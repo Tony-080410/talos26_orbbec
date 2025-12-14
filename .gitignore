@@ -13,3 +13,4 @@ Makefile
 *.log
 logs/
 /compile_commands.json
+CTestTestfile.cmake
