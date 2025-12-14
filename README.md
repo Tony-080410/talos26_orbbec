@@ -3,7 +3,7 @@
 > _如同守卫克里特岛的青铜巨人，Talos 追踪器作为唯一的、永不疲倦的哨兵，_
 
 [![C++20](https://img.shields.io/badge/C++-20-00599C.svg)](https://isocpp.org/)
-[![Status](https://img.shields.io/badge/Status-Phase_1_Prototype-green.svg))](#)
+[![Status](https://img.shields.io/badge/Status-Phase_1_Prototype-green.svg)](#)
 
 ## 📖 项目简介
 
