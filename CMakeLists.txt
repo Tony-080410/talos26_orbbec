@@ -60,6 +60,19 @@ target_link_libraries(tracker_soa_test PRIVATE
 
 add_test(NAME TrackerSoATest COMMAND tracker_soa_test)
 
+add_executable(triple_buffer_test
+    test/triple_buffer_test.cpp
+)
+
+target_include_directories(triple_buffer_test PRIVATE include)
+
+target_link_libraries(triple_buffer_test PRIVATE
+    GTest::GTest
+    GTest::Main
+)
+
+add_test(NAME TripleBufferTest COMMAND triple_buffer_test)
+
 # Latency benchmarks (only if benchmark library is found)
 if(benchmark_FOUND)
   add_executable(latency_benchmark

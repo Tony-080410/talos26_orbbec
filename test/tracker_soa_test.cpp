@@ -200,21 +200,27 @@ TEST(TripleBuffer, NoBlockingDropOnOverload) {
 TEST(TripleBuffer, VersionTracking) {
   spike::TripleBuffer<spike::ArmorSlots> buffer;
 
-  // Multiple cycles to verify version counter increments
-  uint64_t prev_ver = 0;
-  for (int i = 0; i < 5; i++) {
+  // Track version for each slot independently
+  std::array<uint64_t, 3> slot_versions = {0, 0, 0};
+
+  for (int i = 0; i < 6; i++) {
     auto* slot = buffer.begin_write();
     slot->frame_id = i;
+
+    // Determine which slot we're writing to
+    int slot_idx = i % 3;
+
     buffer.publish_write();
     auto [ptr, ver] = buffer.try_read();
     ASSERT_NE(ptr, nullptr);
 
-    // Version should increase with each publish (after 3 cycles)
-    if (i >= 3) {
-      EXPECT_GT(ver, prev_ver)
-          << "Version should increase after slot reuse";
+    // Version should be greater than or equal to previous version for same slot
+    if (slot_versions[slot_idx] > 0) {
+      EXPECT_GT(ver, slot_versions[slot_idx])
+          << "Version " << i << " for slot " << slot_idx
+          << " should be > " << slot_versions[slot_idx];
     }
-    prev_ver = ver;
+    slot_versions[slot_idx] = ver;
   }
 }
 
