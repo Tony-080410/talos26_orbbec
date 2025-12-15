@@ -2,7 +2,6 @@
 #include "detector_state.hpp"
 #include "tracker_soa.hpp"
 #include "triple_buffer.hpp"
-#include "performance_probe.hpp"
 #include <thread>
 #include <chrono>
 
