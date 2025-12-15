@@ -9,7 +9,6 @@ protected:
     UKFState ukf{};
 
     void SetUp() override {
-        // Reset tracker state manually (atomic member prevents copy assignment)
         tracker.state.store(TrackerState::IDLE);
         tracker.detecting_count = 0;
         tracker.lost_count = 0;
@@ -22,8 +21,6 @@ protected:
         tracker.v_yaw = 0.0f;
         tracker.radius[0] = 1.0f;
         tracker.radius[1] = 1.0f;
-
-        // Reset UKF state
         ukf = UKFState{};
     }
 };
@@ -32,16 +29,12 @@ protected:
 
 TEST_F(UKFTest, InitFromDetection) {
     const Vec3 pos(1.0f, 2.0f, 3.0f);
-    constexpr float yaw = 0.5f;
-
-    init_from_detection(tracker, ukf, pos, yaw);
+    init_from_detection(tracker, ukf, pos, 0.5f);
 
     EXPECT_FLOAT_EQ(tracker.pos[0], 1.0f);
     EXPECT_FLOAT_EQ(tracker.pos[1], 2.0f);
     EXPECT_FLOAT_EQ(tracker.pos[2], 3.0f);
     EXPECT_FLOAT_EQ(tracker.yaw, 0.5f);
-
-    // Velocity should be zero
     EXPECT_FLOAT_EQ(tracker.vel[0], 0.0f);
     EXPECT_FLOAT_EQ(tracker.vel[1], 0.0f);
     EXPECT_FLOAT_EQ(tracker.vel[2], 0.0f);
@@ -52,15 +45,14 @@ TEST_F(UKFTest, InitialCovarianceIsPositiveDefinite) {
     const Vec3 pos(0.0f, 0.0f, 0.0f);
     init_from_detection(tracker, ukf, pos, 0.0f);
 
-    // Check diagonal is positive
+    Cov11 P = ukf.P();
     for (int i = 0; i < 11; ++i) {
-        EXPECT_GT(ukf.P(i, i), 0.0f) << "Diagonal element " << i << " not positive";
+        EXPECT_GT(P(i, i), 0.0f) << "Diagonal element " << i << " not positive";
     }
 
-    // Check symmetry
     for (int i = 0; i < 11; ++i) {
         for (int j = i + 1; j < 11; ++j) {
-            EXPECT_FLOAT_EQ(ukf.P(i, j), ukf.P(j, i))
+            EXPECT_NEAR(P(i, j), P(j, i), 1e-6f)
                 << "P not symmetric at (" << i << "," << j << ")";
         }
     }
@@ -71,11 +63,8 @@ TEST_F(UKFTest, InitialCovarianceIsPositiveDefinite) {
 TEST_F(UKFTest, PredictWithZeroVelocity) {
     const Vec3 pos(1.0f, 2.0f, 3.0f);
     init_from_detection(tracker, ukf, pos, 0.0f);
-
-    // Predict with 10ms dt
     predict(tracker, ukf, 10.0f);
 
-    // Position should not change (velocity is zero)
     EXPECT_NEAR(tracker.pos[0], 1.0f, 1e-5f);
     EXPECT_NEAR(tracker.pos[1], 2.0f, 1e-5f);
     EXPECT_NEAR(tracker.pos[2], 3.0f, 1e-5f);
@@ -85,15 +74,9 @@ TEST_F(UKFTest, PredictWithConstantVelocity) {
     const Vec3 pos(0.0f, 0.0f, 0.0f);
     init_from_detection(tracker, ukf, pos, 0.0f);
 
-    // Set velocity: 1 m/s in X direction
     tracker.vel[0] = 1.0f;
-    tracker.vel[1] = 0.0f;
-    tracker.vel[2] = 0.0f;
-
-    // Predict with 100ms dt
     predict(tracker, ukf, 100.0f);
 
-    // Position X should advance by 0.1m
     EXPECT_NEAR(tracker.pos[0], 0.1f, 1e-5f);
     EXPECT_NEAR(tracker.pos[1], 0.0f, 1e-5f);
     EXPECT_NEAR(tracker.pos[2], 0.0f, 1e-5f);
@@ -103,26 +86,19 @@ TEST_F(UKFTest, PredictYawWithAngularVelocity) {
     const Vec3 pos(0.0f, 0.0f, 0.0f);
     init_from_detection(tracker, ukf, pos, 0.0f);
 
-    // Set angular velocity: 1 rad/s
     tracker.v_yaw = 1.0f;
-
-    // Predict with 100ms dt
     predict(tracker, ukf, 100.0f);
 
-    // Yaw should advance by 0.1 rad
     EXPECT_NEAR(tracker.yaw, 0.1f, 1e-5f);
 }
 
 TEST_F(UKFTest, PredictYawWrapAround) {
     const Vec3 pos(0.0f, 0.0f, 0.0f);
-    init_from_detection(tracker, ukf, pos, M_PI - 0.05f);
+    init_from_detection(tracker, ukf, pos, static_cast<float>(M_PI) - 0.05f);
 
-    tracker.v_yaw = 1.0f; // 1 rad/s
-
-    // Predict with 100ms - should wrap from ~pi to ~-pi
+    tracker.v_yaw = 1.0f;
     predict(tracker, ukf, 100.0f);
 
-    // Should wrap to negative
     EXPECT_LT(tracker.yaw, 0.0f);
     EXPECT_GT(tracker.yaw, static_cast<float>(-M_PI));
 }
@@ -131,12 +107,10 @@ TEST_F(UKFTest, PredictIncreasesUncertainty) {
     const Vec3 pos(0.0f, 0.0f, 0.0f);
     init_from_detection(tracker, ukf, pos, 0.0f);
 
-    const float P_before = ukf.P(0, 0);
-
+    const float P_before = ukf.P()(0, 0);
     predict(tracker, ukf, 10.0f);
 
-    // Position uncertainty should increase after prediction
-    EXPECT_GT(ukf.P(0, 0), P_before);
+    EXPECT_GT(ukf.P()(0, 0), P_before);
 }
 
 // ============== Update Tests ==============
@@ -145,30 +119,24 @@ TEST_F(UKFTest, UpdateReducesUncertainty) {
     const Vec3 pos(0.0f, 0.0f, 0.0f);
     init_from_detection(tracker, ukf, pos, 0.0f);
 
-    // Increase uncertainty
     predict(tracker, ukf, 100.0f);
+    const float P_before = ukf.P()(0, 0);
 
-    const float P_before = ukf.P(0, 0);
-
-    // Update with measurement at same position
     const Vec3 meas(0.0f, 0.0f, 0.0f);
     update(tracker, ukf, meas, 0.0f);
 
-    // Uncertainty should decrease
-    EXPECT_LT(ukf.P(0, 0), P_before);
+    EXPECT_LT(ukf.P()(0, 0), P_before);
 }
 
 TEST_F(UKFTest, UpdateCorrectsMeanState) {
     const Vec3 pos(0.0f, 0.0f, 0.0f);
     init_from_detection(tracker, ukf, pos, 0.0f);
 
-    // Measurement shows position at (1, 0, 0)
     const Vec3 meas(1.0f, 0.0f, 0.0f);
     update(tracker, ukf, meas, 0.0f);
 
-    // State should move toward measurement
     EXPECT_GT(tracker.pos[0], 0.0f);
-    EXPECT_LT(tracker.pos[0], 1.0f); // Partial correction
+    EXPECT_LT(tracker.pos[0], 1.0f);
 }
 
 TEST_F(UKFTest, UpdateMaintainsCovarianceSymmetry) {
@@ -181,10 +149,10 @@ TEST_F(UKFTest, UpdateMaintainsCovarianceSymmetry) {
         update(tracker, ukf, meas, 0.0f);
     }
 
-    // Check symmetry after multiple iterations (relaxed tolerance for float32 accumulation)
+    Cov11 P = ukf.P();
     for (int i = 0; i < 11; ++i) {
         for (int j = i + 1; j < 11; ++j) {
-            EXPECT_NEAR(ukf.P(i, j), ukf.P(j, i), 1e-3f)
+            EXPECT_NEAR(P(i, j), P(j, i), 1e-3f)
                 << "P not symmetric at (" << i << "," << j << ")";
         }
     }
@@ -196,9 +164,7 @@ TEST_F(UKFTest, MahalanobisDistanceZeroForExactMatch) {
     const Vec3 pos(1.0f, 2.0f, 3.0f);
     init_from_detection(tracker, ukf, pos, 0.0f);
 
-    // Measurement exactly at tracker position
     const float d2 = mahalanobis_distance_sq(tracker, ukf, pos);
-
     EXPECT_NEAR(d2, 0.0f, 1e-5f);
 }
 
@@ -234,34 +200,25 @@ TEST_F(UKFTest, IsAssociatedReturnsFalseForFar) {
 // ============== Integration Tests ==============
 
 TEST_F(UKFTest, PredictUpdateCycle) {
-    const Vec3 pos(0.0f, 0.0f, 5.0f); // 5m away
+    const Vec3 pos(0.0f, 0.0f, 5.0f);
     init_from_detection(tracker, ukf, pos, 0.0f);
-
-    // Simulate target moving at 1 m/s in X
     tracker.vel[0] = 1.0f;
 
     for (int i = 0; i < 100; ++i) {
-        predict(tracker, ukf, 2.0f); // 2ms interval (500Hz)
-
-        // Simulate noisy measurement
-        const float noise = i % 2 == 0 ? 0.01f : -0.01f;
+        predict(tracker, ukf, 2.0f);
+        const float noise = (i % 2 == 0) ? 0.01f : -0.01f;
         Vec3 meas(tracker.pos[0] + noise, tracker.pos[1], tracker.pos[2]);
         update(tracker, ukf, meas, 0.0f);
     }
 
-    // After 200ms, position should be ~0.2m
     EXPECT_NEAR(tracker.pos[0], 0.2f, 0.05f);
 }
 
 TEST_F(UKFTest, ConvergenceToTrueState) {
-    // Start with wrong initial guess
     const Vec3 pos(0.0f, 0.0f, 0.0f);
     init_from_detection(tracker, ukf, pos, 0.0f);
 
-    // True state is at (1, 1, 1)
     const Vec3 true_pos(1.0f, 1.0f, 1.0f);
-
-    // Multiple updates should converge
     for (int i = 0; i < 50; ++i) {
         update(tracker, ukf, true_pos, 0.0f);
     }

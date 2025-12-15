@@ -14,9 +14,15 @@ struct LargeFrame {
 
     [[nodiscard]] bool is_consistent() const {
         const auto first = data[0];
+#if defined(__cpp_lib_ranges) && __cpp_lib_ranges >= 201911
         return std::ranges::all_of(data.begin(), data.end(), [&](const auto v) {
             return v == first;
         });
+#else
+        return std::all_of(data.begin(), data.end(), [&](const auto v) {
+            return v == first;
+        });
+#endif
     }
 
     [[nodiscard]] auto value() const { return data[0]; }
