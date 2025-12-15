@@ -193,6 +193,22 @@ if (benchmark_FOUND)
     )
 
     add_test(NAME UKFBenchmark COMMAND ukf_benchmark)
+
+    # Scheduler benchmark
+    add_executable(scheduler_benchmark
+            test/scheduler_benchmark.cpp
+    )
+
+    target_include_directories(scheduler_benchmark PRIVATE include)
+
+    target_link_libraries(scheduler_benchmark PRIVATE
+            scheduler
+            benchmark::benchmark
+            ${OpenCV_LIBS}
+            TBB::tbb
+    )
+
+    add_test(NAME SchedulerBenchmark COMMAND scheduler_benchmark)
 else ()
     message(STATUS "benchmark library not found - benchmark tests will be skipped")
     message(STATUS "To enable: brew install google-benchmark")
