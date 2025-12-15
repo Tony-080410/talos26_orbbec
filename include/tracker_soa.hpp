@@ -94,7 +94,7 @@ namespace spike {
          * Called when first armor detected in IDLE state
          */
         bool try_start_detecting() {
-            TrackerState expected = TrackerState::IDLE;
+            auto expected = TrackerState::IDLE;
             return state.compare_exchange_strong(
                 expected, TrackerState::DETECTING,
                 std::memory_order_release, std::memory_order_relaxed);
@@ -105,7 +105,7 @@ namespace spike {
          * Called when detection confidence threshold reached
          */
         bool try_confirm_tracking() {
-            TrackerState expected = TrackerState::DETECTING;
+            auto expected = TrackerState::DETECTING;
             return state.compare_exchange_strong(
                 expected, TrackerState::TRACKING,
                 std::memory_order_release, std::memory_order_relaxed);
@@ -116,7 +116,7 @@ namespace spike {
          * Called when detection missed
          */
         bool try_enter_lost() {
-            TrackerState expected = TrackerState::TRACKING;
+            auto expected = TrackerState::TRACKING;
             return state.compare_exchange_strong(
                 expected, TrackerState::TEMP_LOST,
                 std::memory_order_release, std::memory_order_relaxed);
@@ -127,7 +127,7 @@ namespace spike {
          * Called when target re-detected after being lost
          */
         bool try_restore_tracking() {
-            TrackerState expected = TrackerState::TEMP_LOST;
+            auto expected = TrackerState::TEMP_LOST;
             return state.compare_exchange_strong(
                 expected, TrackerState::TRACKING,
                 std::memory_order_release, std::memory_order_relaxed);
