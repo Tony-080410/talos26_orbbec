@@ -165,6 +165,23 @@ target_link_libraries(scheduler_test PRIVATE
 
 add_test(NAME SchedulerTest COMMAND scheduler_test)
 
+# Integration scheduler test (comprehensive)
+add_executable(integration_scheduler_test
+        test/integration_scheduler_test.cpp
+)
+
+target_include_directories(integration_scheduler_test PRIVATE include)
+
+target_link_libraries(integration_scheduler_test PRIVATE
+        scheduler
+        GTest::GTest
+        GTest::Main
+        ${OpenCV_LIBS}
+        TBB::tbb
+)
+
+add_test(NAME IntegrationSchedulerTest COMMAND integration_scheduler_test)
+
 # Latency benchmarks (only if benchmark library is found)
 if (benchmark_FOUND)
     add_executable(latency_benchmark
@@ -209,6 +226,35 @@ if (benchmark_FOUND)
     )
 
     add_test(NAME SchedulerBenchmark COMMAND scheduler_benchmark)
+
+    # Integration scheduler benchmark
+    add_executable(integration_scheduler_benchmark
+            test/integration_scheduler_benchmark.cpp
+    )
+
+    target_include_directories(integration_scheduler_benchmark PRIVATE include)
+
+    target_link_libraries(integration_scheduler_benchmark PRIVATE
+            scheduler
+            benchmark::benchmark
+            ${OpenCV_LIBS}
+            TBB::tbb
+    )
+
+    add_test(NAME IntegrationSchedulerBenchmark COMMAND integration_scheduler_benchmark)
+
+    # RealWorld scheduler benchmark (with camera)
+    add_executable(realworld_scheduler_benchmark
+            test/realworld_scheduler_benchmark.cpp
+    )
+
+    target_include_directories(realworld_scheduler_benchmark PRIVATE include)
+
+    target_link_libraries(realworld_scheduler_benchmark PRIVATE
+            scheduler
+            ${OpenCV_LIBS}
+            TBB::tbb
+    )
 else ()
     message(STATUS "benchmark library not found - benchmark tests will be skipped")
     message(STATUS "To enable: brew install google-benchmark")

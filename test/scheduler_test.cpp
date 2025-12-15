@@ -343,7 +343,7 @@ TEST(SchedulerTest, PreprocessorCallback) {
     sched.set_preprocessor([&](SharedFeature& sf) {
         preprocess_count.fetch_add(1, std::memory_order_relaxed);
         // 模拟预处理: 可以用 TBB parallel_for
-        sf.preprocessed = cv::Mat(100, 100, CV_8UC1, cv::Scalar(0));
+        sf.preprocessed = ImageBuffer::create(100, 100, CV_8UC1);
     });
 
     sched.set_detector([](const SharedFeature& sf) {
