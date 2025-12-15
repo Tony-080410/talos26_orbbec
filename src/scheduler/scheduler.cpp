@@ -93,7 +93,12 @@ void Scheduler::detector_loop() {
             shared.frame_seq = frame.seq;
             shared.timestamp_ns = frame.timestamp_ns;
             shared.image = std::move(frame.image);
-            // TODO: 预处理，可用 TBB parallel_for
+
+            // 预处理 (用户可用 TBB parallel_for 并行化)
+            if (preprocess_fn_) {
+                preprocess_fn_(shared);
+            }
+
             shared_buffer_.publish();
 
             // 执行检测（用户回调）
@@ -106,6 +111,7 @@ void Scheduler::detector_loop() {
             const auto t1 = std::chrono::steady_clock::now();
             const auto latency = std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count();
             stats_.detect_latency.store(static_cast<uint64_t>(latency), std::memory_order_relaxed);
+            stats_.detect_hist.record(static_cast<uint64_t>(latency));
             stats_.detect_count.fetch_add(1, std::memory_order_relaxed);
         }
     }
@@ -136,6 +142,7 @@ void Scheduler::tracker_loop() {
             const auto t1 = std::chrono::steady_clock::now();
             const auto latency = std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count();
             stats_.track_latency.store(static_cast<uint64_t>(latency), std::memory_order_relaxed);
+            stats_.track_hist.record(static_cast<uint64_t>(latency));
             stats_.track_count.fetch_add(1, std::memory_order_relaxed);
         }
     }
@@ -169,6 +176,7 @@ void Scheduler::solver_loop() {
         const auto t1 = std::chrono::steady_clock::now();
         const auto latency = std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count();
         stats_.solve_latency.store(static_cast<uint64_t>(latency), std::memory_order_relaxed);
+        stats_.solve_hist.record(static_cast<uint64_t>(latency));
         stats_.solve_count.fetch_add(1, std::memory_order_relaxed);
     }
 

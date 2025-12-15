@@ -1,8 +1,10 @@
 #pragma once
 
 #include <cstdint>
+#include <atomic>
 #include <vector>
 #include <opencv2/core.hpp>
+#include "scheduler/primitives/latency_histogram.hpp"
 
 namespace scheduler {
 
@@ -58,22 +60,33 @@ struct RuntimeConfig {
 // ============ 统计信息 ============
 
 struct Stats {
+    // 计数器
     std::atomic<uint64_t> frame_in{0};
     std::atomic<uint64_t> frame_drop{0};
     std::atomic<uint64_t> detect_count{0};
     std::atomic<uint64_t> track_count{0};
     std::atomic<uint64_t> solve_count{0};
 
-    // 延迟 (ns)
+    // 最新延迟 (ns) - 用于实时监控
     std::atomic<uint64_t> detect_latency{0};
     std::atomic<uint64_t> track_latency{0};
     std::atomic<uint64_t> solve_latency{0};
     std::atomic<uint64_t> e2e_latency{0};
 
+    // 延迟直方图 - 用于百分位数统计
+    LatencyHistogram detect_hist;
+    LatencyHistogram track_hist;
+    LatencyHistogram solve_hist;
+    LatencyHistogram e2e_hist;
+
     void reset() noexcept {
         frame_in = frame_drop = 0;
         detect_count = track_count = solve_count = 0;
         detect_latency = track_latency = solve_latency = e2e_latency = 0;
+        detect_hist.reset();
+        track_hist.reset();
+        solve_hist.reset();
+        e2e_hist.reset();
     }
 };
 

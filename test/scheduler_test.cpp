@@ -2,10 +2,13 @@
 #include "scheduler/scheduler.hpp"
 #include "scheduler/primitives/latest_value.hpp"
 #include "scheduler/primitives/event_flag.hpp"
+#include "scheduler/primitives/latency_histogram.hpp"
 
 #include <thread>
 #include <chrono>
 #include <atomic>
+#include <random>
+#include <oneapi/tbb/parallel_for.h>
 
 using namespace scheduler;
 using namespace std::chrono_literals;
@@ -257,4 +260,192 @@ TEST(SchedulerTest, StatsReset) {
     EXPECT_EQ(sched.stats().frame_in.load(), 0);
 
     sched.stop();
+}
+
+// ============ LatencyHistogram Tests ============
+
+TEST(LatencyHistogramTest, BasicRecord) {
+    LatencyHistogram hist;
+    hist.record(1000);  // 1us
+    hist.record(2000);  // 2us
+    hist.record(3000);  // 3us
+
+    EXPECT_EQ(hist.count(), 3);
+    EXPECT_NEAR(hist.mean(), 2000.0, 1.0);
+    EXPECT_EQ(hist.min(), 1000);
+    EXPECT_EQ(hist.max(), 3000);
+}
+
+TEST(LatencyHistogramTest, Percentiles) {
+    LatencyHistogram hist;
+
+    // 记录 100 个样本: 1us, 2us, ..., 100us
+    for (int i = 1; i <= 100; ++i) {
+        hist.record(i * 1000);  // i us
+    }
+
+    EXPECT_EQ(hist.count(), 100);
+
+    // p50 应该在 ~50us 附近
+    EXPECT_GE(hist.p50(), 20000);
+    EXPECT_LE(hist.p50(), 100000);
+
+    // p99 应该在 ~99us 附近
+    EXPECT_GE(hist.p99(), 50000);
+}
+
+TEST(LatencyHistogramTest, Reset) {
+    LatencyHistogram hist;
+    hist.record(1000);
+    hist.record(2000);
+
+    EXPECT_EQ(hist.count(), 2);
+
+    hist.reset();
+
+    EXPECT_EQ(hist.count(), 0);
+    EXPECT_EQ(hist.min(), 0);
+    EXPECT_EQ(hist.max(), 0);
+}
+
+TEST(LatencyHistogramTest, ConcurrentRecord) {
+    LatencyHistogram hist;
+    constexpr int kThreads = 4;
+    constexpr int kSamplesPerThread = 10000;
+
+    std::vector<std::thread> threads;
+    for (int t = 0; t < kThreads; ++t) {
+        threads.emplace_back([&hist, t] {
+            std::mt19937 gen(t);
+            std::uniform_int_distribution<uint64_t> dist(100, 100000);
+            for (int i = 0; i < kSamplesPerThread; ++i) {
+                hist.record(dist(gen));
+            }
+        });
+    }
+
+    for (auto& th : threads) {
+        th.join();
+    }
+
+    EXPECT_EQ(hist.count(), kThreads * kSamplesPerThread);
+}
+
+// ============ Preprocessor Tests ============
+
+TEST(SchedulerTest, PreprocessorCallback) {
+    Scheduler sched;
+    RuntimeConfig config;
+    sched.init(config);
+
+    std::atomic<int> preprocess_count{0};
+
+    sched.set_preprocessor([&](SharedFeature& sf) {
+        preprocess_count.fetch_add(1, std::memory_order_relaxed);
+        // 模拟预处理: 可以用 TBB parallel_for
+        sf.preprocessed = cv::Mat(100, 100, CV_8UC1, cv::Scalar(0));
+    });
+
+    sched.set_detector([](const SharedFeature& sf) {
+        Detection det;
+        det.frame_seq = sf.frame_seq;
+        return det;
+    });
+
+    sched.start();
+
+    for (int i = 0; i < 5; ++i) {
+        Frame frame;
+        frame.seq = i;
+        sched.push_frame(std::move(frame));
+    }
+
+    std::this_thread::sleep_for(300ms);
+    sched.stop();
+
+    EXPECT_GE(preprocess_count.load(), 4);
+}
+
+// ============ Stress Tests ============
+
+TEST(SchedulerTest, HighFrequencyFrames) {
+    Scheduler sched;
+    RuntimeConfig config;
+    sched.init(config);
+
+    std::atomic<int> detect_count{0};
+
+    sched.set_detector([&](const SharedFeature& sf) {
+        detect_count.fetch_add(1, std::memory_order_relaxed);
+        Detection det;
+        det.frame_seq = sf.frame_seq;
+        return det;
+    });
+
+    sched.start();
+
+    // 模拟 160Hz 输入，持续 500ms
+    constexpr int kFrameCount = 80;  // 160Hz * 0.5s
+    for (int i = 0; i < kFrameCount; ++i) {
+        Frame frame;
+        frame.seq = i;
+        frame.timestamp_ns = i * 6250000;  // 160Hz = 6.25ms
+        sched.push_frame(std::move(frame));
+        std::this_thread::sleep_for(std::chrono::microseconds(6250));
+    }
+
+    std::this_thread::sleep_for(200ms);
+    sched.stop();
+
+    // 验证至少处理了大部分帧
+    EXPECT_GE(detect_count.load(), kFrameCount * 0.8);
+}
+
+TEST(SchedulerTest, LatencyHistogramStats) {
+    Scheduler sched;
+    RuntimeConfig config;
+    sched.init(config);
+
+    sched.set_detector([](const SharedFeature& sf) {
+        // 模拟一些处理延迟
+        std::this_thread::sleep_for(std::chrono::microseconds(100));
+        Detection det;
+        det.frame_seq = sf.frame_seq;
+        return det;
+    });
+
+    sched.set_tracker([](const Detection& det, const SharedFeature&) {
+        std::this_thread::sleep_for(std::chrono::microseconds(50));
+        TrackResult tr;
+        tr.frame_seq = det.frame_seq;
+        return tr;
+    });
+
+    sched.set_solver([](const TrackResult& tr) {
+        std::this_thread::sleep_for(std::chrono::microseconds(50));
+        SolverOutput out;
+        out.frame_seq = tr.frame_seq;
+        return out;
+    });
+
+    sched.start();
+
+    for (int i = 0; i < 20; ++i) {
+        Frame frame;
+        frame.seq = i;
+        sched.push_frame(std::move(frame));
+        std::this_thread::sleep_for(10ms);
+    }
+
+    std::this_thread::sleep_for(300ms);
+    sched.stop();
+
+    // 验证直方图有数据
+    const auto& stats = sched.stats();
+    EXPECT_GT(stats.detect_hist.count(), 0);
+    EXPECT_GT(stats.detect_hist.p50(), 0);
+
+    // 验证延迟在合理范围 (100us = 100000ns 左右)
+    EXPECT_GE(stats.detect_hist.min(), 50000);   // >= 50us
+    EXPECT_LE(stats.detect_hist.max(), 10000000); // <= 10ms
 }

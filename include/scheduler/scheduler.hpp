@@ -31,6 +31,7 @@ namespace scheduler {
 class Scheduler {
 public:
     // 回调类型
+    using PreprocessFunc = std::function<void(SharedFeature&)>;  // 预处理 (可并行)
     using DetectorFunc = std::function<Detection(const SharedFeature&)>;
     using TrackerFunc = std::function<TrackResult(const Detection&, const SharedFeature&)>;
     using SolverFunc = std::function<SolverOutput(const TrackResult&)>;
@@ -89,6 +90,7 @@ public:
 
     // ============ 注册回调 ============
 
+    void set_preprocessor(PreprocessFunc fn) { preprocess_fn_ = std::move(fn); }
     void set_detector(DetectorFunc fn) { detect_fn_ = std::move(fn); }
     void set_tracker(TrackerFunc fn) { track_fn_ = std::move(fn); }
     void set_solver(SolverFunc fn) { solve_fn_ = std::move(fn); }
@@ -118,6 +120,7 @@ private:
     std::shared_ptr<RuntimeConfig> config_;
 
     // 回调
+    PreprocessFunc preprocess_fn_;
     DetectorFunc detect_fn_;
     TrackerFunc track_fn_;
     SolverFunc solve_fn_;
