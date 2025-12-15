@@ -42,6 +42,23 @@ find_package(benchmark QUIET)
 
 include_directories(include)
 
+# Scheduler library
+add_library(scheduler
+        src/scheduler/scheduler.cpp
+)
+
+target_include_directories(scheduler PUBLIC
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+        $<INSTALL_INTERFACE:include>
+)
+
+target_link_libraries(scheduler PUBLIC
+        ${OpenCV_LIBS}
+        spdlog::spdlog
+        fmt::fmt
+        TBB::tbb
+)
+
 # Main executable
 add_executable(${PROJECT_NAME}
         src/main.cpp
@@ -51,6 +68,7 @@ add_executable(${PROJECT_NAME}
 target_include_directories(${PROJECT_NAME} PRIVATE include)
 
 target_link_libraries(${PROJECT_NAME} PRIVATE
+        scheduler
         ${OpenCV_LIBS}
         spdlog::spdlog
         fmt::fmt
@@ -129,6 +147,23 @@ target_link_libraries(ukf_test PRIVATE
 )
 
 add_test(NAME UKFTest COMMAND ukf_test)
+
+# Scheduler tests
+add_executable(scheduler_test
+        test/scheduler_test.cpp
+)
+
+target_include_directories(scheduler_test PRIVATE include)
+
+target_link_libraries(scheduler_test PRIVATE
+        scheduler
+        GTest::GTest
+        GTest::Main
+        ${OpenCV_LIBS}
+        TBB::tbb
+)
+
+add_test(NAME SchedulerTest COMMAND scheduler_test)
 
 # Latency benchmarks (only if benchmark library is found)
 if (benchmark_FOUND)
