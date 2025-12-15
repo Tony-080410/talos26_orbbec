@@ -15,3 +15,5 @@ logs/
 /compile_commands.json
 CTestTestfile.cmake
 Testing/
+cmake-build-debug
+cmake-build-release

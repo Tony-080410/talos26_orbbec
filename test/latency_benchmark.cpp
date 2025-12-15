@@ -4,94 +4,97 @@
 #include "triple_buffer.hpp"
 
 namespace spike::bench {
+    // ============================================================================
+    // Benchmark: TripleBuffer Round-trip
+    // ============================================================================
 
-// ============================================================================
-// Benchmark: TripleBuffer Round-trip
-// ============================================================================
+    static void BM_TripleBufferPublish(benchmark::State &state) {
+        TripleBuffer<ArmorSlots> buffer;
 
-static void BM_TripleBufferPublish(benchmark::State& state) {
-  spike::TripleBuffer<spike::ArmorSlots> buffer;
+        for (auto _: state) {
+            auto &slot = buffer.borrow_mut();
+            slot.valid_mask = 0x0F;
+            buffer.publish();
+            benchmark::DoNotOptimize(slot);
+        }
+    }
 
-  for (auto _ : state) {
-    auto* slot = buffer.begin_write();
-    slot->valid_mask = 0x0F;
-    buffer.publish_write();
-    benchmark::DoNotOptimize(slot);
-  }
-}
-BENCHMARK(BM_TripleBufferPublish);
+    BENCHMARK(BM_TripleBufferPublish);
 
-static void BM_TripleBufferRead(benchmark::State& state) {
-  spike::TripleBuffer<spike::ArmorSlots> buffer;
+    static void BM_TripleBufferRead(benchmark::State &state) {
+        TripleBuffer<ArmorSlots> buffer;
 
-  // Pre-populate with data
-  auto* slot = buffer.begin_write();
-  slot->valid_mask = 0x0F;
-  buffer.publish_write();
+        // Pre-populate with data
+        auto &slot = buffer.borrow_mut();
+        slot.valid_mask = 0x0F;
+        buffer.publish();
 
-  for (auto _ : state) {
-    auto [ptr, ver] = buffer.try_read();
-    benchmark::DoNotOptimize(ptr);
-    benchmark::DoNotOptimize(ver);
-  }
-}
-BENCHMARK(BM_TripleBufferRead);
+        for (auto _: state) {
+            auto ptr = buffer.borrow();
+            benchmark::DoNotOptimize(ptr);
+        }
+    }
 
-// ============================================================================
-// Benchmark: State Machine Transitions
-// ============================================================================
+    BENCHMARK(BM_TripleBufferRead);
 
-static void BM_StateTransitionIDLEtoDETECTING(benchmark::State& state) {
-  for (auto _ : state) {
-    spike::TrackerSoA tracker;
-    benchmark::DoNotOptimize(tracker.try_start_detecting());
-  }
-}
-BENCHMARK(BM_StateTransitionIDLEtoDETECTING);
+    // ============================================================================
+    // Benchmark: State Machine Transitions
+    // ============================================================================
 
-static void BM_StateTransitionTRACKINGtoTEMP_LOST(benchmark::State& state) {
-  spike::TrackerSoA tracker;
-  tracker.state.store(spike::TrackerState::TRACKING, std::memory_order_relaxed);
+    static void BM_StateTransitionIdleToDetecting(benchmark::State &state) {
+        for (auto _: state) {
+            TrackerSoA tracker;
+            benchmark::DoNotOptimize(tracker.try_start_detecting());
+        }
+    }
 
-  for (auto _ : state) {
-    benchmark::DoNotOptimize(tracker.try_enter_lost());
-    // Reset for next iteration
-    tracker.state.store(spike::TrackerState::TRACKING, std::memory_order_relaxed);
-  }
-}
-BENCHMARK(BM_StateTransitionTRACKINGtoTEMP_LOST);
+    BENCHMARK(BM_StateTransitionIdleToDetecting);
 
-// ============================================================================
-// Benchmark: ArmorSlots Iteration
-// ============================================================================
+    static void BM_StateTransitionTrackingtoTempLost(benchmark::State &state) {
+        TrackerSoA tracker;
+        tracker.state.store(TrackerState::TRACKING, std::memory_order_relaxed);
 
-static void BM_ArmorSlotsCountValid(benchmark::State& state) {
-  spike::ArmorSlots slots;
-  slots.valid_mask = 0x0F;  // 4 valid armors
+        for (auto _: state) {
+            benchmark::DoNotOptimize(tracker.try_enter_lost());
+            // Reset for next iteration
+            tracker.state.store(TrackerState::TRACKING, std::memory_order_relaxed);
+        }
+    }
 
-  for (auto _ : state) {
-    benchmark::DoNotOptimize(slots.count_valid());
-  }
-}
-BENCHMARK(BM_ArmorSlotsCountValid);
+    BENCHMARK(BM_StateTransitionTrackingtoTempLost);
 
-// ============================================================================
-// Benchmark: Data Access (Cache Locality)
-// ============================================================================
+    // ============================================================================
+    // Benchmark: ArmorSlots Iteration
+    // ============================================================================
 
-static void BM_TrackerSoAMemoryAccess(benchmark::State& state) {
-  spike::TrackerSoA tracker;
-  tracker.pos[0] = 1.0f;
-  tracker.vel[0] = 0.5f;
+    static void BM_ArmorSlotsCountValid(benchmark::State &state) {
+        ArmorSlots slots;
+        slots.valid_mask = 0x0F; // 4 valid armors
 
-  for (auto _ : state) {
-    // Simulate typical tracker predict operation
-    tracker.pos[0] += tracker.vel[0] * 0.004f;  // 4ms timestep
-    tracker.pos[1] += tracker.vel[1] * 0.004f;
-    tracker.pos[2] += tracker.vel[2] * 0.004f;
-    benchmark::DoNotOptimize(tracker);
-  }
-}
-BENCHMARK(BM_TrackerSoAMemoryAccess);
+        for (auto _: state) {
+            benchmark::DoNotOptimize(slots.count_valid());
+        }
+    }
 
-}  // namespace spike::bench
+    BENCHMARK(BM_ArmorSlotsCountValid);
+
+    // ============================================================================
+    // Benchmark: Data Access (Cache Locality)
+    // ============================================================================
+
+    static void BM_TrackerSoAMemoryAccess(benchmark::State &state) {
+        TrackerSoA tracker;
+        tracker.pos[0] = 1.0f;
+        tracker.vel[0] = 0.5f;
+
+        for (auto _: state) {
+            // Simulate typical tracker predict operation
+            tracker.pos[0] += tracker.vel[0] * 0.004f; // 4ms timestep
+            tracker.pos[1] += tracker.vel[1] * 0.004f;
+            tracker.pos[2] += tracker.vel[2] * 0.004f;
+            benchmark::DoNotOptimize(tracker);
+        }
+    }
+
+    BENCHMARK(BM_TrackerSoAMemoryAccess);
+} // namespace spike::bench
