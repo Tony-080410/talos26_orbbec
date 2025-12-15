@@ -1,5 +1,5 @@
 build/
-bin/
+bin/*
 CMakeFiles/
 CMakeCache.txt
 cmake_install.cmake
@@ -14,6 +14,8 @@ Makefile
 logs/
 /compile_commands.json
 CTestTestfile.cmake
-Testing/
-cmake-build-debug
-cmake-build-release
+Testing/*
+cmake-build-debug/
+cmake-build-release/
+.cmake/
+.idea/
