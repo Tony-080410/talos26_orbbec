@@ -115,6 +115,21 @@ target_link_libraries(integration_test PRIVATE
 
 add_test(NAME IntegrationTest COMMAND integration_test)
 
+# UKF logic tests
+add_executable(ukf_test
+        test/ukf_test.cpp
+)
+
+target_include_directories(ukf_test PRIVATE include)
+
+target_link_libraries(ukf_test PRIVATE
+        GTest::GTest
+        GTest::Main
+        Eigen3::Eigen
+)
+
+add_test(NAME UKFTest COMMAND ukf_test)
+
 # Latency benchmarks (only if benchmark library is found)
 if (benchmark_FOUND)
     add_executable(latency_benchmark
@@ -129,13 +144,27 @@ if (benchmark_FOUND)
     )
 
     add_test(NAME LatencyBenchmark COMMAND latency_benchmark)
+
+    # UKF benchmark (separate)
+    add_executable(ukf_benchmark
+            test/ukf_benchmark.cpp
+    )
+
+    target_include_directories(ukf_benchmark PRIVATE include)
+
+    target_link_libraries(ukf_benchmark PRIVATE
+            benchmark::benchmark
+            Eigen3::Eigen
+    )
+
+    add_test(NAME UKFBenchmark COMMAND ukf_benchmark)
 else ()
     message(STATUS "benchmark library not found - benchmark tests will be skipped")
     message(STATUS "To enable: brew install google-benchmark")
 endif ()
 
 if (ENABLE_COVERAGE)
-    foreach (tgt ${PROJECT_NAME} tracker_soa_test triple_buffer_test performance_probe_test integration_test)
+    foreach (tgt ${PROJECT_NAME} tracker_soa_test triple_buffer_test performance_probe_test integration_test ukf_test)
         target_compile_options(${tgt} PRIVATE -fprofile-arcs -ftest-coverage -O0 -g)
         target_link_options(${tgt} PRIVATE --coverage)
     endforeach ()
