@@ -1,7 +1,6 @@
 #pragma once
 
-// Phase B: 使用moodycamel高性能无锁队列替代TBB
-#include <concurrentqueue.h>
+#include <oneapi/tbb/concurrent_queue.h>
 #include <oneapi/tbb/parallel_for.h>
 #include <oneapi/tbb/task_group.h>
 #include <oneapi/tbb/global_control.h>
@@ -47,7 +46,7 @@ namespace scheduler {
 template<SchedulerStrategy Strategy>
 class Scheduler {
 public:
-    Scheduler() noexcept : config_(nullptr), strategy_(nullptr) {}
+    Scheduler() noexcept : strategy_(nullptr), config_(nullptr) {}
 
     ~Scheduler() noexcept {
         stop();
@@ -135,8 +134,7 @@ public:
             return false;
         }
 
-        // Phase B: moodycamel enqueue
-        frame_queue_.enqueue(std::move(frame));
+        frame_queue_.push(std::move(frame));
         frame_queue_size_.fetch_add(1, std::memory_order_relaxed);
         frame_event_.notify_one();
         return true;
@@ -167,9 +165,8 @@ public:
 private:
     // ============ 数据通道 ============
 
-    // Phase B: 使用moodycamel高性能无锁队列
     // Frame队列 + Event驱动detector
-    moodycamel::ConcurrentQueue<Frame> frame_queue_;
+    tbb::concurrent_queue<Frame> frame_queue_;
     alignas(CACHE_LINE_SIZE) std::atomic<size_t> frame_queue_size_{0};
     static constexpr size_t kMaxFrameQueueSize = 8;
     NativeEvent frame_event_;  // 通知detector有新帧
@@ -178,7 +175,7 @@ private:
     TripleBuffer<SharedFeature> shared_buffer_;
 
     // Detection队列 + Event驱动tracker
-    moodycamel::ConcurrentQueue<Detection> detection_queue_;
+    tbb::concurrent_queue<Detection> detection_queue_;
     NativeEvent tracker_event_;  // 通知tracker有新detection
 
     // Track Result: 双缓冲（solver轮询读取）
@@ -209,7 +206,6 @@ private:
      * 1. CRTP直接调用strategy_->detect() - 编译器可内联
      * 2. NativeEvent避免condition_variable开销
      * 3. 缓存行对齐避免false sharing
-     * 4. Phase B: moodycamel高性能队列
      */
     void detector_loop() noexcept {
         spdlog::debug("[Detector] loop started");
@@ -221,8 +217,8 @@ private:
                 continue;  // 超时，检查 running 状态
             }
 
-            // Phase B: moodycamel try_dequeue
-            while (frame_queue_.try_dequeue(frame)) {
+            // 处理队列中所有帧
+            while (frame_queue_.try_pop(frame)) {
                 frame_queue_size_.fetch_sub(1, std::memory_order_relaxed);
 
                 const auto t0 = std::chrono::steady_clock::now();
@@ -245,8 +241,7 @@ private:
                 // 性能：0ns (vs std::function的10-20ns)
                 Detection det = strategy_->detect(shared);
 
-                // Phase B: moodycamel enqueue
-                detection_queue_.enqueue(std::move(det));
+                detection_queue_.push(std::move(det));
                 tracker_event_.notify_one();
 
                 const auto t1 = std::chrono::steady_clock::now();
@@ -260,7 +255,6 @@ private:
 
     /**
      * @brief Tracker线程主循环
-     * Phase B: moodycamel队列 + solver_event通知
      */
     void tracker_loop() noexcept {
         spdlog::debug("[Tracker] loop started");
@@ -272,8 +266,7 @@ private:
                 continue;
             }
 
-            // Phase B: moodycamel try_dequeue
-            while (detection_queue_.try_dequeue(det)) {
+            while (detection_queue_.try_pop(det)) {
                 const auto t0 = std::chrono::steady_clock::now();
 
                 auto shared_opt = shared_buffer_.borrow();
@@ -332,3 +325,5 @@ private:
 };
 
 }  // namespace scheduler
+
+// ============ 显式模板实例化 (见scheduler_template.cpp) ============

@@ -1,5 +1,4 @@
 #include <benchmark/benchmark.h>
-#include <concurrentqueue.h>  // Phase B: moodycamel
 #include "scheduler/scheduler.hpp"
 #include "scheduler/primitives/triple_buffer.hpp"
 #include "scheduler/primitives/latest_value.hpp"
@@ -256,37 +255,37 @@ static void BM_Scheduler_Throughput(benchmark::State& state) {
 }
 BENCHMARK(BM_Scheduler_Throughput);
 
-// Phase B: moodycamel::ConcurrentQueue push/pop 开销
-static void BM_Moodycamel_ConcurrentQueue_Enqueue(benchmark::State& state) {
-    moodycamel::ConcurrentQueue<uint64_t> queue;
+// TBB concurrent_queue push/pop 开销
+static void BM_TBB_ConcurrentQueue_Push(benchmark::State& state) {
+    tbb::concurrent_queue<uint64_t> queue;
     uint64_t seq = 0;
 
     for (auto _ : state) {
-        queue.enqueue(seq++);
+        queue.push(seq++);
     }
 
     state.SetItemsProcessed(state.iterations());
 }
-BENCHMARK(BM_Moodycamel_ConcurrentQueue_Enqueue);
+BENCHMARK(BM_TBB_ConcurrentQueue_Push);
 
-static void BM_Moodycamel_ConcurrentQueue_TryDequeue(benchmark::State& state) {
-    moodycamel::ConcurrentQueue<uint64_t> queue;
+static void BM_TBB_ConcurrentQueue_TryPop(benchmark::State& state) {
+    tbb::concurrent_queue<uint64_t> queue;
 
     // 预填充
     for (int i = 0; i < 1000; ++i) {
-        queue.enqueue(i);
+        queue.push(i);
     }
 
     uint64_t value;
     for (auto _ : state) {
-        if (!queue.try_dequeue(value)) {
-            queue.enqueue(value);  // 保持队列有数据
+        if (!queue.try_pop(value)) {
+            queue.push(value);  // 保持队列有数据
         }
         benchmark::DoNotOptimize(value);
     }
 
     state.SetItemsProcessed(state.iterations());
 }
-BENCHMARK(BM_Moodycamel_ConcurrentQueue_TryDequeue);
+BENCHMARK(BM_TBB_ConcurrentQueue_TryPop);
 
 BENCHMARK_MAIN();
