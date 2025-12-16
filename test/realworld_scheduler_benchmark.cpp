@@ -7,6 +7,8 @@
  */
 
 #include "scheduler/scheduler.hpp"
+#include "scheduler/primitives/buffer_pool.hpp"
+#include "scheduler/primitives/latency_stats.hpp"
 #include <opencv2/videoio.hpp>
 #include <opencv2/imgproc.hpp>
 
@@ -19,90 +21,9 @@
 #include <numeric>
 #include <algorithm>
 
+
 using namespace scheduler;
 using namespace std::chrono_literals;
-
-// ============ Buffer Pool ============
-
-class BufferPool {
-public:
-    explicit BufferPool(size_t count, int rows, int cols, int type)
-        : rows_(rows), cols_(cols), type_(type) {
-        for (size_t i = 0; i < count; ++i) {
-            pool_.push_back(ImageBuffer::create(rows, cols, type));
-        }
-        available_.resize(count, true);
-    }
-
-    ImagePtr acquire() {
-        std::lock_guard<std::mutex> lock(mutex_);
-        for (size_t i = 0; i < available_.size(); ++i) {
-            if (available_[i]) {
-                available_[i] = false;
-                return pool_[i];
-            }
-        }
-        // Pool exhausted, create new (will be GC'd later)
-        return ImageBuffer::create(rows_, cols_, type_);
-    }
-
-    void release(ImagePtr& ptr) {
-        std::lock_guard<std::mutex> lock(mutex_);
-        for (size_t i = 0; i < pool_.size(); ++i) {
-            if (pool_[i].get() == ptr.get()) {
-                available_[i] = true;
-                return;
-            }
-        }
-        // Not from pool, let it go
-    }
-
-private:
-    std::vector<ImagePtr> pool_;
-    std::vector<bool> available_;
-    std::mutex mutex_;
-    int rows_, cols_, type_;
-};
-
-// ============ 统计工具 ============
-
-struct LatencyStats {
-    std::vector<uint64_t> samples;
-    std::mutex mutex;
-
-    void record(uint64_t ns) {
-        std::lock_guard<std::mutex> lock(mutex);
-        samples.push_back(ns);
-    }
-
-    void print(const std::string& name) {
-        if (samples.empty()) {
-            std::cout << "[" << name << "] No samples\n";
-            return;
-        }
-
-        std::sort(samples.begin(), samples.end());
-        auto sum = std::accumulate(samples.begin(), samples.end(), 0ULL);
-        auto avg = sum / samples.size();
-        auto p50 = samples[samples.size() / 2];
-        auto p90 = samples[samples.size() * 90 / 100];
-        auto p99 = samples[samples.size() * 99 / 100];
-        auto max_val = samples.back();
-
-        std::cout << "[" << name << "] "
-                  << "n=" << samples.size()
-                  << ", avg=" << avg / 1000.0 << "us"
-                  << ", p50=" << p50 / 1000.0 << "us"
-                  << ", p90=" << p90 / 1000.0 << "us"
-                  << ", p99=" << p99 / 1000.0 << "us"
-                  << ", max=" << max_val / 1000.0 << "us\n";
-    }
-
-    void reset() {
-        std::lock_guard<std::mutex> lock(mutex);
-        samples.clear();
-    }
-};
 
 class RealworldStrategy {
 public:

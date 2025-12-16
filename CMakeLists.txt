@@ -60,12 +60,31 @@ target_link_libraries(scheduler INTERFACE
 # Main executable
 add_executable(${PROJECT_NAME}
         src/main.cpp
+        include/scheduler/primitives/buffer_pool.hpp
+        include/scheduler/primitives/latency_stats.hpp
 )
 
 
 target_include_directories(${PROJECT_NAME} PRIVATE include)
 
 target_link_libraries(${PROJECT_NAME} PRIVATE
+        scheduler
+        ${OpenCV_LIBS}
+        spdlog::spdlog
+        fmt::fmt
+        Eigen3::Eigen
+        TBB::tbb
+)
+
+# sp_vision executable
+add_executable(sp_vision
+        src/sp_vision/sp_vision.cpp
+)
+
+
+target_include_directories(sp_vision PRIVATE include)
+
+target_link_libraries(sp_vision PRIVATE
         scheduler
         ${OpenCV_LIBS}
         spdlog::spdlog
