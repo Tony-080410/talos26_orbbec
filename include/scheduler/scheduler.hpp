@@ -16,6 +16,7 @@
 #include "scheduler/primitives/triple_buffer.hpp"
 #include "scheduler/primitives/latest_value.hpp"
 #include "scheduler/primitives/native_event.hpp"
+#include "scheduler/primitives/thread_affinity.hpp"  // Phase C: CPU pinning
 
 // ============ 编译器提示宏 ============
 #if defined(__GNUC__) || defined(__clang__)
@@ -206,9 +207,12 @@ private:
      * 1. CRTP直接调用strategy_->detect() - 编译器可内联
      * 2. NativeEvent避免condition_variable开销
      * 3. 缓存行对齐避免false sharing
+     * 4. Phase C: CPU pinning减少缓存失效
      */
     void detector_loop() noexcept {
-        spdlog::debug("[Detector] loop started");
+        // Phase C: 绑定到核心0 (detector是最频繁的线程)
+        ThreadAffinity::pin_to_core(0);
+        spdlog::debug("[Detector] loop started, pinned to core 0");
 
         Frame frame;
         while (LIKELY(running_.load(std::memory_order_relaxed))) {
@@ -255,9 +259,12 @@ private:
 
     /**
      * @brief Tracker线程主循环
+     * Phase C: CPU pinning to core 1
      */
     void tracker_loop() noexcept {
-        spdlog::debug("[Tracker] loop started");
+        // Phase C: 绑定到核心1
+        ThreadAffinity::pin_to_core(1);
+        spdlog::debug("[Tracker] loop started, pinned to core 1");
 
         Detection det;
         while (LIKELY(running_.load(std::memory_order_relaxed))) {
@@ -291,9 +298,12 @@ private:
      * @brief Solver线程主循环
      *
      * 轮询模式：读取最新的track result，无竞争
+     * Phase C: CPU pinning to core 2
      */
     void solver_loop() noexcept {
-        spdlog::debug("[Solver] loop started");
+        // Phase C: 绑定到核心2
+        ThreadAffinity::pin_to_core(2);
+        spdlog::debug("[Solver] loop started, pinned to core 2");
 
         TrackResult tr;
         uint64_t last_version = 0;
