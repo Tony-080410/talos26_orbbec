@@ -87,13 +87,11 @@ private:
     NativeEvent() noexcept = default;
     ~NativeEvent() noexcept = default;
 
-    // 禁止拷贝
+    // 禁止拷贝和移动
     NativeEvent(const NativeEvent&) = delete;
     NativeEvent& operator=(const NativeEvent&) = delete;
-
-    // 允许移动
-    NativeEvent(NativeEvent&& other) noexcept = default;
-    NativeEvent& operator=(NativeEvent&& other) noexcept = default;
+    NativeEvent(NativeEvent&& other) noexcept = delete;
+    NativeEvent& operator=(NativeEvent&& other) noexcept = delete;
 
     /**
      * @brief 使用Linux futex等待事件
@@ -104,18 +102,11 @@ private:
      * - 无虚假唤醒 (kernel已检查state)
      */
     inline void wait() noexcept {
-        while (true) {
-            uint32_t expected = UNSIGNALED;
-            if (state_.compare_exchange_strong(expected, UNSIGNALED,
-                                               std::memory_order_acquire)) {
-                break;  // CAS成功，说明signal已到达
-            }
-
-            // futex_wait: 内核会检查当前值是否仍为expected，
-            // 如果不是则立即返回，避免race condition
-            syscall(SYS_futex, &state_, FUTEX_WAIT_PRIVATE, UNSIGNALED,
-                   nullptr, nullptr, 0);
+        if (state_.exchange(UNSIGNALED, std::memory_order_acquire) == SIGNALED) {
+            return;
         }
+        syscall(SYS_futex, &state_, FUTEX_WAIT_PRIVATE, UNSIGNALED,
+               nullptr, nullptr, 0);
     }
 
     /**
@@ -128,19 +119,16 @@ private:
         ts.tv_sec = timeout_ms / 1000;
         ts.tv_nsec = (timeout_ms % 1000) * 1000000;
 
-        while (true) {
-            uint32_t expected = UNSIGNALED;
-            if (state_.compare_exchange_strong(expected, UNSIGNALED,
-                                               std::memory_order_acquire)) {
-                return true;
-            }
-
-            int ret = syscall(SYS_futex, &state_, FUTEX_WAIT_PRIVATE, UNSIGNALED,
-                             &ts, nullptr, 0);
-            if (ret == -1 && errno == ETIMEDOUT) {
-                return false;
-            }
+        if (state_.exchange(UNSIGNALED, std::memory_order_acquire) == SIGNALED) {
+            return true;
         }
+
+        int ret = syscall(SYS_futex, &state_, FUTEX_WAIT_PRIVATE, UNSIGNALED,
+                         &ts, nullptr, 0);
+        if (ret == -1 && errno == ETIMEDOUT) {
+            return false;
+        }
+        return true;
     }
 
     /**
