@@ -41,6 +41,7 @@ find_package(GTest REQUIRED)
 find_package(benchmark QUIET)
 
 include_directories(include)
+include_directories(third_party)  # moodycamel::ConcurrentQueue
 
 # Scheduler library (header-only template, no .cpp compilation needed)
 add_library(scheduler INTERFACE)
