@@ -19,14 +19,17 @@
 #include <vector>
 #include <numeric>
 
+#include "test_strategy.hpp"
+
 using namespace scheduler;
+using namespace scheduler::test;
 using namespace std::chrono_literals;
 
 class SchedulerIntegrationTest : public ::testing::Test {
 protected:
     void SetUp() override {
         config_.detector_threads = 4;
-        sched_.init(config_);
+        sched_.init(config_, &strategy_);
     }
 
     void TearDown() override {
@@ -35,7 +38,8 @@ protected:
         }
     }
 
-    Scheduler sched_;
+    TestStrategy strategy_;
+    Scheduler<TestStrategy> sched_;
     RuntimeConfig config_;
 };
 
@@ -51,7 +55,7 @@ TEST_F(SchedulerIntegrationTest, ZeroCopyVerification) {
     std::atomic<void*> detected_ptr{nullptr};
     std::atomic<void*> tracked_ptr{nullptr};
 
-    sched_.set_detector([&](const SharedFeature& sf) {
+    strategy_.set_detect([&](const SharedFeature& sf) {
         if (sf.image) {
             detected_ptr.store(sf.image->data(), std::memory_order_release);
         }
@@ -60,7 +64,7 @@ TEST_F(SchedulerIntegrationTest, ZeroCopyVerification) {
         return det;
     });
 
-    sched_.set_tracker([&](const Detection& det, const SharedFeature& sf) {
+    strategy_.set_track([&](const Detection& det, const SharedFeature& sf) {
         if (sf.image) {
             tracked_ptr.store(sf.image->data(), std::memory_order_release);
         }
@@ -92,7 +96,7 @@ TEST_F(SchedulerIntegrationTest, ZeroCopyFromMat) {
 
     std::atomic<void*> detected_ptr{nullptr};
 
-    sched_.set_detector([&](const SharedFeature& sf) {
+    strategy_.set_detect([&](const SharedFeature& sf) {
         if (sf.image) {
             detected_ptr.store(sf.image->data(), std::memory_order_release);
         }
@@ -129,7 +133,7 @@ TEST_F(SchedulerIntegrationTest, FullPipelineWithRealImage) {
     std::mutex latency_mutex;
 
     // 预处理: 使用 TBB 并行处理
-    sched_.set_preprocessor([&](SharedFeature& sf) {
+    strategy_.set_preprocess([&](SharedFeature& sf) {
         preprocess_count.fetch_add(1, std::memory_order_relaxed);
         if (sf.image && sf.image->rows() > 0) {
             // 创建预处理结果
@@ -145,7 +149,7 @@ TEST_F(SchedulerIntegrationTest, FullPipelineWithRealImage) {
         }
     });
 
-    sched_.set_detector([&](const SharedFeature& sf) {
+    strategy_.set_detect([&](const SharedFeature& sf) {
         detect_count.fetch_add(1, std::memory_order_relaxed);
         Detection det;
         det.frame_seq = sf.frame_seq;
@@ -156,7 +160,7 @@ TEST_F(SchedulerIntegrationTest, FullPipelineWithRealImage) {
         return det;
     });
 
-    sched_.set_tracker([&](const Detection& det, const SharedFeature& sf) {
+    strategy_.set_track([&](const Detection& det, const SharedFeature& sf) {
         track_count.fetch_add(1, std::memory_order_relaxed);
         TrackResult tr;
         tr.frame_seq = det.frame_seq;
@@ -164,7 +168,7 @@ TEST_F(SchedulerIntegrationTest, FullPipelineWithRealImage) {
         return tr;
     });
 
-    sched_.set_solver([&](const TrackResult& tr) {
+    strategy_.set_solve([&](const TrackResult& tr) {
         solve_count.fetch_add(1, std::memory_order_relaxed);
         SolverOutput out;
         out.frame_seq = tr.frame_seq;
@@ -172,7 +176,7 @@ TEST_F(SchedulerIntegrationTest, FullPipelineWithRealImage) {
         return out;
     });
 
-    sched_.set_output([&](const SolverOutput& out) {
+    strategy_.set_output([&](const SolverOutput& out) {
         output_count.fetch_add(1, std::memory_order_relaxed);
         auto now = std::chrono::steady_clock::now().time_since_epoch().count();
         auto latency = now - out.timestamp_ns;
@@ -225,7 +229,7 @@ TEST_F(SchedulerIntegrationTest, HighLoadStressTest) {
     std::atomic<uint64_t> frame_sent{0};
     std::atomic<uint64_t> frame_processed{0};
 
-    sched_.set_detector([&](const SharedFeature& sf) {
+    strategy_.set_detect([&](const SharedFeature& sf) {
         frame_processed.fetch_add(1, std::memory_order_relaxed);
         Detection det;
         det.frame_seq = sf.frame_seq;
@@ -270,7 +274,7 @@ TEST_F(SchedulerIntegrationTest, HighLoadStressTest) {
 
 TEST_F(SchedulerIntegrationTest, SchedulingOverheadVerification) {
     // 空回调，只测量调度开销
-    sched_.set_detector([](const SharedFeature& sf) {
+    strategy_.set_detect([](const SharedFeature& sf) {
         Detection det;
         det.frame_seq = sf.frame_seq;
         return det;
@@ -316,21 +320,21 @@ TEST_F(SchedulerIntegrationTest, SchedulingOverheadVerification) {
 
 TEST_F(SchedulerIntegrationTest, LatencyHistogramVerification) {
     // 设置有一定延迟的回调
-    sched_.set_detector([](const SharedFeature& sf) {
+    strategy_.set_detect([](const SharedFeature& sf) {
         std::this_thread::sleep_for(std::chrono::microseconds(100));
         Detection det;
         det.frame_seq = sf.frame_seq;
         return det;
     });
 
-    sched_.set_tracker([](const Detection& det, const SharedFeature&) {
+    strategy_.set_track([](const Detection& det, const SharedFeature&) {
         std::this_thread::sleep_for(std::chrono::microseconds(50));
         TrackResult tr;
         tr.frame_seq = det.frame_seq;
         return tr;
     });
 
-    sched_.set_solver([](const TrackResult& tr) {
+    strategy_.set_solve([](const TrackResult& tr) {
         std::this_thread::sleep_for(std::chrono::microseconds(30));
         SolverOutput out;
         out.frame_seq = tr.frame_seq;
@@ -383,7 +387,7 @@ TEST_F(SchedulerIntegrationTest, LatencyHistogramVerification) {
 TEST_F(SchedulerIntegrationTest, ConfigHotUpdateUnderLoad) {
     std::atomic<int> mode_at_detect{-1};
 
-    sched_.set_detector([&](const SharedFeature& sf) {
+    strategy_.set_detect([&](const SharedFeature& sf) {
         auto cfg = sched_.get_config();
         mode_at_detect.store(cfg.detector_mode, std::memory_order_relaxed);
         Detection det;
@@ -431,7 +435,7 @@ TEST_F(SchedulerIntegrationTest, MultipleProducers) {
 
     std::atomic<int> detect_count{0};
 
-    sched_.set_detector([&](const SharedFeature& sf) {
+    strategy_.set_detect([&](const SharedFeature& sf) {
         detect_count.fetch_add(1, std::memory_order_relaxed);
         Detection det;
         det.frame_seq = sf.frame_seq;

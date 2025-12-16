@@ -2,13 +2,16 @@
 #include "scheduler/scheduler.hpp"
 #include "scheduler/primitives/triple_buffer.hpp"
 #include "scheduler/primitives/latest_value.hpp"
-#include "scheduler/primitives/event_flag.hpp"
+#include "scheduler/primitives/native_event.hpp"
 #include "scheduler/primitives/latency_histogram.hpp"
 
 #include <thread>
 #include <atomic>
 
+#include "test_strategy.hpp"
+
 using namespace scheduler;
+using namespace scheduler::test;
 
 // ============ 基础组件 Benchmark ============
 
@@ -101,10 +104,10 @@ BENCHMARK(BM_LatestValue_TryRead);
 
 // EventFlag notify 开销 (无等待者)
 static void BM_EventFlag_Notify_NoWaiter(benchmark::State& state) {
-    EventFlag flag;
+    NativeEvent flag;
 
     for (auto _ : state) {
-        flag.notify();
+        flag.notify_one();
     }
 
     state.SetItemsProcessed(state.iterations());
@@ -129,16 +132,17 @@ BENCHMARK(BM_LatencyHistogram_Record);
 
 // push_frame 调度开销 (空回调)
 static void BM_Scheduler_PushFrame(benchmark::State& state) {
-    Scheduler sched;
-    RuntimeConfig config;
-    sched.init(config);
-
+    auto strategy = TestStrategy{};
     // 空回调，只测调度开销
-    sched.set_detector([](const SharedFeature& sf) {
+    strategy.set_detect([](const SharedFeature& sf) {
         Detection det;
         det.frame_seq = sf.frame_seq;
         return det;
     });
+    Scheduler<TestStrategy> sched;
+    RuntimeConfig config;
+    config.detector_threads = 2;
+    sched.init(config, &strategy);
 
     sched.start();
 
@@ -163,37 +167,35 @@ BENCHMARK(BM_Scheduler_PushFrame);
 
 // 端到端延迟测量 (简化版，避免死锁)
 static void BM_Scheduler_E2E_Latency(benchmark::State& state) {
-    Scheduler sched;
-    RuntimeConfig config;
-    sched.init(config);
-
     std::atomic<uint64_t> processed{0};
-
-    sched.set_detector([](const SharedFeature& sf) {
+    auto strategy = TestStrategy{};
+    strategy.set_detect([](const SharedFeature& sf) {
         Detection det;
         det.frame_seq = sf.frame_seq;
         det.timestamp_ns = sf.timestamp_ns;
         return det;
     });
-
-    sched.set_tracker([](const Detection& det, const SharedFeature&) {
+    strategy.set_track([](const Detection& det, const SharedFeature&) {
         TrackResult tr;
         tr.frame_seq = det.frame_seq;
         tr.timestamp_ns = det.timestamp_ns;
         return tr;
     });
-
-    sched.set_solver([](const TrackResult& tr) {
+    strategy.set_solve([](const TrackResult& tr) {
         SolverOutput out;
         out.frame_seq = tr.frame_seq;
         out.timestamp_ns = tr.timestamp_ns;
         return out;
     });
-
-    sched.set_output([&](const SolverOutput&) {
+    strategy.set_output([&](const SolverOutput&) {
         processed.fetch_add(1, std::memory_order_release);
     });
 
+    Scheduler<TestStrategy> sched;
+    RuntimeConfig config;
+    config.detector_threads = 2;
+
+    sched.init(config, &strategy);
     sched.start();
 
     uint64_t seq = 0;
@@ -218,19 +220,20 @@ BENCHMARK(BM_Scheduler_E2E_Latency);
 
 // 高吞吐量测试
 static void BM_Scheduler_Throughput(benchmark::State& state) {
-    Scheduler sched;
-    RuntimeConfig config;
-    sched.init(config);
-
     std::atomic<uint64_t> processed{0};
-
-    sched.set_detector([&](const SharedFeature& sf) {
+    auto strategy = TestStrategy{};
+    strategy.set_detect([&](const SharedFeature& sf) {
         processed.fetch_add(1, std::memory_order_relaxed);
         Detection det;
         det.frame_seq = sf.frame_seq;
         return det;
     });
 
+    Scheduler<TestStrategy> sched;
+    RuntimeConfig config;
+    config.detector_threads = 2;
+
+    sched.init(config, &strategy);
     sched.start();
 
     uint64_t seq = 0;

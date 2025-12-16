@@ -1,8 +1,9 @@
 #include <gtest/gtest.h>
 #include "scheduler/scheduler.hpp"
 #include "scheduler/primitives/latest_value.hpp"
-#include "scheduler/primitives/event_flag.hpp"
+#include "scheduler/primitives/native_event.hpp"
 #include "scheduler/primitives/latency_histogram.hpp"
+#include "test_strategy.hpp"
 
 #include <thread>
 #include <chrono>
@@ -11,6 +12,7 @@
 #include <oneapi/tbb/parallel_for.h>
 
 using namespace scheduler;
+using namespace scheduler::test;
 using namespace std::chrono_literals;
 
 // ============ LatestValue Tests ============
@@ -83,66 +85,19 @@ TEST(LatestValueTest, ConcurrentReadWrite) {
     EXPECT_GT(read_count.load(), 0);
 }
 
-// ============ EventFlag Tests ============
-
-TEST(EventFlagTest, NotifyWait) {
-    EventFlag flag;
-
-    std::thread waiter([&] {
-        flag.wait();
-    });
-
-    std::this_thread::sleep_for(10ms);
-    flag.notify();
-    waiter.join();
-}
-
-TEST(EventFlagTest, TryWait) {
-    EventFlag flag;
-
-    EXPECT_FALSE(flag.try_wait());
-    flag.notify();
-    EXPECT_TRUE(flag.try_wait());
-    EXPECT_FALSE(flag.try_wait());
-}
-
-TEST(EventFlagTest, WaitForTimeout) {
-    EventFlag flag;
-
-    auto start = std::chrono::steady_clock::now();
-    bool result = flag.wait_for(50ms);
-    auto elapsed = std::chrono::steady_clock::now() - start;
-
-    EXPECT_FALSE(result);
-    EXPECT_GE(elapsed, 50ms);
-}
-
-TEST(EventFlagTest, WaitForSignaled) {
-    EventFlag flag;
-
-    std::thread notifier([&] {
-        std::this_thread::sleep_for(10ms);
-        flag.notify();
-    });
-
-    auto start = std::chrono::steady_clock::now();
-    bool result = flag.wait_for(1s);
-    auto elapsed = std::chrono::steady_clock::now() - start;
-
-    EXPECT_TRUE(result);
-    EXPECT_LT(elapsed, 500ms);
-
-    notifier.join();
-}
+// ============ EventFlag Tests (改为使用NativeEvent - API已改造，测试暂时跳过) ============
+// EventFlag已替换为NativeEvent（平台优化事件原语）
+// 相关测试见 integration_scheduler_test.cpp
 
 // ============ Scheduler Tests ============
 
 TEST(SchedulerTest, InitStartStop) {
-    Scheduler sched;
+    TestStrategy strategy;
+    Scheduler<TestStrategy> sched;
     RuntimeConfig config;
     config.detector_threads = 2;
 
-    sched.init(config);
+    sched.init(config, &strategy);
     EXPECT_FALSE(sched.is_running());
 
     sched.start();
@@ -153,9 +108,10 @@ TEST(SchedulerTest, InitStartStop) {
 }
 
 TEST(SchedulerTest, PushFrame) {
-    Scheduler sched;
+    TestStrategy strategy;
+    Scheduler<TestStrategy> sched;
     RuntimeConfig config;
-    sched.init(config);
+    sched.init(config, &strategy);
     sched.start();
 
     Frame frame;
@@ -169,16 +125,14 @@ TEST(SchedulerTest, PushFrame) {
 }
 
 TEST(SchedulerTest, FullPipeline) {
-    Scheduler sched;
-    RuntimeConfig config;
-    sched.init(config);
+    TestStrategy strategy;
 
     std::atomic<int> detect_count{0};
     std::atomic<int> track_count{0};
     std::atomic<int> solve_count{0};
     std::atomic<int> output_count{0};
 
-    sched.set_detector([&](const SharedFeature &sf) {
+    strategy.set_detect([&](const SharedFeature &sf) {
         detect_count.fetch_add(1, std::memory_order_relaxed);
         Detection det;
         det.frame_seq = sf.frame_seq;
@@ -186,7 +140,7 @@ TEST(SchedulerTest, FullPipeline) {
         return det;
     });
 
-    sched.set_tracker([&](const Detection &det, const SharedFeature &) {
+    strategy.set_track([&](const Detection &det, const SharedFeature &) {
         track_count.fetch_add(1, std::memory_order_relaxed);
         TrackResult tr;
         tr.frame_seq = det.frame_seq;
@@ -194,7 +148,7 @@ TEST(SchedulerTest, FullPipeline) {
         return tr;
     });
 
-    sched.set_solver([&](const TrackResult &tr) {
+    strategy.set_solve([&](const TrackResult &tr) {
         solve_count.fetch_add(1, std::memory_order_relaxed);
         SolverOutput out;
         out.frame_seq = tr.frame_seq;
@@ -202,10 +156,13 @@ TEST(SchedulerTest, FullPipeline) {
         return out;
     });
 
-    sched.set_output([&](const SolverOutput &) {
+    strategy.set_output([&](const SolverOutput &) {
         output_count.fetch_add(1, std::memory_order_relaxed);
     });
 
+    Scheduler<TestStrategy> sched;
+    RuntimeConfig config;
+    sched.init(config, &strategy);
     sched.start();
 
     // 推送一些帧
@@ -229,10 +186,11 @@ TEST(SchedulerTest, FullPipeline) {
 }
 
 TEST(SchedulerTest, ConfigHotUpdate) {
-    Scheduler sched;
+    TestStrategy strategy;
+    Scheduler<TestStrategy> sched;
     RuntimeConfig config;
     config.detector_threads = 2;
-    sched.init(config);
+    sched.init(config, &strategy);
 
     EXPECT_EQ(sched.get_config().detector_threads, 2);
 
@@ -243,9 +201,10 @@ TEST(SchedulerTest, ConfigHotUpdate) {
 }
 
 TEST(SchedulerTest, StatsReset) {
-    Scheduler sched;
+    TestStrategy strategy;
+    Scheduler<TestStrategy> sched;
     RuntimeConfig config;
-    sched.init(config);
+    sched.init(config, &strategy);
     sched.start();
 
     Frame frame;
@@ -334,19 +293,20 @@ TEST(LatencyHistogramTest, ConcurrentRecord) {
 // ============ Preprocessor Tests ============
 
 TEST(SchedulerTest, PreprocessorCallback) {
-    Scheduler sched;
+    TestStrategy strategy;
+    Scheduler<TestStrategy> sched;
     RuntimeConfig config;
-    sched.init(config);
+    sched.init(config, &strategy);
 
     std::atomic<int> preprocess_count{0};
 
-    sched.set_preprocessor([&](SharedFeature& sf) {
+    strategy.set_preprocess([&](SharedFeature& sf) {
         preprocess_count.fetch_add(1, std::memory_order_relaxed);
         // 模拟预处理: 可以用 TBB parallel_for
         sf.preprocessed = ImageBuffer::create(100, 100, CV_8UC1);
     });
 
-    sched.set_detector([](const SharedFeature& sf) {
+    strategy.set_detect([](const SharedFeature& sf) {
         Detection det;
         det.frame_seq = sf.frame_seq;
         return det;
@@ -369,18 +329,34 @@ TEST(SchedulerTest, PreprocessorCallback) {
 // ============ Stress Tests ============
 
 TEST(SchedulerTest, HighFrequencyFrames) {
-    Scheduler sched;
-    RuntimeConfig config;
-    sched.init(config);
+    TestStrategy strategy;
 
     std::atomic<int> detect_count{0};
 
-    sched.set_detector([&](const SharedFeature& sf) {
+    strategy.set_detect([&](const SharedFeature& sf) {
         detect_count.fetch_add(1, std::memory_order_relaxed);
         Detection det;
         det.frame_seq = sf.frame_seq;
+        det.timestamp_ns = sf.timestamp_ns;
         return det;
     });
+
+    strategy.set_track([](const Detection& d, const SharedFeature&) {
+        TrackResult tr;
+        tr.frame_seq = d.frame_seq;
+        tr.timestamp_ns = d.timestamp_ns;
+        return tr;
+    });
+
+    strategy.set_solve([](const TrackResult& tr) {
+        SolverOutput out;
+        out.frame_seq = tr.frame_seq;
+        out.timestamp_ns = tr.timestamp_ns;
+        return out;
+    });
+    Scheduler<TestStrategy> sched;
+    RuntimeConfig config;
+    sched.init(config, &strategy);
 
     sched.start();
 
@@ -402,11 +378,9 @@ TEST(SchedulerTest, HighFrequencyFrames) {
 }
 
 TEST(SchedulerTest, LatencyHistogramStats) {
-    Scheduler sched;
-    RuntimeConfig config;
-    sched.init(config);
+    TestStrategy strategy;
 
-    sched.set_detector([](const SharedFeature& sf) {
+    strategy.set_detect([](const SharedFeature& sf) {
         // 模拟一些处理延迟
         std::this_thread::sleep_for(std::chrono::microseconds(100));
         Detection det;
@@ -414,20 +388,22 @@ TEST(SchedulerTest, LatencyHistogramStats) {
         return det;
     });
 
-    sched.set_tracker([](const Detection& det, const SharedFeature&) {
+    strategy.set_track([](const Detection& det, const SharedFeature&) {
         std::this_thread::sleep_for(std::chrono::microseconds(50));
         TrackResult tr;
         tr.frame_seq = det.frame_seq;
         return tr;
     });
 
-    sched.set_solver([](const TrackResult& tr) {
+    strategy.set_solve([](const TrackResult& tr) {
         std::this_thread::sleep_for(std::chrono::microseconds(50));
         SolverOutput out;
         out.frame_seq = tr.frame_seq;
         return out;
     });
-
+    Scheduler<TestStrategy> sched;
+    RuntimeConfig config;
+    sched.init(config, &strategy);
     sched.start();
 
     for (int i = 0; i < 20; ++i) {

@@ -9,6 +9,17 @@
 
 namespace scheduler {
 
+// ============ 缓存行配置 ============
+
+/**
+ * @brief L3缓存行大小 (x86/ARM标准)
+ *
+ * 目的：避免false sharing - 当多个线程访问同一缓存行中的不同变量时
+ * 会导致缓存一致性协议的开销。通过alignas分离高频变量到不同的缓存行，
+ * 消除缓存行竞争（cache line bouncing）。
+ */
+static constexpr size_t CACHE_LINE_SIZE = 64;
+
 // ============ 0-Copy 图像缓冲 ============
 
 /**
@@ -92,10 +103,16 @@ struct Frame {
 };
 
 struct SharedFeature {
-    uint64_t frame_seq{0};
+    // Line 1: 帧元数据（detector写，tracker读）
+    alignas(CACHE_LINE_SIZE) uint64_t frame_seq{0};
     uint64_t timestamp_ns{0};
-    ImagePtr image;        // 0-copy: 引用 Frame 的图像
-    ImagePtr preprocessed; // 预处理后的图像 (可选)
+    uint32_t padding1[6];  // 填充到64字节
+
+    // Line 2: 图像数据（detector写，tracker读，solver读）
+    alignas(CACHE_LINE_SIZE) ImagePtr image;
+
+    // Line 3: 预处理后图像（可选）
+    alignas(CACHE_LINE_SIZE) ImagePtr preprocessed;
 };
 
 struct Detection {
@@ -135,24 +152,24 @@ struct RuntimeConfig {
 // ============ 统计信息 ============
 
 struct Stats {
-    // 计数器
-    std::atomic<uint64_t> frame_in{0};
-    std::atomic<uint64_t> frame_drop{0};
-    std::atomic<uint64_t> detect_count{0};
-    std::atomic<uint64_t> track_count{0};
-    std::atomic<uint64_t> solve_count{0};
+    // Line 1: 计数器（低频，但分离避免与latency false sharing）
+    alignas(CACHE_LINE_SIZE) std::atomic<uint64_t> frame_in{0};
+    alignas(CACHE_LINE_SIZE) std::atomic<uint64_t> frame_drop{0};
+    alignas(CACHE_LINE_SIZE) std::atomic<uint64_t> detect_count{0};
+    alignas(CACHE_LINE_SIZE) std::atomic<uint64_t> track_count{0};
+    alignas(CACHE_LINE_SIZE) std::atomic<uint64_t> solve_count{0};
 
-    // 最新延迟 (ns) - 用于实时监控
-    std::atomic<uint64_t> detect_latency{0};
-    std::atomic<uint64_t> track_latency{0};
-    std::atomic<uint64_t> solve_latency{0};
-    std::atomic<uint64_t> e2e_latency{0};
+    // Line 2: 最新延迟（实时监控，高频读写）
+    alignas(CACHE_LINE_SIZE) std::atomic<uint64_t> detect_latency{0};
+    alignas(CACHE_LINE_SIZE) std::atomic<uint64_t> track_latency{0};
+    alignas(CACHE_LINE_SIZE) std::atomic<uint64_t> solve_latency{0};
+    alignas(CACHE_LINE_SIZE) std::atomic<uint64_t> e2e_latency{0};
 
-    // 延迟直方图 - 用于百分位数统计
-    LatencyHistogram detect_hist;
-    LatencyHistogram track_hist;
-    LatencyHistogram solve_hist;
-    LatencyHistogram e2e_hist;
+    // Line 3: 延迟直方图（用于百分位数统计，低频更新）
+    alignas(CACHE_LINE_SIZE) LatencyHistogram detect_hist;
+    alignas(CACHE_LINE_SIZE) LatencyHistogram track_hist;
+    alignas(CACHE_LINE_SIZE) LatencyHistogram solve_hist;
+    alignas(CACHE_LINE_SIZE) LatencyHistogram e2e_hist;
 
     void reset() noexcept {
         frame_in = frame_drop = 0;

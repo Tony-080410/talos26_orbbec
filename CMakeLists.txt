@@ -42,17 +42,15 @@ find_package(benchmark QUIET)
 
 include_directories(include)
 
-# Scheduler library
-add_library(scheduler
-        src/scheduler/scheduler.cpp
-)
+# Scheduler library (header-only template, no .cpp compilation needed)
+add_library(scheduler INTERFACE)
 
-target_include_directories(scheduler PUBLIC
+target_include_directories(scheduler INTERFACE
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
         $<INSTALL_INTERFACE:include>
 )
 
-target_link_libraries(scheduler PUBLIC
+target_link_libraries(scheduler INTERFACE
         ${OpenCV_LIBS}
         spdlog::spdlog
         fmt::fmt

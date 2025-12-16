@@ -17,7 +17,10 @@
 #include <atomic>
 #include <random>
 
+#include "test_strategy.hpp"
+
 using namespace scheduler;
+using namespace scheduler::test;
 
 // ============ 0-Copy 开销测试 ============
 
@@ -78,30 +81,32 @@ BENCHMARK(BM_Frame_FromMat);
 
 // 空回调 - 纯调度开销
 static void BM_Pipeline_EmptyCallbacks(benchmark::State& state) {
-    Scheduler sched;
-    RuntimeConfig config;
-    sched.init(config);
-
     std::atomic<uint64_t> processed{0};
+    TestStrategy strategy;
 
-    sched.set_detector([&](const SharedFeature& sf) {
+    strategy.set_detect([&](const SharedFeature& sf) {
         processed.fetch_add(1, std::memory_order_relaxed);
         Detection det;
         det.frame_seq = sf.frame_seq;
         return det;
     });
 
-    sched.set_tracker([](const Detection& det, const SharedFeature&) {
+    strategy.set_track([](const Detection& det, const SharedFeature&) {
         TrackResult tr;
         tr.frame_seq = det.frame_seq;
         return tr;
     });
 
-    sched.set_solver([](const TrackResult& tr) {
+    strategy.set_solve([](const TrackResult& tr) {
         SolverOutput out;
         out.frame_seq = tr.frame_seq;
         return out;
     });
+
+    Scheduler<TestStrategy> sched;
+    RuntimeConfig config;
+    sched.init(config, &strategy);
+
 
     sched.start();
 
@@ -124,19 +129,22 @@ BENCHMARK(BM_Pipeline_EmptyCallbacks);
 
 // 带真实图像的流水线
 static void BM_Pipeline_WithImage(benchmark::State& state) {
-    Scheduler sched;
-    RuntimeConfig config;
-    sched.init(config);
+    TestStrategy strategy;
 
     std::atomic<uint64_t> processed{0};
-    std::vector<uint8_t> camera_buffer(480 * 640 * 3, 128);
 
-    sched.set_detector([&](const SharedFeature& sf) {
+    strategy.set_detect([&](const SharedFeature& sf) {
         processed.fetch_add(1, std::memory_order_relaxed);
         Detection det;
         det.frame_seq = sf.frame_seq;
         return det;
     });
+
+    Scheduler<TestStrategy> sched;
+    RuntimeConfig config;
+    sched.init(config,&strategy);
+
+    std::vector<uint8_t> camera_buffer(480 * 640 * 3, 128);
 
     sched.start();
 
@@ -158,24 +166,25 @@ BENCHMARK(BM_Pipeline_WithImage);
 
 // 带预处理的流水线
 static void BM_Pipeline_WithPreprocess(benchmark::State& state) {
-    Scheduler sched;
-    RuntimeConfig config;
-    sched.init(config);
-
     std::atomic<uint64_t> processed{0};
+    TestStrategy strategy;
 
-    sched.set_preprocessor([](SharedFeature& sf) {
+    strategy.set_preprocess([](SharedFeature& sf) {
         if (sf.image && sf.image->rows() > 0) {
             sf.preprocessed = ImageBuffer::create(sf.image->rows() / 2, sf.image->cols() / 2, CV_8UC1);
         }
     });
 
-    sched.set_detector([&](const SharedFeature& sf) {
+    strategy.set_detect([&](const SharedFeature& sf) {
         processed.fetch_add(1, std::memory_order_relaxed);
         Detection det;
         det.frame_seq = sf.frame_seq;
         return det;
     });
+
+    Scheduler<TestStrategy> sched;
+    RuntimeConfig config;
+    sched.init(config, &strategy);
 
     sched.start();
 
@@ -198,13 +207,11 @@ BENCHMARK(BM_Pipeline_WithPreprocess);
 
 // 带 TBB 并行预处理
 static void BM_Pipeline_WithParallelPreprocess(benchmark::State& state) {
-    Scheduler sched;
-    RuntimeConfig config;
-    sched.init(config);
+    TestStrategy strategy;
 
     std::atomic<uint64_t> processed{0};
 
-    sched.set_preprocessor([](SharedFeature& sf) {
+    strategy.set_preprocess([](SharedFeature& sf) {
         if (sf.image && sf.image->rows() > 0) {
             sf.preprocessed = ImageBuffer::create(sf.image->rows() / 2, sf.image->cols() / 2, CV_8UC1);
             auto& src = sf.image->mat();
@@ -221,12 +228,16 @@ static void BM_Pipeline_WithParallelPreprocess(benchmark::State& state) {
         }
     });
 
-    sched.set_detector([&](const SharedFeature& sf) {
+    strategy.set_detect([&](const SharedFeature& sf) {
         processed.fetch_add(1, std::memory_order_relaxed);
         Detection det;
         det.frame_seq = sf.frame_seq;
         return det;
     });
+
+    Scheduler<TestStrategy> sched;
+    RuntimeConfig config;
+    sched.init(config,&strategy);
 
     sched.start();
 
@@ -251,14 +262,12 @@ BENCHMARK(BM_Pipeline_WithParallelPreprocess);
 
 // 模拟 160Hz 相机输入，测量丢帧率
 static void BM_RealWorld_160Hz(benchmark::State& state) {
-    Scheduler sched;
-    RuntimeConfig config;
-    sched.init(config);
+    TestStrategy strategy;
 
     std::atomic<uint64_t> processed{0};
     std::vector<uint8_t> camera_buffer(480 * 640 * 3, 100);
 
-    sched.set_detector([&](const SharedFeature& sf) {
+    strategy.set_detect([&](const SharedFeature& sf) {
         processed.fetch_add(1, std::memory_order_relaxed);
         // 模拟 1ms 检测延迟
         std::this_thread::sleep_for(std::chrono::microseconds(1000));
@@ -267,7 +276,7 @@ static void BM_RealWorld_160Hz(benchmark::State& state) {
         return det;
     });
 
-    sched.set_tracker([](const Detection& det, const SharedFeature&) {
+    strategy.set_track([](const Detection& det, const SharedFeature&) {
         // 模拟 500us 跟踪延迟
         std::this_thread::sleep_for(std::chrono::microseconds(500));
         TrackResult tr;
@@ -275,13 +284,17 @@ static void BM_RealWorld_160Hz(benchmark::State& state) {
         return tr;
     });
 
-    sched.set_solver([](const TrackResult& tr) {
+    strategy.set_solve([](const TrackResult& tr) {
         // 模拟 200us 解算延迟
         std::this_thread::sleep_for(std::chrono::microseconds(200));
         SolverOutput out;
         out.frame_seq = tr.frame_seq;
         return out;
     });
+
+    Scheduler<TestStrategy> sched;
+    RuntimeConfig config;
+    sched.init(config, &strategy);
 
     sched.start();
 
@@ -311,40 +324,42 @@ BENCHMARK(BM_RealWorld_160Hz)->Iterations(100);
 
 // 测量从 push_frame 到 output 的完整延迟
 static void BM_E2E_Latency_Measurement(benchmark::State& state) {
-    Scheduler sched;
-    RuntimeConfig config;
-    sched.init(config);
+    TestStrategy strategy;
 
     std::atomic<uint64_t> last_output_ts{0};
     std::atomic<uint64_t> last_seq{UINT64_MAX};
 
-    sched.set_detector([](const SharedFeature& sf) {
+    strategy.set_detect([](const SharedFeature& sf) {
         Detection det;
         det.frame_seq = sf.frame_seq;
         det.timestamp_ns = sf.timestamp_ns;
         return det;
     });
 
-    sched.set_tracker([](const Detection& det, const SharedFeature&) {
+    strategy.set_track([](const Detection& det, const SharedFeature&) {
         TrackResult tr;
         tr.frame_seq = det.frame_seq;
         tr.timestamp_ns = det.timestamp_ns;
         return tr;
     });
 
-    sched.set_solver([](const TrackResult& tr) {
+    strategy.set_solve([](const TrackResult& tr) {
         SolverOutput out;
         out.frame_seq = tr.frame_seq;
         out.timestamp_ns = tr.timestamp_ns;
         return out;
     });
 
-    sched.set_output([&](const SolverOutput& out) {
+    strategy.set_output([&](const SolverOutput& out) {
         last_output_ts.store(
             std::chrono::steady_clock::now().time_since_epoch().count(),
             std::memory_order_release);
         last_seq.store(out.frame_seq, std::memory_order_release);
     });
+
+    Scheduler<TestStrategy> sched;
+    RuntimeConfig config;
+    sched.init(config,&strategy);
 
     sched.start();
 

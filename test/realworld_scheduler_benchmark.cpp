@@ -104,6 +104,131 @@ struct LatencyStats {
     }
 };
 
+class RealworldStrategy {
+public:
+
+
+    // SchedulerStrategy concept实现
+    inline void preprocess(SharedFeature& sf)  {
+        auto t0 = std::chrono::steady_clock::now();
+
+        if (sf.image && sf.image->rows() > 0) {
+            // 获取复用 buffer
+            auto gray = gray_pool.acquire();
+            auto small = small_pool.acquire();
+
+            // 灰度转换
+            cv::cvtColor(sf.image->mat(), gray->mat(), cv::COLOR_BGR2GRAY);
+
+            // 下采样
+            cv::resize(gray->mat(), small->mat(), small->mat().size());
+
+            sf.preprocessed = small;
+
+            // 释放中间 buffer
+            gray_pool.release(gray);
+        }
+
+        auto t1 = std::chrono::steady_clock::now();
+        preprocess_latency.record(
+            std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count());
+    }
+
+    inline Detection detect(const SharedFeature& sf)  {
+        auto t0 = std::chrono::steady_clock::now();
+
+        Detection det;
+        det.frame_seq = sf.frame_seq;
+        det.timestamp_ns = sf.timestamp_ns;
+
+        if (sf.preprocessed && sf.preprocessed->rows() > 0) {
+            cv::Mat binary;
+            cv::threshold(sf.preprocessed->mat(), binary, 128, 255, cv::THRESH_BINARY);
+
+            std::vector<std::vector<cv::Point>> contours;
+            cv::findContours(binary, contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
+
+            for (const auto& contour : contours) {
+                auto rect = cv::boundingRect(contour);
+                if (rect.area() > 100) {  // 过滤噪声
+                    // 缩放回原图尺寸
+                    det.boxes.emplace_back(rect.x * 4, rect.y * 4, rect.width * 4, rect.height * 4);
+                    det.scores.push_back(static_cast<float>(rect.area()) / 1000.0f);
+                }
+            }
+        }
+
+        processed_count.fetch_add(1, std::memory_order_relaxed);
+
+        auto t1 = std::chrono::steady_clock::now();
+        detect_latency.record(
+            std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count());
+
+        return det;
+    }
+
+    inline TrackResult track(const Detection& det, const SharedFeature& sf)  {
+        auto t0 = std::chrono::steady_clock::now();
+
+        TrackResult tr;
+        tr.frame_seq = det.frame_seq;
+        tr.timestamp_ns = det.timestamp_ns;
+
+        // 模拟跟踪计算
+        volatile int sum = 0;
+        for (const auto& box : det.boxes) {
+            sum += box.x + box.y + box.width + box.height;
+        }
+        (void)sum;
+
+        auto t1 = std::chrono::steady_clock::now();
+        track_latency.record(
+            std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count());
+
+        return tr;
+    }
+
+    inline SolverOutput solve(const TrackResult& tr) {
+        SolverOutput out;
+        out.frame_seq = tr.frame_seq;
+        out.timestamp_ns = tr.timestamp_ns;
+
+        // 模拟解算计算
+        volatile double result = 0;
+        for (int i = 0; i < 100; ++i) {
+            result += std::sin(i * 0.1) * std::cos(i * 0.2);
+        }
+        (void)result;
+
+        return out;
+    }
+
+    inline void output(const SolverOutput& out) {
+        auto now = std::chrono::steady_clock::now().time_since_epoch().count();
+        e2e_latency.record(now - out.timestamp_ns);
+        output_count.fetch_add(1, std::memory_order_relaxed);
+    }
+
+    RealworldStrategy(size_t count, int rows, int cols) noexcept : frame_pool(count,rows,cols,CV_8UC3), gray_pool(count,rows,cols,CV_8UC1), small_pool(count,rows,cols,CV_8UC1) {
+    }
+
+    // Buffer pool (复用 buffer)
+    BufferPool frame_pool;
+    BufferPool gray_pool;
+    BufferPool small_pool;
+
+    // 统计
+    LatencyStats capture_latency;
+    LatencyStats preprocess_latency;
+    LatencyStats detect_latency;
+    LatencyStats track_latency;
+    LatencyStats e2e_latency;
+
+    std::atomic<uint64_t> frame_count{0};
+    std::atomic<uint64_t> processed_count{0};
+    std::atomic<uint64_t> output_count{0};
+};
+
 // ============ 主测试 ============
 
 int main(int argc, char** argv) {
@@ -156,132 +281,12 @@ int main(int argc, char** argv) {
                   << " @ " << target_fps << " FPS\n\n";
     }
 
-    // Buffer pool (复用 buffer)
-    BufferPool frame_pool(8, frame_height, frame_width, CV_8UC3);
-    BufferPool gray_pool(8, frame_height, frame_width, CV_8UC1);
-    BufferPool small_pool(8, frame_height / 4, frame_width / 4, CV_8UC1);
-
-    // 统计
-    LatencyStats capture_latency;
-    LatencyStats preprocess_latency;
-    LatencyStats detect_latency;
-    LatencyStats track_latency;
-    LatencyStats e2e_latency;
-
-    std::atomic<uint64_t> frame_count{0};
-    std::atomic<uint64_t> processed_count{0};
-    std::atomic<uint64_t> output_count{0};
-
     // 调度器
-    Scheduler sched;
+    RealworldStrategy strategy(8, frame_height, frame_width);
+    Scheduler<RealworldStrategy> sched;
     RuntimeConfig config;
     config.detector_threads = 4;
-    sched.init(config);
-
-    // 预处理: RGB -> Gray -> Resize
-    sched.set_preprocessor([&](SharedFeature& sf) {
-        auto t0 = std::chrono::steady_clock::now();
-
-        if (sf.image && sf.image->rows() > 0) {
-            // 获取复用 buffer
-            auto gray = gray_pool.acquire();
-            auto small = small_pool.acquire();
-
-            // 灰度转换
-            cv::cvtColor(sf.image->mat(), gray->mat(), cv::COLOR_BGR2GRAY);
-
-            // 下采样
-            cv::resize(gray->mat(), small->mat(), small->mat().size());
-
-            sf.preprocessed = small;
-
-            // 释放中间 buffer
-            gray_pool.release(gray);
-        }
-
-        auto t1 = std::chrono::steady_clock::now();
-        preprocess_latency.record(
-            std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count());
-    });
-
-    // 检测: 简单阈值 + 轮廓检测
-    sched.set_detector([&](const SharedFeature& sf) {
-        auto t0 = std::chrono::steady_clock::now();
-
-        Detection det;
-        det.frame_seq = sf.frame_seq;
-        det.timestamp_ns = sf.timestamp_ns;
-
-        if (sf.preprocessed && sf.preprocessed->rows() > 0) {
-            cv::Mat binary;
-            cv::threshold(sf.preprocessed->mat(), binary, 128, 255, cv::THRESH_BINARY);
-
-            std::vector<std::vector<cv::Point>> contours;
-            cv::findContours(binary, contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
-
-            for (const auto& contour : contours) {
-                auto rect = cv::boundingRect(contour);
-                if (rect.area() > 100) {  // 过滤噪声
-                    // 缩放回原图尺寸
-                    det.boxes.emplace_back(rect.x * 4, rect.y * 4, rect.width * 4, rect.height * 4);
-                    det.scores.push_back(static_cast<float>(rect.area()) / 1000.0f);
-                }
-            }
-        }
-
-        processed_count.fetch_add(1, std::memory_order_relaxed);
-
-        auto t1 = std::chrono::steady_clock::now();
-        detect_latency.record(
-            std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count());
-
-        return det;
-    });
-
-    // 跟踪: 简单 IOU 匹配 (模拟)
-    sched.set_tracker([&](const Detection& det, const SharedFeature&) {
-        auto t0 = std::chrono::steady_clock::now();
-
-        TrackResult tr;
-        tr.frame_seq = det.frame_seq;
-        tr.timestamp_ns = det.timestamp_ns;
-
-        // 模拟跟踪计算
-        volatile int sum = 0;
-        for (const auto& box : det.boxes) {
-            sum += box.x + box.y + box.width + box.height;
-        }
-        (void)sum;
-
-        auto t1 = std::chrono::steady_clock::now();
-        track_latency.record(
-            std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count());
-
-        return tr;
-    });
-
-    // 解算: 模拟 PnP 解算
-    sched.set_solver([](const TrackResult& tr) {
-        SolverOutput out;
-        out.frame_seq = tr.frame_seq;
-        out.timestamp_ns = tr.timestamp_ns;
-
-        // 模拟解算计算
-        volatile double result = 0;
-        for (int i = 0; i < 100; ++i) {
-            result += std::sin(i * 0.1) * std::cos(i * 0.2);
-        }
-        (void)result;
-
-        return out;
-    });
-
-    // 输出
-    sched.set_output([&](const SolverOutput& out) {
-        auto now = std::chrono::steady_clock::now().time_since_epoch().count();
-        e2e_latency.record(now - out.timestamp_ns);
-        output_count.fetch_add(1, std::memory_order_relaxed);
-    });
+    sched.init(config,&strategy);
 
     // 启动
     sched.start();
@@ -295,35 +300,35 @@ int main(int argc, char** argv) {
             auto t0 = std::chrono::steady_clock::now();
 
             // 获取复用 buffer
-            auto buffer = frame_pool.acquire();
+            auto buffer = strategy.frame_pool.acquire();
 
             if (use_camera) {
                 // 从摄像头读取
                 cap.read(buffer->mat());
                 if (buffer->mat().empty()) {
-                    frame_pool.release(buffer);
+                    strategy.frame_pool.release(buffer);
                     continue;
                 }
             } else {
                 // 合成数据
-                auto seq = frame_count.load();
+                auto seq = strategy.frame_count.load();
                 synthetic_frame.setTo(cv::Scalar(seq % 256, (seq * 2) % 256, (seq * 3) % 256));
                 synthetic_frame.copyTo(buffer->mat());
             }
 
             auto t1 = std::chrono::steady_clock::now();
-            capture_latency.record(
+            strategy.capture_latency.record(
                 std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count());
 
             // 创建 Frame (0-copy, 使用 pool buffer)
             Frame frame;
-            frame.seq = frame_count.fetch_add(1, std::memory_order_relaxed);
+            frame.seq = strategy.frame_count.fetch_add(1, std::memory_order_relaxed);
             frame.timestamp_ns = std::chrono::steady_clock::now().time_since_epoch().count();
             frame.image = buffer;
 
             // 推送到调度器
             if (!sched.push_frame(std::move(frame))) {
-                frame_pool.release(buffer);
+                strategy.frame_pool.release(buffer);
             }
 
             // 控制帧率
@@ -349,9 +354,9 @@ int main(int argc, char** argv) {
         // 实时统计
         auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(
             std::chrono::steady_clock::now() - start_time).count();
-        auto frames = frame_count.load();
-        auto processed = processed_count.load();
-        auto outputs = output_count.load();
+        auto frames = strategy.frame_count.load();
+        auto processed = strategy.processed_count.load();
+        auto outputs = strategy.output_count.load();
         auto dropped = sched.stats().frame_drop.load();
 
         std::cout << "\r[" << elapsed << "s] "
@@ -372,9 +377,9 @@ int main(int argc, char** argv) {
     // 最终统计
     std::cout << "\n\n=== Final Statistics ===\n";
 
-    auto total_frames = frame_count.load();
-    auto total_processed = processed_count.load();
-    auto total_outputs = output_count.load();
+    auto total_frames = strategy.frame_count.load();
+    auto total_processed = strategy.processed_count.load();
+    auto total_outputs = strategy.output_count.load();
     auto total_dropped = sched.stats().frame_drop.load();
 
     std::cout << "Total Frames:    " << total_frames << "\n";
@@ -387,11 +392,11 @@ int main(int argc, char** argv) {
               << (total_frames * 1.0 / duration_sec) << "\n\n";
 
     std::cout << "=== Latency Distribution ===\n";
-    capture_latency.print("Capture");
-    preprocess_latency.print("Preprocess");
-    detect_latency.print("Detect");
-    track_latency.print("Track");
-    e2e_latency.print("E2E");
+    strategy.capture_latency.print("Capture");
+    strategy.preprocess_latency.print("Preprocess");
+    strategy.detect_latency.print("Detect");
+    strategy.track_latency.print("Track");
+    strategy.e2e_latency.print("E2E");
 
     std::cout << "\n=== Scheduler Stats ===\n";
     const auto& stats = sched.stats();
