@@ -22,3 +22,4 @@ cmake-build-release/
 home/
 dataset.zip
 sp_vision_25/
+_deps/

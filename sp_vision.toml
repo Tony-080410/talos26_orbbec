@@ -1,0 +1,15 @@
+detector_mode = 0
+detector_threads = 8
+max_frame_skip = 2
+
+[detector]
+threshold = 150
+max_angle_error = 45 # degree
+min_lightbar_ratio = 1.5
+max_lightbar_ratio = 20
+min_lightbar_length = 8
+min_armor_ratio = 1
+max_armor_ratio = 5
+max_side_ratio = 1.5
+max_rectangular_error = 25 # degree
+min_confidence = 0.8

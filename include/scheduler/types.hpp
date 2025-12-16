@@ -5,6 +5,10 @@
 #include <vector>
 #include <memory>
 #include <opencv2/core.hpp>
+#include <toml++/toml.hpp>
+#include <expected>
+
+#include "toml_helper.hpp"
 #include "scheduler/primitives/latency_histogram.hpp"
 
 namespace scheduler {
@@ -142,11 +146,12 @@ struct RuntimeConfig {
     int detector_threads{4};
     int max_frame_skip{2};
 
-    // Tracker
-    float smooth_alpha{0.8f};
-
-    // Solver
-    int solver_max_iter{10};
+    std::expected<void, std::string> read_from(const toml::table &tbl) {
+        READ(tbl, "detector_mode", detector_mode);
+        READ(tbl, "detector_threads", detector_threads);
+        READ(tbl, "max_frame_skip", max_frame_skip);
+        return {};
+    }
 };
 
 // ============ 统计信息 ============

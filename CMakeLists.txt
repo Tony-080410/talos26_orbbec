@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.14)
 project(talos VERSION 0.1 LANGUAGES CXX)
 
-set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
@@ -40,6 +40,14 @@ find_package(GTest REQUIRED)
 # Benchmark is optional (not essential for Day 1)
 find_package(benchmark QUIET)
 
+include(FetchContent)
+FetchContent_Declare(
+        tomlplusplus
+        GIT_REPOSITORY https://github.com/marzer/tomlplusplus.git
+        GIT_TAG v3.4.0
+)
+FetchContent_MakeAvailable(tomlplusplus)
+
 include_directories(include)
 
 # Scheduler library (header-only template, no .cpp compilation needed)
@@ -62,8 +70,8 @@ add_executable(${PROJECT_NAME}
         src/main.cpp
         include/scheduler/primitives/buffer_pool.hpp
         include/scheduler/primitives/latency_stats.hpp
+        include/toml_helper.hpp
 )
-
 
 target_include_directories(${PROJECT_NAME} PRIVATE include)
 
@@ -74,6 +82,7 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
         fmt::fmt
         Eigen3::Eigen
         TBB::tbb
+        tomlplusplus::tomlplusplus
 )
 
 # sp_vision executable
@@ -91,6 +100,7 @@ target_link_libraries(sp_vision PRIVATE
         fmt::fmt
         Eigen3::Eigen
         TBB::tbb
+        tomlplusplus::tomlplusplus
 )
 
 # Unit tests
