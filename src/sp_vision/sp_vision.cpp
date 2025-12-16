@@ -11,6 +11,7 @@
 #include <numeric>
 #include <algorithm>
 
+#include "spdlog_hook.hpp"
 #include "toml_helper.hpp"
 #include "toml++/toml.hpp"
 #include "scheduler/primitives/buffer_pool.hpp"
@@ -19,32 +20,67 @@
 using namespace scheduler;
 using namespace std::chrono_literals;
 
+struct SpVisionDetectorConfig {
+    double threshold;
+    double max_angle_error;
+    double min_lightbar_ratio;
+    double max_lightbar_ratio;
+    double min_lightbar_length;
+    double min_armor_ratio;
+    double max_armor_ratio;
+    double max_side_ratio;
+    double min_confidence;
+    double max_rectangular_error;
+
+    std::expected<void, std::string> read_from(const toml::table &tbl) {
+        if (const auto _t = tbl["detector"].as_table()) {
+            auto t = *_t;
+            READ(t, "threshold", threshold);
+            READ(t, "max_angle_error", max_angle_error);
+            READ(t, "min_lightbar_ratio", min_lightbar_ratio);
+            READ(t, "max_lightbar_ratio", max_lightbar_ratio);
+            READ(t, "min_lightbar_length", min_lightbar_length);
+            READ(t, "min_armor_ratio", min_armor_ratio);
+            READ(t, "max_armor_ratio", max_armor_ratio);
+            READ(t, "max_side_ratio", max_side_ratio);
+            READ(t, "min_confidence", min_confidence);
+            READ(t, "max_rectangular_error", max_rectangular_error);
+            return {};
+        }
+        return std::unexpected("detector is not a table");
+    }
+};
+
+struct SpVisionConfig : RuntimeConfig {
+    SpVisionDetectorConfig detector;
+
+    std::expected<void, std::string> read_from(const toml::table &tbl) {
+        if (auto read = RuntimeConfig::read_from(tbl); !read) {
+            return read;
+        }
+        if (auto read = detector.read_from(tbl); !read) {
+            return read;
+        }
+        return {};
+    }
+};
+
 class RealworldStrategy {
 public:
-    // SchedulerStrategy concept实现
     void preprocess(SharedFeature &sf) {
         const auto t0 = std::chrono::steady_clock::now();
 
         if (sf.image && sf.image->rows() > 0) {
-            // 获取复用 buffer
             const auto gray = gray_pool.acquire();
-            const auto small = small_pool.acquire();
 
-            // 灰度转换
             cv::cvtColor(sf.image->mat(), gray->mat(), cv::COLOR_BGR2GRAY);
+            cv::threshold(gray->mat(), gray->mat(), config.detector.threshold, 255, cv::THRESH_BINARY);
 
-            // 下采样
-            cv::resize(gray->mat(), small->mat(), small->mat().size());
-
-            sf.preprocessed = small;
-
-            // 释放中间 buffer
-            gray_pool.release(gray);
+            sf.preprocessed = gray;
         }
 
         const auto t1 = std::chrono::steady_clock::now();
-        preprocess_latency.record(
-            std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count());
+        preprocess_latency.record(std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count());
     }
 
     Detection detect(const SharedFeature &sf) {
@@ -55,15 +91,11 @@ public:
         det.timestamp_ns = sf.timestamp_ns;
 
         if (sf.preprocessed && sf.preprocessed->rows() > 0) {
-            cv::Mat binary;
-            cv::threshold(sf.preprocessed->mat(), binary, 128, 255, cv::THRESH_BINARY);
-
             std::vector<std::vector<cv::Point> > contours;
-            cv::findContours(binary, contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
+            cv::findContours(sf.preprocessed->mat(), contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_NONE);
 
             for (const auto &contour: contours) {
-                auto rect = cv::boundingRect(contour);
-                if (rect.area() > 100) {
+                if (auto rect = cv::boundingRect(contour); rect.area() > 100) {
                     // 过滤噪声
                     // 缩放回原图尺寸
                     det.boxes.emplace_back(rect.x * 4, rect.y * 4, rect.width * 4, rect.height * 4);
@@ -71,6 +103,7 @@ public:
                 }
             }
         }
+        gray_pool.release(sf.preprocessed);
 
         processed_count.fetch_add(1, std::memory_order_relaxed);
 
@@ -81,7 +114,7 @@ public:
         return det;
     }
 
-    TrackResult track(const Detection &det, const SharedFeature &sf) {
+    TrackResult track(const Detection &det, [[maybe_unused]] const SharedFeature &sf) {
         const auto t0 = std::chrono::steady_clock::now();
 
         TrackResult tr;
@@ -123,16 +156,17 @@ public:
         output_count.fetch_add(1, std::memory_order_relaxed);
     }
 
-    RealworldStrategy(const size_t count, const int rows, const int cols) noexcept : frame_pool(count, rows, cols,
-            CV_8UC3),
-        gray_pool(count, rows, cols,CV_8UC1),
-        small_pool(count, rows, cols,CV_8UC1) {
+    RealworldStrategy(const SpVisionConfig config, const size_t count, const int rows,
+                      const int cols) noexcept : frame_pool(count, rows, cols,
+                                                            CV_8UC3),
+                                                 gray_pool(count, rows, cols,CV_8UC1), config(std::move(config)) {
     }
 
     // Buffer pool (复用 buffer)
     BufferPool frame_pool;
     BufferPool gray_pool;
-    BufferPool small_pool;
+
+    SpVisionConfig config;
 
     // 统计
     LatencyStats capture_latency;
@@ -146,47 +180,15 @@ public:
     std::atomic<uint64_t> output_count{0};
 };
 
-struct SpVisionDetectorConfig {
-    double threshold;
-    double max_angle_error;
-    double min_lightbar_ratio;
-    double max_lightbar_ratio;
-    double min_lightbar_length;
-    double min_armor_ratio;
-    double max_armor_ratio;
-    double max_side_ratio;
-    double min_confidence;
-    double max_rectangular_error;
-};
-
-struct SpVisionConfig : RuntimeConfig {
-    SpVisionDetectorConfig detector;
-
-    std::expected<void, std::string> read_from(const toml::table &tbl) {
-        if (auto read = RuntimeConfig::read_from(tbl); !read) {
-            return read;
-        }
-        if (const auto _t = tbl["detector"].as_table()) {
-            auto t = *_t;
-            READ(t, "threshold", detector.threshold);
-            READ(t, "max_angle_error", detector.max_angle_error);
-            READ(t, "min_lightbar_ratio", detector.min_lightbar_ratio);
-            READ(t, "max_lightbar_ratio", detector.max_lightbar_ratio);
-            READ(t, "min_lightbar_length", detector.min_lightbar_length);
-            READ(t, "min_armor_ratio", detector.min_armor_ratio);
-            READ(t, "max_armor_ratio", detector.max_armor_ratio);
-            READ(t, "max_side_ratio", detector.max_side_ratio);
-            READ(t, "min_confidence", detector.min_confidence);
-            READ(t, "max_rectangular_error", detector.max_rectangular_error);
-            return {};
-        }
-        return std::unexpected("detector is not a table");
-    }
-};
-
 // ============ 主测试 ============
 
 int main(const int argc, char **argv) {
+    hook_cstream();
+    SpVisionConfig config;
+    if (auto result = config.read_from(toml::parse_file("sp_vision.toml")); !result) {
+        std::cerr << "read sp_vision.toml: " + result.error();
+        return 1;
+    }
     // 参数
     int camera_id = 0;
     int duration_sec = 5;
@@ -200,13 +202,6 @@ int main(const int argc, char **argv) {
     }
     if (argc > 3 && std::string(argv[3]) == "--no-camera") {
         use_camera = false;
-    }
-
-    SpVisionConfig config;
-    if (auto result = config.read_from(toml::parse_file("sp_vision.toml")); !result) {
-        std::cerr << "Failed to read from toml file\n";
-        std::cerr << result.error() << "\n";
-        return 1;
     }
 
     std::cout << "=== RealWorld Scheduler Benchmark ===\n";
@@ -244,7 +239,8 @@ int main(const int argc, char **argv) {
     }
 
     // 调度器
-    RealworldStrategy strategy(8, frame_height, frame_width);
+    RealworldStrategy strategy(config, 8, frame_height, frame_width);
+
     Scheduler<RealworldStrategy> sched;
 
     sched.init(config, &strategy);

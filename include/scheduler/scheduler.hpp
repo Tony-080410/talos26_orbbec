@@ -47,7 +47,7 @@ namespace scheduler {
 template<SchedulerStrategy Strategy>
 class Scheduler {
 public:
-    Scheduler() noexcept : strategy_(nullptr), config_(nullptr) {}
+    Scheduler() noexcept : config_(nullptr), strategy_(nullptr) {}
 
     ~Scheduler() noexcept {
         stop();

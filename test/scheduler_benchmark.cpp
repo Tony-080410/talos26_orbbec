@@ -90,8 +90,8 @@ static void BM_LatestValue_TryRead(benchmark::State& state) {
         }
     });
 
-    for (auto _ : state) {
-        lv.try_read(value, version);
+    for ([[maybe_unused]] auto _ : state) {
+        [[maybe_unused]] auto __ = lv.try_read(value, version);
         benchmark::DoNotOptimize(value);
     }
 

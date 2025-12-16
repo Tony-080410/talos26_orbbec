@@ -147,10 +147,14 @@ struct RuntimeConfig {
     int max_frame_skip{2};
 
     std::expected<void, std::string> read_from(const toml::table &tbl) {
-        READ(tbl, "detector_mode", detector_mode);
-        READ(tbl, "detector_threads", detector_threads);
-        READ(tbl, "max_frame_skip", max_frame_skip);
-        return {};
+        if (const auto _t = tbl["runtime"].as_table()) {
+            auto t = *_t;
+            READ(t, "detector_mode", detector_mode);
+            READ(t, "detector_threads", detector_threads);
+            READ(t, "max_frame_skip", max_frame_skip);
+            return {};
+        }
+        return std::unexpected("runtime is not a table");
     }
 };
 

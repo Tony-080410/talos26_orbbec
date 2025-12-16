@@ -2,6 +2,7 @@
 #include <thread>
 #include <atomic>
 #include <iostream>
+#include <algorithm>
 #include "triple_buffer.hpp"
 
 // 大结构体，更容易暴露撕裂问题

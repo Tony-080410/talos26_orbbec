@@ -95,7 +95,7 @@ public:
      * @param priority 优先级 (1-99, 99最高)
      * @return true 如果成功
      */
-    static bool set_realtime_priority(int priority = 50) noexcept {
+    static bool set_realtime_priority([[maybe_unused]] int priority = 50) noexcept {
 #ifdef __linux__
         struct sched_param param;
         param.sched_priority = priority;
