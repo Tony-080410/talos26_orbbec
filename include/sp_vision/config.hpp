@@ -1,7 +1,6 @@
 #pragma once
 #include "scheduler/scheduler.hpp"
 
-#include <chrono>
 #include <expected>
 #include "spdlog_hook.hpp"
 #include "toml++/toml.hpp"

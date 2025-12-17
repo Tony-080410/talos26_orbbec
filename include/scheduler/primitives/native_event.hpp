@@ -2,7 +2,7 @@
 
 #include <atomic>
 #include <chrono>
-#include <cstdint>
+#include <mutex>
 
 #ifdef __APPLE__
 
