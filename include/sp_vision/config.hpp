@@ -4,8 +4,8 @@
 #include <chrono>
 #include <expected>
 #include "spdlog_hook.hpp"
-#include "toml_helper.hpp"
 #include "toml++/toml.hpp"
+#include "toml_helper.hpp"
 
 struct SpVisionDetectorConfig {
     double threshold;
@@ -55,16 +55,9 @@ struct SpVisionConfig : scheduler::RuntimeConfig {
 
 
 inline const auto_aim::DetectorConfig convert(SpVisionDetectorConfig &config) {
-    return auto_aim::DetectorConfig{
-        config.threshold,
-        config.max_angle_error,
-        config.min_lightbar_ratio,
-        config.max_lightbar_ratio,
-        config.min_lightbar_length,
-        config.min_armor_ratio,
-        config.max_armor_ratio,
-        config.max_side_ratio,
-        config.min_confidence,
-        config.max_rectangular_error
-    };
+    return auto_aim::DetectorConfig{config.threshold,           config.max_angle_error,
+                                    config.min_lightbar_ratio,  config.max_lightbar_ratio,
+                                    config.min_lightbar_length, config.min_armor_ratio,
+                                    config.max_armor_ratio,     config.max_side_ratio,
+                                    config.min_confidence,      config.max_rectangular_error};
 }

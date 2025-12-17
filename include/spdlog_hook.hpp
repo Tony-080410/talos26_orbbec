@@ -2,17 +2,16 @@
 
 #include <iostream>
 #include <memory>
+#include <spdlog/sinks/rotating_file_sink.h>
+#include <spdlog/sinks/stdout_color_sinks.h>
+#include <spdlog/spdlog.h>
 #include <streambuf>
 #include <utility>
-#include <spdlog/spdlog.h>
-#include <spdlog/sinks/stdout_color_sinks.h>
-#include <spdlog/sinks/rotating_file_sink.h>
 
 class spdlog_streambuf : public std::streambuf {
 public:
-    spdlog_streambuf(std::shared_ptr<spdlog::logger> logger, const spdlog::level::level_enum lvl)
-        : logger_(std::move(logger)), level_(lvl) {
-    }
+    spdlog_streambuf(std::shared_ptr<spdlog::logger> logger, const spdlog::level::level_enum lvl) :
+        logger_(std::move(logger)), level_(lvl) {}
 
 protected:
     int_type overflow(const int_type ch) override {

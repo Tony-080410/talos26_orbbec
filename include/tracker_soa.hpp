@@ -83,10 +83,8 @@ namespace spike {
          * @brief Verify this tracker fits in exactly one cache line
          */
         static constexpr void static_checks() {
-            static_assert(sizeof(TrackerSoA) == 64,
-                          "TrackerSoA must be exactly 64 bytes for L1 cache residence");
-            static_assert(alignof(TrackerSoA) == 64,
-                          "TrackerSoA must be 64-byte aligned (cache line alignment)");
+            static_assert(sizeof(TrackerSoA) == 64, "TrackerSoA must be exactly 64 bytes for L1 cache residence");
+            static_assert(alignof(TrackerSoA) == 64, "TrackerSoA must be 64-byte aligned (cache line alignment)");
         }
 
         /**
@@ -95,9 +93,8 @@ namespace spike {
          */
         bool try_start_detecting() {
             auto expected = TrackerState::IDLE;
-            return state.compare_exchange_strong(
-                expected, TrackerState::DETECTING,
-                std::memory_order_release, std::memory_order_relaxed);
+            return state.compare_exchange_strong(expected, TrackerState::DETECTING, std::memory_order_release,
+                                                 std::memory_order_relaxed);
         }
 
         /**
@@ -106,9 +103,8 @@ namespace spike {
          */
         bool try_confirm_tracking() {
             auto expected = TrackerState::DETECTING;
-            return state.compare_exchange_strong(
-                expected, TrackerState::TRACKING,
-                std::memory_order_release, std::memory_order_relaxed);
+            return state.compare_exchange_strong(expected, TrackerState::TRACKING, std::memory_order_release,
+                                                 std::memory_order_relaxed);
         }
 
         /**
@@ -117,9 +113,8 @@ namespace spike {
          */
         bool try_enter_lost() {
             auto expected = TrackerState::TRACKING;
-            return state.compare_exchange_strong(
-                expected, TrackerState::TEMP_LOST,
-                std::memory_order_release, std::memory_order_relaxed);
+            return state.compare_exchange_strong(expected, TrackerState::TEMP_LOST, std::memory_order_release,
+                                                 std::memory_order_relaxed);
         }
 
         /**
@@ -128,9 +123,8 @@ namespace spike {
          */
         bool try_restore_tracking() {
             auto expected = TrackerState::TEMP_LOST;
-            return state.compare_exchange_strong(
-                expected, TrackerState::TRACKING,
-                std::memory_order_release, std::memory_order_relaxed);
+            return state.compare_exchange_strong(expected, TrackerState::TRACKING, std::memory_order_release,
+                                                 std::memory_order_relaxed);
         }
 
         /**
@@ -138,8 +132,7 @@ namespace spike {
          * Called when timeout (too many consecutive misses)
          */
         bool try_reset_idle() {
-            return state.exchange(TrackerState::IDLE, std::memory_order_release)
-                   != TrackerState::IDLE;
+            return state.exchange(TrackerState::IDLE, std::memory_order_release) != TrackerState::IDLE;
         }
 
         /**

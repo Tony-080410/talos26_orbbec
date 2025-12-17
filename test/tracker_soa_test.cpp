@@ -1,6 +1,6 @@
+#include "tracker_soa.hpp"
 #include <gtest/gtest.h>
 #include "detector_state.hpp"
-#include "tracker_soa.hpp"
 #include "triple_buffer.hpp"
 
 namespace spike::test {
@@ -9,26 +9,21 @@ namespace spike::test {
     // ============================================================================
 
     TEST(MemoryLayout, ArmorSlotsSize) {
-        EXPECT_LE(sizeof(spike::ArmorSlots), 2048)
-      << "ArmorSlots exceeds 2KB budget";
-        EXPECT_GE(sizeof(spike::ArmorSlots), 512)
-      << "ArmorSlots seems too small";
+        EXPECT_LE(sizeof(spike::ArmorSlots), 2048) << "ArmorSlots exceeds 2KB budget";
+        EXPECT_GE(sizeof(spike::ArmorSlots), 512) << "ArmorSlots seems too small";
     }
 
     TEST(MemoryLayout, ArmorSlotsAlignment) {
-        EXPECT_EQ(alignof(spike::ArmorSlots), 64)
-      << "ArmorSlots must be 64-byte cache-line aligned";
+        EXPECT_EQ(alignof(spike::ArmorSlots), 64) << "ArmorSlots must be 64-byte cache-line aligned";
     }
 
     TEST(MemoryLayout, TrackerSoAExactSize) {
         // Critical: must be exactly 64 bytes
-        EXPECT_EQ(sizeof(spike::TrackerSoA), 64)
-      << "TrackerSoA must be exactly 64 bytes for L1 cache residence";
+        EXPECT_EQ(sizeof(spike::TrackerSoA), 64) << "TrackerSoA must be exactly 64 bytes for L1 cache residence";
     }
 
     TEST(MemoryLayout, TrackerSoAAlignment) {
-        EXPECT_EQ(alignof(spike::TrackerSoA), 64)
-      << "TrackerSoA must be 64-byte aligned";
+        EXPECT_EQ(alignof(spike::TrackerSoA), 64) << "TrackerSoA must be 64-byte aligned";
     }
 
     TEST(MemoryLayout, TrackerSoACacheLine) {

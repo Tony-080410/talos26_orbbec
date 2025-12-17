@@ -5,8 +5,8 @@
 
 namespace scheduler {
 
-// 使用现有的高质量 TripleBuffer 实现
-template<typename T>
-using TripleBuffer = spike::TripleBuffer<T>;
+    // 使用现有的高质量 TripleBuffer 实现
+    template<typename T>
+    using TripleBuffer = spike::TripleBuffer<T>;
 
 } // namespace scheduler

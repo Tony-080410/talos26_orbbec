@@ -1,9 +1,9 @@
+#include "performance_probe.hpp"
+#include <atomic>
+#include <chrono>
 #include <gtest/gtest.h>
 #include <thread>
-#include <atomic>
 #include <vector>
-#include <chrono>
-#include "performance_probe.hpp"
 
 namespace spike::test {
     // ============================================================================
@@ -28,8 +28,8 @@ namespace spike::test {
 
         // Busy-wait for short duration to test precision
         const auto start = std::chrono::high_resolution_clock::now();
-        while (std::chrono::duration_cast<std::chrono::nanoseconds>(
-                   std::chrono::high_resolution_clock::now() - start).count() < 1000) {
+        while (std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::high_resolution_clock::now() - start)
+                       .count() < 1000) {
             // Busy spin for ~1 microsecond
         }
 

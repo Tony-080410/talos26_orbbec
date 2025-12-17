@@ -1,22 +1,22 @@
-#include "scheduler/scheduler.hpp"
-#include <opencv2/videoio.hpp>
 #include <opencv2/imgproc.hpp>
+#include <opencv2/videoio.hpp>
+#include "scheduler/scheduler.hpp"
 
-#include <iostream>
-#include <iomanip>
-#include <chrono>
+#include <algorithm>
 #include <atomic>
+#include <chrono>
+#include <iomanip>
+#include <iostream>
+#include <numeric>
 #include <thread>
 #include <vector>
-#include <numeric>
-#include <algorithm>
 
-#include "spdlog_hook.hpp"
-#include "toml++/toml.hpp"
+#include "auto_aim/detector.hpp"
 #include "scheduler/primitives/buffer_pool.hpp"
 #include "scheduler/primitives/latency_stats.hpp"
-#include "auto_aim/detector.hpp"
 #include "sp_vision/config.hpp"
+#include "spdlog_hook.hpp"
+#include "toml++/toml.hpp"
 
 using namespace scheduler;
 using namespace std::chrono_literals;
@@ -48,25 +48,21 @@ public:
 
         if (sf.image && sf.image->rows() > 0) {
             // 使用传统检测器
-            auto armor_slots = detector_.detect(
-                sf.image->mat(),sf.preprocessed->mat(), sf.frame_seq, sf.timestamp_ns);
+            auto armor_slots = detector_.detect(sf.image->mat(), sf.preprocessed->mat(), sf.frame_seq, sf.timestamp_ns);
 
 
             // 转换 ArmorSlots 到 Detection 格式
             for (int i = 0; i < 10; i++) {
                 if (armor_slots.is_valid(i)) {
-                    const auto& armor = armor_slots.armors[i];
+                    const auto &armor = armor_slots.armors[i];
                     // 计算包围盒 (从四个角点)
                     float min_x = std::min({armor.pts[0], armor.pts[2], armor.pts[4], armor.pts[6]});
                     float min_y = std::min({armor.pts[1], armor.pts[3], armor.pts[5], armor.pts[7]});
                     float max_x = std::max({armor.pts[0], armor.pts[2], armor.pts[4], armor.pts[6]});
                     float max_y = std::max({armor.pts[1], armor.pts[3], armor.pts[5], armor.pts[7]});
 
-                    det.boxes.emplace_back(
-                        static_cast<int>(min_x),
-                        static_cast<int>(min_y),
-                        static_cast<int>(max_x - min_x),
-                        static_cast<int>(max_y - min_y));
+                    det.boxes.emplace_back(static_cast<int>(min_x), static_cast<int>(min_y),
+                                           static_cast<int>(max_x - min_x), static_cast<int>(max_y - min_y));
                     det.scores.push_back(armor.confidence);
                 }
             }
@@ -75,8 +71,7 @@ public:
         processed_count.fetch_add(1, std::memory_order_relaxed);
 
         const auto t1 = std::chrono::steady_clock::now();
-        detect_latency.record(
-            std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count());
+        detect_latency.record(std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count());
 
         return det;
     }
@@ -96,8 +91,7 @@ public:
         (void) sum;
 
         const auto t1 = std::chrono::steady_clock::now();
-        track_latency.record(
-            std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count());
+        track_latency.record(std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count());
 
         return tr;
     }
@@ -123,27 +117,15 @@ public:
         output_count.fetch_add(1, std::memory_order_relaxed);
     }
 
-    RealworldStrategy(const SpVisionConfig cfg, const size_t count, const int rows,
-                      const int cols) noexcept : frame_pool(count, rows, cols,
-                                                            CV_8UC3),
-                                                 gray_pool(count, rows, cols,CV_8UC1),
-                                                 config(std::move(cfg)),
-                                                 detector_(auto_aim::DetectorConfig{
-                                                     config.detector.threshold,
-                                                     config.detector.max_angle_error,
-                                                     config.detector.min_lightbar_ratio,
-                                                     config.detector.max_lightbar_ratio,
-                                                     config.detector.min_lightbar_length,
-                                                     config.detector.min_armor_ratio,
-                                                     config.detector.max_armor_ratio,
-                                                     config.detector.max_side_ratio,
-                                                     config.detector.min_confidence,
-                                                     config.detector.max_rectangular_error
-                                                 }) {
-    }
+    RealworldStrategy(const SpVisionConfig cfg, const size_t count, const int rows, const int cols) noexcept :
+        frame_pool(count, rows, cols, CV_8UC3), gray_pool(count, rows, cols, CV_8UC1), config(std::move(cfg)),
+        detector_(auto_aim::DetectorConfig{config.detector.threshold, config.detector.max_angle_error,
+                                           config.detector.min_lightbar_ratio, config.detector.max_lightbar_ratio,
+                                           config.detector.min_lightbar_length, config.detector.min_armor_ratio,
+                                           config.detector.max_armor_ratio, config.detector.max_side_ratio,
+                                           config.detector.min_confidence, config.detector.max_rectangular_error}) {}
 
 public:
-
     // Buffer pool (复用 buffer)
     BufferPool frame_pool;
     BufferPool gray_pool;
@@ -213,11 +195,9 @@ int main(const int argc, char **argv) {
         frame_height = static_cast<int>(cap.get(cv::CAP_PROP_FRAME_HEIGHT));
         target_fps = cap.get(cv::CAP_PROP_FPS);
 
-        std::cout << "Camera: " << frame_width << "x" << frame_height
-                << " @ " << target_fps << " FPS\n\n";
+        std::cout << "Camera: " << frame_width << "x" << frame_height << " @ " << target_fps << " FPS\n\n";
     } else {
-        std::cout << "Synthetic: " << frame_width << "x" << frame_height
-                << " @ " << target_fps << " FPS\n\n";
+        std::cout << "Synthetic: " << frame_width << "x" << frame_height << " @ " << target_fps << " FPS\n\n";
     }
 
     // 调度器
@@ -256,8 +236,7 @@ int main(const int argc, char **argv) {
             }
 
             auto t1 = std::chrono::steady_clock::now();
-            strategy.capture_latency.record(
-                std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count());
+            strategy.capture_latency.record(std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count());
 
             // 创建 Frame (0-copy, 使用 pool buffer)
             Frame frame;
@@ -291,21 +270,17 @@ int main(const int argc, char **argv) {
         std::this_thread::sleep_for(100ms);
 
         // 实时统计
-        const auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(
-            std::chrono::steady_clock::now() - start_time).count();
+        const auto elapsed =
+                std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now() - start_time).count();
         const auto frames = strategy.frame_count.load();
         const auto processed = strategy.processed_count.load();
         const auto outputs = strategy.output_count.load();
         const auto dropped = sched.stats().frame_drop.load();
 
         std::cout << "\r[" << elapsed << "s] "
-                << "Frames: " << frames
-                << ", Processed: " << processed
-                << ", Outputs: " << outputs
-                << ", Dropped: " << dropped
-                << ", FPS: " << std::fixed << std::setprecision(1)
-                << (frames * 1.0 / (elapsed + 1))
-                << "   " << std::flush;
+                  << "Frames: " << frames << ", Processed: " << processed << ", Outputs: " << outputs
+                  << ", Dropped: " << dropped << ", FPS: " << std::fixed << std::setprecision(1)
+                  << (frames * 1.0 / (elapsed + 1)) << "   " << std::flush;
     }
 
     // 停止
@@ -325,10 +300,10 @@ int main(const int argc, char **argv) {
     std::cout << "Total Processed: " << total_processed << "\n";
     std::cout << "Total Outputs:   " << total_outputs << "\n";
     std::cout << "Total Dropped:   " << total_dropped << "\n";
-    std::cout << "Process Rate:    " << std::fixed << std::setprecision(1)
-            << (total_processed * 100.0 / total_frames) << "%\n";
-    std::cout << "Avg FPS:         " << std::fixed << std::setprecision(1)
-            << (total_frames * 1.0 / duration_sec) << "\n\n";
+    std::cout << "Process Rate:    " << std::fixed << std::setprecision(1) << (total_processed * 100.0 / total_frames)
+              << "%\n";
+    std::cout << "Avg FPS:         " << std::fixed << std::setprecision(1) << (total_frames * 1.0 / duration_sec)
+              << "\n\n";
 
     std::cout << "=== Latency Distribution ===\n";
     strategy.capture_latency.print("Capture");
@@ -340,11 +315,11 @@ int main(const int argc, char **argv) {
     std::cout << "\n=== Scheduler Stats ===\n";
     const auto &stats = sched.stats();
     std::cout << "Detect Hist: p50=" << stats.detect_hist.p50() / 1000.0 << "us"
-            << ", p99=" << stats.detect_hist.p99() / 1000.0 << "us\n";
+              << ", p99=" << stats.detect_hist.p99() / 1000.0 << "us\n";
     std::cout << "Track Hist:  p50=" << stats.track_hist.p50() / 1000.0 << "us"
-            << ", p99=" << stats.track_hist.p99() / 1000.0 << "us\n";
+              << ", p99=" << stats.track_hist.p99() / 1000.0 << "us\n";
     std::cout << "Solve Hist:  p50=" << stats.solve_hist.p50() / 1000.0 << "us"
-            << ", p99=" << stats.solve_hist.p99() / 1000.0 << "us\n";
+              << ", p99=" << stats.solve_hist.p99() / 1000.0 << "us\n";
 
     if (use_camera) {
         cap.release();

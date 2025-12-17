@@ -1,9 +1,9 @@
-#include "spdlog_hook.hpp"
+#include <chrono>
+#include <thread>
 #include "detector_state.hpp"
+#include "spdlog_hook.hpp"
 #include "tracker_soa.hpp"
 #include "triple_buffer.hpp"
-#include <thread>
-#include <chrono>
 
 int main() {
     hook_cstream();
@@ -54,8 +54,7 @@ int main() {
         for (int iter = 0; iter < 10; iter++) {
             if (auto data = buffer.borrow(); data.has_value()) {
                 const auto value = data.value();
-                spdlog::debug("Consumer: read frame {}, armors: {}",
-                              value->frame_id, value->count_valid());
+                spdlog::debug("Consumer: read frame {}, armors: {}", value->frame_id, value->count_valid());
                 consumed++;
             } else {
                 spdlog::debug("Consumer: no new frame (predict-only)");

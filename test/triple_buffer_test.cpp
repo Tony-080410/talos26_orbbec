@@ -1,23 +1,22 @@
-#include <gtest/gtest.h>
-#include <thread>
-#include <atomic>
-#include <iostream>
-#include <algorithm>
 #include "triple_buffer.hpp"
+#include <algorithm>
+#include <atomic>
+#include <gtest/gtest.h>
+#include <iostream>
+#include <thread>
 
 // 大结构体，更容易暴露撕裂问题
 struct LargeFrame {
     std::array<uint64_t, 64> data{}; // 512 bytes
 
     void fill(const auto v) {
-        for (auto &x: data) x = v;
+        for (auto &x: data)
+            x = v;
     }
 
     [[nodiscard]] bool is_consistent() const {
         const auto first = data[0];
-        return std::all_of(data.begin(), data.end(), [&](const auto v) {
-            return v == first;
-        });
+        return std::all_of(data.begin(), data.end(), [&](const auto v) { return v == first; });
     }
 
     [[nodiscard]] auto value() const { return data[0]; }
@@ -236,8 +235,7 @@ TEST(TripleBufferTest, SlowProducerFastConsumer) {
     producer.join();
     consumer.join();
 
-    std::cout << "Valid: " << valid_reads.load()
-            << ", Empty: " << empty_reads.load() << std::endl;
+    std::cout << "Valid: " << valid_reads.load() << ", Empty: " << empty_reads.load() << std::endl;
     EXPECT_EQ(violations.load(), 0);
     EXPECT_GT(empty_reads.load(), valid_reads.load()); // 空读应该更多
 }

@@ -8,8 +8,8 @@
 namespace scheduler {
     class BufferPool {
     public:
-        explicit BufferPool(const size_t count, const int rows, const int cols, const int type)
-            : rows_(rows), cols_(cols), type_(type) {
+        explicit BufferPool(const size_t count, const int rows, const int cols, const int type) :
+            rows_(rows), cols_(cols), type_(type) {
             for (size_t i = 0; i < count; ++i) {
                 pool_.push_back(ImageBuffer::create(rows, cols, type));
             }
@@ -45,4 +45,4 @@ namespace scheduler {
         std::mutex mutex_;
         int rows_, cols_, type_;
     };
-}
+} // namespace scheduler

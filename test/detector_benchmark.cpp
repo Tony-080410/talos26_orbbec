@@ -9,16 +9,16 @@
  *   --debug               Show detection visualization
  */
 
-#include "auto_aim/detector.hpp"
-#include "auto_aim/dataset_loader.hpp"
-#include <opencv2/highgui.hpp>
-#include <opencv2/imgproc.hpp>
-#include <fmt/format.h>
 #include <chrono>
+#include <fmt/format.h>
 #include <numeric>
 #include <oneapi/tbb/parallel_for.h>
 #include <oneapi/tbb/task_arena.h>
+#include <opencv2/highgui.hpp>
+#include <opencv2/imgproc.hpp>
 #include <tbb/concurrent_vector.h>
+#include "auto_aim/dataset_loader.hpp"
+#include "auto_aim/detector.hpp"
 
 #include "sp_vision/config.hpp"
 
@@ -28,15 +28,13 @@ using namespace std::chrono;
 /**
  * @brief Match detections with ground truth using Hungarian algorithm (greedy)
  */
-AccuracyMetrics evaluate_frame(
-    const spike::ArmorSlots &detections,
-    const std::vector<GroundTruth> &ground_truths,
-    double iou_threshold = 0.3) {
+AccuracyMetrics evaluate_frame(const spike::ArmorSlots &detections, const std::vector<GroundTruth> &ground_truths,
+                               double iou_threshold = 0.3) {
     AccuracyMetrics metrics;
     metrics.total_gt = static_cast<int>(ground_truths.size());
 
     // Collect valid detections
-    std::vector<std::pair<int, cv::Rect2f> > det_boxes;
+    std::vector<std::pair<int, cv::Rect2f>> det_boxes;
     for (int i = 0; i < 10; i++) {
         if (detections.is_valid(i)) {
             const auto &armor = detections.armors[i];
@@ -54,7 +52,7 @@ AccuracyMetrics evaluate_frame(
     std::vector<bool> det_matched(det_boxes.size(), false);
 
     // Build IoU matrix and sort by IoU descending
-    std::vector<std::tuple<double, int, int> > iou_pairs; // (iou, det_idx, gt_idx)
+    std::vector<std::tuple<double, int, int>> iou_pairs; // (iou, det_idx, gt_idx)
     for (size_t d = 0; d < det_boxes.size(); d++) {
         for (size_t g = 0; g < ground_truths.size(); g++) {
             double iou = calculate_iou(det_boxes[d].second, ground_truths[g].bounding_box());
@@ -70,7 +68,8 @@ AccuracyMetrics evaluate_frame(
 
     // Greedy assignment
     for (const auto &[iou, d_idx, g_idx]: iou_pairs) {
-        if (det_matched[d_idx] || gt_matched[g_idx]) continue;
+        if (det_matched[d_idx] || gt_matched[g_idx])
+            continue;
 
         det_matched[d_idx] = true;
         gt_matched[g_idx] = true;
@@ -105,10 +104,12 @@ AccuracyMetrics evaluate_frame(
 
     // Count false positives and false negatives
     for (bool matched: det_matched) {
-        if (!matched) metrics.false_positives++;
+        if (!matched)
+            metrics.false_positives++;
     }
     for (bool matched: gt_matched) {
-        if (!matched) metrics.false_negatives++;
+        if (!matched)
+            metrics.false_negatives++;
     }
 
     return metrics;
@@ -117,11 +118,8 @@ AccuracyMetrics evaluate_frame(
 /**
  * @brief Visualize detection results
  */
-void visualize_frame(
-    const cv::Mat &image,
-    const spike::ArmorSlots &detections,
-    const std::vector<GroundTruth> &ground_truths,
-    const std::string &window_name = "Detection") {
+void visualize_frame(const cv::Mat &image, const spike::ArmorSlots &detections,
+                     const std::vector<GroundTruth> &ground_truths, const std::string &window_name = "Detection") {
     cv::Mat display = image.clone();
 
     // Draw ground truth (green)
@@ -131,8 +129,8 @@ void visualize_frame(
             pts.emplace_back(static_cast<int>(p.x), static_cast<int>(p.y));
         }
         cv::polylines(display, pts, true, cv::Scalar(0, 255, 0), 2);
-        cv::putText(display, fmt::format("GT c{} t{}", gt.color, gt.type),
-                    pts[0], cv::FONT_HERSHEY_SIMPLEX, 0.4, cv::Scalar(0, 255, 0), 1);
+        cv::putText(display, fmt::format("GT c{} t{}", gt.color, gt.type), pts[0], cv::FONT_HERSHEY_SIMPLEX, 0.4,
+                    cv::Scalar(0, 255, 0), 1);
     }
 
     // Draw detections (red for red armor, blue for blue armor)
@@ -141,17 +139,14 @@ void visualize_frame(
             const auto &armor = detections.armors[i];
             std::vector<cv::Point> pts;
             for (int j = 0; j < 4; j++) {
-                pts.emplace_back(static_cast<int>(armor.pts[j * 2]),
-                                 static_cast<int>(armor.pts[j * 2 + 1]));
+                pts.emplace_back(static_cast<int>(armor.pts[j * 2]), static_cast<int>(armor.pts[j * 2 + 1]));
             }
 
             cv::Scalar color = (armor.color == 0) ? cv::Scalar(0, 0, 255) : cv::Scalar(255, 0, 0);
             cv::polylines(display, pts, true, color, 1);
 
-            cv::putText(display, fmt::format("D c{} t{} {:.2f}",
-                                             armor.color, armor.type, armor.confidence),
-                        cv::Point(pts[0].x, pts[0].y - 5),
-                        cv::FONT_HERSHEY_SIMPLEX, 0.3, color, 1);
+            cv::putText(display, fmt::format("D c{} t{} {:.2f}", armor.color, armor.type, armor.confidence),
+                        cv::Point(pts[0].x, pts[0].y - 5), cv::FONT_HERSHEY_SIMPLEX, 0.3, color, 1);
         }
     }
 
@@ -235,11 +230,10 @@ int main(int argc, char **argv) {
             total_metrics += frame_metrics;
             metrics_mutex.unlock();
 
-            spdlog::debug("GT:{} Det:{} TP:{} Latency:{:.2f}ms",
-                          frame_metrics.total_gt, frame_metrics.total_det,
+            spdlog::debug("GT:{} Det:{} TP:{} Latency:{:.2f}ms", frame_metrics.total_gt, frame_metrics.total_det,
                           frame_metrics.true_positives, latency_ms);
             ++num_frames;
-            if (num_frames % 2000==0) {
+            if (num_frames % 2000 == 0) {
                 spdlog::info("working: {}/{}", num_frames.load(), loader.size());
             }
             // Debug visualization

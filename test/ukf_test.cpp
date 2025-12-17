@@ -52,8 +52,7 @@ TEST_F(UKFTest, InitialCovarianceIsPositiveDefinite) {
 
     for (int i = 0; i < 11; ++i) {
         for (int j = i + 1; j < 11; ++j) {
-            EXPECT_NEAR(P(i, j), P(j, i), 1e-6f)
-                << "P not symmetric at (" << i << "," << j << ")";
+            EXPECT_NEAR(P(i, j), P(j, i), 1e-6f) << "P not symmetric at (" << i << "," << j << ")";
         }
     }
 }
@@ -152,8 +151,7 @@ TEST_F(UKFTest, UpdateMaintainsCovarianceSymmetry) {
     Cov11 P = ukf.P();
     for (int i = 0; i < 11; ++i) {
         for (int j = i + 1; j < 11; ++j) {
-            EXPECT_NEAR(P(i, j), P(j, i), 1e-3f)
-                << "P not symmetric at (" << i << "," << j << ")";
+            EXPECT_NEAR(P(i, j), P(j, i), 1e-3f) << "P not symmetric at (" << i << "," << j << ")";
         }
     }
 }

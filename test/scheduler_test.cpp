@@ -1,14 +1,14 @@
-#include <gtest/gtest.h>
 #include "scheduler/scheduler.hpp"
-#include "scheduler/primitives/latest_value.hpp"
+#include <gtest/gtest.h>
 #include "scheduler/primitives/latency_histogram.hpp"
+#include "scheduler/primitives/latest_value.hpp"
 #include "test_strategy.hpp"
 
-#include <thread>
-#include <chrono>
 #include <atomic>
-#include <random>
+#include <chrono>
 #include <oneapi/tbb/parallel_for.h>
+#include <random>
+#include <thread>
 
 using namespace scheduler;
 using namespace scheduler::test;
@@ -155,9 +155,7 @@ TEST(SchedulerTest, FullPipeline) {
         return out;
     });
 
-    strategy.set_output([&](const SolverOutput &) {
-        output_count.fetch_add(1, std::memory_order_relaxed);
-    });
+    strategy.set_output([&](const SolverOutput &) { output_count.fetch_add(1, std::memory_order_relaxed); });
 
     Scheduler<TestStrategy> sched;
     RuntimeConfig config;
@@ -224,9 +222,9 @@ TEST(SchedulerTest, StatsReset) {
 
 TEST(LatencyHistogramTest, BasicRecord) {
     LatencyHistogram hist;
-    hist.record(1000);  // 1us
-    hist.record(2000);  // 2us
-    hist.record(3000);  // 3us
+    hist.record(1000); // 1us
+    hist.record(2000); // 2us
+    hist.record(3000); // 3us
 
     EXPECT_EQ(hist.count(), 3);
     EXPECT_NEAR(hist.mean(), 2000.0, 1.0);
@@ -239,7 +237,7 @@ TEST(LatencyHistogramTest, Percentiles) {
 
     // 记录 100 个样本: 1us, 2us, ..., 100us
     for (int i = 1; i <= 100; ++i) {
-        hist.record(i * 1000);  // i us
+        hist.record(i * 1000); // i us
     }
 
     EXPECT_EQ(hist.count(), 100);
@@ -282,7 +280,7 @@ TEST(LatencyHistogramTest, ConcurrentRecord) {
         });
     }
 
-    for (auto& th : threads) {
+    for (auto &th: threads) {
         th.join();
     }
 
@@ -299,13 +297,13 @@ TEST(SchedulerTest, PreprocessorCallback) {
 
     std::atomic<int> preprocess_count{0};
 
-    strategy.set_preprocess([&](SharedFeature& sf) {
+    strategy.set_preprocess([&](SharedFeature &sf) {
         preprocess_count.fetch_add(1, std::memory_order_relaxed);
         // 模拟预处理: 可以用 TBB parallel_for
         sf.preprocessed = ImageBuffer::create(100, 100, CV_8UC1);
     });
 
-    strategy.set_detect([](const SharedFeature& sf) {
+    strategy.set_detect([](const SharedFeature &sf) {
         Detection det;
         det.frame_seq = sf.frame_seq;
         return det;
@@ -332,7 +330,7 @@ TEST(SchedulerTest, HighFrequencyFrames) {
 
     std::atomic<int> detect_count{0};
 
-    strategy.set_detect([&](const SharedFeature& sf) {
+    strategy.set_detect([&](const SharedFeature &sf) {
         detect_count.fetch_add(1, std::memory_order_relaxed);
         Detection det;
         det.frame_seq = sf.frame_seq;
@@ -340,14 +338,14 @@ TEST(SchedulerTest, HighFrequencyFrames) {
         return det;
     });
 
-    strategy.set_track([](const Detection& d, const SharedFeature&) {
+    strategy.set_track([](const Detection &d, const SharedFeature &) {
         TrackResult tr;
         tr.frame_seq = d.frame_seq;
         tr.timestamp_ns = d.timestamp_ns;
         return tr;
     });
 
-    strategy.set_solve([](const TrackResult& tr) {
+    strategy.set_solve([](const TrackResult &tr) {
         SolverOutput out;
         out.frame_seq = tr.frame_seq;
         out.timestamp_ns = tr.timestamp_ns;
@@ -360,11 +358,11 @@ TEST(SchedulerTest, HighFrequencyFrames) {
     sched.start();
 
     // 模拟 160Hz 输入，持续 500ms
-    constexpr int kFrameCount = 80;  // 160Hz * 0.5s
+    constexpr int kFrameCount = 80; // 160Hz * 0.5s
     for (int i = 0; i < kFrameCount; ++i) {
         Frame frame;
         frame.seq = i;
-        frame.timestamp_ns = i * 6250000;  // 160Hz = 6.25ms
+        frame.timestamp_ns = i * 6250000; // 160Hz = 6.25ms
         sched.push_frame(std::move(frame));
         std::this_thread::sleep_for(std::chrono::microseconds(6250));
     }
@@ -379,7 +377,7 @@ TEST(SchedulerTest, HighFrequencyFrames) {
 TEST(SchedulerTest, LatencyHistogramStats) {
     TestStrategy strategy;
 
-    strategy.set_detect([](const SharedFeature& sf) {
+    strategy.set_detect([](const SharedFeature &sf) {
         // 模拟一些处理延迟
         std::this_thread::sleep_for(std::chrono::microseconds(100));
         Detection det;
@@ -387,14 +385,14 @@ TEST(SchedulerTest, LatencyHistogramStats) {
         return det;
     });
 
-    strategy.set_track([](const Detection& det, const SharedFeature&) {
+    strategy.set_track([](const Detection &det, const SharedFeature &) {
         std::this_thread::sleep_for(std::chrono::microseconds(50));
         TrackResult tr;
         tr.frame_seq = det.frame_seq;
         return tr;
     });
 
-    strategy.set_solve([](const TrackResult& tr) {
+    strategy.set_solve([](const TrackResult &tr) {
         std::this_thread::sleep_for(std::chrono::microseconds(50));
         SolverOutput out;
         out.frame_seq = tr.frame_seq;
@@ -416,11 +414,11 @@ TEST(SchedulerTest, LatencyHistogramStats) {
     sched.stop();
 
     // 验证直方图有数据
-    const auto& stats = sched.stats();
+    const auto &stats = sched.stats();
     EXPECT_GT(stats.detect_hist.count(), 0);
     EXPECT_GT(stats.detect_hist.p50(), 0);
 
     // 验证延迟在合理范围 (100us = 100000ns 左右)
-    EXPECT_GE(stats.detect_hist.min(), 50000);   // >= 50us
+    EXPECT_GE(stats.detect_hist.min(), 50000); // >= 50us
     EXPECT_LE(stats.detect_hist.max(), 10000000); // <= 10ms
 }

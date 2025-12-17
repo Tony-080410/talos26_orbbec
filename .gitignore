@@ -21,6 +21,7 @@ cmake-build-release/
 .idea/
 datasets/
 dataset.zip
-sp_vision_25/
+sp_vision_25
 _deps/
 thirdparty
+.DS_Store

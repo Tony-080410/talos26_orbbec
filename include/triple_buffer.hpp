@@ -1,7 +1,7 @@
 #pragma once
 
-#include <atomic>
 #include <array>
+#include <atomic>
 #include <optional>
 
 namespace spike {
@@ -14,15 +14,13 @@ namespace spike {
         TripleBuffer() = default;
 
         template<typename... Args>
-        explicit TripleBuffer(std::in_place_t, Args &&... args) {
+        explicit TripleBuffer(std::in_place_t, Args &&...args) {
             for (auto &slot: slots_) {
                 slot = T(std::forward<Args>(args)...);
             }
         }
 
-        [[nodiscard]] T &borrow_mut() noexcept {
-            return slots_[write_idx_];
-        }
+        [[nodiscard]] T &borrow_mut() noexcept { return slots_[write_idx_]; }
 
         void publish() noexcept {
             // 设置 new_data flag，交换 ready 和 write
@@ -41,8 +39,7 @@ namespace spike {
             // CAS: 尝试拿走 ready，把 read 还回去，清除 flag
             auto ready_idx = expected & INDEX_MASK;
 
-            if (auto desired = read_idx_; !state_.compare_exchange_strong(expected, desired,
-                                                                          std::memory_order_acq_rel,
+            if (auto desired = read_idx_; !state_.compare_exchange_strong(expected, desired, std::memory_order_acq_rel,
                                                                           std::memory_order_acquire)) {
                 // Producer 刚好又写了，expected 已更新，再试一次
                 if (!(expected & FLAG_NEW)) {
@@ -50,8 +47,8 @@ namespace spike {
                 }
                 ready_idx = expected & INDEX_MASK;
                 desired = read_idx_;
-                if (!state_.compare_exchange_strong(expected, desired,
-                                                    std::memory_order_acq_rel, std::memory_order_relaxed)) {
+                if (!state_.compare_exchange_strong(expected, desired, std::memory_order_acq_rel,
+                                                    std::memory_order_relaxed)) {
                     // producer 在这么短时间内连续 publish 两次
                     // 放弃这次
                     return std::nullopt;
@@ -62,13 +59,9 @@ namespace spike {
             return &slots_[read_idx_];
         }
 
-        [[nodiscard]] const T &current() const noexcept {
-            return slots_[read_idx_];
-        }
+        [[nodiscard]] const T &current() const noexcept { return slots_[read_idx_]; }
 
-        [[nodiscard]] bool has_new_frame() const noexcept {
-            return state_.load(std::memory_order_acquire) & FLAG_NEW;
-        }
+        [[nodiscard]] bool has_new_frame() const noexcept { return state_.load(std::memory_order_acquire) & FLAG_NEW; }
 
     private:
         static constexpr uint8_t FLAG_NEW = 0x80;

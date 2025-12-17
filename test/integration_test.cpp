@@ -1,11 +1,11 @@
-#include <gtest/gtest.h>
-#include <thread>
 #include <atomic>
 #include <chrono>
+#include <gtest/gtest.h>
+#include <thread>
 #include "detector_state.hpp"
+#include "performance_probe.hpp"
 #include "tracker_soa.hpp"
 #include "triple_buffer.hpp"
-#include "performance_probe.hpp"
 
 namespace spike::test {
     // ============================================================================
@@ -31,8 +31,8 @@ namespace spike::test {
                 frame.clear();
                 frame.frame_id = frame_id++;
                 frame.timestamp_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
-                            std::chrono::high_resolution_clock::now().time_since_epoch())
-                        .count();
+                                             std::chrono::high_resolution_clock::now().time_since_epoch())
+                                             .count();
 
                 // Add 3 valid armors
                 for (int i = 0; i < 3; i++) {
@@ -273,8 +273,7 @@ namespace spike::test {
             const auto addr_curr = reinterpret_cast<uintptr_t>(&trackers[i]);
             auto distance = addr_curr - addr_prev;
 
-            EXPECT_EQ(distance, 64) << "Trackers " << (i - 1) << " and " << i
-                            << " not on separate cache lines";
+            EXPECT_EQ(distance, 64) << "Trackers " << (i - 1) << " and " << i << " not on separate cache lines";
         }
     }
 

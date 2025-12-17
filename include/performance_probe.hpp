@@ -1,11 +1,11 @@
 #pragma once
 
-#include <chrono>
-#include <vector>
-#include <numeric>
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <iostream>
+#include <numeric>
+#include <vector>
 
 namespace spike {
     /**
@@ -23,17 +23,14 @@ namespace spike {
      */
     class LatencyProbe {
     public:
-        LatencyProbe() : start_ns_(now_ns()) {
-        }
+        LatencyProbe() : start_ns_(now_ns()) {}
 
         ~LatencyProbe() = default;
 
         /**
          * @brief Get elapsed nanoseconds since construction
          */
-        [[nodiscard]] uint64_t elapsed_ns() const {
-            return now_ns() - start_ns_;
-        }
+        [[nodiscard]] uint64_t elapsed_ns() const { return now_ns() - start_ns_; }
 
         /**
          * @brief Get elapsed nanoseconds and reset
@@ -73,8 +70,7 @@ namespace spike {
     public:
         static constexpr size_t MAX_SAMPLES = 1000000; // 1M samples = 1GB
 
-        LatencyHistogram() : samples_(), count_(0) {
-        }
+        LatencyHistogram() : samples_(), count_(0) {}
 
         /**
          * @brief Record a latency sample (nanoseconds)
@@ -129,17 +125,8 @@ namespace spike {
             }
             const double stddev = std::sqrt(sum_sq / static_cast<double>(count_));
 
-            return {
-                min_val,
-                max_val,
-                mean_val,
-                sorted[p50_idx],
-                sorted[p95_idx],
-                sorted[p99_idx],
-                sorted[p999_idx],
-                stddev,
-                count_
-            };
+            return {min_val,         max_val,          mean_val, sorted[p50_idx], sorted[p95_idx],
+                    sorted[p99_idx], sorted[p999_idx], stddev,   count_};
         }
 
         /**
@@ -148,15 +135,15 @@ namespace spike {
         void print_stats() const {
             const auto stats = compute();
             std::cout << "Latency Statistics (ns):\n"
-                    << "  Count:  " << stats.count << "\n"
-                    << "  Min:    " << stats.min_ns << " ns\n"
-                    << "  P50:    " << stats.p50_ns << " ns\n"
-                    << "  P95:    " << stats.p95_ns << " ns\n"
-                    << "  P99:    " << stats.p99_ns << " ns\n"
-                    << "  P99.9:  " << stats.p999_ns << " ns\n"
-                    << "  Mean:   " << stats.mean_ns << " ns\n"
-                    << "  Max:    " << stats.max_ns << " ns\n"
-                    << "  StdDev: " << stats.stddev_ns << " ns\n";
+                      << "  Count:  " << stats.count << "\n"
+                      << "  Min:    " << stats.min_ns << " ns\n"
+                      << "  P50:    " << stats.p50_ns << " ns\n"
+                      << "  P95:    " << stats.p95_ns << " ns\n"
+                      << "  P99:    " << stats.p99_ns << " ns\n"
+                      << "  P99.9:  " << stats.p999_ns << " ns\n"
+                      << "  Mean:   " << stats.mean_ns << " ns\n"
+                      << "  Max:    " << stats.max_ns << " ns\n"
+                      << "  StdDev: " << stats.stddev_ns << " ns\n";
         }
 
     private:
