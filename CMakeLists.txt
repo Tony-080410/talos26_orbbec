@@ -1,4 +1,15 @@
 cmake_minimum_required(VERSION 3.14)
+
+find_program(SCCACHE_PROGRAM sccache)
+
+if(SCCACHE_PROGRAM)
+    message(STATUS "sccache found: ${SCCACHE_PROGRAM}")
+    set(CMAKE_C_COMPILER_LAUNCHER   ${SCCACHE_PROGRAM})
+    set(CMAKE_CXX_COMPILER_LAUNCHER ${SCCACHE_PROGRAM})
+else()
+    message(STATUS "sccache not found, building without compiler cache")
+endif()
+
 project(talos VERSION 0.1 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 23)
@@ -6,6 +17,12 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
+option(TALOS_OFFLINE "Build without network" ON)
+
+if (TALOS_OFFLINE)
+    set(FETCHCONTENT_UPDATES_DISCONNECTED ON)
+endif()
 
 # Performance optimization flags for microsecond-level latency
 add_compile_options(-O3 -march=native)
@@ -116,6 +133,7 @@ target_include_directories(detector_benchmark PRIVATE include)
 target_link_libraries(detector_benchmark PRIVATE
         ${OpenCV_LIBS}
         spdlog::spdlog
+        TBB::tbb
         fmt::fmt
 )
 
