@@ -44,7 +44,7 @@ namespace spike::test {
     // ============================================================================
 
     TEST(ArmorSlots, DefaultConstruction) {
-        ArmorSlots slots;
+        constexpr ArmorSlots slots;
         EXPECT_EQ(slots.valid_mask, 0);
         EXPECT_EQ(slots.count_valid(), 0);
     }

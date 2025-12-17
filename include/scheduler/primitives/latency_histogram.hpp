@@ -43,7 +43,7 @@ namespace scheduler {
         /**
          * @brief 记录一个延迟样本 (纳秒)
          */
-        void record(uint64_t latency_ns) noexcept {
+        void record(const uint64_t latency_ns) noexcept {
             const size_t bucket = latency_to_bucket(latency_ns);
             buckets_[bucket].fetch_add(1, std::memory_order_relaxed);
             count_.fetch_add(1, std::memory_order_relaxed);
@@ -104,14 +104,14 @@ namespace scheduler {
 
         /**
          * @brief 获取百分位数 (纳秒)
-         * @param percentile 百分位 (0.0-1.0)
+         * @param p 百分位 (0.0-1.0)
          */
-        [[nodiscard]] uint64_t percentile(double p) const noexcept {
+        [[nodiscard]] uint64_t percentile(const double p) const noexcept {
             const auto total = count_.load(std::memory_order_relaxed);
             if (total == 0)
                 return 0;
 
-            const uint64_t target = static_cast<uint64_t>(p * total);
+            const auto target = static_cast<uint64_t>(p * static_cast<double>(total));
             uint64_t cumulative = 0;
 
             for (size_t i = 0; i < kNumBuckets; ++i) {
@@ -174,7 +174,7 @@ namespace scheduler {
                 UINT64_MAX // 19: >100ms
         };
 
-        static size_t latency_to_bucket(uint64_t latency_ns) noexcept {
+        static constexpr size_t latency_to_bucket(const uint64_t latency_ns) noexcept {
             for (size_t i = 0; i < kNumBuckets; ++i) {
                 if (latency_ns < kBucketBounds[i]) {
                     return i;
@@ -183,7 +183,7 @@ namespace scheduler {
             return kNumBuckets - 1;
         }
 
-        static uint64_t bucket_to_latency(size_t bucket) noexcept {
+        static constexpr uint64_t bucket_to_latency(const size_t bucket) noexcept {
             if (bucket == 0)
                 return 50; // 中点
             if (bucket >= kNumBuckets)

@@ -2,15 +2,16 @@
 #include <algorithm>
 #include <fmt/format.h>
 #include <numeric>
+#include <ranges>
 
 namespace spike {
 
     // ============ LightbarFull 构造函数 ============
 
-    LightbarFull::LightbarFull(const cv::RotatedRect &rect, std::size_t id) : id(id), rotated_rect(rect) {
+    LightbarFull::LightbarFull(const cv::RotatedRect &rect, const std::size_t id) : id(id), rotated_rect(rect) {
         std::vector<cv::Point2f> corners(4);
         rect.points(&corners[0]);
-        std::sort(corners.begin(), corners.end(), [](const cv::Point2f &a, const cv::Point2f &b) { return a.y < b.y; });
+        std::ranges::sort(corners, [](const cv::Point2f &a, const cv::Point2f &b) { return a.y < b.y; });
 
         center = rect.center;
         top = (corners[0] + corners[1]) / 2.0;
@@ -21,7 +22,7 @@ namespace spike {
         angle = std::atan2(top2bottom.y, top2bottom.x);
         angle_error = std::abs(angle - CV_PI / 2.0);
         length = cv::norm(top2bottom);
-        ratio = (width > 0.1) ? length / width : 0.0;
+        ratio = width > 0.1 ? length / width : 0.0;
     }
 
     // ============ ArmorFull 构造函数 ============
@@ -36,16 +37,16 @@ namespace spike {
         points.emplace_back(right.bottom);
         points.emplace_back(left.bottom);
 
-        auto left2right = right.center - left.center;
-        auto width = cv::norm(left2right);
-        auto max_lightbar_length = std::max(left.length, right.length);
-        auto min_lightbar_length = std::min(left.length, right.length);
-        ratio = (max_lightbar_length > 0.1) ? width / max_lightbar_length : 0.0;
-        side_ratio = (min_lightbar_length > 0.1) ? max_lightbar_length / min_lightbar_length : 1.0;
+        const auto left2right = right.center - left.center;
+        const auto width = cv::norm(left2right);
+        const auto max_lightbar_length = std::max(left.length, right.length);
+        const auto min_lightbar_length = std::min(left.length, right.length);
+        ratio = max_lightbar_length > 0.1 ? width / max_lightbar_length : 0.0;
+        side_ratio = min_lightbar_length > 0.1 ? max_lightbar_length / min_lightbar_length : 1.0;
 
-        auto roll = std::atan2(left2right.y, left2right.x);
-        auto left_rectangular_error = std::abs(left.angle - roll - CV_PI / 2);
-        auto right_rectangular_error = std::abs(right.angle - roll - CV_PI / 2);
+        const auto roll = std::atan2(left2right.y, left2right.x);
+        const auto left_rectangular_error = std::abs(left.angle - roll - CV_PI / 2);
+        const auto right_rectangular_error = std::abs(right.angle - roll - CV_PI / 2);
         rectangular_error = std::max(left_rectangular_error, right_rectangular_error);
     }
 
@@ -55,15 +56,15 @@ namespace auto_aim {
 
     // ============ TraditionalDetector ============
 
-    TraditionalDetector::TraditionalDetector(const DetectorConfig &config, bool debug) :
+    TraditionalDetector::TraditionalDetector(const DetectorConfig &config, const bool debug) :
         config_(config), debug_(debug) {
         // 预转换角度为弧度
         max_angle_error_rad_ = config_.max_angle_error / 57.3;
         max_rectangular_error_rad_ = config_.max_rectangular_error / 57.3;
     }
 
-    spike::ArmorSlots TraditionalDetector::detect(const cv::Mat &bgr_img, const cv::Mat &binary_img, uint64_t frame_id,
-                                                  uint64_t timestamp_ns) {
+    spike::ArmorSlots TraditionalDetector::detect(const cv::Mat &bgr_img, const cv::Mat &binary_img,
+                                                  const uint64_t frame_id, const uint64_t timestamp_ns) {
         // 清空上一帧结果
         lightbars_.clear();
         armors_.clear();
@@ -101,8 +102,8 @@ namespace auto_aim {
                 [](const spike::LightbarFull &a, const spike::LightbarFull &b) { return a.center.x < b.center.x; });
 
         // 获取装甲板 - 双重循环配对灯条
-        for (auto left = lightbars_.begin(); left != lightbars_.end(); left++) {
-            for (auto right = std::next(left); right != lightbars_.end(); right++) {
+        for (auto left = lightbars_.begin(); left != lightbars_.end(); ++left) {
+            for (auto right = std::next(left); right != lightbars_.end(); ++right) {
                 if (left->color != right->color)
                     continue;
 
@@ -131,7 +132,7 @@ namespace auto_aim {
         return to_armor_slots(frame_id, timestamp_ns);
     }
 
-    bool TraditionalDetector::refine(spike::ArmorFull &armor, const cv::Mat &bgr_img) {
+    bool TraditionalDetector::refine(spike::ArmorFull &armor, const cv::Mat &bgr_img) const {
         // 取得四个角点
         if (armor.points.size() < 4)
             return false;
@@ -157,8 +158,8 @@ namespace auto_aim {
 
         // 构造新的四个角点
         std::vector<cv::Point> points = {tl2, tr2, br2, bl2};
-        auto armor_rotaterect = cv::minAreaRect(points);
-        cv::Rect boundingBox = armor_rotaterect.boundingRect();
+        auto armor_rotate_rect = cv::minAreaRect(points);
+        cv::Rect boundingBox = armor_rotate_rect.boundingRect();
 
         // 检查boundingBox是否超出图像边界
         if (boundingBox.x < 0 || boundingBox.y < 0 || boundingBox.x + boundingBox.width > bgr_img.cols ||
@@ -213,20 +214,22 @@ namespace auto_aim {
         // 计算与 tl, bl 和 br, tr 距离最近的灯条
         spike::LightbarFull *closest_left_lightbar = nullptr;
         spike::LightbarFull *closest_right_lightbar = nullptr;
-        float min_distance_tl_bl = std::numeric_limits<float>::max();
-        float min_distance_br_tr = std::numeric_limits<float>::max();
+        double min_distance_tl_bl = std::numeric_limits<double>::max();
+        double min_distance_br_tr = std::numeric_limits<double>::max();
 
         cv::Point2f offset(static_cast<float>(boundingBox.x), static_cast<float>(boundingBox.y));
 
         for (auto &lightbar: roi_lightbars) {
-            float distance_tl_bl = cv::norm(tl - (lightbar.top + offset)) + cv::norm(bl - (lightbar.bottom + offset));
-            if (distance_tl_bl < min_distance_tl_bl) {
+            if (auto distance_tl_bl =
+                        cv::norm(tl - (lightbar.top + offset)) + cv::norm(bl - (lightbar.bottom + offset));
+                distance_tl_bl < min_distance_tl_bl) {
                 min_distance_tl_bl = distance_tl_bl;
                 closest_left_lightbar = &lightbar;
             }
 
-            float distance_br_tr = cv::norm(br - (lightbar.bottom + offset)) + cv::norm(tr - (lightbar.top + offset));
-            if (distance_br_tr < min_distance_br_tr) {
+            if (auto distance_br_tr =
+                        cv::norm(br - (lightbar.bottom + offset)) + cv::norm(tr - (lightbar.top + offset));
+                distance_br_tr < min_distance_br_tr) {
                 min_distance_br_tr = distance_br_tr;
                 closest_right_lightbar = &lightbar;
             }
@@ -247,16 +250,17 @@ namespace auto_aim {
     // ============ 几何检查 ============
 
     bool TraditionalDetector::check_geometry(const spike::LightbarFull &lightbar) const {
-        auto angle_ok = lightbar.angle_error < max_angle_error_rad_;
-        auto ratio_ok = lightbar.ratio > config_.min_lightbar_ratio && lightbar.ratio < config_.max_lightbar_ratio;
-        auto length_ok = lightbar.length > config_.min_lightbar_length;
+        const auto angle_ok = lightbar.angle_error < max_angle_error_rad_;
+        const auto ratio_ok =
+                lightbar.ratio > config_.min_lightbar_ratio && lightbar.ratio < config_.max_lightbar_ratio;
+        const auto length_ok = lightbar.length > config_.min_lightbar_length;
         return angle_ok && ratio_ok && length_ok;
     }
 
     bool TraditionalDetector::check_geometry(const spike::ArmorFull &armor) const {
-        auto ratio_ok = armor.ratio > config_.min_armor_ratio && armor.ratio < config_.max_armor_ratio;
-        auto side_ratio_ok = armor.side_ratio < config_.max_side_ratio;
-        auto rectangular_error_ok = armor.rectangular_error < max_rectangular_error_rad_;
+        const auto ratio_ok = armor.ratio > config_.min_armor_ratio && armor.ratio < config_.max_armor_ratio;
+        const auto side_ratio_ok = armor.side_ratio < config_.max_side_ratio;
+        const auto rectangular_error_ok = armor.rectangular_error < max_rectangular_error_rad_;
         return ratio_ok && side_ratio_ok && rectangular_error_ok;
     }
 
@@ -288,8 +292,8 @@ namespace auto_aim {
     }
 
     cv::Point2f TraditionalDetector::get_center_norm(const cv::Mat &bgr_img, const cv::Point2f &center) const {
-        auto h = static_cast<float>(bgr_img.rows);
-        auto w = static_cast<float>(bgr_img.cols);
+        const auto h = static_cast<float>(bgr_img.rows);
+        const auto w = static_cast<float>(bgr_img.cols);
         return {center.x / w, center.y / h};
     }
 
@@ -297,8 +301,8 @@ namespace auto_aim {
 
     void TraditionalDetector::remove_duplicates() {
         // 检查装甲板是否存在共用灯条的情况
-        for (auto armor1 = armors_.begin(); armor1 != armors_.end(); armor1++) {
-            for (auto armor2 = std::next(armor1); armor2 != armors_.end(); armor2++) {
+        for (auto armor1 = armors_.begin(); armor1 != armors_.end(); ++armor1) {
+            for (auto armor2 = std::next(armor1); armor2 != armors_.end(); ++armor2) {
                 if (armor1->left.id != armor2->left.id && armor1->left.id != armor2->right.id &&
                     armor1->right.id != armor2->left.id && armor1->right.id != armor2->right.id) {
                     continue;
@@ -306,8 +310,8 @@ namespace auto_aim {
 
                 // 装甲板重叠，保留较小的
                 if (armor1->left.id == armor2->left.id || armor1->right.id == armor2->right.id) {
-                    auto area1 = armor1->left.length * armor1->right.length;
-                    auto area2 = armor2->left.length * armor2->right.length;
+                    const auto area1 = armor1->left.length * armor1->right.length;
+                    const auto area2 = armor2->left.length * armor2->right.length;
                     if (area1 < area2)
                         armor2->duplicated = true;
                     else
@@ -329,7 +333,7 @@ namespace auto_aim {
 
     // ============ 结果转换 ============
 
-    spike::ArmorSlots TraditionalDetector::to_armor_slots(uint64_t frame_id, uint64_t timestamp_ns) const {
+    spike::ArmorSlots TraditionalDetector::to_armor_slots(const uint64_t frame_id, const uint64_t timestamp_ns) const {
         spike::ArmorSlots result;
         result.frame_id = frame_id;
         result.timestamp_ns = timestamp_ns;
@@ -394,10 +398,10 @@ namespace auto_aim {
 
         // 扩展并裁剪ROI
         cv::Rect roi_box = lightbar.rotated_rect.boundingRect();
-        roi_box.x -= static_cast<int>(roi_box.width * ROI_SCALE);
-        roi_box.y -= static_cast<int>(roi_box.height * ROI_SCALE);
-        roi_box.width += static_cast<int>(2 * roi_box.width * ROI_SCALE);
-        roi_box.height += static_cast<int>(2 * roi_box.height * ROI_SCALE);
+        roi_box.x -= static_cast<int>(static_cast<float>(roi_box.width) * ROI_SCALE);
+        roi_box.y -= static_cast<int>(static_cast<float>(roi_box.height) * ROI_SCALE);
+        roi_box.width += static_cast<int>(2.0 * roi_box.width * ROI_SCALE);
+        roi_box.height += static_cast<int>(2.0 * roi_box.height * ROI_SCALE);
 
         // 边界约束
         roi_box &= cv::Rect(0, 0, gray_img.cols, gray_img.rows);
@@ -436,24 +440,25 @@ namespace auto_aim {
         // PCA计算对称轴方向
         cv::PCA pca(cv::Mat(points).reshape(1), cv::Mat(), cv::PCA::DATA_AS_ROW);
         cv::Point2f axis(pca.eigenvectors.at<float>(0, 0), pca.eigenvectors.at<float>(0, 1));
-        float axis_norm = cv::norm(axis);
+        auto axis_norm = cv::norm(axis);
         if (axis_norm < 1e-6f)
             return;
         axis /= axis_norm;
         if (axis.y > 0)
             axis = -axis;
 
-        const auto find_corner = [&](int direction) -> cv::Point2f {
+        const auto find_corner = [&](const float direction) -> cv::Point2f {
             const float dx = axis.x * direction;
             const float dy = axis.y * direction;
-            const float search_length = static_cast<float>(lightbar.length) * (SEARCH_END - SEARCH_START);
+            const auto length = static_cast<float>(lightbar.length);
+            const float search_length = length * (SEARCH_END - SEARCH_START);
 
             std::vector<cv::Point2f> candidates;
 
             const int half_width = static_cast<int>((lightbar.width - 2) / 2);
             for (int i_offset = -half_width; i_offset <= half_width; ++i_offset) {
-                cv::Point2f start_point(centroid.x + static_cast<float>(lightbar.length) * SEARCH_START * dx + i_offset,
-                                        centroid.y + static_cast<float>(lightbar.length) * SEARCH_START * dy);
+                const cv::Point2f start_point(centroid.x + length * SEARCH_START * dx + static_cast<float>(i_offset),
+                                              centroid.y + length * SEARCH_START * dy);
 
                 cv::Point2f corner = start_point;
                 float max_diff = 0;
@@ -462,22 +467,22 @@ namespace auto_aim {
                 for (float step = 0; step < search_length; ++step) {
                     const cv::Point2f cur_point(start_point.x + dx * step, start_point.y + dy * step);
 
-                    if (cur_point.x < 0 || cur_point.x >= gray_img.cols || cur_point.y < 0 ||
-                        cur_point.y >= gray_img.rows) {
+                    const double cols = gray_img.cols;
+                    const double rows = gray_img.rows;
+                    if (cur_point.x < 0 || cur_point.x >= cols || cur_point.y < 0 || cur_point.y >= rows) {
                         break;
                     }
 
                     cv::Point2f prev_point = cur_point - cv::Point2f(dx, dy);
-                    if (prev_point.x < 0 || prev_point.x >= gray_img.cols || prev_point.y < 0 ||
-                        prev_point.y >= gray_img.rows) {
+                    if (prev_point.x < 0 || prev_point.x >= cols || prev_point.y < 0 || prev_point.y >= rows) {
                         continue;
                     }
 
-                    const auto prev_val = gray_img.at<uchar>(cv::Point2i(prev_point));
-                    const auto cur_val = gray_img.at<uchar>(cv::Point2i(cur_point));
-                    const float diff = static_cast<float>(prev_val) - static_cast<float>(cur_val);
+                    const float prev_val = gray_img.at<uchar>(cv::Point2i(prev_point));
+                    const float cur_val = gray_img.at<uchar>(cv::Point2i(cur_point));
 
-                    if (diff > max_diff && prev_val > mean_val) {
+                    if (const float diff = static_cast<float>(prev_val) - static_cast<float>(cur_val);
+                        diff > max_diff && prev_val > mean_val) {
                         max_diff = diff;
                         corner = prev_point;
                         found = true;
@@ -490,7 +495,7 @@ namespace auto_aim {
             }
 
             if (candidates.empty()) {
-                return cv::Point2f(-1, -1);
+                return {-1.0, -1.0};
             }
             return std::accumulate(candidates.begin(), candidates.end(), cv::Point2f(0, 0)) /
                    static_cast<float>(candidates.size());

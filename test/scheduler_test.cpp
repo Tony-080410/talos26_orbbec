@@ -56,8 +56,8 @@ TEST(LatestValueTest, TryReadNewData) {
 
 TEST(LatestValueTest, ConcurrentReadWrite) {
     LatestValue<int> lv;
-    std::atomic<bool> running{true};
-    std::atomic<int> read_count{0};
+    std::atomic running{true};
+    std::atomic read_count{0};
 
     // Writer thread
     std::thread writer([&] {
@@ -109,7 +109,7 @@ TEST(SchedulerTest, InitStartStop) {
 TEST(SchedulerTest, PushFrame) {
     TestStrategy strategy;
     Scheduler<TestStrategy> sched;
-    RuntimeConfig config;
+    constexpr RuntimeConfig config;
     sched.init(config, &strategy);
     sched.start();
 
@@ -126,10 +126,10 @@ TEST(SchedulerTest, PushFrame) {
 TEST(SchedulerTest, FullPipeline) {
     TestStrategy strategy;
 
-    std::atomic<int> detect_count{0};
-    std::atomic<int> track_count{0};
-    std::atomic<int> solve_count{0};
-    std::atomic<int> output_count{0};
+    std::atomic detect_count{0};
+    std::atomic track_count{0};
+    std::atomic solve_count{0};
+    std::atomic output_count{0};
 
     strategy.set_detect([&](const SharedFeature &sf) {
         detect_count.fetch_add(1, std::memory_order_relaxed);
@@ -158,7 +158,7 @@ TEST(SchedulerTest, FullPipeline) {
     strategy.set_output([&](const SolverOutput &) { output_count.fetch_add(1, std::memory_order_relaxed); });
 
     Scheduler<TestStrategy> sched;
-    RuntimeConfig config;
+    constexpr RuntimeConfig config;
     sched.init(config, &strategy);
     sched.start();
 
@@ -200,7 +200,7 @@ TEST(SchedulerTest, ConfigHotUpdate) {
 TEST(SchedulerTest, StatsReset) {
     TestStrategy strategy;
     Scheduler<TestStrategy> sched;
-    RuntimeConfig config;
+    constexpr RuntimeConfig config;
     sched.init(config, &strategy);
     sched.start();
 
@@ -292,10 +292,10 @@ TEST(LatencyHistogramTest, ConcurrentRecord) {
 TEST(SchedulerTest, PreprocessorCallback) {
     TestStrategy strategy;
     Scheduler<TestStrategy> sched;
-    RuntimeConfig config;
+    constexpr RuntimeConfig config;
     sched.init(config, &strategy);
 
-    std::atomic<int> preprocess_count{0};
+    std::atomic preprocess_count{0};
 
     strategy.set_preprocess([&](SharedFeature &sf) {
         preprocess_count.fetch_add(1, std::memory_order_relaxed);
@@ -328,7 +328,7 @@ TEST(SchedulerTest, PreprocessorCallback) {
 TEST(SchedulerTest, HighFrequencyFrames) {
     TestStrategy strategy;
 
-    std::atomic<int> detect_count{0};
+    std::atomic detect_count{0};
 
     strategy.set_detect([&](const SharedFeature &sf) {
         detect_count.fetch_add(1, std::memory_order_relaxed);
@@ -352,7 +352,7 @@ TEST(SchedulerTest, HighFrequencyFrames) {
         return out;
     });
     Scheduler<TestStrategy> sched;
-    RuntimeConfig config;
+    constexpr RuntimeConfig config;
     sched.init(config, &strategy);
 
     sched.start();
@@ -399,7 +399,7 @@ TEST(SchedulerTest, LatencyHistogramStats) {
         return out;
     });
     Scheduler<TestStrategy> sched;
-    RuntimeConfig config;
+    constexpr RuntimeConfig config;
     sched.init(config, &strategy);
     sched.start();
 

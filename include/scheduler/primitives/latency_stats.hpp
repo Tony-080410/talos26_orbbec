@@ -4,6 +4,7 @@
 #include <iostream>
 #include <numeric>
 #include <vector>
+#include <ranges>
 
 namespace scheduler {
     using namespace std::chrono_literals;
@@ -25,7 +26,7 @@ namespace scheduler {
                 return;
             }
 
-            std::sort(samples.begin(), samples.end());
+            std::ranges::sort(samples);
             const auto sum = std::accumulate(samples.begin(), samples.end(), 0ULL);
             const auto avg = sum / samples.size();
             const auto p50 = samples[samples.size() / 2];

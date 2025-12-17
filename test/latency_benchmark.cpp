@@ -11,7 +11,7 @@ namespace spike::bench {
     static void BM_TripleBufferPublish(benchmark::State &state) {
         TripleBuffer<ArmorSlots> buffer;
 
-        for (auto _: state) {
+        for ([[maybe_unused]] auto _: state) {
             auto &slot = buffer.borrow_mut();
             slot.valid_mask = 0x0F;
             buffer.publish();
@@ -29,7 +29,7 @@ namespace spike::bench {
         slot.valid_mask = 0x0F;
         buffer.publish();
 
-        for (auto _: state) {
+        for ([[maybe_unused]] auto _: state) {
             auto ptr = buffer.borrow();
             benchmark::DoNotOptimize(ptr);
         }
@@ -42,7 +42,7 @@ namespace spike::bench {
     // ============================================================================
 
     static void BM_StateTransitionIdleToDetecting(benchmark::State &state) {
-        for (auto _: state) {
+        for ([[maybe_unused]] auto _: state) {
             TrackerSoA tracker;
             benchmark::DoNotOptimize(tracker.try_start_detecting());
         }
@@ -54,7 +54,7 @@ namespace spike::bench {
         TrackerSoA tracker;
         tracker.state.store(TrackerState::TRACKING, std::memory_order_relaxed);
 
-        for (auto _: state) {
+        for ([[maybe_unused]] auto _: state) {
             benchmark::DoNotOptimize(tracker.try_enter_lost());
             // Reset for next iteration
             tracker.state.store(TrackerState::TRACKING, std::memory_order_relaxed);
@@ -71,7 +71,7 @@ namespace spike::bench {
         ArmorSlots slots;
         slots.valid_mask = 0x0F; // 4 valid armors
 
-        for (auto _: state) {
+        for ([[maybe_unused]] auto _: state) {
             benchmark::DoNotOptimize(slots.count_valid());
         }
     }
@@ -87,7 +87,7 @@ namespace spike::bench {
         tracker.pos[0] = 1.0f;
         tracker.vel[0] = 0.5f;
 
-        for (auto _: state) {
+        for ([[maybe_unused]] auto _: state) {
             // Simulate typical tracker predict operation
             tracker.pos[0] += tracker.vel[0] * 0.004f; // 4ms timestep
             tracker.pos[1] += tracker.vel[1] * 0.004f;

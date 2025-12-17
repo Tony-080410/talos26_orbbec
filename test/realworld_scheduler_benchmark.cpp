@@ -28,13 +28,13 @@ using namespace std::chrono_literals;
 class RealworldStrategy {
 public:
     // SchedulerStrategy concept实现
-    inline void preprocess(SharedFeature &sf) {
-        auto t0 = std::chrono::steady_clock::now();
+    void preprocess(SharedFeature &sf) {
+        const auto t0 = std::chrono::steady_clock::now();
 
         if (sf.image && sf.image->rows() > 0) {
             // 获取复用 buffer
-            auto gray = gray_pool.acquire();
-            auto small = small_pool.acquire();
+            const auto gray = gray_pool.acquire();
+            const auto small = small_pool.acquire();
 
             // 灰度转换
             cv::cvtColor(sf.image->mat(), gray->mat(), cv::COLOR_BGR2GRAY);
@@ -48,12 +48,12 @@ public:
             gray_pool.release(gray);
         }
 
-        auto t1 = std::chrono::steady_clock::now();
+        const auto t1 = std::chrono::steady_clock::now();
         preprocess_latency.record(std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count());
     }
 
-    inline Detection detect(const SharedFeature &sf) {
-        auto t0 = std::chrono::steady_clock::now();
+    Detection detect(const SharedFeature &sf) {
+        const auto t0 = std::chrono::steady_clock::now();
 
         Detection det;
         det.frame_seq = sf.frame_seq;
@@ -78,14 +78,14 @@ public:
 
         processed_count.fetch_add(1, std::memory_order_relaxed);
 
-        auto t1 = std::chrono::steady_clock::now();
+        const auto t1 = std::chrono::steady_clock::now();
         detect_latency.record(std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count());
 
         return det;
     }
 
-    inline TrackResult track(const Detection &det, const SharedFeature &sf) {
-        auto t0 = std::chrono::steady_clock::now();
+    TrackResult track(const Detection &det, const SharedFeature &sf) {
+        const auto t0 = std::chrono::steady_clock::now();
 
         TrackResult tr;
         tr.frame_seq = det.frame_seq;
@@ -98,13 +98,13 @@ public:
         }
         (void) sum;
 
-        auto t1 = std::chrono::steady_clock::now();
+        const auto t1 = std::chrono::steady_clock::now();
         track_latency.record(std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count());
 
         return tr;
     }
 
-    inline SolverOutput solve(const TrackResult &tr) {
+    SolverOutput solve(const TrackResult &tr) {
         SolverOutput out;
         out.frame_seq = tr.frame_seq;
         out.timestamp_ns = tr.timestamp_ns;
@@ -119,13 +119,13 @@ public:
         return out;
     }
 
-    inline void output(const SolverOutput &out) {
-        auto now = std::chrono::steady_clock::now().time_since_epoch().count();
+    void output(const SolverOutput &out) {
+        const auto now = std::chrono::steady_clock::now().time_since_epoch().count();
         e2e_latency.record(now - out.timestamp_ns);
         output_count.fetch_add(1, std::memory_order_relaxed);
     }
 
-    RealworldStrategy(size_t count, int rows, int cols) noexcept :
+    RealworldStrategy(const size_t count, const int rows, const int cols) noexcept :
         frame_pool(count, rows, cols, CV_8UC3), gray_pool(count, rows, cols, CV_8UC1),
         small_pool(count, rows, cols, CV_8UC1) {}
 
@@ -148,7 +148,7 @@ public:
 
 // ============ 主测试 ============
 
-int main(int argc, char **argv) {
+int main(const int argc, char **argv) {
     // 参数
     int camera_id = 0;
     int duration_sec = 5;
@@ -207,7 +207,7 @@ int main(int argc, char **argv) {
     sched.start();
 
     // 帧获取线程
-    std::atomic<bool> running{true};
+    std::atomic running{true};
     cv::Mat synthetic_frame(frame_height, frame_width, CV_8UC3);
 
     std::thread capture_thread([&] {
@@ -226,8 +226,8 @@ int main(int argc, char **argv) {
                 }
             } else {
                 // 合成数据
-                auto seq = strategy.frame_count.load();
-                synthetic_frame.setTo(cv::Scalar(seq % 256, (seq * 2) % 256, (seq * 3) % 256));
+                const auto seq = strategy.frame_count.load();
+                synthetic_frame.setTo(cv::Scalar(seq % 256, seq * 2 % 256, seq * 3 % 256));
                 synthetic_frame.copyTo(buffer->mat());
             }
 
@@ -259,19 +259,19 @@ int main(int argc, char **argv) {
     // 运行指定时间
     std::cout << "Running for " << duration_sec << " seconds...\n\n";
 
-    auto start_time = std::chrono::steady_clock::now();
-    auto end_time = start_time + std::chrono::seconds(duration_sec);
+    const auto start_time = std::chrono::steady_clock::now();
+    const auto end_time = start_time + std::chrono::seconds(duration_sec);
 
     while (std::chrono::steady_clock::now() < end_time) {
         std::this_thread::sleep_for(100ms);
 
         // 实时统计
-        auto elapsed =
+        const auto elapsed =
                 std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now() - start_time).count();
-        auto frames = strategy.frame_count.load();
-        auto processed = strategy.processed_count.load();
-        auto outputs = strategy.output_count.load();
-        auto dropped = sched.stats().frame_drop.load();
+        const auto frames = strategy.frame_count.load();
+        const auto processed = strategy.processed_count.load();
+        const auto outputs = strategy.output_count.load();
+        const auto dropped = sched.stats().frame_drop.load();
 
         std::cout << "\r[" << elapsed << "s] "
                   << "Frames: " << frames << ", Processed: " << processed << ", Outputs: " << outputs
@@ -287,10 +287,10 @@ int main(int argc, char **argv) {
     // 最终统计
     std::cout << "\n\n=== Final Statistics ===\n";
 
-    auto total_frames = strategy.frame_count.load();
-    auto total_processed = strategy.processed_count.load();
-    auto total_outputs = strategy.output_count.load();
-    auto total_dropped = sched.stats().frame_drop.load();
+    const auto total_frames = strategy.frame_count.load();
+    const auto total_processed = strategy.processed_count.load();
+    const auto total_outputs = strategy.output_count.load();
+    const auto total_dropped = sched.stats().frame_drop.load();
 
     std::cout << "Total Frames:    " << total_frames << "\n";
     std::cout << "Total Processed: " << total_processed << "\n";

@@ -204,7 +204,7 @@ TEST_F(UKFTest, PredictUpdateCycle) {
 
     for (int i = 0; i < 100; ++i) {
         predict(tracker, ukf, 2.0f);
-        const float noise = (i % 2 == 0) ? 0.01f : -0.01f;
+        const float noise = i % 2 == 0 ? 0.01f : -0.01f;
         Vec3 meas(tracker.pos[0] + noise, tracker.pos[1], tracker.pos[2]);
         update(tracker, ukf, meas, 0.0f);
     }

@@ -5,6 +5,7 @@
 #include <fstream>
 #include <opencv2/opencv.hpp>
 #include <optional>
+#include <ranges>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -21,19 +22,19 @@ namespace auto_aim {
      * - x1,y1...x4,y4: normalized corner points (0-1 range)
      */
     struct GroundTruth {
-        uint8_t color; // 0=Blue, 1=Red, 2=Gray, 3=Purple
-        uint8_t type; // 0=Small, 1=Large
-        uint8_t label; // ArmorLabel enum
+        uint8_t color{}; // 0=Blue, 1=Red, 2=Gray, 3=Purple
+        uint8_t type{}; // 0=Small, 1=Large
+        uint8_t label{}; // ArmorLabel enum
         std::array<cv::Point2f, 4> points; // Corner points (pixel coords)
         cv::Point2f center; // Computed center
 
         // Compute bounding box
-        cv::Rect2f bounding_box() const {
-            float min_x = std::min({points[0].x, points[1].x, points[2].x, points[3].x});
-            float min_y = std::min({points[0].y, points[1].y, points[2].y, points[3].y});
-            float max_x = std::max({points[0].x, points[1].x, points[2].x, points[3].x});
-            float max_y = std::max({points[0].y, points[1].y, points[2].y, points[3].y});
-            return cv::Rect2f(min_x, min_y, max_x - min_x, max_y - min_y);
+        [[nodiscard]] constexpr cv::Rect2f bounding_box() const {
+            const float min_x = std::min({points[0].x, points[1].x, points[2].x, points[3].x});
+            const float min_y = std::min({points[0].y, points[1].y, points[2].y, points[3].y});
+            const float max_x = std::max({points[0].x, points[1].x, points[2].x, points[3].x});
+            const float max_y = std::max({points[0].y, points[1].y, points[2].y, points[3].y});
+            return {min_x, min_y, max_x - min_x, max_y - min_y};
         }
     };
 
@@ -44,7 +45,7 @@ namespace auto_aim {
         std::string name;
         cv::Mat image;
         std::vector<GroundTruth> ground_truths;
-        uint64_t frame_id;
+        uint64_t frame_id{};
     };
 
     /**
@@ -72,7 +73,7 @@ namespace auto_aim {
         /**
          * @brief Load a specific frame by index
          */
-        std::optional<DatasetFrame> load_frame(size_t index) const {
+        [[nodiscard]] std::optional<DatasetFrame> load_frame(const size_t index) const {
             if (index >= frame_names_.size()) {
                 return std::nullopt;
             }
@@ -83,15 +84,14 @@ namespace auto_aim {
             frame.frame_id = index;
 
             // Load image
-            auto image_path = image_dir_ / (name + ".jpg");
+            const auto image_path = image_dir_ / (name + ".jpg");
             frame.image = cv::imread(image_path.string(), cv::IMREAD_COLOR);
             if (frame.image.empty()) {
                 return std::nullopt;
             }
 
             // Load labels
-            auto label_path = label_dir_ / (name + ".txt");
-            if (!load_labels(label_path, frame)) {
+            if (const auto label_path = label_dir_ / (name + ".txt"); !load_labels(label_path, frame)) {
                 return std::nullopt;
             }
 
@@ -103,7 +103,7 @@ namespace auto_aim {
          */
         class Iterator {
         public:
-            Iterator(const DatasetLoader *loader, size_t index) : loader_(loader), index_(index) {}
+            Iterator(const DatasetLoader *loader, const size_t index) : loader_(loader), index_(index) {}
 
             std::optional<DatasetFrame> operator*() const { return loader_->load_frame(index_); }
 
@@ -118,8 +118,8 @@ namespace auto_aim {
             size_t index_;
         };
 
-        Iterator begin() const { return Iterator(this, 0); }
-        Iterator end() const { return Iterator(this, frame_names_.size()); }
+        [[nodiscard]] Iterator begin() const { return {this, 0}; }
+        [[nodiscard]] Iterator end() const { return {this, frame_names_.size()}; }
 
     private:
         std::filesystem::path dataset_path_;
@@ -136,25 +136,24 @@ namespace auto_aim {
                 if (entry.path().extension() == ".jpg") {
                     auto stem = entry.path().stem().string();
                     // Check if corresponding label exists
-                    auto label_path = label_dir_ / (stem + ".txt");
-                    if (std::filesystem::exists(label_path)) {
+                    if (auto label_path = label_dir_ / (stem + ".txt"); std::filesystem::exists(label_path)) {
                         frame_names_.push_back(stem);
                     }
                 }
             }
 
             // Sort by name for deterministic order
-            std::sort(frame_names_.begin(), frame_names_.end());
+            std::ranges::sort(frame_names_);
         }
 
-        bool load_labels(const std::filesystem::path &path, DatasetFrame &frame) const {
+        static bool load_labels(const std::filesystem::path &path, DatasetFrame &frame) {
             std::ifstream file(path);
             if (!file.is_open()) {
                 return false;
             }
 
-            int img_width = frame.image.cols;
-            int img_height = frame.image.rows;
+            auto img_width = static_cast<float>(frame.image.cols);
+            auto img_height = static_cast<float>(frame.image.rows);
 
             std::string line;
             while (std::getline(file, line)) {
@@ -178,7 +177,7 @@ namespace auto_aim {
                     int cls = static_cast<int>(values[0]);
                     // Class encoding: assume class contains color info
                     // Common encoding: 0-3 = blue armors, 4-7 = red armors
-                    gt.color = (cls >= 4) ? 1 : 0; // 0=blue, 1=red
+                    gt.color = cls >= 4 ? 1 : 0; // 0=blue, 1=red
                     gt.type = 0; // Default small
                     gt.label = static_cast<uint8_t>(cls % 4);
                     x1 = values[1];
@@ -243,23 +242,23 @@ namespace auto_aim {
         int type_correct{0};
         int type_total{0};
 
-        [[nodiscard]] double precision() const {
+        [[nodiscard]] constexpr double precision() const {
             return total_det > 0 ? static_cast<double>(true_positives) / total_det : 0.0;
         }
 
-        [[nodiscard]] double recall() const {
+        [[nodiscard]] constexpr double recall() const {
             return total_gt > 0 ? static_cast<double>(true_positives) / total_gt : 0.0;
         }
 
-        [[nodiscard]] double f1_score() const {
-            double p = precision();
-            double r = recall();
-            return (p + r) > 0 ? 2 * p * r / (p + r) : 0.0;
+        [[nodiscard]] constexpr double f1_score() const {
+            const double p = precision();
+            const double r = recall();
+            return p + r > 0 ? 2 * p * r / (p + r) : 0.0;
         }
 
-        [[nodiscard]] double mean_iou() const { return iou_count > 0 ? iou_sum / iou_count : 0.0; }
+        [[nodiscard]] constexpr double mean_iou() const { return iou_count > 0 ? iou_sum / iou_count : 0.0; }
 
-        [[nodiscard]] double color_accuracy() const {
+        [[nodiscard]] constexpr double color_accuracy() const {
             return color_total > 0 ? static_cast<double>(color_correct) / color_total : 0.0;
         }
 
@@ -298,18 +297,18 @@ namespace auto_aim {
     /**
      * @brief Calculate IoU between two bounding boxes
      */
-    inline double calculate_iou(const cv::Rect2f &a, const cv::Rect2f &b) {
-        float x1 = std::max(a.x, b.x);
-        float y1 = std::max(a.y, b.y);
-        float x2 = std::min(a.x + a.width, b.x + b.width);
-        float y2 = std::min(a.y + a.height, b.y + b.height);
+    constexpr double calculate_iou(const cv::Rect2f &a, const cv::Rect2f &b) {
+        const float x1 = std::max(a.x, b.x);
+        const float y1 = std::max(a.y, b.y);
+        const float x2 = std::min(a.x + a.width, b.x + b.width);
+        const float y2 = std::min(a.y + a.height, b.y + b.height);
 
         if (x2 <= x1 || y2 <= y1) {
             return 0.0;
         }
 
-        float intersection = (x2 - x1) * (y2 - y1);
-        float union_area = a.area() + b.area() - intersection;
+        const float intersection = (x2 - x1) * (y2 - y1);
+        const float union_area = a.area() + b.area() - intersection;
 
         return union_area > 0 ? intersection / union_area : 0.0;
     }

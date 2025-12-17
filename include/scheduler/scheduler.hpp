@@ -114,7 +114,7 @@ namespace scheduler {
         /**
          * @brief 检查是否在运行
          */
-        [[nodiscard]] inline bool is_running() const noexcept { return running_.load(std::memory_order_acquire); }
+        [[nodiscard]] bool is_running() const noexcept { return running_.load(std::memory_order_acquire); }
 
         // ============ 数据输入 ============
 
@@ -122,7 +122,7 @@ namespace scheduler {
          * @brief 推送新帧 (非阻塞)
          * @return true 如果成功入队, false 如果队列满
          */
-        inline bool push_frame(Frame frame) noexcept {
+        bool push_frame(Frame frame) noexcept {
             stats_.frame_in.fetch_add(1, std::memory_order_relaxed);
 
             // 检查队列是否已满
@@ -150,12 +150,12 @@ namespace scheduler {
         /**
          * @brief 获取当前配置
          */
-        [[nodiscard]] inline RuntimeConfig get_config() const noexcept { return *config_; }
+        [[nodiscard]] RuntimeConfig get_config() const noexcept { return *config_; }
 
         // ============ 统计 ============
 
-        [[nodiscard]] inline const Stats &stats() const noexcept { return stats_; }
-        inline void reset_stats() noexcept { stats_.reset(); }
+        [[nodiscard]] const Stats &stats() const noexcept { return stats_; }
+        void reset_stats() noexcept { stats_.reset(); }
 
     private:
         // ============ 数据通道 ============

@@ -37,8 +37,8 @@ namespace scheduler {
          *
          * 使用double-checked locking模式避免虚假唤醒
          */
-        inline void wait() noexcept {
-            std::unique_lock<std::mutex> lock(mutex_);
+        void wait() noexcept {
+            std::unique_lock lock(mutex_);
             cv_.wait(lock, [this] { return signaled_; });
             signaled_ = false;
         }
@@ -48,8 +48,8 @@ namespace scheduler {
          *
          * @return true 如果收到信号，false 如果超时
          */
-        inline bool wait_for(uint64_t timeout_ms) noexcept {
-            std::unique_lock<std::mutex> lock(mutex_);
+        bool wait_for(const uint64_t timeout_ms) noexcept {
+            std::unique_lock lock(mutex_);
             const bool result = cv_.wait_for(lock, std::chrono::milliseconds(timeout_ms), [this] { return signaled_; });
             if (result) {
                 signaled_ = false;
@@ -60,16 +60,16 @@ namespace scheduler {
         /**
          * @brief 唤醒单个等待者
          */
-        inline void notify_one() noexcept { this->notify_all(); }
+        void notify_one() noexcept { this->notify_all(); }
 
         /**
          * @brief 唤醒所有等待者
          *
          * macOS dispatch_semaphore在这个场景下比mutex更慢，所以使用mutex
          */
-        inline void notify_all() noexcept {
+        void notify_all() noexcept {
             {
-                std::lock_guard<std::mutex> lock(mutex_);
+                std::lock_guard lock(mutex_);
                 signaled_ = true;
             }
             cv_.notify_all();

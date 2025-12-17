@@ -47,9 +47,9 @@ namespace scheduler {
             // macOS不支持严格的CPU绑定，使用affinity tag作为提示
             // 相同tag的线程会倾向于调度到同一核心组
             thread_affinity_policy_data_t policy = {core_id + 1}; // tag从1开始
-            thread_port_t mach_thread = pthread_mach_thread_np(pthread_self());
+            const thread_port_t mach_thread = pthread_mach_thread_np(pthread_self());
 
-            kern_return_t result =
+            const kern_return_t result =
                     thread_policy_set(mach_thread, THREAD_AFFINITY_POLICY, reinterpret_cast<thread_policy_t>(&policy),
                                       THREAD_AFFINITY_POLICY_COUNT);
             return result == KERN_SUCCESS;
@@ -104,8 +104,8 @@ namespace scheduler {
             policy.constraint = 100000; // 100us约束
             policy.preemptible = false;
 
-            thread_port_t mach_thread = pthread_mach_thread_np(pthread_self());
-            kern_return_t result =
+            const thread_port_t mach_thread = pthread_mach_thread_np(pthread_self());
+            const kern_return_t result =
                     thread_policy_set(mach_thread, THREAD_TIME_CONSTRAINT_POLICY,
                                       reinterpret_cast<thread_policy_t>(&policy), THREAD_TIME_CONSTRAINT_POLICY_COUNT);
             return result == KERN_SUCCESS;

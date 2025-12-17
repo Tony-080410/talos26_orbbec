@@ -65,32 +65,32 @@ namespace spike {
         uint16_t valid_mask{0}; // Bitmask: bit i = 1 iff armors[i] valid
         uint8_t lightbar_count{0}; // Number of detected lightbars
         uint8_t armor_count{0}; // Number of valid armors
-        uint8_t padding_[4]; // Alignment padding
+        uint8_t padding_[4]{}; // Alignment padding
 
-        std::array<Armor, 10> armors;
-        std::array<Pose, 10> poses;
-        std::array<Lightbar, 20> lightbars;
+        std::array<Armor, 10> armors{};
+        std::array<Pose, 10> poses{};
+        std::array<Lightbar, 20> lightbars{};
 
         uint64_t timestamp_ns{0};
         uint64_t frame_id{0};
 
-        [[nodiscard]] size_t count_valid() const { return __builtin_popcount(valid_mask); }
+        [[nodiscard]] constexpr size_t count_valid() const { return __builtin_popcount(valid_mask); }
 
-        void set_valid(const int slot) {
+        constexpr void set_valid(const int slot) {
             if (slot >= 0 && slot < 10) {
                 valid_mask |= 1u << slot;
             }
         }
 
-        void set_invalid(const int slot) {
+        constexpr void set_invalid(const int slot) {
             if (slot >= 0 && slot < 10) {
                 valid_mask &= ~(1u << slot);
             }
         }
 
-        [[nodiscard]] bool is_valid(const int slot) const { return (valid_mask & (1u << slot)) != 0; }
+        [[nodiscard]] constexpr bool is_valid(const int slot) const { return (valid_mask & 1u << slot) != 0; }
 
-        void clear() {
+        constexpr void clear() {
             valid_mask = 0;
             lightbar_count = 0;
             armor_count = 0;

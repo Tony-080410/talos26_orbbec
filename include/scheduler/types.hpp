@@ -35,7 +35,7 @@ namespace scheduler {
     class ImageBuffer {
     public:
         // 从外部指针构造 (0-copy, 调用者负责生命周期)
-        static std::shared_ptr<ImageBuffer> wrap(void *data, int rows, int cols, int type) {
+        static std::shared_ptr<ImageBuffer> wrap(void *data, const int rows, const int cols, const int type) {
             auto buf = std::make_shared<ImageBuffer>();
             buf->mat_ = cv::Mat(rows, cols, type, data);
             buf->external_ = true;
@@ -51,7 +51,7 @@ namespace scheduler {
         }
 
         // 创建空缓冲
-        static std::shared_ptr<ImageBuffer> create(int rows, int cols, int type) {
+        static std::shared_ptr<ImageBuffer> create(const int rows, const int cols, const int type) {
             auto buf = std::make_shared<ImageBuffer>();
             buf->mat_ = cv::Mat(rows, cols, type);
             buf->external_ = false;
@@ -87,7 +87,7 @@ namespace scheduler {
         ImagePtr image; // 0-copy: shared_ptr 引用计数
 
         // 便捷构造: 从 cv::Mat
-        static Frame from_mat(uint64_t seq, uint64_t ts, cv::Mat mat) {
+        static Frame from_mat(const uint64_t seq, const uint64_t ts, cv::Mat mat) {
             Frame f;
             f.seq = seq;
             f.timestamp_ns = ts;
@@ -96,7 +96,8 @@ namespace scheduler {
         }
 
         // 便捷构造: 从外部缓冲 (0-copy)
-        static Frame wrap(uint64_t seq, uint64_t ts, void *data, int rows, int cols, int type) {
+        static Frame wrap(const uint64_t seq, const uint64_t ts, void *data, const int rows, const int cols,
+                          const int type) {
             Frame f;
             f.seq = seq;
             f.timestamp_ns = ts;
@@ -145,7 +146,7 @@ namespace scheduler {
         int detector_threads{4};
         int max_frame_skip{2};
 
-        std::expected<void, std::string> read_from(const toml::table &tbl) {
+        constexpr std::expected<void, std::string> read_from(const toml::table &tbl) {
             if (const auto _t = tbl["runtime"].as_table()) {
                 auto t = *_t;
                 READ(t, "detector_mode", detector_mode);

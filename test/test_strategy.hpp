@@ -19,37 +19,37 @@ namespace scheduler::test {
         using OutputCb = std::function<void(const SolverOutput &)>;
 
         // 设置回调
-        void set_detect(DetectCb cb) { detect_cb_ = cb; }
-        void set_track(TrackCb cb) { track_cb_ = cb; }
-        void set_solve(SolveCb cb) { solve_cb_ = cb; }
-        void set_preprocess(PreprocessCb cb) { preprocess_cb_ = cb; }
-        void set_output(OutputCb cb) { output_cb_ = cb; }
+        void set_detect(const DetectCb &cb) { detect_cb_ = cb; }
+        void set_track(const TrackCb &cb) { track_cb_ = cb; }
+        void set_solve(const SolveCb &cb) { solve_cb_ = cb; }
+        void set_preprocess(const PreprocessCb &cb) { preprocess_cb_ = cb; }
+        void set_output(const OutputCb &cb) { output_cb_ = cb; }
 
         // SchedulerStrategy concept实现
-        inline void preprocess(SharedFeature &f) const {
+        void preprocess(SharedFeature &f) const {
             if (preprocess_cb_)
                 preprocess_cb_(f);
         }
 
-        inline Detection detect(const SharedFeature &f) const {
+        [[nodiscard]] Detection detect(const SharedFeature &f) const {
             if (detect_cb_)
                 return detect_cb_(f);
             return Detection{};
         }
 
-        inline TrackResult track(const Detection &d, const SharedFeature &f) const {
+        [[nodiscard]] TrackResult track(const Detection &d, const SharedFeature &f) const {
             if (track_cb_)
                 return track_cb_(d, f);
             return TrackResult{};
         }
 
-        inline SolverOutput solve(const TrackResult &tr) const {
+        [[nodiscard]] SolverOutput solve(const TrackResult &tr) const {
             if (solve_cb_)
                 return solve_cb_(tr);
             return SolverOutput{};
         }
 
-        inline void output(const SolverOutput &out) const {
+        void output(const SolverOutput &out) const {
             if (output_cb_)
                 output_cb_(out);
         }

@@ -41,7 +41,7 @@ struct SpVisionDetectorConfig {
 struct SpVisionConfig : scheduler::RuntimeConfig {
     SpVisionDetectorConfig detector{};
 
-    std::expected<void, std::string> read_from(const toml::table &tbl) {
+    constexpr std::expected<void, std::string> read_from(const toml::table &tbl) {
         if (auto read = RuntimeConfig::read_from(tbl); !read) {
             return read;
         }
@@ -53,7 +53,7 @@ struct SpVisionConfig : scheduler::RuntimeConfig {
 };
 
 
-inline const auto_aim::DetectorConfig convert(SpVisionDetectorConfig &config) {
+constexpr auto convert(const SpVisionDetectorConfig &config) {
     return auto_aim::DetectorConfig{config.threshold,           config.max_angle_error,
                                     config.min_lightbar_ratio,  config.max_lightbar_ratio,
                                     config.min_lightbar_length, config.min_armor_ratio,

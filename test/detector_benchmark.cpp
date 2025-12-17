@@ -4,8 +4,8 @@
  *
  * Usage: ./detector_benchmark <dataset_path> [options]
  * Options:
- *   --threshold <value>   Binary threshold (default: 150)
- *   --iou <value>         IoU threshold for matching (default: 0.3)
+ *   --threshold value   Binary threshold (default: 150)
+ *   --iou value         IoU threshold for matching (default: 0.3)
  *   --debug               Show detection visualization
  */
 
@@ -16,6 +16,7 @@
 #include <oneapi/tbb/task_arena.h>
 #include <opencv2/highgui.hpp>
 #include <opencv2/imgproc.hpp>
+#include <ranges>
 #include <tbb/concurrent_vector.h>
 #include "auto_aim/dataset_loader.hpp"
 #include "auto_aim/detector.hpp"
@@ -29,7 +30,7 @@ using namespace std::chrono;
  * @brief Match detections with ground truth using Hungarian algorithm (greedy)
  */
 AccuracyMetrics evaluate_frame(const spike::ArmorSlots &detections, const std::vector<GroundTruth> &ground_truths,
-                               double iou_threshold = 0.3) {
+                               const double iou_threshold = 0.3) {
     AccuracyMetrics metrics;
     metrics.total_gt = static_cast<int>(ground_truths.size());
 
@@ -38,32 +39,32 @@ AccuracyMetrics evaluate_frame(const spike::ArmorSlots &detections, const std::v
     for (int i = 0; i < 10; i++) {
         if (detections.is_valid(i)) {
             const auto &armor = detections.armors[i];
-            float min_x = std::min({armor.pts[0], armor.pts[2], armor.pts[4], armor.pts[6]});
-            float min_y = std::min({armor.pts[1], armor.pts[3], armor.pts[5], armor.pts[7]});
-            float max_x = std::max({armor.pts[0], armor.pts[2], armor.pts[4], armor.pts[6]});
-            float max_y = std::max({armor.pts[1], armor.pts[3], armor.pts[5], armor.pts[7]});
+            const float min_x = std::min({armor.pts[0], armor.pts[2], armor.pts[4], armor.pts[6]});
+            const float min_y = std::min({armor.pts[1], armor.pts[3], armor.pts[5], armor.pts[7]});
+            const float max_x = std::max({armor.pts[0], armor.pts[2], armor.pts[4], armor.pts[6]});
+            const float max_y = std::max({armor.pts[1], armor.pts[3], armor.pts[5], armor.pts[7]});
             det_boxes.emplace_back(i, cv::Rect2f(min_x, min_y, max_x - min_x, max_y - min_y));
         }
     }
     metrics.total_det = static_cast<int>(det_boxes.size());
 
     // Greedy matching based on IoU
-    std::vector<bool> gt_matched(ground_truths.size(), false);
-    std::vector<bool> det_matched(det_boxes.size(), false);
+    std::vector gt_matched(ground_truths.size(), false);
+    std::vector det_matched(det_boxes.size(), false);
 
     // Build IoU matrix and sort by IoU descending
     std::vector<std::tuple<double, int, int>> iou_pairs; // (iou, det_idx, gt_idx)
     for (size_t d = 0; d < det_boxes.size(); d++) {
         for (size_t g = 0; g < ground_truths.size(); g++) {
-            double iou = calculate_iou(det_boxes[d].second, ground_truths[g].bounding_box());
-            if (iou >= iou_threshold) {
+            if (double iou = calculate_iou(det_boxes[d].second, ground_truths[g].bounding_box());
+                iou >= iou_threshold) {
                 iou_pairs.emplace_back(iou, d, g);
             }
         }
     }
 
     // Sort by IoU descending
-    std::sort(iou_pairs.begin(), iou_pairs.end(),
+    std::ranges::sort(iou_pairs,
               [](const auto &a, const auto &b) { return std::get<0>(a) > std::get<0>(b); });
 
     // Greedy assignment
@@ -86,8 +87,7 @@ AccuracyMetrics evaluate_frame(const spike::ArmorSlots &detections, const std::v
         // Map: GT color 0=Blue, 1=Red -> Detection color 0=red, 1=blue
         // Note: detector_state.hpp has: enum class Color { red = 0, blue = 1, ... }
         // Dataset has: 0=Blue, 1=Red
-        uint8_t expected_det_color = (gt.color == 0) ? 1 : 0; // Blue->1, Red->0
-        if (det.color == expected_det_color) {
+        if (const uint8_t expected_det_color = gt.color == 0 ? 1 : 0; det.color == expected_det_color) {
             metrics.color_correct++;
         }
 
@@ -96,18 +96,17 @@ AccuracyMetrics evaluate_frame(const spike::ArmorSlots &detections, const std::v
         // GT type: 0=Small, 1=Large -> Detection type: 0=big, 1=small
         // detector_state.hpp: enum class ArmorType { big = 0, small = 1 }
         // Dataset: 0=Small, 1=Large
-        uint8_t expected_det_type = (gt.type == 0) ? 1 : 0; // Small->1, Large->0
-        if (det.type == expected_det_type) {
+        if (const uint8_t expected_det_type = gt.type == 0 ? 1 : 0; det.type == expected_det_type) {
             metrics.type_correct++;
         }
     }
 
     // Count false positives and false negatives
-    for (bool matched: det_matched) {
+    for (const bool matched: det_matched) {
         if (!matched)
             metrics.false_positives++;
     }
-    for (bool matched: gt_matched) {
+    for (const bool matched: gt_matched) {
         if (!matched)
             metrics.false_negatives++;
     }
@@ -142,7 +141,7 @@ void visualize_frame(const cv::Mat &image, const spike::ArmorSlots &detections,
                 pts.emplace_back(static_cast<int>(armor.pts[j * 2]), static_cast<int>(armor.pts[j * 2 + 1]));
             }
 
-            cv::Scalar color = (armor.color == 0) ? cv::Scalar(0, 0, 255) : cv::Scalar(255, 0, 0);
+            cv::Scalar color = armor.color == 0 ? cv::Scalar(0, 0, 255) : cv::Scalar(255, 0, 0);
             cv::polylines(display, pts, true, color, 1);
 
             cv::putText(display, fmt::format("D c{} t{} {:.2f}", armor.color, armor.type, armor.confidence),
@@ -162,8 +161,7 @@ int main(int argc, char **argv) {
 
     // Parse arguments
     for (int i = 1; i < argc; i++) {
-        std::string arg = argv[i];
-        if (arg == "--iou" && i + 1 < argc) {
+        if (std::string arg = argv[i]; arg == "--iou" && i + 1 < argc) {
             iou_threshold = std::stod(argv[++i]);
         } else if (arg == "--debug") {
             debug = true;
@@ -250,7 +248,7 @@ int main(int argc, char **argv) {
 
     // Calculate latency statistics
     if (!latencies.empty()) {
-        std::sort(latencies.begin(), latencies.end());
+        std::ranges::sort(latencies);
         double p50 = latencies[latencies.size() / 2];
         double p99 = latencies[static_cast<size_t>(latencies.size() * 0.99)];
         double mean = std::accumulate(latencies.begin(), latencies.end(), 0.0) / latencies.size();

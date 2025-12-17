@@ -69,7 +69,7 @@ namespace spike {
     /**
      * @brief Ultra-fast CV prediction
      */
-    inline void predict(TrackerSoA &tracker, UKFState &ukf, float dt_ms) {
+    constexpr void predict(TrackerSoA &tracker, UKFState &ukf, float dt_ms) {
         const float dt = dt_ms * 0.001f;
         const float dt2 = dt * dt;
 
@@ -100,7 +100,7 @@ namespace spike {
     /**
      * @brief Batch update for 4 observations (pos_xyz + yaw)
      */
-    inline void update(TrackerSoA &tracker, UKFState &ukf, const Vec3 &measured_pos, float measured_yaw) {
+    constexpr void update(TrackerSoA &tracker, UKFState &ukf, const Vec3 &measured_pos, float measured_yaw) {
         auto &P = ukf.P_;
 
         // Innovation
@@ -172,7 +172,7 @@ namespace spike {
     /**
      * @brief Scalar update for single observation
      */
-    inline void scalar_update(TrackerSoA &tracker, UKFState &ukf, int obs_idx, float measurement, float R) {
+    constexpr void scalar_update(TrackerSoA &tracker, UKFState &ukf, int obs_idx, float measurement, float R) {
         auto &P = ukf.P_;
 
         float *x_ptr;

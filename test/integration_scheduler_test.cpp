@@ -123,11 +123,11 @@ TEST_F(SchedulerIntegrationTest, ZeroCopyFromMat) {
 TEST_F(SchedulerIntegrationTest, FullPipelineWithRealImage) {
     constexpr int kFrameCount = 100;
 
-    std::atomic<int> preprocess_count{0};
-    std::atomic<int> detect_count{0};
-    std::atomic<int> track_count{0};
-    std::atomic<int> solve_count{0};
-    std::atomic<int> output_count{0};
+    std::atomic preprocess_count{0};
+    std::atomic detect_count{0};
+    std::atomic track_count{0};
+    std::atomic solve_count{0};
+    std::atomic output_count{0};
 
     std::vector<uint64_t> e2e_latencies;
     std::mutex latency_mutex;
@@ -141,7 +141,7 @@ TEST_F(SchedulerIntegrationTest, FullPipelineWithRealImage) {
             // 模拟并行预处理
             auto &src = sf.image->mat();
             auto &dst = sf.preprocessed->mat();
-            tbb::parallel_for(0, dst.rows, [&](int y) {
+            tbb::parallel_for(0, dst.rows, [&](const int y) {
                 for (int x = 0; x < dst.cols; ++x) {
                     dst.at<uint8_t>(y, x) = src.at<cv::Vec3b>(y * 2, x * 2)[0];
                 }
@@ -178,9 +178,9 @@ TEST_F(SchedulerIntegrationTest, FullPipelineWithRealImage) {
 
     strategy_.set_output([&](const SolverOutput &out) {
         output_count.fetch_add(1, std::memory_order_relaxed);
-        auto now = std::chrono::steady_clock::now().time_since_epoch().count();
-        auto latency = now - out.timestamp_ns;
-        std::lock_guard<std::mutex> lock(latency_mutex);
+        const auto now = std::chrono::steady_clock::now().time_since_epoch().count();
+        const auto latency = now - out.timestamp_ns;
+        std::lock_guard lock(latency_mutex);
         e2e_latencies.push_back(latency);
     });
 
@@ -238,12 +238,12 @@ TEST_F(SchedulerIntegrationTest, HighLoadStressTest) {
 
     sched_.start();
 
-    auto start = std::chrono::steady_clock::now();
-    auto deadline = start + std::chrono::milliseconds(kDurationMs);
+    const auto start = std::chrono::steady_clock::now();
+    const auto deadline = start + std::chrono::milliseconds(kDurationMs);
 
     while (std::chrono::steady_clock::now() < deadline) {
         cv::Mat img(480, 640, CV_8UC1);
-        auto ts = std::chrono::steady_clock::now().time_since_epoch().count();
+        const auto ts = std::chrono::steady_clock::now().time_since_epoch().count();
         auto frame = Frame::from_mat(frame_sent.load(), ts, std::move(img));
 
         if (sched_.push_frame(std::move(frame))) {
@@ -256,9 +256,9 @@ TEST_F(SchedulerIntegrationTest, HighLoadStressTest) {
     std::this_thread::sleep_for(500ms);
     sched_.stop();
 
-    auto sent = frame_sent.load();
-    auto processed = frame_processed.load();
-    auto dropped = sched_.stats().frame_drop.load();
+    const auto sent = frame_sent.load();
+    const auto processed = frame_processed.load();
+    const auto dropped = sched_.stats().frame_drop.load();
 
     std::cout << "[Stress Test] Sent: " << sent << ", Processed: " << processed << ", Dropped: " << dropped
               << ", Rate: " << (processed * 100.0 / sent) << "%" << std::endl;
@@ -300,9 +300,9 @@ TEST_F(SchedulerIntegrationTest, SchedulingOverheadVerification) {
 
     // 计算统计
     std::sort(push_latencies.begin(), push_latencies.end());
-    auto p50 = push_latencies[push_latencies.size() / 2];
-    auto p99 = push_latencies[push_latencies.size() * 99 / 100];
-    auto max_lat = push_latencies.back();
+    const auto p50 = push_latencies[push_latencies.size() / 2];
+    const auto p99 = push_latencies[push_latencies.size() * 99 / 100];
+    const auto max_lat = push_latencies.back();
 
     std::cout << "[Scheduling Overhead] p50: " << p50 << "ns, "
               << "p99: " << p99 << "ns, "
@@ -382,10 +382,10 @@ TEST_F(SchedulerIntegrationTest, LatencyHistogramVerification) {
 // ============ 配置热更新测试 ============
 
 TEST_F(SchedulerIntegrationTest, ConfigHotUpdateUnderLoad) {
-    std::atomic<int> mode_at_detect{-1};
+    std::atomic mode_at_detect{-1};
 
     strategy_.set_detect([&](const SharedFeature &sf) {
-        auto cfg = sched_.get_config();
+        const auto cfg = sched_.get_config();
         mode_at_detect.store(cfg.detector_mode, std::memory_order_relaxed);
         Detection det;
         det.frame_seq = sf.frame_seq;
@@ -430,7 +430,7 @@ TEST_F(SchedulerIntegrationTest, MultipleProducers) {
     constexpr int kProducers = 4;
     constexpr int kFramesPerProducer = 50;
 
-    std::atomic<int> detect_count{0};
+    std::atomic detect_count{0};
 
     strategy_.set_detect([&](const SharedFeature &sf) {
         detect_count.fetch_add(1, std::memory_order_relaxed);
@@ -460,9 +460,9 @@ TEST_F(SchedulerIntegrationTest, MultipleProducers) {
     std::this_thread::sleep_for(500ms);
     sched_.stop();
 
-    auto total_sent = kProducers * kFramesPerProducer;
-    auto processed = detect_count.load();
-    auto dropped = sched_.stats().frame_drop.load();
+    constexpr auto total_sent = kProducers * kFramesPerProducer;
+    const auto processed = detect_count.load();
+    const auto dropped = sched_.stats().frame_drop.load();
 
     std::cout << "[Multi-Producer] Sent: " << total_sent << ", Processed: " << processed << ", Dropped: " << dropped
               << std::endl;

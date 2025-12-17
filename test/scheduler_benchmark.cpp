@@ -20,7 +20,7 @@ static void BM_TripleBuffer_Write(benchmark::State &state) {
     spike::TripleBuffer<uint64_t> buffer;
     uint64_t seq = 0;
 
-    for (auto _: state) {
+    for ([[maybe_unused]] auto _: state) {
         auto &slot = buffer.borrow_mut();
         slot = seq++;
         buffer.publish();
@@ -39,7 +39,7 @@ static void BM_TripleBuffer_Read(benchmark::State &state) {
     slot = 42;
     buffer.publish();
 
-    for (auto _: state) {
+    for ([[maybe_unused]] auto _: state) {
         auto result = buffer.borrow();
         benchmark::DoNotOptimize(result);
     }
@@ -53,7 +53,7 @@ static void BM_LatestValue_Write(benchmark::State &state) {
     LatestValue<uint64_t> lv;
     uint64_t seq = 0;
 
-    for (auto _: state) {
+    for ([[maybe_unused]] auto _: state) {
         lv.write(seq++);
     }
 
@@ -66,7 +66,7 @@ static void BM_LatestValue_Read(benchmark::State &state) {
     LatestValue<uint64_t> lv;
     lv.write(42);
 
-    for (auto _: state) {
+    for ([[maybe_unused]] auto _: state) {
         auto val = lv.read();
         benchmark::DoNotOptimize(val);
     }
@@ -82,7 +82,7 @@ static void BM_LatestValue_TryRead(benchmark::State &state) {
     uint64_t value = 0;
 
     // Writer thread
-    std::atomic<bool> running{true};
+    std::atomic running{true};
     std::thread writer([&] {
         uint64_t seq = 0;
         while (running.load(std::memory_order_relaxed)) {
@@ -91,7 +91,7 @@ static void BM_LatestValue_TryRead(benchmark::State &state) {
     });
 
     for ([[maybe_unused]] auto _: state) {
-        [[maybe_unused]] auto __ = lv.try_read(value, version);
+        [[maybe_unused]] auto _2 = lv.try_read(value, version);
         benchmark::DoNotOptimize(value);
     }
 
@@ -106,7 +106,7 @@ BENCHMARK(BM_LatestValue_TryRead);
 static void BM_EventFlag_Notify_NoWaiter(benchmark::State &state) {
     NativeEvent flag;
 
-    for (auto _: state) {
+    for ([[maybe_unused]] auto _: state) {
         flag.notify_one();
     }
 
@@ -119,7 +119,7 @@ static void BM_LatencyHistogram_Record(benchmark::State &state) {
     LatencyHistogram hist;
     uint64_t latency = 1000;
 
-    for (auto _: state) {
+    for ([[maybe_unused]] auto _: state) {
         hist.record(latency);
         latency = (latency + 1) % 100000;
     }
@@ -147,7 +147,7 @@ static void BM_Scheduler_PushFrame(benchmark::State &state) {
     sched.start();
 
     uint64_t seq = 0;
-    for (auto _: state) {
+    for ([[maybe_unused]] auto _: state) {
         Frame frame;
         frame.seq = seq++;
         frame.timestamp_ns = seq * 1000000;
@@ -197,7 +197,7 @@ static void BM_Scheduler_E2E_Latency(benchmark::State &state) {
     sched.start();
 
     uint64_t seq = 0;
-    for (auto _: state) {
+    for ([[maybe_unused]] auto _: state) {
         Frame frame;
         frame.seq = seq++;
         frame.timestamp_ns = std::chrono::steady_clock::now().time_since_epoch().count();
@@ -205,7 +205,7 @@ static void BM_Scheduler_E2E_Latency(benchmark::State &state) {
     }
 
     // 等待处理完成 (带超时)
-    auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
     while (processed.load(std::memory_order_acquire) < seq && std::chrono::steady_clock::now() < deadline) {
         std::this_thread::yield();
     }
@@ -234,14 +234,14 @@ static void BM_Scheduler_Throughput(benchmark::State &state) {
     sched.start();
 
     uint64_t seq = 0;
-    for (auto _: state) {
+    for ([[maybe_unused]] auto _: state) {
         Frame frame;
         frame.seq = seq++;
         sched.push_frame(std::move(frame));
     }
 
     // 等待处理完成 (带超时)
-    auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
     while (processed.load(std::memory_order_acquire) < seq && std::chrono::steady_clock::now() < deadline) {
         std::this_thread::yield();
     }
@@ -256,7 +256,7 @@ static void BM_TBB_ConcurrentQueue_Push(benchmark::State &state) {
     tbb::concurrent_queue<uint64_t> queue;
     uint64_t seq = 0;
 
-    for (auto _: state) {
+    for ([[maybe_unused]] auto _: state) {
         queue.push(seq++);
     }
 
@@ -273,7 +273,7 @@ static void BM_TBB_ConcurrentQueue_TryPop(benchmark::State &state) {
     }
 
     uint64_t value;
-    for (auto _: state) {
+    for ([[maybe_unused]] auto _: state) {
         if (!queue.try_pop(value)) {
             queue.push(value); // 保持队列有数据
         }

@@ -35,7 +35,7 @@ namespace scheduler {
             const auto idx = write_idx_;
             buffers_[idx] = val;
             // 发布: 设置 ready index + 递增版本
-            uint64_t new_state = (version_.load(std::memory_order_relaxed) + 1) << 1 | idx;
+            const uint64_t new_state = (version_.load(std::memory_order_relaxed) + 1) << 1 | idx;
             state_.store(new_state, std::memory_order_release);
             version_.fetch_add(1, std::memory_order_relaxed);
             write_idx_ = 1 - idx; // 切换写缓冲
@@ -44,7 +44,7 @@ namespace scheduler {
         void write(T &&val) noexcept {
             const auto idx = write_idx_;
             buffers_[idx] = std::move(val);
-            uint64_t new_state = (version_.load(std::memory_order_relaxed) + 1) << 1 | idx;
+            const uint64_t new_state = (version_.load(std::memory_order_relaxed) + 1) << 1 | idx;
             state_.store(new_state, std::memory_order_release);
             version_.fetch_add(1, std::memory_order_relaxed);
             write_idx_ = 1 - idx;

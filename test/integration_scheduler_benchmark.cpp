@@ -103,7 +103,7 @@ static void BM_Pipeline_EmptyCallbacks(benchmark::State &state) {
     });
 
     Scheduler<TestStrategy> sched;
-    RuntimeConfig config;
+    constexpr RuntimeConfig config;
     sched.init(config, &strategy);
 
 
@@ -116,7 +116,7 @@ static void BM_Pipeline_EmptyCallbacks(benchmark::State &state) {
     }
 
     // 等待处理完成
-    auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
     while (processed.load() < seq && std::chrono::steady_clock::now() < deadline) {
         std::this_thread::yield();
     }
@@ -140,7 +140,7 @@ static void BM_Pipeline_WithImage(benchmark::State &state) {
     });
 
     Scheduler<TestStrategy> sched;
-    RuntimeConfig config;
+    constexpr RuntimeConfig config;
     sched.init(config, &strategy);
 
     std::vector<uint8_t> camera_buffer(480 * 640 * 3, 128);
@@ -153,7 +153,7 @@ static void BM_Pipeline_WithImage(benchmark::State &state) {
         sched.push_frame(std::move(frame));
     }
 
-    auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
     while (processed.load() < seq && std::chrono::steady_clock::now() < deadline) {
         std::this_thread::yield();
     }
@@ -182,7 +182,7 @@ static void BM_Pipeline_WithPreprocess(benchmark::State &state) {
     });
 
     Scheduler<TestStrategy> sched;
-    RuntimeConfig config;
+    constexpr RuntimeConfig config;
     sched.init(config, &strategy);
 
     sched.start();
@@ -194,7 +194,7 @@ static void BM_Pipeline_WithPreprocess(benchmark::State &state) {
         sched.push_frame(std::move(frame));
     }
 
-    auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
     while (processed.load() < seq && std::chrono::steady_clock::now() < deadline) {
         std::this_thread::yield();
     }
@@ -217,7 +217,7 @@ static void BM_Pipeline_WithParallelPreprocess(benchmark::State &state) {
             auto &dst = sf.preprocessed->mat();
 
             // 并行下采样
-            tbb::parallel_for(0, dst.rows, [&](int y) {
+            tbb::parallel_for(0, dst.rows, [&](const int y) {
                 auto *dst_row = dst.ptr<uint8_t>(y);
                 auto *src_row = src.ptr<cv::Vec3b>(y * 2);
                 for (int x = 0; x < dst.cols; ++x) {
@@ -235,7 +235,7 @@ static void BM_Pipeline_WithParallelPreprocess(benchmark::State &state) {
     });
 
     Scheduler<TestStrategy> sched;
-    RuntimeConfig config;
+    constexpr RuntimeConfig config;
     sched.init(config, &strategy);
 
     sched.start();
@@ -247,7 +247,7 @@ static void BM_Pipeline_WithParallelPreprocess(benchmark::State &state) {
         sched.push_frame(std::move(frame));
     }
 
-    auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
     while (processed.load() < seq && std::chrono::steady_clock::now() < deadline) {
         std::this_thread::yield();
     }
@@ -292,7 +292,7 @@ static void BM_RealWorld_160Hz(benchmark::State &state) {
     });
 
     Scheduler<TestStrategy> sched;
-    RuntimeConfig config;
+    constexpr RuntimeConfig config;
     sched.init(config, &strategy);
 
     sched.start();
@@ -305,7 +305,7 @@ static void BM_RealWorld_160Hz(benchmark::State &state) {
         std::this_thread::sleep_for(std::chrono::microseconds(6250));
     }
 
-    auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
     while (processed.load() < seq && std::chrono::steady_clock::now() < deadline) {
         std::this_thread::yield();
     }
@@ -326,7 +326,7 @@ static void BM_E2E_Latency_Measurement(benchmark::State &state) {
     TestStrategy strategy;
 
     std::atomic<uint64_t> last_output_ts{0};
-    std::atomic<uint64_t> last_seq{UINT64_MAX};
+    std::atomic last_seq{UINT64_MAX};
 
     strategy.set_detect([](const SharedFeature &sf) {
         Detection det;
@@ -355,7 +355,7 @@ static void BM_E2E_Latency_Measurement(benchmark::State &state) {
     });
 
     Scheduler<TestStrategy> sched;
-    RuntimeConfig config;
+    constexpr RuntimeConfig config;
     sched.init(config, &strategy);
 
     sched.start();
@@ -378,7 +378,7 @@ static void BM_E2E_Latency_Measurement(benchmark::State &state) {
         }
 
         if (last_seq.load() == seq) {
-            auto latency = last_output_ts.load() - frame.timestamp_ns;
+            const auto latency = last_output_ts.load() - frame.timestamp_ns;
             total_latency += latency;
             ++count;
         }
@@ -389,7 +389,7 @@ static void BM_E2E_Latency_Measurement(benchmark::State &state) {
     sched.stop();
 
     if (count > 0) {
-        state.counters["avg_latency_us"] = (total_latency / count) / 1000.0;
+        state.counters["avg_latency_us"] = total_latency / count / 1000.0;
     }
     state.SetItemsProcessed(state.iterations());
 }
@@ -428,7 +428,7 @@ BENCHMARK(BM_ImageBuffer_Create_Large);
 // ============ SharedPtr 开销测试 ============
 
 static void BM_SharedPtr_Copy(benchmark::State &state) {
-    auto img = ImageBuffer::create(480, 640, CV_8UC3);
+    const auto img = ImageBuffer::create(480, 640, CV_8UC3);
 
     for (auto _: state) {
         auto copy = img;

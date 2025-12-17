@@ -3,6 +3,7 @@
 #include <atomic>
 #include <gtest/gtest.h>
 #include <iostream>
+#include <ranges>
 #include <thread>
 
 // 大结构体，更容易暴露撕裂问题
@@ -16,7 +17,7 @@ struct LargeFrame {
 
     [[nodiscard]] bool is_consistent() const {
         const auto first = data[0];
-        return std::all_of(data.begin(), data.end(), [&](const auto v) { return v == first; });
+        return std::ranges::all_of(data, [&](const auto v) { return v == first; });
     }
 
     [[nodiscard]] auto value() const { return data[0]; }

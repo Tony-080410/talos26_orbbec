@@ -99,7 +99,7 @@ namespace auto_aim {
          * @param bgr_img BGR彩色图像
          * @return 是否成功精修
          */
-        bool refine(spike::ArmorFull &armor, const cv::Mat &bgr_img);
+        bool refine(spike::ArmorFull &armor, const cv::Mat &bgr_img) const;
 
         /**
          * @brief 获取内部检测到的完整装甲板列表 (用于后续处理)
@@ -124,19 +124,19 @@ namespace auto_aim {
         double max_rectangular_error_rad_;
 
         // ============ 几何检查 ============
-        bool check_geometry(const spike::LightbarFull &lightbar) const;
-        bool check_geometry(const spike::ArmorFull &armor) const;
+        [[nodiscard]] bool check_geometry(const spike::LightbarFull &lightbar) const;
+        [[nodiscard]] bool check_geometry(const spike::ArmorFull &armor) const;
 
         // ============ 属性获取 ============
-        spike::Color get_color(const cv::Mat &bgr_img, const std::vector<cv::Point> &contour) const;
-        spike::ArmorType get_type(const spike::ArmorFull &armor) const;
-        cv::Point2f get_center_norm(const cv::Mat &bgr_img, const cv::Point2f &center) const;
+        [[nodiscard]] spike::Color get_color(const cv::Mat &bgr_img, const std::vector<cv::Point> &contour) const;
+        [[nodiscard]] spike::ArmorType get_type(const spike::ArmorFull &armor) const;
+        [[nodiscard]] cv::Point2f get_center_norm(const cv::Mat &bgr_img, const cv::Point2f &center) const;
 
         // ============ 去重处理 ============
         void remove_duplicates();
 
         // ============ 结果转换 ============
-        spike::ArmorSlots to_armor_slots(uint64_t frame_id, uint64_t timestamp_ns) const;
+        [[nodiscard]] spike::ArmorSlots to_armor_slots(uint64_t frame_id, uint64_t timestamp_ns) const;
 
         // ============ PCA角点修正 (可选) ============
         void lightbar_points_corrector(spike::LightbarFull &lightbar, const cv::Mat &gray_img) const;

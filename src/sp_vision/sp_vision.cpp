@@ -48,7 +48,8 @@ public:
 
         if (sf.image && sf.image->rows() > 0) {
             // 使用传统检测器
-            auto armor_slots = detector_.detect(sf.image->mat(), sf.preprocessed->mat(), sf.frame_seq, sf.timestamp_ns);
+            const auto armor_slots =
+                    detector_.detect(sf.image->mat(), sf.preprocessed->mat(), sf.frame_seq, sf.timestamp_ns);
 
 
             // 转换 ArmorSlots 到 Detection 格式
@@ -56,10 +57,10 @@ public:
                 if (armor_slots.is_valid(i)) {
                     const auto &armor = armor_slots.armors[i];
                     // 计算包围盒 (从四个角点)
-                    float min_x = std::min({armor.pts[0], armor.pts[2], armor.pts[4], armor.pts[6]});
-                    float min_y = std::min({armor.pts[1], armor.pts[3], armor.pts[5], armor.pts[7]});
-                    float max_x = std::max({armor.pts[0], armor.pts[2], armor.pts[4], armor.pts[6]});
-                    float max_y = std::max({armor.pts[1], armor.pts[3], armor.pts[5], armor.pts[7]});
+                    const float min_x = std::min({armor.pts[0], armor.pts[2], armor.pts[4], armor.pts[6]});
+                    const float min_y = std::min({armor.pts[1], armor.pts[3], armor.pts[5], armor.pts[7]});
+                    const float max_x = std::max({armor.pts[0], armor.pts[2], armor.pts[4], armor.pts[6]});
+                    const float max_y = std::max({armor.pts[1], armor.pts[3], armor.pts[5], armor.pts[7]});
 
                     det.boxes.emplace_back(static_cast<int>(min_x), static_cast<int>(min_y),
                                            static_cast<int>(max_x - min_x), static_cast<int>(max_y - min_y));
@@ -231,7 +232,7 @@ int main(const int argc, char **argv) {
             } else {
                 // 合成数据
                 const auto seq = strategy.frame_count.load();
-                synthetic_frame.setTo(cv::Scalar(seq % 256, (seq * 2) % 256, (seq * 3) % 256));
+                synthetic_frame.setTo(cv::Scalar(seq % 256, seq * 2 % 256, seq * 3 % 256));
                 synthetic_frame.copyTo(buffer->mat());
             }
 
