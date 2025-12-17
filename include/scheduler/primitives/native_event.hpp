@@ -67,8 +67,7 @@ public:
     /**
      * @brief 唤醒所有等待者
      *
-     * macOS dispatch_semaphore没有wake_all等价物，通过多次signal模拟，假设最多10个等待者
-     * 那么比mutex更慢，所以使用mutex
+     * macOS dispatch_semaphore在这个场景下比mutex更慢，所以使用mutex
      */
     inline void notify_all() noexcept {
         {

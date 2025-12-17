@@ -1,54 +1,112 @@
-# 🤖 Talos Tracker
+<div align="center">
 
-> _如同守卫克里特岛的青铜巨人，Talos 追踪器作为唯一的、永不疲倦的哨兵，_
+# 🤖 Talos
 
-[![C++20](https://img.shields.io/badge/C++-20-00599C.svg)](https://isocpp.org/)
-[![Status](https://img.shields.io/badge/Status-Phase_1_Prototype-green.svg)](#)
+**下一代 RoboMaster 机器人框架**
 
-## 📖 项目简介
+*如同守卫克里特岛的青铜巨人，永不疲倦地守护着机器人视觉系统*
 
-Talos 是一款专为 **RoboMaster 自瞄系统**设计的高性能单例追踪器，通过无锁原子同步和缓存友好的数据结构，彻底消除传统互斥锁瓶颈，实现 **< 1 微秒**的端到端延迟。
+[![C++23](https://img.shields.io/badge/C++-23-00599C.svg?style=for-the-badge&logo=cplusplus)](https://isocpp.org/)
+[![TBB](https://img.shields.io/badge/Intel-TBB-0071C5.svg?style=for-the-badge&logo=intel)](https://github.com/oneapi-src/oneTBB)
+[![Status](https://img.shields.io/badge/Status-开发中-yellow.svg?style=for-the-badge)](#)
 
-### ⚡ 核心特性
+</div>
 
-- **🔓 无锁并发** - 基于三缓冲区 (Triple-Buffer) 的零阻塞原子同步
-- **💾 缓存优化** - 64 字节对齐的单实例追踪器，完整驻留 L1 缓存
-- **🤖 自主运行** - 自包含的单例守护者，处理多目标追踪
-- **📊 SoA 架构** - 固定 10 槽装甲数组，位掩码验证，零动态分配
+## 本项目亮点
 
-## 🚀 快速开始
+- **无 ROS 依赖**，彻底摆脱 DDS 中间件开销，单二进制部署。
+- **亚微秒级调度**，关键链路无锁<sup>*除macOS™️*</sup>设计，调度开销不超过 100ns。
+- **静态分发多态**，静态多态替代回调机制，用户逻辑可被完全内联。
+- **缓存友好架构**，关键数据结构对齐至单个缓存行，线程绑定独立核心。
 
-### 环境要求
+## 架构设计
 
-- **编译器**: GCC 11+ / Clang 13+ (C++20)
-- **依赖**: Eigen3, OpenCV 4.x, fmt
-- **构建**: CMake 3.20+
-- **测试**: GoogleTest, Google Benchmark
+### 流水线模型
 
-### 编译安装
+Talos 采用多级流水线架构，各阶段通过无锁通道解耦：
 
-```bash
-# 克隆仓库
-git clone https://github.com/your-org/talos-tracker.git
-cd talos-tracker
-
-# 构建
-mkdir build && cd build
-cmake -DCMAKE_BUILD_TYPE=Release \
-      -DCMAKE_CXX_FLAGS="-O3 -march=native" ..
-make -j$(nproc)
-
-# 运行测试
-ctest --output-on-failure
-
-# 运行性能基准
-./bin/latency_benchmark
 ```
+📷 采集 ──→ 🔍 检测 ──→ 🎯 追踪 ──→ 📐 解算 ──→ 📡 通信
+     │           │           │           │
+     └───────────┴───────────┴───────────┘
+              无锁通道 · 零拷贝 · 事件驱动
+```
+
+- **采集**：相机驱动，帧同步，时间戳对齐
+- **检测**：神经网络推理，装甲板识别，并行处理
+- **追踪**：状态估计，运动预测，目标关联
+- **解算**：弹道计算，瞄准决策，开火判断
+- **通信**：串口/CAN 协议，下位机交互
+
+### 核心技术
+
+**🔓 无锁并发**
+
+传统方案使用互斥锁保护共享数据，在高频场景下会产生严重的线程阻塞。Talos 采用无锁数据结构：
+
+- **三缓冲机制**：生产者-消费者之间零拷贝通信，读写永不阻塞
+- **原子操作同步**：CAS 操作替代互斥锁，状态转换无竞争
+- **原生事件原语<sup>*除macOS™️*</sup>**：Linux futex，唤醒延迟大幅降低
+
+**💾 缓存友好**
+
+现代 CPU 的性能瓶颈往往在内存访问。Talos 针对缓存层级进行优化：
+
+- **缓存行对齐**：关键结构体对齐至 64 字节，完整驻留单个 L1 缓存行
+- **CPU 核心绑定**：各流水线阶段绑定独立核心，避免缓存失效
+- **紧凑内存布局**：消除伪共享，减少 cache line bouncing
+
+**⚡ 零成本抽象**
+
+C++ 的抽象不应有运行时代价。Talos 通过编译期技术实现：
+
+- **静态多态**：CRTP 模式替代虚函数，用户策略可被完全内联
+- **类型约束**：C++20 Concepts 替代运行时类型检查
+
+---
+
+## 开发状态
+
+| 模块   | 状态     | 描述            |
+|------|--------|---------------|
+| 调度器  | ✅ 完成   | 核心流水线引擎       |
+| 无锁原语 | ✅ 完成   | 三缓冲、事件、线程亲和性  |
+| 追踪器  | 🚧 开发中 | UKF 状态估计、目标关联 |
+| 检测器  | 📋 规划中 | 神经网络推理集成      |
+| 串口通信 | 📋 规划中 | 下位机协议实现       |
+
+---
+
+## 性能目标
+
+| 指标    | 目标值      | 说明          |
+|-------|----------|-------------|
+| 调度开销  | < 100 ns | 帧分发到处理启动的时间 |
+| 事件唤醒  | < 15 ns  | 线程间通知延迟     |
+| 端到端延迟 | < 15 ms  | 图像采集到控制输出   |
+
+---
+
+## 5 环境要求
+
+- **操作系统**：Ubuntu 22.04 / macOS
+- **编译器**：GCC 11+ / Clang 13+ (C++23)
+- **构建工具**：CMake 3.20+
+- **依赖库**：Eigen3、OpenCV、oneTBB、spdlog、fmt
+
+---
+
+## 6 未来规划
+
+- **完整自瞄流程**：集成检测器、追踪器、解算器，实现端到端自瞄
+- **多兵种适配**：步兵、英雄、哨兵、无人机的差异化配置
+- **可视化调试**：集成 PlotJuggler 或自研调试工具
+- **录制回放**：支持类似 rosbag 的数据录制与离线分析
+
+---
 
 <div align="center">
 
-**🤖 Built with precision · Engineered for speed · Guarded by Talos**
-
-[⭐ Star](https://github.com/your-org/talos-tracker) · [🐛 Report Bug](https://github.com/your-org/talos-tracker/issues) · [💡 Request Feature](https://github.com/your-org/talos-tracker/issues)
+**用 🪓 和 💀 构建**
 
 </div>
