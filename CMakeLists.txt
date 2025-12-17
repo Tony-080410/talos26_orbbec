@@ -50,7 +50,6 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 include_directories(thirdparty)
 include_directories(include)
 
-find_package(tomlplusplus REQUIRED)
 find_package(Eigen3 REQUIRED)
 find_package(OpenCV REQUIRED)
 find_package(spdlog REQUIRED)
@@ -94,7 +93,6 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
         fmt::fmt
         Eigen3::Eigen
         TBB::tbb
-        tomlplusplus::tomlplusplus
 )
 
 # sp_vision executable
@@ -113,7 +111,6 @@ target_link_libraries(sp_vision PRIVATE
         fmt::fmt
         Eigen3::Eigen
         TBB::tbb
-        tomlplusplus::tomlplusplus
 )
 
 # Detector benchmark (accuracy testing against dataset)

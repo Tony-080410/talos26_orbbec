@@ -3,7 +3,7 @@
 
 #include <expected>
 #include "spdlog_hook.hpp"
-#include "toml++/toml.hpp"
+#include "toml.hpp"
 #include "toml_helper.hpp"
 
 struct SpVisionDetectorConfig {
