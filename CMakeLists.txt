@@ -47,6 +47,10 @@ endif ()
 
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 
+include_directories(thirdparty)
+include_directories(include)
+
+find_package(tomlplusplus REQUIRED)
 find_package(Eigen3 REQUIRED)
 find_package(OpenCV REQUIRED)
 find_package(spdlog REQUIRED)
@@ -56,16 +60,6 @@ find_package(GTest REQUIRED)
 
 # Benchmark is optional (not essential for Day 1)
 find_package(benchmark QUIET)
-
-include(FetchContent)
-FetchContent_Declare(
-        tomlplusplus
-        GIT_REPOSITORY https://github.com/marzer/tomlplusplus.git
-        GIT_TAG v3.4.0
-)
-FetchContent_MakeAvailable(tomlplusplus)
-
-include_directories(include)
 
 # Scheduler library (header-only template, no .cpp compilation needed)
 add_library(scheduler INTERFACE)
