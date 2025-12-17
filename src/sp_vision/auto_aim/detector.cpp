@@ -16,13 +16,13 @@ LightbarFull::LightbarFull(const cv::RotatedRect& rect, std::size_t id)
               [](const cv::Point2f& a, const cv::Point2f& b) { return a.y < b.y; });
 
     center = rect.center;
-    top = (corners[0] + corners[1]) / 2;
-    bottom = (corners[2] + corners[3]) / 2;
+    top = (corners[0] + corners[1]) / 2.0;
+    bottom = (corners[2] + corners[3]) / 2.0;
     top2bottom = bottom - top;
 
     width = cv::norm(corners[0] - corners[1]);
     angle = std::atan2(top2bottom.y, top2bottom.x);
-    angle_error = std::abs(angle - CV_PI / 2);
+    angle_error = std::abs(angle - CV_PI / 2.0);
     length = cv::norm(top2bottom);
     ratio = (width > 0.1) ? length / width : 0.0;
 }
@@ -67,7 +67,7 @@ TraditionalDetector::TraditionalDetector(const DetectorConfig& config, bool debu
 }
 
 spike::ArmorSlots TraditionalDetector::detect(
-    const cv::Mat& bgr_img, uint64_t frame_id, uint64_t timestamp_ns) {
+    const cv::Mat& bgr_img,const cv::Mat& binary_img, uint64_t frame_id, uint64_t timestamp_ns) {
     // 清空上一帧结果
     lightbars_.clear();
     armors_.clear();
@@ -76,18 +76,9 @@ spike::ArmorSlots TraditionalDetector::detect(
         return to_armor_slots(frame_id, timestamp_ns);
     }
 
-    // 彩色图转灰度图
-    cv::Mat gray_img;
-    cv::cvtColor(bgr_img, gray_img, cv::COLOR_BGR2GRAY);
-
-    // 进行二值化
-    cv::Mat binary_img;
-    cv::threshold(gray_img, binary_img, config_.threshold, 255, cv::THRESH_BINARY);
-
     // 获取轮廓点
     std::vector<std::vector<cv::Point>> contours;
-    cv::Mat binary_copy = binary_img.clone();
-    cv::findContours(binary_copy, contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_NONE);
+    cv::findContours(binary_img, contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_NONE);
 
     // 获取灯条
     std::size_t lightbar_id = 0;
@@ -152,16 +143,16 @@ bool TraditionalDetector::refine(spike::ArmorFull& armor, const cv::Mat& bgr_img
     // 计算向量和调整后的点
     auto lt2b = bl - tl;
     auto rt2b = br - tr;
-    auto tl1 = (tl + bl) / 2 - lt2b;
-    auto bl1 = (tl + bl) / 2 + lt2b;
-    auto br1 = (tr + br) / 2 + rt2b;
-    auto tr1 = (tr + br) / 2 - rt2b;
+    auto tl1 = (tl + bl) / 2.0 - lt2b;
+    auto bl1 = (tl + bl) / 2.0 + lt2b;
+    auto br1 = (tr + br) / 2.0 + rt2b;
+    auto tr1 = (tr + br) / 2.0 - rt2b;
     auto tl2tr = tr1 - tl1;
     auto bl2br = br1 - bl1;
-    auto tl2 = (tl1 + tr) / 2 - 0.75f * tl2tr;
-    auto tr2 = (tl1 + tr) / 2 + 0.75f * tl2tr;
-    auto bl2 = (bl1 + br) / 2 - 0.75f * bl2br;
-    auto br2 = (bl1 + br) / 2 + 0.75f * bl2br;
+    auto tl2 = (tl1 + tr) / 2.0 - 0.75f * tl2tr;
+    auto tr2 = (tl1 + tr) / 2.0 + 0.75f * tl2tr;
+    auto bl2 = (bl1 + br) / 2.0 - 0.75f * bl2br;
+    auto br2 = (bl1 + br) / 2.0 + 0.75f * bl2br;
 
     // 构造新的四个角点
     std::vector<cv::Point> points = {tl2, tr2, br2, bl2};

@@ -71,6 +71,7 @@ add_executable(${PROJECT_NAME}
         include/scheduler/primitives/buffer_pool.hpp
         include/scheduler/primitives/latency_stats.hpp
         include/toml_helper.hpp
+        include/sp_vision/config.hpp
 )
 
 target_include_directories(${PROJECT_NAME} PRIVATE include)
@@ -102,6 +103,20 @@ target_link_libraries(sp_vision PRIVATE
         Eigen3::Eigen
         TBB::tbb
         tomlplusplus::tomlplusplus
+)
+
+# Detector benchmark (accuracy testing against dataset)
+add_executable(detector_benchmark
+        test/detector_benchmark.cpp
+        src/sp_vision/auto_aim/detector.cpp
+)
+
+target_include_directories(detector_benchmark PRIVATE include)
+
+target_link_libraries(detector_benchmark PRIVATE
+        ${OpenCV_LIBS}
+        spdlog::spdlog
+        fmt::fmt
 )
 
 # Unit tests

@@ -85,11 +85,12 @@ public:
     /**
      * @brief 全图检测装甲板
      * @param bgr_img BGR彩色图像
+     * @param binary_img
      * @param frame_id 帧ID
      * @param timestamp_ns 时间戳
      * @return ArmorSlots 检测结果
      */
-    spike::ArmorSlots detect(const cv::Mat& bgr_img, uint64_t frame_id, uint64_t timestamp_ns);
+    spike::ArmorSlots detect(const cv::Mat& bgr_img,const cv::Mat& binary_img,  uint64_t frame_id, uint64_t timestamp_ns);
 
     /**
      * @brief 在已有装甲板基础上精修角点 (ROI检测)
