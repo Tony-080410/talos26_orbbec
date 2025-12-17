@@ -2,9 +2,7 @@
 
 #include <atomic>
 #include <array>
-#include <algorithm>
 #include <cstdint>
-#include <cmath>
 
 namespace scheduler {
 

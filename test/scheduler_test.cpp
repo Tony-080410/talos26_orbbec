@@ -1,7 +1,6 @@
 #include <gtest/gtest.h>
 #include "scheduler/scheduler.hpp"
 #include "scheduler/primitives/latest_value.hpp"
-#include "scheduler/primitives/native_event.hpp"
 #include "scheduler/primitives/latency_histogram.hpp"
 #include "test_strategy.hpp"
 

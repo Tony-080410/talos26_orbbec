@@ -1,6 +1,5 @@
 #include "auto_aim/detector.hpp"
 #include <algorithm>
-#include <cmath>
 #include <numeric>
 #include <fmt/format.h>
 

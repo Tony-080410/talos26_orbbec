@@ -42,7 +42,8 @@ clean_dir() {
         rm -rf "$dir"
         status "[o]" "$GREEN" "Removed $dir."
     else
-        status "[x]" "$RED" "No existing directory, skipping removal."
+        status "[x]" "$RED" "No existing directory, creating one."
+        mkdir -p "$dir"
     fi
 }
 

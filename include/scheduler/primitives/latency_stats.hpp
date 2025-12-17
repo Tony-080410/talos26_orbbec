@@ -2,8 +2,6 @@
 #include "scheduler/scheduler.hpp"
 
 #include <iostream>
-#include <iomanip>
-#include <chrono>
 #include <vector>
 #include <numeric>
 #include <algorithm>

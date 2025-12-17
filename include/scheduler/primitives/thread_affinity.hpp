@@ -1,7 +1,6 @@
 #pragma once
 
 #include <thread>
-#include <cstdint>
 
 #ifdef __APPLE__
 #include <mach/mach.h>

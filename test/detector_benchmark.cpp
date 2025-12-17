@@ -15,8 +15,9 @@
 #include <opencv2/imgproc.hpp>
 #include <fmt/format.h>
 #include <chrono>
-#include <iostream>
 #include <numeric>
+#include <oneapi/tbb/parallel_for.h>
+#include <oneapi/tbb/task_arena.h>
 #include <tbb/concurrent_vector.h>
 
 #include "sp_vision/config.hpp"

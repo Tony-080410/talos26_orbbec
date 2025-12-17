@@ -15,7 +15,6 @@
 
 #include <thread>
 #include <atomic>
-#include <random>
 
 #include "test_strategy.hpp"
 

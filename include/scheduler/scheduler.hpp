@@ -1,9 +1,6 @@
 #pragma once
 
 #include <oneapi/tbb/concurrent_queue.h>
-#include <oneapi/tbb/parallel_for.h>
-#include <oneapi/tbb/task_group.h>
-#include <oneapi/tbb/global_control.h>
 
 #include <thread>
 #include <atomic>

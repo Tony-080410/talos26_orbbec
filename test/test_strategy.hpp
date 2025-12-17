@@ -1,6 +1,5 @@
 #pragma once
 
-#include "scheduler/strategy.hpp"
 #include "scheduler/types.hpp"
 #include <functional>
 
