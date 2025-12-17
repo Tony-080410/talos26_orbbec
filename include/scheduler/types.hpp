@@ -4,11 +4,9 @@
 #include <expected>
 #include <memory>
 #include <opencv2/core.hpp>
-#include <toml++/toml.hpp>
 #include <vector>
 
 #include "scheduler/primitives/latency_histogram.hpp"
-#include "toml_helper.hpp"
 
 namespace scheduler {
 
@@ -145,17 +143,6 @@ namespace scheduler {
         int detector_mode{0}; // 0=传统, 1=NN吞吐, 2=NN延迟
         int detector_threads{4};
         int max_frame_skip{2};
-
-        constexpr std::expected<void, std::string> read_from(const toml::table &tbl) {
-            if (const auto _t = tbl["runtime"].as_table()) {
-                auto t = *_t;
-                READ(t, "detector_mode", detector_mode);
-                READ(t, "detector_threads", detector_threads);
-                READ(t, "max_frame_skip", max_frame_skip);
-                return {};
-            }
-            return std::unexpected("runtime is not a table");
-        }
     };
 
     // ============ 统计信息 ============

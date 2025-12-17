@@ -47,9 +47,6 @@ endif ()
 
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 
-include_directories(thirdparty)
-include_directories(include)
-
 find_package(Eigen3 REQUIRED)
 find_package(OpenCV REQUIRED)
 find_package(spdlog REQUIRED)
@@ -59,6 +56,16 @@ find_package(GTest REQUIRED)
 
 # Benchmark is optional (not essential for Day 1)
 find_package(benchmark QUIET)
+
+include(FetchContent)
+FetchContent_Declare(
+        tomlplusplus
+        GIT_REPOSITORY https://github.com/marzer/tomlplusplus.git
+        GIT_TAG v3.4.0
+)
+FetchContent_MakeAvailable(tomlplusplus)
+
+include_directories(include)
 
 # Scheduler library (header-only template, no .cpp compilation needed)
 add_library(scheduler INTERFACE)
@@ -93,6 +100,7 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
         fmt::fmt
         Eigen3::Eigen
         TBB::tbb
+        tomlplusplus::tomlplusplus
 )
 
 # sp_vision executable
@@ -111,6 +119,7 @@ target_link_libraries(sp_vision PRIVATE
         fmt::fmt
         Eigen3::Eigen
         TBB::tbb
+        tomlplusplus::tomlplusplus
 )
 
 # Detector benchmark (accuracy testing against dataset)
@@ -126,6 +135,7 @@ target_link_libraries(detector_benchmark PRIVATE
         spdlog::spdlog
         TBB::tbb
         fmt::fmt
+        tomlplusplus::tomlplusplus
 )
 
 # Unit tests
