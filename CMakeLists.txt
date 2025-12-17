@@ -88,6 +88,7 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
 # sp_vision executable
 add_executable(sp_vision
         src/sp_vision/sp_vision.cpp
+        src/sp_vision/auto_aim/detector.cpp
 )
 
 

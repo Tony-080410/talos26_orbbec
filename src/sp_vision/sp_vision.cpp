@@ -16,6 +16,7 @@
 #include "toml++/toml.hpp"
 #include "scheduler/primitives/buffer_pool.hpp"
 #include "scheduler/primitives/latency_stats.hpp"
+#include "auto_aim/detector.hpp"
 
 using namespace scheduler;
 using namespace std::chrono_literals;
@@ -90,20 +91,31 @@ public:
         det.frame_seq = sf.frame_seq;
         det.timestamp_ns = sf.timestamp_ns;
 
-        if (sf.preprocessed && sf.preprocessed->rows() > 0) {
-            std::vector<std::vector<cv::Point> > contours;
-            cv::findContours(sf.preprocessed->mat(), contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_NONE);
+        if (sf.image && sf.image->rows() > 0) {
+            // 使用传统检测器
+            auto armor_slots = detector_.detect(
+                sf.image->mat(), sf.frame_seq, sf.timestamp_ns);
 
-            for (const auto &contour: contours) {
-                if (auto rect = cv::boundingRect(contour); rect.area() > 100) {
-                    // 过滤噪声
-                    // 缩放回原图尺寸
-                    det.boxes.emplace_back(rect.x * 4, rect.y * 4, rect.width * 4, rect.height * 4);
-                    det.scores.push_back(static_cast<float>(rect.area()) / 1000.0f);
+
+            // 转换 ArmorSlots 到 Detection 格式
+            for (int i = 0; i < 10; i++) {
+                if (armor_slots.is_valid(i)) {
+                    const auto& armor = armor_slots.armors[i];
+                    // 计算包围盒 (从四个角点)
+                    float min_x = std::min({armor.pts[0], armor.pts[2], armor.pts[4], armor.pts[6]});
+                    float min_y = std::min({armor.pts[1], armor.pts[3], armor.pts[5], armor.pts[7]});
+                    float max_x = std::max({armor.pts[0], armor.pts[2], armor.pts[4], armor.pts[6]});
+                    float max_y = std::max({armor.pts[1], armor.pts[3], armor.pts[5], armor.pts[7]});
+
+                    det.boxes.emplace_back(
+                        static_cast<int>(min_x),
+                        static_cast<int>(min_y),
+                        static_cast<int>(max_x - min_x),
+                        static_cast<int>(max_y - min_y));
+                    det.scores.push_back(armor.confidence);
                 }
             }
         }
-        gray_pool.release(sf.preprocessed);
 
         processed_count.fetch_add(1, std::memory_order_relaxed);
 
@@ -156,17 +168,32 @@ public:
         output_count.fetch_add(1, std::memory_order_relaxed);
     }
 
-    RealworldStrategy(const SpVisionConfig config, const size_t count, const int rows,
+    RealworldStrategy(const SpVisionConfig cfg, const size_t count, const int rows,
                       const int cols) noexcept : frame_pool(count, rows, cols,
                                                             CV_8UC3),
-                                                 gray_pool(count, rows, cols,CV_8UC1), config(std::move(config)) {
+                                                 gray_pool(count, rows, cols,CV_8UC1),
+                                                 config(std::move(cfg)),
+                                                 detector_(auto_aim::DetectorConfig{
+                                                     config.detector.threshold,
+                                                     config.detector.max_angle_error,
+                                                     config.detector.min_lightbar_ratio,
+                                                     config.detector.max_lightbar_ratio,
+                                                     config.detector.min_lightbar_length,
+                                                     config.detector.min_armor_ratio,
+                                                     config.detector.max_armor_ratio,
+                                                     config.detector.max_side_ratio,
+                                                     config.detector.min_confidence,
+                                                     config.detector.max_rectangular_error
+                                                 }) {
     }
+
+public:
 
     // Buffer pool (复用 buffer)
     BufferPool frame_pool;
     BufferPool gray_pool;
-
     SpVisionConfig config;
+    auto_aim::TraditionalDetector detector_;
 
     // 统计
     LatencyStats capture_latency;

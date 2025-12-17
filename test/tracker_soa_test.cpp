@@ -9,8 +9,8 @@ namespace spike::test {
     // ============================================================================
 
     TEST(MemoryLayout, ArmorSlotsSize) {
-        EXPECT_LE(sizeof(spike::ArmorSlots), 1024)
-      << "ArmorSlots exceeds 1KB budget";
+        EXPECT_LE(sizeof(spike::ArmorSlots), 2048)
+      << "ArmorSlots exceeds 2KB budget";
         EXPECT_GE(sizeof(spike::ArmorSlots), 512)
       << "ArmorSlots seems too small";
     }

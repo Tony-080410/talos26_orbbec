@@ -1,109 +1,110 @@
 #pragma once
 
 #include <array>
-#include <algorithm>
-#include <numeric>
+#include <cstdint>
 
 namespace spike {
-    /**
-     * @brief Armor data - individual armor plate detection result
-     * Fits in SoA layout with fixed 10-slot capacity
-     */
-    struct Armor {
-        float x2d, y2d; // 2D image position
-        int id; // Armor ID
-        uint8_t cls; // Classification (1-5)
-        float confidence; // Detection confidence [0, 1]
-    };
 
-    /**
-     * @brief PnP pose result - 3D location and orientation
-     */
-    struct Pose {
-        float x, y, z; // 3D position in world frame
-        float qx, qy, qz, qw; // Unit quaternion (normalized)
-    };
+// ============ 枚举类型 ============
 
-    /**
-     * @brief ArmorSlots - Structure-of-Arrays layout for detector output
-     *
-     * Design rationale:
-     * - Fixed 10-slot capacity (max armors per frame in RoboMaster)
-     * - Uses bitmask to track which slots are valid
-     * - Achieves SoA memory layout with O(1) iteration
-     * - Total size: ~1.2KB (acceptable for single-frame cache)
-     *
-     * Memory layout (cache-friendly):
-     * ┌────────────────────────────────────────────────────────┐
-     * │ valid_mask (1 byte)                                    │
-     * │ padding (7 bytes for alignment)                        │
-     * │ armors[0..9] (10 × ~20B = 200B)                        │
-     * │ poses[0..9] (10 × ~28B = 280B)                         │
-     * │ timestamp_ns (8 bytes)                                 │
-     * │ frame_id (8 bytes)                                     │
-     * └────────────────────────────────────────────────────────┘
-     * Total: ~512 bytes (fits in L1 TLB)
-     */
-    struct alignas(64) ArmorSlots {
-        uint8_t valid_mask{0}; // Bitmask: bit i = 1 iff armors[i] valid
-        uint8_t padding_[7]; // Alignment padding
-        std::array<Armor, 10> armors; // SoA: All armors' x2d in sequence, then y2d, etc.
-        std::array<Pose, 10> poses; // SoA: Corresponding PnP results
-        uint64_t timestamp_ns{0}; // Frame timestamp (nanoseconds)
-        uint64_t frame_id{0}; // Monotonic frame counter
+enum class Color : uint8_t { red = 0, blue = 1, extinguish = 2, purple = 3 };
+enum class ArmorType : uint8_t { big = 0, small = 1 };
+enum class ArmorName : uint8_t {
+    one = 0, two, three, four, five, sentry, outpost, base, not_armor
+};
 
-        /**
-         * @brief Count valid armors in this frame
-         * @return Number of armors (0-10)
-         */
-        [[nodiscard]] size_t count_valid() const {
-            return __builtin_popcount(valid_mask);
+// ============ 缓存友好的输出结构 ============
+
+/**
+ * @brief Lightbar - 20 bytes, cache-optimized output
+ */
+struct Lightbar {
+    float x, y;           // Center position (8B)
+    float angle_error;    // Error from ideal angle (4B)
+    float ratio;          // length / width (4B)
+    uint8_t color;        // 0=red, 1=blue, 2=extinguish, 3=purple (1B)
+    uint8_t _pad[3];      // Padding (3B)
+};
+static_assert(sizeof(Lightbar) == 20, "Lightbar must be exactly 20 bytes");
+
+/**
+ * @brief Armor - 32 bytes, cache-optimized output
+ */
+struct Armor {
+    float x2d, y2d;       // 2D center position (8B)
+    float pts[8];         // 4 corner points: tl_x, tl_y, tr_x, tr_y, br_x, br_y, bl_x, bl_y (32B)
+    float confidence;     // Detection confidence [0, 1] (4B)
+    uint8_t color;        // Color enum (1B)
+    uint8_t type;         // ArmorType enum (1B)
+    uint8_t name;         // ArmorName enum (1B)
+    uint8_t _pad;         // Padding (1B)
+};
+static_assert(sizeof(Armor) == 48, "Armor must be exactly 48 bytes");
+
+/**
+ * @brief PnP pose result - 3D location and orientation
+ */
+struct Pose {
+    float x, y, z;        // 3D position in world frame
+    float qx, qy, qz, qw; // Unit quaternion (normalized)
+};
+
+/**
+ * @brief ArmorSlots - Structure-of-Arrays layout for detector output
+ *
+ * Memory layout (cache-friendly):
+ * ┌────────────────────────────────────────────────────────┐
+ * │ valid_mask (2 bytes) + lightbar_count (1B) + pad (5B)  │
+ * │ armors[0..9] (10 × 48B = 480B)                         │
+ * │ poses[0..9] (10 × 28B = 280B)                          │
+ * │ lightbars[0..19] (20 × 20B = 400B)                     │
+ * │ timestamp_ns (8 bytes)                                 │
+ * │ frame_id (8 bytes)                                     │
+ * └────────────────────────────────────────────────────────┘
+ * Total: ~1184 bytes
+ */
+struct alignas(64) ArmorSlots {
+    uint16_t valid_mask{0};    // Bitmask: bit i = 1 iff armors[i] valid
+    uint8_t lightbar_count{0}; // Number of detected lightbars
+    uint8_t armor_count{0};    // Number of valid armors
+    uint8_t padding_[4];       // Alignment padding
+
+    std::array<Armor, 10> armors;
+    std::array<Pose, 10> poses;
+    std::array<Lightbar, 20> lightbars;
+
+    uint64_t timestamp_ns{0};
+    uint64_t frame_id{0};
+
+    [[nodiscard]] size_t count_valid() const {
+        return __builtin_popcount(valid_mask);
+    }
+
+    void set_valid(const int slot) {
+        if (slot >= 0 && slot < 10) {
+            valid_mask |= 1u << slot;
         }
+    }
 
-        /**
-         * @brief Mark armor slot as valid
-         */
-        void set_valid(const int slot) {
-            if (slot >= 0 && slot < 10) {
-                valid_mask |= 1u << slot;
-            }
+    void set_invalid(const int slot) {
+        if (slot >= 0 && slot < 10) {
+            valid_mask &= ~(1u << slot);
         }
+    }
 
-        /**
-         * @brief Mark armor slot as invalid
-         */
-        void set_invalid(const int slot) {
-            if (slot >= 0 && slot < 10) {
-                valid_mask &= ~(1u << slot);
-            }
-        }
+    [[nodiscard]] bool is_valid(const int slot) const {
+        return (valid_mask & (1u << slot)) != 0;
+    }
 
-        /**
-         * @brief Check if slot is valid
-         */
-        [[nodiscard]] bool is_valid(const int slot) const {
-            return (valid_mask & 1u << slot) != 0;
-        }
+    void clear() {
+        valid_mask = 0;
+        lightbar_count = 0;
+        armor_count = 0;
+    }
+};
 
-        /**
-         * @brief Clear all slots
-         */
-        void clear() {
-            valid_mask = 0;
-        }
+// Verify memory layout
+static_assert(sizeof(ArmorSlots) <= 2048, "ArmorSlots exceeds 2KB budget");
+static_assert(alignof(ArmorSlots) == 64, "ArmorSlots must be cache-line aligned");
 
-        /**
-         * @brief Iterate over valid armor indices
-         * Example usage:
-         *   for (int i = 0; i < 10; i++) {
-         *     if (frame.is_valid(i)) {
-         *       process(frame.armors[i], frame.poses[i]);
-         *     }
-         *   }
-         */
-    };
-
-    // Verify memory layout
-    static_assert(sizeof(ArmorSlots) <= 1024, "ArmorSlots exceeds 1KB budget");
-    static_assert(alignof(ArmorSlots) == 64, "ArmorSlots must be cache-line aligned");
 } // namespace spike
