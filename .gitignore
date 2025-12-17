@@ -25,3 +25,4 @@ sp_vision_25
 _deps/
 thirdparty
 .DS_Store
+.cache
