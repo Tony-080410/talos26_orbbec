@@ -21,13 +21,13 @@ const std::vector<cv::Point3f> SMALL_ARMOR_POINTS{
 
 Solver::Solver(const SpVisionSolverConfig &config) : R_gimbal2world_(Eigen::Matrix3d::Identity()) {
     // 转换外参矩阵
-    R_gimbal2imubody_ = Eigen::Matrix<double, 3, 3, Eigen::RowMajor>(config.R_gimbal2imubody.data());
-    R_camera2gimbal_ = Eigen::Matrix<double, 3, 3, Eigen::RowMajor>(config.R_camera2gimbal.data());
-    t_camera2gimbal_ = Eigen::Matrix<double, 3, 1>(config.t_camera2gimbal.data());
+    R_gimbal2imubody_ = Eigen::Matrix<double, 3, 3, Eigen::RowMajor>(config.extrinsic_gimbal_imu.data());
+    R_camera2gimbal_ = Eigen::Matrix<double, 3, 3, Eigen::RowMajor>(config.extrinsic_camera_gimbal.data());
+    t_camera2gimbal_ = Eigen::Matrix<double, 3, 1>(config.extrinsic_camera_gimbal_tf.data());
 
     // 转换相机内参
     Eigen::Matrix<double, 3, 3, Eigen::RowMajor> camera_matrix(config.camera_matrix.data());
-    Eigen::Matrix<double, 1, 5> distort_coeffs(config.distort_coeffs.data());
+    Eigen::Matrix<double, 1, 5> distort_coeffs(config.distort_coefficient.data());
     cv::eigen2cv(camera_matrix, camera_matrix_);
     cv::eigen2cv(distort_coeffs, distort_coeffs_);
 }

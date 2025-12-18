@@ -24,8 +24,8 @@ std::expected<void, std::string> parse_double_array_impl(const toml::table &t, c
     return std::unexpected(key + " not found");
 }
 
-#define PARSE_DOUBLE_ARRAY(var, t, key, container, size)                                                               \
-    auto(var) = parse_double_array_impl(t, key, container, size);                                                      \
+#define PARSE_DOUBLE_ARRAY(var, t, container, size)                                                               \
+    auto(var) = parse_double_array_impl(t, #container, container, size);                                                      \
     if (!(var)) {                                                                                                      \
         return std::unexpected((var).error());                                                                         \
     }

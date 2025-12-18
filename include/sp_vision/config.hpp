@@ -109,21 +109,21 @@ struct SpVisionClassifierConfig {
 struct SpVisionSolverConfig {
     // 相机内参
     Eigen::Matrix<double, 3, 3, Eigen::RowMajor> camera_matrix; // 3x3 row-major
-    Eigen::Matrix<double, 1, 5> distort_coeffs; // 1x5
+    Eigen::Matrix<double, 1, 5> distort_coefficient; // 1x5
 
     // 外参：相机到云台、云台到IMU
-    Eigen::Matrix<double, 3, 3, Eigen::RowMajor> R_camera2gimbal; // 3x3 row-major
-    Eigen::Matrix<double, 3, 1> t_camera2gimbal; // 3x1
-    Eigen::Matrix<double, 3, 3, Eigen::RowMajor> R_gimbal2imubody; // 3x3 row-major
+    Eigen::Matrix<double, 3, 3, Eigen::RowMajor> extrinsic_camera_gimbal; // 3x3 row-major
+    Eigen::Matrix<double, 3, 1> extrinsic_camera_gimbal_tf; // 3x1
+    Eigen::Matrix<double, 3, 3, Eigen::RowMajor> extrinsic_gimbal_imu; // 3x3 row-major
 
     std::expected<void, std::string> read_from(const toml::table &tbl) {
         if (const auto _t = tbl["solver"].as_table()) {
             auto t = *_t;
-            PARSE_DOUBLE_ARRAY(c, t, "camera_matrix", camera_matrix, 9);
-            PARSE_DOUBLE_ARRAY(d, t, "distort_coeffs", distort_coeffs, 5);
-            PARSE_DOUBLE_ARRAY(r, t, "R_camera2gimbal", R_camera2gimbal, 9);
-            PARSE_DOUBLE_ARRAY(tt, t, "t_camera2gimbal", t_camera2gimbal, 3);
-            PARSE_DOUBLE_ARRAY(rr, t, "R_gimbal2imubody", R_gimbal2imubody, 9);
+            PARSE_DOUBLE_ARRAY(c, t, camera_matrix, 9);
+            PARSE_DOUBLE_ARRAY(d, t, distort_coefficient, 5);
+            PARSE_DOUBLE_ARRAY(r, t, extrinsic_camera_gimbal, 9);
+            PARSE_DOUBLE_ARRAY(tt, t, extrinsic_camera_gimbal_tf, 3);
+            PARSE_DOUBLE_ARRAY(rr, t, extrinsic_gimbal_imu, 9);
             return {};
         }
         return std::unexpected("solver section not found");
@@ -160,10 +160,10 @@ struct SpVisionTrackerConfig {
     }
 
 struct SpVisionConfig : scheduler::RuntimeConfig {
-    SpVisionClassifierConfig classifier;
-    SpVisionDetectorConfig detector;
-    SpVisionSolverConfig solver;
-    SpVisionTrackerConfig tracker;
+    SpVisionClassifierConfig classifier{};
+    SpVisionDetectorConfig detector{};
+    SpVisionSolverConfig solver{};
+    SpVisionTrackerConfig tracker{};
 
     std::expected<void, std::string> read_from(const toml::table &tbl) {
         if (auto read = read_runtime_config(this, tbl); !read) {
