@@ -31,7 +31,7 @@ namespace auto_aim {
         }
     }
 
-    bool Classifier::preprocess(const cv::Mat &pattern) const {
+    bool Classifier::preprocess(const cv::Mat &pattern, cv::Mat &output) {
         if (pattern.empty()) {
             return false;
         }
@@ -45,6 +45,7 @@ namespace auto_aim {
         }
 
         // 等比例缩放到 32x32，保持宽高比
+        output = cv::Mat(32, 32, CV_8UC1, cv::Scalar(0));
         const auto x_scale = 32.0 / gray.cols;
         const auto y_scale = 32.0 / gray.rows;
         const auto scale = std::min(x_scale, y_scale);
@@ -56,7 +57,7 @@ namespace auto_aim {
         }
 
         const auto roi = cv::Rect(0, 0, w, h);
-        cv::resize(gray, preprocessed_(roi), {w, h});
+        cv::resize(gray, output(roi), {w, h});
 
         return true;
     }
@@ -67,44 +68,75 @@ namespace auto_aim {
             return;
         }
 
-        if (!preprocess(armor.pattern)) {
+        cv::Mat input;
+        if (!preprocess(armor.pattern, input)) {
             armor.name = spike::ArmorName::not_armor;
             return;
         }
 
+        // 创建 blob: NCHW 格式, 归一化到 [0, 1]
+        const auto blob = cv::dnn::blobFromImage(input, 1.0 / 255.0, cv::Size(), cv::Scalar());
 
-        cv::Mat output;
-        if (ov_initialized_) {
-            // 归一化到 [0, 1]
-            preprocessed_.convertTo(output, CV_32F, 1.0 / 255.0);
-
-            // 创建 OpenVINO tensor: NCHW = [1, 1, 32, 32]
-            const ov::Tensor input_tensor(ov::element::f32, {1, 1, 32, 32}, output.data);
-
-            ov::InferRequest infer_request = compiled_model_.create_infer_request();
-            infer_request.set_input_tensor(input_tensor);
-            infer_request.infer();
-
-            auto output_tensor = infer_request.get_output_tensor();
-            cv::Mat outputs(1, 9, CV_32F, output_tensor.data());
-        } else {
-            // 创建 blob: NCHW 格式, 归一化到 [0, 1]
-            const auto blob = cv::dnn::blobFromImage(preprocessed_, 1.0 / 255.0, cv::Size(), cv::Scalar());
-
-            net_.setInput(blob);
-            output = net_.forward();
-        }
+        net_.setInput(blob);
+        cv::Mat outputs = net_.forward();
 
         // Softmax
-        const float max_val = *std::max_element(output.begin<float>(), output.end<float>());
-        cv::exp(output - max_val, output);
-        const float sum = static_cast<float>(cv::sum(output)[0]);
-        output /= sum;
+        const float max_val = *std::max_element(outputs.begin<float>(), outputs.end<float>());
+        cv::exp(outputs - max_val, outputs);
+        const float sum = static_cast<float>(cv::sum(outputs)[0]);
+        outputs /= sum;
 
         // 找最大值
         double confidence;
         cv::Point label_point;
-        cv::minMaxLoc(output.reshape(1, 1), nullptr, &confidence, nullptr, &label_point);
+        cv::minMaxLoc(outputs.reshape(1, 1), nullptr, &confidence, nullptr, &label_point);
+        int label_id = label_point.x;
+
+        armor.confidence = confidence;
+        armor.name = static_cast<spike::ArmorName>(label_id);
+    }
+
+    void Classifier::classify_ov(spike::ArmorFull &armor) {
+        if (!ov_initialized_) {
+            // 回退到 OpenCV DNN
+            classify(armor);
+            return;
+        }
+
+        if (armor.pattern.empty()) {
+            armor.name = spike::ArmorName::not_armor;
+            return;
+        }
+
+        cv::Mat input;
+        if (!preprocess(armor.pattern, input)) {
+            armor.name = spike::ArmorName::not_armor;
+            return;
+        }
+
+        // 归一化到 [0, 1]
+        input.convertTo(input, CV_32F, 1.0 / 255.0);
+
+        // 创建 OpenVINO tensor: NCHW = [1, 1, 32, 32]
+        const ov::Tensor input_tensor(ov::element::f32, {1, 1, 32, 32}, input.data);
+
+        ov::InferRequest infer_request = compiled_model_.create_infer_request();
+        infer_request.set_input_tensor(input_tensor);
+        infer_request.infer();
+
+        auto output_tensor = infer_request.get_output_tensor();
+        cv::Mat outputs(1, 9, CV_32F, output_tensor.data());
+
+        // Softmax
+        const float max_val = *std::max_element(outputs.begin<float>(), outputs.end<float>());
+        cv::exp(outputs - max_val, outputs);
+        const float sum = static_cast<float>(cv::sum(outputs)[0]);
+        outputs /= sum;
+
+        // 找最大值
+        double confidence;
+        cv::Point label_point;
+        cv::minMaxLoc(outputs.reshape(1, 1), nullptr, &confidence, nullptr, &label_point);
         int label_id = label_point.x;
 
         armor.confidence = confidence;

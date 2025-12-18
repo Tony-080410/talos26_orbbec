@@ -29,6 +29,13 @@ namespace auto_aim {
         void classify(spike::ArmorFull &armor);
 
         /**
+         * @brief 对装甲板进行分类 (使用 OpenVINO)
+         * @param armor 装甲板 (pattern 必须已填充)
+         * 结果会更新 armor.name 和 armor.confidence
+         */
+        void classify_ov(spike::ArmorFull &armor);
+
+        /**
          * @brief 从图像和装甲板角点提取图案
          * @param bgr_img BGR 图像
          * @param armor 装甲板 (需要 left/right 灯条信息)
@@ -41,16 +48,15 @@ namespace auto_aim {
         cv::dnn::Net net_;
         ov::Core core_;
         ov::CompiledModel compiled_model_;
-        cv::Mat preprocessed_ = cv::Mat(32, 32, CV_8UC1, cv::Scalar(0));
-
         bool ov_initialized_{false};
 
         /**
          * @brief 预处理图像到 32x32 灰度归一化输入
          * @param pattern BGR 图案
+         * @param output 输出 32x32 CV_32F 归一化图像
          * @return 是否成功
          */
-        bool preprocess(const cv::Mat &pattern) const;
+        static bool preprocess(const cv::Mat &pattern, cv::Mat &output);
     };
 
 } // namespace auto_aim

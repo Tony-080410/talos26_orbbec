@@ -1,29 +1,88 @@
 /**
  * @file detector_benchmark.cpp
- * @brief Armor detector accuracy benchmark against ground truth dataset
+ * @brief Full auto-aim pipeline benchmark: detector → solver → tracker
  *
  * Usage: ./detector_benchmark <dataset_path> [options]
  * Options:
- *   --threshold value   Binary threshold (default: 150)
  *   --iou value         IoU threshold for matching (default: 0.3)
- *   --debug               Show detection visualization
+ *   --debug             Show detection visualization
+ *   --enemy red|blue    Enemy color (default: red)
  */
 
 #include <chrono>
 #include <fmt/format.h>
 #include <numeric>
-#include <oneapi/tbb/parallel_for.h>
 #include <opencv2/highgui.hpp>
 #include <opencv2/imgproc.hpp>
 #include <ranges>
-#include <tbb/concurrent_vector.h>
+
 #include "auto_aim/dataset_loader.hpp"
 #include "auto_aim/detector.hpp"
-
+#include "auto_aim/solver.hpp"
+#include "auto_aim/tracker.hpp"
 #include "sp_vision/config.hpp"
 
 using namespace auto_aim;
 using namespace std::chrono;
+
+/**
+ * @brief Pipeline metrics for detector + solver + tracker
+ */
+struct PipelineMetrics {
+    // Detection metrics
+    AccuracyMetrics detection;
+
+    // Solver metrics
+    int solver_success{0};
+    int solver_total{0};
+    double total_distance{0};
+
+    // Tracker metrics
+    int tracking_frames{0};   // Frames in TRACKING state
+    int detecting_frames{0};  // Frames in DETECTING state
+    int temp_lost_frames{0};  // Frames in TEMP_LOST state
+    int idle_frames{0};       // Frames in IDLE state
+    int total_frames{0};
+
+    // Latency
+    std::vector<double> detect_latencies_ms;
+    std::vector<double> solve_latencies_ms;
+    std::vector<double> track_latencies_ms;
+    std::vector<double> total_latencies_ms;
+
+    void print() const {
+        spdlog::info("\n=== Detection Metrics ===");
+        detection.print();
+
+        spdlog::info("\n=== Solver Metrics ===");
+        spdlog::info("Success Rate: {}/{} ({:.1f}%)", solver_success, solver_total,
+                     solver_total > 0 ? 100.0 * solver_success / solver_total : 0.0);
+        spdlog::info("Avg Distance: {:.3f} m", solver_success > 0 ? total_distance / solver_success : 0.0);
+
+        spdlog::info("\n=== Tracker State Distribution ===");
+        spdlog::info("IDLE:      {} ({:.1f}%)", idle_frames, 100.0 * idle_frames / total_frames);
+        spdlog::info("DETECTING: {} ({:.1f}%)", detecting_frames, 100.0 * detecting_frames / total_frames);
+        spdlog::info("TRACKING:  {} ({:.1f}%)", tracking_frames, 100.0 * tracking_frames / total_frames);
+        spdlog::info("TEMP_LOST: {} ({:.1f}%)", temp_lost_frames, 100.0 * temp_lost_frames / total_frames);
+
+        auto print_latency_stats = [](const std::string &name, const std::vector<double> &latencies) {
+            if (latencies.empty())
+                return;
+            std::vector<double> sorted = latencies;
+            std::ranges::sort(sorted);
+            const double p50 = sorted[sorted.size() / 2];
+            const double p99 = sorted[static_cast<size_t>(sorted.size() * 0.99)];
+            const double mean = std::accumulate(sorted.begin(), sorted.end(), 0.0) / sorted.size();
+            spdlog::info("{}: mean={:.2f}ms p50={:.2f}ms p99={:.2f}ms", name, mean, p50, p99);
+        };
+
+        spdlog::info("\n=== Latency Statistics ===");
+        print_latency_stats("Detect", detect_latencies_ms);
+        print_latency_stats("Solve ", solve_latencies_ms);
+        print_latency_stats("Track ", track_latencies_ms);
+        print_latency_stats("Total ", total_latencies_ms);
+    }
+};
 
 /**
  * @brief Match detections with ground truth using Hungarian algorithm (greedy)
@@ -82,18 +141,12 @@ AccuracyMetrics evaluate_frame(const spike::ArmorSlots &detections, const std::v
         const auto &gt = ground_truths[g_idx];
 
         metrics.color_total++;
-        // Map: GT color 0=Blue, 1=Red -> Detection color 0=red, 1=blue
-        // Note: detector_state.hpp has: enum class Color { red = 0, blue = 1, ... }
-        // Dataset has: 0=Blue, 1=Red
         if (const uint8_t expected_det_color = gt.color == 0 ? 1 : 0; det.color == expected_det_color) {
             metrics.color_correct++;
         }
 
         // Check type accuracy
         metrics.type_total++;
-        // GT type: 0=Small, 1=Large -> Detection type: 0=big, 1=small
-        // detector_state.hpp: enum class ArmorType { big = 0, small = 1 }
-        // Dataset: 0=Small, 1=Large
         if (const uint8_t expected_det_type = gt.type == 0 ? 1 : 0; det.type == expected_det_type) {
             metrics.type_correct++;
         }
@@ -113,10 +166,11 @@ AccuracyMetrics evaluate_frame(const spike::ArmorSlots &detections, const std::v
 }
 
 /**
- * @brief Visualize detection results
+ * @brief Visualize full pipeline results
  */
 void visualize_frame(const cv::Mat &image, const spike::ArmorSlots &detections,
-                     const std::vector<GroundTruth> &ground_truths, const std::string &window_name = "Detection") {
+                     const std::array<ArmorPose3D, 10> &poses3d, const Tracker &tracker,
+                     const std::vector<GroundTruth> &ground_truths, const std::string &window_name = "Pipeline") {
     cv::Mat display = image.clone();
 
     // Draw ground truth (green)
@@ -130,10 +184,12 @@ void visualize_frame(const cv::Mat &image, const spike::ArmorSlots &detections,
                     cv::Scalar(0, 255, 0), 1);
     }
 
-    // Draw detections (red for red armor, blue for blue armor)
+    // Draw detections with 3D info
     for (int i = 0; i < 10; i++) {
         if (detections.is_valid(i)) {
             const auto &armor = detections.armors[i];
+            const auto &pose = poses3d[i];
+
             std::vector<cv::Point> pts;
             for (int j = 0; j < 4; j++) {
                 pts.emplace_back(static_cast<int>(armor.pts[j * 2]), static_cast<int>(armor.pts[j * 2 + 1]));
@@ -141,12 +197,58 @@ void visualize_frame(const cv::Mat &image, const spike::ArmorSlots &detections,
 
             cv::Scalar color = armor.color == 0 ? cv::Scalar(0, 0, 255) : cv::Scalar(255, 0, 0);
             cv::polylines(display, pts, true, color, 1);
-
             cv::putText(display,
-                        fmt::format("D c{} n{} t{} {:.2f}", spike::COLORS[armor.color], spike::ARMOR_NAMES[armor.name],
-                                    spike::ARMOR_TYPES[armor.type], armor.confidence),
-                        cv::Point(pts[0].x, pts[0].y - 5), cv::FONT_HERSHEY_SIMPLEX, 0.3, color, 1);
+                                   fmt::format("D c{} n{} t{} {:.2f}", spike::COLORS[armor.color], spike::ARMOR_NAMES[armor.name],
+                                               spike::ARMOR_TYPES[armor.type], armor.confidence),
+                                   cv::Point(pts[0].x, pts[0].y - 5), cv::FONT_HERSHEY_SIMPLEX, 0.3, color, 1);
+
+            // Show 3D distance if solved
+            if (pose.valid) {
+                cv::putText(display, fmt::format("{:.2f}m", pose.ypd_in_world[2]),
+                            cv::Point(pts[0].x, pts[0].y - 5), cv::FONT_HERSHEY_SIMPLEX, 0.4, color, 1);
+            }
         }
+    }
+
+    // Draw tracker state
+    std::string state_str = tracker.state_string();
+    cv::Scalar state_color;
+    switch (tracker.state()) {
+        case spike::TrackerState::IDLE:
+            state_color = cv::Scalar(128, 128, 128);
+            break;
+        case spike::TrackerState::DETECTING:
+            state_color = cv::Scalar(0, 255, 255);
+            break;
+        case spike::TrackerState::TRACKING:
+            state_color = cv::Scalar(0, 255, 0);
+            break;
+        case spike::TrackerState::TEMP_LOST:
+            state_color = cv::Scalar(0, 165, 255);
+            break;
+    }
+    cv::putText(display, fmt::format("State: {}", state_str), cv::Point(10, 30), cv::FONT_HERSHEY_SIMPLEX, 0.8,
+                state_color, 2);
+
+    // Draw tracked target prediction if available
+    if (tracker.state() != spike::TrackerState::IDLE) {
+        const auto &target = tracker.target();
+        auto ekf_x = target.ekf_x();
+
+        // Draw predicted armor positions
+        auto armor_list = tracker.armor_xyza_list();
+        for (size_t i = 0; i < armor_list.size(); i++) {
+            const auto &xyza = armor_list[i];
+            // Simple projection (assuming fixed camera parameters)
+            cv::putText(display, fmt::format("T{}: ({:.2f},{:.2f},{:.2f})", i, xyza[0], xyza[1], xyza[2]),
+                        cv::Point(10, 60 + static_cast<int>(i) * 20), cv::FONT_HERSHEY_SIMPLEX, 0.4,
+                        cv::Scalar(255, 255, 0), 1);
+        }
+
+        // Show target info
+        cv::putText(display,
+                    fmt::format("Target: {} v_yaw={:.2f}", spike::ARMOR_NAMES[static_cast<int>(target.name)], ekf_x[7]),
+                    cv::Point(10, display.rows - 20), cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(255, 255, 0), 1);
     }
 
     cv::imshow(window_name, display);
@@ -154,10 +256,12 @@ void visualize_frame(const cv::Mat &image, const spike::ArmorSlots &detections,
 
 int main(int argc, char **argv) {
     hook_cstream();
+
     // Default parameters
     std::string dataset_path = "./datasets";
     double iou_threshold = 0.3;
     bool debug = false;
+    spike::Color enemy_color = spike::Color::red;
 
     // Parse arguments
     for (int i = 1; i < argc; i++) {
@@ -165,22 +269,29 @@ int main(int argc, char **argv) {
             iou_threshold = std::stod(argv[++i]);
         } else if (arg == "--debug") {
             debug = true;
+        } else if (arg == "--enemy" && i + 1 < argc) {
+            std::string color_str = argv[++i];
+            enemy_color = (color_str == "blue") ? spike::Color::blue : spike::Color::red;
         } else if (arg[0] != '-') {
             dataset_path = arg;
         }
     }
 
-    spdlog::info("=== Armor Detector Benchmark ===\n");
-    spdlog::info("Dataset: {}\n", dataset_path);
-    spdlog::info("IoU Threshold: {}\n", iou_threshold);
-    spdlog::info("Debug: {}\n\n", debug);
+    spdlog::info("=== Full Pipeline Benchmark ===");
+    spdlog::info("Dataset: {}", dataset_path);
+    spdlog::info("IoU Threshold: {}", iou_threshold);
+    spdlog::info("Enemy Color: {}", enemy_color == spike::Color::red ? "red" : "blue");
+    spdlog::info("Debug: {}", debug);
 
-
+    // Load config
     SpVisionConfig config;
     if (auto result = config.read_from(toml::parse_file("sp_vision.toml")); !result) {
         spdlog::critical("read sp_vision.toml: " + result.error());
         return 1;
     }
+
+    // Override enemy color from command line
+    config.tracker.enemy_color = enemy_color;
 
     // Load dataset
     DatasetLoader loader(dataset_path);
@@ -191,13 +302,17 @@ int main(int argc, char **argv) {
     const auto size = loader.size();
     spdlog::info("Loaded {} frames", size);
 
-    // Metrics
-    std::mutex metrics_mutex;
-    AccuracyMetrics total_metrics;
-    std::atomic<uint64_t> num_frames{0};
-    tbb::concurrent_vector<double> latencies;
-    std::mutex show_mutex;
+    // Initialize pipeline components
     TraditionalDetector detector(config, false);
+    Solver solver(config.solver);
+    Tracker tracker(config.tracker, solver);
+
+    // Set default gimbal orientation (identity for benchmark)
+    solver.set_R_gimbal2world(Eigen::Quaterniond::Identity());
+
+    // Metrics
+    PipelineMetrics metrics;
+    std::array<ArmorPose3D, 10> poses3d{};
 
     for (size_t i = 0; i < size; i++) {
         auto frame_opt = loader.load_frame(i);
@@ -207,59 +322,88 @@ int main(int argc, char **argv) {
         }
 
         const auto &frame = *frame_opt;
+        metrics.total_frames++;
 
         // Generate binary image
         cv::Mat gray_img, binary_img;
         cv::cvtColor(frame.image, gray_img, cv::COLOR_BGR2GRAY);
         cv::threshold(gray_img, binary_img, config.detector.threshold, 255, cv::THRESH_BINARY);
 
-        // Time the detection
+        // === Stage 1: Detection ===
         auto t0 = steady_clock::now();
         auto detections = detector.detect(frame.image, binary_img, frame.frame_id, 0);
         auto t1 = steady_clock::now();
 
-        double latency_ms = static_cast<double>(duration_cast<microseconds>(t1 - t0).count()) / 1000.0;
-        latencies.push_back(latency_ms);
+        // === Stage 3: Solver ===
+        solver.solve_all(detections, poses3d);
+        auto t2 = steady_clock::now();
 
-        // Evaluate
-        auto frame_metrics = evaluate_frame(detections, frame.ground_truths, iou_threshold);
-        metrics_mutex.lock();
-        total_metrics += frame_metrics;
-        metrics_mutex.unlock();
-
-        spdlog::debug("GT:{} Det:{} TP:{} Latency:{:.2f}ms", frame_metrics.total_gt, frame_metrics.total_det,
-                      frame_metrics.true_positives, latency_ms);
-        ++num_frames;
-        if (num_frames % 2000 == 0) {
-            spdlog::info("working: {}/{}", num_frames.load(), size);
+        // Count solver success
+        for (int j = 0; j < 10; j++) {
+            if (detections.is_valid(j)) {
+                metrics.solver_total++;
+                if (poses3d[j].valid) {
+                    metrics.solver_success++;
+                    metrics.total_distance += poses3d[j].ypd_in_world[2];
+                }
+            }
         }
+
+        // === Stage 2: Tracker ===
+        auto timestamp = steady_clock::now();
+        tracker.track(detections, poses3d, timestamp);
+        auto t3 = steady_clock::now();
+
+        // Record tracker state
+        switch (tracker.state()) {
+            case spike::TrackerState::IDLE:
+                metrics.idle_frames++;
+                break;
+            case spike::TrackerState::DETECTING:
+                metrics.detecting_frames++;
+                break;
+            case spike::TrackerState::TRACKING:
+                metrics.tracking_frames++;
+                break;
+            case spike::TrackerState::TEMP_LOST:
+                metrics.temp_lost_frames++;
+                break;
+        }
+
+        // Record latencies
+        const double detect_ms = duration_cast<microseconds>(t1 - t0).count() / 1000.0;
+        const double solve_ms = duration_cast<microseconds>(t2 - t1).count() / 1000.0;
+        const double track_ms = duration_cast<microseconds>(t3 - t2).count() / 1000.0;
+        const double total_ms = duration_cast<microseconds>(t3 - t0).count() / 1000.0;
+
+        metrics.detect_latencies_ms.push_back(detect_ms);
+        metrics.solve_latencies_ms.push_back(solve_ms);
+        metrics.track_latencies_ms.push_back(track_ms);
+        metrics.total_latencies_ms.push_back(total_ms);
+
+        // Evaluate detection accuracy
+        auto frame_metrics = evaluate_frame(detections, frame.ground_truths, iou_threshold);
+        metrics.detection += frame_metrics;
+
+        // Progress logging
+        if ((i + 1) % 2000 == 0) {
+            spdlog::info("Progress: {}/{} ({:.1f}%)", i + 1, size, 100.0 * (i + 1) / size);
+        }
+
         // Debug visualization
         if (debug) {
-            show_mutex.lock();
-            visualize_frame(frame.image, detections, frame.ground_truths);
-            visualize_frame(gray_img, detections, frame.ground_truths, "Gray");
-            visualize_frame(binary_img, detections, frame.ground_truths, "Binary");
-            cv::waitKey(0);
-            show_mutex.unlock();
+            visualize_frame(frame.image, detections, poses3d, tracker, frame.ground_truths);
+            visualize_frame(gray_img, detections, poses3d, tracker, frame.ground_truths, "Gray");
+            visualize_frame(binary_img, detections, poses3d, tracker, frame.ground_truths, "Binary");
+            int key = cv::waitKey(0);
+            if (key == 'q' || key == 27) { // q or ESC to quit
+                break;
+            }
         }
-    }
-
-
-    // Calculate latency statistics
-    if (!latencies.empty()) {
-        std::ranges::sort(latencies);
-        double p50 = latencies[latencies.size() / 2];
-        double p99 = latencies[static_cast<size_t>(latencies.size() * 0.99)];
-        double mean = std::accumulate(latencies.begin(), latencies.end(), 0.0) / latencies.size();
-
-        spdlog::info("\n=== Latency Statistics ===\n");
-        spdlog::info("Mean:  {:.2f} ms\n", mean);
-        spdlog::info("P50:   {:.2f} ms\n", p50);
-        spdlog::info("P99:   {:.2f} ms\n", p99);
     }
 
     // Print final metrics
-    total_metrics.print();
+    metrics.print();
 
     return 0;
 }

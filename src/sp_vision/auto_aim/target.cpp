@@ -6,8 +6,7 @@ namespace auto_aim {
 
     Target::Target(const spike::Armor &armor, const ArmorPose3D &pose3d, const std::chrono::steady_clock::time_point t,
                    const double radius, const int armor_num, const Eigen::VectorXd &P0_dig) :
-        name(static_cast<spike::ArmorName>(armor.name)), armor_type(static_cast<spike::ArmorType>(armor.type)),
-        armor_num_(armor_num), t_(t) {
+        name(static_cast<spike::ArmorName>(armor.name)), armor_type(static_cast<spike::ArmorType>(armor.type)), armor_num_(armor_num), t_(t) {
         auto r = radius;
         const Eigen::Vector3d &xyz = pose3d.xyz_in_world;
         const Eigen::Vector3d &ypr = pose3d.ypr_in_world;

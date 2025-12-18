@@ -14,7 +14,7 @@ namespace auto_aim {
  * @brief 装甲板跟踪器
  *
  * 移植自 sp_vision_25/tasks/auto_aim/tracker
- * 复用 spike::TrackerState 状态机
+ * 复用 spike::TrackerSoA 状态机
  * 功能：
  * 1. 状态机管理（IDLE/DETECTING/TRACKING/TEMP_LOST）
  * 2. 目标初始化和更新
@@ -32,7 +32,7 @@ public:
     /**
      * @brief 获取当前状态
      */
-    [[nodiscard]] spike::TrackerState state() const { return state_; }
+    [[nodiscard]] spike::TrackerState state() const { return tracker_soa_.state.load(std::memory_order_acquire); }
 
     /**
      * @brief 获取当前状态字符串
@@ -60,6 +60,11 @@ public:
     [[nodiscard]] Target &target() { return target_; }
 
     /**
+     * @brief 获取 TrackerSoA 引用（用于状态访问）
+     */
+    [[nodiscard]] const spike::TrackerSoA &tracker_soa() const { return tracker_soa_; }
+
+    /**
      * @brief 获取目标装甲板列表 (预测位置)
      */
     [[nodiscard]] std::vector<Eigen::Vector4d> armor_xyza_list() const;
@@ -69,11 +74,10 @@ private:
     spike::Color enemy_color_;
     int min_detect_count_;
     int max_temp_lost_count_;
-    int detect_count_;
-    int temp_lost_count_;
     int outpost_max_temp_lost_count_;
     int normal_temp_lost_count_;
-    spike::TrackerState state_;
+
+    spike::TrackerSoA tracker_soa_; // 复用 TrackerSoA 管理状态机
     Target target_;
     std::chrono::steady_clock::time_point last_timestamp_;
 
