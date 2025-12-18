@@ -215,6 +215,27 @@ target_link_libraries(ukf_test PRIVATE
 
 add_test(NAME UKFTest COMMAND ukf_test)
 
+# Armor ratio perspective correction test
+add_executable(armor_ratio_test
+        test/armor_ratio_test.cpp
+        src/sp_vision/auto_aim/detector.cpp
+        src/sp_vision/auto_aim/classifier.cpp
+)
+
+target_include_directories(armor_ratio_test PRIVATE include)
+
+target_link_libraries(armor_ratio_test PRIVATE
+        GTest::GTest
+        GTest::Main
+        ${OpenCV_LIBS}
+        spdlog::spdlog
+        fmt::fmt
+        tomlplusplus::tomlplusplus
+        $<$<TARGET_EXISTS:openvino::runtime>:openvino::runtime>
+)
+
+add_test(NAME ArmorRatioTest COMMAND armor_ratio_test)
+
 # Scheduler tests
 add_executable(scheduler_test
         test/scheduler_test.cpp

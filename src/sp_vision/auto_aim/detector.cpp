@@ -41,8 +41,9 @@ namespace spike {
         const auto width = cv::norm(left2right);
         const auto max_lightbar_length = std::max(left.length, right.length);
         const auto min_lightbar_length = std::min(left.length, right.length);
-        // ratio = max_lightbar_length > 0.1 ? width / max_lightbar_length : 0.0;
-        // side_ratio = min_lightbar_length > 0.1 ? max_lightbar_length / min_lightbar_length : 1.0;
+
+        // 简单 ratio 计算，不做透视矫正
+        // 正确的透视矫正应该在 PnP 解算后通过相机模型完成
         ratio = width / max_lightbar_length;
         side_ratio = max_lightbar_length / min_lightbar_length;
 
