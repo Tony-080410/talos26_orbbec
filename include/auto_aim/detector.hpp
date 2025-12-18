@@ -4,7 +4,9 @@
 #include <opencv2/opencv.hpp>
 #include <spdlog/spdlog.h>
 #include <vector>
+#include "classifier.hpp"
 #include "detector_state.hpp"
+#include "sp_vision/config.hpp"
 
 namespace spike {
 
@@ -16,7 +18,7 @@ namespace spike {
      */
     struct LightbarFull {
         std::size_t id{0};
-        Color color{Color::red};
+        Color color{red};
         cv::Point2f center, top, bottom, top2bottom;
         double angle{0}, angle_error{0}, length{0}, width{0}, ratio{0};
         cv::RotatedRect rotated_rect;
@@ -30,7 +32,7 @@ namespace spike {
      * 包含灯条引用、几何属性、分类结果
      */
     struct ArmorFull {
-        Color color{Color::red};
+        Color color{red};
         LightbarFull left, right;
         cv::Point2f center;
         cv::Point2f center_norm; // 归一化坐标
@@ -40,10 +42,12 @@ namespace spike {
         double side_ratio{0}; // 长灯条 / 短灯条
         double rectangular_error{0}; // 灯条与中点连线夹角误差
 
-        ArmorType type{ArmorType::small};
-        ArmorName name{ArmorName::not_armor};
+        ArmorType type{small};
+        ArmorName name{not_armor};
         double confidence{0};
         bool duplicated{false};
+
+        cv::Mat pattern; // 装甲板图案 ROI (用于分类器)
 
         ArmorFull() = default;
         ArmorFull(const LightbarFull &l, const LightbarFull &r);
@@ -52,7 +56,6 @@ namespace spike {
 } // namespace spike
 
 namespace auto_aim {
-
     /**
      * @brief 传统装甲板检测器配置
      */
@@ -67,6 +70,14 @@ namespace auto_aim {
         double max_side_ratio{1.5};
         double min_confidence{0.8};
         double max_rectangular_error{25}; // degree (内部转换为弧度)
+
+        static constexpr auto from(const SpVisionDetectorConfig &config) {
+            return DetectorConfig{config.threshold,           config.max_angle_error,
+                                  config.min_lightbar_ratio,  config.max_lightbar_ratio,
+                                  config.min_lightbar_length, config.min_armor_ratio,
+                                  config.max_armor_ratio,     config.max_side_ratio,
+                                  config.min_confidence,      config.max_rectangular_error};
+        }
     };
 
     /**
@@ -80,7 +91,7 @@ namespace auto_aim {
      */
     class TraditionalDetector {
     public:
-        explicit TraditionalDetector(const DetectorConfig &config, bool debug = false);
+        explicit TraditionalDetector(const SpVisionConfig &config, bool debug = false);
 
         /**
          * @brief 全图检测装甲板
@@ -111,8 +122,17 @@ namespace auto_aim {
          */
         [[nodiscard]] const std::list<spike::LightbarFull> &get_lightbars() const { return lightbars_; }
 
+        /**
+         * @brief 从图像和装甲板灯条信息提取图案 ROI
+         * @param bgr_img BGR彩色图像
+         * @param armor 装甲板 (需要 left/right 灯条信息)
+         * @return 提取的图案 ROI
+         */
+        [[nodiscard]] static cv::Mat get_pattern(const cv::Mat &bgr_img, const spike::ArmorFull &armor);
+
     private:
         DetectorConfig config_;
+        Classifier classifier_;
         bool debug_;
 
         // 内部状态 (每次detect后更新)
@@ -126,11 +146,13 @@ namespace auto_aim {
         // ============ 几何检查 ============
         [[nodiscard]] bool check_geometry(const spike::LightbarFull &lightbar) const;
         [[nodiscard]] bool check_geometry(const spike::ArmorFull &armor) const;
+        [[nodiscard]] bool check_name(const spike::ArmorFull &armor) const;
+        [[nodiscard]] static bool check_type(const spike::ArmorFull &armor);
 
         // ============ 属性获取 ============
-        [[nodiscard]] spike::Color get_color(const cv::Mat &bgr_img, const std::vector<cv::Point> &contour) const;
-        [[nodiscard]] spike::ArmorType get_type(const spike::ArmorFull &armor) const;
-        [[nodiscard]] cv::Point2f get_center_norm(const cv::Mat &bgr_img, const cv::Point2f &center) const;
+        [[nodiscard]] static spike::Color get_color(const cv::Mat &bgr_img, const std::vector<cv::Point> &contour);
+        [[nodiscard]] static spike::ArmorType get_type(const spike::ArmorFull &armor);
+        [[nodiscard]] static cv::Point2f get_center_norm(const cv::Mat &bgr_img, const cv::Point2f &center) ;
 
         // ============ 去重处理 ============
         void remove_duplicates();
@@ -139,7 +161,7 @@ namespace auto_aim {
         [[nodiscard]] spike::ArmorSlots to_armor_slots(uint64_t frame_id, uint64_t timestamp_ns) const;
 
         // ============ PCA角点修正 (可选) ============
-        void lightbar_points_corrector(spike::LightbarFull &lightbar, const cv::Mat &gray_img) const;
+        static void lightbar_points_corrector(spike::LightbarFull &lightbar, const cv::Mat &gray_img);
 
         // ============ 调试输出 ============
         void show_result(const cv::Mat &binary_img, const cv::Mat &bgr_img, int frame_count) const;

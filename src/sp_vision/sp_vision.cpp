@@ -9,6 +9,7 @@
 #include <iostream>
 #include <numeric>
 #include <thread>
+#include <utility>
 #include <vector>
 
 #include "auto_aim/detector.hpp"
@@ -118,13 +119,9 @@ public:
         output_count.fetch_add(1, std::memory_order_relaxed);
     }
 
-    RealworldStrategy(const SpVisionConfig cfg, const size_t count, const int rows, const int cols) noexcept :
+    RealworldStrategy(SpVisionConfig cfg, const size_t count, const int rows, const int cols) noexcept :
         frame_pool(count, rows, cols, CV_8UC3), gray_pool(count, rows, cols, CV_8UC1), config(std::move(cfg)),
-        detector_(auto_aim::DetectorConfig{config.detector.threshold, config.detector.max_angle_error,
-                                           config.detector.min_lightbar_ratio, config.detector.max_lightbar_ratio,
-                                           config.detector.min_lightbar_length, config.detector.min_armor_ratio,
-                                           config.detector.max_armor_ratio, config.detector.max_side_ratio,
-                                           config.detector.min_confidence, config.detector.max_rectangular_error}) {}
+        detector_(config) {}
 
 public:
     // Buffer pool (复用 buffer)
@@ -150,7 +147,15 @@ public:
 int main(const int argc, char **argv) {
     hook_cstream();
     SpVisionConfig config;
-    if (auto result = config.read_from(toml::parse_file("sp_vision.toml")); !result) {
+    toml::table tbl;
+    try {
+        tbl = toml::parse_file("sp_vision.toml");
+    } catch (const toml::parse_error &err) {
+        const auto &src = err.source();
+        std::cerr << fmt::format("parse {}:{}:{}: {}", *src.path, src.begin.line, src.begin.column, err.description());
+        return 1;
+    }
+    if (auto result = config.read_from(tbl); !result) {
         std::cerr << "read sp_vision.toml: " + result.error();
         return 1;
     }

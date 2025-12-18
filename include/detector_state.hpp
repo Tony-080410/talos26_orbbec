@@ -7,10 +7,13 @@ namespace spike {
 
     // ============ 枚举类型 ============
 
-    enum class Color : uint8_t { red = 0, blue = 1, extinguish = 2, purple = 3 };
-    enum class ArmorType : uint8_t { big = 0, small = 1 };
-    enum class ArmorName : uint8_t { one = 0, two, three, four, five, sentry, outpost, base, not_armor };
-
+    enum Color : uint8_t { red = 0, blue = 1, extinguish = 2, purple = 3 };
+    const std::array<std::string, 4> COLORS = {"red", "blue", "extinguish", "purple"};
+    enum ArmorType : uint8_t { big = 0, small = 1 };
+    const std::array<std::string, 2> ARMOR_TYPES = {"big", "small"};
+    enum ArmorName : uint8_t { one = 0, two, three, four, five, sentry, outpost, base, not_armor };
+    const std::array<std::string, 9> ARMOR_NAMES = {"one",    "two",     "three", "four",     "five",
+                                                    "sentry", "outpost", "base",  "not_armor"};
     // ============ 缓存友好的输出结构 ============
 
     /**

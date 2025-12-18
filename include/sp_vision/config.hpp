@@ -49,12 +49,66 @@ struct SpVisionDetectorConfig {
     }
 };
 
+enum DeviceType : int {
+    Auto = 0,
+    Cpu = 1,
+    Gpu = 2,
+};
+
+/**
+ * @brief 分类器配置
+ */
+struct SpVisionClassifierConfig {
+    std::string model_path; // ONNX 模型路径
+    bool use_openvino{true}; // 是否使用 OpenVINO (否则用 OpenCV DNN)
+    DeviceType device{Auto}; // OpenVINO 设备: "AUTO", "CPU", "GPU"
+
+    [[nodiscard]] constexpr std::string device_type() const {
+        if (device == Auto) {
+            return "AUTO";
+        }
+        if (device == Cpu) {
+            return "CPU";
+        }
+        if (device == Gpu) {
+            return "GPU";
+        }
+        return {};
+    }
+
+    std::expected<void, std::string> read_from(const toml::table &tbl) {
+        if (const auto _t = tbl["classifier"].as_table()) {
+            auto t = *_t;
+            READ(t, "model_path", model_path);
+            READ(t, "use_openvino", use_openvino);
+            const std::optional<std::string> device_type = t["device"].value<std::string>();
+            if (!device_type) {
+                return std::unexpected("invalid device type");
+            }
+            if (const auto &dev = *device_type; dev == "AUTO") {
+                device = Auto;
+            } else if (dev == "CPU") {
+                device = Cpu;
+            } else if (dev == "GPU") {
+                device = Gpu;
+            } else {
+                return std::unexpected("invalid device type: " + dev);
+            }
+            return {};
+        }
+        return std::unexpected("classifier is not a table");
+    }
+};
 
 struct SpVisionConfig : scheduler::RuntimeConfig {
+    SpVisionClassifierConfig classifier{};
     SpVisionDetectorConfig detector{};
 
     constexpr std::expected<void, std::string> read_from(const toml::table &tbl) {
         if (auto read = read_runtime_config(this, tbl); !read) {
+            return read;
+        }
+        if (auto read = classifier.read_from(tbl); !read) {
             return read;
         }
         if (auto read = detector.read_from(tbl); !read) {
@@ -63,12 +117,3 @@ struct SpVisionConfig : scheduler::RuntimeConfig {
         return {};
     }
 };
-
-
-constexpr auto convert(const SpVisionDetectorConfig &config) {
-    return auto_aim::DetectorConfig{config.threshold,           config.max_angle_error,
-                                    config.min_lightbar_ratio,  config.max_lightbar_ratio,
-                                    config.min_lightbar_length, config.min_armor_ratio,
-                                    config.max_armor_ratio,     config.max_side_ratio,
-                                    config.min_confidence,      config.max_rectangular_error};
-}

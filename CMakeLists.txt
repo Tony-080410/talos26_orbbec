@@ -53,6 +53,7 @@ find_package(spdlog REQUIRED)
 find_package(fmt REQUIRED)
 find_package(TBB REQUIRED)
 find_package(GTest REQUIRED)
+find_package(OpenVINO QUIET)
 
 # Benchmark is optional (not essential for Day 1)
 find_package(benchmark QUIET)
@@ -107,6 +108,7 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
 add_executable(sp_vision
         src/sp_vision/sp_vision.cpp
         src/sp_vision/auto_aim/detector.cpp
+        src/sp_vision/auto_aim/classifier.cpp
 )
 
 
@@ -120,12 +122,14 @@ target_link_libraries(sp_vision PRIVATE
         Eigen3::Eigen
         TBB::tbb
         tomlplusplus::tomlplusplus
+        $<$<TARGET_EXISTS:openvino::runtime>:openvino::runtime>
 )
 
 # Detector benchmark (accuracy testing against dataset)
 add_executable(detector_benchmark
         test/detector_benchmark.cpp
         src/sp_vision/auto_aim/detector.cpp
+        src/sp_vision/auto_aim/classifier.cpp
 )
 
 target_include_directories(detector_benchmark PRIVATE include)
@@ -136,6 +140,7 @@ target_link_libraries(detector_benchmark PRIVATE
         TBB::tbb
         fmt::fmt
         tomlplusplus::tomlplusplus
+        $<$<TARGET_EXISTS:openvino::runtime>:openvino::runtime>
 )
 
 # Unit tests

@@ -13,7 +13,6 @@
 #include <fmt/format.h>
 #include <numeric>
 #include <oneapi/tbb/parallel_for.h>
-#include <oneapi/tbb/task_arena.h>
 #include <opencv2/highgui.hpp>
 #include <opencv2/imgproc.hpp>
 #include <ranges>
@@ -64,8 +63,7 @@ AccuracyMetrics evaluate_frame(const spike::ArmorSlots &detections, const std::v
     }
 
     // Sort by IoU descending
-    std::ranges::sort(iou_pairs,
-              [](const auto &a, const auto &b) { return std::get<0>(a) > std::get<0>(b); });
+    std::ranges::sort(iou_pairs, [](const auto &a, const auto &b) { return std::get<0>(a) > std::get<0>(b); });
 
     // Greedy assignment
     for (const auto &[iou, d_idx, g_idx]: iou_pairs) {
@@ -144,7 +142,9 @@ void visualize_frame(const cv::Mat &image, const spike::ArmorSlots &detections,
             cv::Scalar color = armor.color == 0 ? cv::Scalar(0, 0, 255) : cv::Scalar(255, 0, 0);
             cv::polylines(display, pts, true, color, 1);
 
-            cv::putText(display, fmt::format("D c{} t{} {:.2f}", armor.color, armor.type, armor.confidence),
+            cv::putText(display,
+                        fmt::format("D c{} n{} t{} {:.2f}", spike::COLORS[armor.color], spike::ARMOR_NAMES[armor.name],
+                                    spike::ARMOR_TYPES[armor.type], armor.confidence),
                         cv::Point(pts[0].x, pts[0].y - 5), cv::FONT_HERSHEY_SIMPLEX, 0.3, color, 1);
         }
     }
@@ -188,7 +188,8 @@ int main(int argc, char **argv) {
         spdlog::critical("no valid frames found in dataset");
         return 1;
     }
-    spdlog::info("Loaded {} frames", loader.size());
+    const auto size = loader.size();
+    spdlog::info("Loaded {} frames", size);
 
     // Metrics
     std::mutex metrics_mutex;
@@ -196,55 +197,53 @@ int main(int argc, char **argv) {
     std::atomic<uint64_t> num_frames{0};
     tbb::concurrent_vector<double> latencies;
     std::mutex show_mutex;
-    tbb::task_arena arena(std::thread::hardware_concurrency());
+    TraditionalDetector detector(config, false);
 
-    arena.execute([&] {
-        tbb::parallel_for(static_cast<size_t>(0), loader.size(), [&](size_t i) {
-            auto frame_opt = loader.load_frame(i);
-            if (!frame_opt) {
-                spdlog::error("load frame {}", i);
-                return;
-            }
+    for (size_t i = 0; i < size; i++) {
+        auto frame_opt = loader.load_frame(i);
+        if (!frame_opt) {
+            spdlog::error("load frame {}", i);
+            continue;
+        }
 
-            const auto &frame = *frame_opt;
+        const auto &frame = *frame_opt;
 
-            // Generate binary image
-            cv::Mat gray_img, binary_img;
-            cv::cvtColor(frame.image, gray_img, cv::COLOR_BGR2GRAY);
-            cv::threshold(gray_img, binary_img, config.detector.threshold, 255, cv::THRESH_BINARY);
+        // Generate binary image
+        cv::Mat gray_img, binary_img;
+        cv::cvtColor(frame.image, gray_img, cv::COLOR_BGR2GRAY);
+        cv::threshold(gray_img, binary_img, config.detector.threshold, 255, cv::THRESH_BINARY);
 
-            TraditionalDetector detector(convert(config.detector), false);
-            // Time the detection
-            auto t0 = steady_clock::now();
-            auto detections = detector.detect(frame.image, binary_img, frame.frame_id, 0);
-            auto t1 = steady_clock::now();
+        // Time the detection
+        auto t0 = steady_clock::now();
+        auto detections = detector.detect(frame.image, binary_img, frame.frame_id, 0);
+        auto t1 = steady_clock::now();
 
-            double latency_ms = static_cast<double>(duration_cast<microseconds>(t1 - t0).count()) / 1000.0;
-            latencies.push_back(latency_ms);
+        double latency_ms = static_cast<double>(duration_cast<microseconds>(t1 - t0).count()) / 1000.0;
+        latencies.push_back(latency_ms);
 
-            // Evaluate
-            auto frame_metrics = evaluate_frame(detections, frame.ground_truths, iou_threshold);
-            metrics_mutex.lock();
-            total_metrics += frame_metrics;
-            metrics_mutex.unlock();
+        // Evaluate
+        auto frame_metrics = evaluate_frame(detections, frame.ground_truths, iou_threshold);
+        metrics_mutex.lock();
+        total_metrics += frame_metrics;
+        metrics_mutex.unlock();
 
-            spdlog::debug("GT:{} Det:{} TP:{} Latency:{:.2f}ms", frame_metrics.total_gt, frame_metrics.total_det,
-                          frame_metrics.true_positives, latency_ms);
-            ++num_frames;
-            if (num_frames % 2000 == 0) {
-                spdlog::info("working: {}/{}", num_frames.load(), loader.size());
-            }
-            // Debug visualization
-            if (debug) {
-                show_mutex.lock();
-                visualize_frame(frame.image, detections, frame.ground_truths);
-                visualize_frame(gray_img, detections, frame.ground_truths, "Gray");
-                visualize_frame(binary_img, detections, frame.ground_truths, "Binary");
-                cv::waitKey(0);
-                show_mutex.unlock();
-            }
-        });
-    });
+        spdlog::debug("GT:{} Det:{} TP:{} Latency:{:.2f}ms", frame_metrics.total_gt, frame_metrics.total_det,
+                      frame_metrics.true_positives, latency_ms);
+        ++num_frames;
+        if (num_frames % 2000 == 0) {
+            spdlog::info("working: {}/{}", num_frames.load(), size);
+        }
+        // Debug visualization
+        if (debug) {
+            show_mutex.lock();
+            visualize_frame(frame.image, detections, frame.ground_truths);
+            visualize_frame(gray_img, detections, frame.ground_truths, "Gray");
+            visualize_frame(binary_img, detections, frame.ground_truths, "Binary");
+            cv::waitKey(0);
+            show_mutex.unlock();
+        }
+    }
+
 
     // Calculate latency statistics
     if (!latencies.empty()) {

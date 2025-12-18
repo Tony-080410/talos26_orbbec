@@ -29,7 +29,7 @@ namespace spike {
 
     ArmorFull::ArmorFull(const LightbarFull &l, const LightbarFull &r) : left(l), right(r) {
         color = left.color;
-        center = (left.center + right.center) / 2;
+        center = (left.center + right.center) / 2.0;
 
         points.reserve(4);
         points.emplace_back(left.top);
@@ -41,8 +41,10 @@ namespace spike {
         const auto width = cv::norm(left2right);
         const auto max_lightbar_length = std::max(left.length, right.length);
         const auto min_lightbar_length = std::min(left.length, right.length);
-        ratio = max_lightbar_length > 0.1 ? width / max_lightbar_length : 0.0;
-        side_ratio = min_lightbar_length > 0.1 ? max_lightbar_length / min_lightbar_length : 1.0;
+        // ratio = max_lightbar_length > 0.1 ? width / max_lightbar_length : 0.0;
+        // side_ratio = min_lightbar_length > 0.1 ? max_lightbar_length / min_lightbar_length : 1.0;
+        ratio = width / max_lightbar_length;
+        side_ratio = max_lightbar_length / min_lightbar_length;
 
         const auto roll = std::atan2(left2right.y, left2right.x);
         const auto left_rectangular_error = std::abs(left.angle - roll - CV_PI / 2);
@@ -56,8 +58,8 @@ namespace auto_aim {
 
     // ============ TraditionalDetector ============
 
-    TraditionalDetector::TraditionalDetector(const DetectorConfig &config, const bool debug) :
-        config_(config), debug_(debug) {
+    TraditionalDetector::TraditionalDetector(const SpVisionConfig &config, const bool debug) :
+        config_(DetectorConfig::from(config.detector)), classifier_(config.classifier), debug_(debug) {
         // 预转换角度为弧度
         max_angle_error_rad_ = config_.max_angle_error / 57.3;
         max_rectangular_error_rad_ = config_.max_rectangular_error / 57.3;
@@ -112,9 +114,14 @@ namespace auto_aim {
                     continue;
 
                 // 设置装甲板类型 (不依赖分类器)
+                armor.pattern = get_pattern(bgr_img, armor);
+                classifier_.classify_ov(armor);
+                if (!check_name(armor))
+                    continue;
+
                 armor.type = get_type(armor);
-                armor.name = spike::ArmorName::not_armor; // 无分类器时设为unknown
-                armor.confidence = 0.8; // 默认置信度
+                if (!check_type(armor))
+                    continue;
 
                 armor.center_norm = get_center_norm(bgr_img, armor.center);
                 armors_.emplace_back(armor);
@@ -264,9 +271,43 @@ namespace auto_aim {
         return ratio_ok && side_ratio_ok && rectangular_error_ok;
     }
 
+    bool TraditionalDetector::check_name(const spike::ArmorFull &armor) const {
+        if (armor.confidence < config_.min_confidence) {
+            return false;
+        }
+        const auto name_ok = armor.name != spike::ArmorName::not_armor;
+
+        // 保存不确定的图案，用于分类器的迭代
+        // if (name_ok && !confidence_ok) save(armor);
+
+        // 出现 5号 则显示 debug 信息。但不过滤。
+        if (armor.name == spike::ArmorName::five) {
+            std::cerr << "classifier detected an armor five, which is outdated";
+        }
+
+        return name_ok;
+    }
+
+    bool TraditionalDetector::check_type(const spike::ArmorFull &armor) {
+        const auto name_ok = armor.type == spike::ArmorType::small
+                                     ? armor.name != spike::ArmorName::one && armor.name != spike::ArmorName::base
+                                     : armor.name == spike::ArmorName::one || armor.name == spike::ArmorName::base;
+
+        // 保存异常的图案，用于分类器的迭代
+        if (!name_ok) {
+            spdlog::warn("classifier detected a strange armor {} with type {}",
+                         spike::ARMOR_NAMES[static_cast<uint8_t>(armor.name)],
+                         spike::ARMOR_TYPES[static_cast<uint8_t>(armor.type)]);
+            cv::imshow("ROI", armor.pattern);
+            return false;
+        }
+
+        return name_ok;
+    }
+
     // ============ 属性获取 ============
 
-    spike::Color TraditionalDetector::get_color(const cv::Mat &bgr_img, const std::vector<cv::Point> &contour) const {
+    spike::Color TraditionalDetector::get_color(const cv::Mat &bgr_img, const std::vector<cv::Point> &contour) {
         int red_sum = 0, blue_sum = 0;
 
         for (const auto &point: contour) {
@@ -279,7 +320,7 @@ namespace auto_aim {
         return blue_sum > red_sum ? spike::Color::blue : spike::Color::red;
     }
 
-    spike::ArmorType TraditionalDetector::get_type(const spike::ArmorFull &armor) const {
+    spike::ArmorType TraditionalDetector::get_type(const spike::ArmorFull &armor) {
         // 优先根据当前armor.ratio判断
         if (armor.ratio > 3.0) {
             return spike::ArmorType::big;
@@ -287,14 +328,42 @@ namespace auto_aim {
         if (armor.ratio < 2.5) {
             return spike::ArmorType::small;
         }
+        if (armor.name == spike::ArmorName::one || armor.name == spike::ArmorName::base) {
+            return spike::ArmorType::big;
+        }
         // 默认小装甲板
         return spike::ArmorType::small;
     }
 
-    cv::Point2f TraditionalDetector::get_center_norm(const cv::Mat &bgr_img, const cv::Point2f &center) const {
+    cv::Point2f TraditionalDetector::get_center_norm(const cv::Mat &bgr_img, const cv::Point2f &center) {
         const auto h = static_cast<float>(bgr_img.rows);
         const auto w = static_cast<float>(bgr_img.cols);
         return {center.x / w, center.y / h};
+    }
+
+    cv::Mat TraditionalDetector::get_pattern(const cv::Mat &bgr_img, const spike::ArmorFull &armor) {
+        // 延长灯条获得装甲板角点
+        // 1.125 = 0.5 * armor_height / lightbar_length = 0.5 * 126mm / 56mm
+        const auto &left = armor.left;
+        const auto &right = armor.right;
+
+        const auto tl = left.center - left.top2bottom * 1.125f;
+        const auto bl = left.center + left.top2bottom * 1.125f;
+        const auto tr = right.center - right.top2bottom * 1.125f;
+        const auto br = right.center + right.top2bottom * 1.125f;
+
+        const auto roi_left = std::max<int>(static_cast<int>(std::min(tl.x, bl.x)), 0);
+        const auto roi_top = std::max<int>(static_cast<int>(std::min(tl.y, tr.y)), 0);
+        const auto roi_right = std::min<int>(static_cast<int>(std::max(tr.x, br.x)), bgr_img.cols);
+        const auto roi_bottom = std::min<int>(static_cast<int>(std::max(bl.y, br.y)), bgr_img.rows);
+        const auto roi_tl = cv::Point(roi_left, roi_top);
+        const auto roi_br = cv::Point(roi_right, roi_bottom);
+        const auto roi = cv::Rect(roi_tl, roi_br);
+        /*if (roi_right <= roi_left || roi_bottom <= roi_top) {
+            return {};
+        }*/
+
+        return bgr_img(roi);
     }
 
     // ============ 去重处理 ============
@@ -311,8 +380,7 @@ namespace auto_aim {
                 // 装甲板重叠，保留较小的
                 if (armor1->left.id == armor2->left.id || armor1->right.id == armor2->right.id) {
                     const auto area1 = armor1->left.length * armor1->right.length;
-                    const auto area2 = armor2->left.length * armor2->right.length;
-                    if (area1 < area2)
+                    if (const auto area2 = armor2->left.length * armor2->right.length; area1 < area2)
                         armor2->duplicated = true;
                     else
                         armor1->duplicated = true;
@@ -389,7 +457,7 @@ namespace auto_aim {
 
     // ============ PCA角点修正 ============
 
-    void TraditionalDetector::lightbar_points_corrector(spike::LightbarFull &lightbar, const cv::Mat &gray_img) const {
+    void TraditionalDetector::lightbar_points_corrector(spike::LightbarFull &lightbar, const cv::Mat &gray_img) {
         // 配置参数
         constexpr float MAX_BRIGHTNESS = 25;
         constexpr float ROI_SCALE = 0.07f;
@@ -427,8 +495,7 @@ namespace auto_aim {
         std::vector<cv::Point2f> points;
         for (int i = 0; i < roi_float.rows; ++i) {
             for (int j = 0; j < roi_float.cols; ++j) {
-                const float weight = roi_float.at<float>(i, j);
-                if (weight > 1e-3f) {
+                if (const float weight = roi_float.at<float>(i, j); weight > 1e-3f) {
                     points.emplace_back(static_cast<float>(j), static_cast<float>(i));
                 }
             }
