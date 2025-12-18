@@ -46,6 +46,7 @@ inline void hook_cstream() {
     const auto console_sink = std::make_shared<spdlog::sinks::stdout_color_sink_mt>();
     std::vector<spdlog::sink_ptr> sinks{console_sink, file_sink};
     const auto logger = std::make_shared<spdlog::logger>("talos", sinks.begin(), sinks.end());
+    logger->set_pattern("[%^%l%$] %v");
     spdlog::set_default_logger(logger);
     static spdlog_streambuf cout_buf(logger, spdlog::level::info);
     static spdlog_streambuf cerr_buf(logger, spdlog::level::err);

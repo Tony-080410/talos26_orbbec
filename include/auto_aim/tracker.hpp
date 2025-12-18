@@ -1,7 +1,6 @@
 #pragma once
 
 #include <chrono>
-#include <list>
 #include <string>
 
 #include "detector_state.hpp"
@@ -28,7 +27,7 @@ public:
      * @param config 跟踪器配置
      * @param solver PnP解算器引用
      */
-    Tracker(const struct SpVisionTrackerConfig &config, Solver &solver);
+    Tracker(const SpVisionTrackerConfig &config, Solver &solver);
 
     /**
      * @brief 获取当前状态

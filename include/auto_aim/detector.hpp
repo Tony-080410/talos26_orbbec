@@ -151,7 +151,7 @@ namespace auto_aim {
         // ============ 属性获取 ============
         [[nodiscard]] static spike::Color get_color(const cv::Mat &bgr_img, const std::vector<cv::Point> &contour);
         [[nodiscard]] static spike::ArmorType get_type(const spike::ArmorFull &armor);
-        [[nodiscard]] static cv::Point2f get_center_norm(const cv::Mat &bgr_img, const cv::Point2f &center) ;
+        [[nodiscard]] static cv::Point2f get_center_norm(const cv::Mat &bgr_img, const cv::Point2f &center);
 
         // ============ 去重处理 ============
         void remove_duplicates();

@@ -33,7 +33,7 @@ public:
      * @param x_add 状态加法函数（用于角度wrap）
      */
     ExtendedKalmanFilter(const Eigen::VectorXd &x0, const Eigen::MatrixXd &P0,
-                         std::function<Eigen::VectorXd(const Eigen::VectorXd &, const Eigen::VectorXd &)> x_add =
+            const std::function<Eigen::VectorXd(const Eigen::VectorXd &, const Eigen::VectorXd &)> &x_add =
                              [](const Eigen::VectorXd &a, const Eigen::VectorXd &b) { return a + b; });
 
     /**
@@ -52,7 +52,7 @@ public:
      * @return 预测后的状态
      */
     Eigen::VectorXd predict(const Eigen::MatrixXd &F, const Eigen::MatrixXd &Q,
-                            std::function<Eigen::VectorXd(const Eigen::VectorXd &)> f);
+                            const std::function<Eigen::VectorXd(const Eigen::VectorXd &)> &f);
 
     /**
      * @brief 线性更新
@@ -63,7 +63,7 @@ public:
      * @return 更新后的状态
      */
     Eigen::VectorXd update(const Eigen::VectorXd &z, const Eigen::MatrixXd &H, const Eigen::MatrixXd &R,
-                           std::function<Eigen::VectorXd(const Eigen::VectorXd &, const Eigen::VectorXd &)> z_subtract =
+            const std::function<Eigen::VectorXd(const Eigen::VectorXd &, const Eigen::VectorXd &)> &z_subtract =
                                [](const Eigen::VectorXd &a, const Eigen::VectorXd &b) { return a - b; });
 
     /**
@@ -76,8 +76,8 @@ public:
      * @return 更新后的状态
      */
     Eigen::VectorXd update(const Eigen::VectorXd &z, const Eigen::MatrixXd &H, const Eigen::MatrixXd &R,
-                           std::function<Eigen::VectorXd(const Eigen::VectorXd &)> h,
-                           std::function<Eigen::VectorXd(const Eigen::VectorXd &, const Eigen::VectorXd &)> z_subtract =
+            const std::function<Eigen::VectorXd(const Eigen::VectorXd &)> &h,
+            const std::function<Eigen::VectorXd(const Eigen::VectorXd &, const Eigen::VectorXd &)> &z_subtract =
                                [](const Eigen::VectorXd &a, const Eigen::VectorXd &b) { return a - b; });
 
 private:

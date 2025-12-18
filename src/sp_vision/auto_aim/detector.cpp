@@ -116,7 +116,7 @@ namespace auto_aim {
 
                 // 设置装甲板类型 (不依赖分类器)
                 armor.pattern = get_pattern(bgr_img, armor);
-                classifier_.classify_ov(armor);
+                classifier_.classify(armor);
                 if (!check_name(armor))
                     continue;
 
