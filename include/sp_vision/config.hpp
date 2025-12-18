@@ -100,11 +100,141 @@ struct SpVisionClassifierConfig {
     }
 };
 
+/**
+ * @brief PnP解算器配置
+ */
+struct SpVisionSolverConfig {
+    // 相机内参
+    std::vector<double> camera_matrix;  // 3x3 row-major
+    std::vector<double> distort_coeffs; // 1x5
+
+    // 外参：相机到云台、云台到IMU
+    std::vector<double> R_camera2gimbal;  // 3x3 row-major
+    std::vector<double> t_camera2gimbal;  // 3x1
+    std::vector<double> R_gimbal2imubody; // 3x3 row-major
+
+    std::expected<void, std::string> read_from(const toml::table &tbl) {
+        if (const auto _t = tbl["solver"].as_table()) {
+            auto t = *_t;
+
+            // 读取相机内参
+            if (const auto arr = t["camera_matrix"].as_array()) {
+                camera_matrix.clear();
+                for (const auto &v : *arr) {
+                    if (const auto val = v.value<double>()) {
+                        camera_matrix.push_back(*val);
+                    }
+                }
+                if (camera_matrix.size() != 9) {
+                    return std::unexpected("camera_matrix must have 9 elements");
+                }
+            } else {
+                return std::unexpected("camera_matrix not found");
+            }
+
+            // 读取畸变系数
+            if (const auto arr = t["distort_coeffs"].as_array()) {
+                distort_coeffs.clear();
+                for (const auto &v : *arr) {
+                    if (const auto val = v.value<double>()) {
+                        distort_coeffs.push_back(*val);
+                    }
+                }
+                if (distort_coeffs.size() != 5) {
+                    return std::unexpected("distort_coeffs must have 5 elements");
+                }
+            } else {
+                return std::unexpected("distort_coeffs not found");
+            }
+
+            // 读取外参
+            if (const auto arr = t["R_camera2gimbal"].as_array()) {
+                R_camera2gimbal.clear();
+                for (const auto &v : *arr) {
+                    if (const auto val = v.value<double>()) {
+                        R_camera2gimbal.push_back(*val);
+                    }
+                }
+                if (R_camera2gimbal.size() != 9) {
+                    return std::unexpected("R_camera2gimbal must have 9 elements");
+                }
+            } else {
+                return std::unexpected("R_camera2gimbal not found");
+            }
+
+            if (const auto arr = t["t_camera2gimbal"].as_array()) {
+                t_camera2gimbal.clear();
+                for (const auto &v : *arr) {
+                    if (const auto val = v.value<double>()) {
+                        t_camera2gimbal.push_back(*val);
+                    }
+                }
+                if (t_camera2gimbal.size() != 3) {
+                    return std::unexpected("t_camera2gimbal must have 3 elements");
+                }
+            } else {
+                return std::unexpected("t_camera2gimbal not found");
+            }
+
+            if (const auto arr = t["R_gimbal2imubody"].as_array()) {
+                R_gimbal2imubody.clear();
+                for (const auto &v : *arr) {
+                    if (const auto val = v.value<double>()) {
+                        R_gimbal2imubody.push_back(*val);
+                    }
+                }
+                if (R_gimbal2imubody.size() != 9) {
+                    return std::unexpected("R_gimbal2imubody must have 9 elements");
+                }
+            } else {
+                return std::unexpected("R_gimbal2imubody not found");
+            }
+
+            return {};
+        }
+        return std::unexpected("solver section not found");
+    }
+};
+
+/**
+ * @brief 跟踪器配置
+ */
+struct SpVisionTrackerConfig {
+    int enemy_color{0};              // 0=red, 1=blue
+    int min_detect_count{3};         // 确认跟踪所需的最小检测次数
+    int max_temp_lost_count{30};     // 临时丢失的最大帧数
+    int outpost_max_temp_lost_count{100}; // 前哨站临时丢失的最大帧数
+
+    std::expected<void, std::string> read_from(const toml::table &tbl) {
+        if (const auto _t = tbl["tracker"].as_table()) {
+            auto t = *_t;
+
+            if (const auto val = t["enemy_color"].value<std::string>()) {
+                enemy_color = (*val == "red") ? 0 : 1;
+            }
+            if (const auto val = t["min_detect_count"].value<int64_t>()) {
+                min_detect_count = static_cast<int>(*val);
+            }
+            if (const auto val = t["max_temp_lost_count"].value<int64_t>()) {
+                max_temp_lost_count = static_cast<int>(*val);
+            }
+            if (const auto val = t["outpost_max_temp_lost_count"].value<int64_t>()) {
+                outpost_max_temp_lost_count = static_cast<int>(*val);
+            }
+
+            return {};
+        }
+        return std::unexpected("tracker section not found");
+    }
+};
+
 struct SpVisionConfig : scheduler::RuntimeConfig {
     SpVisionClassifierConfig classifier{};
     SpVisionDetectorConfig detector{};
+    SpVisionSolverConfig solver{};
+    SpVisionTrackerConfig tracker{};
 
-    constexpr std::expected<void, std::string> read_from(const toml::table &tbl) {
+    std::expected<void, std::string> read_from(const toml::table &tbl) {
         if (auto read = read_runtime_config(this, tbl); !read) {
             return read;
         }
@@ -112,6 +242,12 @@ struct SpVisionConfig : scheduler::RuntimeConfig {
             return read;
         }
         if (auto read = detector.read_from(tbl); !read) {
+            return read;
+        }
+        if (auto read = solver.read_from(tbl); !read) {
+            return read;
+        }
+        if (auto read = tracker.read_from(tbl); !read) {
             return read;
         }
         return {};

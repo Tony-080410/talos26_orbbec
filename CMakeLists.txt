@@ -109,6 +109,10 @@ add_executable(sp_vision
         src/sp_vision/sp_vision.cpp
         src/sp_vision/auto_aim/detector.cpp
         src/sp_vision/auto_aim/classifier.cpp
+        src/sp_vision/auto_aim/solver.cpp
+        src/sp_vision/auto_aim/extended_kalman_filter.cpp
+        src/sp_vision/auto_aim/target.cpp
+        src/sp_vision/auto_aim/tracker.cpp
 )
 
 
@@ -130,6 +134,10 @@ add_executable(detector_benchmark
         test/detector_benchmark.cpp
         src/sp_vision/auto_aim/detector.cpp
         src/sp_vision/auto_aim/classifier.cpp
+        src/sp_vision/auto_aim/solver.cpp
+        src/sp_vision/auto_aim/extended_kalman_filter.cpp
+        src/sp_vision/auto_aim/target.cpp
+        src/sp_vision/auto_aim/tracker.cpp
 )
 
 target_include_directories(detector_benchmark PRIVATE include)
@@ -139,6 +147,7 @@ target_link_libraries(detector_benchmark PRIVATE
         spdlog::spdlog
         TBB::tbb
         fmt::fmt
+        Eigen3::Eigen
         tomlplusplus::tomlplusplus
         $<$<TARGET_EXISTS:openvino::runtime>:openvino::runtime>
 )
@@ -220,6 +229,10 @@ add_executable(armor_ratio_test
         test/armor_ratio_test.cpp
         src/sp_vision/auto_aim/detector.cpp
         src/sp_vision/auto_aim/classifier.cpp
+        src/sp_vision/auto_aim/solver.cpp
+        src/sp_vision/auto_aim/extended_kalman_filter.cpp
+        src/sp_vision/auto_aim/target.cpp
+        src/sp_vision/auto_aim/tracker.cpp
 )
 
 target_include_directories(armor_ratio_test PRIVATE include)
@@ -230,6 +243,7 @@ target_link_libraries(armor_ratio_test PRIVATE
         ${OpenCV_LIBS}
         spdlog::spdlog
         fmt::fmt
+        Eigen3::Eigen
         tomlplusplus::tomlplusplus
         $<$<TARGET_EXISTS:openvino::runtime>:openvino::runtime>
 )

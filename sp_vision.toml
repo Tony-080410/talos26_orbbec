@@ -19,3 +19,37 @@ max_armor_ratio = 5
 max_side_ratio = 1.5
 max_rectangular_error = 25 # degree
 min_confidence = 0.8
+
+[solver]
+# 相机内参 (3x3 row-major)
+camera_matrix = [
+    1280.0, 0.0, 640.0,
+    0.0, 1280.0, 512.0,
+    0.0, 0.0, 1.0
+]
+
+# 畸变系数 (k1, k2, p1, p2, k3)
+distort_coeffs = [0.0, 0.0, 0.0, 0.0, 0.0]
+
+# 相机到云台旋转矩阵 (3x3 row-major)
+R_camera2gimbal = [
+    1.0, 0.0, 0.0,
+    0.0, 1.0, 0.0,
+    0.0, 0.0, 1.0
+]
+
+# 相机到云台平移向量 (3x1)
+t_camera2gimbal = [0.0, 0.0, 0.0]
+
+# 云台到IMU body旋转矩阵 (3x3 row-major)
+R_gimbal2imubody = [
+    1.0, 0.0, 0.0,
+    0.0, 1.0, 0.0,
+    0.0, 0.0, 1.0
+]
+
+[tracker]
+enemy_color = "red"           # "red" or "blue"
+min_detect_count = 3          # 确认跟踪所需的最小检测次数
+max_temp_lost_count = 30      # 临时丢失的最大帧数
+outpost_max_temp_lost_count = 100  # 前哨站临时丢失的最大帧数
