@@ -137,7 +137,6 @@ namespace scheduler {
     };
 
     // ============ 运行时配置 ============
-
     struct RuntimeConfig {
         // Detector
         int detector_mode{0}; // 0=传统, 1=NN吞吐, 2=NN延迟

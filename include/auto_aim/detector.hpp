@@ -2,7 +2,6 @@
 
 #include <list>
 #include <opencv2/opencv.hpp>
-#include <spdlog/spdlog.h>
 #include <vector>
 #include "classifier.hpp"
 #include "detector_state.hpp"

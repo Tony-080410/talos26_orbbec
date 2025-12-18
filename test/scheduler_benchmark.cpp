@@ -140,8 +140,7 @@ static void BM_Scheduler_PushFrame(benchmark::State &state) {
         return det;
     });
     Scheduler<TestStrategy> sched;
-    RuntimeConfig config;
-    config.detector_threads = 2;
+    RuntimeConfig config(1, 4, 10);
     sched.init(config, &strategy);
 
     sched.start();
