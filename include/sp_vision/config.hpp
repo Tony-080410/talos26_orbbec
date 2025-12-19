@@ -134,7 +134,7 @@ struct SpVisionSolverConfig {
  * @brief 跟踪器配置
  */
 struct SpVisionTrackerConfig {
-    spike::Color enemy_color{spike::Color::red}; // 0=red, 1=blue
+    talos::Color enemy_color{talos::Color::red}; // 0=red, 1=blue
     uint16_t min_detect_count{3}; // 确认跟踪所需的最小检测次数
     uint16_t max_temp_lost_count{30}; // 临时丢失的最大帧数
     uint16_t outpost_max_temp_lost_count{100}; // 前哨站临时丢失的最大帧数

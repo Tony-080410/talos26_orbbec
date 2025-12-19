@@ -28,8 +28,8 @@ namespace auto_aim {
  */
 class Target {
 public:
-    spike::ArmorName name{spike::ArmorName::not_armor};
-    spike::ArmorType armor_type{spike::ArmorType::small};
+    talos::ArmorName name{talos::ArmorName::not_armor};
+    talos::ArmorType armor_type{talos::ArmorType::small};
     bool jumped{false};
     int last_id{0};
 
@@ -44,7 +44,7 @@ public:
      * @param armor_num 装甲板数量（2/3/4）
      * @param P0_dig 初始协方差对角线
      */
-    Target(const spike::Armor &armor, const ArmorPose3D &pose3d, std::chrono::steady_clock::time_point t, double radius,
+    Target(const talos::Armor &armor, const ArmorPose3D &pose3d, std::chrono::steady_clock::time_point t, double radius,
            int armor_num, const Eigen::VectorXd &P0_dig);
 
     /**
@@ -67,7 +67,7 @@ public:
      * @param armor 检测到的装甲板
      * @param pose3d 解算得到的3D位姿
      */
-    void update(const spike::Armor &armor, const ArmorPose3D &pose3d);
+    void update(const talos::Armor &armor, const ArmorPose3D &pose3d);
 
     /**
      * @brief 获取EKF状态向量

@@ -1,7 +1,7 @@
 #include <gtest/gtest.h>
 #include "ukf_logic.hpp"
 
-using namespace spike;
+using namespace talos;
 
 class UKFTest : public testing::Test {
 protected:

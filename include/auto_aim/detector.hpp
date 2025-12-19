@@ -7,7 +7,7 @@
 #include "detector_state.hpp"
 #include "sp_vision/config.hpp"
 
-namespace spike {
+namespace talos {
 
     // ============ 传统检测器内部结构 (需要 OpenCV) ============
 
@@ -100,7 +100,7 @@ namespace auto_aim {
          * @param timestamp_ns 时间戳
          * @return ArmorSlots 检测结果
          */
-        spike::ArmorSlots detect(const cv::Mat &bgr_img, const cv::Mat &binary_img, uint64_t frame_id,
+        talos::ArmorSlots detect(const cv::Mat &bgr_img, const cv::Mat &binary_img, uint64_t frame_id,
                                  uint64_t timestamp_ns);
 
         /**
@@ -109,17 +109,17 @@ namespace auto_aim {
          * @param bgr_img BGR彩色图像
          * @return 是否成功精修
          */
-        bool refine(spike::ArmorFull &armor, const cv::Mat &bgr_img) const;
+        bool refine(talos::ArmorFull &armor, const cv::Mat &bgr_img) const;
 
         /**
          * @brief 获取内部检测到的完整装甲板列表 (用于后续处理)
          */
-        [[nodiscard]] const std::list<spike::ArmorFull> &get_armors() const { return armors_; }
+        [[nodiscard]] const std::list<talos::ArmorFull> &get_armors() const { return armors_; }
 
         /**
          * @brief 获取内部检测到的完整灯条列表 (用于调试)
          */
-        [[nodiscard]] const std::list<spike::LightbarFull> &get_lightbars() const { return lightbars_; }
+        [[nodiscard]] const std::list<talos::LightbarFull> &get_lightbars() const { return lightbars_; }
 
         /**
          * @brief 从图像和装甲板灯条信息提取图案 ROI
@@ -127,7 +127,7 @@ namespace auto_aim {
          * @param armor 装甲板 (需要 left/right 灯条信息)
          * @return 提取的图案 ROI
          */
-        [[nodiscard]] static cv::Mat get_pattern(const cv::Mat &bgr_img, const spike::ArmorFull &armor);
+        [[nodiscard]] static cv::Mat get_pattern(const cv::Mat &bgr_img, const talos::ArmorFull &armor);
 
     private:
         DetectorConfig config_;
@@ -135,32 +135,32 @@ namespace auto_aim {
         bool debug_;
 
         // 内部状态 (每次detect后更新)
-        std::list<spike::LightbarFull> lightbars_;
-        std::list<spike::ArmorFull> armors_;
+        std::list<talos::LightbarFull> lightbars_;
+        std::list<talos::ArmorFull> armors_;
 
         // 配置值 (预转换为弧度)
         double max_angle_error_rad_;
         double max_rectangular_error_rad_;
 
         // ============ 几何检查 ============
-        [[nodiscard]] bool check_geometry(const spike::LightbarFull &lightbar) const;
-        [[nodiscard]] bool check_geometry(const spike::ArmorFull &armor) const;
-        [[nodiscard]] bool check_name(const spike::ArmorFull &armor) const;
-        [[nodiscard]] static bool check_type(const spike::ArmorFull &armor);
+        [[nodiscard]] bool check_geometry(const talos::LightbarFull &lightbar) const;
+        [[nodiscard]] bool check_geometry(const talos::ArmorFull &armor) const;
+        [[nodiscard]] bool check_name(const talos::ArmorFull &armor) const;
+        [[nodiscard]] static bool check_type(const talos::ArmorFull &armor);
 
         // ============ 属性获取 ============
-        [[nodiscard]] static spike::Color get_color(const cv::Mat &bgr_img, const std::vector<cv::Point> &contour);
-        [[nodiscard]] static spike::ArmorType get_type(const spike::ArmorFull &armor);
+        [[nodiscard]] static talos::Color get_color(const cv::Mat &bgr_img, const std::vector<cv::Point> &contour);
+        [[nodiscard]] static talos::ArmorType get_type(const talos::ArmorFull &armor);
         [[nodiscard]] static cv::Point2f get_center_norm(const cv::Mat &bgr_img, const cv::Point2f &center);
 
         // ============ 去重处理 ============
         void remove_duplicates();
 
         // ============ 结果转换 ============
-        [[nodiscard]] spike::ArmorSlots to_armor_slots(uint64_t frame_id, uint64_t timestamp_ns) const;
+        [[nodiscard]] talos::ArmorSlots to_armor_slots(uint64_t frame_id, uint64_t timestamp_ns) const;
 
         // ============ PCA角点修正 (可选) ============
-        static void lightbar_points_corrector(spike::LightbarFull &lightbar, const cv::Mat &gray_img);
+        static void lightbar_points_corrector(talos::LightbarFull &lightbar, const cv::Mat &gray_img);
 
         // ============ 调试输出 ============
         void show_result(const cv::Mat &binary_img, const cv::Mat &bgr_img, int frame_count) const;

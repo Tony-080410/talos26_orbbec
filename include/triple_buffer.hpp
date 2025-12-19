@@ -4,7 +4,7 @@
 #include <atomic>
 #include <optional>
 
-namespace spike {
+namespace talos {
     /**
      * @brief Lock-free SPSC triple-buffer with zero-copy borrow semantics
      */

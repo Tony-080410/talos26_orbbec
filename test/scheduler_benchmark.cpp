@@ -17,7 +17,7 @@ using namespace scheduler::test;
 
 // TripleBuffer 写入开销
 static void BM_TripleBuffer_Write(benchmark::State &state) {
-    spike::TripleBuffer<uint64_t> buffer;
+    talos::TripleBuffer<uint64_t> buffer;
     uint64_t seq = 0;
 
     for ([[maybe_unused]] auto _: state) {
@@ -32,7 +32,7 @@ BENCHMARK(BM_TripleBuffer_Write);
 
 // TripleBuffer 读取开销
 static void BM_TripleBuffer_Read(benchmark::State &state) {
-    spike::TripleBuffer<uint64_t> buffer;
+    talos::TripleBuffer<uint64_t> buffer;
 
     // 预写入数据
     auto &slot = buffer.borrow_mut();

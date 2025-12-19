@@ -3,7 +3,7 @@
 #include "tracker_soa.hpp"
 #include "triple_buffer.hpp"
 
-namespace spike::bench {
+namespace talos::bench {
     // ============================================================================
     // Benchmark: TripleBuffer Round-trip
     // ============================================================================

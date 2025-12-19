@@ -6,7 +6,7 @@
 namespace auto_aim {
 
     Tracker::Tracker(const SpVisionTrackerConfig &config, Solver &solver) :
-        solver_(solver), enemy_color_(static_cast<spike::Color>(config.enemy_color)),
+        solver_(solver), enemy_color_(static_cast<talos::Color>(config.enemy_color)),
         min_detect_count_(config.min_detect_count), max_temp_lost_count_(config.max_temp_lost_count),
         outpost_max_temp_lost_count_(config.outpost_max_temp_lost_count),
         normal_temp_lost_count_(config.max_temp_lost_count),
@@ -16,32 +16,32 @@ namespace auto_aim {
 
     std::string Tracker::state_string() const {
         switch (state()) {
-            case spike::TrackerState::IDLE:
+            case talos::TrackerState::IDLE:
                 return "idle";
-            case spike::TrackerState::DETECTING:
+            case talos::TrackerState::DETECTING:
                 return "detecting";
-            case spike::TrackerState::TRACKING:
+            case talos::TrackerState::TRACKING:
                 return "tracking";
-            case spike::TrackerState::TEMP_LOST:
+            case talos::TrackerState::TEMP_LOST:
                 return "temp_lost";
             default:
                 return "unknown";
         }
     }
 
-    bool Tracker::track(const spike::ArmorSlots &slots, const std::array<ArmorPose3D, 10> &poses3d,
+    bool Tracker::track(const talos::ArmorSlots &slots, const std::array<ArmorPose3D, 10> &poses3d,
                         const std::chrono::steady_clock::time_point t) {
         auto dt = std::chrono::duration<double>(t - last_timestamp_).count();
         last_timestamp_ = t;
 
         // 时间间隔过长，说明可能发生了相机离线
-        if (state() != spike::TrackerState::IDLE && dt > 0.1) {
+        if (state() != talos::TrackerState::IDLE && dt > 0.1) {
             spdlog::warn("[Tracker] Large dt: {:.3f}s", dt);
             tracker_soa_.try_reset_idle();
         }
 
         bool found;
-        if (state() == spike::TrackerState::IDLE) {
+        if (state() == talos::TrackerState::IDLE) {
             found = set_target(slots, poses3d, t);
         } else {
             found = update_target(slots, poses3d, t);
@@ -50,14 +50,14 @@ namespace auto_aim {
         state_machine(found);
 
         // 发散检测
-        if (state() != spike::TrackerState::IDLE && target_.diverged()) {
+        if (state() != talos::TrackerState::IDLE && target_.diverged()) {
             spdlog::debug("[Tracker] Target diverged!");
             tracker_soa_.try_reset_idle();
             return false;
         }
 
         // 收敛效果检测
-        if (state() != spike::TrackerState::IDLE) {
+        if (state() != talos::TrackerState::IDLE) {
             const int recent_failures = std::accumulate(target_.ekf().recent_nis_failures.begin(),
                                                         target_.ekf().recent_nis_failures.end(), 0);
             if (recent_failures >= static_cast<int>(0.4 * target_.ekf().window_size)) {
@@ -67,11 +67,11 @@ namespace auto_aim {
             }
         }
 
-        return state() != spike::TrackerState::IDLE;
+        return state() != talos::TrackerState::IDLE;
     }
 
     std::vector<Eigen::Vector4d> Tracker::armor_xyza_list() const {
-        if (state() == spike::TrackerState::IDLE) {
+        if (state() == talos::TrackerState::IDLE) {
             return {};
         }
         return target_.armor_xyza_list();
@@ -80,7 +80,7 @@ namespace auto_aim {
     void Tracker::state_machine(const bool found) {
         auto current_state = state();
 
-        if (current_state == spike::TrackerState::IDLE) {
+        if (current_state == talos::TrackerState::IDLE) {
             if (!found)
                 return;
 
@@ -90,7 +90,7 @@ namespace auto_aim {
             }
         }
 
-        else if (current_state == spike::TrackerState::DETECTING) {
+        else if (current_state == talos::TrackerState::DETECTING) {
             if (found) {
                 tracker_soa_.detecting_count++;
                 if (tracker_soa_.detecting_count >= min_detect_count_) {
@@ -104,7 +104,7 @@ namespace auto_aim {
             }
         }
 
-        else if (current_state == spike::TrackerState::TRACKING) {
+        else if (current_state == talos::TrackerState::TRACKING) {
             if (found)
                 return;
 
@@ -114,7 +114,7 @@ namespace auto_aim {
             }
         }
 
-        else if (current_state == spike::TrackerState::TEMP_LOST) {
+        else if (current_state == talos::TrackerState::TEMP_LOST) {
             if (found) {
                 // TEMP_LOST -> TRACKING
                 tracker_soa_.try_restore_tracking();
@@ -122,7 +122,7 @@ namespace auto_aim {
                 tracker_soa_.lost_count++;
 
                 // 前哨站特殊处理
-                if (target_.name == spike::ArmorName::outpost) {
+                if (target_.name == talos::ArmorName::outpost) {
                     max_temp_lost_count_ = outpost_max_temp_lost_count_;
                 } else {
                     max_temp_lost_count_ = normal_temp_lost_count_;
@@ -136,7 +136,7 @@ namespace auto_aim {
         }
     }
 
-    bool Tracker::set_target(const spike::ArmorSlots &slots, const std::array<ArmorPose3D, 10> &poses3d,
+    bool Tracker::set_target(const talos::ArmorSlots &slots, const std::array<ArmorPose3D, 10> &poses3d,
                              const std::chrono::steady_clock::time_point t) {
         // 找到第一个有效的敌方装甲板
         int best_idx = -1;
@@ -148,7 +148,7 @@ namespace auto_aim {
             }
 
             // 过滤非敌方颜色
-            if (const auto &armor = slots.armors[i]; static_cast<spike::Color>(armor.color) != enemy_color_) {
+            if (const auto &armor = slots.armors[i]; static_cast<talos::Color>(armor.color) != enemy_color_) {
                 continue;
             }
 
@@ -165,21 +165,21 @@ namespace auto_aim {
 
         const auto &armor = slots.armors[best_idx];
         const auto &pose3d = poses3d[best_idx];
-        const auto name = static_cast<spike::ArmorName>(armor.name);
-        const auto type = static_cast<spike::ArmorType>(armor.type);
+        const auto name = static_cast<talos::ArmorName>(armor.name);
+        const auto type = static_cast<talos::ArmorType>(armor.type);
 
         // 根据兵种优化初始化参数
         const auto is_balance =
-                type == spike::ArmorType::big &&
-                (name == spike::ArmorName::three || name == spike::ArmorName::four || name == spike::ArmorName::five);
+                type == talos::ArmorType::big &&
+                (name == talos::ArmorName::three || name == talos::ArmorName::four || name == talos::ArmorName::five);
 
         if (is_balance) {
             const Eigen::VectorXd P0_dig{{1, 64, 1, 64, 1, 64, 0.4, 100, 1, 1, 1}};
             target_ = Target(armor, pose3d, t, 0.2, 2, P0_dig);
-        } else if (name == spike::ArmorName::outpost) {
+        } else if (name == talos::ArmorName::outpost) {
             const Eigen::VectorXd P0_dig{{1, 64, 1, 64, 1, 81, 0.4, 100, 1e-4, 0, 0}};
             target_ = Target(armor, pose3d, t, 0.2765, 3, P0_dig);
-        } else if (name == spike::ArmorName::base) {
+        } else if (name == talos::ArmorName::base) {
             const Eigen::VectorXd P0_dig{{1, 64, 1, 64, 1, 64, 0.4, 100, 1e-4, 0, 0}};
             target_ = Target(armor, pose3d, t, 0.3205, 3, P0_dig);
         } else {
@@ -193,7 +193,7 @@ namespace auto_aim {
         return true;
     }
 
-    bool Tracker::update_target(const spike::ArmorSlots &slots, const std::array<ArmorPose3D, 10> &poses3d,
+    bool Tracker::update_target(const talos::ArmorSlots &slots, const std::array<ArmorPose3D, 10> &poses3d,
                                 const std::chrono::steady_clock::time_point t) {
         target_.predict(t);
 
@@ -205,11 +205,11 @@ namespace auto_aim {
             }
 
             const auto &armor = slots.armors[i];
-            const auto name = static_cast<spike::ArmorName>(armor.name);
-            const auto type = static_cast<spike::ArmorType>(armor.type);
+            const auto name = static_cast<talos::ArmorName>(armor.name);
+            const auto type = static_cast<talos::ArmorType>(armor.type);
 
             // 过滤非敌方颜色
-            if (static_cast<spike::Color>(armor.color) != enemy_color_) {
+            if (static_cast<talos::Color>(armor.color) != enemy_color_) {
                 continue;
             }
 

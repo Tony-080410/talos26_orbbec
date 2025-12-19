@@ -30,7 +30,7 @@ namespace auto_aim {
         R_gimbal2world_ = R_gimbal2imubody_.transpose() * R_imubody2imuabs * R_gimbal2imubody_;
     }
 
-    bool Solver::solve(const spike::Armor &armor, ArmorPose3D &pose3d, const bool optimize_yaw) const {
+    bool Solver::solve(const talos::Armor &armor, ArmorPose3D &pose3d, const bool optimize_yaw) const {
         // 从armor.pts提取角点
         std::vector<cv::Point2f> image_points(4);
         image_points[0] = {armor.pts[0], armor.pts[1]}; // tl
@@ -40,7 +40,7 @@ namespace auto_aim {
 
         // 选择物体点
         const auto type = armor.type;
-        const auto &object_points = type == spike::ArmorType::big ? BIG_ARMOR_POINTS : SMALL_ARMOR_POINTS;
+        const auto &object_points = type == talos::ArmorType::big ? BIG_ARMOR_POINTS : SMALL_ARMOR_POINTS;
 
         // PnP解算
         cv::Vec3d rvec, tvec;
@@ -71,10 +71,10 @@ namespace auto_aim {
         pose3d.ypd_in_world = math::xyz2ypd(pose3d.xyz_in_world);
 
         // 判断是否为平衡步兵（平衡不做yaw优化）
-        const auto name = static_cast<spike::ArmorName>(armor.name);
+        const auto name = static_cast<talos::ArmorName>(armor.name);
         const bool is_balance =
-                type == spike::ArmorType::big &&
-                (name == spike::ArmorName::three || name == spike::ArmorName::four || name == spike::ArmorName::five);
+                type == talos::ArmorType::big &&
+                (name == talos::ArmorName::three || name == talos::ArmorName::four || name == talos::ArmorName::five);
 
         if (optimize_yaw && !is_balance) {
             this->optimize_yaw(armor, pose3d);
@@ -86,7 +86,7 @@ namespace auto_aim {
         return true;
     }
 
-    void Solver::solve_all(spike::ArmorSlots &slots, std::array<ArmorPose3D, 10> &poses3d) const {
+    void Solver::solve_all(talos::ArmorSlots &slots, std::array<ArmorPose3D, 10> &poses3d) const {
         for (int i = 0; i < 10; ++i) {
             if (!slots.is_valid(i)) {
                 poses3d[i].valid = false;
@@ -120,12 +120,12 @@ namespace auto_aim {
     }
 
     std::vector<cv::Point2f> Solver::reproject_armor(const Eigen::Vector3d &xyz_in_world, const double yaw,
-                                                     const spike::ArmorType type, const spike::ArmorName name) const {
+                                                     const talos::ArmorType type, const talos::ArmorName name) const {
         const auto sin_yaw = std::sin(yaw);
         auto cos_yaw = std::cos(yaw);
 
         // 装甲板pitch角：前哨站向下，其他向上
-        const auto pitch = name == spike::ArmorName::outpost ? -15.0 * CV_PI / 180.0 : 15.0 * CV_PI / 180.0;
+        const auto pitch = name == talos::ArmorName::outpost ? -15.0 * CV_PI / 180.0 : 15.0 * CV_PI / 180.0;
         const auto sin_pitch = std::sin(pitch);
         auto cos_pitch = std::cos(pitch);
 
@@ -153,7 +153,7 @@ namespace auto_aim {
 
         // 重投影
         std::vector<cv::Point2f> image_points;
-        const auto &object_points = type == spike::ArmorType::big ? BIG_ARMOR_POINTS : SMALL_ARMOR_POINTS;
+        const auto &object_points = type == talos::ArmorType::big ? BIG_ARMOR_POINTS : SMALL_ARMOR_POINTS;
         cv::projectPoints(object_points, rvec, tvec, camera_matrix_, distort_coeffs_, image_points);
 
         return image_points;
@@ -187,7 +187,7 @@ namespace auto_aim {
         return pixel_points;
     }
 
-    void Solver::optimize_yaw(const spike::Armor &armor, ArmorPose3D &pose3d) const {
+    void Solver::optimize_yaw(const talos::Armor &armor, ArmorPose3D &pose3d) const {
         Eigen::Vector3d gimbal_ypr = math::eulers(R_gimbal2world_, 2, 1, 0);
 
         constexpr double SEARCH_RANGE = 140; // degree
@@ -196,8 +196,8 @@ namespace auto_aim {
         auto min_error = 1e10;
         auto best_yaw = pose3d.ypr_in_world[0];
 
-        const auto type = static_cast<spike::ArmorType>(armor.type);
-        const auto name = static_cast<spike::ArmorName>(armor.name);
+        const auto type = static_cast<talos::ArmorType>(armor.type);
+        const auto name = static_cast<talos::ArmorName>(armor.name);
 
         for (int i = 0; i < static_cast<int>(SEARCH_RANGE); i++) {
             const double yaw = math::limit_rad(yaw0 + i * CV_PI / 180.0);
@@ -213,9 +213,9 @@ namespace auto_aim {
         pose3d.ypr_in_world[0] = best_yaw;
     }
 
-    double Solver::armor_reprojection_error(const spike::Armor &armor, const Eigen::Vector3d &xyz_in_world,
-                                            const double yaw, const spike::ArmorType type,
-                                            const spike::ArmorName name) const {
+    double Solver::armor_reprojection_error(const talos::Armor &armor, const Eigen::Vector3d &xyz_in_world,
+                                            const double yaw, const talos::ArmorType type,
+                                            const talos::ArmorName name) const {
         const auto image_points = reproject_armor(xyz_in_world, yaw, type, name);
 
         // 提取原始角点

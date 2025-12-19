@@ -5,7 +5,7 @@
 #include <thread>
 #include <vector>
 
-namespace spike::test {
+namespace talos::test {
     // ============================================================================
     // Test: Basic Timing Functionality
     // ============================================================================

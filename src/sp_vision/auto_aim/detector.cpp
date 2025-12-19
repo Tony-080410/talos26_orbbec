@@ -4,7 +4,7 @@
 #include <numeric>
 #include <ranges>
 
-namespace spike {
+namespace talos {
 
     // ============ LightbarFull 构造函数 ============
 
@@ -66,7 +66,7 @@ namespace auto_aim {
         max_rectangular_error_rad_ = config_.max_rectangular_error / 57.3;
     }
 
-    spike::ArmorSlots TraditionalDetector::detect(const cv::Mat &bgr_img, const cv::Mat &binary_img,
+    talos::ArmorSlots TraditionalDetector::detect(const cv::Mat &bgr_img, const cv::Mat &binary_img,
                                                   const uint64_t frame_id, const uint64_t timestamp_ns) {
         // 清空上一帧结果
         lightbars_.clear();
@@ -90,7 +90,7 @@ namespace auto_aim {
             if (rotated_rect.size.width < 1.0f || rotated_rect.size.height < 1.0f)
                 continue;
 
-            auto lightbar = spike::LightbarFull(rotated_rect, lightbar_id);
+            auto lightbar = talos::LightbarFull(rotated_rect, lightbar_id);
 
             if (!check_geometry(lightbar))
                 continue;
@@ -102,7 +102,7 @@ namespace auto_aim {
 
         // 将灯条从左到右排序
         lightbars_.sort(
-                [](const spike::LightbarFull &a, const spike::LightbarFull &b) { return a.center.x < b.center.x; });
+                [](const talos::LightbarFull &a, const talos::LightbarFull &b) { return a.center.x < b.center.x; });
 
         // 获取装甲板 - 双重循环配对灯条
         for (auto left = lightbars_.begin(); left != lightbars_.end(); ++left) {
@@ -110,7 +110,7 @@ namespace auto_aim {
                 if (left->color != right->color)
                     continue;
 
-                auto armor = spike::ArmorFull(*left, *right);
+                auto armor = talos::ArmorFull(*left, *right);
                 if (!check_geometry(armor))
                     continue;
 
@@ -140,7 +140,7 @@ namespace auto_aim {
         return to_armor_slots(frame_id, timestamp_ns);
     }
 
-    bool TraditionalDetector::refine(spike::ArmorFull &armor, const cv::Mat &bgr_img) const {
+    bool TraditionalDetector::refine(talos::ArmorFull &armor, const cv::Mat &bgr_img) const {
         // 取得四个角点
         if (armor.points.size() < 4)
             return false;
@@ -195,14 +195,14 @@ namespace auto_aim {
         cv::findContours(binary_copy, contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_NONE);
 
         // 获取灯条
-        std::list<spike::LightbarFull> roi_lightbars;
+        std::list<talos::LightbarFull> roi_lightbars;
         std::size_t lightbar_id = 0;
         for (const auto &contour: contours) {
             if (contour.size() < 5)
                 continue;
 
             auto rotated_rect = cv::minAreaRect(contour);
-            auto lightbar = spike::LightbarFull(rotated_rect, lightbar_id);
+            auto lightbar = talos::LightbarFull(rotated_rect, lightbar_id);
 
             if (!check_geometry(lightbar))
                 continue;
@@ -217,11 +217,11 @@ namespace auto_aim {
 
         // 将灯条从左到右排序
         roi_lightbars.sort(
-                [](const spike::LightbarFull &a, const spike::LightbarFull &b) { return a.center.x < b.center.x; });
+                [](const talos::LightbarFull &a, const talos::LightbarFull &b) { return a.center.x < b.center.x; });
 
         // 计算与 tl, bl 和 br, tr 距离最近的灯条
-        spike::LightbarFull *closest_left_lightbar = nullptr;
-        spike::LightbarFull *closest_right_lightbar = nullptr;
+        talos::LightbarFull *closest_left_lightbar = nullptr;
+        talos::LightbarFull *closest_right_lightbar = nullptr;
         double min_distance_tl_bl = std::numeric_limits<double>::max();
         double min_distance_br_tr = std::numeric_limits<double>::max();
 
@@ -257,7 +257,7 @@ namespace auto_aim {
 
     // ============ 几何检查 ============
 
-    bool TraditionalDetector::check_geometry(const spike::LightbarFull &lightbar) const {
+    bool TraditionalDetector::check_geometry(const talos::LightbarFull &lightbar) const {
         const auto angle_ok = lightbar.angle_error < max_angle_error_rad_;
         const auto ratio_ok =
                 lightbar.ratio > config_.min_lightbar_ratio && lightbar.ratio < config_.max_lightbar_ratio;
@@ -265,40 +265,40 @@ namespace auto_aim {
         return angle_ok && ratio_ok && length_ok;
     }
 
-    bool TraditionalDetector::check_geometry(const spike::ArmorFull &armor) const {
+    bool TraditionalDetector::check_geometry(const talos::ArmorFull &armor) const {
         const auto ratio_ok = armor.ratio > config_.min_armor_ratio && armor.ratio < config_.max_armor_ratio;
         const auto side_ratio_ok = armor.side_ratio < config_.max_side_ratio;
         const auto rectangular_error_ok = armor.rectangular_error < max_rectangular_error_rad_;
         return ratio_ok && side_ratio_ok && rectangular_error_ok;
     }
 
-    bool TraditionalDetector::check_name(const spike::ArmorFull &armor) const {
+    bool TraditionalDetector::check_name(const talos::ArmorFull &armor) const {
         if (armor.confidence < config_.min_confidence) {
             return false;
         }
-        const auto name_ok = armor.name != spike::ArmorName::not_armor;
+        const auto name_ok = armor.name != talos::ArmorName::not_armor;
 
         // 保存不确定的图案，用于分类器的迭代
         // if (name_ok && !confidence_ok) save(armor);
 
         // 出现 5号 则显示 debug 信息。但不过滤。
-        if (armor.name == spike::ArmorName::five) {
+        if (armor.name == talos::ArmorName::five) {
             std::cerr << "classifier detected an armor five, which is outdated";
         }
 
         return name_ok;
     }
 
-    bool TraditionalDetector::check_type(const spike::ArmorFull &armor) {
-        const auto name_ok = armor.type == spike::ArmorType::small
-                                     ? armor.name != spike::ArmorName::one && armor.name != spike::ArmorName::base
-                                     : armor.name == spike::ArmorName::one || armor.name == spike::ArmorName::base;
+    bool TraditionalDetector::check_type(const talos::ArmorFull &armor) {
+        const auto name_ok = armor.type == talos::ArmorType::small
+                                     ? armor.name != talos::ArmorName::one && armor.name != talos::ArmorName::base
+                                     : armor.name == talos::ArmorName::one || armor.name == talos::ArmorName::base;
 
         // 保存异常的图案，用于分类器的迭代
         if (!name_ok) {
             spdlog::warn("classifier detected a strange armor {} with type {}",
-                         spike::ARMOR_NAMES[static_cast<uint8_t>(armor.name)],
-                         spike::ARMOR_TYPES[static_cast<uint8_t>(armor.type)]);
+                         talos::ARMOR_NAMES[static_cast<uint8_t>(armor.name)],
+                         talos::ARMOR_TYPES[static_cast<uint8_t>(armor.type)]);
             cv::imshow("ROI", armor.pattern);
             return false;
         }
@@ -308,7 +308,7 @@ namespace auto_aim {
 
     // ============ 属性获取 ============
 
-    spike::Color TraditionalDetector::get_color(const cv::Mat &bgr_img, const std::vector<cv::Point> &contour) {
+    talos::Color TraditionalDetector::get_color(const cv::Mat &bgr_img, const std::vector<cv::Point> &contour) {
         int red_sum = 0, blue_sum = 0;
 
         for (const auto &point: contour) {
@@ -318,22 +318,22 @@ namespace auto_aim {
             }
         }
 
-        return blue_sum > red_sum ? spike::Color::blue : spike::Color::red;
+        return blue_sum > red_sum ? talos::Color::blue : talos::Color::red;
     }
 
-    spike::ArmorType TraditionalDetector::get_type(const spike::ArmorFull &armor) {
+    talos::ArmorType TraditionalDetector::get_type(const talos::ArmorFull &armor) {
         // 优先根据当前armor.ratio判断
         if (armor.ratio > 3.0) {
-            return spike::ArmorType::big;
+            return talos::ArmorType::big;
         }
         if (armor.ratio < 2.5) {
-            return spike::ArmorType::small;
+            return talos::ArmorType::small;
         }
-        if (armor.name == spike::ArmorName::one || armor.name == spike::ArmorName::base) {
-            return spike::ArmorType::big;
+        if (armor.name == talos::ArmorName::one || armor.name == talos::ArmorName::base) {
+            return talos::ArmorType::big;
         }
         // 默认小装甲板
-        return spike::ArmorType::small;
+        return talos::ArmorType::small;
     }
 
     cv::Point2f TraditionalDetector::get_center_norm(const cv::Mat &bgr_img, const cv::Point2f &center) {
@@ -342,7 +342,7 @@ namespace auto_aim {
         return {center.x / w, center.y / h};
     }
 
-    cv::Mat TraditionalDetector::get_pattern(const cv::Mat &bgr_img, const spike::ArmorFull &armor) {
+    cv::Mat TraditionalDetector::get_pattern(const cv::Mat &bgr_img, const talos::ArmorFull &armor) {
         // 延长灯条获得装甲板角点
         // 1.125 = 0.5 * armor_height / lightbar_length = 0.5 * 126mm / 56mm
         const auto &left = armor.left;
@@ -397,13 +397,13 @@ namespace auto_aim {
             }
         }
 
-        armors_.remove_if([](const spike::ArmorFull &a) { return a.duplicated; });
+        armors_.remove_if([](const talos::ArmorFull &a) { return a.duplicated; });
     }
 
     // ============ 结果转换 ============
 
-    spike::ArmorSlots TraditionalDetector::to_armor_slots(const uint64_t frame_id, const uint64_t timestamp_ns) const {
-        spike::ArmorSlots result;
+    talos::ArmorSlots TraditionalDetector::to_armor_slots(const uint64_t frame_id, const uint64_t timestamp_ns) const {
+        talos::ArmorSlots result;
         result.frame_id = frame_id;
         result.timestamp_ns = timestamp_ns;
         result.clear();
@@ -458,7 +458,7 @@ namespace auto_aim {
 
     // ============ PCA角点修正 ============
 
-    void TraditionalDetector::lightbar_points_corrector(spike::LightbarFull &lightbar, const cv::Mat &gray_img) {
+    void TraditionalDetector::lightbar_points_corrector(talos::LightbarFull &lightbar, const cv::Mat &gray_img) {
         // 配置参数
         constexpr float MAX_BRIGHTNESS = 25;
         constexpr float ROI_SCALE = 0.07f;

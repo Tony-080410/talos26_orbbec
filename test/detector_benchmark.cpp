@@ -87,7 +87,7 @@ struct PipelineMetrics {
 /**
  * @brief Match detections with ground truth using Hungarian algorithm (greedy)
  */
-AccuracyMetrics evaluate_frame(const spike::ArmorSlots &detections, const std::vector<GroundTruth> &ground_truths,
+AccuracyMetrics evaluate_frame(const talos::ArmorSlots &detections, const std::vector<GroundTruth> &ground_truths,
                                const double iou_threshold = 0.3) {
     AccuracyMetrics metrics;
     metrics.total_gt = static_cast<int>(ground_truths.size());
@@ -168,7 +168,7 @@ AccuracyMetrics evaluate_frame(const spike::ArmorSlots &detections, const std::v
 /**
  * @brief Visualize full pipeline results
  */
-void visualize_frame(const cv::Mat &image, const spike::ArmorSlots &detections,
+void visualize_frame(const cv::Mat &image, const talos::ArmorSlots &detections,
                      const std::array<ArmorPose3D, 10> &poses3d, const Tracker &tracker,
                      const std::vector<GroundTruth> &ground_truths, const std::string &window_name = "Pipeline") {
     cv::Mat display = image.clone();
@@ -198,8 +198,8 @@ void visualize_frame(const cv::Mat &image, const spike::ArmorSlots &detections,
             cv::Scalar color = armor.color == 0 ? cv::Scalar(0, 0, 255) : cv::Scalar(255, 0, 0);
             cv::polylines(display, pts, true, color, 1);
             cv::putText(display,
-                                   fmt::format("D c{} n{} t{} {:.2f}", spike::COLORS[armor.color], spike::ARMOR_NAMES[armor.name],
-                                               spike::ARMOR_TYPES[armor.type], armor.confidence),
+                                   fmt::format("D c{} n{} t{} {:.2f}", talos::COLORS[armor.color], talos::ARMOR_NAMES[armor.name],
+                                               talos::ARMOR_TYPES[armor.type], armor.confidence),
                                    cv::Point(pts[0].x, pts[0].y - 5), cv::FONT_HERSHEY_SIMPLEX, 0.3, color, 1);
 
             // Show 3D distance if solved
@@ -214,16 +214,16 @@ void visualize_frame(const cv::Mat &image, const spike::ArmorSlots &detections,
     std::string state_str = tracker.state_string();
     cv::Scalar state_color;
     switch (tracker.state()) {
-        case spike::TrackerState::IDLE:
+        case talos::TrackerState::IDLE:
             state_color = cv::Scalar(128, 128, 128);
             break;
-        case spike::TrackerState::DETECTING:
+        case talos::TrackerState::DETECTING:
             state_color = cv::Scalar(0, 255, 255);
             break;
-        case spike::TrackerState::TRACKING:
+        case talos::TrackerState::TRACKING:
             state_color = cv::Scalar(0, 255, 0);
             break;
-        case spike::TrackerState::TEMP_LOST:
+        case talos::TrackerState::TEMP_LOST:
             state_color = cv::Scalar(0, 165, 255);
             break;
     }
@@ -231,7 +231,7 @@ void visualize_frame(const cv::Mat &image, const spike::ArmorSlots &detections,
                 state_color, 2);
 
     // Draw tracked target prediction if available
-    if (tracker.state() != spike::TrackerState::IDLE) {
+    if (tracker.state() != talos::TrackerState::IDLE) {
         const auto &target = tracker.target();
         auto ekf_x = target.ekf_x();
 
@@ -247,7 +247,7 @@ void visualize_frame(const cv::Mat &image, const spike::ArmorSlots &detections,
 
         // Show target info
         cv::putText(display,
-                    fmt::format("Target: {} v_yaw={:.2f}", spike::ARMOR_NAMES[static_cast<int>(target.name)], ekf_x[7]),
+                    fmt::format("Target: {} v_yaw={:.2f}", talos::ARMOR_NAMES[static_cast<int>(target.name)], ekf_x[7]),
                     cv::Point(10, display.rows - 20), cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(255, 255, 0), 1);
     }
 
@@ -261,7 +261,7 @@ int main(int argc, char **argv) {
     std::string dataset_path = "./datasets";
     double iou_threshold = 0.3;
     bool debug = false;
-    spike::Color enemy_color = spike::Color::red;
+    talos::Color enemy_color = talos::Color::red;
 
     // Parse arguments
     for (int i = 1; i < argc; i++) {
@@ -271,7 +271,7 @@ int main(int argc, char **argv) {
             debug = true;
         } else if (arg == "--enemy" && i + 1 < argc) {
             std::string color_str = argv[++i];
-            enemy_color = (color_str == "blue") ? spike::Color::blue : spike::Color::red;
+            enemy_color = (color_str == "blue") ? talos::Color::blue : talos::Color::red;
         } else if (arg[0] != '-') {
             dataset_path = arg;
         }
@@ -280,7 +280,7 @@ int main(int argc, char **argv) {
     spdlog::info("=== Full Pipeline Benchmark ===");
     spdlog::info("Dataset: {}", dataset_path);
     spdlog::info("IoU Threshold: {}", iou_threshold);
-    spdlog::info("Enemy Color: {}", enemy_color == spike::Color::red ? "red" : "blue");
+    spdlog::info("Enemy Color: {}", enemy_color == talos::Color::red ? "red" : "blue");
     spdlog::info("Debug: {}", debug);
 
     // Load config
@@ -356,16 +356,16 @@ int main(int argc, char **argv) {
 
         // Record tracker state
         switch (tracker.state()) {
-            case spike::TrackerState::IDLE:
+            case talos::TrackerState::IDLE:
                 metrics.idle_frames++;
                 break;
-            case spike::TrackerState::DETECTING:
+            case talos::TrackerState::DETECTING:
                 metrics.detecting_frames++;
                 break;
-            case spike::TrackerState::TRACKING:
+            case talos::TrackerState::TRACKING:
                 metrics.tracking_frames++;
                 break;
-            case spike::TrackerState::TEMP_LOST:
+            case talos::TrackerState::TEMP_LOST:
                 metrics.temp_lost_frames++;
                 break;
         }

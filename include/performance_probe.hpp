@@ -8,7 +8,7 @@
 #include <ranges>
 #include <vector>
 
-namespace spike {
+namespace talos {
     /**
      * @brief High-resolution latency probe
      *

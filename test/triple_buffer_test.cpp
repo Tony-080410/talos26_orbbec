@@ -25,7 +25,7 @@ struct LargeFrame {
 
 // 1. 基础功能测试
 TEST(TripleBufferTest, BasicOperation) {
-    spike::TripleBuffer<int> buffer;
+    talos::TripleBuffer<int> buffer;
 
     // 初始状态没有新数据
     EXPECT_FALSE(buffer.has_new_frame());
@@ -48,7 +48,7 @@ TEST(TripleBufferTest, BasicOperation) {
 
 // 2. 连续写入，只读到最新
 TEST(TripleBufferTest, ConsecutiveWrites) {
-    spike::TripleBuffer<int> buffer;
+    talos::TripleBuffer<int> buffer;
 
     for (int i = 1; i <= 100; ++i) {
         buffer.borrow_mut() = i;
@@ -66,7 +66,7 @@ TEST(TripleBufferTest, ConsecutiveWrites) {
 
 // 3. current() 总是有效
 TEST(TripleBufferTest, CurrentAlwaysValid) {
-    spike::TripleBuffer<int> buffer;
+    talos::TripleBuffer<int> buffer;
 
     // 即使没有 publish，current() 也能用（返回默认值）
     EXPECT_EQ(buffer.current(), 0);
@@ -82,7 +82,7 @@ TEST(TripleBufferTest, CurrentAlwaysValid) {
 
 // 4. 高压单调性测试（无 sleep）
 TEST(TripleBufferTest, StressMonotonicity) {
-    spike::TripleBuffer<uint64_t> buffer;
+    talos::TripleBuffer<uint64_t> buffer;
 
     std::atomic stop{false};
     std::atomic<uint64_t> violations{0};
@@ -122,7 +122,7 @@ TEST(TripleBufferTest, StressMonotonicity) {
 
 // 5. 高压数据完整性测试（大结构体，无 sleep）
 TEST(TripleBufferTest, StressDataIntegrity) {
-    spike::TripleBuffer<LargeFrame> buffer;
+    talos::TripleBuffer<LargeFrame> buffer;
 
     std::atomic stop{false};
     std::atomic<uint64_t> corrupted{0};
@@ -159,7 +159,7 @@ TEST(TripleBufferTest, StressDataIntegrity) {
 
 // 6. 快生产者慢消费者（会丢帧，但不能乱序或撕裂）
 TEST(TripleBufferTest, FastProducerSlowConsumer) {
-    spike::TripleBuffer<uint64_t> buffer;
+    talos::TripleBuffer<uint64_t> buffer;
 
     std::atomic stop{false};
     std::atomic<uint64_t> violations{0};
@@ -198,7 +198,7 @@ TEST(TripleBufferTest, FastProducerSlowConsumer) {
 
 // 7. 慢生产者快消费者（大量空读）
 TEST(TripleBufferTest, SlowProducerFastConsumer) {
-    spike::TripleBuffer<uint64_t> buffer;
+    talos::TripleBuffer<uint64_t> buffer;
 
     std::atomic stop{false};
     std::atomic<uint64_t> violations{0};
@@ -243,7 +243,7 @@ TEST(TripleBufferTest, SlowProducerFastConsumer) {
 
 // 8. 多次 borrow_mut 不 publish
 TEST(TripleBufferTest, MultipleBorrowMutWithoutPublish) {
-    spike::TripleBuffer<int> buffer;
+    talos::TripleBuffer<int> buffer;
 
     buffer.borrow_mut() = 1;
     buffer.borrow_mut() = 2;
@@ -258,7 +258,7 @@ TEST(TripleBufferTest, MultipleBorrowMutWithoutPublish) {
 
 // 9. 交替读写
 TEST(TripleBufferTest, AlternatingReadWrite) {
-    spike::TripleBuffer<int> buffer;
+    talos::TripleBuffer<int> buffer;
 
     for (int i = 1; i <= 1000; ++i) {
         buffer.borrow_mut() = i;

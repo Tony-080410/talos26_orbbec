@@ -15,17 +15,17 @@ int main() {
     // Demo 1: Memory Layout Verification
     // =========================================================================
     spdlog::info("\n[Demo 1] Memory Layout Verification");
-    spdlog::info("ArmorSlots size: {} bytes (target: ≤ 1KB)", sizeof(spike::ArmorSlots));
-    spdlog::info("ArmorSlots alignment: {} bytes (target: 64)", alignof(spike::ArmorSlots));
-    spdlog::info("TrackerSoA size: {} bytes (target: exactly 64)", sizeof(spike::TrackerSoA));
-    spdlog::info("TrackerSoA alignment: {} bytes (target: 64)", alignof(spike::TrackerSoA));
+    spdlog::info("ArmorSlots size: {} bytes (target: ≤ 1KB)", sizeof(talos::ArmorSlots));
+    spdlog::info("ArmorSlots alignment: {} bytes (target: 64)", alignof(talos::ArmorSlots));
+    spdlog::info("TrackerSoA size: {} bytes (target: exactly 64)", sizeof(talos::TrackerSoA));
+    spdlog::info("TrackerSoA alignment: {} bytes (target: 64)", alignof(talos::TrackerSoA));
 
     // =========================================================================
     // Demo 2: Triple-Buffer Lock-free Synchronization
     // =========================================================================
     spdlog::info("\n[Demo 2] Triple-Buffer Lock-free Synchronization");
 
-    spike::TripleBuffer<spike::ArmorSlots> buffer;
+    talos::TripleBuffer<talos::ArmorSlots> buffer;
 
     // Simulate producer (detector thread)
     auto producer = [&buffer] {
@@ -78,7 +78,7 @@ int main() {
     // =========================================================================
     spdlog::info("\n[Demo 3] State Machine Transitions");
 
-    spike::TrackerSoA tracker;
+    talos::TrackerSoA tracker;
     spdlog::info("Initial state: {}", static_cast<int>(tracker.state.load()));
 
     // Simulate detection → tracking flow

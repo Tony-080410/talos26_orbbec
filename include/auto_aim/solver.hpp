@@ -59,14 +59,14 @@ public:
      * @param optimize_yaw 是否执行yaw优化 (平衡步兵不做yaw优化)
      * @return 是否解算成功
      */
-    bool solve(const spike::Armor &armor, ArmorPose3D &pose3d, bool optimize_yaw = true) const;
+    bool solve(const talos::Armor &armor, ArmorPose3D &pose3d, bool optimize_yaw = true) const;
 
     /**
      * @brief 对ArmorSlots中的所有装甲板执行PnP解算
      * @param slots 检测结果，poses数组会被填充
      * @param poses3d 输出的详细3D位姿数组
      */
-    void solve_all(spike::ArmorSlots &slots, std::array<ArmorPose3D, 10> &poses3d) const;
+    void solve_all(talos::ArmorSlots &slots, std::array<ArmorPose3D, 10> &poses3d) const;
 
     /**
      * @brief 重投影装甲板角点到图像平面
@@ -77,7 +77,7 @@ public:
      * @return 重投影的四个角点
      */
     [[nodiscard]] std::vector<cv::Point2f> reproject_armor(const Eigen::Vector3d &xyz_in_world, double yaw,
-                                                           spike::ArmorType type, spike::ArmorName name) const;
+                                                           talos::ArmorType type, talos::ArmorName name) const;
 
     /**
      * @brief 世界坐标到像素坐标的转换
@@ -102,7 +102,7 @@ private:
      * @param armor 装甲板数据
      * @param pose3d 3D位姿 (ypr_in_world[0]会被更新)
      */
-    void optimize_yaw(const spike::Armor &armor, ArmorPose3D &pose3d) const;
+    void optimize_yaw(const talos::Armor &armor, ArmorPose3D &pose3d) const;
 
     /**
      * @brief 计算装甲板重投影误差
@@ -113,8 +113,8 @@ private:
      * @param name 装甲板名称
      * @return 重投影误差
      */
-    [[nodiscard]] double armor_reprojection_error(const spike::Armor &armor, const Eigen::Vector3d &xyz_in_world,
-                                                  double yaw, spike::ArmorType type, spike::ArmorName name) const;
+    [[nodiscard]] double armor_reprojection_error(const talos::Armor &armor, const Eigen::Vector3d &xyz_in_world,
+                                                  double yaw, talos::ArmorType type, talos::ArmorName name) const;
 };
 
 // ============ 数学工具函数 ============

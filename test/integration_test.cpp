@@ -7,7 +7,7 @@
 #include "tracker_soa.hpp"
 #include "triple_buffer.hpp"
 
-namespace spike::test {
+namespace talos::test {
     // ============================================================================
     // Integration Test: Detector -> Triple Buffer -> Tracker Pipeline
     // ============================================================================
@@ -162,7 +162,7 @@ namespace spike::test {
 
         // Initialize all trackers
         for (auto &tracker: trackers) {
-            EXPECT_EQ(tracker.state.load(), spike::TrackerState::IDLE);
+            EXPECT_EQ(tracker.state.load(), talos::TrackerState::IDLE);
         }
 
         // Simulate detector frame with 4 armors
@@ -195,7 +195,7 @@ namespace spike::test {
 
         // Verify all trackers started
         for (const auto &tracker: trackers) {
-            EXPECT_EQ(tracker.state.load(), spike::TrackerState::DETECTING);
+            EXPECT_EQ(tracker.state.load(), talos::TrackerState::DETECTING);
         }
 
         // Simulate confirming all trackers
@@ -207,7 +207,7 @@ namespace spike::test {
 
         // Verify all trackers are tracking
         for (const auto &tracker: trackers) {
-            EXPECT_EQ(tracker.state.load(), spike::TrackerState::TRACKING);
+            EXPECT_EQ(tracker.state.load(), talos::TrackerState::TRACKING);
         }
     }
 
@@ -221,7 +221,7 @@ namespace spike::test {
 
         // State: IDLE -> DETECTING
         EXPECT_TRUE(tracker.try_start_detecting());
-        EXPECT_EQ(tracker.state.load(), spike::TrackerState::DETECTING);
+        EXPECT_EQ(tracker.state.load(), talos::TrackerState::DETECTING);
 
         // Simulate 5 detections to confirm tracking
         for (int i = 0; i < 5; i++) {
@@ -237,20 +237,20 @@ namespace spike::test {
 
         // State: DETECTING -> TRACKING
         EXPECT_TRUE(tracker.try_confirm_tracking());
-        EXPECT_EQ(tracker.state.load(), spike::TrackerState::TRACKING);
+        EXPECT_EQ(tracker.state.load(), talos::TrackerState::TRACKING);
 
         // Simulate lost detection
         EXPECT_TRUE(tracker.try_enter_lost());
-        EXPECT_EQ(tracker.state.load(), spike::TrackerState::TEMP_LOST);
+        EXPECT_EQ(tracker.state.load(), talos::TrackerState::TEMP_LOST);
 
         // Simulate recovery
         EXPECT_TRUE(tracker.try_restore_tracking());
-        EXPECT_EQ(tracker.state.load(), spike::TrackerState::TRACKING);
+        EXPECT_EQ(tracker.state.load(), talos::TrackerState::TRACKING);
 
         // Simulate permanent loss (reset to idle)
         tracker.lost_count = 10;
         EXPECT_TRUE(tracker.try_reset_idle());
-        EXPECT_EQ(tracker.state.load(), spike::TrackerState::IDLE);
+        EXPECT_EQ(tracker.state.load(), talos::TrackerState::IDLE);
     }
 
     // ============================================================================
@@ -351,11 +351,11 @@ namespace spike::test {
 
     TEST(Integration, MemoryLayoutComprehensive) {
         // Verify all critical data structures
-        EXPECT_EQ(sizeof(spike::TrackerSoA), 64);
-        EXPECT_EQ(alignof(spike::TrackerSoA), 64);
+        EXPECT_EQ(sizeof(talos::TrackerSoA), 64);
+        EXPECT_EQ(alignof(talos::TrackerSoA), 64);
 
-        EXPECT_LE(sizeof(spike::ArmorSlots), 2048);
-        EXPECT_EQ(alignof(spike::ArmorSlots), 64);
+        EXPECT_LE(sizeof(talos::ArmorSlots), 2048);
+        EXPECT_EQ(alignof(talos::ArmorSlots), 64);
 
         // Verify triple buffer slot alignment
         TripleBuffer<ArmorSlots> _;

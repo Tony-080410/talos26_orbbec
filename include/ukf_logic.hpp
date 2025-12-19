@@ -4,7 +4,7 @@
 #include <cmath>
 #include "tracker_soa.hpp"
 
-namespace spike {
+namespace talos {
 
     /**
      * @brief High-performance Kalman Filter for armor tracking

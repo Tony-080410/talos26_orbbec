@@ -4,9 +4,9 @@
 
 namespace auto_aim {
 
-    Target::Target(const spike::Armor &armor, const ArmorPose3D &pose3d, const std::chrono::steady_clock::time_point t,
+    Target::Target(const talos::Armor &armor, const ArmorPose3D &pose3d, const std::chrono::steady_clock::time_point t,
                    const double radius, const int armor_num, const Eigen::VectorXd &P0_dig) :
-        name(static_cast<spike::ArmorName>(armor.name)), armor_type(static_cast<spike::ArmorType>(armor.type)), armor_num_(armor_num), t_(t) {
+        name(static_cast<talos::ArmorName>(armor.name)), armor_type(static_cast<talos::ArmorType>(armor.type)), armor_num_(armor_num), t_(t) {
         auto r = radius;
         const Eigen::Vector3d &xyz = pose3d.xyz_in_world;
         const Eigen::Vector3d &ypr = pose3d.ypr_in_world;
@@ -74,7 +74,7 @@ namespace auto_aim {
 
         // Piecewise White Noise Model
         double v1, v2;
-        if (name == spike::ArmorName::outpost) {
+        if (name == talos::ArmorName::outpost) {
             v1 = 10; // 前哨站加速度方差
             v2 = 0.1; // 前哨站角加速度方差
         } else {
@@ -107,14 +107,14 @@ namespace auto_aim {
         };
 
         // 前哨站转速特判
-        if (this->converged() && this->name == spike::ArmorName::outpost && std::abs(this->ekf_.x[7]) > 2) {
+        if (this->converged() && this->name == talos::ArmorName::outpost && std::abs(this->ekf_.x[7]) > 2) {
             this->ekf_.x[7] = this->ekf_.x[7] > 0 ? 2.51 : -2.51;
         }
 
         ekf_.predict(F, Q, f);
     }
 
-    void Target::update([[maybe_unused]] const spike::Armor &armor, const ArmorPose3D &pose3d) {
+    void Target::update([[maybe_unused]] const talos::Armor &armor, const ArmorPose3D &pose3d) {
         // 装甲板匹配
         int id = 0;
         auto min_angle_error = 1e10;
@@ -224,12 +224,12 @@ namespace auto_aim {
     }
 
     bool Target::converged() {
-        if (this->name != spike::ArmorName::outpost && update_count_ > 3 && !this->diverged()) {
+        if (this->name != talos::ArmorName::outpost && update_count_ > 3 && !this->diverged()) {
             is_converged_ = true;
         }
 
         // 前哨站特殊判断
-        if (this->name == spike::ArmorName::outpost && update_count_ > 10 && !this->diverged()) {
+        if (this->name == talos::ArmorName::outpost && update_count_ > 10 && !this->diverged()) {
             is_converged_ = true;
         }
 

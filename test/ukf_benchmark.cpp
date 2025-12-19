@@ -1,7 +1,7 @@
 #include <benchmark/benchmark.h>
 #include "ukf_logic.hpp"
 
-namespace spike::bench {
+namespace talos::bench {
     // ============================================================================
     // Benchmark: UKF Predict (Target: < 200ns)
     // ============================================================================

@@ -32,7 +32,7 @@ public:
     /**
      * @brief 获取当前状态
      */
-    [[nodiscard]] spike::TrackerState state() const { return tracker_soa_.state.load(std::memory_order_acquire); }
+    [[nodiscard]] talos::TrackerState state() const { return tracker_soa_.state.load(std::memory_order_acquire); }
 
     /**
      * @brief 获取当前状态字符串
@@ -46,7 +46,7 @@ public:
      * @param t 时间戳
      * @return 是否有有效目标
      */
-    bool track(const spike::ArmorSlots &slots, const std::array<ArmorPose3D, 10> &poses3d,
+    bool track(const talos::ArmorSlots &slots, const std::array<ArmorPose3D, 10> &poses3d,
                std::chrono::steady_clock::time_point t);
 
     /**
@@ -62,7 +62,7 @@ public:
     /**
      * @brief 获取 TrackerSoA 引用（用于状态访问）
      */
-    [[nodiscard]] const spike::TrackerSoA &tracker_soa() const { return tracker_soa_; }
+    [[nodiscard]] const talos::TrackerSoA &tracker_soa() const { return tracker_soa_; }
 
     /**
      * @brief 获取目标装甲板列表 (预测位置)
@@ -71,13 +71,13 @@ public:
 
 private:
     Solver &solver_;
-    spike::Color enemy_color_;
+    talos::Color enemy_color_;
     int min_detect_count_;
     int max_temp_lost_count_;
     int outpost_max_temp_lost_count_;
     int normal_temp_lost_count_;
 
-    spike::TrackerSoA tracker_soa_; // 复用 TrackerSoA 管理状态机
+    talos::TrackerSoA tracker_soa_; // 复用 TrackerSoA 管理状态机
     Target target_;
     std::chrono::steady_clock::time_point last_timestamp_;
 
@@ -89,13 +89,13 @@ private:
     /**
      * @brief 设置新目标
      */
-    bool set_target(const spike::ArmorSlots &slots, const std::array<ArmorPose3D, 10> &poses3d,
+    bool set_target(const talos::ArmorSlots &slots, const std::array<ArmorPose3D, 10> &poses3d,
                     std::chrono::steady_clock::time_point t);
 
     /**
      * @brief 更新现有目标
      */
-    bool update_target(const spike::ArmorSlots &slots, const std::array<ArmorPose3D, 10> &poses3d,
+    bool update_target(const talos::ArmorSlots &slots, const std::array<ArmorPose3D, 10> &poses3d,
                        std::chrono::steady_clock::time_point t);
 };
 

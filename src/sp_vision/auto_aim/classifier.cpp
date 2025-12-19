@@ -62,15 +62,15 @@ namespace auto_aim {
         return true;
     }
 
-    void Classifier::classify(spike::ArmorFull &armor) {
+    void Classifier::classify(talos::ArmorFull &armor) {
         if (armor.pattern.empty()) {
-            armor.name = spike::ArmorName::not_armor;
+            armor.name = talos::ArmorName::not_armor;
             return;
         }
 
         cv::Mat input;
         if (!preprocess(armor.pattern, input)) {
-            armor.name = spike::ArmorName::not_armor;
+            armor.name = talos::ArmorName::not_armor;
             return;
         }
 
@@ -93,10 +93,10 @@ namespace auto_aim {
         int label_id = label_point.x;
 
         armor.confidence = confidence;
-        armor.name = static_cast<spike::ArmorName>(label_id);
+        armor.name = static_cast<talos::ArmorName>(label_id);
     }
 
-    void Classifier::classify_ov(spike::ArmorFull &armor) {
+    void Classifier::classify_ov(talos::ArmorFull &armor) {
         if (!ov_initialized_) {
             // 回退到 OpenCV DNN
             classify(armor);
@@ -104,13 +104,13 @@ namespace auto_aim {
         }
 
         if (armor.pattern.empty()) {
-            armor.name = spike::ArmorName::not_armor;
+            armor.name = talos::ArmorName::not_armor;
             return;
         }
 
         cv::Mat input;
         if (!preprocess(armor.pattern, input)) {
-            armor.name = spike::ArmorName::not_armor;
+            armor.name = talos::ArmorName::not_armor;
             return;
         }
 
@@ -140,10 +140,10 @@ namespace auto_aim {
         int label_id = label_point.x;
 
         armor.confidence = confidence;
-        armor.name = static_cast<spike::ArmorName>(label_id);
+        armor.name = static_cast<talos::ArmorName>(label_id);
     }
 
-    cv::Mat Classifier::extract_pattern(const cv::Mat &bgr_img, const spike::ArmorFull &armor) {
+    cv::Mat Classifier::extract_pattern(const cv::Mat &bgr_img, const talos::ArmorFull &armor) {
         // 延长灯条获得装甲板角点
         // 1.125 = 0.5 * armor_height / lightbar_length = 0.5 * 126mm / 56mm
         const auto &left = armor.left;

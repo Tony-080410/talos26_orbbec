@@ -3,27 +3,27 @@
 #include "detector_state.hpp"
 #include "triple_buffer.hpp"
 
-namespace spike::test {
+namespace talos::test {
     // ============================================================================
     // Test: Memory Layout Verification
     // ============================================================================
 
     TEST(MemoryLayout, ArmorSlotsSize) {
-        EXPECT_LE(sizeof(spike::ArmorSlots), 2048) << "ArmorSlots exceeds 2KB budget";
-        EXPECT_GE(sizeof(spike::ArmorSlots), 512) << "ArmorSlots seems too small";
+        EXPECT_LE(sizeof(talos::ArmorSlots), 2048) << "ArmorSlots exceeds 2KB budget";
+        EXPECT_GE(sizeof(talos::ArmorSlots), 512) << "ArmorSlots seems too small";
     }
 
     TEST(MemoryLayout, ArmorSlotsAlignment) {
-        EXPECT_EQ(alignof(spike::ArmorSlots), 64) << "ArmorSlots must be 64-byte cache-line aligned";
+        EXPECT_EQ(alignof(talos::ArmorSlots), 64) << "ArmorSlots must be 64-byte cache-line aligned";
     }
 
     TEST(MemoryLayout, TrackerSoAExactSize) {
         // Critical: must be exactly 64 bytes
-        EXPECT_EQ(sizeof(spike::TrackerSoA), 64) << "TrackerSoA must be exactly 64 bytes for L1 cache residence";
+        EXPECT_EQ(sizeof(talos::TrackerSoA), 64) << "TrackerSoA must be exactly 64 bytes for L1 cache residence";
     }
 
     TEST(MemoryLayout, TrackerSoAAlignment) {
-        EXPECT_EQ(alignof(spike::TrackerSoA), 64) << "TrackerSoA must be 64-byte aligned";
+        EXPECT_EQ(alignof(talos::TrackerSoA), 64) << "TrackerSoA must be 64-byte aligned";
     }
 
     TEST(MemoryLayout, TrackerSoACacheLine) {
@@ -94,7 +94,7 @@ namespace spike::test {
 
     TEST(TrackerSoA, DefaultState) {
         TrackerSoA tracker;
-        EXPECT_EQ(tracker.state.load(), spike::TrackerState::IDLE);
+        EXPECT_EQ(tracker.state.load(), talos::TrackerState::IDLE);
         EXPECT_EQ(tracker.detecting_count, 0);
         EXPECT_EQ(tracker.lost_count, 0);
     }
@@ -102,7 +102,7 @@ namespace spike::test {
     TEST(TrackerSoA, StateTransitionIDLEtoDETECTING) {
         TrackerSoA tracker;
         EXPECT_TRUE(tracker.try_start_detecting());
-        EXPECT_EQ(tracker.state.load(), spike::TrackerState::DETECTING);
+        EXPECT_EQ(tracker.state.load(), talos::TrackerState::DETECTING);
 
         // Second call should fail (already in DETECTING)
         EXPECT_FALSE(tracker.try_start_detecting());
@@ -113,7 +113,7 @@ namespace spike::test {
         tracker.state.store(TrackerState::DETECTING, std::memory_order_relaxed);
 
         EXPECT_TRUE(tracker.try_confirm_tracking());
-        EXPECT_EQ(tracker.state.load(), spike::TrackerState::TRACKING);
+        EXPECT_EQ(tracker.state.load(), talos::TrackerState::TRACKING);
     }
 
     TEST(TrackerSoA, StateTransitionTRACKINGtoTEMP_LOST) {
@@ -121,7 +121,7 @@ namespace spike::test {
         tracker.state.store(TrackerState::TRACKING, std::memory_order_relaxed);
 
         EXPECT_TRUE(tracker.try_enter_lost());
-        EXPECT_EQ(tracker.state.load(), spike::TrackerState::TEMP_LOST);
+        EXPECT_EQ(tracker.state.load(), talos::TrackerState::TEMP_LOST);
     }
 
     TEST(TrackerSoA, StateTransitionTEMP_LOSTtoTRACKING) {
@@ -129,7 +129,7 @@ namespace spike::test {
         tracker.state.store(TrackerState::TEMP_LOST, std::memory_order_relaxed);
 
         EXPECT_TRUE(tracker.try_restore_tracking());
-        EXPECT_EQ(tracker.state.load(), spike::TrackerState::TRACKING);
+        EXPECT_EQ(tracker.state.load(), talos::TrackerState::TRACKING);
     }
 
     TEST(TrackerSoA, StateTransitionReset) {
@@ -137,7 +137,7 @@ namespace spike::test {
         tracker.state.store(TrackerState::TRACKING, std::memory_order_relaxed);
 
         EXPECT_TRUE(tracker.try_reset_idle());
-        EXPECT_EQ(tracker.state.load(), spike::TrackerState::IDLE);
+        EXPECT_EQ(tracker.state.load(), talos::TrackerState::IDLE);
     }
 
     TEST(TrackerSoA, GenerationCounter) {

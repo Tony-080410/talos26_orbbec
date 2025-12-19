@@ -133,9 +133,9 @@ namespace {
      *
      * Simulates what the detector would extract from an image
      */
-    constexpr spike::LightbarFull create_lightbar_from_points(const cv::Point2f &top, const cv::Point2f &bottom,
+    constexpr talos::LightbarFull create_lightbar_from_points(const cv::Point2f &top, const cv::Point2f &bottom,
                                                               const std::size_t id) {
-        spike::LightbarFull lb;
+        talos::LightbarFull lb;
         lb.id = id;
         lb.top = top;
         lb.bottom = bottom;
@@ -164,13 +164,13 @@ namespace {
     /**
      * @brief Create ArmorFull from projected 2D points and compute its ratio
      */
-    constexpr spike::ArmorFull create_armor_from_projection(const std::array<cv::Point2f, 4> &pts_2d) {
+    constexpr talos::ArmorFull create_armor_from_projection(const std::array<cv::Point2f, 4> &pts_2d) {
         // pts_2d: {left_top, right_top, right_bottom, left_bottom}
-        const spike::LightbarFull left_lb = create_lightbar_from_points(pts_2d[0], pts_2d[3], 0);
-        const spike::LightbarFull right_lb = create_lightbar_from_points(pts_2d[1], pts_2d[2], 1);
+        const talos::LightbarFull left_lb = create_lightbar_from_points(pts_2d[0], pts_2d[3], 0);
+        const talos::LightbarFull right_lb = create_lightbar_from_points(pts_2d[1], pts_2d[2], 1);
 
         // Use the ArmorFull constructor which computes ratio
-        spike::ArmorFull armor(left_lb, right_lb);
+        talos::ArmorFull armor(left_lb, right_lb);
         return armor;
     }
 
@@ -202,7 +202,7 @@ namespace {
         }
 
         // Create ArmorFull from projected points
-        const spike::ArmorFull armor = create_armor_from_projection(pts_2d);
+        const talos::ArmorFull armor = create_armor_from_projection(pts_2d);
 
         // Calculate relative error
         const double relative_error = calculate_relative_error(armor.ratio, expected_ratio);

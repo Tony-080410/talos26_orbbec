@@ -5,7 +5,7 @@
 
 #include "sp_vision/config.hpp"
 
-namespace spike {
+namespace talos {
     struct ArmorFull;
 }
 
@@ -26,14 +26,14 @@ namespace auto_aim {
          * @param armor 装甲板 (pattern 必须已填充)
          * 结果会更新 armor.name 和 armor.confidence
          */
-        void classify(spike::ArmorFull &armor);
+        void classify(talos::ArmorFull &armor);
 
         /**
          * @brief 对装甲板进行分类 (使用 OpenVINO)
          * @param armor 装甲板 (pattern 必须已填充)
          * 结果会更新 armor.name 和 armor.confidence
          */
-        void classify_ov(spike::ArmorFull &armor);
+        void classify_ov(talos::ArmorFull &armor);
 
         /**
          * @brief 从图像和装甲板角点提取图案
@@ -41,7 +41,7 @@ namespace auto_aim {
          * @param armor 装甲板 (需要 left/right 灯条信息)
          * @return 提取的图案 ROI
          */
-        static cv::Mat extract_pattern(const cv::Mat &bgr_img, const spike::ArmorFull &armor);
+        static cv::Mat extract_pattern(const cv::Mat &bgr_img, const talos::ArmorFull &armor);
 
     private:
         SpVisionClassifierConfig config_;

@@ -2,7 +2,7 @@
 
 #include <atomic>
 
-namespace spike {
+namespace talos {
     /**
      * @brief Tracker state machine enumerator
      *
