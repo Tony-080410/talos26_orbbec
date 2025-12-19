@@ -388,6 +388,7 @@ int main(int argc, char **argv) {
         // Progress logging
         if ((i + 1) % 2000 == 0) {
             spdlog::info("Progress: {}/{} ({:.1f}%)", i + 1, size, 100.0 * (i + 1) / size);
+            break;
         }
 
         // Debug visualization

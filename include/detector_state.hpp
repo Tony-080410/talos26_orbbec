@@ -35,9 +35,9 @@ namespace spike {
         float x2d, y2d; // 2D center position (8B)
         float pts[8]; // 4 corner points: tl_x, tl_y, tr_x, tr_y, br_x, br_y, bl_x, bl_y (32B)
         float confidence; // Detection confidence [0, 1] (4B)
-        uint8_t color; // Color enum (1B)
-        uint8_t type; // ArmorType enum (1B)
-        uint8_t name; // ArmorName enum (1B)
+        Color color; // Color enum (1B)
+        ArmorType type; // ArmorType enum (1B)
+        ArmorName name; // ArmorName enum (1B)
         uint8_t _pad; // Padding (1B)
     };
     static_assert(sizeof(Armor) == 48, "Armor must be exactly 48 bytes");

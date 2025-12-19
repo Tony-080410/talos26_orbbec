@@ -432,9 +432,9 @@ namespace auto_aim {
             out.x2d = static_cast<float>(armor.center.x);
             out.y2d = static_cast<float>(armor.center.y);
             out.confidence = static_cast<float>(armor.confidence);
-            out.color = static_cast<uint8_t>(armor.color);
-            out.type = static_cast<uint8_t>(armor.type);
-            out.name = static_cast<uint8_t>(armor.name);
+            out.color = armor.color;
+            out.type = armor.type;
+            out.name = armor.name;
 
             // 四个角点
             if (armor.points.size() >= 4) {

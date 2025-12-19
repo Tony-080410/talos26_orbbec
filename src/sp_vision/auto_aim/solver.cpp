@@ -3,15 +3,15 @@
 namespace auto_aim {
 
     // 装甲板3D点（物体坐标系）
-    const std::vector<cv::Point3f> BIG_ARMOR_POINTS{{0, BIG_ARMOR_WIDTH / 2, LIGHTBAR_LENGTH / 2},
-                                                    {0, -BIG_ARMOR_WIDTH / 2, LIGHTBAR_LENGTH / 2},
-                                                    {0, -BIG_ARMOR_WIDTH / 2, -LIGHTBAR_LENGTH / 2},
-                                                    {0, BIG_ARMOR_WIDTH / 2, -LIGHTBAR_LENGTH / 2}};
+    const std::vector<cv::Point3f> BIG_ARMOR_POINTS{{0, BIG_ARMOR_WIDTH / 2.0, LIGHTBAR_LENGTH / 2.0},
+                                                    {0, -BIG_ARMOR_WIDTH / 2.0, LIGHTBAR_LENGTH / 2.0},
+                                                    {0, -BIG_ARMOR_WIDTH / 2.0, -LIGHTBAR_LENGTH / 2.0},
+                                                    {0, BIG_ARMOR_WIDTH / 2.0, -LIGHTBAR_LENGTH / 2.0}};
 
-    const std::vector<cv::Point3f> SMALL_ARMOR_POINTS{{0, SMALL_ARMOR_WIDTH / 2, LIGHTBAR_LENGTH / 2},
-                                                      {0, -SMALL_ARMOR_WIDTH / 2, LIGHTBAR_LENGTH / 2},
-                                                      {0, -SMALL_ARMOR_WIDTH / 2, -LIGHTBAR_LENGTH / 2},
-                                                      {0, SMALL_ARMOR_WIDTH / 2, -LIGHTBAR_LENGTH / 2}};
+    const std::vector<cv::Point3f> SMALL_ARMOR_POINTS{{0, SMALL_ARMOR_WIDTH / 2.0, LIGHTBAR_LENGTH / 2.0},
+                                                      {0, -SMALL_ARMOR_WIDTH / 2.0, LIGHTBAR_LENGTH / 2.0},
+                                                      {0, -SMALL_ARMOR_WIDTH / 2.0, -LIGHTBAR_LENGTH / 2.0},
+                                                      {0, SMALL_ARMOR_WIDTH / 2.0, -LIGHTBAR_LENGTH / 2.0}};
 
     // ============ Solver ============
 
@@ -39,7 +39,7 @@ namespace auto_aim {
         image_points[3] = {armor.pts[6], armor.pts[7]}; // bl
 
         // 选择物体点
-        const auto type = static_cast<spike::ArmorType>(armor.type);
+        const auto type = armor.type;
         const auto &object_points = type == spike::ArmorType::big ? BIG_ARMOR_POINTS : SMALL_ARMOR_POINTS;
 
         // PnP解算
