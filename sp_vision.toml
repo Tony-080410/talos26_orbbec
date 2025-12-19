@@ -9,7 +9,7 @@ use_openvino = true
 device = "GPU"
 
 [detector]
-threshold = 110
+threshold = 60
 max_angle_error = 45 # degree
 min_lightbar_ratio = 1.5
 max_lightbar_ratio = 20

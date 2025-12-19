@@ -147,10 +147,13 @@ add_executable(sp_vision
         src/sp_vision/auto_aim/extended_kalman_filter.cpp
         src/sp_vision/auto_aim/target.cpp
         src/sp_vision/auto_aim/tracker.cpp
+        ${FOXGLOVE_SOURCES}
 )
 
 
 target_include_directories(sp_vision PRIVATE include)
+target_include_directories(sp_vision PRIVATE ${foxglove_SOURCE_DIR}/include)
+target_include_directories(sp_vision PRIVATE ${foxglove_SOURCE_DIR}/include/foxglove)
 
 target_link_libraries(sp_vision PRIVATE
         scheduler
@@ -161,6 +164,7 @@ target_link_libraries(sp_vision PRIVATE
         TBB::tbb
         tomlplusplus::tomlplusplus
         $<$<TARGET_EXISTS:openvino::runtime>:openvino::runtime>
+        ${foxglove_SOURCE_DIR}/lib/libfoxglove.a
 )
 
 # Detector benchmark (accuracy testing against dataset)
