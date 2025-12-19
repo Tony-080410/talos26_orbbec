@@ -3,11 +3,11 @@ cmake_minimum_required(VERSION 3.14)
 find_program(SCCACHE_PROGRAM sccache)
 
 if(SCCACHE_PROGRAM)
-    message(STATUS "sccache found: ${SCCACHE_PROGRAM}")
+        message(STATUS "sccache found: ${SCCACHE_PROGRAM}")
     set(CMAKE_C_COMPILER_LAUNCHER   ${SCCACHE_PROGRAM})
-    set(CMAKE_CXX_COMPILER_LAUNCHER ${SCCACHE_PROGRAM})
+        set(CMAKE_CXX_COMPILER_LAUNCHER ${SCCACHE_PROGRAM})
 else()
-    message(STATUS "sccache not found, building without compiler cache")
+        message(STATUS "sccache not found, building without compiler cache")
 endif()
 
 project(talos VERSION 0.1 LANGUAGES CXX)
@@ -21,7 +21,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 option(TALOS_OFFLINE "Build without network" ON)
 
 if (TALOS_OFFLINE)
-    set(FETCHCONTENT_UPDATES_DISCONNECTED ON)
+        set(FETCHCONTENT_UPDATES_DISCONNECTED ON)
 endif()
 
 # Performance optimization flags for microsecond-level latency
@@ -34,15 +34,15 @@ option(ENABLE_TSAN "Enable ThreadSanitizer" OFF)
 option(ENABLE_COVERAGE "Enable code coverage" OFF)
 
 if (ENABLE_ASAN)
-    message(STATUS "AddressSanitizer enabled")
-    add_compile_options(-fsanitize=address -fno-omit-frame-pointer)
-    add_link_options(-fsanitize=address)
+        message(STATUS "AddressSanitizer enabled")
+        add_compile_options(-fsanitize=address -fno-omit-frame-pointer)
+        add_link_options(-fsanitize=address)
 endif ()
 
 if (ENABLE_TSAN)
-    message(STATUS "ThreadSanitizer enabled")
-    add_compile_options(-fsanitize=thread -fno-omit-frame-pointer)
-    add_link_options(-fsanitize=thread)
+        message(STATUS "ThreadSanitizer enabled")
+        add_compile_options(-fsanitize=thread -fno-omit-frame-pointer)
+        add_link_options(-fsanitize=thread)
 endif ()
 
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
@@ -65,6 +65,40 @@ FetchContent_Declare(
         GIT_TAG v3.4.0
 )
 FetchContent_MakeAvailable(tomlplusplus)
+
+if(APPLE AND CMAKE_SYSTEM_PROCESSOR MATCHES "arm64|aarch64")
+        set(FOXGLOVE_PLATFORM "aarch64-apple-darwin")
+elseif(UNIX AND NOT APPLE)
+        if(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64")
+                set(FOXGLOVE_PLATFORM "aarch64-unknown-linux-gnu")
+        else()
+                set(FOXGLOVE_PLATFORM "x86_64-unknown-linux-gnu")
+        endif()
+else()
+        message(FATAL_ERROR "Unsupported platform. Only macOS and Linux are supported.")
+endif()
+
+message(STATUS "Foxglove platform: ${FOXGLOVE_PLATFORM}")
+
+set(FOXGLOVE_VERSION "v0.16.1")
+set(FOXGLOVE_SHA256_aarch64-apple-darwin "7bb818be22396dce6f2430df3451bb2deb4faf9bcff4cd007d737172e0eec764")
+set(FOXGLOVE_SHA256_aarch64-unknown-linux-gnu "20dd412fa8be481e6ed84d88879f368e1a55a146e9a98f936a05931742e1dea5")
+set(FOXGLOVE_SHA256_x86_64-unknown-linux-gnu "d8afbb8f99b75d7ad0f1b2885d35cacead28e6f2e36bd4d1a30e17413ebab896")
+
+set(FOXGLOVE_URL "https://github.com/foxglove/foxglove-sdk/releases/download/sdk%2F${FOXGLOVE_VERSION}/foxglove-${FOXGLOVE_VERSION}-cpp-${FOXGLOVE_PLATFORM}.zip")
+set(FOXGLOVE_SHA ${FOXGLOVE_SHA256_${FOXGLOVE_PLATFORM}})
+
+message(STATUS "Downloading Foxglove from: ${FOXGLOVE_URL}")
+
+FetchContent_Declare(
+        foxglove
+        URL ${FOXGLOVE_URL}
+        URL_HASH SHA256=${FOXGLOVE_SHA}
+        DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+)
+
+FetchContent_MakeAvailable(foxglove)
+
 
 include_directories(include)
 
@@ -286,109 +320,109 @@ add_test(NAME IntegrationSchedulerTest COMMAND integration_scheduler_test)
 
 # Latency benchmarks (only if benchmark library is found)
 if (benchmark_FOUND)
-    add_executable(latency_benchmark
-            test/latency_benchmark.cpp
-    )
+        add_executable(latency_benchmark
+                test/latency_benchmark.cpp
+        )
 
-    target_include_directories(latency_benchmark PRIVATE include)
+        target_include_directories(latency_benchmark PRIVATE include)
 
-    target_link_libraries(latency_benchmark PRIVATE
-            benchmark::benchmark
-            benchmark::benchmark_main
-    )
+        target_link_libraries(latency_benchmark PRIVATE
+                benchmark::benchmark
+                benchmark::benchmark_main
+        )
 
-    add_test(NAME LatencyBenchmark COMMAND latency_benchmark)
+        add_test(NAME LatencyBenchmark COMMAND latency_benchmark)
 
-    # UKF benchmark (separate)
-    add_executable(ukf_benchmark
-            test/ukf_benchmark.cpp
-    )
+        # UKF benchmark (separate)
+        add_executable(ukf_benchmark
+                test/ukf_benchmark.cpp
+        )
 
-    target_include_directories(ukf_benchmark PRIVATE include)
+        target_include_directories(ukf_benchmark PRIVATE include)
 
-    target_link_libraries(ukf_benchmark PRIVATE
-            benchmark::benchmark
-            Eigen3::Eigen
-    )
+        target_link_libraries(ukf_benchmark PRIVATE
+                benchmark::benchmark
+                Eigen3::Eigen
+        )
 
-    add_test(NAME UKFBenchmark COMMAND ukf_benchmark)
+        add_test(NAME UKFBenchmark COMMAND ukf_benchmark)
 
-    # Scheduler benchmark
-    add_executable(scheduler_benchmark
-            test/scheduler_benchmark.cpp
-    )
+        # Scheduler benchmark
+        add_executable(scheduler_benchmark
+                test/scheduler_benchmark.cpp
+        )
 
-    target_include_directories(scheduler_benchmark PRIVATE include)
+        target_include_directories(scheduler_benchmark PRIVATE include)
 
-    target_link_libraries(scheduler_benchmark PRIVATE
-            scheduler
-            benchmark::benchmark
-            ${OpenCV_LIBS}
-            TBB::tbb
-    )
+        target_link_libraries(scheduler_benchmark PRIVATE
+                scheduler
+                benchmark::benchmark
+                ${OpenCV_LIBS}
+                TBB::tbb
+        )
 
-    add_test(NAME SchedulerBenchmark COMMAND scheduler_benchmark)
+        add_test(NAME SchedulerBenchmark COMMAND scheduler_benchmark)
 
-    # Integration scheduler benchmark
-    add_executable(integration_scheduler_benchmark
-            test/integration_scheduler_benchmark.cpp
-    )
+        # Integration scheduler benchmark
+        add_executable(integration_scheduler_benchmark
+                test/integration_scheduler_benchmark.cpp
+        )
 
-    target_include_directories(integration_scheduler_benchmark PRIVATE include)
+        target_include_directories(integration_scheduler_benchmark PRIVATE include)
 
-    target_link_libraries(integration_scheduler_benchmark PRIVATE
-            scheduler
-            benchmark::benchmark
-            ${OpenCV_LIBS}
-            TBB::tbb
-    )
+        target_link_libraries(integration_scheduler_benchmark PRIVATE
+                scheduler
+                benchmark::benchmark
+                ${OpenCV_LIBS}
+                TBB::tbb
+        )
 
-    add_test(NAME IntegrationSchedulerBenchmark COMMAND integration_scheduler_benchmark)
+        add_test(NAME IntegrationSchedulerBenchmark COMMAND integration_scheduler_benchmark)
 
-    # RealWorld scheduler benchmark (with camera)
-    add_executable(realworld_scheduler_benchmark
-            test/realworld_scheduler_benchmark.cpp
-    )
+        # RealWorld scheduler benchmark (with camera)
+        add_executable(realworld_scheduler_benchmark
+                test/realworld_scheduler_benchmark.cpp
+        )
 
-    target_include_directories(realworld_scheduler_benchmark PRIVATE include)
+        target_include_directories(realworld_scheduler_benchmark PRIVATE include)
 
-    target_link_libraries(realworld_scheduler_benchmark PRIVATE
-            scheduler
-            ${OpenCV_LIBS}
-            TBB::tbb
-    )
+        target_link_libraries(realworld_scheduler_benchmark PRIVATE
+                scheduler
+                ${OpenCV_LIBS}
+                TBB::tbb
+        )
 else ()
-    message(STATUS "benchmark library not found - benchmark tests will be skipped")
-    message(STATUS "To enable: brew install google-benchmark")
+        message(STATUS "benchmark library not found - benchmark tests will be skipped")
+        message(STATUS "To enable: brew install google-benchmark")
 endif ()
 
 if (ENABLE_COVERAGE)
     foreach (tgt ${PROJECT_NAME} tracker_soa_test triple_buffer_test performance_probe_test integration_test ukf_test)
-        target_compile_options(${tgt} PRIVATE -fprofile-arcs -ftest-coverage -O0 -g)
-        target_link_options(${tgt} PRIVATE --coverage)
+                target_compile_options(${tgt} PRIVATE -fprofile-arcs -ftest-coverage -O0 -g)
+                target_link_options(${tgt} PRIVATE --coverage)
     endforeach ()
 endif ()
 
 # Coverage target (only if coverage is enabled)
 if (ENABLE_COVERAGE)
-    find_program(LCOV lcov)
-    find_program(GENHTML genhtml)
+        find_program(LCOV lcov)
+        find_program(GENHTML genhtml)
 
     if (LCOV AND GENHTML)
-        add_custom_target(coverage
-                COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_BINARY_DIR}/coverage
-                COMMAND ${LCOV} --directory . --zerocounters
-                COMMAND ${CMAKE_CTEST_COMMAND} --output-on-failure
-                COMMAND ${LCOV} --directory . --capture --output-file coverage.info
-                COMMAND ${LCOV} --remove coverage.info '/usr/*' '*/test/*' --output-file coverage.info
-                COMMAND ${GENHTML} coverage.info --output-directory ${CMAKE_BINARY_DIR}/coverage
-                WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
-                COMMENT "Generating code coverage report"
-        )
-        message(STATUS "Coverage target available: make coverage")
+                add_custom_target(coverage
+                        COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_BINARY_DIR}/coverage
+                        COMMAND ${LCOV} --directory . --zerocounters
+                        COMMAND ${CMAKE_CTEST_COMMAND} --output-on-failure
+                        COMMAND ${LCOV} --directory . --capture --output-file coverage.info
+                        COMMAND ${LCOV} --remove coverage.info '/usr/*' '*/test/*' --output-file coverage.info
+                        COMMAND ${GENHTML} coverage.info --output-directory ${CMAKE_BINARY_DIR}/coverage
+                        WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+                        COMMENT "Generating code coverage report"
+                )
+                message(STATUS "Coverage target available: make coverage")
     else ()
-        message(STATUS "lcov/genhtml not found - coverage target unavailable")
-        message(STATUS "To enable: brew install lcov")
+                message(STATUS "lcov/genhtml not found - coverage target unavailable")
+                message(STATUS "To enable: brew install lcov")
     endif ()
 endif ()
 

@@ -42,12 +42,12 @@ clean_dir() {
         rm -rf "$dir"
         status "[o]" "$GREEN" "Removed $dir."
     else
-        status "[x]" "$RED" "No existing directory, creating one."
-        mkdir -p "$dir"
+        status "[x]" "$RED" "No existing directory."
     fi
 }
 
 clean_dir "build"
+mkdir -p "build"
 cd "build"
 cmake ..
 make -j22
