@@ -38,8 +38,8 @@ namespace spike::test {
                 for (int i = 0; i < 3; i++) {
                     frame.armors[i].x2d = 100.0f + static_cast<float>(i) * 10;
                     frame.armors[i].y2d = 200.0f + static_cast<float>(i) * 10;
-                    frame.armors[i].name = static_cast<uint8_t>(i);
-                    frame.armors[i].color = 1;
+                    frame.armors[i].name = ArmorName::base;
+                    frame.armors[i].color = Color::red;
                     frame.armors[i].confidence = 0.9f;
                     frame.set_valid(i);
 
@@ -171,7 +171,7 @@ namespace spike::test {
         for (int i = 0; i < NUM_TRACKERS; i++) {
             frame.armors[i].x2d = 100.0f + static_cast<float>(i) * 50;
             frame.armors[i].y2d = 200.0f + static_cast<float>(i) * 50;
-            frame.armors[i].name = static_cast<uint8_t>(i);
+            frame.armors[i].name = ArmorName::base;
             frame.set_valid(i);
 
             frame.poses[i].x = 1.0f + static_cast<float>(i);
