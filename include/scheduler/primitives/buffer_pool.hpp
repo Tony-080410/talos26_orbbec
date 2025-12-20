@@ -1,6 +1,6 @@
 #pragma once
 
-#include "scheduler/scheduler.hpp"
+#include "scheduler.hpp"
 
 #include <vector>
 
@@ -15,6 +15,13 @@ namespace scheduler {
             }
             available_.resize(count, true);
         }
+
+        // 禁止拷贝
+        BufferPool(const BufferPool &) = delete;
+        BufferPool &operator=(const BufferPool &) = delete;
+        // 禁止移动
+        BufferPool(BufferPool &&other) noexcept = delete;
+        BufferPool &operator=(BufferPool &&other) noexcept = delete;
 
         ImagePtr acquire() {
             std::lock_guard lock(mutex_);

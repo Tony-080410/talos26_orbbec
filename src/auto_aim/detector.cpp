@@ -1,4 +1,4 @@
-#include "auto_aim/detector.hpp"
+#include "detector.hpp"
 #include <algorithm>
 #include <fmt/format.h>
 #include <numeric>

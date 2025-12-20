@@ -1,5 +1,5 @@
 /**
- * @file sp_vision_ipc.cpp
+ * @file sp_vision.cpp
  * @brief 使用共享内存 IPC 的视觉处理示例
  *
  * 从 Rust 模拟器接收图像，处理后发送云台控制命令
@@ -9,10 +9,9 @@
 #include <iostream>
 #include <opencv2/imgproc.hpp>
 #include <thread>
-
+#include "config.hpp"
 #include "auto_aim/detector.hpp"
 #include "ipc/shm_client.hpp"
-#include "sp_vision/config.hpp"
 #include "spdlog_hook.hpp"
 #include "toml++/toml.hpp"
 

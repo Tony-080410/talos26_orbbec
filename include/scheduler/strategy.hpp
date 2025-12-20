@@ -1,7 +1,7 @@
 #pragma once
 
 #include <concepts>
-#include "scheduler/types.hpp"
+#include "types.hpp"
 
 namespace scheduler {
 

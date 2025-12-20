@@ -1,12 +1,10 @@
 #pragma once
 
-#include <Eigen/Dense>
 #include <Eigen/Geometry>
-#include <opencv2/core/eigen.hpp>
 #include <opencv2/opencv.hpp>
 
+#include "config.hpp"
 #include "detector_state.hpp"
-#include "sp_vision/config.hpp"
 
 namespace auto_aim {
 

@@ -8,12 +8,12 @@
 #include <spdlog/spdlog.h>
 #include <thread>
 
-#include "scheduler/primitives/latest_value.hpp"
-#include "scheduler/primitives/native_event.hpp"
-#include "scheduler/primitives/thread_affinity.hpp" // Phase C: CPU pinning
-#include "scheduler/primitives/triple_buffer.hpp"
-#include "scheduler/strategy.hpp"
-#include "scheduler/types.hpp"
+#include "primitives/latest_value.hpp"
+#include "primitives/native_event.hpp"
+#include "primitives/thread_affinity.hpp" // Phase C: CPU pinning
+#include "primitives/triple_buffer.hpp"
+#include "strategy.hpp"
+#include "types.hpp"
 
 // ============ 编译器提示宏 ============
 #if defined(__GNUC__) || defined(__clang__)
@@ -52,9 +52,9 @@ namespace scheduler {
         Scheduler(const Scheduler &) = delete;
         Scheduler &operator=(const Scheduler &) = delete;
 
-        // 允许移动
-        Scheduler(Scheduler &&) = default;
-        Scheduler &operator=(Scheduler &&) = default;
+        // 禁止移动
+        Scheduler(Scheduler &&) = delete;
+        Scheduler &operator=(Scheduler &&) = delete;
 
         // ============ 生命周期 ============
 

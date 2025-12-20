@@ -1,15 +1,15 @@
-#include "auto_aim/tracker.hpp"
+#include "tracker.hpp"
 
 #include <numeric>
 #include <spdlog/spdlog.h>
 
 namespace auto_aim {
 
-    Tracker::Tracker(const SpVisionTrackerConfig &config, Solver &solver) :
-        solver_(solver), enemy_color_(static_cast<talos::Color>(config.enemy_color)),
-        min_detect_count_(config.min_detect_count), max_temp_lost_count_(config.max_temp_lost_count),
+    Tracker::Tracker(const SpVisionTrackerConfig &config) :
+        enemy_color_(static_cast<talos::Color>(config.enemy_color)), min_detect_count_(config.min_detect_count),
+        max_temp_lost_count_(config.max_temp_lost_count),
         outpost_max_temp_lost_count_(config.outpost_max_temp_lost_count),
-        normal_temp_lost_count_(config.max_temp_lost_count),
+        normal_temp_lost_count_(config.max_temp_lost_count), tracker_soa_(),
         last_timestamp_(std::chrono::steady_clock::now()) {
         // TrackerSoA 默认初始化为 IDLE 状态
     }

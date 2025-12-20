@@ -1,4 +1,5 @@
-#include "auto_aim/solver.hpp"
+#include "solver.hpp"
+#include <opencv2/core/eigen.hpp>
 
 namespace auto_aim {
 

@@ -6,7 +6,7 @@
 #include <opencv2/core.hpp>
 #include <vector>
 
-#include "scheduler/primitives/latency_histogram.hpp"
+#include "primitives/latency_histogram.hpp"
 
 namespace scheduler {
 

@@ -14,6 +14,11 @@ namespace talos {
     enum ArmorName : uint8_t { one = 0, two, three, four, five, sentry, outpost, base, not_armor };
     const std::array<std::string, 9> ARMOR_NAMES = {"one",    "two",     "three", "four",     "five",
                                                     "sentry", "outpost", "base",  "not_armor"};
+
+    constexpr std::string_view color_name(const Color c) noexcept { return COLORS[c]; }
+    constexpr std::string_view armor_type(const ArmorType c) noexcept { return ARMOR_TYPES[c]; }
+    constexpr std::string_view armor_name(const ArmorName c) noexcept { return ARMOR_NAMES[c]; }
+
     // ============ 缓存友好的输出结构 ============
 
     /**
@@ -104,4 +109,4 @@ namespace talos {
     static_assert(sizeof(ArmorSlots) <= 2048, "ArmorSlots exceeds 2KB budget");
     static_assert(alignof(ArmorSlots) == 64, "ArmorSlots must be cache-line aligned");
 
-} // namespace spike
+} // namespace talos

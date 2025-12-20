@@ -2,17 +2,14 @@
 
 #include <atomic>
 #include <chrono>
-#include <mutex>
 
-#ifdef __APPLE__
-
-#elif __linux__
+#ifdef __linux__
 #include <errno.h>
 #include <linux/futex.h>
 #include <sys/syscall.h>
 #include <unistd.h>
 #else
-#error "Unsupported platform - requires Linux or macOS"
+#include <mutex>
 #endif
 
 namespace scheduler {
@@ -21,16 +18,20 @@ namespace scheduler {
      * @brief 平台原生事件原语 - 提供高性能的线程同步
      *
      * Linux: 使用futex (fast userspace mutex)
-     * macOS: 使用mutex (dispatch_semaphore更慢)
+     * 其他OS: 使用mutex+condition_variable (macOS上semaphore更慢)
      */
     class NativeEvent {
     public:
-#ifdef __APPLE__
-        NativeEvent() noexcept = default;
+        explicit NativeEvent() noexcept = default;
 
         // 禁止拷贝
         NativeEvent(const NativeEvent &) = delete;
         NativeEvent &operator=(const NativeEvent &) = delete;
+        // 禁止移动
+        NativeEvent(NativeEvent &&other) noexcept = delete;
+        NativeEvent &operator=(NativeEvent &&other) noexcept = delete;
+
+#ifndef __linux__
 
         /**
          * @brief 等待事件（无超时）
@@ -64,8 +65,6 @@ namespace scheduler {
 
         /**
          * @brief 唤醒所有等待者
-         *
-         * macOS dispatch_semaphore在这个场景下比mutex更慢，所以使用mutex
          */
         void notify_all() noexcept {
             {
@@ -81,15 +80,6 @@ namespace scheduler {
         bool signaled_{false};
 
 #elif __linux__
-        NativeEvent() noexcept = default;
-        ~NativeEvent() noexcept = default;
-
-        // 禁止拷贝和移动
-        NativeEvent(const NativeEvent &) = delete;
-        NativeEvent &operator=(const NativeEvent &) = delete;
-        NativeEvent(NativeEvent &&other) noexcept = delete;
-        NativeEvent &operator=(NativeEvent &&other) noexcept = delete;
-
         /**
          * @brief 使用Linux futex等待事件
          *

@@ -4,8 +4,8 @@
 #include <opencv2/opencv.hpp>
 #include <vector>
 #include "classifier.hpp"
+#include "config.hpp"
 #include "detector_state.hpp"
-#include "sp_vision/config.hpp"
 
 namespace talos {
 

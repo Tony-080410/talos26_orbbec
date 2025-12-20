@@ -25,9 +25,8 @@ public:
     /**
      * @brief 构造跟踪器
      * @param config 跟踪器配置
-     * @param solver PnP解算器引用
      */
-    Tracker(const SpVisionTrackerConfig &config, Solver &solver);
+    explicit Tracker(const SpVisionTrackerConfig &config);
 
     /**
      * @brief 获取当前状态
@@ -70,7 +69,6 @@ public:
     [[nodiscard]] std::vector<Eigen::Vector4d> armor_xyza_list() const;
 
 private:
-    Solver &solver_;
     talos::Color enemy_color_;
     int min_detect_count_;
     int max_temp_lost_count_;

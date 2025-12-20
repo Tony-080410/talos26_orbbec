@@ -16,11 +16,11 @@
 #include <opencv2/imgproc.hpp>
 #include <ranges>
 
+#include "auto_aim/config.hpp"
 #include "auto_aim/dataset_loader.hpp"
 #include "auto_aim/detector.hpp"
 #include "auto_aim/solver.hpp"
 #include "auto_aim/tracker.hpp"
-#include "sp_vision/config.hpp"
 
 using namespace auto_aim;
 using namespace std::chrono;
@@ -38,10 +38,10 @@ struct PipelineMetrics {
     double total_distance{0};
 
     // Tracker metrics
-    int tracking_frames{0};   // Frames in TRACKING state
-    int detecting_frames{0};  // Frames in DETECTING state
-    int temp_lost_frames{0};  // Frames in TEMP_LOST state
-    int idle_frames{0};       // Frames in IDLE state
+    int tracking_frames{0}; // Frames in TRACKING state
+    int detecting_frames{0}; // Frames in DETECTING state
+    int temp_lost_frames{0}; // Frames in TEMP_LOST state
+    int idle_frames{0}; // Frames in IDLE state
     int total_frames{0};
 
     // Latency
@@ -198,14 +198,14 @@ void visualize_frame(const cv::Mat &image, const talos::ArmorSlots &detections,
             cv::Scalar color = armor.color == 0 ? cv::Scalar(0, 0, 255) : cv::Scalar(255, 0, 0);
             cv::polylines(display, pts, true, color, 1);
             cv::putText(display,
-                                   fmt::format("D c{} n{} t{} {:.2f}", talos::COLORS[armor.color], talos::ARMOR_NAMES[armor.name],
-                                               talos::ARMOR_TYPES[armor.type], armor.confidence),
-                                   cv::Point(pts[0].x, pts[0].y - 5), cv::FONT_HERSHEY_SIMPLEX, 0.3, color, 1);
+                        fmt::format("D c{} n{} t{} {:.2f}", talos::COLORS[armor.color], talos::ARMOR_NAMES[armor.name],
+                                    talos::ARMOR_TYPES[armor.type], armor.confidence),
+                        cv::Point(pts[0].x, pts[0].y - 5), cv::FONT_HERSHEY_SIMPLEX, 0.3, color, 1);
 
             // Show 3D distance if solved
             if (pose.valid) {
-                cv::putText(display, fmt::format("{:.2f}m", pose.ypd_in_world[2]),
-                            cv::Point(pts[0].x, pts[0].y - 5), cv::FONT_HERSHEY_SIMPLEX, 0.4, color, 1);
+                cv::putText(display, fmt::format("{:.2f}m", pose.ypd_in_world[2]), cv::Point(pts[0].x, pts[0].y - 5),
+                            cv::FONT_HERSHEY_SIMPLEX, 0.4, color, 1);
             }
         }
     }
@@ -236,7 +236,7 @@ void visualize_frame(const cv::Mat &image, const talos::ArmorSlots &detections,
         auto ekf_x = target.ekf_x();
 
         // Draw predicted armor positions
-        auto armor_list = tracker.armor_xyza_list();
+        const auto armor_list = tracker.armor_xyza_list();
         for (size_t i = 0; i < armor_list.size(); i++) {
             const auto &xyza = armor_list[i];
             // Simple projection (assuming fixed camera parameters)
@@ -271,7 +271,7 @@ int main(int argc, char **argv) {
             debug = true;
         } else if (arg == "--enemy" && i + 1 < argc) {
             std::string color_str = argv[++i];
-            enemy_color = (color_str == "blue") ? talos::Color::blue : talos::Color::red;
+            enemy_color = color_str == "blue" ? talos::Color::blue : talos::Color::red;
         } else if (arg[0] != '-') {
             dataset_path = arg;
         }
@@ -305,7 +305,7 @@ int main(int argc, char **argv) {
     // Initialize pipeline components
     TraditionalDetector detector(config, false);
     Solver solver(config.solver);
-    Tracker tracker(config.tracker, solver);
+    Tracker tracker(config.tracker);
 
     // Set default gimbal orientation (identity for benchmark)
     solver.set_R_gimbal2world(Eigen::Quaterniond::Identity());
@@ -396,8 +396,7 @@ int main(int argc, char **argv) {
             visualize_frame(frame.image, detections, poses3d, tracker, frame.ground_truths);
             visualize_frame(gray_img, detections, poses3d, tracker, frame.ground_truths, "Gray");
             visualize_frame(binary_img, detections, poses3d, tracker, frame.ground_truths, "Binary");
-            int key = cv::waitKey(0);
-            if (key == 'q' || key == 27) { // q or ESC to quit
+            if (auto key = cv::waitKey(0); key == 'q' || key == 27) { // q or ESC to quit
                 break;
             }
         }

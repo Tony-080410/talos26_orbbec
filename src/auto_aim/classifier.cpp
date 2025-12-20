@@ -1,5 +1,5 @@
-#include "auto_aim/classifier.hpp"
-#include "auto_aim/detector.hpp"
+#include "classifier.hpp"
+#include "detector.hpp"
 
 #include <algorithm>
 #include <utility>

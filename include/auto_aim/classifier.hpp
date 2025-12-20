@@ -3,7 +3,7 @@
 #include <opencv2/opencv.hpp>
 #include <openvino/openvino.hpp>
 
-#include "sp_vision/config.hpp"
+#include "config.hpp"
 
 namespace talos {
     struct ArmorFull;

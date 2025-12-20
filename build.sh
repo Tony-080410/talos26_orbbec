@@ -46,10 +46,6 @@ clean_dir() {
     fi
 }
 
-clean_dir "build"
-mkdir -p "build"
-cd "build"
-cmake ..
-make -j22
-
+cmake -G Ninja -B build -S .
+cmake --build build
 status "[+]" "$BLUE" "All done."

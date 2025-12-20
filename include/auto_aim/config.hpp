@@ -6,7 +6,7 @@
 
 #include "detector_state.hpp"
 #include "spdlog_hook.hpp"
-#include "toml++/toml.hpp"
+#include <toml++/toml.hpp>
 #include "toml_helper.hpp"
 
 constexpr std::expected<void, std::string> read_runtime_config(scheduler::RuntimeConfig *config,
