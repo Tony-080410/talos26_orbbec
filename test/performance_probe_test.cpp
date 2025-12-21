@@ -1,5 +1,6 @@
 #include "performance_probe.hpp"
 #include <atomic>
+#include <benchmark/benchmark.h>
 #include <chrono>
 #include <gtest/gtest.h>
 #include <thread>
@@ -347,4 +348,4 @@ namespace talos::test {
         std::cout << "  Mean: " << stats.mean_ns << " ns\n";
         std::cout << "  P99:  " << stats.p99_ns << " ns\n";
     }
-} // namespace spike::test
+} // namespace talos::test

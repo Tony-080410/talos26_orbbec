@@ -1,6 +1,9 @@
 #pragma once
 
+#include <array>
 #include <atomic>
+#include <string>
+#include <string_view>
 
 namespace talos {
     /**
@@ -61,7 +64,7 @@ namespace talos {
      */
     struct alignas(64) TrackerSoA {
         // === State Machine (4 bytes) ===
-        std::atomic<TrackerState> state{TrackerState::IDLE}; // Atomic for CAS operations
+        std::atomic<TrackerState> state{IDLE}; // Atomic for CAS operations
         int8_t detecting_count{0}; // Frames since DETECTING started
         int8_t lost_count{0}; // Frames since tracking lost
         uint8_t generation{0}; // Version counter for ABA prevention
@@ -96,8 +99,8 @@ namespace talos {
          * Called when first armor detected in IDLE state
          */
         bool try_start_detecting() {
-            auto expected = TrackerState::IDLE;
-            return state.compare_exchange_strong(expected, TrackerState::DETECTING, std::memory_order_release,
+            auto expected = IDLE;
+            return state.compare_exchange_strong(expected, DETECTING, std::memory_order_release,
                                                  std::memory_order_relaxed);
         }
 
@@ -106,8 +109,8 @@ namespace talos {
          * Called when detection confidence threshold reached
          */
         bool try_confirm_tracking() {
-            auto expected = TrackerState::DETECTING;
-            return state.compare_exchange_strong(expected, TrackerState::TRACKING, std::memory_order_release,
+            auto expected = DETECTING;
+            return state.compare_exchange_strong(expected, TRACKING, std::memory_order_release,
                                                  std::memory_order_relaxed);
         }
 
@@ -116,8 +119,8 @@ namespace talos {
          * Called when detection missed
          */
         bool try_enter_lost() {
-            auto expected = TrackerState::TRACKING;
-            return state.compare_exchange_strong(expected, TrackerState::TEMP_LOST, std::memory_order_release,
+            auto expected = TRACKING;
+            return state.compare_exchange_strong(expected, TEMP_LOST, std::memory_order_release,
                                                  std::memory_order_relaxed);
         }
 
@@ -126,8 +129,8 @@ namespace talos {
          * Called when target re-detected after being lost
          */
         bool try_restore_tracking() {
-            auto expected = TrackerState::TEMP_LOST;
-            return state.compare_exchange_strong(expected, TrackerState::TRACKING, std::memory_order_release,
+            auto expected = TEMP_LOST;
+            return state.compare_exchange_strong(expected, TRACKING, std::memory_order_release,
                                                  std::memory_order_relaxed);
         }
 
@@ -135,9 +138,7 @@ namespace talos {
          * @brief State machine transition: * -> IDLE
          * Called when timeout (too many consecutive misses)
          */
-        bool try_reset_idle() {
-            return state.exchange(TrackerState::IDLE, std::memory_order_release) != TrackerState::IDLE;
-        }
+        bool try_reset_idle() { return state.exchange(IDLE, std::memory_order_release) != IDLE; }
 
         /**
          * @brief Increment generation counter for ABA prevention
@@ -150,4 +151,4 @@ namespace talos {
     // Compile-time verification
     static_assert(sizeof(TrackerSoA) == 64, "TrackerSoA size verification failed");
     static_assert(alignof(TrackerSoA) == 64, "TrackerSoA alignment verification failed");
-} // namespace spike
+} // namespace talos

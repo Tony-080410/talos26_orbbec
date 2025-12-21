@@ -45,13 +45,14 @@ namespace scheduler::test {
 
         [[nodiscard]] SolverOutput solve(const TrackResult &tr) const {
             if (solve_cb_)
-                return solve_cb_(tr);
+                return solve_cb_(tr); // NOLINT(*-readability-braces-around-statements)
             return SolverOutput{};
         }
 
         void output(const SolverOutput &out) const {
-            if (output_cb_)
+            if (output_cb_) {
                 output_cb_(out);
+            }
         }
 
     private:

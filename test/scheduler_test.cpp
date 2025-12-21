@@ -1,7 +1,6 @@
 #include "scheduler/scheduler.hpp"
 #include <gtest/gtest.h>
 #include "scheduler/primitives/latency_histogram.hpp"
-#include "scheduler/primitives/latest_value.hpp"
 #include "test_strategy.hpp"
 
 #include <atomic>
@@ -14,87 +13,12 @@ using namespace scheduler;
 using namespace scheduler::test;
 using namespace std::chrono_literals;
 
-// ============ LatestValue Tests ============
-
-TEST(LatestValueTest, BasicWriteRead) {
-    LatestValue<int> lv;
-    lv.write(42);
-    EXPECT_EQ(lv.read(), 42);
-}
-
-TEST(LatestValueTest, VersionIncrement) {
-    LatestValue<int> lv;
-    EXPECT_EQ(lv.version(), 0);
-    lv.write(1);
-    EXPECT_EQ(lv.version(), 1);
-    lv.write(2);
-    EXPECT_EQ(lv.version(), 2);
-}
-
-TEST(LatestValueTest, TryReadNewData) {
-    LatestValue<int> lv;
-    uint64_t version = 0;
-    int value = 0;
-
-    // 没有新数据
-    EXPECT_FALSE(lv.try_read(value, version));
-
-    // 写入新数据
-    lv.write(42);
-    EXPECT_TRUE(lv.try_read(value, version));
-    EXPECT_EQ(value, 42);
-    EXPECT_EQ(version, 1);
-
-    // 再次读取，没有新数据
-    EXPECT_FALSE(lv.try_read(value, version));
-
-    // 写入更多数据
-    lv.write(100);
-    EXPECT_TRUE(lv.try_read(value, version));
-    EXPECT_EQ(value, 100);
-}
-
-TEST(LatestValueTest, ConcurrentReadWrite) {
-    LatestValue<int> lv;
-    std::atomic running{true};
-    std::atomic read_count{0};
-
-    // Writer thread
-    std::thread writer([&] {
-        for (int i = 0; i < 10000 && running; ++i) {
-            lv.write(i);
-        }
-        running = false;
-    });
-
-    // Reader thread
-    std::thread reader([&] {
-        uint64_t version = 0;
-        int value = 0;
-        while (running || version < lv.version()) {
-            if (lv.try_read(value, version)) {
-                read_count.fetch_add(1, std::memory_order_relaxed);
-            }
-        }
-    });
-
-    writer.join();
-    reader.join();
-
-    EXPECT_GT(read_count.load(), 0);
-}
-
-// ============ EventFlag Tests (改为使用NativeEvent - API已改造，测试暂时跳过) ============
-// EventFlag已替换为NativeEvent（平台优化事件原语）
-// 相关测试见 integration_scheduler_test.cpp
-
 // ============ Scheduler Tests ============
 
 TEST(SchedulerTest, InitStartStop) {
     TestStrategy strategy;
     Scheduler<TestStrategy> sched;
-    RuntimeConfig config;
-    config.detector_threads = 2;
+    constexpr RuntimeConfig config;
 
     sched.init(config, &strategy);
     EXPECT_FALSE(sched.is_running());
@@ -114,8 +38,6 @@ TEST(SchedulerTest, PushFrame) {
     sched.start();
 
     Frame frame;
-    frame.seq = 1;
-    frame.timestamp_ns = 123456789;
 
     EXPECT_TRUE(sched.push_frame(std::move(frame)));
     EXPECT_EQ(sched.stats().frame_in.load(), 1);
@@ -186,15 +108,15 @@ TEST(SchedulerTest, ConfigHotUpdate) {
     TestStrategy strategy;
     Scheduler<TestStrategy> sched;
     RuntimeConfig config;
-    config.detector_threads = 2;
+    config.detector_mode = 0;
     sched.init(config, &strategy);
 
-    EXPECT_EQ(sched.get_config().detector_threads, 2);
+    EXPECT_EQ(sched.get_config().detector_mode, 0);
 
-    config.detector_threads = 4;
+    config.detector_mode = 4;
     sched.update_config(config);
 
-    EXPECT_EQ(sched.get_config().detector_threads, 4);
+    EXPECT_EQ(sched.get_config().detector_mode, 4);
 }
 
 TEST(SchedulerTest, StatsReset) {
@@ -236,7 +158,7 @@ TEST(LatencyHistogramTest, Percentiles) {
     LatencyHistogram hist;
 
     // 记录 100 个样本: 1us, 2us, ..., 100us
-    for (int i = 1; i <= 100; ++i) {
+    for (auto i = 1; i <= 100; ++i) {
         hist.record(i * 1000); // i us
     }
 

@@ -24,7 +24,7 @@ namespace scheduler {
         BufferPool &operator=(BufferPool &&other) noexcept = delete;
 
         ImagePtr acquire() {
-            std::lock_guard lock(mutex_);
+            std::scoped_lock const lock(mutex_);
             for (size_t i = 0; i < available_.size(); ++i) {
                 if (available_[i]) {
                     available_[i] = false;

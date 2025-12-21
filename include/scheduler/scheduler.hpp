@@ -8,9 +8,8 @@
 #include <spdlog/spdlog.h>
 #include <thread>
 
-#include "primitives/latest_value.hpp"
 #include "primitives/native_event.hpp"
-#include "primitives/thread_affinity.hpp" // Phase C: CPU pinning
+#include "primitives/thread_affinity.hpp"
 #include "primitives/triple_buffer.hpp"
 #include "strategy.hpp"
 #include "types.hpp"
@@ -67,7 +66,7 @@ namespace scheduler {
         void init(const RuntimeConfig &config, Strategy *strategy) noexcept {
             strategy_ = strategy;
             config_ = std::make_shared<RuntimeConfig>(config);
-            spdlog::info("[Scheduler] initialized with {} detector threads", config.detector_threads);
+            spdlog::info("[Scheduler] initialized.");
         }
 
         /**
@@ -201,12 +200,14 @@ namespace scheduler {
          * 1. CRTP直接调用strategy_->detect() - 编译器可内联
          * 2. NativeEvent避免condition_variable开销
          * 3. 缓存行对齐避免false sharing
-         * 4. Phase C: CPU pinning减少缓存失效
          */
         void detector_loop() noexcept {
-            // Phase C: 绑定到核心0 (detector是最频繁的线程)
-            ThreadAffinity::pin_to_core(0);
-            spdlog::debug("[Detector] loop started, pinned to core 0");
+            if (const auto result = ThreadAffinity::pin_to_core(0); !result) {
+                spdlog::warn("[detector] failed to pin: {}", error_message(result.error()));
+            } else {
+                spdlog::warn("[detector] pinned to core 0");
+            }
+            spdlog::debug("[detector] loop started");
 
             Frame frame;
             while (LIKELY(running_.load(std::memory_order_relaxed))) {
@@ -249,12 +250,14 @@ namespace scheduler {
 
         /**
          * @brief Tracker线程主循环
-         * Phase C: CPU pinning to core 1
          */
         void tracker_loop() noexcept {
-            // Phase C: 绑定到核心1
-            ThreadAffinity::pin_to_core(1);
-            spdlog::debug("[Tracker] loop started, pinned to core 1");
+            if (const auto result = ThreadAffinity::pin_to_core(1); !result) {
+                spdlog::warn("[tracker] failed to pin: {}", error_message(result.error()));
+            } else {
+                spdlog::debug("[tracker] pinned to core 1");
+            }
+            spdlog::debug("[tracker] loop started");
 
             Detection det;
             while (LIKELY(running_.load(std::memory_order_relaxed))) {
@@ -289,12 +292,14 @@ namespace scheduler {
          * @brief Solver线程主循环
          *
          * 轮询模式：读取最新的track result，无竞争
-         * Phase C: CPU pinning to core 2
          */
         void solver_loop() noexcept {
-            // Phase C: 绑定到核心2
-            ThreadAffinity::pin_to_core(2);
-            spdlog::debug("[Solver] loop started, pinned to core 2");
+            if (const auto result = ThreadAffinity::pin_to_core(2); !result) {
+                spdlog::warn("[solver] failed to pin: {}", error_message(result.error()));
+            } else {
+                spdlog::warn("[solver] pinned to core 2");
+            }
+            spdlog::debug("[solver] loop started");
 
             while (LIKELY(running_.load(std::memory_order_relaxed))) {
                 if (auto tr = track_result_.borrow(); LIKELY(tr.has_value())) {

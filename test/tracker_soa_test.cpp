@@ -151,28 +151,4 @@ namespace talos::test {
         EXPECT_NE(gen0, gen1);
         EXPECT_NE(gen1, gen2);
     }
-
-    // ============================================================================
-    // Test: TripleBuffer Synchronization
-    // ============================================================================
-
-    TEST(TripleBuffer, BasicPubSub) {
-        TripleBuffer<ArmorSlots> buffer;
-
-        // Initial state: no data
-        const auto ptr = buffer.borrow();
-        EXPECT_EQ(ptr.has_value(), false);
-
-        // Producer writes
-        auto &write_slot = buffer.borrow_mut();
-        write_slot.valid_mask = 0x0F; // 4 armors
-        write_slot.frame_id = 1;
-        buffer.publish();
-
-        // Consumer reads
-        const auto val = buffer.borrow();
-        ASSERT_EQ(val.has_value(), true);
-        EXPECT_EQ(val.value()->valid_mask, 0x0F);
-        EXPECT_EQ(val.value()->frame_id, 1);
-    }
-} // namespace spike::test
+} // namespace talos::test

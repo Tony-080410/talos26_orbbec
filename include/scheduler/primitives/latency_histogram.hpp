@@ -184,10 +184,12 @@ namespace scheduler {
         }
 
         static constexpr uint64_t bucket_to_latency(const size_t bucket) noexcept {
-            if (bucket == 0)
+            if (bucket == 0) {
                 return 50; // 中点
-            if (bucket >= kNumBuckets)
+            }
+            if (bucket >= kNumBuckets) {
                 return kBucketBounds[kNumBuckets - 2];
+            }
             // 返回桶的中点
             return (kBucketBounds[bucket - 1] + kBucketBounds[bucket]) / 2;
         }

@@ -23,6 +23,7 @@ namespace scheduler {
     class NativeEvent {
     public:
         explicit NativeEvent() noexcept = default;
+        ~NativeEvent() { notify_all(); }
 
         // 禁止拷贝
         NativeEvent(const NativeEvent &) = delete;

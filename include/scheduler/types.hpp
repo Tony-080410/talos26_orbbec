@@ -140,8 +140,6 @@ namespace scheduler {
     struct RuntimeConfig {
         // Detector
         int detector_mode{0}; // 0=传统, 1=NN吞吐, 2=NN延迟
-        int detector_threads{4};
-        int max_frame_skip{2};
     };
 
     // ============ 统计信息 ============

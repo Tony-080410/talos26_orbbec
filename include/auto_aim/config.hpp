@@ -14,8 +14,6 @@ constexpr std::expected<void, std::string> read_runtime_config(scheduler::Runtim
     if (const auto _t = tbl["runtime"].as_table()) {
         auto t = *_t;
         READ(t, "detector_mode", config->detector_mode);
-        READ(t, "detector_threads", config->detector_threads);
-        READ(t, "max_frame_skip", config->max_frame_skip);
         return {};
     }
     return std::unexpected("runtime is not a table");

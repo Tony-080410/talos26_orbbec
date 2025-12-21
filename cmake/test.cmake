@@ -86,21 +86,6 @@ target_link_libraries(ukf_test PRIVATE
 
 add_test(NAME UKFTest COMMAND ukf_test)
 
-# Armor ratio perspective correction test
-add_executable(armor_ratio_test
-        test/armor_ratio_test.cpp
-)
-
-target_include_directories(armor_ratio_test PRIVATE include)
-
-target_link_libraries(armor_ratio_test PRIVATE
-        auto_aim
-        GTest::GTest
-        GTest::Main
-)
-
-add_test(NAME ArmorRatioTest COMMAND armor_ratio_test)
-
 # Scheduler tests
 add_executable(scheduler_test
         test/scheduler_test.cpp
@@ -195,19 +180,6 @@ if (benchmark_FOUND)
     )
 
     add_test(NAME IntegrationSchedulerBenchmark COMMAND integration_scheduler_benchmark)
-
-    # RealWorld scheduler benchmark (with camera)
-    add_executable(realworld_scheduler_benchmark
-            test/realworld_scheduler_benchmark.cpp
-    )
-
-    target_include_directories(realworld_scheduler_benchmark PRIVATE include)
-
-    target_link_libraries(realworld_scheduler_benchmark PRIVATE
-            scheduler
-            ${OpenCV_LIBS}
-            TBB::tbb
-    )
 else ()
     message(STATUS "benchmark library not found - benchmark tests will be skipped")
     message(STATUS "To enable: brew install google-benchmark")

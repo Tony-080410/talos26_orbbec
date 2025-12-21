@@ -50,18 +50,18 @@ namespace talos::bench {
 
     BENCHMARK(BM_StateTransitionIdleToDetecting);
 
-    static void BM_StateTransitionTrackingtoTempLost(benchmark::State &state) {
+    static void BM_StateTransitionTrackingToTempLost(benchmark::State &state) {
         TrackerSoA tracker;
-        tracker.state.store(TrackerState::TRACKING, std::memory_order_relaxed);
+        tracker.state.store(TRACKING, std::memory_order_relaxed);
 
         for ([[maybe_unused]] auto _: state) {
             benchmark::DoNotOptimize(tracker.try_enter_lost());
             // Reset for next iteration
-            tracker.state.store(TrackerState::TRACKING, std::memory_order_relaxed);
+            tracker.state.store(TRACKING, std::memory_order_relaxed);
         }
     }
 
-    BENCHMARK(BM_StateTransitionTrackingtoTempLost);
+    BENCHMARK(BM_StateTransitionTrackingToTempLost);
 
     // ============================================================================
     // Benchmark: ArmorSlots Iteration
@@ -97,4 +97,4 @@ namespace talos::bench {
     }
 
     BENCHMARK(BM_TrackerSoAMemoryAccess);
-} // namespace spike::bench
+} // namespace talos::bench

@@ -101,9 +101,6 @@ add_executable(${PROJECT_NAME}
         src/main.cpp
         include/toml_helper.hpp
         src/strategy.cpp
-        src/strategy.cpp
-        src/strategy.cpp
-        src/strategy.hpp
 )
 
 target_include_directories(${PROJECT_NAME} PRIVATE include)

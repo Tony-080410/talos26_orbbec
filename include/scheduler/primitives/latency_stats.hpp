@@ -3,8 +3,8 @@
 #include <algorithm>
 #include <iostream>
 #include <numeric>
-#include <vector>
 #include <ranges>
+#include <vector>
 
 namespace scheduler {
     using namespace std::chrono_literals;
@@ -16,7 +16,7 @@ namespace scheduler {
         std::mutex mutex;
 
         void record(const uint64_t ns) {
-            std::lock_guard lock(mutex);
+            std::scoped_lock const lock(mutex);
             samples.push_back(ns);
         }
 
@@ -43,7 +43,7 @@ namespace scheduler {
         }
 
         void reset() {
-            std::lock_guard lock(mutex);
+            std::scoped_lock lock(mutex);
             samples.clear();
         }
     };

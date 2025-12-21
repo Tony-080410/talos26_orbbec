@@ -16,21 +16,18 @@
 #include <atomic>
 #include <chrono>
 #include <numeric>
+#include <ranges>
 #include <thread>
 #include <vector>
-
 #include "test_strategy.hpp"
 
 using namespace scheduler;
 using namespace scheduler::test;
 using namespace std::chrono_literals;
 
-class SchedulerIntegrationTest : public ::testing::Test {
+class SchedulerIntegrationTest : public testing::Test {
 protected:
-    void SetUp() override {
-        config_.detector_threads = 4;
-        sched_.init(config_, &strategy_);
-    }
+    void SetUp() override { sched_.init(config_, &strategy_); }
 
     void TearDown() override {
         if (sched_.is_running()) {
@@ -206,7 +203,7 @@ TEST_F(SchedulerIntegrationTest, FullPipelineWithRealImage) {
 
     // 验证延迟分布
     if (!e2e_latencies.empty()) {
-        std::sort(e2e_latencies.begin(), e2e_latencies.end());
+        std::ranges::sort(e2e_latencies);
         auto p50 = e2e_latencies[e2e_latencies.size() / 2];
         auto p99 = e2e_latencies[e2e_latencies.size() * 99 / 100];
 
@@ -221,9 +218,9 @@ TEST_F(SchedulerIntegrationTest, FullPipelineWithRealImage) {
 
 // ============ 高负载压力测试 ============
 
+constexpr int kDurationMs = 2000;
+constexpr int kFrameIntervalUs = 6250; // 160 Hz
 TEST_F(SchedulerIntegrationTest, HighLoadStressTest) {
-    constexpr int kDurationMs = 2000;
-    constexpr int kFrameIntervalUs = 6250; // 160 Hz
 
     std::atomic<uint64_t> frame_sent{0};
     std::atomic<uint64_t> frame_processed{0};
@@ -243,9 +240,8 @@ TEST_F(SchedulerIntegrationTest, HighLoadStressTest) {
     while (std::chrono::steady_clock::now() < deadline) {
         cv::Mat img(480, 640, CV_8UC1);
         const auto ts = std::chrono::steady_clock::now().time_since_epoch().count();
-        auto frame = Frame::from_mat(frame_sent.load(), ts, std::move(img));
 
-        if (sched_.push_frame(std::move(frame))) {
+        if (auto frame = Frame::from_mat(frame_sent.load(), ts, std::move(img)); sched_.push_frame(std::move(frame))) {
             frame_sent.fetch_add(1, std::memory_order_relaxed);
         }
 
@@ -298,7 +294,7 @@ TEST_F(SchedulerIntegrationTest, SchedulingOverheadVerification) {
     sched_.stop();
 
     // 计算统计
-    std::sort(push_latencies.begin(), push_latencies.end());
+    std::ranges::sort(push_latencies);
     const auto p50 = push_latencies[push_latencies.size() / 2];
     const auto p99 = push_latencies[push_latencies.size() * 99 / 100];
     const auto max_lat = push_latencies.back();

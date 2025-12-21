@@ -131,6 +131,6 @@ namespace talos::bench {
     }
 
     BENCHMARK(BM_InitFromDetection);
-} // namespace spike::bench
+} // namespace talos::bench
 
 BENCHMARK_MAIN();

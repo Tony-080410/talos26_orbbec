@@ -9,7 +9,7 @@ protected:
     UKFState ukf{};
 
     void SetUp() override {
-        tracker.state.store(TrackerState::IDLE);
+        tracker.state.store(IDLE);
         tracker.detecting_count = 0;
         tracker.lost_count = 0;
         tracker.generation = 0;

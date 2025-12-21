@@ -5,7 +5,8 @@ Checks: >
   -fuchsia-*,
   -altera-*,
   -abseil-*,
-  -android-*
+  -android-*,
+  *-readability-braces-around-statements
 WarningsAsErrors: '*'
 HeaderFilterRegex: '.*'
 FormatStyle: file

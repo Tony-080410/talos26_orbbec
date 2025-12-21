@@ -198,8 +198,8 @@ void visualize_frame(const cv::Mat &image, const talos::ArmorSlots &detections,
             cv::Scalar color = armor.color == 0 ? cv::Scalar(0, 0, 255) : cv::Scalar(255, 0, 0);
             cv::polylines(display, pts, true, color, 1);
             cv::putText(display,
-                        fmt::format("D c{} n{} t{} {:.2f}", talos::COLORS[armor.color], talos::ARMOR_NAMES[armor.name],
-                                    talos::ARMOR_TYPES[armor.type], armor.confidence),
+                        fmt::format("D c{} n{} t{} {:.2f}", talos::color_name(armor.color),
+                                    talos::armor_name(armor.name), talos::armor_type(armor.type), armor.confidence),
                         cv::Point(pts[0].x, pts[0].y - 5), cv::FONT_HERSHEY_SIMPLEX, 0.3, color, 1);
 
             // Show 3D distance if solved
@@ -246,8 +246,7 @@ void visualize_frame(const cv::Mat &image, const talos::ArmorSlots &detections,
         }
 
         // Show target info
-        cv::putText(display,
-                    fmt::format("Target: {} v_yaw={:.2f}", talos::ARMOR_NAMES[static_cast<int>(target.name)], ekf_x[7]),
+        cv::putText(display, fmt::format("Target: {} v_yaw={:.2f}", talos::armor_name(target.name), ekf_x[7]),
                     cv::Point(10, display.rows - 20), cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(255, 255, 0), 1);
     }
 

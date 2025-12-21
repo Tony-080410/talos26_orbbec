@@ -1,6 +1,5 @@
 #include <benchmark/benchmark.h>
 #include "scheduler/primitives/latency_histogram.hpp"
-#include "scheduler/primitives/latest_value.hpp"
 #include "scheduler/primitives/native_event.hpp"
 #include "scheduler/primitives/triple_buffer.hpp"
 #include "scheduler/scheduler.hpp"
@@ -48,60 +47,6 @@ static void BM_TripleBuffer_Read(benchmark::State &state) {
 }
 BENCHMARK(BM_TripleBuffer_Read);
 
-// LatestValue 写入开销
-static void BM_LatestValue_Write(benchmark::State &state) {
-    LatestValue<uint64_t> lv;
-    uint64_t seq = 0;
-
-    for ([[maybe_unused]] auto _: state) {
-        lv.write(seq++);
-    }
-
-    state.SetItemsProcessed(state.iterations());
-}
-BENCHMARK(BM_LatestValue_Write);
-
-// LatestValue 读取开销
-static void BM_LatestValue_Read(benchmark::State &state) {
-    LatestValue<uint64_t> lv;
-    lv.write(42);
-
-    for ([[maybe_unused]] auto _: state) {
-        auto val = lv.read();
-        benchmark::DoNotOptimize(val);
-    }
-
-    state.SetItemsProcessed(state.iterations());
-}
-BENCHMARK(BM_LatestValue_Read);
-
-// LatestValue try_read 开销
-static void BM_LatestValue_TryRead(benchmark::State &state) {
-    LatestValue<uint64_t> lv;
-    uint64_t version = 0;
-    uint64_t value = 0;
-
-    // Writer thread
-    std::atomic running{true};
-    std::thread writer([&] {
-        uint64_t seq = 0;
-        while (running.load(std::memory_order_relaxed)) {
-            lv.write(seq++);
-        }
-    });
-
-    for ([[maybe_unused]] auto _: state) {
-        [[maybe_unused]] auto _2 = lv.try_read(value, version);
-        benchmark::DoNotOptimize(value);
-    }
-
-    running = false;
-    writer.join();
-
-    state.SetItemsProcessed(state.iterations());
-}
-BENCHMARK(BM_LatestValue_TryRead);
-
 // EventFlag notify 开销 (无等待者)
 static void BM_EventFlag_Notify_NoWaiter(benchmark::State &state) {
     NativeEvent flag;
@@ -140,7 +85,7 @@ static void BM_Scheduler_PushFrame(benchmark::State &state) {
         return det;
     });
     Scheduler<TestStrategy> sched;
-    RuntimeConfig config(1, 4, 10);
+    constexpr RuntimeConfig config;
     sched.init(config, &strategy);
 
     sched.start();
@@ -189,8 +134,7 @@ static void BM_Scheduler_E2E_Latency(benchmark::State &state) {
     strategy.set_output([&](const SolverOutput &) { processed.fetch_add(1, std::memory_order_release); });
 
     Scheduler<TestStrategy> sched;
-    RuntimeConfig config;
-    config.detector_threads = 2;
+    constexpr RuntimeConfig config;
 
     sched.init(config, &strategy);
     sched.start();
@@ -226,8 +170,7 @@ static void BM_Scheduler_Throughput(benchmark::State &state) {
     });
 
     Scheduler<TestStrategy> sched;
-    RuntimeConfig config;
-    config.detector_threads = 2;
+    constexpr RuntimeConfig config;
 
     sched.init(config, &strategy);
     sched.start();
