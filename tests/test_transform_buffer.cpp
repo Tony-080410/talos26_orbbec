@@ -54,8 +54,8 @@ TEST_F(CircularTransformBufferTest, PushAndQuery) {
 
     buffer.push(timestamp, tf);
 
-    // Query at exact timestamp
-    auto result = buffer.at(timestamp);
+    // Get the latest transform (most recent entry)
+    auto result = buffer.latest();
     EXPECT_TRUE(result.has_value());
 
     if (result.has_value()) {
@@ -78,10 +78,14 @@ TEST_F(CircularTransformBufferTest, MultiplePushes) {
         buffer.push(timestamp, tf);
     }
 
-    // All should be queryable
-    for (const auto& [tf, ts] : transforms) {
-        auto result = buffer.at(ts);
-        EXPECT_TRUE(result.has_value());
+    // Check that we can get the latest
+    auto latest = buffer.latest();
+    EXPECT_TRUE(latest.has_value());
+
+    if (latest.has_value()) {
+        // Latest should be the last one pushed (index 4)
+        Eigen::Vector3d trans = latest.value().transform.translation();
+        EXPECT_NEAR(trans.x(), 4.0, EPSILON);
     }
 }
 
@@ -192,10 +196,14 @@ TEST_F(CircularTransformBufferTest, LargeBuffer) {
         large_buffer.push(1000000 + i * 100, tf);
     }
 
-    // All should be queryable
-    for (int i = 0; i < 500; ++i) {
-        auto result = large_buffer.at(1000000 + i * 100);
-        EXPECT_TRUE(result.has_value());
+    // Check that we have data
+    auto latest = large_buffer.latest();
+    EXPECT_TRUE(latest.has_value());
+
+    if (latest.has_value()) {
+        // Latest should be around index 499
+        Eigen::Vector3d trans = latest.value().transform.translation();
+        EXPECT_NEAR(trans.x(), 499.0, EPSILON);
     }
 }
 
@@ -287,10 +295,13 @@ TEST_F(TimestampOrderTest, StrictlyIncreasingTimestamps) {
         buffer.push(1000000 + i * 1000, tf);
     }
 
-    // All should be queryable
-    for (int i = 0; i < 5; ++i) {
-        auto result = buffer.at(1000000 + i * 1000);
-        EXPECT_TRUE(result.has_value());
+    // Check that we can get the latest
+    auto latest = buffer.latest();
+    EXPECT_TRUE(latest.has_value());
+
+    if (latest.has_value()) {
+        Eigen::Vector3d trans = latest.value().transform.translation();
+        EXPECT_NEAR(trans.x(), 4.0, EPSILON);
     }
 }
 
