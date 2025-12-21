@@ -11,25 +11,11 @@
 namespace fast_tf {
 
 // ============================================================================
-// 编译期坐标系ID定义（注：更好的实现在 frame_builder.hpp 中）
+// Runtime Frame Name and ID Management
 // ============================================================================
 
-// 旧的实现已移至 frame_builder.hpp，新项目应使用 frame_builder.hpp 中的 FrameId
-
-// 宏定义，用于简化编译期帧ID的创建
-#define DECLARE_FRAME_ID(frame_name_str) \
-    struct frame_name##Frame { \
-        static constexpr std::string_view name() { \
-            return std::string_view(#frame_name_str); \
-        } \
-        static constexpr uint64_t id() { \
-            return fast_tf::hash_string_view(std::string_view(#frame_name_str)); \
-        } \
-    }
-
-// ============================================================================
-// 运行期帧名称和ID管理
-// ============================================================================
+// New frame definitions use DECLARE_FRAME macro from frame_id.hpp
+// This provides compile-time hierarchy validation with no runtime overhead
 
 class FrameRegistry {
 public:
@@ -93,18 +79,18 @@ private:
 
 // RPY格式的变换
 struct RPYTransformData {
-    double roll;   // 绕X轴旋转（弧度）
-    double pitch;  // 绕Y轴旋转（弧度）
-    double yaw;    // 绕Z轴旋转（弧度）
-    double x;      // 平移X
-    double y;      // 平移Y
-    double z;      // 平移Z
+    double roll = 0.0;   // 绕X轴旋转（弧度）
+    double pitch = 0.0;  // 绕Y轴旋转（弧度）
+    double yaw = 0.0;    // 绕Z轴旋转（弧度）
+    double x = 0.0;      // 平移X
+    double y = 0.0;      // 平移Y
+    double z = 0.0;      // 平移Z
 
     RPYTransformData() = default;
 
-    RPYTransformData(double r, double p, double y,
+    RPYTransformData(double r, double p, double y_val,
                      double tx, double ty, double tz)
-        : roll(r), pitch(p), yaw(y), x(tx), y(ty), z(tz) {}
+        : roll(r), pitch(p), yaw(y_val), x(tx), y(ty), z(tz) {}
 
     // 验证值有效性
     [[nodiscard]] bool is_valid() const {
@@ -116,13 +102,13 @@ struct RPYTransformData {
 
 // 四元数格式的变换
 struct QuaternionTransformData {
-    double w;   // 实部
-    double x;   // 虚部i
-    double y;   // 虚部j
-    double z;   // 虚部k
-    double tx;  // 平移X
-    double ty;  // 平移Y
-    double tz;  // 平移Z
+    double w = 1.0;   // 实部 (default: identity quaternion)
+    double x = 0.0;   // 虚部i
+    double y = 0.0;   // 虚部j
+    double z = 0.0;   // 虚部k
+    double tx = 0.0;  // 平移X
+    double ty = 0.0;  // 平移Y
+    double tz = 0.0;  // 平移Z
 
     QuaternionTransformData() = default;
 

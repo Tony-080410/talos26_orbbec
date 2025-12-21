@@ -135,6 +135,82 @@ target_link_libraries(integration_scheduler_test PRIVATE
 
 add_test(NAME IntegrationSchedulerTest COMMAND integration_scheduler_test)
 
+# ============================================================================
+# Fast TF Tests
+# ============================================================================
+
+# Frame types unit tests
+add_executable(test_frame_types
+        tests/test_frame_types.cpp
+        src/fast_tf.cpp
+)
+
+target_include_directories(test_frame_types PRIVATE include)
+
+target_link_libraries(test_frame_types PRIVATE
+        fast_tf
+        GTest::GTest
+        GTest::Main
+        Eigen3::Eigen
+        TBB::tbb
+)
+
+add_test(NAME FrameTypesTest COMMAND test_frame_types)
+
+# Frame hierarchy validation tests
+add_executable(test_frame_hierarchy
+        tests/test_frame_hierarchy.cpp
+        src/fast_tf.cpp
+)
+
+target_include_directories(test_frame_hierarchy PRIVATE include)
+
+target_link_libraries(test_frame_hierarchy PRIVATE
+        fast_tf
+        GTest::GTest
+        GTest::Main
+        Eigen3::Eigen
+        TBB::tbb
+)
+
+add_test(NAME FrameHierarchyTest COMMAND test_frame_hierarchy)
+
+# Static transform storage tests
+add_executable(test_static_transforms
+        tests/test_static_transforms.cpp
+        src/fast_tf.cpp
+)
+
+target_include_directories(test_static_transforms PRIVATE include)
+
+target_link_libraries(test_static_transforms PRIVATE
+        fast_tf
+        GTest::GTest
+        GTest::Main
+        Eigen3::Eigen
+        TBB::tbb
+)
+
+add_test(NAME StaticTransformsTest COMMAND test_static_transforms)
+
+# Circular transform buffer tests
+add_executable(test_transform_buffer
+        tests/test_transform_buffer.cpp
+        src/fast_tf.cpp
+)
+
+target_include_directories(test_transform_buffer PRIVATE include)
+
+target_link_libraries(test_transform_buffer PRIVATE
+        fast_tf
+        GTest::GTest
+        GTest::Main
+        Eigen3::Eigen
+        TBB::tbb
+)
+
+add_test(NAME TransformBufferTest COMMAND test_transform_buffer)
+
 # Latency benchmarks (only if benchmark library is found)
 if (benchmark_FOUND)
     add_executable(latency_benchmark
@@ -208,6 +284,25 @@ if (benchmark_FOUND)
             ${OpenCV_LIBS}
             TBB::tbb
     )
+
+    # Fast TF performance benchmarks
+    add_executable(benchmark_transforms
+            benchmarks/benchmark_transforms.cpp
+            src/fast_tf.cpp
+    )
+
+    target_include_directories(benchmark_transforms PRIVATE include)
+
+    target_link_libraries(benchmark_transforms PRIVATE
+            fast_tf
+            benchmark::benchmark
+            benchmark::benchmark_main
+            Eigen3::Eigen
+            TBB::tbb
+    )
+
+    add_test(NAME TransformBenchmark COMMAND benchmark_transforms)
+
 else ()
     message(STATUS "benchmark library not found - benchmark tests will be skipped")
     message(STATUS "To enable: brew install google-benchmark")
