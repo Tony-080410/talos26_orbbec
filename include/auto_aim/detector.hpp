@@ -95,7 +95,7 @@ namespace auto_aim {
         /**
          * @brief 全图检测装甲板
          * @param bgr_img BGR彩色图像
-         * @param binary_img
+         * @param binary_img 二值化图像
          * @param frame_id 帧ID
          * @param timestamp_ns 时间戳
          * @return ArmorSlots 检测结果

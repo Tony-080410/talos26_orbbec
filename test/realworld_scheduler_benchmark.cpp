@@ -84,7 +84,7 @@ public:
         return det;
     }
 
-    TrackResult track(const Detection &det, const SharedFeature &sf) {
+    TrackResult track(const Detection &det, [[maybe_unused]] const SharedFeature &sf) {
         const auto t0 = std::chrono::steady_clock::now();
 
         TrackResult tr;

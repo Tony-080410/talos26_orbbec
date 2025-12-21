@@ -92,7 +92,6 @@ TEST_F(SchedulerIntegrationTest, ZeroCopyFromMat) {
     // 测试从 cv::Mat 创建的 Frame 也是 0-copy
     cv::Mat mat(480, 640, CV_8UC3);
     mat.setTo(cv::Scalar(100, 150, 200));
-    void *original_ptr = mat.data;
 
     std::atomic<void *> detected_ptr{nullptr};
 

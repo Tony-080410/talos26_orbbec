@@ -50,7 +50,7 @@ namespace talos_gimbal {
 #pragma pack()
 
     inline void print_imu(const ReceiveImuData &imu) {
-        constexpr double RAD2DEG = 180.0 / 3.1415926535;
+        constexpr float RAD2DEG = 180.0f / 3.1415926535f;
 
         std::cout << std::fixed << std::setprecision(3);
 

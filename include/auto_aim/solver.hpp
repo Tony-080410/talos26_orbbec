@@ -126,7 +126,7 @@ double limit_rad(double angle);
 /**
  * @brief 旋转矩阵转欧拉角 (ZYX顺序)
  * @param R 旋转矩阵
- * @param axis0, axis1, axis2 轴顺序 (0=x, 1=y, 2=z)
+ * @param axis0 , axis1 , axis2 轴顺序 (0=x, 1=y, 2=z)
  * @param extrinsic 是否为外旋
  * @return 欧拉角向量
  */

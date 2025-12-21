@@ -20,7 +20,7 @@ namespace auto_aim {
     }
 
     Eigen::VectorXd ExtendedKalmanFilter::predict(const Eigen::MatrixXd &F, const Eigen::MatrixXd &Q) {
-        return predict(F, Q, [&](const Eigen::VectorXd &x) { return F * x; });
+        return predict(F, Q, [&](const Eigen::VectorXd &vec) { return F * vec; });
     }
 
     Eigen::VectorXd ExtendedKalmanFilter::predict(const Eigen::MatrixXd &F, const Eigen::MatrixXd &Q,
@@ -33,7 +33,7 @@ namespace auto_aim {
     Eigen::VectorXd ExtendedKalmanFilter::update(
             const Eigen::VectorXd &z, const Eigen::MatrixXd &H, const Eigen::MatrixXd &R,
             const std::function<Eigen::VectorXd(const Eigen::VectorXd &, const Eigen::VectorXd &)> &z_subtract) {
-        return update(z, H, R, [&](const Eigen::VectorXd &x) { return H * x; }, z_subtract);
+        return update(z, H, R, [&](const Eigen::VectorXd &vec) { return H * vec; }, z_subtract);
     }
 
     Eigen::VectorXd ExtendedKalmanFilter::update(
