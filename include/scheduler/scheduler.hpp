@@ -174,7 +174,7 @@ namespace scheduler {
         NativeEvent tracker_event_; // 通知tracker有新detection
 
         // Track Result: 双缓冲（solver轮询读取）
-        LatestValue<TrackResult> track_result_;
+        TripleBuffer<TrackResult> track_result_;
 
         // ============ 配置 + 策略 ============
 
@@ -228,9 +228,7 @@ namespace scheduler {
                     shared.image = std::move(frame.image);
 
                     // 预处理（可选，使用if constexpr检测）
-                    if constexpr (requires { std::declval<Strategy>().preprocess(std::declval<SharedFeature &>()); }) {
-                        strategy_->preprocess(shared);
-                    }
+                    strategy_->preprocess(shared);
 
                     shared_buffer_.publish();
 
@@ -273,9 +271,11 @@ namespace scheduler {
                         continue; // 共享缓冲无效
                     }
 
-                    // ⭐ 关键热点：CRTP直接调用
-                    TrackResult tr = strategy_->track(det, **shared_opt);
-                    track_result_.write(tr);
+                    auto mut = track_result_.borrow_mut();
+                    const TrackResult tr = strategy_->track(det, **shared_opt);
+                    mut.frame_seq = tr.frame_seq;
+                    mut.timestamp_ns = tr.timestamp_ns;
+                    track_result_.publish();
 
                     const auto t1 = std::chrono::steady_clock::now();
                     const auto latency_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count();
@@ -296,20 +296,16 @@ namespace scheduler {
             ThreadAffinity::pin_to_core(2);
             spdlog::debug("[Solver] loop started, pinned to core 2");
 
-            TrackResult tr;
-            uint64_t last_version = 0;
-
             while (LIKELY(running_.load(std::memory_order_relaxed))) {
-                if (LIKELY(track_result_.try_read(tr, last_version))) {
+                if (auto tr = track_result_.borrow(); LIKELY(tr.has_value())) {
                     const auto t0 = std::chrono::steady_clock::now();
 
                     // ⭐ 关键热点：CRTP直接调用
-                    SolverOutput out = strategy_->solve(tr);
+                    TrackResult result = *tr.value();
+                    SolverOutput out = strategy_->solve(result);
 
                     // 可选：输出回调（如果strategy实现了）
-                    if constexpr (requires { std::declval<Strategy>().output(std::declval<SolverOutput>()); }) {
-                        strategy_->output(out);
-                    }
+                    strategy_->output(out);
 
                     const auto t1 = std::chrono::steady_clock::now();
                     const auto latency_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count();

@@ -12,12 +12,16 @@ namespace talos {
      *                           <-- [miss] --> TEMP_LOST --+
      *                           [timeout] -> IDLE
      */
-    enum class TrackerState : uint8_t {
+    enum TrackerState : uint8_t {
         IDLE = 0, // No target tracked
         DETECTING = 1, // Candidate detected, waiting for confirmation
         TRACKING = 2, // Actively tracking target
         TEMP_LOST = 3 // Lost tracking, predicting only
     };
+
+    const std::array<std::string, 4> TRACKER_STATE_NAMES = {"IDLE", "DETECTING", "TRACKING", "TEMP_LOST"};
+
+    constexpr std::string_view tracker_state(const TrackerState c) noexcept { return TRACKER_STATE_NAMES[c]; }
 
     /**
      * @brief Tracker state - optimized for L1 cache residence

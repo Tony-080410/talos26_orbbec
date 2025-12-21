@@ -4,13 +4,13 @@
 #include <Eigen/Eigen>
 #include <expected>
 
+#include <toml++/toml.hpp>
 #include "detector_state.hpp"
 #include "spdlog_hook.hpp"
-#include <toml++/toml.hpp>
 #include "toml_helper.hpp"
 
 constexpr std::expected<void, std::string> read_runtime_config(scheduler::RuntimeConfig *config,
-                                                               const toml::table &tbl) {
+                                                               const toml::table &tbl) noexcept {
     if (const auto _t = tbl["runtime"].as_table()) {
         auto t = *_t;
         READ(t, "detector_mode", config->detector_mode);
@@ -33,7 +33,7 @@ struct SpVisionDetectorConfig {
     double min_confidence;
     double max_rectangular_error;
 
-    std::expected<void, std::string> read_from(const toml::table &tbl) {
+    std::expected<void, std::string> read_from(const toml::table &tbl) noexcept {
         if (const auto _t = tbl["detector"].as_table()) {
             auto t = *_t;
             READ_KEY(t, threshold);
@@ -66,7 +66,7 @@ struct SpVisionClassifierConfig {
     bool use_openvino{true}; // 是否使用 OpenVINO (否则用 OpenCV DNN)
     DeviceType device{Auto}; // OpenVINO 设备: "AUTO", "CPU", "GPU"
 
-    [[nodiscard]] constexpr std::string device_type() const {
+    [[nodiscard]] constexpr std::string device_type() const noexcept {
         if (device == Auto) {
             return "AUTO";
         }
@@ -79,7 +79,7 @@ struct SpVisionClassifierConfig {
         return {};
     }
 
-    std::expected<void, std::string> read_from(const toml::table &tbl) {
+    std::expected<void, std::string> read_from(const toml::table &tbl) noexcept {
         if (const auto _t = tbl["classifier"].as_table()) {
             auto t = *_t;
             READ_KEY(t, model_path);
@@ -116,7 +116,7 @@ struct SpVisionSolverConfig {
     Eigen::Matrix<double, 3, 1> extrinsic_camera_gimbal_tf; // 3x1
     Eigen::Matrix<double, 3, 3, Eigen::RowMajor> extrinsic_gimbal_imu; // 3x3 row-major
 
-    std::expected<void, std::string> read_from(const toml::table &tbl) {
+    std::expected<void, std::string> read_from(const toml::table &tbl) noexcept {
         if (const auto _t = tbl["solver"].as_table()) {
             auto t = *_t;
             PARSE_DOUBLE_ARRAY(c, t, camera_matrix, 9);
@@ -139,7 +139,7 @@ struct SpVisionTrackerConfig {
     uint16_t max_temp_lost_count{30}; // 临时丢失的最大帧数
     uint16_t outpost_max_temp_lost_count{100}; // 前哨站临时丢失的最大帧数
 
-    std::expected<void, std::string> read_from(const toml::table &tbl) {
+    std::expected<void, std::string> read_from(const toml::table &tbl) noexcept {
         if (const auto _t = tbl["tracker"].as_table()) {
             auto t = *_t;
 
@@ -165,7 +165,7 @@ struct SpVisionConfig : scheduler::RuntimeConfig {
     SpVisionSolverConfig solver{};
     SpVisionTrackerConfig tracker{};
 
-    std::expected<void, std::string> read_from(const toml::table &tbl) {
+    std::expected<void, std::string> read_from(const toml::table &tbl) noexcept {
         if (auto read = read_runtime_config(this, tbl); !read) {
             return read;
         }

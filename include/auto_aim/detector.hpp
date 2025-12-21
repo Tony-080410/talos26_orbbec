@@ -52,7 +52,7 @@ namespace talos {
         ArmorFull(const LightbarFull &l, const LightbarFull &r);
     };
 
-} // namespace spike
+} // namespace talos
 
 namespace auto_aim {
     /**
@@ -91,6 +91,8 @@ namespace auto_aim {
     class TraditionalDetector {
     public:
         explicit TraditionalDetector(const SpVisionConfig &config, bool debug = false);
+
+        void preprocess(const cv::Mat &bgr_img, const cv::Mat &binary_img) const noexcept;
 
         /**
          * @brief 全图检测装甲板

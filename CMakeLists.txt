@@ -100,13 +100,20 @@ target_link_libraries(talos_gimbal PRIVATE
 add_executable(${PROJECT_NAME}
         src/main.cpp
         include/toml_helper.hpp
+        src/strategy.cpp
+        src/strategy.cpp
+        src/strategy.cpp
+        src/strategy.hpp
 )
 
 target_include_directories(${PROJECT_NAME} PRIVATE include)
 
 target_link_libraries(${PROJECT_NAME} PRIVATE
         talos_gimbal
+        talos_std
+        auto_aim
         scheduler
+        ipc
         ${OpenCV_LIBS}
         spdlog::spdlog
         fmt::fmt

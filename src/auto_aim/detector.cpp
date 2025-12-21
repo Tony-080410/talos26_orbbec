@@ -53,7 +53,7 @@ namespace talos {
         rectangular_error = std::max(left_rectangular_error, right_rectangular_error);
     }
 
-} // namespace spike
+} // namespace talos
 
 namespace auto_aim {
 
@@ -64,6 +64,11 @@ namespace auto_aim {
         // 预转换角度为弧度
         max_angle_error_rad_ = config_.max_angle_error / 57.3;
         max_rectangular_error_rad_ = config_.max_rectangular_error / 57.3;
+    }
+
+    void TraditionalDetector::preprocess(const cv::Mat &bgr_img, const cv::Mat &binary_img) const noexcept {
+        cv::cvtColor(bgr_img, binary_img, cv::COLOR_BGR2GRAY);
+        cv::threshold(binary_img, binary_img, config_.threshold, 255, cv::THRESH_BINARY);
     }
 
     talos::ArmorSlots TraditionalDetector::detect(const cv::Mat &bgr_img, const cv::Mat &binary_img,

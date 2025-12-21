@@ -51,8 +51,8 @@ namespace talos_gimbal {
                 return;
             }
             if (header_frame->id == 0x01) {
-                const auto received = reinterpret_cast<const ReceiveImuData *>(data.data());
-                print_imu(*received);
+                //const auto received = reinterpret_cast<const ReceiveImuData *>(data.data());
+                //print_imu(*received);
             }
         }
     };

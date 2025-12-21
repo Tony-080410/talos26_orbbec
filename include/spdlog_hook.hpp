@@ -41,13 +41,18 @@ private:
     std::string buffer_;
 };
 
-inline void hook_cstream() {
+inline std::shared_ptr<spdlog::logger> init_logger() noexcept {
     const auto file_sink = std::make_shared<spdlog::sinks::rotating_file_sink_mt>("logs/talos.log", 1024 * 1024 * 5, 3);
     const auto console_sink = std::make_shared<spdlog::sinks::stdout_color_sink_mt>();
     std::vector<spdlog::sink_ptr> sinks{console_sink, file_sink};
     const auto logger = std::make_shared<spdlog::logger>("talos", sinks.begin(), sinks.end());
     logger->set_pattern("[%^%l%$] %v");
     spdlog::set_default_logger(logger);
+    return logger;
+}
+
+inline void hook_cstream() noexcept {
+    const std::shared_ptr<spdlog::logger> logger = init_logger();
     static spdlog_streambuf cout_buf(logger, spdlog::level::info);
     static spdlog_streambuf cerr_buf(logger, spdlog::level::err);
     std::cout.rdbuf(&cout_buf);

@@ -19,7 +19,7 @@ add_compile_options(
         # 数学优化
         # -ffast-math
         # -fno-math-errno
-        -ffinite-math-only
+        # -ffinite-math-only
 
         # 循环优化
         -funroll-loops
@@ -27,7 +27,7 @@ add_compile_options(
         -fslp-vectorize
 
         # 内联优化
-        -finline-functions
+        $<$<CONFIG:Release>:-finline-functions>
         $<$<CONFIG:Release>:-finline-hint-functions>
 
         # 其他优化
