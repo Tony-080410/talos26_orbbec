@@ -1,6 +1,5 @@
 #include "performance_probe.hpp"
 #include <atomic>
-#include <benchmark/benchmark.h>
 #include <chrono>
 #include <gtest/gtest.h>
 #include <thread>

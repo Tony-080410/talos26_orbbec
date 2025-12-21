@@ -66,7 +66,7 @@ namespace scheduler {
         void init(const RuntimeConfig &config, Strategy *strategy) noexcept {
             strategy_ = strategy;
             config_ = std::make_shared<RuntimeConfig>(config);
-            spdlog::info("[Scheduler] initialized.");
+            spdlog::info("[scheduler] initialized.");
         }
 
         /**
@@ -77,13 +77,13 @@ namespace scheduler {
                 return; // 已经在运行
             }
 
-            spdlog::info("[Scheduler] starting...");
+            spdlog::info("[scheduler] starting...");
 
             detector_thread_ = std::thread([this] { detector_loop(); });
             tracker_thread_ = std::thread([this] { tracker_loop(); });
             solver_thread_ = std::thread([this] { solver_loop(); });
 
-            spdlog::info("[Scheduler] started");
+            spdlog::info("[scheduler] started");
         }
 
         /**
@@ -94,20 +94,23 @@ namespace scheduler {
                 return; // 已经停止
             }
 
-            spdlog::info("[Scheduler] stopping...");
+            spdlog::info("[scheduler] stopping...");
 
             // 唤醒可能阻塞的线程
             frame_event_.notify_all();
             tracker_event_.notify_all();
 
-            if (detector_thread_.joinable())
+            if (detector_thread_.joinable()) {
                 detector_thread_.join();
-            if (tracker_thread_.joinable())
+            }
+            if (tracker_thread_.joinable()) {
                 tracker_thread_.join();
-            if (solver_thread_.joinable())
+            }
+            if (solver_thread_.joinable()) {
                 solver_thread_.join();
+            }
 
-            spdlog::info("[Scheduler] stopped");
+            spdlog::info("[scheduler] stopped");
         }
 
         /**
@@ -143,7 +146,7 @@ namespace scheduler {
          */
         void update_config(const RuntimeConfig &config) noexcept {
             config_ = std::make_shared<RuntimeConfig>(config);
-            spdlog::debug("[Scheduler] config updated");
+            spdlog::debug("[scheduler] config updated");
         }
 
         /**
@@ -204,8 +207,8 @@ namespace scheduler {
         void detector_loop() noexcept {
             if (const auto result = ThreadAffinity::pin_to_core(0); !result) {
                 spdlog::warn("[detector] failed to pin: {}", error_message(result.error()));
-            } else {
-                spdlog::warn("[detector] pinned to core 0");
+            } else if (const auto realtime_result = ThreadAffinity::set_realtime_priority(); !realtime_result) {
+                spdlog::warn("[detector] failed to set realtime policy: {}", error_message(result.error()));
             }
             spdlog::debug("[detector] loop started");
 
@@ -254,6 +257,8 @@ namespace scheduler {
         void tracker_loop() noexcept {
             if (const auto result = ThreadAffinity::pin_to_core(1); !result) {
                 spdlog::warn("[tracker] failed to pin: {}", error_message(result.error()));
+            } else if (const auto realtime_result = ThreadAffinity::set_realtime_priority(); !realtime_result) {
+                spdlog::warn("[detector] failed to set realtime policy: {}", error_message(result.error()));
             } else {
                 spdlog::debug("[tracker] pinned to core 1");
             }
@@ -296,6 +301,8 @@ namespace scheduler {
         void solver_loop() noexcept {
             if (const auto result = ThreadAffinity::pin_to_core(2); !result) {
                 spdlog::warn("[solver] failed to pin: {}", error_message(result.error()));
+            } else if (const auto realtime_result = ThreadAffinity::set_realtime_priority(); !realtime_result) {
+                spdlog::warn("[detector] failed to set realtime policy: {}", error_message(result.error()));
             } else {
                 spdlog::warn("[solver] pinned to core 2");
             }
@@ -305,8 +312,11 @@ namespace scheduler {
                 if (auto tr = track_result_.borrow(); LIKELY(tr.has_value())) {
                     const auto t0 = std::chrono::steady_clock::now();
 
+                    const auto value = *tr.value();
                     // ⭐ 关键热点：CRTP直接调用
-                    TrackResult result = *tr.value();
+                    TrackResult result;
+                    result.frame_seq = value.frame_seq;
+                    result.timestamp_ns = value.timestamp_ns;
                     SolverOutput out = strategy_->solve(result);
 
                     // 可选：输出回调（如果strategy实现了）

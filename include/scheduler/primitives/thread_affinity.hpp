@@ -170,7 +170,8 @@ namespace scheduler {
          * @param config 实时优先级配置
          * @return AffinityResult 成功返回void，失败返回具体错误
          */
-        [[nodiscard]] static auto set_realtime_priority(const RealtimeConfig &config) noexcept -> AffinityResult {
+        [[nodiscard]] static auto set_realtime_priority(const RealtimeConfig config = RealtimeConfig{
+                                                                50, 50000, 100000, false}) noexcept -> AffinityResult {
 #ifdef __linux__
             struct sched_param param{};
             param.sched_priority = static_cast<int>(config.priority);
