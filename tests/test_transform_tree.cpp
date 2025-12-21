@@ -298,6 +298,7 @@ TEST(PerformanceTest, InterpolationSpeed) {
     for (int i = 0; i < 1000; ++i) {
         auto entry = buffer.at_interpolated(50000 + i * 100);
         // 不检查结果，只测速度
+        (void)entry;
     }
 }
 

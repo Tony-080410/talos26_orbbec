@@ -2,7 +2,7 @@
 detector_mode = 0
 detector_threads = 8
 max_frame_skip = 2
-
+daedalus = false
 [classifier]
 model_path = "tiny_resnet.onnx"
 use_openvino = true

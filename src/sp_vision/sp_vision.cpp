@@ -9,7 +9,6 @@
 #include <iostream>
 #include <opencv2/imgproc.hpp>
 #include <thread>
-#include "config.hpp"
 #include "auto_aim/detector.hpp"
 #include "ipc/shm_client.hpp"
 #include "spdlog_hook.hpp"

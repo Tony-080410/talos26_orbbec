@@ -1,11 +1,27 @@
 #include <chrono>
 #include "auto_aim/config.hpp"
-#include "detector.hpp"
-#include "shm_client.hpp"
+#include "auto_aim/detector.hpp"
+#include "camera/hik_camera.hpp"
+#include "ipc/shm_client.hpp"
 #include "spdlog_hook.hpp"
 #include "strategy.hpp"
 #include "talos_gimbal/stm32.hpp"
 #include "tracker.hpp"
+
+struct TalosConfig : SpVisionConfig {
+    bool daedalus;
+    std::expected<void, std::string> read_from(const toml::table &tbl) noexcept {
+        if (auto read = SpVisionConfig::read_from(tbl); !read) {
+            return read;
+        }
+        if (const auto _t = tbl["runtime"].as_table()) {
+            auto t = *_t;
+            READ_KEY(t, daedalus);
+            return {};
+        }
+        return std::unexpected("runtime section not found");
+    }
+};
 
 template<class... Ts>
 struct overloaded : Ts... {
@@ -18,8 +34,8 @@ using read_config_error = std::variant<toml::parse_error, std::string>;
 
 using namespace std::chrono_literals;
 
-inline std::expected<SpVisionConfig, read_config_error> read_config() {
-    SpVisionConfig config;
+inline std::expected<TalosConfig, read_config_error> read_config() {
+    TalosConfig config;
     toml::table tbl;
     try {
         tbl = toml::parse_file("sp_vision.toml");
@@ -31,6 +47,17 @@ inline std::expected<SpVisionConfig, read_config_error> read_config() {
     }
     return config;
 }
+
+// using RecvImageError = std::variant<hikcamera::CameraError, ipc::ShmError>;
+// template<typename T>
+// concept Camera = requires(T &camera) {
+//     typename T::CameraProfile;
+//     { camera.recv_image() } -> std::convertible_to<std::expected<ipc::ShmClient::ImageFrame, RecvImageError>>;
+// };
+
+// hikcamera::ImageCapturer::recv_image() -> std::expected<ipc::ShmClient::ImageFrame, RecvImageError> {
+//     return read(100ms);
+// }
 
 int main() {
     init_logger();
@@ -55,14 +82,21 @@ int main() {
     auto config = config_result.value();
 
     std::optional<ipc::ShmClient> client;
-    while (!client) {
-        if (auto result = ipc::ShmClient::connect()) {
-            client = std::move(*result);
-            std::cout << "已连接到共享内存!\n";
-        } else {
-            std::cout << "." << std::flush;
-            std::this_thread::sleep_for(500ms);
+    std::unique_ptr<hikcamera::ImageCapturer> camera_;
+    auto daedalus_or_camera = config.daedalus;
+    if (daedalus_or_camera) {
+        while (!client) {
+            if (auto result = ipc::ShmClient::connect()) {
+                client = std::move(*result);
+                std::cout << "已连接到共享内存!\n";
+            } else {
+                std::cout << "." << std::flush;
+                std::this_thread::sleep_for(500ms);
+            }
         }
+    } else {
+        hikcamera::ImageCapturer::CameraProfile profile;
+        camera_ = hikcamera::ImageCapturer::create(profile).value();
     }
 
     const auto info = client->camera_info();
@@ -82,7 +116,21 @@ int main() {
     uint64_t last_seq = 0;
     while (true) {
         gimbal.handle_events();
-        auto frame = client->recv_image();
+        std::optional<ipc::ShmClient::ImageFrame> frame;
+        if (daedalus_or_camera) {
+            frame = client->recv_image();
+        } else {
+            auto img_result = camera_->read(100ms);
+            if (img_result) {
+                static uint64_t seq = 0;
+                auto img = img_result.value();
+                frame = ipc::ShmClient::ImageFrame{.image = std::move(img), .seq = seq++, .timestamp_ns = 0};
+            } else {
+                spdlog::critical("{}", img_result.error().what());
+                return 2;
+            }
+        }
+
         if (!frame.has_value()) {
             // 没有新图像
             continue;

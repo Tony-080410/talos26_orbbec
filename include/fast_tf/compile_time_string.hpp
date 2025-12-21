@@ -16,7 +16,7 @@ struct CompileTimeString {
     constexpr CompileTimeString() = default;
 
     // 从字符串字面量构造
-    constexpr CompileTimeString(const char (&str)[N + 1]) {
+    constexpr explicit CompileTimeString(const char (&str)[N + 1]) {
         std::copy(str, str + N, data.begin());
         size = N;
     }

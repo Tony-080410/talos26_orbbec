@@ -2,12 +2,12 @@
 
 #include <cstdint>
 #include <expected>
+#include <fcntl.h>
 #include <filesystem>
 #include <fstream>
+#include <memory>
 #include <string>
 #include <string_view>
-
-#include <fcntl.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <unistd.h>

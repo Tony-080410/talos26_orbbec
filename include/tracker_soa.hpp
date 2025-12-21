@@ -1,6 +1,9 @@
 #pragma once
 
 #include <atomic>
+#include <array>
+#include <string>
+#include <string_view>
 
 namespace talos {
     /**

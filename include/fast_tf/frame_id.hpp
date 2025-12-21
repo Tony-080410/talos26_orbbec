@@ -23,7 +23,7 @@ namespace fast_tf {
  */
 
 // FNV-1a hash for compile-time string hashing
-constexpr uint64_t compile_time_hash(std::string_view str, uint64_t hash = 14695981039346656037ULL) {
+constexpr auto compile_time_hash(std::string_view str, uint64_t hash = 14695981039346656037ULL) -> uint64_t {
     for (char c : str) {
         hash ^= static_cast<uint64_t>(c);
         hash *= 1099511628211ULL;
