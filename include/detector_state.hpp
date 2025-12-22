@@ -2,6 +2,7 @@
 
 #include <array>
 #include <cstdint>
+#include <string>
 
 namespace talos {
 
@@ -82,7 +83,7 @@ namespace talos {
         uint64_t timestamp_ns{0};
         uint64_t frame_id{0};
 
-        [[nodiscard]] constexpr size_t count_valid() const { return __builtin_popcount(valid_mask); }
+        [[nodiscard]] constexpr std::size_t count_valid() const { return __builtin_popcount(valid_mask); }
 
         constexpr void set_valid(const int slot) {
             if (slot >= 0 && slot < 10) {

@@ -76,3 +76,9 @@ FetchContent_Declare(
 
 FetchContent_MakeAvailable(foxglove)
 
+# Find all Foxglove SDK source files
+file(GLOB FOXGLOVE_SOURCES CONFIGURE_DEPENDS
+    "${foxglove_SOURCE_DIR}/src/*.cpp"
+    "${foxglove_SOURCE_DIR}/src/server/*.cpp"
+)
+

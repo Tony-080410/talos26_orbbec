@@ -2,9 +2,10 @@
 detector_mode = 0
 detector_threads = 8
 max_frame_skip = 2
-daedalus = false
+daedalus = true
+
 [classifier]
-model_path = "tiny_resnet.onnx"
+model_path = "/home/praysky/talos/tiny_resnet.onnx"
 use_openvino = true
 device = "GPU"
 
@@ -47,7 +48,7 @@ extrinsic_gimbal_imu = [
 ]
 
 [tracker]
-enemy_color = 0           # "red" or "blue"
+enemy_color = 1           # "red" or "blue"
 min_detect_count = 3          # 确认跟踪所需的最小检测次数
 max_temp_lost_count = 30      # 临时丢失的最大帧数
 outpost_max_temp_lost_count = 100  # 前哨站临时丢失的最大帧数

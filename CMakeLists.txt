@@ -144,10 +144,14 @@ target_compile_options(hikcamera PRIVATE -Wno-documentation -Wno-documentation-u
 add_executable(${PROJECT_NAME}
         src/main.cpp
         src/strategy.cpp
+        src/strategy_wrapper.cpp
+        ${FOXGLOVE_SOURCES}
         include/toml_helper.hpp
 )
 
 target_include_directories(${PROJECT_NAME} PRIVATE include)
+target_include_directories(${PROJECT_NAME} SYSTEM PRIVATE ${foxglove_SOURCE_DIR}/include)
+target_include_directories(${PROJECT_NAME} SYSTEM PRIVATE ${foxglove_SOURCE_DIR}/include/foxglove)
 
 target_link_libraries(${PROJECT_NAME} PRIVATE
         talos_gimbal
@@ -161,6 +165,7 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
         TBB::tbb
         tomlplusplus::tomlplusplus
         ${LIBUSB_LINK_LIBRARIES}
+        ${foxglove_SOURCE_DIR}/lib/libfoxglove.a
 )
 
 # sp_vision executable

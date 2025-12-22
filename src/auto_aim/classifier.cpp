@@ -12,15 +12,14 @@ namespace auto_aim {
         // 加载 OpenVINO 模型 (如果启用)
         if (config_.use_openvino) {
             try {
-                std::cout << "try openvino classifier" << std::endl;
+                spdlog::info("initializing openvino classifier");
                 const auto ov_model = core_.read_model(config.model_path);
-                std::cout << "compiling openvino classifier" << std::endl;
+                spdlog::info("model loaded, compiling...");
                 compiled_model_ = core_.compile_model(ov_model, config_.device_type(),
                                                       ov::hint::performance_mode(ov::hint::PerformanceMode::LATENCY));
                 ov_initialized_ = true;
             } catch (const std::exception &e) {
-                std::cerr << "error initializing openvino" << std::endl;
-                std::cerr << e.what() << std::endl;
+                spdlog::error("openvino exception: {}", e.what());
                 // OpenVINO 初始化失败，回退到 OpenCV DNN
                 ov_initialized_ = false;
             }
@@ -31,7 +30,7 @@ namespace auto_aim {
         }
     }
 
-    bool Classifier::preprocess(const cv::Mat &pattern, cv::Mat &output) {
+    auto Classifier::preprocess(const cv::Mat &pattern, cv::Mat &output) -> bool {
         if (pattern.empty()) {
             return false;
         }

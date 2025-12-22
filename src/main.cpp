@@ -1,16 +1,16 @@
-#include <chrono>
 #include "auto_aim/config.hpp"
 #include "auto_aim/detector.hpp"
 #include "camera/hik_camera.hpp"
 #include "ipc/shm_client.hpp"
 #include "spdlog_hook.hpp"
-#include "strategy.hpp"
+#include "strategy_wrapper.hpp"
 #include "talos_gimbal/stm32.hpp"
 #include "tracker.hpp"
+#include <chrono>
 
 struct TalosConfig : SpVisionConfig {
     bool daedalus;
-    std::expected<void, std::string> read_from(const toml::table &tbl) noexcept {
+    std::expected<void, std::string> read_from(const toml::table& tbl) noexcept {
         if (auto read = SpVisionConfig::read_from(tbl); !read) {
             return read;
         }
@@ -23,11 +23,11 @@ struct TalosConfig : SpVisionConfig {
     }
 };
 
-template<class... Ts>
+template <class... Ts>
 struct overloaded : Ts... {
     using Ts::operator()...;
 };
-template<class... Ts>
+template <class... Ts>
 overloaded(Ts...) -> overloaded<Ts...>;
 
 using read_config_error = std::variant<toml::parse_error, std::string>;
@@ -39,7 +39,7 @@ inline std::expected<TalosConfig, read_config_error> read_config() {
     toml::table tbl;
     try {
         tbl = toml::parse_file("sp_vision.toml");
-    } catch (const toml::parse_error &err) {
+    } catch (const toml::parse_error& err) {
         return std::unexpected(err);
     }
     if (auto result = config.read_from(tbl); !result) {
@@ -52,10 +52,12 @@ inline std::expected<TalosConfig, read_config_error> read_config() {
 // template<typename T>
 // concept Camera = requires(T &camera) {
 //     typename T::CameraProfile;
-//     { camera.recv_image() } -> std::convertible_to<std::expected<ipc::ShmClient::ImageFrame, RecvImageError>>;
+//     { camera.recv_image() } -> std::convertible_to<std::expected<ipc::ShmClient::ImageFrame,
+//     RecvImageError>>;
 // };
 
-// hikcamera::ImageCapturer::recv_image() -> std::expected<ipc::ShmClient::ImageFrame, RecvImageError> {
+// hikcamera::ImageCapturer::recv_image() -> std::expected<ipc::ShmClient::ImageFrame,
+// RecvImageError> {
 //     return read(100ms);
 // }
 
@@ -64,7 +66,7 @@ inline std::expected<TalosConfig, read_config_error> read_config() {
  * Uses std::chrono::high_resolution_clock for portability
  */
 static uint64_t now_ns() {
-    const auto now = std::chrono::high_resolution_clock::now();
+    const auto now      = std::chrono::high_resolution_clock::now();
     const auto duration = now.time_since_epoch();
     return std::chrono::duration_cast<std::chrono::nanoseconds>(duration).count();
 }
@@ -73,19 +75,22 @@ int main() {
     init_logger();
     spdlog::set_level(spdlog::level::debug);
     spdlog::info("talos is initializing...");
-    const auto start = std::chrono::system_clock::now();
+    const auto start         = std::chrono::system_clock::now();
     const auto config_result = read_config();
     if (!config_result.has_value()) {
-        std::visit(overloaded{[](const toml::parse_error &e) {
-                                  const auto src = e.source();
-                                  spdlog::critical("parse toml: {} at {}:{}:{}", e.description(), src.path->data(),
-                                                   src.begin.line, src.begin.column);
-                              },
-                              [](const std::string &s) { spdlog::critical("read toml: {}", s); }},
-                   config_result.error());
+        std::visit(
+            overloaded{
+                [](const toml::parse_error& e) {
+                    const auto& src = e.source();
+                    spdlog::critical(
+                        "parse toml: {} at {}:{}:{}", e.description(), src.path->data(),
+                        src.begin.line, src.begin.column);
+                },
+                [](const std::string& s) { spdlog::critical("read toml: {}", s); }},
+            config_result.error());
         return 1;
     }
-    const auto &config = config_result.value();
+    const auto& config = config_result.value();
 
     std::optional<ipc::ShmClient> client;
     std::unique_ptr<hikcamera::ImageCapturer> camera_;
@@ -112,15 +117,17 @@ int main() {
     spdlog::info("Initialization complete, starting main loop...");
 
     TalosStrategy strategy(false, config, 6, 1080, 1440);
-    scheduler::Scheduler<TalosStrategy> sched;
-    sched.init(config, &strategy);
+    FoxgloveServer foxglove_server(8765);
+    FoxgloveWrapper<TalosStrategy> wrapper(strategy, foxglove_server);
+    scheduler::Scheduler<decltype(wrapper)> sched;
+    sched.init(config, &wrapper);
     sched.start();
 
     spdlog::info(
-            "done. ({}ms)",
-            std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now() - start).count());
+        "done. ({}ms)", std::chrono::duration_cast<std::chrono::milliseconds>(
+                            std::chrono::system_clock::now() - start)
+                            .count());
 
-    // cv::Mat rvec = (cv::Mat_<double>(3, 1) << 90.0, 90.0, 90.0);
     uint64_t last_seq = 0;
     while (true) {
         std::optional<ipc::ShmClient::ImageFrame> frame;
@@ -130,8 +137,9 @@ int main() {
             auto img_result = camera_->read(100ms);
             if (img_result) {
                 static uint64_t seq = 0;
-                auto img = img_result.value();
-                frame = ipc::ShmClient::ImageFrame{.image = std::move(img), .seq = seq++, .timestamp_ns = now_ns()};
+                auto img            = img_result.value();
+                frame               = ipc::ShmClient::ImageFrame{
+                                  .image = std::move(img), .seq = seq++, .timestamp_ns = now_ns()};
             } else {
                 spdlog::critical("{}", img_result.error().what());
                 return 2;
@@ -142,9 +150,9 @@ int main() {
             // 没有新图像
             continue;
         }
-        double roll = 0; // rad
+        double roll  = 0; // rad
         double pitch = 0; // rad
-        double yaw = 0; // rad
+        double yaw   = 0; // rad
 
         Eigen::AngleAxisd rx(roll, Eigen::Vector3d::UnitX());
         Eigen::AngleAxisd ry(pitch, Eigen::Vector3d::UnitY());
@@ -153,9 +161,9 @@ int main() {
 
         // 跳帧检测
         auto v = *frame;
-        cv::Mat c = v.image.clone();
-        cv::cvtColor(c, c, cv::COLOR_RGB2GRAY);
-        cv::threshold(c, c, 50, 255, cv::THRESH_BINARY);
+        // cv::Mat c = v.image.clone();
+        // cv::cvtColor(c, c, cv::COLOR_RGB2GRAY);
+        // cv::threshold(c, c, 50, 255, cv::THRESH_BINARY);
         // cv::cvtColor(v.image, v.image, cv::COLOR_RGB2BGR);
         if (v.seq != last_seq + 1 && last_seq > 0) {
             spdlog::info("跳 {} 帧", v.seq - last_seq - 1);
@@ -166,7 +174,9 @@ int main() {
         // cv::waitKey(1);
         last_seq = v.seq;
         spdlog::info("处理 {} 帧", last_seq);
-        sched.push_frame(scheduler::Frame{v.seq, v.timestamp_ns, scheduler::ImageBuffer::from_mat(std::move(v.image))});
+        sched.push_frame(
+            scheduler::Frame{
+                v.seq, v.timestamp_ns, scheduler::ImageBuffer::from_mat(std::move(v.image))});
         // std::this_thread::sleep_for(std::chrono::microseconds(1));
     }
 }
