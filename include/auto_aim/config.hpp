@@ -117,11 +117,11 @@ struct SpVisionSolverConfig {
     std::expected<void, std::string> read_from(const toml::table &tbl) noexcept {
         if (const auto _t = tbl["solver"].as_table()) {
             auto t = *_t;
-            PARSE_DOUBLE_ARRAY(c, t, camera_matrix, 9);
-            PARSE_DOUBLE_ARRAY(d, t, distort_coefficient, 5);
-            PARSE_DOUBLE_ARRAY(r, t, extrinsic_camera_gimbal, 9);
-            PARSE_DOUBLE_ARRAY(tt, t, extrinsic_camera_gimbal_tf, 3);
-            PARSE_DOUBLE_ARRAY(rr, t, extrinsic_gimbal_imu, 9);
+            PARSE_DOUBLE_MATRIX(c, t, camera_matrix);
+            PARSE_DOUBLE_MATRIX(d, t, distort_coefficient);
+            PARSE_DOUBLE_MATRIX(r, t, extrinsic_camera_gimbal);
+            PARSE_DOUBLE_MATRIX(tt, t, extrinsic_camera_gimbal_tf);
+            PARSE_DOUBLE_MATRIX(rr, t, extrinsic_gimbal_imu);
             return {};
         }
         return std::unexpected("solver section not found");
