@@ -5,6 +5,8 @@
 #include <fcntl.h>
 #include <filesystem>
 #include <fstream>
+#include <cstring>
+#include <memory>
 #include <string>
 #include <string_view>
 #include <sys/mman.h>

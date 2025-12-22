@@ -43,6 +43,21 @@ target_link_libraries(triple_buffer_test PRIVATE
 
 add_test(NAME TripleBufferTest COMMAND triple_buffer_test)
 
+# IPC shared memory tests (memory safety and tearing)
+add_executable(ipc_test
+        test/ipc_test.cpp
+)
+
+target_include_directories(ipc_test PRIVATE include/ipc)
+
+target_link_libraries(ipc_test PRIVATE
+        GTest::GTest
+        GTest::Main
+        ${OpenCV_LIBS}
+)
+
+add_test(NAME IPCTest COMMAND ipc_test)
+
 # Performance probe tests
 add_executable(performance_probe_test
         test/performance_probe_test.cpp
