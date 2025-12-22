@@ -51,12 +51,15 @@ target_link_libraries(scheduler INTERFACE
 
 # auto aim library
 add_library(auto_aim SHARED
+        src/auto_aim/aimer.cpp
         src/auto_aim/classifier.cpp
         src/auto_aim/detector.cpp
         src/auto_aim/extended_kalman_filter.cpp
+        src/auto_aim/shooter.cpp
         src/auto_aim/solver.cpp
         src/auto_aim/target.cpp
         src/auto_aim/tracker.cpp
+        src/auto_aim/trajectory.cpp
 )
 
 target_include_directories(auto_aim PUBLIC

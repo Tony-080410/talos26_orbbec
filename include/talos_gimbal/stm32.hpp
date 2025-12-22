@@ -38,6 +38,9 @@ namespace talos_gimbal {
 
     class Stm32Parser {
     public:
+        // 静态指针，指向外部的 IMU 数据存储 (由外部管理生命周期)
+        static inline ReceiveImuData *latest_imu{nullptr};
+
         Stm32Parser(const Stm32Parser &) = delete;
         Stm32Parser &operator=(const Stm32Parser &) = delete;
         static void parse(const std::span<const std::byte> data) noexcept {
@@ -51,8 +54,10 @@ namespace talos_gimbal {
                 return;
             }
             if (header_frame->id == 0x01) {
-                //const auto received = reinterpret_cast<const ReceiveImuData *>(data.data());
-                //print_imu(*received);
+                if (latest_imu && data.size_bytes() >= sizeof(ReceiveImuData)) {
+                    const auto *received = reinterpret_cast<const ReceiveImuData *>(data.data());
+                    *latest_imu = *received;
+                }
             }
         }
     };

@@ -55,4 +55,35 @@ auto TalosStrategy::track(
 
 auto TalosStrategy::output() noexcept -> void {
     output_count.fetch_add(1, std::memory_order_relaxed);
+
+    // 检查输出接口是否已初始化
+    if (!output_interface_) {
+        return;
+    }
+
+    // 检查目标是否有效 (依赖 track() 的结果)
+    if (!target_.converged()) {
+        // 发送无效命令
+        output_interface_->send({false, false, 0.0, 0.0, 0.0});
+        return;
+    }
+
+    // 1. Aimer: 计算瞄准命令
+    const auto timestamp = std::chrono::steady_clock::now();
+    auto cmd             = aimer_.aim(target_, timestamp, bullet_speed_, true);
+
+    if (!cmd.valid) {
+        output_interface_->send(cmd);
+        return;
+    }
+
+    // 2. Shooter: 判断是否发射
+    const bool should_fire = shooter_.should_shoot(cmd, aimer_, target_, gimbal_yaw_);
+    cmd.fire_advice        = should_fire;
+    if (should_fire) {
+        spdlog::info("fire!!!");
+    }
+
+    // 3. 发送命令
+    output_interface_->send(cmd);
 }

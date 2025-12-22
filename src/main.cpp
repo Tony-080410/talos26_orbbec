@@ -1,9 +1,11 @@
 #include "auto_aim/config.hpp"
 #include "auto_aim/detector.hpp"
+#include "auto_aim/output_interface.hpp"
 #include "camera/hik_camera.hpp"
 #include "ipc/shm_client.hpp"
 #include "spdlog_hook.hpp"
 #include "strategy_wrapper.hpp"
+#include "talos_gimbal/packet.hpp"
 #include "talos_gimbal/stm32.hpp"
 #include "tracker.hpp"
 #include <chrono>
@@ -101,7 +103,7 @@ int main() {
                 // 连接成功，但需要确认是活跃的共享内存（防止连接到旧文件）
                 if (result->wait_for_producer(std::chrono::seconds(2))) {
                     client = std::move(*result);
-                    std::cout << "已连接到共享内存!\n";
+                    spdlog::info("daedalus client connected");
 
                     const auto info = client->camera_info();
                     config.solver.camera_matrix << info.fx, 0.0, info.cx, 0.0, info.fy, info.cy,
@@ -121,14 +123,42 @@ int main() {
         hikcamera::ImageCapturer::CameraProfile profile;
         auto x = hikcamera::ImageCapturer::create(profile);
         if (!x) {
-            spdlog::critical("camera: {}", x.error().what());
+            spdlog::critical("hikcamera: {}", x.error().what());
             return 2;
         }
         camera_ = std::move(*x);
     }
-    spdlog::info("Initialization complete, starting main loop...");
 
     TalosStrategy strategy(false, config, 6, 1080, 1440);
+
+    // USB 设备和 IMU 数据存储
+    talos_gimbal::ReceiveImuData imu_data{};
+    talos_gimbal::Stm32Parser::latest_imu = &imu_data;
+    talos_gimbal::Stm32Impl<talos_gimbal::Stm32Parser> usb_device;
+
+    // 初始化输出接口
+    if (daedalus_or_camera) {
+        // IPC 模式: 通过共享内存发送到 Rust 模拟器
+        if (auto ipc_output = auto_aim::OutputInterface::create_ipc()) {
+            strategy.set_output_interface(std::move(*ipc_output));
+            spdlog::info("endpoint: daedalus");
+        } else {
+            spdlog::critical("init daedalus endpoint: {}", ipc_output.error());
+            return 2;
+        }
+    } else {
+        // USB 模式: 通过串口发送到 STM32
+        if (auto result = usb_device.connect(0x0483, 0x5740); result) {
+            strategy.set_output_interface(
+                auto_aim::OutputInterface(auto_aim::UsbOutput{&usb_device}));
+            spdlog::info("endpoint: USB (STM32)");
+        } else {
+            spdlog::critical(
+                "init USB (STM32) endpoint: {}", talos_gimbal::to_string(result.error()));
+            return 2;
+        }
+    }
+
     FoxgloveServer foxglove_server(8765);
     FoxgloveWrapper wrapper(strategy, foxglove_server);
     scheduler::Scheduler<decltype(wrapper)> sched;
@@ -142,6 +172,11 @@ int main() {
 
     uint64_t last_seq = 0;
     while (true) {
+        // 处理 USB 事件 (非阻塞)
+        if (!daedalus_or_camera && usb_device.is_connected()) {
+            usb_device.handle_events();
+        }
+
         std::optional<ipc::ShmClient::ImageFrame> frame;
         if (daedalus_or_camera) {
             frame = client->recv_image();
@@ -153,7 +188,7 @@ int main() {
                 frame               = ipc::ShmClient::ImageFrame{
                                   .image = std::move(img), .seq = seq++, .timestamp_ns = now_ns()};
             } else {
-                spdlog::critical("{}", img_result.error().what());
+                spdlog::critical("read hikcamera image: {}", img_result.error().what());
                 return 2;
             }
         }
@@ -162,9 +197,15 @@ int main() {
             // 没有新图像
             continue;
         }
-        double roll  = 0; // rad
-        double pitch = 0; // rad
-        double yaw   = 0; // rad
+
+        // 从 IMU 获取姿态角 (USB 模式)
+        double roll  = imu_data.data.roll;
+        double pitch = imu_data.data.pitch;
+        double yaw   = imu_data.data.yaw;
+
+        // 更新 strategy 的弹速和云台角度
+        strategy.set_bullet_speed(imu_data.data.bullet_speed);
+        strategy.set_gimbal_yaw(yaw);
 
         Eigen::AngleAxisd rx(roll, Eigen::Vector3d::UnitX());
         Eigen::AngleAxisd ry(pitch, Eigen::Vector3d::UnitY());
@@ -180,14 +221,14 @@ int main() {
             cv::cvtColor(v.image, v.image, cv::COLOR_RGB2BGR);
         }
         if (v.seq != last_seq + 1 && last_seq > 0) {
-            spdlog::warn("跳 {} 帧", v.seq - last_seq - 1);
+            spdlog::info("skip {} frame", v.seq - last_seq - 1);
         }
 
         // cv::imshow("FUCK", v.image);
         // cv::imshow("GOD", c);
         // cv::waitKey(1);
         last_seq = v.seq;
-        spdlog::debug("处理 {} 帧", last_seq);
+        // spdlog::info("处理 {} 帧", last_seq);
         sched.push_frame(
             scheduler::Frame{
                 v.seq, v.timestamp_ns, scheduler::ImageBuffer::from_mat(std::move(v.image))});
