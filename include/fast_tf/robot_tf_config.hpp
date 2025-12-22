@@ -19,11 +19,7 @@
 #include <memory>
 #include <optional>
 #include <chrono>
-#include <cmath>
-#include <functional>
-#include <unordered_map>
 
-#include "frame_id.hpp"
 #include "frame_hierarchy.hpp"
 #include "static_transforms.hpp"
 #include "frame_types.hpp"
@@ -91,8 +87,8 @@ public:
 class RobotTFPublisher {
 public:
     explicit RobotTFPublisher(
-        std::shared_ptr<foxglove::schemas::FrameTransformsChannel> channel)
-        : channel_(channel) {}
+        std::optional<foxglove::schemas::FrameTransformsChannel> channel)
+        : channel_(std::move(channel)) {}
 
     /**
      * Publish a generic transform by frame type.
@@ -151,17 +147,17 @@ public:
     /**
      * Publish all static transforms.
      */
-    void publish_static_transforms(uint64_t timestamp_ns = 0) {
+    static void publish_static_transforms(uint64_t timestamp_ns = 0) {
         spdlog::debug("Publishing static transforms to Foxglove");
     }
 
     /**
      * Check if publisher is connected.
      */
-    bool is_connected() const { return channel_ != nullptr; }
+    bool is_connected() const { return channel_.has_value(); }
 
 private:
-    std::shared_ptr<foxglove::schemas::FrameTransformsChannel> channel_;
+    std::optional<foxglove::schemas::FrameTransformsChannel> channel_;
 };
 
 // ============================================================================
@@ -179,16 +175,16 @@ public:
      */
     explicit RobotTFManager(
         std::unique_ptr<RobotTFConfig> config,
-        std::shared_ptr<foxglove::schemas::FrameTransformsChannel> foxglove_channel = nullptr)
+        std::optional<foxglove::schemas::FrameTransformsChannel> foxglove_channel = std::nullopt)
         : config_(std::move(config))
-        , publisher_(foxglove_channel) {
+        , publisher_(std::move(foxglove_channel)) {
 
         // Initialize robot-specific configuration
         config_->initialize_static_transforms();
 
         // Publish static transforms if Foxglove is available
         if (foxglove_channel) {
-            publisher_.publish_static_transforms();
+            publisher_->publish_static_transforms();
         }
 
         spdlog::info("RobotTFManager initialized for {} robot",
@@ -203,7 +199,7 @@ public:
     /**
      * Get the Foxglove publisher.
      */
-    RobotTFPublisher& get_publisher() { return publisher_; }
+    RobotTFPublisher& get_publisher() { return *publisher_; }
 
     /**
      * Get a static transform using template-based query.
@@ -232,18 +228,18 @@ public:
         StaticTransformStore::register_transform<FromFrame, ToFrame>(transform);
 
         // Also publish to Foxglove if available
-        if (publisher_.is_connected()) {
+        if (publisher_->is_connected()) {
             uint64_t timestamp_ns = std::chrono::duration_cast<
                 std::chrono::nanoseconds>(
                 std::chrono::steady_clock::now().time_since_epoch()).count();
-            publisher_.publish_transform<FromFrame, ToFrame>(
+            publisher_->publish_transform<FromFrame, ToFrame>(
                 transform, timestamp_ns);
         }
     }
 
 private:
     std::unique_ptr<RobotTFConfig> config_;
-    RobotTFPublisher publisher_;
+    std::optional<RobotTFPublisher> publisher_;
 };
 
 } // namespace fast_tf

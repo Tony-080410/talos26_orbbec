@@ -16,14 +16,12 @@
  */
 
 #include <chrono>
-#include <cmath>
 #include <mutex>
 #include <shared_mutex>
 #include <string>
 #include <utility>
 #include <vector>
 
-#include "frame_hierarchy.hpp"
 #include "frame_id.hpp"
 #include "frame_types.hpp"
 #include "robot_tf_config.hpp"
@@ -129,15 +127,15 @@ public:
     }
 
     // Infantry-specific accessors
-    const TransformMatrix4d* get_camera_offset() const {
+    static const TransformMatrix4d* get_camera_offset()  {
         return StaticTransformStore::get_transform<camera_link_Frame, gimbal_link_Frame>();
     }
 
-    const TransformMatrix4d* get_muzzle_offset() const {
+    static const TransformMatrix4d* get_muzzle_offset()  {
         return StaticTransformStore::get_transform<muzzle_link_Frame, gimbal_link_Frame>();
     }
 
-    const TransformMatrix4d* get_optical_frame_transform() const {
+    static const TransformMatrix4d* get_optical_frame_transform()  {
         return StaticTransformStore::get_transform<camera_optical_frame_Frame, camera_link_Frame>();
     }
 };
@@ -153,7 +151,7 @@ private:
 
 public:
     explicit InfantryTFManager(
-        std::shared_ptr<foxglove::schemas::FrameTransformsChannel> foxglove_channel = nullptr)
+        std::optional<foxglove::schemas::FrameTransformsChannel> foxglove_channel)
         : RobotTFManager(std::make_unique<InfantryTFConfig>(), std::move(foxglove_channel)) {}
 
     /**

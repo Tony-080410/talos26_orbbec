@@ -1,4 +1,3 @@
-#include "fast_tf/core.hpp"
 #include "fast_tf/frame_types.hpp"
 #include "fast_tf/frame_builder.hpp"
 #include <unordered_map>
@@ -31,13 +30,15 @@ std::unordered_map<std::string, std::string> FrameRegistry::canonical_map;
 // ============================================================================
 // CircularTransformBuffer 显式实例化
 // ============================================================================
+// Note: For header-only library, explicit instantiations may not be necessary
+// Uncomment if needed for compilation optimization
 
 // 常用的缓冲区大小
-template class CircularTransformBuffer<30>;   // 30条目
-template class CircularTransformBuffer<50>;   // 50条目
-template class CircularTransformBuffer<100>;  // 100条目
-template class CircularTransformBuffer<200>;  // 200条目
-template class CircularTransformBuffer<500>;  // 500条目
+// template class CircularTransformBuffer<30>;   // 30条目
+// template class CircularTransformBuffer<50>;   // 50条目
+// template class CircularTransformBuffer<100>;  // 100条目
+// template class CircularTransformBuffer<200>;  // 200条目
+// template class CircularTransformBuffer<500>;  // 500条目
 
 // ============================================================================
 // 性能优化：预热SIMD

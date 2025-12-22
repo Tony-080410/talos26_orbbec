@@ -1,11 +1,8 @@
 #pragma once
 
 #include <string_view>
-#include <cstdint>
-#include <type_traits>
 #include <unordered_map>
 #include <string>
-#include "frame_id.hpp"
 
 namespace fast_tf {
 

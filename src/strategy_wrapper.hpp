@@ -218,7 +218,7 @@ struct FoxgloveWrapper {
             foxglove::schemas::CubePrimitive cube;
             cube.pose = p;
             cube.size = cube_size;
-            cube.color = get_color(static_cast<talos::Color>(a.color));
+            cube.color = fxgl_get_color(static_cast<talos::Color>(a.color));
             entity.cubes.push_back(cube);
 
             // 创建文本标签
@@ -298,7 +298,7 @@ struct FoxgloveWrapper {
     auto preprocess(scheduler::SharedFeature& sf) -> void { inner.get().preprocess(sf); }
 
     // 颜色映射函数
-    static inline foxglove::schemas::Color get_color(talos::Color c) noexcept {
+    static inline foxglove::schemas::Color fxgl_get_color(talos::Color c) noexcept {
         foxglove::schemas::Color color;
         color.a = 1.0;
         switch(c) {
