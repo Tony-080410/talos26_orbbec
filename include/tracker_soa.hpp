@@ -2,6 +2,7 @@
 
 #include <array>
 #include <atomic>
+#include <array>
 #include <string>
 #include <string_view>
 

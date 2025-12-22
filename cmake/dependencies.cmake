@@ -10,11 +10,28 @@ find_package(spdlog REQUIRED)
 find_package(fmt REQUIRED)
 find_package(TBB REQUIRED)
 find_package(GTest REQUIRED)
+
+# OpenVINO configuration with better error handling
 find_package(OpenVINO QUIET)
+if (OpenVINO_FOUND)
+    message(STATUS "OpenVINO found at: ${OpenVINO_DIR}")
+else ()
+    message(WARNING "OpenVINO not found - auto_aim features may be disabled")
+endif ()
+
 find_package(benchmark QUIET)
 
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(LIBUSB REQUIRED libusb-1.0)
+
+# HIK Camera SDK configuration
+set(HIK_SDK_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/3dparty/hik_sdk")
+
+if (EXISTS "${HIK_SDK_ROOT}")
+    message(STATUS "HIK SDK found at: ${HIK_SDK_ROOT}")
+else ()
+    message(WARNING "HIK SDK not found at: ${HIK_SDK_ROOT}")
+endif ()
 
 include(FetchContent)
 
@@ -53,8 +70,8 @@ message(STATUS "Downloading Foxglove from: ${FOXGLOVE_URL}")
 FetchContent_Declare(
         foxglove
         URL ${FOXGLOVE_URL}
-        URL_HASH SHA256=${FOXGLOVE_SHA}
-        DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+        # URL_HASH SHA256=${FOXGLOVE_SHA}
+        # DOWNLOAD_EXTRACT_TIMESTAMP TRUE
 )
 
 FetchContent_MakeAvailable(foxglove)

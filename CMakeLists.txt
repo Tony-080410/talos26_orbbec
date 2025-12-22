@@ -63,6 +63,22 @@ target_include_directories(auto_aim PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/include/auto_aim
 )
 
+# Add OpenVINO include directories if found
+if (OpenVINO_FOUND)
+    # Get include path from OpenVINO runtime target
+    if (TARGET openvino::runtime)
+        get_target_property(_openvino_include openvino::runtime INTERFACE_INCLUDE_DIRECTORIES)
+        if (_openvino_include)
+            target_include_directories(auto_aim PUBLIC ${_openvino_include})
+        else ()
+            # Fallback to known OpenVINO installation path
+            target_include_directories(auto_aim PUBLIC
+                    ${OpenVINO_DIR}/../../../include
+            )
+        endif ()
+    endif ()
+endif ()
+
 target_link_libraries(auto_aim PUBLIC
         talos_std
         scheduler
@@ -96,21 +112,48 @@ target_link_libraries(talos_gimbal PRIVATE
         ${LIBUSB_LINK_LIBRARIES}
 )
 
+# hikcamera library
+add_library(hikcamera SHARED
+        src/camera/hik_camera.cpp
+)
+
+target_include_directories(hikcamera PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${HIK_SDK_ROOT}/include
+)
+
+target_link_directories(hikcamera PRIVATE
+        ${HIK_SDK_ROOT}/lib
+)
+
+target_link_libraries(hikcamera PUBLIC
+        talos_std
+        spdlog::spdlog
+        ${OpenCV_LIBS}
+)
+
+target_link_libraries(hikcamera PRIVATE
+        MvCameraControl
+        FormatConversion
+)
+
+# Suppress warnings from external SDK headers
+target_compile_options(hikcamera PRIVATE -Wno-documentation -Wno-documentation-unknown-command -Wno-switch-enum)
+
 # Main executable
 add_executable(${PROJECT_NAME}
         src/main.cpp
-        include/toml_helper.hpp
         src/strategy.cpp
+        include/toml_helper.hpp
 )
 
 target_include_directories(${PROJECT_NAME} PRIVATE include)
 
 target_link_libraries(${PROJECT_NAME} PRIVATE
         talos_gimbal
-        talos_std
-        auto_aim
         scheduler
-        ipc
+        auto_aim
+        hikcamera
         ${OpenCV_LIBS}
         spdlog::spdlog
         fmt::fmt
@@ -146,6 +189,64 @@ target_link_libraries(sp_vision PRIVATE
         ${foxglove_SOURCE_DIR}/lib/libfoxglove.a
 )
 
+# Fast TF library (header-only + compiled support)
+add_library(fast_tf INTERFACE)
+
+target_include_directories(fast_tf INTERFACE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+
+target_link_libraries(fast_tf INTERFACE
+        Eigen3::Eigen
+        TBB::tbb
+)
+
+# Fast TF compiled support
+add_library(fast_tf_compiled OBJECT
+        src/fast_tf.cpp
+)
+
+target_include_directories(fast_tf_compiled PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+
+target_link_libraries(fast_tf_compiled PUBLIC
+        fast_tf
+)
+
+# Fast TF example
+add_executable(fast_tf_example
+        examples/fast_tf_example.cpp
+        src/fast_tf.cpp
+)
+
+target_include_directories(fast_tf_example PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+
+target_link_libraries(fast_tf_example PRIVATE
+        fast_tf
+        Eigen3::Eigen
+        TBB::tbb
+)
+
+# Fast TF modern example (with new type-safe APIs and std::expected)
+# This is the recommended example - it demonstrates all new modern APIs
+add_executable(fast_tf_modern_example
+        examples/fast_tf_modern_example.cpp
+        src/fast_tf.cpp
+)
+
+target_include_directories(fast_tf_modern_example PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+
+target_link_libraries(fast_tf_modern_example PRIVATE
+        fast_tf
+        Eigen3::Eigen
+        TBB::tbb
+)
+
 # Detector benchmark (accuracy testing against dataset)
 add_executable(detector_benchmark
         test/detector_benchmark.cpp
@@ -157,4 +258,14 @@ target_link_libraries(detector_benchmark PRIVATE
         auto_aim
 )
 
+# CMake package configuration for hikcamera
+include(CMakePackageConfigHelpers)
+
+install(TARGETS hikcamera
+        LIBRARY DESTINATION lib
+        ARCHIVE DESTINATION lib
+        RUNTIME DESTINATION bin
+)
+
+install(DIRECTORY include/camera DESTINATION include)
 

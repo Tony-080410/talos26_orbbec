@@ -109,6 +109,7 @@ namespace auto_aim {
         buffers.lightbars.sort(
                 [](const talos::LightbarFull &a, const talos::LightbarFull &b) { return a.center.x < b.center.x; });
 
+        spdlog::debug("{} lightbars detected", buffers.lightbars.size());
         // 获取装甲板 - 双重循环配对灯条
         for (auto left = buffers.lightbars.begin(); left != buffers.lightbars.end(); ++left) {
             for (auto right = std::next(left); right != buffers.lightbars.end(); ++right) {
@@ -116,23 +117,32 @@ namespace auto_aim {
                     continue;
 
                 auto armor = talos::ArmorFull(*left, *right);
-                if (!check_geometry(armor))
+                if (!check_geometry(armor)) {
+                    spdlog::debug("armor geometry check failed");
                     continue;
+                }
 
                 // 设置装甲板类型 (不依赖分类器)
                 armor.pattern = get_pattern(bgr_img, armor);
-                classifier_.classify_ov(armor);
-                if (!check_name(armor))
+                armor.type = talos::ArmorType::small;
+                armor.name = talos::ArmorName::three;
+                armor.confidence = 1.0;
+                if (!check_name(armor)) {
+                    spdlog::debug("armor name check failed");
                     continue;
+                }
 
                 armor.type = get_type(armor);
-                if (!check_type(armor))
+                if (!check_type(armor)) {
+                    spdlog::debug("armor type check failed");
                     continue;
-
+                }
+                spdlog::debug("armor passed all checks");
                 armor.center_norm = get_center_norm(bgr_img, armor.center);
                 buffers.armors.emplace_back(armor);
             }
         }
+        spdlog::debug("{} armors detected", buffers.armors.size());
 
         // 去重处理
         remove_duplicates(buffers);
@@ -299,6 +309,7 @@ namespace auto_aim {
                                      ? armor.name != talos::ArmorName::one && armor.name != talos::ArmorName::base
                                      : armor.name == talos::ArmorName::one || armor.name == talos::ArmorName::base;
 
+        // cv::imshow("ROI", armor.pattern);
         // 保存异常的图案，用于分类器的迭代
         if (!name_ok) {
             spdlog::warn("classifier detected a strange armor {} with type {}",

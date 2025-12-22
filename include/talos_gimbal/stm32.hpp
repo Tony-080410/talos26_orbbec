@@ -9,8 +9,8 @@
 #include <span>
 #include <thread>
 // libusb
+#include <condition_variable>
 #include <libusb-1.0/libusb.h>
-
 // spdlog
 #include <spdlog/spdlog.h>
 

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <expected>
+#include <optional>
 #include <libusb-1.0/libusb.h>
 #include <span>
 #include <variant>
