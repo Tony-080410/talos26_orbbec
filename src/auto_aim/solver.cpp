@@ -40,31 +40,17 @@ namespace auto_aim {
         image_points[3] = {armor.pts[6], armor.pts[7]}; // bl
 
         // 选择物体点
-        // const auto type = armor.type;
-        const auto type = talos::ArmorType::small;
+        const auto type = armor.type;
         const auto &object_points = type == talos::ArmorType::big ? BIG_ARMOR_POINTS : SMALL_ARMOR_POINTS;
 
         // PnP解算
-        // K: 3x3, double
-        cv::Mat camera_matrix =
-                (cv::Mat_<double>(3, 3) << 1825.132, 0.0, 725.494, 0.0, 1816.228, 607.733, 0.0, 0.0, 1.0);
-
-        // dist: 1x5 (或 5x1), [k1 k2 p1 p2 k3]
-        cv::Mat distort_coeffs = (cv::Mat_<double>(1, 5) << -0.101, 0.451, -0.005, -0.001, -0.920);
-
-        // rvec/tvec 建议用 cv::Vec3d 或 cv::Mat 都可
         cv::Vec3d rvec, tvec;
+        const bool success = cv::solvePnP(object_points, image_points, camera_matrix_, distort_coeffs_, rvec, tvec,
+                                          false, cv::SOLVEPNP_IPPE);
 
-        bool success = cv::solvePnP(object_points, image_points, camera_matrix, distort_coeffs, rvec, tvec, false,
-                                    cv::SOLVEPNP_IPPE);
         if (!success) {
             pose3d.valid = false;
             return false;
-        } else {
-            spdlog::info("distance {} , rvec norm {}", cv::norm(tvec), cv::norm(rvec));
-            // spdlog::info("PnP solve tvec x={} y={} z={}, rvec {} {} {}  ", tvec[0], tvec[1], tvec[2], rvec[0],
-            // rvec[1],
-            //              rvec[2]);
         }
 
         // 坐标变换：相机 -> 云台 -> 世界
@@ -80,7 +66,6 @@ namespace auto_aim {
         cv::cv2eigen(rmat, R_armor2camera);
         const Eigen::Matrix3d R_armor2gimbal = R_camera2gimbal_ * R_armor2camera;
         const Eigen::Matrix3d R_armor2world = R_gimbal2world_ * R_armor2gimbal;
-
 
         pose3d.ypr_in_gimbal = math::eulers(R_armor2gimbal, 2, 1, 0);
         pose3d.ypr_in_world = math::eulers(R_armor2world, 2, 1, 0);

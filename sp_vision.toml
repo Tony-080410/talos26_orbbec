@@ -5,7 +5,7 @@ max_frame_skip = 2
 daedalus = true
 
 [classifier]
-model_path = "/home/praysky/talos/tiny_resnet.onnx"
+model_path = "tiny_resnet.onnx"
 use_openvino = true
 device = "GPU"
 

@@ -112,33 +112,50 @@ target_link_libraries(talos_gimbal PRIVATE
         ${LIBUSB_LINK_LIBRARIES}
 )
 
-# hikcamera library
-add_library(hikcamera SHARED
-        src/camera/hik_camera.cpp
-)
+# hikcamera library (HIK SDK only available on Linux x86_64)
+if (CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_SYSTEM_PROCESSOR STREQUAL "x86_64")
+    add_library(hikcamera SHARED
+            src/camera/hik_camera.cpp
+    )
 
-target_include_directories(hikcamera PUBLIC
-        ${CMAKE_CURRENT_SOURCE_DIR}/include
-        ${HIK_SDK_ROOT}/include
-)
+    target_include_directories(hikcamera PUBLIC
+            ${CMAKE_CURRENT_SOURCE_DIR}/include
+            ${HIK_SDK_ROOT}/include
+    )
 
-target_link_directories(hikcamera PRIVATE
-        ${HIK_SDK_ROOT}/lib
-)
+    target_link_directories(hikcamera PRIVATE
+            ${HIK_SDK_ROOT}/lib
+    )
 
-target_link_libraries(hikcamera PUBLIC
-        talos_std
-        spdlog::spdlog
-        ${OpenCV_LIBS}
-)
+    target_link_libraries(hikcamera PUBLIC
+            talos_std
+            spdlog::spdlog
+            ${OpenCV_LIBS}
+    )
 
-target_link_libraries(hikcamera PRIVATE
-        MvCameraControl
-        FormatConversion
-)
+    target_link_libraries(hikcamera PRIVATE
+            MvCameraControl
+            FormatConversion
+    )
 
-# Suppress warnings from external SDK headers
-target_compile_options(hikcamera PRIVATE -Wno-documentation -Wno-documentation-unknown-command -Wno-switch-enum)
+    # Suppress warnings from external SDK headers
+    target_compile_options(hikcamera PRIVATE -Wno-documentation -Wno-documentation-unknown-command -Wno-switch-enum)
+else ()
+    message(STATUS "Building hikcamera with stub (HIK SDK only available on Linux x86_64)")
+    add_library(hikcamera SHARED
+            src/camera/hik_camera_stub.cpp
+    )
+
+    target_include_directories(hikcamera PUBLIC
+            ${CMAKE_CURRENT_SOURCE_DIR}/include
+    )
+
+    target_link_libraries(hikcamera PUBLIC
+            talos_std
+            spdlog::spdlog
+            ${OpenCV_LIBS}
+    )
+endif ()
 
 # Main executable
 add_executable(${PROJECT_NAME}
@@ -166,6 +183,9 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
         tomlplusplus::tomlplusplus
         ${LIBUSB_LINK_LIBRARIES}
         ${foxglove_SOURCE_DIR}/lib/libfoxglove.a
+        "$<$<PLATFORM_ID:Darwin>:-framework Security>"
+        "$<$<PLATFORM_ID:Darwin>:-framework CoreFoundation>"
+        "$<$<PLATFORM_ID:Darwin>:-framework SystemConfiguration>"
 )
 
 # sp_vision executable
@@ -192,6 +212,9 @@ target_link_libraries(sp_vision PRIVATE
         tomlplusplus::tomlplusplus
         $<$<TARGET_EXISTS:openvino::runtime>:openvino::runtime>
         ${foxglove_SOURCE_DIR}/lib/libfoxglove.a
+        "$<$<PLATFORM_ID:Darwin>:-framework Security>"
+        "$<$<PLATFORM_ID:Darwin>:-framework CoreFoundation>"
+        "$<$<PLATFORM_ID:Darwin>:-framework SystemConfiguration>"
 )
 
 # Fast TF library (header-only + compiled support)
@@ -264,13 +287,14 @@ target_link_libraries(detector_benchmark PRIVATE
 )
 
 # CMake package configuration for hikcamera
-include(CMakePackageConfigHelpers)
+if (CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_SYSTEM_PROCESSOR STREQUAL "x86_64")
+    include(CMakePackageConfigHelpers)
 
-install(TARGETS hikcamera
-        LIBRARY DESTINATION lib
-        ARCHIVE DESTINATION lib
-        RUNTIME DESTINATION bin
-)
+    install(TARGETS hikcamera
+            LIBRARY DESTINATION lib
+            ARCHIVE DESTINATION lib
+            RUNTIME DESTINATION bin
+    )
 
-install(DIRECTORY include/camera DESTINATION include)
-
+    install(DIRECTORY include/camera DESTINATION include)
+endif ()

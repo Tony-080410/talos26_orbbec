@@ -124,9 +124,7 @@ namespace auto_aim {
 
                 // 设置装甲板类型 (不依赖分类器)
                 armor.pattern = get_pattern(bgr_img, armor);
-                armor.type = talos::ArmorType::small;
-                armor.name = talos::ArmorName::three;
-                armor.confidence = 1.0;
+                classifier_.classify_ov(armor);
                 if (!check_name(armor)) {
                     spdlog::debug("armor name check failed");
                     continue;

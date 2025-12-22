@@ -73,10 +73,10 @@ static uint64_t now_ns() {
 
 int main() {
     init_logger();
-    spdlog::set_level(spdlog::level::debug);
+    // spdlog::set_level(spdlog::level::debug);
     spdlog::info("talos is initializing...");
-    const auto start         = std::chrono::system_clock::now();
-    const auto config_result = read_config();
+    const auto start   = std::chrono::system_clock::now();
+    auto config_result = read_config();
     if (!config_result.has_value()) {
         std::visit(
             overloaded{
@@ -90,7 +90,7 @@ int main() {
             config_result.error());
         return 1;
     }
-    const auto& config = config_result.value();
+    auto& config = config_result.value();
 
     std::optional<ipc::ShmClient> client;
     std::unique_ptr<hikcamera::ImageCapturer> camera_;
@@ -100,6 +100,13 @@ int main() {
             if (auto result = ipc::ShmClient::connect()) {
                 client = std::move(*result);
                 std::cout << "已连接到共享内存!\n";
+
+                const auto info = client->camera_info();
+                config.solver.camera_matrix << info.fx, 0.0, info.cx, 0.0, info.fy, info.cy, 0.0,
+                    0.0, 1.0;
+                config.solver.distort_coefficient << info.distortion[0], info.distortion[1],
+                    info.distortion[2], info.distortion[3], info.distortion[4];
+
             } else {
                 std::cout << "." << std::flush;
                 std::this_thread::sleep_for(500ms);
@@ -118,7 +125,7 @@ int main() {
 
     TalosStrategy strategy(false, config, 6, 1080, 1440);
     FoxgloveServer foxglove_server(8765);
-    FoxgloveWrapper<TalosStrategy> wrapper(strategy, foxglove_server);
+    FoxgloveWrapper wrapper(strategy, foxglove_server);
     scheduler::Scheduler<decltype(wrapper)> sched;
     sched.init(config, &wrapper);
     sched.start();
@@ -164,7 +171,9 @@ int main() {
         // cv::Mat c = v.image.clone();
         // cv::cvtColor(c, c, cv::COLOR_RGB2GRAY);
         // cv::threshold(c, c, 50, 255, cv::THRESH_BINARY);
-        // cv::cvtColor(v.image, v.image, cv::COLOR_RGB2BGR);
+        if (daedalus_or_camera) {
+            cv::cvtColor(v.image, v.image, cv::COLOR_RGB2BGR);
+        }
         if (v.seq != last_seq + 1 && last_seq > 0) {
             spdlog::info("跳 {} 帧", v.seq - last_seq - 1);
         }
