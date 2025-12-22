@@ -3,6 +3,7 @@
 #include "strategy.hpp"
 
 #include <opencv2/imgproc.hpp>
+#include <opencv2/imgcodecs.hpp>
 
 #include <chrono>
 #include <condition_variable>
@@ -29,11 +30,12 @@
 #if defined(__clang__)
 #  pragma clang diagnostic pop
 #endif
+
 #include <spdlog/spdlog.h>
 
 // 消息队列消息类型定义
 struct ImageMessage {
-    foxglove::schemas::RawImage img;
+    foxglove::schemas::CompressedImage img;
 };
 
 struct SceneMessage {
@@ -42,6 +44,10 @@ struct SceneMessage {
 
 struct TfMessage {
     foxglove::schemas::FrameTransforms tf;
+};
+
+struct ArmorMessage {
+
 };
 
 using FoxgloveMessage = std::variant<ImageMessage, SceneMessage, TfMessage>;
@@ -74,7 +80,7 @@ private:
     std::optional<foxglove::WebSocketServer> server_;
     std::optional<foxglove::schemas::FrameTransformsChannel> tf_ch_;
     std::optional<foxglove::schemas::SceneUpdateChannel> scene_ch_;
-    std::optional<foxglove::schemas::RawImageChannel> img_ch_;
+    std::optional<foxglove::schemas::CompressedImageChannel> img_ch_;
 
     // 消息队列及同步原语
     std::queue<FoxgloveMessage> message_queue_;
@@ -98,17 +104,21 @@ struct FoxgloveWrapper {
     auto detect(const scheduler::SharedFeature& feat, talos::ArmorSlots& armor) noexcept -> void {
         inner.get().detect(feat, armor);
 
-        // 拷贝图像数据到消息队列 - 装饰节点不持有数据所有权
+        // 压缩图像数据并转换为消息 - 装饰节点不持有数据所有权
         auto img = feat.image->mat().clone();
+
+        // 使用OpenCV的imencode方法压缩为JPEG格式
+        std::vector<uint8_t> compressed_data;
+        std::vector<int> encode_params{cv::IMWRITE_JPEG_QUALITY, 85};  // 85质量
+        cv::imencode(".jpg", img, compressed_data, encode_params);
+
         ImageMessage img_msg;
         img_msg.img.timestamp = fxglv_ts_from_ns(feat.timestamp_ns);
-        img_msg.img.width     = static_cast<uint32_t>(img.cols);
-        img_msg.img.height    = static_cast<uint32_t>(img.rows);
-        img_msg.img.encoding  = "rgb8";
-        img_msg.img.step      = static_cast<uint32_t>(img.step);
+        img_msg.img.frame_id  = "camera";
+        img_msg.img.format    = "jpeg";
         img_msg.img.data      = std::vector<std::byte>(
-            reinterpret_cast<const std::byte*>(img.data),
-            reinterpret_cast<const std::byte*>(img.data + img.total() * img.elemSize()));
+            reinterpret_cast<const std::byte*>(compressed_data.data()),
+            reinterpret_cast<const std::byte*>(compressed_data.data() + compressed_data.size()));
 
         // 将消息加入FoxgloveServer队列 - 线程安全
         server.get().enqueue_message(std::move(img_msg));
@@ -121,6 +131,7 @@ struct FoxgloveWrapper {
 
         // 发布目标位置信息
         // TODO: 通过SceneMessage发送tracker信息
+        // server.get().enqueue_message(std::move(armor_msg));
         // spdlog::debug("Target tracking completed with {} poses", poses3d.size());
     }
 

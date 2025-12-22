@@ -34,9 +34,9 @@ FoxgloveServer::FoxgloveServer(uint16_t port, std::string_view host) {
     }
     scene_ch_.emplace(std::move(scene_r.value()));
 
-    auto img_r = foxglove::schemas::RawImageChannel::create("/image");
+    auto img_r = foxglove::schemas::CompressedImageChannel::create("/image");
     if (!img_r.has_value()) {
-        spdlog::error("RawImageChannel create failed: {}", foxglove::strerror(img_r.error()));
+        spdlog::error("CompressedImageChannel create failed: {}", foxglove::strerror(img_r.error()));
         return;
     }
     img_ch_.emplace(std::move(img_r.value()));
