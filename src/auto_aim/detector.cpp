@@ -71,14 +71,14 @@ namespace auto_aim {
         cv::threshold(binary_img, binary_img, config_.threshold, 255, cv::THRESH_BINARY);
     }
 
-    talos::ArmorSlots TraditionalDetector::detect(const cv::Mat &bgr_img, const cv::Mat &binary_img,
-                                                  const uint64_t frame_id, const uint64_t timestamp_ns) {
+    talos::ArmorSlots TraditionalDetector::detect(DetectorWorkBuffers &buffers, const cv::Mat &bgr_img,
+                                                  const cv::Mat &binary_img, const uint64_t frame_id,
+                                                  const uint64_t timestamp_ns) const {
         // 清空上一帧结果
-        lightbars_.clear();
-        armors_.clear();
+        buffers.clear();
 
         if (bgr_img.empty() || bgr_img.channels() != 3) {
-            return to_armor_slots(frame_id, timestamp_ns);
+            return to_armor_slots(buffers, frame_id, timestamp_ns);
         }
 
         // 获取轮廓点
@@ -101,17 +101,17 @@ namespace auto_aim {
                 continue;
 
             lightbar.color = get_color(bgr_img, contour);
-            lightbars_.emplace_back(lightbar);
+            buffers.lightbars.emplace_back(lightbar);
             lightbar_id += 1;
         }
 
         // 将灯条从左到右排序
-        lightbars_.sort(
+        buffers.lightbars.sort(
                 [](const talos::LightbarFull &a, const talos::LightbarFull &b) { return a.center.x < b.center.x; });
 
         // 获取装甲板 - 双重循环配对灯条
-        for (auto left = lightbars_.begin(); left != lightbars_.end(); ++left) {
-            for (auto right = std::next(left); right != lightbars_.end(); ++right) {
+        for (auto left = buffers.lightbars.begin(); left != buffers.lightbars.end(); ++left) {
+            for (auto right = std::next(left); right != buffers.lightbars.end(); ++right) {
                 if (left->color != right->color)
                     continue;
 
@@ -130,19 +130,19 @@ namespace auto_aim {
                     continue;
 
                 armor.center_norm = get_center_norm(bgr_img, armor.center);
-                armors_.emplace_back(armor);
+                buffers.armors.emplace_back(armor);
             }
         }
 
         // 去重处理
-        remove_duplicates();
+        remove_duplicates(buffers);
 
         // 调试输出
         if (debug_) {
-            show_result(binary_img, bgr_img, static_cast<int>(frame_id));
+            show_result(buffers, binary_img, bgr_img, static_cast<int>(frame_id));
         }
 
-        return to_armor_slots(frame_id, timestamp_ns);
+        return to_armor_slots(buffers, frame_id, timestamp_ns);
     }
 
     bool TraditionalDetector::refine(talos::ArmorFull &armor, const cv::Mat &bgr_img) const {
@@ -304,7 +304,9 @@ namespace auto_aim {
             spdlog::warn("classifier detected a strange armor {} with type {}",
                          talos::ARMOR_NAMES[static_cast<uint8_t>(armor.name)],
                          talos::ARMOR_TYPES[static_cast<uint8_t>(armor.type)]);
-            cv::imshow("ROI", armor.pattern);
+            //if (debug_) {
+              //  cv::imshow("ROI", armor.pattern);
+            //}
             return false;
         }
 
@@ -374,10 +376,10 @@ namespace auto_aim {
 
     // ============ 去重处理 ============
 
-    void TraditionalDetector::remove_duplicates() {
+    void TraditionalDetector::remove_duplicates(DetectorWorkBuffers &buffers) {
         // 检查装甲板是否存在共用灯条的情况
-        for (auto armor1 = armors_.begin(); armor1 != armors_.end(); ++armor1) {
-            for (auto armor2 = std::next(armor1); armor2 != armors_.end(); ++armor2) {
+        for (auto armor1 = buffers.armors.begin(); armor1 != buffers.armors.end(); ++armor1) {
+            for (auto armor2 = std::next(armor1); armor2 != buffers.armors.end(); ++armor2) {
                 if (armor1->left.id != armor2->left.id && armor1->left.id != armor2->right.id &&
                     armor1->right.id != armor2->left.id && armor1->right.id != armor2->right.id) {
                     continue;
@@ -402,12 +404,13 @@ namespace auto_aim {
             }
         }
 
-        armors_.remove_if([](const talos::ArmorFull &a) { return a.duplicated; });
+        buffers.armors.remove_if([](const talos::ArmorFull &a) { return a.duplicated; });
     }
 
     // ============ 结果转换 ============
 
-    talos::ArmorSlots TraditionalDetector::to_armor_slots(const uint64_t frame_id, const uint64_t timestamp_ns) const {
+    talos::ArmorSlots TraditionalDetector::to_armor_slots(const DetectorWorkBuffers &buffers, const uint64_t frame_id,
+                                                          const uint64_t timestamp_ns) {
         talos::ArmorSlots result;
         result.frame_id = frame_id;
         result.timestamp_ns = timestamp_ns;
@@ -415,7 +418,7 @@ namespace auto_aim {
 
         // 填充灯条
         uint8_t lb_count = 0;
-        for (const auto &lb: lightbars_) {
+        for (const auto &lb: buffers.lightbars) {
             if (lb_count >= 20)
                 break;
             result.lightbars[lb_count].x = static_cast<float>(lb.center.x);
@@ -429,7 +432,7 @@ namespace auto_aim {
 
         // 填充装甲板
         uint8_t armor_count = 0;
-        for (const auto &armor: armors_) {
+        for (const auto &armor: buffers.armors) {
             if (armor_count >= 10)
                 break;
 
@@ -580,7 +583,8 @@ namespace auto_aim {
 
     // ============ 调试输出 ============
 
-    void TraditionalDetector::show_result(const cv::Mat &binary_img, const cv::Mat &bgr_img, int frame_count) const {
+    void TraditionalDetector::show_result(const DetectorWorkBuffers &buffers, const cv::Mat &binary_img,
+                                          const cv::Mat &bgr_img, int frame_count) const {
         auto detection = bgr_img.clone();
 
         // 绘制帧号
@@ -588,7 +592,7 @@ namespace auto_aim {
                     {255, 255, 255}, 2);
 
         // 绘制灯条
-        for (const auto &lightbar: lightbars_) {
+        for (const auto &lightbar: buffers.lightbars) {
             auto info =
                     fmt::format("{:.1f} {:.1f} {:.1f}", lightbar.angle_error * 57.3, lightbar.ratio, lightbar.length);
             cv::putText(detection, info, lightbar.top, cv::FONT_HERSHEY_SIMPLEX, 0.4, {0, 255, 255}, 1);
@@ -597,7 +601,7 @@ namespace auto_aim {
         }
 
         // 绘制装甲板
-        for (const auto &armor: armors_) {
+        for (const auto &armor: buffers.armors) {
             if (armor.points.size() >= 4) {
                 std::vector<cv::Point> pts;
                 for (const auto &p: armor.points) {

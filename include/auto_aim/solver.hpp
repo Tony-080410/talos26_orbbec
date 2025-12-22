@@ -5,6 +5,7 @@
 
 #include "config.hpp"
 #include "detector_state.hpp"
+#include "types.hpp"
 
 namespace auto_aim {
 
@@ -12,19 +13,6 @@ namespace auto_aim {
     constexpr double LIGHTBAR_LENGTH = 56e-3; // m
     constexpr double BIG_ARMOR_WIDTH = 230e-3; // m
     constexpr double SMALL_ARMOR_WIDTH = 135e-3; // m
-
-    /**
-     * @brief 扩展的ArmorSlots结构，包含完整的3D位姿信息
-     */
-    struct ArmorPose3D {
-        Eigen::Vector3d xyz_in_gimbal{0, 0, 0}; // 云台坐标系下的位置 (m)
-        Eigen::Vector3d xyz_in_world{0, 0, 0}; // 世界坐标系下的位置 (m)
-        Eigen::Vector3d ypr_in_gimbal{0, 0, 0}; // 云台坐标系下的欧拉角 (rad)
-        Eigen::Vector3d ypr_in_world{0, 0, 0}; // 世界坐标系下的欧拉角 (rad)
-        Eigen::Vector3d ypd_in_world{0, 0, 0}; // 球坐标系: yaw, pitch, distance
-        double yaw_raw{0}; // 优化前的yaw值 (rad)
-        bool valid{false};
-    };
 
     /**
      * @brief PnP解算器
@@ -64,7 +52,7 @@ namespace auto_aim {
          * @param slots 检测结果，poses数组会被填充
          * @param poses3d 输出的详细3D位姿数组
          */
-        void solve_all(talos::ArmorSlots &slots, std::array<ArmorPose3D, 10> &poses3d) const;
+        void solve_all(const talos::ArmorSlots &slots, std::array<ArmorPose3D, 10> &poses3d) const;
 
         /**
          * @brief 重投影装甲板角点到图像平面

@@ -1,7 +1,11 @@
 #pragma once
 
 #include <functional>
+#include "auto_aim/solver.hpp"
+#include "detector_state.hpp"
+#include "scheduler/strategy.hpp"
 #include "scheduler/types.hpp"
+#include "tracker_soa.hpp"
 
 namespace scheduler::test {
 
@@ -12,16 +16,17 @@ namespace scheduler::test {
      */
     class TestStrategy {
     public:
-        using DetectCb = std::function<Detection(const SharedFeature &)>;
-        using TrackCb = std::function<TrackResult(const Detection &, const SharedFeature &)>;
-        using SolveCb = std::function<SolverOutput(const TrackResult &)>;
+        using DetectCb = std::function<void(const SharedFeature &, talos::ArmorSlots &)>;
+        using SolveCb = std::function<void(const talos::ArmorSlots &, std::array<auto_aim::ArmorPose3D, 10> &)>;
+        using TrackCb = std::function<void(talos::TrackerSoA &, const talos::ArmorSlots &,
+                                           const std::array<auto_aim::ArmorPose3D, 10> &)>;
         using PreprocessCb = std::function<void(SharedFeature &)>;
-        using OutputCb = std::function<void(const SolverOutput &)>;
+        using OutputCb = std::function<void()>;
 
         // 设置回调
         void set_detect(const DetectCb &cb) { detect_cb_ = cb; }
-        void set_track(const TrackCb &cb) { track_cb_ = cb; }
         void set_solve(const SolveCb &cb) { solve_cb_ = cb; }
+        void set_track(const TrackCb &cb) { track_cb_ = cb; }
         void set_preprocess(const PreprocessCb &cb) { preprocess_cb_ = cb; }
         void set_output(const OutputCb &cb) { output_cb_ = cb; }
 
@@ -31,36 +36,37 @@ namespace scheduler::test {
                 preprocess_cb_(f);
         }
 
-        [[nodiscard]] Detection detect(const SharedFeature &f) const {
+        void detect(const SharedFeature &f, talos::ArmorSlots &armor) const noexcept {
             if (detect_cb_)
-                return detect_cb_(f);
-            return Detection{};
+                detect_cb_(f, armor);
         }
 
-        [[nodiscard]] TrackResult track(const Detection &d, const SharedFeature &f) const {
-            if (track_cb_)
-                return track_cb_(d, f);
-            return TrackResult{};
-        }
-
-        [[nodiscard]] SolverOutput solve(const TrackResult &tr) const {
+        void solve(const talos::ArmorSlots &armor,
+                   std::array<auto_aim::ArmorPose3D, 10> &poses3d) const noexcept {
             if (solve_cb_)
-                return solve_cb_(tr); // NOLINT(*-readability-braces-around-statements)
-            return SolverOutput{};
+                solve_cb_(armor, poses3d);
         }
 
-        void output(const SolverOutput &out) const {
+        void track(talos::TrackerSoA &tracker_soa, const talos::ArmorSlots &armor,
+                   const std::array<auto_aim::ArmorPose3D, 10> &poses3d) const noexcept {
+            if (track_cb_)
+                track_cb_(tracker_soa, armor, poses3d);
+        }
+
+        void output() const noexcept {
             if (output_cb_) {
-                output_cb_(out);
+                output_cb_();
             }
         }
 
     private:
         DetectCb detect_cb_;
-        TrackCb track_cb_;
         SolveCb solve_cb_;
+        TrackCb track_cb_;
         PreprocessCb preprocess_cb_;
         OutputCb output_cb_;
     };
+
+    static_assert(SchedulerStrategy<TestStrategy>);
 
 } // namespace scheduler::test

@@ -62,7 +62,7 @@ namespace auto_aim {
         return true;
     }
 
-    void Classifier::classify(talos::ArmorFull &armor) {
+    void Classifier::classify(talos::ArmorFull &armor) const {
         if (armor.pattern.empty()) {
             armor.name = talos::ArmorName::not_armor;
             return;
@@ -96,7 +96,7 @@ namespace auto_aim {
         armor.name = static_cast<talos::ArmorName>(label_id);
     }
 
-    void Classifier::classify_ov(talos::ArmorFull &armor) {
+    void Classifier::classify_ov(talos::ArmorFull &armor) const {
         if (!ov_initialized_) {
             // 回退到 OpenCV DNN
             classify(armor);

@@ -7,11 +7,15 @@
 #include <memory>
 #include <spdlog/spdlog.h>
 #include <thread>
+#include <utility>
 
+#include "auto_aim/types.hpp"
+#include "detector_state.hpp"
 #include "primitives/native_event.hpp"
 #include "primitives/thread_affinity.hpp"
 #include "primitives/triple_buffer.hpp"
 #include "strategy.hpp"
+#include "tracker_soa.hpp"
 #include "types.hpp"
 
 // ============ 编译器提示宏 ============
@@ -33,7 +37,11 @@ namespace scheduler {
      * 缓存行对齐避免false sharing。
      *
      * 数据流:
-     *   Frame(160Hz) → Detector(TBB parallel) → Tracker(event-driven) → Solver(polling)
+     *   Frame(160Hz) → Detect → Solve → Track → Output
+     *
+     * 数据所有权:
+     * - Scheduler 持有: TrackerSoA, poses3d
+     * - Strategy 持有: Target, DetectorWorkBuffers (内部状态)
      *
      * 性能目标:
      * - 调度开销 < 500ns (from 1-2µs baseline)
@@ -81,7 +89,7 @@ namespace scheduler {
 
             detector_thread_ = std::thread([this] { detector_loop(); });
             tracker_thread_ = std::thread([this] { tracker_loop(); });
-            solver_thread_ = std::thread([this] { solver_loop(); });
+            output_thread_ = std::thread([this] { output_loop(); });
 
             spdlog::info("[scheduler] started");
         }
@@ -99,6 +107,7 @@ namespace scheduler {
             // 唤醒可能阻塞的线程
             frame_event_.notify_all();
             tracker_event_.notify_all();
+            output_event_.notify_all();
 
             if (detector_thread_.joinable()) {
                 detector_thread_.join();
@@ -106,8 +115,8 @@ namespace scheduler {
             if (tracker_thread_.joinable()) {
                 tracker_thread_.join();
             }
-            if (solver_thread_.joinable()) {
-                solver_thread_.join();
+            if (output_thread_.joinable()) {
+                output_thread_.join();
             }
 
             spdlog::info("[scheduler] stopped");
@@ -169,14 +178,21 @@ namespace scheduler {
         NativeEvent frame_event_; // 通知detector有新帧
 
         // Triple Buffer: 共享特征缓冲（zero-copy）
-        TripleBuffer<SharedFeature> shared_buffer_;
+        alignas(CACHE_LINE_SIZE) TripleBuffer<SharedFeature> shared_buffer_;
 
-        // Detection队列 + Event驱动tracker
-        tbb::concurrent_queue<Detection> detection_queue_;
+        // ArmorSlots + poses3d: 检测和解算结果缓冲
+        struct DetectionResult {
+            talos::ArmorSlots armor_slots{};
+            auto_aim::Poses3D poses3d{};
+        };
+        alignas(CACHE_LINE_SIZE) TripleBuffer<DetectionResult> detection_buffer_;
+
+        // Scheduler 持有的状态
+        alignas(CACHE_LINE_SIZE) talos::TrackerSoA tracker_soa_{};
+
+        // Event驱动
         NativeEvent tracker_event_; // 通知tracker有新detection
-
-        // Track Result: 双缓冲（solver轮询读取）
-        TripleBuffer<TrackResult> track_result_;
+        NativeEvent output_event_;  // 通知output线程
 
         // ============ 配置 + 策略 ============
 
@@ -187,7 +203,7 @@ namespace scheduler {
 
         std::thread detector_thread_;
         std::thread tracker_thread_;
-        std::thread solver_thread_;
+        std::thread output_thread_;
         alignas(CACHE_LINE_SIZE) std::atomic<bool> running_{false};
 
         // ============ 统计 ============
@@ -196,34 +212,33 @@ namespace scheduler {
 
         // ============ 热循环 ============
 
+        constexpr auto realtime_policy(const std::string &prefix, const uint32_t core) {
+            if (const auto result = ThreadAffinity::pin_to_core(core); !result) {
+                spdlog::warn("[{}] failed to pin: {}", prefix, error_message(result.error()));
+            } else if (const auto realtime_result = ThreadAffinity::set_realtime_priority(); !realtime_result) {
+                spdlog::warn("[{}] failed to set realtime policy: {}", prefix, error_message(result.error()));
+            } else {
+                spdlog::debug("[{}] pinned to core {}", prefix, core);
+            }
+        }
+
         /**
          * @brief Detector线程主循环
          *
-         * 关键热路径优化：
-         * 1. CRTP直接调用strategy_->detect() - 编译器可内联
-         * 2. NativeEvent避免condition_variable开销
-         * 3. 缓存行对齐避免false sharing
+         * 执行: detect → solve → 通知 tracker
          */
         void detector_loop() noexcept {
-            if (const auto result = ThreadAffinity::pin_to_core(0); !result) {
-                spdlog::warn("[detector] failed to pin: {}", error_message(result.error()));
-            } else if (const auto realtime_result = ThreadAffinity::set_realtime_priority(); !realtime_result) {
-                spdlog::warn("[detector] failed to set realtime policy: {}", error_message(result.error()));
-            }
-            spdlog::debug("[detector] loop started");
-
+            realtime_policy(__FUNCTION__, 0);
             Frame frame;
             while (LIKELY(running_.load(std::memory_order_relaxed))) {
-                // 等待新帧通知（原生事件，5-10ns hot path）
+                // 等待新帧通知
                 if (UNLIKELY(!frame_event_.wait_for(100))) {
-                    continue; // 超时，检查 running 状态
+                    continue;
                 }
 
                 // 处理队列中所有帧
                 while (frame_queue_.try_pop(frame)) {
                     frame_queue_size_.fetch_sub(1, std::memory_order_relaxed);
-
-                    const auto t0 = std::chrono::steady_clock::now();
 
                     // 写入共享缓冲
                     auto &shared = shared_buffer_.borrow_mut();
@@ -231,109 +246,96 @@ namespace scheduler {
                     shared.timestamp_ns = frame.timestamp_ns;
                     shared.image = std::move(frame.image);
 
-                    // 预处理（可选，使用if constexpr检测）
+                    // 预处理
                     strategy_->preprocess(shared);
-
                     shared_buffer_.publish();
 
-                    // ⭐ 关键热点：CRTP直接调用，编译器会内联
-                    // 性能：0ns (vs std::function的10-20ns)
-                    Detection det = strategy_->detect(shared);
+                    // 检测
+                    auto &result = detection_buffer_.borrow_mut();
+                    const auto t_detect_start = std::chrono::steady_clock::now();
+                    strategy_->detect(shared, result.armor_slots);
+                    const auto t_detect_end = std::chrono::steady_clock::now();
 
-                    detection_queue_.push(std::move(det));
+                    // 解算
+                    strategy_->solve(result.armor_slots, result.poses3d);
+                    const auto t_solve_end = std::chrono::steady_clock::now();
+
+                    detection_buffer_.publish();
+
+                    // 通知 tracker
                     tracker_event_.notify_one();
 
-                    const auto t1 = std::chrono::steady_clock::now();
-                    const auto latency_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count();
-                    stats_.detect_latency.store(latency_ns, std::memory_order_relaxed);
-                    stats_.detect_hist.record(latency_ns);
+                    // 记录延迟
+                    const auto detect_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(t_detect_end - t_detect_start).count();
+                    const auto solve_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(t_solve_end - t_detect_end).count();
+                    stats_.detect_latency.store(detect_ns, std::memory_order_relaxed);
+                    stats_.detect_hist.record(detect_ns);
+                    stats_.solve_latency.store(solve_ns, std::memory_order_relaxed);
+                    stats_.solve_hist.record(solve_ns);
                 }
             }
         }
 
         /**
          * @brief Tracker线程主循环
+         *
+         * 执行: track → 通知 output
          */
         void tracker_loop() noexcept {
-            if (const auto result = ThreadAffinity::pin_to_core(1); !result) {
-                spdlog::warn("[tracker] failed to pin: {}", error_message(result.error()));
-            } else if (const auto realtime_result = ThreadAffinity::set_realtime_priority(); !realtime_result) {
-                spdlog::warn("[detector] failed to set realtime policy: {}", error_message(result.error()));
-            } else {
-                spdlog::debug("[tracker] pinned to core 1");
-            }
+            realtime_policy(__FUNCTION__, 1);
             spdlog::debug("[tracker] loop started");
 
-            Detection det;
             while (LIKELY(running_.load(std::memory_order_relaxed))) {
                 // 等待新detection通知
                 if (UNLIKELY(!tracker_event_.wait_for(100))) {
                     continue;
                 }
 
-                while (detection_queue_.try_pop(det)) {
-                    const auto t0 = std::chrono::steady_clock::now();
+                const auto t0 = std::chrono::steady_clock::now();
 
-                    auto shared_opt = shared_buffer_.borrow();
-                    if (UNLIKELY(!shared_opt)) {
-                        continue; // 共享缓冲无效
-                    }
-
-                    auto mut = track_result_.borrow_mut();
-                    const TrackResult tr = strategy_->track(det, **shared_opt);
-                    mut.frame_seq = tr.frame_seq;
-                    mut.timestamp_ns = tr.timestamp_ns;
-                    track_result_.publish();
-
-                    const auto t1 = std::chrono::steady_clock::now();
-                    const auto latency_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count();
-                    stats_.track_latency.store(latency_ns, std::memory_order_relaxed);
-                    stats_.track_hist.record(latency_ns);
+                auto detection_opt = detection_buffer_.borrow();
+                if (UNLIKELY(!detection_opt)) {
+                    continue;
                 }
+
+                const auto &result = **detection_opt;
+
+                // 调用 track，传入 scheduler 持有的 TrackerSoA
+                strategy_->track(tracker_soa_, result.armor_slots, result.poses3d);
+
+                // 通知 output
+                output_event_.notify_one();
+
+                const auto t1 = std::chrono::steady_clock::now();
+                const auto latency_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count();
+                stats_.track_latency.store(latency_ns, std::memory_order_relaxed);
+                stats_.track_hist.record(latency_ns);
             }
         }
 
         /**
-         * @brief Solver线程主循环
-         *
-         * 轮询模式：读取最新的track result，无竞争
+         * @brief Output线程主循环
          */
-        void solver_loop() noexcept {
-            if (const auto result = ThreadAffinity::pin_to_core(2); !result) {
-                spdlog::warn("[solver] failed to pin: {}", error_message(result.error()));
-            } else if (const auto realtime_result = ThreadAffinity::set_realtime_priority(); !realtime_result) {
-                spdlog::warn("[detector] failed to set realtime policy: {}", error_message(result.error()));
-            } else {
-                spdlog::warn("[solver] pinned to core 2");
-            }
-            spdlog::debug("[solver] loop started");
+        void output_loop() noexcept {
+            realtime_policy(__FUNCTION__, 2);
+            spdlog::debug("[output] loop started");
 
             while (LIKELY(running_.load(std::memory_order_relaxed))) {
-                if (auto tr = track_result_.borrow(); LIKELY(tr.has_value())) {
-                    const auto t0 = std::chrono::steady_clock::now();
-
-                    const auto value = *tr.value();
-                    // ⭐ 关键热点：CRTP直接调用
-                    TrackResult result;
-                    result.frame_seq = value.frame_seq;
-                    result.timestamp_ns = value.timestamp_ns;
-                    SolverOutput out = strategy_->solve(result);
-
-                    // 可选：输出回调（如果strategy实现了）
-                    strategy_->output(out);
-
-                    const auto t1 = std::chrono::steady_clock::now();
-                    const auto latency_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count();
-                    stats_.solve_latency.store(latency_ns, std::memory_order_relaxed);
-                    stats_.solve_hist.record(latency_ns);
-                } else {
-                    // 数据不可用，让出CPU
-                    std::this_thread::yield();
+                if (UNLIKELY(!output_event_.wait_for(100))) {
+                    continue;
                 }
+
+                const auto t0 = std::chrono::steady_clock::now();
+
+                strategy_->output();
+
+                const auto t1 = std::chrono::steady_clock::now();
+                const auto latency_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count();
+                stats_.output_latency.store(latency_ns, std::memory_order_relaxed);
+                stats_.output_hist.record(latency_ns);
             }
         }
     };
-
 } // namespace scheduler
 
 // ============ 显式模板实例化 (见scheduler_template.cpp) ============

@@ -36,11 +36,6 @@ int main() {
     init_logger();
     spdlog::info("talos is initializing...");
     const auto start = std::chrono::system_clock::now();
-    auto gimbal = talos_gimbal::Stm32Impl<talos_gimbal::Stm32Parser>{};
-    if (const auto result = gimbal.connect(0x0483, 0x5740); !result) {
-        spdlog::critical("gimbal: {}", talos_gimbal::to_string(result.error()));
-        return 1;
-    }
     const auto config_result = read_config();
     if (!config_result.has_value()) {
         std::visit(overloaded{[](const toml::parse_error &e) {
@@ -81,7 +76,6 @@ int main() {
 
     uint64_t last_seq = 0;
     while (true) {
-        gimbal.handle_events();
         auto frame = client->recv_image();
         if (!frame.has_value()) {
             // 没有新图像

@@ -34,7 +34,7 @@ namespace talos {
     static_assert(sizeof(Lightbar) == 20, "Lightbar must be exactly 20 bytes");
 
     /**
-     * @brief Armor - 32 bytes, cache-optimized output
+     * @brief Armor - 48 bytes, cache-optimized output
      */
     struct Armor {
         float x2d, y2d; // 2D center position (8B)

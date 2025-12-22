@@ -26,14 +26,14 @@ namespace auto_aim {
          * @param armor 装甲板 (pattern 必须已填充)
          * 结果会更新 armor.name 和 armor.confidence
          */
-        void classify(talos::ArmorFull &armor);
+        void classify(talos::ArmorFull &armor) const;
 
         /**
          * @brief 对装甲板进行分类 (使用 OpenVINO)
          * @param armor 装甲板 (pattern 必须已填充)
          * 结果会更新 armor.name 和 armor.confidence
          */
-        void classify_ov(talos::ArmorFull &armor);
+        void classify_ov(talos::ArmorFull &armor) const;
 
         /**
          * @brief 从图像和装甲板角点提取图案
@@ -45,9 +45,9 @@ namespace auto_aim {
 
     private:
         SpVisionClassifierConfig config_;
-        cv::dnn::Net net_;
+        mutable cv::dnn::Net net_;
         ov::Core core_;
-        ov::CompiledModel compiled_model_;
+        mutable ov::CompiledModel compiled_model_;
         bool ov_initialized_{false};
 
         /**

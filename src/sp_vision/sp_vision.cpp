@@ -52,6 +52,7 @@ int main() {
 
     // 初始化检测器
     auto_aim::TraditionalDetector detector(config);
+    auto_aim::DetectorWorkBuffers detector_buffers;
 
     std::cout << "开始处理...\n";
 
@@ -84,7 +85,7 @@ int main() {
         cv::threshold(gray, gray, config.detector.threshold, 255, cv::THRESH_BINARY);
 
         // 检测装甲板
-        auto armor_slots = detector.detect(bgr, gray, frame->seq, frame->timestamp_ns);
+        auto armor_slots = detector.detect(detector_buffers, bgr, gray, frame->seq, frame->timestamp_ns);
 
         // 如果检测到装甲板，发送云台命令
         if (armor_slots.armor_count > 0) {

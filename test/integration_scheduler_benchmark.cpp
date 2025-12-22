@@ -83,24 +83,13 @@ static void BM_Pipeline_EmptyCallbacks(benchmark::State &state) {
     std::atomic<uint64_t> processed{0};
     TestStrategy strategy;
 
-    strategy.set_detect([&](const SharedFeature &sf) {
+    strategy.set_detect([&](const SharedFeature &, talos::ArmorSlots &) {
         processed.fetch_add(1, std::memory_order_relaxed);
-        Detection det;
-        det.frame_seq = sf.frame_seq;
-        return det;
     });
 
-    strategy.set_track([](const Detection &det, const SharedFeature &) {
-        TrackResult tr;
-        tr.frame_seq = det.frame_seq;
-        return tr;
-    });
+    strategy.set_track([](talos::TrackerSoA &, const talos::ArmorSlots &, const std::array<auto_aim::ArmorPose3D, 10> &) {});
 
-    strategy.set_solve([](const TrackResult &tr) {
-        SolverOutput out;
-        out.frame_seq = tr.frame_seq;
-        return out;
-    });
+    strategy.set_solve([](const talos::ArmorSlots &, std::array<auto_aim::ArmorPose3D, 10> &) {});
 
     Scheduler<TestStrategy> sched;
     constexpr RuntimeConfig config;
@@ -132,11 +121,8 @@ static void BM_Pipeline_WithImage(benchmark::State &state) {
 
     std::atomic<uint64_t> processed{0};
 
-    strategy.set_detect([&](const SharedFeature &sf) {
+    strategy.set_detect([&](const SharedFeature &, talos::ArmorSlots &) {
         processed.fetch_add(1, std::memory_order_relaxed);
-        Detection det;
-        det.frame_seq = sf.frame_seq;
-        return det;
     });
 
     Scheduler<TestStrategy> sched;
@@ -174,11 +160,8 @@ static void BM_Pipeline_WithPreprocess(benchmark::State &state) {
         }
     });
 
-    strategy.set_detect([&](const SharedFeature &sf) {
+    strategy.set_detect([&](const SharedFeature &, talos::ArmorSlots &) {
         processed.fetch_add(1, std::memory_order_relaxed);
-        Detection det;
-        det.frame_seq = sf.frame_seq;
-        return det;
     });
 
     Scheduler<TestStrategy> sched;
@@ -227,11 +210,8 @@ static void BM_Pipeline_WithParallelPreprocess(benchmark::State &state) {
         }
     });
 
-    strategy.set_detect([&](const SharedFeature &sf) {
+    strategy.set_detect([&](const SharedFeature &, talos::ArmorSlots &) {
         processed.fetch_add(1, std::memory_order_relaxed);
-        Detection det;
-        det.frame_seq = sf.frame_seq;
-        return det;
     });
 
     Scheduler<TestStrategy> sched;
@@ -266,29 +246,20 @@ static void BM_RealWorld_160Hz(benchmark::State &state) {
     std::atomic<uint64_t> processed{0};
     std::vector<uint8_t> camera_buffer(480 * 640 * 3, 100);
 
-    strategy.set_detect([&](const SharedFeature &sf) {
+    strategy.set_detect([&](const SharedFeature &, talos::ArmorSlots &) {
         processed.fetch_add(1, std::memory_order_relaxed);
         // 模拟 1ms 检测延迟
         std::this_thread::sleep_for(std::chrono::microseconds(1000));
-        Detection det;
-        det.frame_seq = sf.frame_seq;
-        return det;
     });
 
-    strategy.set_track([](const Detection &det, const SharedFeature &) {
+    strategy.set_track([](talos::TrackerSoA &, const talos::ArmorSlots &, const std::array<auto_aim::ArmorPose3D, 10> &) {
         // 模拟 500us 跟踪延迟
         std::this_thread::sleep_for(std::chrono::microseconds(500));
-        TrackResult tr;
-        tr.frame_seq = det.frame_seq;
-        return tr;
     });
 
-    strategy.set_solve([](const TrackResult &tr) {
+    strategy.set_solve([](const talos::ArmorSlots &, std::array<auto_aim::ArmorPose3D, 10> &) {
         // 模拟 200us 解算延迟
         std::this_thread::sleep_for(std::chrono::microseconds(200));
-        SolverOutput out;
-        out.frame_seq = tr.frame_seq;
-        return out;
     });
 
     Scheduler<TestStrategy> sched;
@@ -327,31 +298,17 @@ static void BM_E2E_Latency_Measurement(benchmark::State &state) {
 
     std::atomic<uint64_t> last_output_ts{0};
     std::atomic last_seq{UINT64_MAX};
+    std::atomic<uint64_t> push_timestamp{0};
 
-    strategy.set_detect([](const SharedFeature &sf) {
-        Detection det;
-        det.frame_seq = sf.frame_seq;
-        det.timestamp_ns = sf.timestamp_ns;
-        return det;
-    });
+    strategy.set_detect([](const SharedFeature &, talos::ArmorSlots &) {});
 
-    strategy.set_track([](const Detection &det, const SharedFeature &) {
-        TrackResult tr;
-        tr.frame_seq = det.frame_seq;
-        tr.timestamp_ns = det.timestamp_ns;
-        return tr;
-    });
+    strategy.set_track([](talos::TrackerSoA &, const talos::ArmorSlots &, const std::array<auto_aim::ArmorPose3D, 10> &) {});
 
-    strategy.set_solve([](const TrackResult &tr) {
-        SolverOutput out;
-        out.frame_seq = tr.frame_seq;
-        out.timestamp_ns = tr.timestamp_ns;
-        return out;
-    });
+    strategy.set_solve([](const talos::ArmorSlots &, std::array<auto_aim::ArmorPose3D, 10> &) {});
 
-    strategy.set_output([&](const SolverOutput &out) {
+    strategy.set_output([&]() {
         last_output_ts.store(std::chrono::steady_clock::now().time_since_epoch().count(), std::memory_order_release);
-        last_seq.store(out.frame_seq, std::memory_order_release);
+        last_seq.fetch_add(1, std::memory_order_release);
     });
 
     Scheduler<TestStrategy> sched;
@@ -367,7 +324,8 @@ static void BM_E2E_Latency_Measurement(benchmark::State &state) {
     for (auto _: state) {
         Frame frame;
         frame.seq = seq;
-        frame.timestamp_ns = std::chrono::steady_clock::now().time_since_epoch().count();
+        push_timestamp.store(std::chrono::steady_clock::now().time_since_epoch().count());
+        frame.timestamp_ns = push_timestamp.load();
 
         sched.push_frame(std::move(frame));
 
@@ -377,8 +335,8 @@ static void BM_E2E_Latency_Measurement(benchmark::State &state) {
             std::this_thread::yield();
         }
 
-        if (last_seq.load() == seq) {
-            const auto latency = last_output_ts.load() - frame.timestamp_ns;
+        if (last_seq.load() >= seq) {
+            const auto latency = last_output_ts.load() - push_timestamp.load();
             total_latency += latency;
             ++count;
         }

@@ -1,6 +1,10 @@
 #pragma once
 
 #include <concepts>
+
+#include "auto_aim/types.hpp"
+#include "detector_state.hpp"
+#include "tracker_soa.hpp"
 #include "types.hpp"
 
 namespace scheduler {
@@ -10,29 +14,19 @@ namespace scheduler {
      *
      * 定义调度器策略的接口。任何实现此concept的类都可以作为Scheduler的模板参数。
      *
-     * 可选方法（通过if constexpr检测）:
-     * - preprocess(SharedFeature&): 预处理回调
-     *
-     * 必需方法:
-     * - detect(const SharedFeature&) -> Detection: 检测
-     * - track(const Detection&, const SharedFeature&) -> TrackResult: 跟踪
-     * - solve(const TrackResult&) -> SolverOutput: 求解
-     * - output(const SolverOutput&): 输出
+     * 数据所有权:
+     * - Scheduler 持有: TrackerSoA, poses3d
+     * - Strategy 持有: Target, DetectorWorkBuffers (内部状态)
      */
     template<typename T>
-    concept SchedulerStrategy =
-            requires(T &t, const SharedFeature &f, const Detection &d, const TrackResult &tr, const SolverOutput &out) {
-                // 必需：检测方法
-                { t.detect(f) } -> std::convertible_to<Detection>;
-
-                // 必需：跟踪方法
-                { t.track(d, f) } -> std::convertible_to<TrackResult>;
-
-                // 必需：求解方法
-                { t.solve(tr) } -> std::convertible_to<SolverOutput>;
-
-                // 必需：输出方法
-                { t.output(out) };
-            };
+    concept SchedulerStrategy = requires(T &strategy, const SharedFeature &feat, talos::ArmorSlots &armor_mut,
+                                         const talos::ArmorSlots &armor_const, talos::TrackerSoA &tracker_mut,
+                                         auto_aim::Poses3D &poses3d_mut,
+                                         const auto_aim::Poses3D &poses3d_const) {
+        { strategy.detect(feat, armor_mut) } noexcept -> std::convertible_to<void>;
+        { strategy.solve(armor_const, poses3d_mut) } noexcept -> std::convertible_to<void>;
+        { strategy.track(tracker_mut, armor_const, poses3d_const) } noexcept -> std::convertible_to<void>;
+        { strategy.output() } noexcept -> std::convertible_to<void>;
+    };
 
 } // namespace scheduler

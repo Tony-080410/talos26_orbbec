@@ -50,24 +50,11 @@ TEST_F(SchedulerIntegrationTest, ZeroCopyVerification) {
     void *original_ptr = camera_buffer.data();
 
     std::atomic<void *> detected_ptr{nullptr};
-    std::atomic<void *> tracked_ptr{nullptr};
 
-    strategy_.set_detect([&](const SharedFeature &sf) {
+    strategy_.set_detect([&](const SharedFeature &sf, talos::ArmorSlots &) {
         if (sf.image) {
             detected_ptr.store(sf.image->data(), std::memory_order_release);
         }
-        Detection det;
-        det.frame_seq = sf.frame_seq;
-        return det;
-    });
-
-    strategy_.set_track([&](const Detection &det, const SharedFeature &sf) {
-        if (sf.image) {
-            tracked_ptr.store(sf.image->data(), std::memory_order_release);
-        }
-        TrackResult tr;
-        tr.frame_seq = det.frame_seq;
-        return tr;
     });
 
     sched_.start();
@@ -81,8 +68,6 @@ TEST_F(SchedulerIntegrationTest, ZeroCopyVerification) {
 
     // 验证指针相同 (0-copy)
     EXPECT_EQ(detected_ptr.load(), original_ptr) << "Detector should see original buffer (0-copy)";
-    // Tracker 可能看到相同指针，取决于 TripleBuffer 状态
-    // EXPECT_EQ(tracked_ptr.load(), original_ptr);
 }
 
 TEST_F(SchedulerIntegrationTest, ZeroCopyFromMat) {
@@ -92,13 +77,10 @@ TEST_F(SchedulerIntegrationTest, ZeroCopyFromMat) {
 
     std::atomic<void *> detected_ptr{nullptr};
 
-    strategy_.set_detect([&](const SharedFeature &sf) {
+    strategy_.set_detect([&](const SharedFeature &sf, talos::ArmorSlots &) {
         if (sf.image) {
             detected_ptr.store(sf.image->data(), std::memory_order_release);
         }
-        Detection det;
-        det.frame_seq = sf.frame_seq;
-        return det;
     });
 
     sched_.start();
@@ -125,9 +107,6 @@ TEST_F(SchedulerIntegrationTest, FullPipelineWithRealImage) {
     std::atomic solve_count{0};
     std::atomic output_count{0};
 
-    std::vector<uint64_t> e2e_latencies;
-    std::mutex latency_mutex;
-
     // 预处理: 使用 TBB 并行处理
     strategy_.set_preprocess([&](SharedFeature &sf) {
         preprocess_count.fetch_add(1, std::memory_order_relaxed);
@@ -145,39 +124,20 @@ TEST_F(SchedulerIntegrationTest, FullPipelineWithRealImage) {
         }
     });
 
-    strategy_.set_detect([&](const SharedFeature &sf) {
+    strategy_.set_detect([&](const SharedFeature &, talos::ArmorSlots &) {
         detect_count.fetch_add(1, std::memory_order_relaxed);
-        Detection det;
-        det.frame_seq = sf.frame_seq;
-        det.timestamp_ns = sf.timestamp_ns;
-        // 模拟检测结果
-        det.boxes.emplace_back(100, 100, 50, 50);
-        det.scores.push_back(0.95f);
-        return det;
     });
 
-    strategy_.set_track([&](const Detection &det, const SharedFeature &sf) {
+    strategy_.set_track([&](talos::TrackerSoA &, const talos::ArmorSlots &, const std::array<auto_aim::ArmorPose3D, 10> &) {
         track_count.fetch_add(1, std::memory_order_relaxed);
-        TrackResult tr;
-        tr.frame_seq = det.frame_seq;
-        tr.timestamp_ns = sf.timestamp_ns;
-        return tr;
     });
 
-    strategy_.set_solve([&](const TrackResult &tr) {
+    strategy_.set_solve([&](const talos::ArmorSlots &, std::array<auto_aim::ArmorPose3D, 10> &) {
         solve_count.fetch_add(1, std::memory_order_relaxed);
-        SolverOutput out;
-        out.frame_seq = tr.frame_seq;
-        out.timestamp_ns = tr.timestamp_ns;
-        return out;
     });
 
-    strategy_.set_output([&](const SolverOutput &out) {
+    strategy_.set_output([&]() {
         output_count.fetch_add(1, std::memory_order_relaxed);
-        const auto now = std::chrono::steady_clock::now().time_since_epoch().count();
-        const auto latency = now - out.timestamp_ns;
-        std::lock_guard lock(latency_mutex);
-        e2e_latencies.push_back(latency);
     });
 
     sched_.start();
@@ -200,20 +160,6 @@ TEST_F(SchedulerIntegrationTest, FullPipelineWithRealImage) {
     EXPECT_GE(track_count.load(), kFrameCount * 0.5); // Tracker 可能合并
     EXPECT_GE(solve_count.load(), kFrameCount * 0.5);
     EXPECT_GE(output_count.load(), kFrameCount * 0.5);
-
-    // 验证延迟分布
-    if (!e2e_latencies.empty()) {
-        std::ranges::sort(e2e_latencies);
-        auto p50 = e2e_latencies[e2e_latencies.size() / 2];
-        auto p99 = e2e_latencies[e2e_latencies.size() * 99 / 100];
-
-        // 端到端延迟应该在合理范围内
-        EXPECT_LT(p50, 50000000); // < 50ms
-        EXPECT_LT(p99, 100000000); // < 100ms
-
-        std::cout << "[E2E Latency] p50: " << p50 / 1000000.0 << "ms, "
-                  << "p99: " << p99 / 1000000.0 << "ms" << std::endl;
-    }
 }
 
 // ============ 高负载压力测试 ============
@@ -225,11 +171,8 @@ TEST_F(SchedulerIntegrationTest, HighLoadStressTest) {
     std::atomic<uint64_t> frame_sent{0};
     std::atomic<uint64_t> frame_processed{0};
 
-    strategy_.set_detect([&](const SharedFeature &sf) {
+    strategy_.set_detect([&](const SharedFeature &, talos::ArmorSlots &) {
         frame_processed.fetch_add(1, std::memory_order_relaxed);
-        Detection det;
-        det.frame_seq = sf.frame_seq;
-        return det;
     });
 
     sched_.start();
@@ -267,11 +210,7 @@ TEST_F(SchedulerIntegrationTest, HighLoadStressTest) {
 
 TEST_F(SchedulerIntegrationTest, SchedulingOverheadVerification) {
     // 空回调，只测量调度开销
-    strategy_.set_detect([](const SharedFeature &sf) {
-        Detection det;
-        det.frame_seq = sf.frame_seq;
-        return det;
-    });
+    strategy_.set_detect([](const SharedFeature &, talos::ArmorSlots &) {});
 
     sched_.start();
 
@@ -312,25 +251,20 @@ TEST_F(SchedulerIntegrationTest, SchedulingOverheadVerification) {
 
 TEST_F(SchedulerIntegrationTest, LatencyHistogramVerification) {
     // 设置有一定延迟的回调
-    strategy_.set_detect([](const SharedFeature &sf) {
+    strategy_.set_detect([](const SharedFeature &, talos::ArmorSlots &) {
         std::this_thread::sleep_for(std::chrono::microseconds(100));
-        Detection det;
-        det.frame_seq = sf.frame_seq;
-        return det;
     });
 
-    strategy_.set_track([](const Detection &det, const SharedFeature &) {
-        std::this_thread::sleep_for(std::chrono::microseconds(50));
-        TrackResult tr;
-        tr.frame_seq = det.frame_seq;
-        return tr;
-    });
-
-    strategy_.set_solve([](const TrackResult &tr) {
+    strategy_.set_solve([](const talos::ArmorSlots &, std::array<auto_aim::ArmorPose3D, 10> &) {
         std::this_thread::sleep_for(std::chrono::microseconds(30));
-        SolverOutput out;
-        out.frame_seq = tr.frame_seq;
-        return out;
+    });
+
+    strategy_.set_track([](talos::TrackerSoA &, const talos::ArmorSlots &, const std::array<auto_aim::ArmorPose3D, 10> &) {
+        std::this_thread::sleep_for(std::chrono::microseconds(50));
+    });
+
+    strategy_.set_output([&]() {
+        std::this_thread::sleep_for(std::chrono::microseconds(20));
     });
 
     sched_.start();
@@ -349,8 +283,9 @@ TEST_F(SchedulerIntegrationTest, LatencyHistogramVerification) {
 
     // 验证直方图有数据
     EXPECT_GT(stats.detect_hist.count(), 80);
+    EXPECT_GT(stats.solve_hist.count(), 80);
     EXPECT_GT(stats.track_hist.count(), 50);
-    EXPECT_GT(stats.solve_hist.count(), 50);
+    EXPECT_GT(stats.output_hist.count(), 50);
 
     // 打印延迟统计
     std::cout << "[Detect Latency] count: " << stats.detect_hist.count()
@@ -358,20 +293,26 @@ TEST_F(SchedulerIntegrationTest, LatencyHistogramVerification) {
               << ", p99: " << stats.detect_hist.p99() / 1000.0 << "us"
               << ", max: " << stats.detect_hist.max() / 1000.0 << "us" << std::endl;
 
-    std::cout << "[Track Latency] count: " << stats.track_hist.count() << ", p50: " << stats.track_hist.p50() / 1000.0
-              << "us"
-              << ", p99: " << stats.track_hist.p99() / 1000.0 << "us"
-              << ", max: " << stats.track_hist.max() / 1000.0 << "us" << std::endl;
-
-    std::cout << "[Solve Latency] count: " << stats.solve_hist.count() << ", p50: " << stats.solve_hist.p50() / 1000.0
-              << "us"
+    std::cout << "[Solve Latency] count: " << stats.solve_hist.count()
+              << ", p50: " << stats.solve_hist.p50() / 1000.0 << "us"
               << ", p99: " << stats.solve_hist.p99() / 1000.0 << "us"
               << ", max: " << stats.solve_hist.max() / 1000.0 << "us" << std::endl;
 
+    std::cout << "[Track Latency] count: " << stats.track_hist.count()
+              << ", p50: " << stats.track_hist.p50() / 1000.0 << "us"
+              << ", p99: " << stats.track_hist.p99() / 1000.0 << "us"
+              << ", max: " << stats.track_hist.max() / 1000.0 << "us" << std::endl;
+
+    std::cout << "[Output Latency] count: " << stats.output_hist.count()
+              << ", p50: " << stats.output_hist.p50() / 1000.0 << "us"
+              << ", p99: " << stats.output_hist.p99() / 1000.0 << "us"
+              << ", max: " << stats.output_hist.max() / 1000.0 << "us" << std::endl;
+
     // 验证延迟在预期范围
-    EXPECT_GE(stats.detect_hist.p50(), 50000); // >= 50us (设置了100us sleep)
-    EXPECT_GE(stats.track_hist.p50(), 20000); // >= 20us (设置了50us sleep)
-    EXPECT_GE(stats.solve_hist.p50(), 10000); // >= 10us (设置了30us sleep)
+    EXPECT_GE(stats.detect_hist.p50(), 50000);  // >= 50us (设置了100us sleep)
+    EXPECT_GE(stats.solve_hist.p50(), 15000);   // >= 15us (设置了30us sleep)
+    EXPECT_GE(stats.track_hist.p50(), 20000);   // >= 20us (设置了50us sleep)
+    EXPECT_GE(stats.output_hist.p50(), 10000);  // >= 10us (设置了20us sleep)
 }
 
 // ============ 配置热更新测试 ============
@@ -379,12 +320,9 @@ TEST_F(SchedulerIntegrationTest, LatencyHistogramVerification) {
 TEST_F(SchedulerIntegrationTest, ConfigHotUpdateUnderLoad) {
     std::atomic mode_at_detect{-1};
 
-    strategy_.set_detect([&](const SharedFeature &sf) {
+    strategy_.set_detect([&](const SharedFeature &, talos::ArmorSlots &) {
         const auto cfg = sched_.get_config();
         mode_at_detect.store(cfg.detector_mode, std::memory_order_relaxed);
-        Detection det;
-        det.frame_seq = sf.frame_seq;
-        return det;
     });
 
     sched_.start();
@@ -427,11 +365,8 @@ TEST_F(SchedulerIntegrationTest, MultipleProducers) {
 
     std::atomic detect_count{0};
 
-    strategy_.set_detect([&](const SharedFeature &sf) {
+    strategy_.set_detect([&](const SharedFeature &, talos::ArmorSlots &) {
         detect_count.fetch_add(1, std::memory_order_relaxed);
-        Detection det;
-        det.frame_seq = sf.frame_seq;
-        return det;
     });
 
     sched_.start();

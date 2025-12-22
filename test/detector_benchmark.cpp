@@ -169,8 +169,9 @@ AccuracyMetrics evaluate_frame(const talos::ArmorSlots &detections, const std::v
  * @brief Visualize full pipeline results
  */
 void visualize_frame(const cv::Mat &image, const talos::ArmorSlots &detections,
-                     const std::array<ArmorPose3D, 10> &poses3d, const Tracker &tracker,
-                     const std::vector<GroundTruth> &ground_truths, const std::string &window_name = "Pipeline") {
+                     const std::array<ArmorPose3D, 10> &poses3d, const talos::TrackerSoA &tracker_soa,
+                     const Target &target, const std::vector<GroundTruth> &ground_truths,
+                     const std::string &window_name = "Pipeline") {
     cv::Mat display = image.clone();
 
     // Draw ground truth (green)
@@ -211,9 +212,9 @@ void visualize_frame(const cv::Mat &image, const talos::ArmorSlots &detections,
     }
 
     // Draw tracker state
-    std::string state_str = tracker.state_string();
+    std::string state_str = Tracker::state_string(tracker_soa);
     cv::Scalar state_color;
-    switch (tracker.state()) {
+    switch (tracker_soa.state.load(std::memory_order_acquire)) {
         case talos::TrackerState::IDLE:
             state_color = cv::Scalar(128, 128, 128);
             break;
@@ -231,12 +232,11 @@ void visualize_frame(const cv::Mat &image, const talos::ArmorSlots &detections,
                 state_color, 2);
 
     // Draw tracked target prediction if available
-    if (tracker.state() != talos::TrackerState::IDLE) {
-        const auto &target = tracker.target();
+    if (tracker_soa.state.load(std::memory_order_acquire) != talos::TrackerState::IDLE) {
         auto ekf_x = target.ekf_x();
 
         // Draw predicted armor positions
-        const auto armor_list = tracker.armor_xyza_list();
+        const auto armor_list = Tracker::armor_xyza_list(tracker_soa, target);
         for (size_t i = 0; i < armor_list.size(); i++) {
             const auto &xyza = armor_list[i];
             // Simple projection (assuming fixed camera parameters)
@@ -305,6 +305,9 @@ int main(int argc, char **argv) {
     TraditionalDetector detector(config, false);
     Solver solver(config.solver);
     Tracker tracker(config.tracker);
+    DetectorWorkBuffers detector_buffers;
+    talos::TrackerSoA tracker_soa;
+    Target target;
 
     // Set default gimbal orientation (identity for benchmark)
     solver.set_R_gimbal2world(Eigen::Quaterniond::Identity());
@@ -330,7 +333,7 @@ int main(int argc, char **argv) {
 
         // === Stage 1: Detection ===
         auto t0 = steady_clock::now();
-        auto detections = detector.detect(frame.image, binary_img, frame.frame_id, 0);
+        auto detections = detector.detect(detector_buffers, frame.image, binary_img, frame.frame_id, 0);
         auto t1 = steady_clock::now();
 
         // === Stage 3: Solver ===
@@ -350,11 +353,11 @@ int main(int argc, char **argv) {
 
         // === Stage 2: Tracker ===
         auto timestamp = steady_clock::now();
-        tracker.track(detections, poses3d, timestamp);
+        tracker.track(tracker_soa, target, detections, poses3d, timestamp);
         auto t3 = steady_clock::now();
 
         // Record tracker state
-        switch (tracker.state()) {
+        switch (tracker_soa.state.load(std::memory_order_acquire)) {
             case talos::TrackerState::IDLE:
                 metrics.idle_frames++;
                 break;
@@ -392,9 +395,9 @@ int main(int argc, char **argv) {
 
         // Debug visualization
         if (debug) {
-            visualize_frame(frame.image, detections, poses3d, tracker, frame.ground_truths);
-            visualize_frame(gray_img, detections, poses3d, tracker, frame.ground_truths, "Gray");
-            visualize_frame(binary_img, detections, poses3d, tracker, frame.ground_truths, "Binary");
+            visualize_frame(frame.image, detections, poses3d, tracker_soa, target, frame.ground_truths);
+            visualize_frame(gray_img, detections, poses3d, tracker_soa, target, frame.ground_truths, "Gray");
+            visualize_frame(binary_img, detections, poses3d, tracker_soa, target, frame.ground_truths, "Binary");
             if (auto key = cv::waitKey(0); key == 'q' || key == 27) { // q or ESC to quit
                 break;
             }

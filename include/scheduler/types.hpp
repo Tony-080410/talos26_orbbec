@@ -117,25 +117,6 @@ namespace scheduler {
         alignas(CACHE_LINE_SIZE) ImagePtr preprocessed;
     };
 
-    struct Detection {
-        uint64_t frame_seq{0};
-        uint64_t timestamp_ns{0};
-        std::vector<cv::Rect> boxes;
-        std::vector<float> scores;
-    };
-
-    struct TrackResult {
-        uint64_t frame_seq{0};
-        uint64_t timestamp_ns{0};
-        // 跟踪状态扩展...
-    };
-
-    struct SolverOutput {
-        uint64_t frame_seq{0};
-        uint64_t timestamp_ns{0};
-        // 解算结果: pitch, yaw, 预测位置等
-    };
-
     // ============ 运行时配置 ============
     struct RuntimeConfig {
         // Detector
@@ -150,27 +131,30 @@ namespace scheduler {
         alignas(CACHE_LINE_SIZE) std::atomic<uint64_t> frame_drop{0};
         alignas(CACHE_LINE_SIZE) std::atomic<uint64_t> detect_count{0};
         alignas(CACHE_LINE_SIZE) std::atomic<uint64_t> track_count{0};
-        alignas(CACHE_LINE_SIZE) std::atomic<uint64_t> solve_count{0};
+        alignas(CACHE_LINE_SIZE) std::atomic<uint64_t> output_count{0};
 
         // Line 2: 最新延迟（实时监控，高频读写）
         alignas(CACHE_LINE_SIZE) std::atomic<uint64_t> detect_latency{0};
-        alignas(CACHE_LINE_SIZE) std::atomic<uint64_t> track_latency{0};
         alignas(CACHE_LINE_SIZE) std::atomic<uint64_t> solve_latency{0};
+        alignas(CACHE_LINE_SIZE) std::atomic<uint64_t> track_latency{0};
+        alignas(CACHE_LINE_SIZE) std::atomic<uint64_t> output_latency{0};
         alignas(CACHE_LINE_SIZE) std::atomic<uint64_t> e2e_latency{0};
 
         // Line 3: 延迟直方图（用于百分位数统计，低频更新）
         alignas(CACHE_LINE_SIZE) LatencyHistogram detect_hist;
-        alignas(CACHE_LINE_SIZE) LatencyHistogram track_hist;
         alignas(CACHE_LINE_SIZE) LatencyHistogram solve_hist;
+        alignas(CACHE_LINE_SIZE) LatencyHistogram track_hist;
+        alignas(CACHE_LINE_SIZE) LatencyHistogram output_hist;
         alignas(CACHE_LINE_SIZE) LatencyHistogram e2e_hist;
 
         void reset() noexcept {
             frame_in = frame_drop = 0;
-            detect_count = track_count = solve_count = 0;
-            detect_latency = track_latency = solve_latency = e2e_latency = 0;
+            detect_count = track_count = output_count = 0;
+            detect_latency = solve_latency = track_latency = output_latency = e2e_latency = 0;
             detect_hist.reset();
-            track_hist.reset();
             solve_hist.reset();
+            track_hist.reset();
+            output_hist.reset();
             e2e_hist.reset();
         }
     };

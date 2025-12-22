@@ -7,15 +7,11 @@ namespace auto_aim {
 
     Tracker::Tracker(const SpVisionTrackerConfig &config) :
         enemy_color_(static_cast<talos::Color>(config.enemy_color)), min_detect_count_(config.min_detect_count),
-        max_temp_lost_count_(config.max_temp_lost_count),
-        outpost_max_temp_lost_count_(config.outpost_max_temp_lost_count),
-        normal_temp_lost_count_(config.max_temp_lost_count), tracker_soa_(),
-        last_timestamp_(std::chrono::steady_clock::now()) {
-        // TrackerSoA 默认初始化为 IDLE 状态
-    }
+        normal_temp_lost_count_(config.max_temp_lost_count),
+        outpost_max_temp_lost_count_(config.outpost_max_temp_lost_count) {}
 
-    std::string Tracker::state_string() const {
-        switch (state()) {
+    std::string Tracker::state_string(const talos::TrackerSoA &state) {
+        switch (state.state.load(std::memory_order_acquire)) {
             case talos::TrackerState::IDLE:
                 return "idle";
             case talos::TrackerState::DETECTING:
@@ -29,78 +25,81 @@ namespace auto_aim {
         }
     }
 
-    bool Tracker::track(const talos::ArmorSlots &slots, const std::array<ArmorPose3D, 10> &poses3d,
-                        const std::chrono::steady_clock::time_point t) {
-        auto dt = std::chrono::duration<double>(t - last_timestamp_).count();
-        last_timestamp_ = t;
+    bool Tracker::track(talos::TrackerSoA &state, Target &target, const talos::ArmorSlots &slots,
+                        const std::array<ArmorPose3D, 10> &poses3d,
+                        const std::chrono::steady_clock::time_point t) const {
+        const auto current_state = state.state.load(std::memory_order_acquire);
+        const auto current_ns = t.time_since_epoch().count();
+        const auto dt = static_cast<double>(current_ns - state.last_timestamp_ns) / 1e9;
+        state.last_timestamp_ns = current_ns;
 
         // 时间间隔过长，说明可能发生了相机离线
-        if (state() != talos::TrackerState::IDLE && dt > 0.1) {
+        if (current_state != talos::TrackerState::IDLE && dt > 0.1) {
             spdlog::warn("[Tracker] Large dt: {:.3f}s", dt);
-            tracker_soa_.try_reset_idle();
+            state.try_reset_idle();
         }
 
         bool found;
-        if (state() == talos::TrackerState::IDLE) {
-            found = set_target(slots, poses3d, t);
+        if (current_state == talos::TrackerState::IDLE) {
+            found = set_target(state, target, slots, poses3d, t);
         } else {
-            found = update_target(slots, poses3d, t);
+            found = update_target(state, target, slots, poses3d, t);
         }
 
-        state_machine(found);
+        state_machine(state, target, found);
 
         // 发散检测
-        if (state() != talos::TrackerState::IDLE && target_.diverged()) {
+        if (state.state.load(std::memory_order_acquire) != talos::TrackerState::IDLE && target.diverged()) {
             spdlog::debug("[Tracker] Target diverged!");
-            tracker_soa_.try_reset_idle();
+            state.try_reset_idle();
             return false;
         }
 
         // 收敛效果检测
-        if (state() != talos::TrackerState::IDLE) {
-            const int recent_failures = std::accumulate(target_.ekf().recent_nis_failures.begin(),
-                                                        target_.ekf().recent_nis_failures.end(), 0);
-            if (recent_failures >= static_cast<int>(0.4 * target_.ekf().window_size)) {
+        if (state.state.load(std::memory_order_acquire) != talos::TrackerState::IDLE) {
+            const int recent_failures = std::accumulate(target.ekf().recent_nis_failures.begin(),
+                                                        target.ekf().recent_nis_failures.end(), 0);
+            if (recent_failures >= static_cast<int>(0.4 * target.ekf().window_size)) {
                 spdlog::debug("[Tracker] Bad Converge Found!");
-                tracker_soa_.try_reset_idle();
+                state.try_reset_idle();
                 return false;
             }
         }
 
-        return state() != talos::TrackerState::IDLE;
+        return state.state.load(std::memory_order_acquire) != talos::TrackerState::IDLE;
     }
 
-    std::vector<Eigen::Vector4d> Tracker::armor_xyza_list() const {
-        if (state() == talos::TrackerState::IDLE) {
+    std::vector<Eigen::Vector4d> Tracker::armor_xyza_list(const talos::TrackerSoA &state, const Target &target) {
+        if (state.state.load(std::memory_order_acquire) == talos::TrackerState::IDLE) {
             return {};
         }
-        return target_.armor_xyza_list();
+        return target.armor_xyza_list();
     }
 
-    void Tracker::state_machine(const bool found) {
-        auto current_state = state();
+    void Tracker::state_machine(talos::TrackerSoA &state, const Target &target, const bool found) const {
+        const auto current_state = state.state.load(std::memory_order_acquire);
 
         if (current_state == talos::TrackerState::IDLE) {
             if (!found)
                 return;
 
             // IDLE -> DETECTING
-            if (tracker_soa_.try_start_detecting()) {
-                tracker_soa_.detecting_count = 1;
+            if (state.try_start_detecting()) {
+                state.detecting_count = 1;
             }
         }
 
         else if (current_state == talos::TrackerState::DETECTING) {
             if (found) {
-                tracker_soa_.detecting_count++;
-                if (tracker_soa_.detecting_count >= min_detect_count_) {
+                state.detecting_count++;
+                if (state.detecting_count >= min_detect_count_) {
                     // DETECTING -> TRACKING
-                    tracker_soa_.try_confirm_tracking();
+                    state.try_confirm_tracking();
                 }
             } else {
                 // DETECTING -> IDLE
-                tracker_soa_.detecting_count = 0;
-                tracker_soa_.try_reset_idle();
+                state.detecting_count = 0;
+                state.try_reset_idle();
             }
         }
 
@@ -109,35 +108,36 @@ namespace auto_aim {
                 return;
 
             // TRACKING -> TEMP_LOST
-            if (tracker_soa_.try_enter_lost()) {
-                tracker_soa_.lost_count = 1;
+            if (state.try_enter_lost()) {
+                state.lost_count = 1;
             }
         }
 
         else if (current_state == talos::TrackerState::TEMP_LOST) {
             if (found) {
                 // TEMP_LOST -> TRACKING
-                tracker_soa_.try_restore_tracking();
+                state.try_restore_tracking();
             } else {
-                tracker_soa_.lost_count++;
+                state.lost_count++;
 
                 // 前哨站特殊处理
-                if (target_.name == talos::ArmorName::outpost) {
-                    max_temp_lost_count_ = outpost_max_temp_lost_count_;
+                if (target.name == talos::ArmorName::outpost) {
+                    state.max_temp_lost_count = outpost_max_temp_lost_count_;
                 } else {
-                    max_temp_lost_count_ = normal_temp_lost_count_;
+                    state.max_temp_lost_count = normal_temp_lost_count_;
                 }
 
-                if (tracker_soa_.lost_count > max_temp_lost_count_) {
+                if (state.lost_count > state.max_temp_lost_count) {
                     // TEMP_LOST -> IDLE
-                    tracker_soa_.try_reset_idle();
+                    state.try_reset_idle();
                 }
             }
         }
     }
 
-    bool Tracker::set_target(const talos::ArmorSlots &slots, const std::array<ArmorPose3D, 10> &poses3d,
-                             const std::chrono::steady_clock::time_point t) {
+    bool Tracker::set_target(talos::TrackerSoA &state, Target &target, const talos::ArmorSlots &slots,
+                             const std::array<ArmorPose3D, 10> &poses3d,
+                             const std::chrono::steady_clock::time_point t) const {
         // 找到第一个有效的敌方装甲板
         int best_idx = -1;
         float best_distance = 1e10f;
@@ -175,27 +175,28 @@ namespace auto_aim {
 
         if (is_balance) {
             const Eigen::VectorXd P0_dig{{1, 64, 1, 64, 1, 64, 0.4, 100, 1, 1, 1}};
-            target_ = Target(armor, pose3d, t, 0.2, 2, P0_dig);
+            target = Target(armor, pose3d, t, 0.2, 2, P0_dig);
         } else if (name == talos::ArmorName::outpost) {
             const Eigen::VectorXd P0_dig{{1, 64, 1, 64, 1, 81, 0.4, 100, 1e-4, 0, 0}};
-            target_ = Target(armor, pose3d, t, 0.2765, 3, P0_dig);
+            target = Target(armor, pose3d, t, 0.2765, 3, P0_dig);
         } else if (name == talos::ArmorName::base) {
             const Eigen::VectorXd P0_dig{{1, 64, 1, 64, 1, 64, 0.4, 100, 1e-4, 0, 0}};
-            target_ = Target(armor, pose3d, t, 0.3205, 3, P0_dig);
+            target = Target(armor, pose3d, t, 0.3205, 3, P0_dig);
         } else {
             const Eigen::VectorXd P0_dig{{1, 64, 1, 64, 1, 64, 0.4, 100, 1, 1, 1}};
-            target_ = Target(armor, pose3d, t, 0.2, 4, P0_dig);
+            target = Target(armor, pose3d, t, 0.2, 4, P0_dig);
         }
 
         // 更新 generation 用于 ABA 防护
-        tracker_soa_.next_generation();
+        state.next_generation();
 
         return true;
     }
 
-    bool Tracker::update_target(const talos::ArmorSlots &slots, const std::array<ArmorPose3D, 10> &poses3d,
-                                const std::chrono::steady_clock::time_point t) {
-        target_.predict(t);
+    bool Tracker::update_target([[maybe_unused]] talos::TrackerSoA &state, Target &target,
+                                const talos::ArmorSlots &slots, const Poses3D &poses3d,
+                                const std::chrono::steady_clock::time_point t) const {
+        target.predict(t);
 
         int found_count = 0;
 
@@ -214,12 +215,12 @@ namespace auto_aim {
             }
 
             // 只更新匹配的目标
-            if (name != target_.name || type != target_.armor_type) {
+            if (name != target.name || type != target.armor_type) {
                 continue;
             }
 
             found_count++;
-            target_.update(armor, poses3d[i]);
+            target.update(armor, poses3d[i]);
         }
 
         return found_count > 0;

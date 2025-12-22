@@ -80,13 +80,30 @@ namespace auto_aim {
     };
 
     /**
-     * @brief 传统装甲板检测器
+     * @brief 检测器工作缓冲区 (每帧复用)
+     *
+     * 由调度器/策略持有，传递给Detector方法
+     */
+    struct DetectorWorkBuffers {
+        std::list<talos::LightbarFull> lightbars{};
+        std::list<talos::ArmorFull> armors{};
+
+        void clear() {
+            lightbars.clear();
+            armors.clear();
+        }
+    };
+
+    /**
+     * @brief 传统装甲板检测器 (无状态)
      *
      * 移植自 sp_vision_25/tasks/auto_aim/detector
      * 功能：
      * 1. 全图检测：灰度化→二值化→轮廓检测→灯条筛选→配对装甲板→去重
      * 2. ROI精修：在已知装甲板位置的基础上，精确定位角点
      * 3. PCA角点修正（可选）
+     *
+     * 所有工作缓冲区通过 DetectorWorkBuffers 参数传递
      */
     class TraditionalDetector {
     public:
@@ -96,14 +113,15 @@ namespace auto_aim {
 
         /**
          * @brief 全图检测装甲板
+         * @param buffers 工作缓冲区 (输入/输出)
          * @param bgr_img BGR彩色图像
          * @param binary_img 二值化图像
          * @param frame_id 帧ID
          * @param timestamp_ns 时间戳
          * @return ArmorSlots 检测结果
          */
-        talos::ArmorSlots detect(const cv::Mat &bgr_img, const cv::Mat &binary_img, uint64_t frame_id,
-                                 uint64_t timestamp_ns);
+        talos::ArmorSlots detect(DetectorWorkBuffers &buffers, const cv::Mat &bgr_img, const cv::Mat &binary_img,
+                                 uint64_t frame_id, uint64_t timestamp_ns) const;
 
         /**
          * @brief 在已有装甲板基础上精修角点 (ROI检测)
@@ -111,17 +129,7 @@ namespace auto_aim {
          * @param bgr_img BGR彩色图像
          * @return 是否成功精修
          */
-        bool refine(talos::ArmorFull &armor, const cv::Mat &bgr_img) const;
-
-        /**
-         * @brief 获取内部检测到的完整装甲板列表 (用于后续处理)
-         */
-        [[nodiscard]] const std::list<talos::ArmorFull> &get_armors() const { return armors_; }
-
-        /**
-         * @brief 获取内部检测到的完整灯条列表 (用于调试)
-         */
-        [[nodiscard]] const std::list<talos::LightbarFull> &get_lightbars() const { return lightbars_; }
+        [[nodiscard]] bool refine(talos::ArmorFull &armor, const cv::Mat &bgr_img) const;
 
         /**
          * @brief 从图像和装甲板灯条信息提取图案 ROI
@@ -135,10 +143,6 @@ namespace auto_aim {
         DetectorConfig config_;
         Classifier classifier_;
         bool debug_;
-
-        // 内部状态 (每次detect后更新)
-        std::list<talos::LightbarFull> lightbars_;
-        std::list<talos::ArmorFull> armors_;
 
         // 配置值 (预转换为弧度)
         double max_angle_error_rad_;
@@ -156,16 +160,18 @@ namespace auto_aim {
         [[nodiscard]] static cv::Point2f get_center_norm(const cv::Mat &bgr_img, const cv::Point2f &center);
 
         // ============ 去重处理 ============
-        void remove_duplicates();
+        static void remove_duplicates(DetectorWorkBuffers &buffers);
 
         // ============ 结果转换 ============
-        [[nodiscard]] talos::ArmorSlots to_armor_slots(uint64_t frame_id, uint64_t timestamp_ns) const;
+        [[nodiscard]] static talos::ArmorSlots to_armor_slots(const DetectorWorkBuffers &buffers, uint64_t frame_id,
+                                                              uint64_t timestamp_ns);
 
         // ============ PCA角点修正 (可选) ============
         static void lightbar_points_corrector(talos::LightbarFull &lightbar, const cv::Mat &gray_img);
 
         // ============ 调试输出 ============
-        void show_result(const cv::Mat &binary_img, const cv::Mat &bgr_img, int frame_count) const;
+        void show_result(const DetectorWorkBuffers &buffers, const cv::Mat &binary_img, const cv::Mat &bgr_img,
+                         int frame_count) const;
     };
 
 } // namespace auto_aim

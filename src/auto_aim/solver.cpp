@@ -87,7 +87,7 @@ namespace auto_aim {
         return true;
     }
 
-    void Solver::solve_all(talos::ArmorSlots &slots, std::array<ArmorPose3D, 10> &poses3d) const {
+    void Solver::solve_all(const talos::ArmorSlots &slots, std::array<ArmorPose3D, 10> &poses3d) const {
         for (int i = 0; i < 10; ++i) {
             if (!slots.is_valid(i)) {
                 poses3d[i].valid = false;
@@ -96,26 +96,8 @@ namespace auto_aim {
 
             if (ArmorPose3D pose3d; solve(slots.armors[i], pose3d, true)) {
                 poses3d[i] = pose3d;
-
-                // 填充slots.poses
-                slots.poses[i].x = static_cast<float>(pose3d.xyz_in_world[0]);
-                slots.poses[i].y = static_cast<float>(pose3d.xyz_in_world[1]);
-                slots.poses[i].z = static_cast<float>(pose3d.xyz_in_world[2]);
-
-                // 将ypr转换为四元数填充
-                Eigen::AngleAxisd yaw_angle(pose3d.ypr_in_world[0], Eigen::Vector3d::UnitZ());
-                Eigen::AngleAxisd pitch_angle(pose3d.ypr_in_world[1], Eigen::Vector3d::UnitY());
-                Eigen::AngleAxisd roll_angle(pose3d.ypr_in_world[2], Eigen::Vector3d::UnitX());
-                Eigen::Quaterniond q = yaw_angle * pitch_angle * roll_angle;
-                q.normalize();
-
-                slots.poses[i].qx = static_cast<float>(q.x());
-                slots.poses[i].qy = static_cast<float>(q.y());
-                slots.poses[i].qz = static_cast<float>(q.z());
-                slots.poses[i].qw = static_cast<float>(q.w());
             } else {
                 poses3d[i].valid = false;
-                slots.set_invalid(i);
             }
         }
     }

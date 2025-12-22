@@ -13,60 +13,40 @@ auto TalosStrategy::preprocess(scheduler::SharedFeature &sf) -> void {
     preprocess_latency.record(std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count());
 }
 
-auto TalosStrategy::detect(const scheduler::SharedFeature &sf) -> scheduler::Detection {
+auto TalosStrategy::detect(const scheduler::SharedFeature &feat, talos::ArmorSlots &armor) noexcept -> void {
     const auto t0 = std::chrono::steady_clock::now();
 
-    scheduler::Detection det;
-    det.frame_seq = sf.frame_seq;
-    det.timestamp_ns = sf.timestamp_ns;
-
-
-    if (!sf.preprocessed || sf.preprocessed->rows() <= 0) [[unlikely]] {
-        return det;
+    if (!feat.preprocessed || feat.preprocessed->rows() <= 0) [[unlikely]] {
+        return;
     }
 
-    slots = detector.detect(sf.image->mat(), sf.preprocessed->mat(), sf.frame_seq, 0);
+    armor = detector.detect(detector_buffers_, feat.image->mat(), feat.preprocessed->mat(), feat.frame_seq, 0);
 
     processed_count.fetch_add(1, std::memory_order_relaxed);
 
     const auto t1 = std::chrono::steady_clock::now();
     detect_latency.record(std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count());
 
-    small_pool.release(sf.preprocessed);
-    return det;
+    small_pool.release(feat.preprocessed);
 }
 
-auto TalosStrategy::track(const scheduler::Detection &det, [[maybe_unused]] const scheduler::SharedFeature &sf)
-        -> scheduler::TrackResult {
+auto TalosStrategy::solve(const talos::ArmorSlots &armor,
+                          std::array<auto_aim::ArmorPose3D, 10> &poses3d) noexcept -> void {
+    solver.solve_all(armor, poses3d);
+}
+
+auto TalosStrategy::track(talos::TrackerSoA &tracker_soa, const talos::ArmorSlots &armor,
+                          const std::array<auto_aim::ArmorPose3D, 10> &poses3d) noexcept -> void {
     const auto t0 = std::chrono::steady_clock::now();
 
-    scheduler::TrackResult tr;
-    tr.frame_seq = det.frame_seq;
-    tr.timestamp_ns = det.timestamp_ns;
-
     const auto timestamp = std::chrono::steady_clock::now();
-    tracker.track(slots, poses3d, timestamp);
+    tracker.track(tracker_soa, target_, armor, poses3d, timestamp);
 
-
+    spdlog::info("state={}",talos::tracker_state(tracker_soa.state.load()));
     const auto t1 = std::chrono::steady_clock::now();
     track_latency.record(std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count());
-
-    return tr;
 }
 
-auto TalosStrategy::solve(const scheduler::TrackResult &tr) -> scheduler::SolverOutput {
-    scheduler::SolverOutput out;
-    out.frame_seq = tr.frame_seq;
-    out.timestamp_ns = tr.timestamp_ns;
-
-    solver.solve_all(slots, poses3d);
-    return out;
-}
-
-auto TalosStrategy::output(const scheduler::SolverOutput &out) -> void {
-    const auto now = std::chrono::steady_clock::now().time_since_epoch().count();
-    e2e_latency.record(now - out.timestamp_ns);
-    spdlog::info("armor count: {}", slots.count_valid());
-    spdlog::info("state: {}", tracker_state(tracker.tracker_soa().state));
+auto TalosStrategy::output() noexcept -> void {
     output_count.fetch_add(1, std::memory_order_relaxed);
 }

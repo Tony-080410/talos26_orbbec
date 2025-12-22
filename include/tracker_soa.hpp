@@ -51,7 +51,9 @@ namespace talos {
      * │ 16      │ vel[3] (float)      │ 12    │ 28                   │
      * │ 28      │ yaw, v_yaw (float)  │  8    │ 36                   │
      * │ 36      │ radius[2] (float)   │  8    │ 44                   │
-     * │ 44      │ padding             │ 20    │ 64                   │
+     * │ 44      │ max_temp_lost_count │  4    │ 48                   │
+     * │ 48      │ last_timestamp_ns   │  8    │ 56                   │
+     * │ 56      │ padding             │  8    │ 64                   │
      * └─────────┴─────────────────────┴───────┴──────────────────────┘
      *
      * Total: 64 bytes (single L1 cache line)
@@ -83,8 +85,12 @@ namespace talos {
         // Shape (2D)
         float radius[2]{1.0f, 1.0f}; // [radius_x, radius_y] armor dimensions ratio
 
-        // === Cache Line Padding (20 bytes) ===
-        char _padding[20];
+        // === Runtime State (使用 padding 空间) ===
+        int32_t max_temp_lost_count{10}; // 动态丢失阈值, 4 bytes (offset 44-48)
+        int64_t last_timestamp_ns{0};    // 上次更新时间戳 (ns), 8 bytes (offset 48-56, 8字节对齐)
+
+        // === Cache Line Padding (8 bytes) ===
+        char _padding[8];
 
         /**
          * @brief Verify this tracker fits in exactly one cache line
