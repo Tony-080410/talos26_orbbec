@@ -7,7 +7,6 @@
 #include "talos_gimbal/stm32.hpp"
 #include "tracker.hpp"
 #include <chrono>
-#include "fast_tf/core.hpp"
 
 struct TalosConfig : SpVisionConfig {
     bool daedalus;

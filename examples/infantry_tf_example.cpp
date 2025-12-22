@@ -136,7 +136,7 @@ int main() {
         return 1;
     }
 
-    auto tf_channel = std::make_shared<foxglove::schemas::FrameTransformsChannel>(
+    auto tf_channel = std::make_optional<foxglove::schemas::FrameTransformsChannel>(
         std::move(tf_channel_result.value()));
 
     std::cout << "  ✓ TF channel created\n";
@@ -147,7 +147,7 @@ int main() {
 
     std::cout << "\n[2] Initializing Infantry TF Manager...\n";
 
-    auto tf_manager = std::make_unique<InfantryTFManager>(tf_channel);
+    auto tf_manager = std::make_optional<InfantryTFManager>(std::move(tf_channel));
 
     std::cout << "  ✓ Infantry TF hierarchy established\n";
     std::cout << "  ✓ All static transforms registered\n";
