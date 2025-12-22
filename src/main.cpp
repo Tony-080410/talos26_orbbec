@@ -98,15 +98,20 @@ int main() {
     if (daedalus_or_camera) {
         while (!client) {
             if (auto result = ipc::ShmClient::connect()) {
-                client = std::move(*result);
-                std::cout << "已连接到共享内存!\n";
+                // 连接成功，但需要确认是活跃的共享内存（防止连接到旧文件）
+                if (result->wait_for_producer(std::chrono::seconds(2))) {
+                    client = std::move(*result);
+                    std::cout << "已连接到共享内存!\n";
 
-                const auto info = client->camera_info();
-                config.solver.camera_matrix << info.fx, 0.0, info.cx, 0.0, info.fy, info.cy, 0.0,
-                    0.0, 1.0;
-                config.solver.distort_coefficient << info.distortion[0], info.distortion[1],
-                    info.distortion[2], info.distortion[3], info.distortion[4];
-
+                    const auto info = client->camera_info();
+                    config.solver.camera_matrix << info.fx, 0.0, info.cx, 0.0, info.fy, info.cy,
+                        0.0, 0.0, 1.0;
+                    config.solver.distort_coefficient << info.distortion[0], info.distortion[1],
+                        info.distortion[2], info.distortion[3], info.distortion[4];
+                } else {
+                    // heartbeat 未更新，可能是旧文件，等待 Rust 端重新创建
+                    std::cout << "x" << std::flush;
+                }
             } else {
                 std::cout << "." << std::flush;
                 std::this_thread::sleep_for(500ms);

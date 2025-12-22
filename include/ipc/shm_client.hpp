@@ -5,6 +5,7 @@
 #include <memory>
 #include <opencv2/core.hpp>
 #include <optional>
+#include <thread>
 
 #include "shm_layout.hpp"
 #include "shm_region.hpp"
@@ -112,14 +113,24 @@ namespace ipc {
                 return std::unexpected(pool_result.error());
             }
 
-            // 初始化头部
+            // 初始化元数据区域
             auto *meta = meta_result->as<ShmMetaRegion>();
+
+            // 初始化头部
             meta->header.magic = SHM_MAGIC;
             meta->header.version = SHM_VERSION;
             meta->header.created_ns =
                     static_cast<uint64_t>(std::chrono::steady_clock::now().time_since_epoch().count());
             meta->header.image_width = IMAGE_WIDTH;
             meta->header.image_height = IMAGE_HEIGHT;
+
+            // 初始化所有 TripleBuffer (CRITICAL: memset 破坏了默认初始化器)
+            // 正确初始状态: state=1 (ready slot), write_idx=0, read_idx=2
+            init_triple_buffer(meta->image);
+            for (auto &pose : meta->poses) {
+                init_triple_buffer(pose);
+            }
+            init_triple_buffer(meta->gimbal_cmd);
 
             return ShmClient(std::move(*meta_result), std::move(*pool_result));
         }
@@ -240,8 +251,7 @@ namespace ipc {
          * @brief 更新心跳 (生产者调用)
          */
         void update_heartbeat() const {
-            meta_->header.heartbeat_ns =
-                    static_cast<uint64_t>(std::chrono::steady_clock::now().time_since_epoch().count());
+            meta_->header.heartbeat_ns = now_ns();
         }
 
         /**
@@ -249,8 +259,26 @@ namespace ipc {
          * @param timeout_ns 超时时间 (纳秒)
          */
         [[nodiscard]] bool is_producer_alive(const uint64_t timeout_ns = 1'000'000'000) const {
-            const auto now = static_cast<uint64_t>(std::chrono::steady_clock::now().time_since_epoch().count());
-            return now - meta_->header.heartbeat_ns < timeout_ns;
+            return now_ns() - meta_->header.heartbeat_ns < timeout_ns;
+        }
+
+        /**
+         * @brief 等待生产者就绪
+         * @param timeout 超时时间
+         * @return true 如果生产者在超时前变为活跃状态
+         *
+         * 用于防止连接到旧的共享内存文件。调用此方法会等待直到
+         * 生产者的 heartbeat 开始更新，确认是一个活跃的连接。
+         */
+        [[nodiscard]] bool wait_for_producer(const std::chrono::milliseconds timeout = std::chrono::seconds(5)) const {
+            const auto deadline = std::chrono::steady_clock::now() + timeout;
+            while (std::chrono::steady_clock::now() < deadline) {
+                if (is_producer_alive()) {
+                    return true;
+                }
+                std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            }
+            return false;
         }
 
         // ============ 图像发布 (生产者模式，用于测试) ============
@@ -292,6 +320,36 @@ namespace ipc {
         }
 
     private:
+        /**
+         * @brief 初始化 TripleBuffer 到正确的初始状态
+         *
+         * ShmRegion::create() 使用 memset 清零内存，会破坏 TripleBuffer
+         * 的默认成员初始化器。必须手动重新初始化。
+         *
+         * 正确初始状态:
+         * - state = 1 (ready slot 是 1, 无 FLAG_NEW)
+         * - write_idx = 0 (生产者写入 slot 0)
+         * - read_idx = 2 (消费者上次读取 slot 2)
+         */
+        template<typename TripleBuffer>
+        static void init_triple_buffer(TripleBuffer &buf) {
+            buf.state.store(1, std::memory_order_relaxed);
+            buf.write_idx = 0;
+            buf.read_idx = 2;
+        }
+
+        /**
+         * @brief 获取当前时间的纳秒时间戳 (UNIX epoch)
+         *
+         * 使用 system_clock 与 Rust 端的 SystemTime::now() 保持一致
+         */
+        [[nodiscard]] static uint64_t now_ns() {
+            return static_cast<uint64_t>(
+                    std::chrono::duration_cast<std::chrono::nanoseconds>(
+                            std::chrono::system_clock::now().time_since_epoch())
+                            .count());
+        }
+
         ShmClient(ShmRegion meta_region, ShmRegion pool_region) :
             meta_region_(std::move(meta_region)), pool_region_(std::move(pool_region)),
             meta_(meta_region_.as<ShmMetaRegion>()), image_pool_(static_cast<uint8_t *>(pool_region_.data())) {}

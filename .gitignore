@@ -26,3 +26,5 @@ _deps/
 thirdparty
 .DS_Store
 .cache
+build-asan/
+build-tsan/
