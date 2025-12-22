@@ -11,8 +11,7 @@ FoxgloveServer::FoxgloveServer(uint16_t port, std::string_view host) {
 
     auto server_r = foxglove::WebSocketServer::create(std::move(ws));
     if (!server_r.has_value()) {
-        spdlog::error(
-            "WebSocketServer create failed: {}", foxglove::strerror(server_r.error()));
+        spdlog::error("WebSocketServer create failed: {}", foxglove::strerror(server_r.error()));
         return;
     }
     server_.emplace(std::move(server_r.value()));
@@ -20,26 +19,32 @@ FoxgloveServer::FoxgloveServer(uint16_t port, std::string_view host) {
 
     auto tf_r = foxglove::schemas::FrameTransformsChannel::create("/tf");
     if (!tf_r.has_value()) {
-        spdlog::error(
-            "FrameTransformsChannel create failed: {}", foxglove::strerror(tf_r.error()));
+        spdlog::error("FrameTransformsChannel create failed: {}", foxglove::strerror(tf_r.error()));
         return;
     }
     tf_ch_.emplace(std::move(tf_r.value()));
 
     auto scene_r = foxglove::schemas::SceneUpdateChannel::create("/scene");
     if (!scene_r.has_value()) {
-        spdlog::error(
-            "SceneUpdateChannel create failed: {}", foxglove::strerror(scene_r.error()));
+        spdlog::error("SceneUpdateChannel create failed: {}", foxglove::strerror(scene_r.error()));
         return;
     }
     scene_ch_.emplace(std::move(scene_r.value()));
 
     auto img_r = foxglove::schemas::CompressedImageChannel::create("/image");
     if (!img_r.has_value()) {
-        spdlog::error("CompressedImageChannel create failed: {}", foxglove::strerror(img_r.error()));
+        spdlog::error(
+            "CompressedImageChannel create failed: {}", foxglove::strerror(img_r.error()));
         return;
     }
     img_ch_.emplace(std::move(img_r.value()));
+
+    auto armor_r = foxglove::RawChannel::create("/armor_data", "json");
+    if (!armor_r.has_value()) {
+        spdlog::error("RawChannel create failed: {}", foxglove::strerror(armor_r.error()));
+        return;
+    }
+    armor_ch_.emplace(std::move(armor_r.value()));
 
     server_initialized_ = true;
 
@@ -93,6 +98,11 @@ void FoxgloveServer::message_sender_thread() {
                 } else if constexpr (std::is_same_v<decltype(m), TfMessage&>) {
                     if (tf_ch_) {
                         tf_ch_->log(m.tf);
+                    }
+                } else if constexpr (std::is_same_v<decltype(m), ArmorDataMessage&>) {
+                    if (armor_ch_) {
+                        armor_ch_->log(
+                            reinterpret_cast<const std::byte*>(m.data.data()), m.data.size());
                     }
                 }
             },

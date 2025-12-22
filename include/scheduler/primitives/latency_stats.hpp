@@ -4,6 +4,7 @@
 #include <iostream>
 #include <numeric>
 #include <ranges>
+#include <mutex>
 #include <vector>
 
 namespace scheduler {

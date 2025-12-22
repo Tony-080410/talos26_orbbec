@@ -1,14 +1,14 @@
 #pragma once
 
+#include "frame_types.hpp"
+#include "tree_structure.hpp"
 #include <memory>
-#include <unordered_map>
-#include <vector>
 #include <optional>
 #include <stdexcept>
-#include <tbb/parallel_for.h>
 #include <tbb/concurrent_vector.h>
-#include "tree_structure.hpp"
-#include "frame_types.hpp"
+#include <tbb/parallel_for.h>
+#include <unordered_map>
+#include <vector>
 
 namespace fast_tf {
 
@@ -23,9 +23,10 @@ struct TransformQueryResult {
 
     TransformQueryResult() = default;
 
-    TransformQueryResult(const TransformMatrix4d& tf, uint64_t ts,
-                         bool interpolated = false)
-        : transform(tf), timestamp_ns(ts), is_interpolated(interpolated) {}
+    TransformQueryResult(const TransformMatrix4d& tf, uint64_t ts, bool interpolated = false)
+        : transform(tf)
+        , timestamp_ns(ts)
+        , is_interpolated(interpolated) {}
 };
 
 // ============================================================================
@@ -35,7 +36,7 @@ struct TransformQueryResult {
 struct TransformQueryOptions {
     bool allow_extrapolation = false;
     bool allow_interpolation = true;
-    uint64_t max_age_ns = UINT64_MAX;  // 最大年龄限制
+    uint64_t max_age_ns      = UINT64_MAX; // 最大年龄限制
 
     TransformQueryOptions() = default;
 };
@@ -50,61 +51,58 @@ struct PathInfo {
 
     PathInfo() = default;
     explicit PathInfo(const std::vector<std::string>& p)
-        : path(p), found(true) {}
+        : path(p)
+        , found(true) {}
 };
 
 // ============================================================================
 // 主变换树API
 // ============================================================================
 
-template<typename TreeStructure>
+template <typename TreeStructure>
 class TransformTree {
 public:
-    using tree_structure = TreeStructure;
+    using tree_structure                   = TreeStructure;
     static constexpr std::size_t num_nodes = TreeStructure::num_nodes;
 
-    TransformTree() : tree_(std::make_unique<TreeStructure>()) {}
+    TransformTree()
+        : tree_(std::make_unique<TreeStructure>()) {}
 
     // ========================================================================
     // 设置变换接口
     // ========================================================================
 
     // 通过坐标系名称设置变换（RPY格式）
-    void set_transform(std::string_view from_frame, std::string_view to_frame,
-                      uint64_t timestamp_ns, double roll, double pitch,
-                      double yaw, double tx, double ty, double tz) {
-        TransformMatrix4d tf = TransformMatrix4d::from_rpy(
-            roll, pitch, yaw, tx, ty, tz);
+    void set_transform(
+        std::string_view from_frame, std::string_view to_frame, uint64_t timestamp_ns, double roll,
+        double pitch, double yaw, double tx, double ty, double tz) {
+        TransformMatrix4d tf = TransformMatrix4d::from_rpy(roll, pitch, yaw, tx, ty, tz);
 
         set_transform_matrix(from_frame, to_frame, timestamp_ns, tf);
     }
 
     // 通过坐标系名称设置变换（四元数格式）
-    void set_transform_quat(std::string_view from_frame,
-                            std::string_view to_frame, uint64_t timestamp_ns,
-                            double w, double x, double y, double z, double tx,
-                            double ty, double tz) {
-        TransformMatrix4d tf = TransformMatrix4d::from_quaternion(
-            w, x, y, z, tx, ty, tz);
+    void set_transform_quat(
+        std::string_view from_frame, std::string_view to_frame, uint64_t timestamp_ns, double w,
+        double x, double y, double z, double tx, double ty, double tz) {
+        TransformMatrix4d tf = TransformMatrix4d::from_quaternion(w, x, y, z, tx, ty, tz);
 
         set_transform_matrix(from_frame, to_frame, timestamp_ns, tf);
     }
 
     // 通过TransformInput概念设置变换
-    template<TransformInput T>
-    void set_transform_input(std::string_view from_frame,
-                             std::string_view to_frame, uint64_t timestamp_ns,
-                             const T& input) {
+    template <TransformInput T>
+    void set_transform_input(
+        std::string_view from_frame, std::string_view to_frame, uint64_t timestamp_ns,
+        const T& input) {
         TransformMatrix4d tf;
 
         if constexpr (RPYTransform<T>) {
             tf = TransformMatrix4d::from_rpy(
-                input.roll, input.pitch, input.yaw,
-                input.x, input.y, input.z);
+                input.roll, input.pitch, input.yaw, input.x, input.y, input.z);
         } else if constexpr (QuaternionTransform<T>) {
             tf = TransformMatrix4d::from_quaternion(
-                input.w, input.x, input.y, input.z,
-                input.tx, input.ty, input.tz);
+                input.w, input.x, input.y, input.z, input.tx, input.ty, input.tz);
         }
 
         set_transform_matrix(from_frame, to_frame, timestamp_ns, tf);
@@ -116,8 +114,7 @@ public:
 
     // 查询两个坐标系之间的变换
     std::optional<TransformQueryResult> lookup_transform(
-        std::string_view target_frame, std::string_view source_frame,
-        uint64_t timestamp_ns,
+        std::string_view target_frame, std::string_view source_frame, uint64_t timestamp_ns,
         const TransformQueryOptions& options = TransformQueryOptions()) {
 
         // 解析别名
@@ -126,8 +123,7 @@ public:
 
         // 如果源和目标相同，返回单位矩阵
         if (resolved_target == resolved_source) {
-            return TransformQueryResult(TransformMatrix4d(),
-                                       timestamp_ns);
+            return TransformQueryResult(TransformMatrix4d(), timestamp_ns);
         }
 
         // 查找从源到目标的路径
@@ -141,13 +137,12 @@ public:
     }
 
     // 获取最新变换
-    std::optional<TransformQueryResult> get_latest_transform(
-        std::string_view target_frame, std::string_view source_frame) {
+    std::optional<TransformQueryResult>
+        get_latest_transform(std::string_view target_frame, std::string_view source_frame) {
         // 获取时间戳范围，使用最新时间戳
         auto time_range = get_time_range(target_frame, source_frame);
         if (time_range) {
-            return lookup_transform(target_frame, source_frame,
-                                   time_range->second);
+            return lookup_transform(target_frame, source_frame, time_range->second);
         }
         return std::nullopt;
     }
@@ -157,17 +152,15 @@ public:
     // ========================================================================
 
     // 获取坐标系的时间范围
-    std::optional<std::pair<uint64_t, uint64_t>> get_time_range(
-        std::string_view frame) {
+    std::optional<std::pair<uint64_t, uint64_t>> get_time_range(std::string_view frame) {
         uint64_t frame_id = FrameRegistry::get_frame_id(frame);
         return find_buffer_for_frame(frame_id)->time_range();
     }
 
     // 获取两个坐标系之间的通用时间范围
-    std::optional<std::pair<uint64_t, uint64_t>> get_time_range(
-        std::string_view target_frame, std::string_view source_frame) {
-        auto path = find_path(std::string(source_frame),
-                             std::string(target_frame));
+    std::optional<std::pair<uint64_t, uint64_t>>
+        get_time_range(std::string_view target_frame, std::string_view source_frame) {
+        auto path = find_path(std::string(source_frame), std::string(target_frame));
         if (!path.found || path.path.empty()) {
             return std::nullopt;
         }
@@ -193,11 +186,9 @@ public:
     }
 
     // 检查是否可以查询变换
-    bool can_transform(std::string_view target_frame,
-                      std::string_view source_frame,
-                      uint64_t timestamp_ns) {
-        auto result = lookup_transform(target_frame, source_frame,
-                                      timestamp_ns);
+    bool can_transform(
+        std::string_view target_frame, std::string_view source_frame, uint64_t timestamp_ns) {
+        auto result = lookup_transform(target_frame, source_frame, timestamp_ns);
         return result.has_value();
     }
 
@@ -207,20 +198,16 @@ public:
 
     // 并行查询多个变换
     std::vector<std::optional<TransformQueryResult>> parallel_lookup_transforms(
-        const std::vector<std::pair<std::string, std::string>>& frame_pairs,
-        uint64_t timestamp_ns,
+        const std::vector<std::pair<std::string, std::string>>& frame_pairs, uint64_t timestamp_ns,
         const TransformQueryOptions& options = TransformQueryOptions()) {
 
-        std::vector<std::optional<TransformQueryResult>> results(
-            frame_pairs.size());
+        std::vector<std::optional<TransformQueryResult>> results(frame_pairs.size());
 
         tbb::parallel_for(
             std::size_t(0), frame_pairs.size(),
-            [this, &frame_pairs, timestamp_ns, &options, &results]
-            (std::size_t i) {
+            [this, &frame_pairs, timestamp_ns, &options, &results](std::size_t i) {
                 results[i] = lookup_transform(
-                    frame_pairs[i].first, frame_pairs[i].second,
-                    timestamp_ns, options);
+                    frame_pairs[i].first, frame_pairs[i].second, timestamp_ns, options);
             });
 
         return results;
@@ -267,8 +254,7 @@ public:
 
     // 获取坐标系的父坐标系
     std::optional<std::string> get_parent_frame(std::string_view frame) const {
-        if (auto it = frame_hierarchy_.find(std::string(frame));
-            it != frame_hierarchy_.end()) {
+        if (auto it = frame_hierarchy_.find(std::string(frame)); it != frame_hierarchy_.end()) {
             return it->second;
         }
         return std::nullopt;
@@ -291,9 +277,7 @@ public:
     }
 
     // 获取树的数据结构（用于调试）
-    const TreeStructure& get_structure() const {
-        return *tree_;
-    }
+    const TreeStructure& get_structure() const { return *tree_; }
 
 private:
     std::unique_ptr<TreeStructure> tree_;
@@ -304,14 +288,13 @@ private:
     // 内部辅助方法
     // ========================================================================
 
-    void set_transform_matrix(std::string_view from_frame,
-                             std::string_view to_frame,
-                             uint64_t /* timestamp_ns */,
-                             const TransformMatrix4d& /* tf */) {
+    void set_transform_matrix(
+        std::string_view from_frame, std::string_view to_frame, uint64_t /* timestamp_ns */,
+        const TransformMatrix4d& /* tf */) {
         register_frame(from_frame, to_frame);
         register_frame(to_frame, "");
 
-        uint64_t from_id = FrameRegistry::get_frame_id(from_frame);
+        uint64_t from_id           = FrameRegistry::get_frame_id(from_frame);
         frame_id_to_name_[from_id] = std::string(from_frame);
 
         // 这里需要根据实际树结构来存储变换
@@ -319,8 +302,7 @@ private:
     }
 
     // BFS查找两个坐标系之间的路径
-    PathInfo find_path(const std::string& source,
-                       const std::string& target) {
+    PathInfo find_path(const std::string& source, const std::string& target) {
         if (source == target) {
             return PathInfo({source});
         }
@@ -375,7 +357,7 @@ private:
         for (std::size_t i = 0; i < path.size() - 1; ++i) {
             // 在真实实现中应该从缓冲区查询
             // 这里返回单位矩阵作为占位符
-            (void)i;  // 避免未使用警告
+            (void)i; // 避免未使用警告
         }
 
         if (found_all) {

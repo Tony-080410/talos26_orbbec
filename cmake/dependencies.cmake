@@ -10,6 +10,7 @@ find_package(spdlog REQUIRED)
 find_package(fmt REQUIRED)
 find_package(TBB REQUIRED)
 find_package(GTest REQUIRED)
+find_package(nlohmann_json REQUIRED)
 
 # OpenVINO configuration with better error handling
 find_package(OpenVINO QUIET)

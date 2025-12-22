@@ -3,6 +3,7 @@
 #include "toml++/toml.hpp"
 #include <expected>
 #include <optional>
+#include <Eigen/Dense>
 
 template <typename Mat>
 requires(Mat::RowsAtCompileTime != Eigen::Dynamic && Mat::ColsAtCompileTime != Eigen::Dynamic)

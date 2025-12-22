@@ -212,6 +212,7 @@ target_link_libraries(sp_vision PRIVATE
         tomlplusplus::tomlplusplus
         $<$<TARGET_EXISTS:openvino::runtime>:openvino::runtime>
         ${foxglove_SOURCE_DIR}/lib/libfoxglove.a
+        nlohmann_json::nlohmann_json
         "$<$<PLATFORM_ID:Darwin>:-framework Security>"
         "$<$<PLATFORM_ID:Darwin>:-framework CoreFoundation>"
         "$<$<PLATFORM_ID:Darwin>:-framework SystemConfiguration>"
@@ -242,37 +243,32 @@ target_link_libraries(fast_tf_compiled PUBLIC
         fast_tf
 )
 
-# Fast TF example
-add_executable(fast_tf_example
-        examples/fast_tf_example.cpp
+# Infantry Robot TF Integration Example
+# Demonstrates type-safe frame hierarchy + Foxglove SDK integration
+add_executable(infantry_tf_example
+        examples/infantry_tf_example.cpp
         src/fast_tf.cpp
+        ${FOXGLOVE_SOURCES}
 )
 
-target_include_directories(fast_tf_example PRIVATE
+target_include_directories(infantry_tf_example PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${foxglove_SOURCE_DIR}/include
 )
 
-target_link_libraries(fast_tf_example PRIVATE
+target_compile_definitions(infantry_tf_example PRIVATE
+        FOXGLOVE_SDK_AVAILABLE
+)
+
+target_link_libraries(infantry_tf_example PRIVATE
         fast_tf
         Eigen3::Eigen
         TBB::tbb
-)
-
-# Fast TF modern example (with new type-safe APIs and std::expected)
-# This is the recommended example - it demonstrates all new modern APIs
-add_executable(fast_tf_modern_example
-        examples/fast_tf_modern_example.cpp
-        src/fast_tf.cpp
-)
-
-target_include_directories(fast_tf_modern_example PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/include
-)
-
-target_link_libraries(fast_tf_modern_example PRIVATE
-        fast_tf
-        Eigen3::Eigen
-        TBB::tbb
+        spdlog::spdlog
+        ${foxglove_SOURCE_DIR}/lib/libfoxglove.a
+        "$<$<PLATFORM_ID:Darwin>:-framework Security>"
+        "$<$<PLATFORM_ID:Darwin>:-framework CoreFoundation>"
+        "$<$<PLATFORM_ID:Darwin>:-framework SystemConfiguration>"
 )
 
 # Detector benchmark (accuracy testing against dataset)

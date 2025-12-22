@@ -1,12 +1,12 @@
 #pragma once
 
-#include <string_view>
-#include <array>
-#include <cstdint>
-#include <unordered_map>
-#include <string>
 #include "compile_time_string.hpp"
 #include "concepts.hpp"
+#include <array>
+#include <cstdint>
+#include <string>
+#include <string_view>
+#include <unordered_map>
 
 namespace fast_tf {
 
@@ -35,8 +35,7 @@ public:
 
     // 根据别名获取规范名称
     static std::string_view resolve_alias(std::string_view alias) {
-        if (auto it = canonical_map.find(std::string(alias));
-            it != canonical_map.end()) {
+        if (auto it = canonical_map.find(std::string(alias)); it != canonical_map.end()) {
             return it->second;
         }
         return alias;
@@ -79,44 +78,53 @@ private:
 
 // RPY格式的变换
 struct RPYTransformData {
-    double roll = 0.0;   // 绕X轴旋转（弧度）
-    double pitch = 0.0;  // 绕Y轴旋转（弧度）
-    double yaw = 0.0;    // 绕Z轴旋转（弧度）
-    double x = 0.0;      // 平移X
-    double y = 0.0;      // 平移Y
-    double z = 0.0;      // 平移Z
+    double roll  = 0.0; // 绕X轴旋转（弧度）
+    double pitch = 0.0; // 绕Y轴旋转（弧度）
+    double yaw   = 0.0; // 绕Z轴旋转（弧度）
+    double x     = 0.0; // 平移X
+    double y     = 0.0; // 平移Y
+    double z     = 0.0; // 平移Z
 
     RPYTransformData() = default;
 
-    RPYTransformData(double r, double p, double y_val,
-                     double tx, double ty, double tz)
-        : roll(r), pitch(p), yaw(y_val), x(tx), y(ty), z(tz) {}
+    RPYTransformData(double r, double p, double y_val, double tx, double ty, double tz)
+        : roll(r)
+        , pitch(p)
+        , yaw(y_val)
+        , x(tx)
+        , y(ty)
+        , z(tz) {}
 
     // 验证值有效性
     [[nodiscard]] bool is_valid() const {
         // 在 -ffinite-math-only 模式下，我们跳过显式的 isfinite 检查
         // 这里仅做基本的范围检查
-        return true;  // 在 -ffinite-math-only 下，所有数值都被认为是有限的
+        return true; // 在 -ffinite-math-only 下，所有数值都被认为是有限的
     }
 };
 
 // 四元数格式的变换
 struct QuaternionTransformData {
-    double w = 1.0;   // 实部 (default: identity quaternion)
-    double x = 0.0;   // 虚部i
-    double y = 0.0;   // 虚部j
-    double z = 0.0;   // 虚部k
-    double tx = 0.0;  // 平移X
-    double ty = 0.0;  // 平移Y
-    double tz = 0.0;  // 平移Z
+    double w  = 1.0; // 实部 (default: identity quaternion)
+    double x  = 0.0; // 虚部i
+    double y  = 0.0; // 虚部j
+    double z  = 0.0; // 虚部k
+    double tx = 0.0; // 平移X
+    double ty = 0.0; // 平移Y
+    double tz = 0.0; // 平移Z
 
     QuaternionTransformData() = default;
 
-    QuaternionTransformData(double w_val, double x_val, double y_val,
-                            double z_val, double tx_val, double ty_val,
-                            double tz_val)
-        : w(w_val), x(x_val), y(y_val), z(z_val),
-          tx(tx_val), ty(ty_val), tz(tz_val) {}
+    QuaternionTransformData(
+        double w_val, double x_val, double y_val, double z_val, double tx_val, double ty_val,
+        double tz_val)
+        : w(w_val)
+        , x(x_val)
+        , y(y_val)
+        , z(z_val)
+        , tx(tx_val)
+        , ty(ty_val)
+        , tz(tz_val) {}
 
     // 验证值有效性（检查是否为单位四元数）
     [[nodiscard]] bool is_valid() const {
@@ -146,41 +154,42 @@ class TransformMatrix4d {
 public:
     using Matrix = Eigen::Matrix4d;
 
-    TransformMatrix4d() : matrix_(Matrix::Identity()) {}
+    TransformMatrix4d()
+        : matrix_(Matrix::Identity()) {}
 
-    explicit TransformMatrix4d(const Matrix& m) : matrix_(m) {}
+    explicit TransformMatrix4d(const Matrix& m)
+        : matrix_(m) {}
 
     // 从RPY和平移创建
-    static TransformMatrix4d from_rpy(double roll, double pitch, double yaw,
-                                      double x, double y, double z) {
-        //todo check wheter eigen provide this method              
+    static TransformMatrix4d
+        from_rpy(double roll, double pitch, double yaw, double x, double y, double z) {
+        // todo check wheter eigen provide this method
         Eigen::AngleAxisd rx(roll, Eigen::Vector3d::UnitX());
         Eigen::AngleAxisd ry(pitch, Eigen::Vector3d::UnitY());
         Eigen::AngleAxisd rz(yaw, Eigen::Vector3d::UnitZ());
         Eigen::Quaterniond q = rz * ry * rx;
 
-        Matrix m = Matrix::Identity();
+        Matrix m            = Matrix::Identity();
         m.block<3, 3>(0, 0) = q.toRotationMatrix();
-        m(0, 3) = x;
-        m(1, 3) = y;
-        m(2, 3) = z;
+        m(0, 3)             = x;
+        m(1, 3)             = y;
+        m(2, 3)             = z;
 
         return TransformMatrix4d(m);
     }
 
     // 从四元数和平移创建
-    static TransformMatrix4d from_quaternion(double w, double x, double y,
-                                             double z, double tx, double ty,
-                                             double tz) {
-                                                
+    static TransformMatrix4d
+        from_quaternion(double w, double x, double y, double z, double tx, double ty, double tz) {
+
         Eigen::Quaterniond q(w, x, y, z);
         q.normalize();
-        //todo check wheter eigen provide this method              
-        Matrix m = Matrix::Identity();
+        // todo check wheter eigen provide this method
+        Matrix m            = Matrix::Identity();
         m.block<3, 3>(0, 0) = q.toRotationMatrix();
-        m(0, 3) = tx;
-        m(1, 3) = ty;
-        m(2, 3) = tz;
+        m(0, 3)             = tx;
+        m(1, 3)             = ty;
+        m(2, 3)             = tz;
 
         return TransformMatrix4d(m);
     }
@@ -191,32 +200,24 @@ public:
     }
 
     // 获取逆变换
-    [[nodiscard]] TransformMatrix4d inverse() const {
-        return TransformMatrix4d(matrix_.inverse());
-    }
+    [[nodiscard]] TransformMatrix4d inverse() const { return TransformMatrix4d(matrix_.inverse()); }
 
     // 获取底层Eigen矩阵
     [[nodiscard]] const Matrix& matrix() const { return matrix_; }
     [[nodiscard]] Matrix& matrix() { return matrix_; }
 
     // 获取平移向量
-    [[nodiscard]] Eigen::Vector3d translation() const {
-        return matrix_.block<3, 1>(0, 3);
-    }
+    [[nodiscard]] Eigen::Vector3d translation() const { return matrix_.block<3, 1>(0, 3); }
 
     // 获取旋转矩阵
-    [[nodiscard]] Eigen::Matrix3d rotation() const {
-        return matrix_.block<3, 3>(0, 0);
-    }
+    [[nodiscard]] Eigen::Matrix3d rotation() const { return matrix_.block<3, 3>(0, 0); }
 
     // 获取四元数
-    [[nodiscard]] Eigen::Quaterniond quaternion() const {
-        return Eigen::Quaterniond(rotation());
-    }
+    [[nodiscard]] Eigen::Quaterniond quaternion() const { return Eigen::Quaterniond(rotation()); }
 
     // 线性插值
-    static TransformMatrix4d lerp(const TransformMatrix4d& a,
-                                  const TransformMatrix4d& b, double t) {
+    static TransformMatrix4d
+        lerp(const TransformMatrix4d& a, const TransformMatrix4d& b, double t) {
         // 位置线性插值
         Eigen::Vector3d pos = a.translation() * (1.0 - t) + b.translation() * t;
 
@@ -225,7 +226,7 @@ public:
         Eigen::Quaterniond qb(b.rotation());
         Eigen::Quaterniond q = qa.slerp(t, qb);
 
-        Matrix m = Matrix::Identity();
+        Matrix m            = Matrix::Identity();
         m.block<3, 3>(0, 0) = q.toRotationMatrix();
         m.block<3, 1>(0, 3) = pos;
 
@@ -244,14 +245,14 @@ private:
 
 namespace std {
 
-template<std::size_t N>
+template <std::size_t N>
 struct hash<fast_tf::CompileTimeString<N>> {
     std::size_t operator()(const fast_tf::CompileTimeString<N>& str) const {
         return static_cast<std::size_t>(str.hash());
     }
 };
 
-template<>
+template <>
 struct hash<fast_tf::TransformMatrix4d> {
     std::size_t operator()(const fast_tf::TransformMatrix4d& tm) const {
         // 使用矩阵第一个元素的哈希作为简单实现

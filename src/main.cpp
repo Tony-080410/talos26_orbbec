@@ -7,6 +7,7 @@
 #include "talos_gimbal/stm32.hpp"
 #include "tracker.hpp"
 #include <chrono>
+#include "fast_tf/core.hpp"
 
 struct TalosConfig : SpVisionConfig {
     bool daedalus;
@@ -175,14 +176,14 @@ int main() {
             cv::cvtColor(v.image, v.image, cv::COLOR_RGB2BGR);
         }
         if (v.seq != last_seq + 1 && last_seq > 0) {
-            spdlog::info("跳 {} 帧", v.seq - last_seq - 1);
+            spdlog::warn("跳 {} 帧", v.seq - last_seq - 1);
         }
 
         // cv::imshow("FUCK", v.image);
         // cv::imshow("GOD", c);
         // cv::waitKey(1);
         last_seq = v.seq;
-        spdlog::info("处理 {} 帧", last_seq);
+        spdlog::debug("处理 {} 帧", last_seq);
         sched.push_frame(
             scheduler::Frame{
                 v.seq, v.timestamp_ns, scheduler::ImageBuffer::from_mat(std::move(v.image))});

@@ -2,7 +2,6 @@
 
 #include <chrono>
 #include <expected>
-#include <memory>
 #include <opencv2/core.hpp>
 #include <optional>
 

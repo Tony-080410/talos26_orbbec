@@ -2,8 +2,8 @@
 
 #include "strategy.hpp"
 
-#include <opencv2/imgproc.hpp>
 #include <opencv2/imgcodecs.hpp>
+#include <opencv2/imgproc.hpp>
 
 #include <chrono>
 #include <condition_variable>
@@ -14,12 +14,14 @@
 #include <thread>
 #include <variant>
 
+#include <nlohmann/json.hpp>
+
 // 很难绷得住
 #if defined(__clang__)
-#  pragma clang diagnostic push
-#  pragma clang diagnostic ignored "-Weverything"
-#  pragma clang diagnostic ignored "-Werror"
-#  pragma clang diagnostic ignored "-Wdocumentation"
+# pragma clang diagnostic push
+# pragma clang diagnostic ignored "-Weverything"
+# pragma clang diagnostic ignored "-Werror"
+# pragma clang diagnostic ignored "-Wdocumentation"
 #endif
 
 #include <foxglove/error.hpp>
@@ -28,7 +30,7 @@
 #include <foxglove/server.hpp>
 
 #if defined(__clang__)
-#  pragma clang diagnostic pop
+# pragma clang diagnostic pop
 #endif
 
 #include <spdlog/spdlog.h>
@@ -46,11 +48,13 @@ struct TfMessage {
     foxglove::schemas::FrameTransforms tf;
 };
 
-struct ArmorMessage {
-
+struct ArmorDataMessage {
+    std::vector<uint8_t> data;  // JSON序列化数据
 };
 
-using FoxgloveMessage = std::variant<ImageMessage, SceneMessage, TfMessage>;
+struct ArmorMessage {};
+
+using FoxgloveMessage = std::variant<ImageMessage, SceneMessage, TfMessage, ArmorDataMessage>;
 
 // FoxgloveServer 类声明
 class FoxgloveServer {
@@ -81,6 +85,7 @@ private:
     std::optional<foxglove::schemas::FrameTransformsChannel> tf_ch_;
     std::optional<foxglove::schemas::SceneUpdateChannel> scene_ch_;
     std::optional<foxglove::schemas::CompressedImageChannel> img_ch_;
+    std::optional<foxglove::RawChannel> armor_ch_;  // 用于发送装甲板JSON数据
 
     // 消息队列及同步原语
     std::queue<FoxgloveMessage> message_queue_;
@@ -104,24 +109,49 @@ struct FoxgloveWrapper {
     auto detect(const scheduler::SharedFeature& feat, talos::ArmorSlots& armor) noexcept -> void {
         inner.get().detect(feat, armor);
 
-        // 压缩图像数据并转换为消息 - 装饰节点不持有数据所有权
-        auto img = feat.image->mat().clone();
+        // 第一步：完整克隆图像数据(防止数据竞争)
+        auto img_bgr = feat.image->mat().clone();
 
-        // 使用OpenCV的imencode方法压缩为JPEG格式
+        // 绘制装甲板边框和标签
+        for (const auto& a : armor.armors) {
+            cv::Point2f tl(a.pts[0], a.pts[1]);
+            cv::Point2f tr(a.pts[2], a.pts[3]);
+            cv::Point2f br(a.pts[4], a.pts[5]);
+            cv::Point2f bl(a.pts[6], a.pts[7]);
+            cv::line(img_bgr, tl, tr, cv::Scalar(0, 255, 0), 2);
+            cv::line(img_bgr, tr, br, cv::Scalar(0, 255, 0), 2);
+            cv::line(img_bgr, br, bl, cv::Scalar(0, 255, 0), 2);
+            cv::line(img_bgr, bl, tl, cv::Scalar(0, 255, 0), 2);
+
+            const std::string_view type  = a.type == talos::ArmorType::big ? "big" : "small";
+            const std::string_view name  = talos::armor_name(static_cast<talos::ArmorName>(a.name));
+            const std::string_view color = talos::color_name(static_cast<talos::Color>(a.color));
+            cv::putText(
+                img_bgr, std::string(name) + " " + std::string(type) + " " + std::string(color), tl,
+                cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(255, 0, 0), 1);
+        }
+
+        // 第二步：使用OpenCV的imencode方法压缩为JPEG格式
         std::vector<uint8_t> compressed_data;
-        std::vector<int> encode_params{cv::IMWRITE_JPEG_QUALITY, 85};  // 85质量
-        cv::imencode(".jpg", img, compressed_data, encode_params);
+        std::vector<int> encode_params{cv::IMWRITE_JPEG_QUALITY, 85};
 
+        bool encode_success = cv::imencode(".jpg", img_bgr, compressed_data, encode_params);
+        if (!encode_success) {
+            spdlog::warn("Failed to encode image to JPEG");
+            return;
+        }
+
+        // 第三步：构造图像消息
         ImageMessage img_msg;
         img_msg.img.timestamp = fxglv_ts_from_ns(feat.timestamp_ns);
-        img_msg.img.frame_id  = "camera";
+        img_msg.img.frame_id  = "camera_optical_frame";
         img_msg.img.format    = "jpeg";
         img_msg.img.data      = std::vector<std::byte>(
             reinterpret_cast<const std::byte*>(compressed_data.data()),
             reinterpret_cast<const std::byte*>(compressed_data.data() + compressed_data.size()));
-
-        // 将消息加入FoxgloveServer队列 - 线程安全
         server.get().enqueue_message(std::move(img_msg));
+
+
     }
 
     auto track(
@@ -138,18 +168,157 @@ struct FoxgloveWrapper {
     auto solve(const talos::ArmorSlots& armor, auto_aim::Poses3D& poses3d) noexcept -> void {
         inner.get().solve(armor, poses3d);
 
-        // 发布装甲板位置信息
-        // TODO: 实现通过SceneMessage发送Marker显示装甲板位置
-        // size_t valid_count = 0;
-        for (const auto& pose : poses3d) {
-            if (pose.valid) {
-                // valid_count++;
+        std::vector<foxglove::schemas::SceneEntity> scene_entities;
+        for (int i = 0; i < 10; i++) {
+            if (!armor.is_valid(i)) continue;
+
+            const auto& a = armor.armors[i];
+            const auto& pose = poses3d[i];
+
+            // 创建SceneEntity
+            foxglove::schemas::SceneEntity entity;
+            entity.id = "armor_" + std::to_string(i);
+            entity.frame_id = "world";
+            entity.timestamp = fxglv_ts_from_ns(armor.timestamp_ns);
+
+            // 构造位置和方向
+            foxglove::schemas::Vector3 position;
+            position.x = pose.xyz_in_world[0];
+            position.y = pose.xyz_in_world[1];
+            position.z = pose.xyz_in_world[2];
+
+            // yaw pitch roll -> qx qy qz qw
+            Eigen::AngleAxisd yawz(pose.ypr_in_world[0], Eigen::Vector3d::UnitZ());
+            Eigen::AngleAxisd pitchy(pose.ypr_in_world[1], Eigen::Vector3d::UnitY());
+            Eigen::AngleAxisd rollx(pose.ypr_in_world[2], Eigen::Vector3d::UnitX());
+
+            Eigen::Quaterniond q = yawz * pitchy * rollx;
+            foxglove::schemas::Quaternion orientation;
+            orientation.x = q.x();
+            orientation.y = q.y();
+            orientation.z = q.z();
+            orientation.w = q.w();
+
+            foxglove::schemas::Pose p;
+            p.position = position;
+            p.orientation = orientation;
+
+            // 创建立方体 (装甲板)
+            foxglove::schemas::Vector3 cube_size;
+            if (a.type == talos::ArmorType::big) {
+                cube_size.x = 0.225;
+                cube_size.y = 0.27;
+                cube_size.z = 0.02;
+            } else {
+                cube_size.x = 0.115;
+                cube_size.y = 0.27;
+                cube_size.z = 0.02;
             }
+
+            foxglove::schemas::CubePrimitive cube;
+            cube.pose = p;
+            cube.size = cube_size;
+            cube.color = get_color(static_cast<talos::Color>(a.color));
+            entity.cubes.push_back(cube);
+
+            // 创建文本标签
+            foxglove::schemas::TextPrimitive text;
+            text.text = std::string(talos::armor_name(static_cast<talos::ArmorName>(a.name))) + " " +
+                       std::string(a.type == talos::ArmorType::big ? "big" : "small");
+            text.pose = p;
+            text.font_size = 0.05;
+            foxglove::schemas::Color text_color;
+            text_color.r = 1.0;  // 白色
+            text_color.g = 1.0;
+            text_color.b = 1.0;
+            text_color.a = 1.0;
+            text.color = text_color;
+            text.billboard = true;
+            entity.texts.push_back(text);
+
+            // 添加元数据
+            {
+                foxglove::schemas::KeyValuePair kv;
+                kv.key = "confidence";
+                kv.value = std::to_string(a.confidence);
+                entity.metadata.push_back(kv);
+            }
+            {
+                foxglove::schemas::KeyValuePair kv;
+                kv.key = "color";
+                kv.value = std::string(talos::color_name(static_cast<talos::Color>(a.color)));
+                entity.metadata.push_back(kv);
+            }
+
+            scene_entities.push_back(entity);
         }
-        // spdlog::debug("Solved {} valid armor poses", valid_count);
+
+        // 发送场景消息
+        if (!scene_entities.empty()) {
+            SceneMessage scene_msg;
+            scene_msg.scene.entities = std::move(scene_entities);
+            server.get().enqueue_message(std::move(scene_msg));
+        }
+
+        // 第五步：构造和发送JSON装甲板数据
+        nlohmann::json armor_json = nlohmann::json::array();
+        for (int i = 0; i < 10; i++) {
+            if (!armor.is_valid(i)) continue;
+
+            const auto& a = armor.armors[i];
+            const auto& pose = poses3d[i];
+
+            nlohmann::json armor_obj;
+            armor_obj["id"] = i;
+            armor_obj["name"] = std::string(talos::armor_name(static_cast<talos::ArmorName>(a.name)));
+            armor_obj["type"] = a.type == talos::ArmorType::big ? "big" : "small";
+            armor_obj["color"] = std::string(talos::color_name(static_cast<talos::Color>(a.color)));
+            armor_obj["confidence"] = a.confidence;
+            armor_obj["pose"]["position"]["x"] = pose.xyz_in_world[0];
+            armor_obj["pose"]["position"]["y"] = pose.xyz_in_world[1];
+            armor_obj["pose"]["position"]["z"] = pose.xyz_in_world[2];
+            armor_obj["pose"]["euler"]["yaw"] = pose.ypr_in_world[0];
+            armor_obj["pose"]["euler"]["pitch"] = pose.ypr_in_world[1];
+            armor_obj["pose"]["euler"]["roll"] = pose.ypr_in_world[2];
+
+            armor_json.push_back(armor_obj);
+        }
+
+        // 发送JSON数据
+        if (!armor_json.empty()) {
+            std::string json_str = armor_json.dump();
+            ArmorDataMessage armor_msg;
+            armor_msg.data = std::vector<uint8_t>(
+                reinterpret_cast<const uint8_t*>(json_str.data()),
+                reinterpret_cast<const uint8_t*>(json_str.data() + json_str.size()));
+            server.get().enqueue_message(std::move(armor_msg));
+        }
     }
 
     auto preprocess(scheduler::SharedFeature& sf) -> void { inner.get().preprocess(sf); }
+
+    // 颜色映射函数
+    static inline foxglove::schemas::Color get_color(talos::Color c) noexcept {
+        foxglove::schemas::Color color;
+        color.a = 1.0;
+        switch(c) {
+            case talos::Color::red:
+                color.r = 1.0; color.g = 0.0; color.b = 0.0;
+                break;
+            case talos::Color::blue:
+                color.r = 0.0; color.g = 0.0; color.b = 1.0;
+                break;
+            case talos::Color::extinguish:
+                color.r = 1.0; color.g = 1.0; color.b = 0.0;  // 黄色
+                break;
+            case talos::Color::purple:
+                color.r = 1.0; color.g = 0.0; color.b = 1.0;  // 紫色
+                break;
+            default:
+                color.r = 0.5; color.g = 0.5; color.b = 0.5;  // 灰色
+        }
+        return color;
+    }
 
     static foxglove::schemas::Timestamp fxglv_ts_from_ns(uint64_t ns) {
         using namespace std::chrono;
