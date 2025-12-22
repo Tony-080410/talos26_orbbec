@@ -9,7 +9,7 @@ use_openvino = true
 device = "GPU"
 
 [detector]
-threshold = 60
+threshold = 90
 max_angle_error = 45 # degree
 min_lightbar_ratio = 1.5
 max_lightbar_ratio = 20
@@ -23,13 +23,11 @@ min_confidence = 0.8
 [solver]
 # 相机内参 (3x3 row-major)
 camera_matrix = [
-    1280.0, 0.0, 640.0,
-    0.0, 1280.0, 512.0,
-    0.0, 0.0, 1.0
+1825.132, 0.000, 725.494, 0.000, 1816.228, 607.733, 0.000, 0.000, 1.000
 ]
 
 # 畸变系数 (k1, k2, p1, p2, k3)
-distort_coefficient = [0.0, 0.0, 0.0, 0.0, 0.0]
+distort_coefficient = [-0.101, 0.451, -0.005, -0.001, -0.920]
 
 # 相机到云台旋转矩阵 (3x3 row-major)
 extrinsic_camera_gimbal = [
@@ -49,7 +47,7 @@ extrinsic_gimbal_imu = [
 ]
 
 [tracker]
-enemy_color = 1           # "red" or "blue"
+enemy_color = 0           # "red" or "blue"
 min_detect_count = 3          # 确认跟踪所需的最小检测次数
 max_temp_lost_count = 30      # 临时丢失的最大帧数
 outpost_max_temp_lost_count = 100  # 前哨站临时丢失的最大帧数

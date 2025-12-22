@@ -59,8 +59,19 @@ inline std::expected<TalosConfig, read_config_error> read_config() {
 //     return read(100ms);
 // }
 
+/**
+ * @brief Get current time in nanoseconds
+ * Uses std::chrono::high_resolution_clock for portability
+ */
+static uint64_t now_ns() {
+    const auto now = std::chrono::high_resolution_clock::now();
+    const auto duration = now.time_since_epoch();
+    return std::chrono::duration_cast<std::chrono::nanoseconds>(duration).count();
+}
+
 int main() {
     init_logger();
+    spdlog::set_level(spdlog::level::debug);
     spdlog::info("talos is initializing...");
     const auto start = std::chrono::system_clock::now();
     auto gimbal = talos_gimbal::Stm32Impl<talos_gimbal::Stm32Parser>{};
@@ -79,7 +90,7 @@ int main() {
                    config_result.error());
         return 1;
     }
-    auto config = config_result.value();
+    const auto &config = config_result.value();
 
     std::optional<ipc::ShmClient> client;
     std::unique_ptr<hikcamera::ImageCapturer> camera_;
@@ -96,15 +107,16 @@ int main() {
         }
     } else {
         hikcamera::ImageCapturer::CameraProfile profile;
-        camera_ = hikcamera::ImageCapturer::create(profile).value();
+        auto x = hikcamera::ImageCapturer::create(profile);
+        if (!x) {
+            spdlog::critical("camera: {}", x.error().what());
+            return 2;
+        }
+        camera_ = std::move(*x);
     }
+    spdlog::info("Initialization complete, starting main loop...");
 
-    const auto info = client->camera_info();
-    config.solver.camera_matrix << info.fx, 0.0, info.cx, 0.0, info.fy, info.cy, 0.0, 0.0, 1.0;
-    config.solver.distort_coefficient << info.distortion[0], info.distortion[1], info.distortion[2], info.distortion[3],
-            info.distortion[4];
-
-    TalosStrategy strategy(false, config, 6, info.height, info.width);
+    TalosStrategy strategy(false, config, 6, 1080, 1440);
     scheduler::Scheduler<TalosStrategy> sched;
     sched.init(config, &strategy);
     sched.start();
@@ -113,6 +125,7 @@ int main() {
             "done. ({}ms)",
             std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now() - start).count());
 
+    // cv::Mat rvec = (cv::Mat_<double>(3, 1) << 90.0, 90.0, 90.0);
     uint64_t last_seq = 0;
     while (true) {
         gimbal.handle_events();
@@ -124,7 +137,7 @@ int main() {
             if (img_result) {
                 static uint64_t seq = 0;
                 auto img = img_result.value();
-                frame = ipc::ShmClient::ImageFrame{.image = std::move(img), .seq = seq++, .timestamp_ns = 0};
+                frame = ipc::ShmClient::ImageFrame{.image = std::move(img), .seq = seq++, .timestamp_ns = now_ns()};
             } else {
                 spdlog::critical("{}", img_result.error().what());
                 return 2;
@@ -135,16 +148,28 @@ int main() {
             // 没有新图像
             continue;
         }
-        if (const auto pose_ = client->recv_pose(ipc::POSE_GIMBAL)) {
-            const auto pose = *pose_;
-            strategy.solver.set_R_gimbal2world(Eigen::Quaterniond{pose.qw, pose.qx, pose.qy, pose.qz});
-        }
+        double roll = 0; // rad
+        double pitch = 0; // rad
+        double yaw = 0; // rad
+
+        Eigen::AngleAxisd rx(roll, Eigen::Vector3d::UnitX());
+        Eigen::AngleAxisd ry(pitch, Eigen::Vector3d::UnitY());
+        Eigen::AngleAxisd rz(yaw, Eigen::Vector3d::UnitZ());
+        strategy.solver.set_R_gimbal2world(rx * ry * rz);
+
         // 跳帧检测
         auto v = *frame;
-        cv::cvtColor(v.image, v.image, cv::COLOR_RGB2BGR);
+        cv::Mat c = v.image.clone();
+        cv::cvtColor(c, c, cv::COLOR_RGB2GRAY);
+        cv::threshold(c, c, 50, 255, cv::THRESH_BINARY);
+        // cv::cvtColor(v.image, v.image, cv::COLOR_RGB2BGR);
         if (v.seq != last_seq + 1 && last_seq > 0) {
             spdlog::info("跳 {} 帧", v.seq - last_seq - 1);
         }
+
+        // cv::imshow("FUCK", v.image);
+        // cv::imshow("GOD", c);
+        // cv::waitKey(1);
         last_seq = v.seq;
         spdlog::info("处理 {} 帧", last_seq);
         sched.push_frame(scheduler::Frame{v.seq, v.timestamp_ns, scheduler::ImageBuffer::from_mat(std::move(v.image))});

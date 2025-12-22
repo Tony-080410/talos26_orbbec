@@ -68,11 +68,11 @@ set(FOXGLOVE_SHA ${FOXGLOVE_SHA256_${FOXGLOVE_PLATFORM}})
 message(STATUS "Downloading Foxglove from: ${FOXGLOVE_URL}")
 
 FetchContent_Declare(
-        foxglove
-        URL ${FOXGLOVE_URL}
-        URL_HASH SHA256=${FOXGLOVE_SHA}
-        DOWNLOAD_EXTRACT_TIMESTAMP TRUE
-)
+       foxglove
+       URL ${FOXGLOVE_URL}
+	#        URL_HASH SHA256=${FOXGLOVE_SHA}
+	#        DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+	)
 
-FetchContent_MakeAvailable(foxglove)
+	FetchContent_MakeAvailable(foxglove)
 

@@ -153,6 +153,7 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
         talos_gimbal
         scheduler
         auto_aim
+	    hikcamera
         ${OpenCV_LIBS}
         spdlog::spdlog
         fmt::fmt

@@ -40,12 +40,14 @@ namespace auto_aim {
             tracker_soa_.try_reset_idle();
         }
 
+        spdlog::debug("Tracker state: {}", state_string());
         bool found;
         if (state() == talos::TrackerState::IDLE) {
             found = set_target(slots, poses3d, t);
         } else {
             found = update_target(slots, poses3d, t);
         }
+        spdlog::debug("Tracker found: {}", found ? "yes" : "no");
 
         state_machine(found);
 
@@ -138,30 +140,38 @@ namespace auto_aim {
 
     bool Tracker::set_target(const talos::ArmorSlots &slots, const std::array<ArmorPose3D, 10> &poses3d,
                              const std::chrono::steady_clock::time_point t) {
+        spdlog::debug("Setting target...");
         // 找到第一个有效的敌方装甲板
         int best_idx = -1;
         float best_distance = 1e10f;
 
         for (int i = 0; i < 10; ++i) {
             if (!slots.is_valid(i) || !poses3d[i].valid) {
+                spdlog::debug("Slot {} is not valid or pose3d is not valid", i);
                 continue;
             }
 
             // 过滤非敌方颜色
             if (const auto &armor = slots.armors[i]; static_cast<talos::Color>(armor.color) != enemy_color_) {
+                spdlog::debug("Slot {} is not enemy color", i);
                 continue;
             }
 
             // 选择距离最近的
             if (const float distance = static_cast<float>(poses3d[i].ypd_in_world[2]); distance < best_distance) {
+                spdlog::debug("Slot {} has better distance: {}", i, distance);
                 best_distance = distance;
                 best_idx = i;
+            } else {
+                spdlog::debug("Slot {} distance {} is worse than best {}", i, distance, best_distance);
             }
         }
 
         if (best_idx < 0) {
+            spdlog::debug("No valid target found");
             return false;
         }
+        spdlog::debug("Best target found at slot {}", best_idx);
 
         const auto &armor = slots.armors[best_idx];
         const auto &pose3d = poses3d[best_idx];
