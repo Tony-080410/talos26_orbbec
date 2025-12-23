@@ -101,7 +101,7 @@ using FoxgloveMessage = std::variant<
 // FoxgloveServer 类声明
 class FoxgloveServer {
 public:
-    explicit FoxgloveServer(uint16_t port = 8765, std::string host = "127.0.0.1") noexcept;
+    explicit FoxgloveServer(uint16_t port = 8765, std::string host = "0.0.0.0") noexcept;
     ~FoxgloveServer() noexcept;
 
     // 禁止拷贝和移动
@@ -116,7 +116,7 @@ public:
     void enqueue_message(FoxgloveMessage msg) noexcept;
 
     // TF 更新方法 (使用统一时间戳发布完整 TF 树)
-    void publish_tf(double gimbal_yaw, double gimbal_pitch, uint64_t timestamp_ns) noexcept;
+    void publish_tf(double gimbal_roll, double gimbal_pitch, double gimbal_yaw, uint64_t timestamp_ns) noexcept;
 
     // 相机标定信息发布
     void publish_camera_calibration(
@@ -192,10 +192,14 @@ struct FoxgloveWrapper {
             server.get().enqueue_message(std::move(cmd_msg));
         }
 
-        // 更新 TF (使用统一时间戳发布完整 TF 树)
+        // 更新 TF (使用实际 IMU 姿态，统一时间戳)
         uint64_t tf_ts = std::chrono::duration_cast<std::chrono::nanoseconds>(
             std::chrono::steady_clock::now().time_since_epoch()).count();
-        server.get().publish_tf(cmd.yaw, cmd.pitch, tf_ts);
+        server.get().publish_tf(
+            inner.get().get_gimbal_roll(),
+            inner.get().get_gimbal_pitch(),
+            inner.get().get_gimbal_yaw(),
+            tf_ts);
     }
 
     auto detect(const scheduler::Captured& feat, talos::ArmorSlots& armor) noexcept -> void {
@@ -413,19 +417,21 @@ struct FoxgloveWrapper {
             // 创建SceneEntity
             foxglove::schemas::SceneEntity entity;
             entity.id = "armor_" + std::to_string(i);
-            entity.frame_id = "world";
+            entity.frame_id = "gimbal_link";  // 使用云台坐标系
             entity.timestamp = fxglv_ts_from_ns(armor.timestamp_ns);
 
-            // 构造位置和方向
+            // 构造位置和方向 (使用云台坐标系)
             foxglove::schemas::Vector3 position;
-            position.x = pose.xyz_in_world[0];
-            position.y = pose.xyz_in_world[1];
-            position.z = pose.xyz_in_world[2];
+            position.x = pose.xyz_in_gimbal[0];
+            position.y = pose.xyz_in_gimbal[1];
+            position.z = pose.xyz_in_gimbal[2];
 
-            // yaw pitch roll -> qx qy qz qw
-            Eigen::AngleAxisd yawz(pose.ypr_in_world[0], Eigen::Vector3d::UnitZ());
-            Eigen::AngleAxisd pitchy(pose.ypr_in_world[1], Eigen::Vector3d::UnitY());
-            Eigen::AngleAxisd rollx(pose.ypr_in_world[2], Eigen::Vector3d::UnitX());
+            // yaw pitch roll -> qx qy qz qw (云台坐标系下的姿态)
+            // eulers(R, 2, 1, 0) 提取的是 ZYX 内旋欧拉角
+            // 重建: R = Rz(yaw) * Ry(pitch) * Rx(roll)
+            Eigen::AngleAxisd yawz(pose.ypr_in_gimbal[0], Eigen::Vector3d::UnitZ());
+            Eigen::AngleAxisd pitchy(pose.ypr_in_gimbal[1], Eigen::Vector3d::UnitY());
+            Eigen::AngleAxisd rollx(pose.ypr_in_gimbal[2], Eigen::Vector3d::UnitX());
 
             Eigen::Quaterniond q = yawz * pitchy * rollx;
             foxglove::schemas::Quaternion orientation;
@@ -441,13 +447,13 @@ struct FoxgloveWrapper {
             // 创建立方体 (装甲板)
             foxglove::schemas::Vector3 cube_size;
             if (a.type == talos::ArmorType::big) {
-                cube_size.x = 0.225;
+                cube_size.z = 0.225;
                 cube_size.y = 0.27;
-                cube_size.z = 0.02;
+                cube_size.x = 0.02;
             } else {
-                cube_size.x = 0.115;
+                cube_size.z = 0.115;
                 cube_size.y = 0.27;
-                cube_size.z = 0.02;
+                cube_size.x = 0.02;
             }
 
             foxglove::schemas::CubePrimitive cube;
@@ -561,7 +567,7 @@ struct FoxgloveWrapper {
     // 颜色映射函数
     static foxglove::schemas::Color fxgl_get_color(const talos::Color c) noexcept {
         foxglove::schemas::Color color;
-        color.a = 1.0;
+        color.a = 0.3;
         switch(c) {
             case talos::Color::red:
                 color.r = 1.0; color.g = 0.0; color.b = 0.0;

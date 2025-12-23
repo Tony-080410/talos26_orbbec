@@ -9,6 +9,7 @@
 #include "talos_gimbal/stm32.hpp"
 #include "tracker.hpp"
 #include <chrono>
+#include <Eigen/Geometry>
 
 struct TalosConfig : SpVisionConfig {
     bool daedalus;
@@ -186,7 +187,7 @@ int main() {
                 strategy.solver.set_R_gimbal2world(q);
 
                 // Extract yaw from quaternion for gimbal tracking
-                auto euler = q.toRotationMatrix().canonicalEulerAngles(2, 1, 0); // ZYX order
+                auto euler = q.toRotationMatrix().eulerAngles(2, 1, 0); // ZYX order
                 strategy.set_gimbal_yaw(euler[0]);
             }
         } else {
@@ -212,9 +213,9 @@ int main() {
         double pitch = imu_data.data.pitch;
         double yaw   = imu_data.data.yaw;
 
-        // 更新 strategy 的弹速和云台角度
+        // 更新 strategy 的弹速和云台姿态
         strategy.set_bullet_speed(imu_data.data.bullet_speed);
-        strategy.set_gimbal_yaw(yaw);
+        strategy.set_gimbal_pose(roll, pitch, yaw);
 
         Eigen::AngleAxisd rx(roll, Eigen::Vector3d::UnitX());
         Eigen::AngleAxisd ry(pitch, Eigen::Vector3d::UnitY());

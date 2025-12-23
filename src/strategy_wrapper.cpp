@@ -113,7 +113,7 @@ FoxgloveServer::FoxgloveServer(const uint16_t port, std::string host) noexcept {
     // 发布初始 TF (建立完整的 TF 树)
     uint64_t init_ts = std::chrono::duration_cast<std::chrono::nanoseconds>(
         std::chrono::steady_clock::now().time_since_epoch()).count();
-    publish_tf(0.0, 0.0, init_ts);
+    publish_tf(0.0, 0.0, 0.0, init_ts);
 
     server_initialized_ = true;
 
@@ -205,7 +205,7 @@ void FoxgloveServer::enqueue_message(FoxgloveMessage msg) noexcept {
     message_queue_.push(std::move(msg));
 }
 
-void FoxgloveServer::publish_tf(double gimbal_yaw, double gimbal_pitch, uint64_t timestamp_ns) noexcept {
+void FoxgloveServer::publish_tf(double gimbal_roll, double gimbal_pitch, double gimbal_yaw, uint64_t timestamp_ns) noexcept {
     if (!tf_manager_) {
         return;
     }
@@ -220,10 +220,17 @@ void FoxgloveServer::publish_tf(double gimbal_yaw, double gimbal_pitch, uint64_t
     publisher.publish_transform<fast_tf::odom_Frame, fast_tf::world_Frame>(
         odom_tf, timestamp_ns);
 
-    // 2. odom -> gimbal_link (云台姿态)
-    fast_tf::TransformMatrix4d gimbal_tf = fast_tf::TransformMatrix4d::from_rpy(
-        0.0, gimbal_pitch, gimbal_yaw,  // roll, pitch, yaw
-        0.0, 0.0, 0.0                   // x, y, z
+    // 2. odom -> gimbal_link (云台姿态 - 使用实际 IMU 读数)
+    // 注意: solver 使用 rx * ry * rz 顺序 (即 ZYX: yaw先, pitch次, roll最后)
+    // 需要手动构建四元数来匹配这个顺序
+    Eigen::AngleAxisd rx(0.0, Eigen::Vector3d::UnitX());  // roll = 0
+    Eigen::AngleAxisd ry(gimbal_pitch, Eigen::Vector3d::UnitY());
+    Eigen::AngleAxisd rz(gimbal_yaw, Eigen::Vector3d::UnitZ());
+    Eigen::Quaterniond q_gimbal = rx * ry * rz;  // 匹配 solver 的顺序
+
+    fast_tf::TransformMatrix4d gimbal_tf = fast_tf::TransformMatrix4d::from_quaternion(
+        q_gimbal.w(), q_gimbal.x(), q_gimbal.y(), q_gimbal.z(),
+        0.0, 0.0, 0.0  // x, y, z translation
     );
     publisher.publish_transform<fast_tf::gimbal_link_Frame, fast_tf::odom_Frame>(
         gimbal_tf, timestamp_ns);

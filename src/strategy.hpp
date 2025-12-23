@@ -56,6 +56,22 @@ public:
     void set_gimbal_yaw(const double yaw) noexcept { gimbal_yaw_ = yaw; }
 
     /**
+     * @brief 设置完整的云台姿态 (从 IMU 获取，用于 TF 发布)
+     */
+    void set_gimbal_pose(double roll, double pitch, double yaw) noexcept {
+        gimbal_roll_ = roll;
+        gimbal_pitch_ = pitch;
+        gimbal_yaw_ = yaw;
+    }
+
+    /**
+     * @brief 获取云台姿态 (用于 TF 发布)
+     */
+    [[nodiscard]] double get_gimbal_roll() const noexcept { return gimbal_roll_; }
+    [[nodiscard]] double get_gimbal_pitch() const noexcept { return gimbal_pitch_; }
+    [[nodiscard]] double get_gimbal_yaw() const noexcept { return gimbal_yaw_; }
+
+    /**
      * @brief 获取检测器工作缓冲区 (用于调试/可视化)
      */
     [[nodiscard]] const auto_aim::DetectorWorkBuffers& get_detector_buffers() const noexcept {
@@ -142,8 +158,10 @@ private:
     std::optional<auto_aim::OutputInterface> output_interface_{};
 
     // 运行时参数 (从外部设置)
-    double bullet_speed_{23.0}; // m/s (默认 23)
-    double gimbal_yaw_{0.0};    // rad (当前云台 yaw)
+    double bullet_speed_{23.0};  // m/s (默认 23)
+    double gimbal_roll_{0.0};    // rad (当前云台 roll)
+    double gimbal_pitch_{0.0};   // rad (当前云台 pitch)
+    double gimbal_yaw_{0.0};     // rad (当前云台 yaw)
 
     // 相机标定参数 (用于可视化)
     uint32_t image_width_{0};
