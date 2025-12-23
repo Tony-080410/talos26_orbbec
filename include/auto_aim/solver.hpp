@@ -20,12 +20,18 @@ namespace auto_aim {
      * 移植自 sp_vision_25/tasks/auto_aim/solver
      * 功能：
      * 1. 对检测到的装甲板执行PnP解算，获取3D位姿
-     * 2. 坐标系变换：相机->云台->世界
+     * 2. 坐标系变换：camera_optical->ROS相机->云台->世界
      * 3. Yaw角优化（通过重投影误差最小化）
      *
      * 坐标系定义（ROS标准REP0103）：
-     * - 相机坐标系：x右 y下 z前（沿光轴）
+     * - camera_optical坐标系（OpenCV/PnP输出）：x右 y下 z前（沿光轴）
+     * - ROS相机坐标系（标准）：x前 y左 z上
      * - 云台/世界坐标系：x前 y左 z上（当相机正向安装时）
+     *
+     * 完整转换链：
+     * camera_optical → [R_cameraOptical_to_ros] → ROS相机
+     *                → [R_camera2gimbal_] → 云台
+     *                → [R_gimbal2world_] → 世界
      */
     class Solver {
     public:
@@ -81,11 +87,16 @@ namespace auto_aim {
         cv::Mat camera_matrix_;
         cv::Mat distort_coeffs_;
 
-        // 外参矩阵
+        // 外参矩阵和坐标系转换
         Eigen::Matrix3d R_gimbal2imubody_;
         Eigen::Matrix3d R_camera2gimbal_;
         Eigen::Vector3d t_camera2gimbal_;
         Eigen::Matrix3d R_gimbal2world_;
+
+        // camera_optical到ROS标准相机坐标系的转换矩阵
+        // OpenCV/PnP输出 camera_optical (x右, y下, z前)
+        // → ROS标准 (x前, y左, z上)
+        Eigen::Matrix3d R_cameraOptical_to_ros_;
 
         /**
          * @brief 执行Yaw角优化

@@ -31,6 +31,13 @@ FoxgloveServer::FoxgloveServer(const uint16_t port, std::string host) noexcept {
     }
     scene_ch_.emplace(std::move(scene_r.value()));
 
+    auto track_scene_r = foxglove::schemas::SceneUpdateChannel::create("/track/scene");
+    if (!track_scene_r.has_value()) {
+        spdlog::error("track_scene_ch_ create failed: {}", foxglove::strerror(track_scene_r.error()));
+        return;
+    }
+    track_scene_ch_.emplace(std::move(track_scene_r.value()));
+
     auto img_r = foxglove::schemas::CompressedImageChannel::create("/image");
     if (!img_r.has_value()) {
         spdlog::error(
@@ -149,6 +156,10 @@ void FoxgloveServer::message_sender_thread() {
                 } else if constexpr (std::is_same_v<decltype(m), SceneMessage&>) {
                     if (scene_ch_) {
                         scene_ch_->log(m.scene);
+                    }
+                } else if constexpr (std::is_same_v<decltype(m), TrackSceneMessage&>) {
+                    if (track_scene_ch_) {
+                        track_scene_ch_->log(m.scene);
                     }
                 } else if constexpr (std::is_same_v<decltype(m), TfMessage&>) {
                     if (tf_ch_) {

@@ -45,6 +45,10 @@ struct SceneMessage {
     foxglove::schemas::SceneUpdate scene;
 };
 
+struct TrackSceneMessage {
+    foxglove::schemas::SceneUpdate scene;
+};
+
 struct TfMessage {
     foxglove::schemas::FrameTransforms tf;
 };
@@ -87,7 +91,7 @@ struct GimbalCmdMessage {
 using FoxgloveMessage = std::variant<
     ImageMessage, SceneMessage, TfMessage, ArmorDataMessage, BinaryImageMessage,
     PatternImageMessage, DebugLightsMessage, DebugArmorsMessage, MeasurementMessage, TargetMessage,
-    GimbalCmdMessage>;
+    GimbalCmdMessage, TrackSceneMessage>;
 
 // FoxgloveServer 类声明
 class FoxgloveServer {
@@ -126,6 +130,7 @@ private:
     std::optional<foxglove::WebSocketServer> server_;
     std::optional<foxglove::schemas::FrameTransformsChannel> tf_ch_;
     std::optional<foxglove::schemas::SceneUpdateChannel> scene_ch_;
+    std::optional<foxglove::schemas::SceneUpdateChannel> track_scene_ch_; // track专用场景channel
     std::optional<foxglove::schemas::CompressedImageChannel> img_ch_;
     std::optional<foxglove::RawChannel> armor_ch_; // 用于发送装甲板JSON数据
 
@@ -351,6 +356,7 @@ struct FoxgloveWrapper {
     auto track(
         talos::TrackerSoA& tracker_soa, const talos::ArmorSlots& armor,
         const auto_aim::Poses3D& poses3d) noexcept -> void {
+
         inner.get().track(tracker_soa, armor, poses3d);
 
         // 发布跟踪目标信息 (JSON)
@@ -381,7 +387,7 @@ struct FoxgloveWrapper {
                 for (const auto& xyza : armor_list) {
                     // 创建SceneEntity
                     foxglove::schemas::SceneEntity entity;
-                    entity.id        = "armor_" + std::to_string(i++);
+                    entity.id        = "armor_" + std::to_string(i);
                     entity.frame_id  = "odom";
                     entity.timestamp = fxglv_ts_from_ns(armor.timestamp_ns);
 
@@ -437,7 +443,7 @@ struct FoxgloveWrapper {
                     {
                         foxglove::schemas::KeyValuePair kv;
                         kv.key   = "armor_id";
-                        kv.value = std::to_string(i);
+                        kv.value = std::to_string(i++);
                         entity.metadata.push_back(kv);
                     }
 
@@ -452,7 +458,7 @@ struct FoxgloveWrapper {
                 }
             }
             if (!scene_entities.empty()) {
-                SceneMessage scene_msg;
+                TrackSceneMessage scene_msg;
                 scene_msg.scene.entities = std::move(scene_entities);
                 server.get().enqueue_message(std::move(scene_msg));
             }
