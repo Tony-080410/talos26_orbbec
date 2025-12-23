@@ -58,13 +58,15 @@ auto TalosStrategy::output() noexcept -> void {
 
     // 检查输出接口是否已初始化
     if (!output_interface_) {
+        last_gimbal_cmd_ = {false, false, 0.0, 0.0, 0.0};
         return;
     }
 
     // 检查目标是否有效 (依赖 track() 的结果)
     if (!target_.converged()) {
         // 发送无效命令
-        output_interface_->send({false, false, 0.0, 0.0, 0.0});
+        last_gimbal_cmd_ = {false, false, 0.0, 0.0, 0.0};
+        output_interface_->send(last_gimbal_cmd_);
         return;
     }
 
@@ -73,6 +75,7 @@ auto TalosStrategy::output() noexcept -> void {
     auto cmd             = aimer_.aim(target_, timestamp, bullet_speed_, true);
 
     if (!cmd.valid) {
+        last_gimbal_cmd_ = cmd;
         output_interface_->send(cmd);
         return;
     }
@@ -84,6 +87,7 @@ auto TalosStrategy::output() noexcept -> void {
         spdlog::info("fire!!!");
     }
 
-    // 3. 发送命令
+    // 3. 保存并发送命令
+    last_gimbal_cmd_ = cmd;
     output_interface_->send(cmd);
 }

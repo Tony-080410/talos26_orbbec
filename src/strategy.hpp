@@ -27,7 +27,16 @@ public:
         detector(config, debug), solver(config.solver), tracker(config.tracker),
         aimer_(to_aimer_config(config.aimer)), shooter_(to_shooter_config(config.shooter)),
         frame_pool(buffer_count, rows, cols, CV_8UC3), gray_pool(buffer_count, rows, cols, CV_8UC1),
-        small_pool(buffer_count, rows, cols, CV_8UC1) {}
+        small_pool(buffer_count, rows, cols, CV_8UC1),
+        image_width_(static_cast<uint32_t>(cols)), image_height_(static_cast<uint32_t>(rows)) {
+        // 存储相机标定参数
+        for (int i = 0; i < 9; ++i) {
+            camera_matrix_[i] = config.solver.camera_matrix.data()[i];
+        }
+        for (int i = 0; i < 5; ++i) {
+            distortion_.push_back(config.solver.distort_coefficient.data()[i]);
+        }
+    }
 
     /**
      * @brief 设置输出接口 (IPC 或 USB)
@@ -45,6 +54,34 @@ public:
      * @brief 设置当前云台角度 (从 IMU 获取)
      */
     void set_gimbal_yaw(const double yaw) noexcept { gimbal_yaw_ = yaw; }
+
+    /**
+     * @brief 获取检测器工作缓冲区 (用于调试/可视化)
+     */
+    [[nodiscard]] const auto_aim::DetectorWorkBuffers& get_detector_buffers() const noexcept {
+        return detector_buffers_;
+    }
+
+    /**
+     * @brief 获取跟踪目标 (用于调试/可视化)
+     * 注意: 返回非 const 引用，因为 converged() 可能修改内部状态
+     */
+    [[nodiscard]] auto_aim::Target& get_target() noexcept { return target_; }
+
+    /**
+     * @brief 获取最新的云台控制命令 (用于可视化)
+     */
+    [[nodiscard]] const auto_aim::GimbalCommand& get_last_gimbal_cmd() const noexcept {
+        return last_gimbal_cmd_;
+    }
+
+    /**
+     * @brief 获取相机标定参数 (用于可视化)
+     */
+    [[nodiscard]] uint32_t get_image_width() const noexcept { return image_width_; }
+    [[nodiscard]] uint32_t get_image_height() const noexcept { return image_height_; }
+    [[nodiscard]] const std::array<double, 9>& get_camera_matrix() const noexcept { return camera_matrix_; }
+    [[nodiscard]] const std::vector<double>& get_distortion() const noexcept { return distortion_; }
 
     // Initialize pipeline components (stateless)
     auto_aim::TraditionalDetector detector;
@@ -95,6 +132,7 @@ private:
     // Internal state owned by strategy
     auto_aim::Target target_{};                          // EKF 跟踪目标
     auto_aim::DetectorWorkBuffers detector_buffers_{};   // 检测器工作缓冲
+    auto_aim::GimbalCommand last_gimbal_cmd_{};          // 最近一次云台命令 (用于可视化)
 
     // Aimer + Shooter
     auto_aim::Aimer aimer_;
@@ -106,5 +144,11 @@ private:
     // 运行时参数 (从外部设置)
     double bullet_speed_{23.0}; // m/s (默认 23)
     double gimbal_yaw_{0.0};    // rad (当前云台 yaw)
+
+    // 相机标定参数 (用于可视化)
+    uint32_t image_width_{0};
+    uint32_t image_height_{0};
+    std::array<double, 9> camera_matrix_{};
+    std::vector<double> distortion_;
 };
 static_assert(scheduler::SchedulerStrategy<TalosStrategy>);

@@ -33,6 +33,7 @@
 # pragma clang diagnostic pop
 #endif
 
+#include <fast_tf/infantry_tf.hpp>
 #include <spdlog/spdlog.h>
 
 // 消息队列消息类型定义
@@ -52,9 +53,50 @@ struct ArmorDataMessage {
     std::vector<uint8_t> data;  // JSON序列化数据
 };
 
-struct ArmorMessage {};
+// 新增: 调试图像消息
+struct BinaryImageMessage {
+    foxglove::schemas::CompressedImage img;
+};
 
-using FoxgloveMessage = std::variant<ImageMessage, SceneMessage, TfMessage, ArmorDataMessage>;
+struct PatternImageMessage {
+    foxglove::schemas::CompressedImage img;
+};
+
+// 新增: 调试数据消息 (JSON)
+struct DebugLightsMessage {
+    std::vector<uint8_t> data;
+};
+
+struct DebugArmorsMessage {
+    std::vector<uint8_t> data;
+};
+
+// 新增: 解算/追踪消息 (JSON)
+struct MeasurementMessage {
+    std::vector<uint8_t> data;
+};
+
+struct TargetMessage {
+    std::vector<uint8_t> data;
+};
+
+struct GimbalCmdMessage {
+    std::vector<uint8_t> data;
+};
+
+using FoxgloveMessage = std::variant<
+    ImageMessage,
+    SceneMessage,
+    TfMessage,
+    ArmorDataMessage,
+    BinaryImageMessage,
+    PatternImageMessage,
+    DebugLightsMessage,
+    DebugArmorsMessage,
+    MeasurementMessage,
+    TargetMessage,
+    GimbalCmdMessage
+>;
 
 // FoxgloveServer 类声明
 class FoxgloveServer {
@@ -73,6 +115,16 @@ public:
     // 线程安全的消息入队方法 - 供其他调用者使用
     void enqueue_message(FoxgloveMessage msg) noexcept;
 
+    // TF 更新方法 (使用统一时间戳发布完整 TF 树)
+    void publish_tf(double gimbal_yaw, double gimbal_pitch, uint64_t timestamp_ns) noexcept;
+
+    // 相机标定信息发布
+    void publish_camera_calibration(
+        uint32_t width, uint32_t height,
+        const std::array<double, 9>& camera_matrix,  // row-major [fx, 0, cx, 0, fy, cy, 0, 0, 1]
+        const std::vector<double>& distortion,       // [k1, k2, p1, p2, k3]
+        uint64_t timestamp_ns = 0) noexcept;
+
 private:
     // 消息发送线程的主函数
     void message_sender_thread();
@@ -85,6 +137,23 @@ private:
     std::optional<foxglove::schemas::SceneUpdateChannel> scene_ch_;
     std::optional<foxglove::schemas::CompressedImageChannel> img_ch_;
     std::optional<foxglove::RawChannel> armor_ch_;  // 用于发送装甲板JSON数据
+
+    // 新增: 调试 channels
+    std::optional<foxglove::schemas::CompressedImageChannel> binary_img_ch_;   // /debug/binary_img
+    std::optional<foxglove::schemas::CompressedImageChannel> pattern_img_ch_;  // /debug/number_img
+    std::optional<foxglove::RawChannel> debug_lights_ch_;   // /debug/lights (JSON)
+    std::optional<foxglove::RawChannel> debug_armors_ch_;   // /debug/armors (JSON)
+
+    // 新增: 解算/追踪 channels
+    std::optional<foxglove::RawChannel> measurement_ch_;    // /solver/measurement (JSON)
+    std::optional<foxglove::RawChannel> target_ch_;         // /solver/target (JSON)
+    std::optional<foxglove::RawChannel> cmd_gimbal_ch_;     // /solver/cmd_gimbal (JSON)
+
+    // 相机标定 channel
+    std::optional<foxglove::schemas::CameraCalibrationChannel> camera_calib_ch_;  // /camera_info
+
+    // TF Manager
+    std::unique_ptr<fast_tf::infantry::InfantryTFManager> tf_manager_;
 
     // 消息队列
     alignas(std::hardware_destructive_interference_size)
@@ -102,17 +171,49 @@ struct FoxgloveWrapper {
         : inner(inner_)
         , server(server_) {}
 
-    auto output() noexcept -> void { inner.get().output(); }
+    auto output() noexcept -> void {
+        inner.get().output();
+
+        // 发布云台控制命令 (JSON)
+        const auto& cmd = inner.get().get_last_gimbal_cmd();
+        {
+            nlohmann::json cmd_json;
+            cmd_json["valid"] = cmd.valid;
+            cmd_json["fire_advice"] = cmd.fire_advice;
+            cmd_json["yaw"] = cmd.yaw;
+            cmd_json["pitch"] = cmd.pitch;
+            cmd_json["distance"] = cmd.distance;
+
+            std::string json_str = cmd_json.dump();
+            GimbalCmdMessage cmd_msg;
+            cmd_msg.data = std::vector(
+                reinterpret_cast<const uint8_t*>(json_str.data()),
+                reinterpret_cast<const uint8_t*>(json_str.data() + json_str.size()));
+            server.get().enqueue_message(std::move(cmd_msg));
+        }
+
+        // 更新 TF (使用统一时间戳发布完整 TF 树)
+        uint64_t tf_ts = std::chrono::duration_cast<std::chrono::nanoseconds>(
+            std::chrono::steady_clock::now().time_since_epoch()).count();
+        server.get().publish_tf(cmd.yaw, cmd.pitch, tf_ts);
+    }
 
     auto detect(const scheduler::Captured& feat, talos::ArmorSlots& armor) noexcept -> void {
         inner.get().detect(feat, armor);
 
+        // 首次发布相机标定信息
+
+        server.get().publish_camera_calibration(
+            inner.get().get_image_width(), inner.get().get_image_height(),
+            inner.get().get_camera_matrix(), inner.get().get_distortion(), feat.timestamp_ns);
+
+
         // 第一步：完整克隆图像数据(防止数据竞争)
         auto img_bgr = feat.image->mat().clone();
-            spdlog::info("use {}",feat.frame_seq);
 
         // 绘制装甲板边框和标签
         for (const auto& a : armor.armors) {
+            if (!armor.is_valid(static_cast<int>(&a - armor.armors.data()))) continue;
             auto tl = cv::Point2f(a.pts[0], a.pts[1]);
             auto tr = cv::Point2f(a.pts[2], a.pts[3]);
             auto br = cv::Point2f(a.pts[4], a.pts[5]);
@@ -149,6 +250,108 @@ struct FoxgloveWrapper {
             reinterpret_cast<const std::byte*>(compressed_data.data()),
             reinterpret_cast<const std::byte*>(compressed_data.data() + compressed_data.size()));
         server.get().enqueue_message(std::move(img_msg));
+
+        // ========== 调试数据发布 ==========
+
+        // 发布二值化图像 (preprocessed)
+        if (feat.preprocessed && feat.preprocessed->rows() > 0) {
+            std::vector<uint8_t> binary_compressed;
+            cv::Mat binary_bgr;
+            cv::cvtColor(feat.preprocessed->mat(), binary_bgr, cv::COLOR_GRAY2BGR);
+            if (cv::imencode(".jpg", binary_bgr, binary_compressed, encode_params)) {
+                BinaryImageMessage binary_msg;
+                binary_msg.img.timestamp = fxglv_ts_from_ns(feat.timestamp_ns);
+                binary_msg.img.frame_id  = "camera_optical_frame";
+                binary_msg.img.format    = "jpeg";
+                binary_msg.img.data      = std::vector(
+                    reinterpret_cast<const std::byte*>(binary_compressed.data()),
+                    reinterpret_cast<const std::byte*>(binary_compressed.data() + binary_compressed.size()));
+                server.get().enqueue_message(std::move(binary_msg));
+            }
+        }
+
+        // 获取检测器工作缓冲区 (用于 pattern 和详细调试信息)
+        const auto& buffers = inner.get().get_detector_buffers();
+
+        // 发布数字识别图案 (第一个装甲板的 pattern)
+        if (!buffers.armors.empty()) {
+            const auto& first_armor = buffers.armors.front();
+            if (!first_armor.pattern.empty()) {
+                std::vector<uint8_t> pattern_compressed;
+                cv::Mat pattern_bgr;
+                if (first_armor.pattern.channels() == 1) {
+                    cv::cvtColor(first_armor.pattern, pattern_bgr, cv::COLOR_GRAY2BGR);
+                } else {
+                    pattern_bgr = first_armor.pattern;
+                }
+                if (cv::imencode(".jpg", pattern_bgr, pattern_compressed, encode_params)) {
+                    PatternImageMessage pattern_msg;
+                    pattern_msg.img.timestamp = fxglv_ts_from_ns(feat.timestamp_ns);
+                    pattern_msg.img.frame_id  = "camera_optical_frame";
+                    pattern_msg.img.format    = "jpeg";
+                    pattern_msg.img.data      = std::vector(
+                        reinterpret_cast<const std::byte*>(pattern_compressed.data()),
+                        reinterpret_cast<const std::byte*>(pattern_compressed.data() + pattern_compressed.size()));
+                    server.get().enqueue_message(std::move(pattern_msg));
+                }
+            }
+        }
+
+        // 发布灯条调试信息 (JSON)
+        {
+            nlohmann::json lights_json;
+            lights_json["timestamp_ns"] = feat.timestamp_ns;
+            lights_json["lights"] = nlohmann::json::array();
+            for (const auto& light : buffers.lightbars) {
+                nlohmann::json light_obj;
+                light_obj["x"] = light.center.x;
+                light_obj["y"] = light.center.y;
+                light_obj["angle"] = light.angle;
+                light_obj["angle_error"] = light.angle_error;
+                light_obj["length"] = light.length;
+                light_obj["width"] = light.width;
+                light_obj["ratio"] = light.ratio;
+                light_obj["color"] = std::string(talos::color_name(light.color));
+                lights_json["lights"].push_back(light_obj);
+            }
+            std::string json_str = lights_json.dump();
+            DebugLightsMessage lights_msg;
+            lights_msg.data = std::vector(
+                reinterpret_cast<const uint8_t*>(json_str.data()),
+                reinterpret_cast<const uint8_t*>(json_str.data() + json_str.size()));
+            server.get().enqueue_message(std::move(lights_msg));
+        }
+
+        // 发布装甲板详细调试信息 (JSON)
+        {
+            nlohmann::json armors_json;
+            armors_json["timestamp_ns"] = feat.timestamp_ns;
+            armors_json["armors"] = nlohmann::json::array();
+            for (const auto& a : buffers.armors) {
+                nlohmann::json armor_obj;
+                armor_obj["center"]["x"] = a.center.x;
+                armor_obj["center"]["y"] = a.center.y;
+                armor_obj["pts"] = nlohmann::json::array();
+                for (const auto& pt : a.points) {
+                    armor_obj["pts"].push_back({pt.x, pt.y});
+                }
+                armor_obj["ratio"] = a.ratio;
+                armor_obj["side_ratio"] = a.side_ratio;
+                armor_obj["rectangular_error"] = a.rectangular_error;
+                armor_obj["confidence"] = a.confidence;
+                armor_obj["color"] = std::string(talos::color_name(a.color));
+                armor_obj["type"] = a.type == talos::ArmorType::big ? "big" : "small";
+                armor_obj["name"] = std::string(talos::armor_name(a.name));
+                armor_obj["duplicated"] = a.duplicated;
+                armors_json["armors"].push_back(armor_obj);
+            }
+            std::string json_str = armors_json.dump();
+            DebugArmorsMessage armors_msg;
+            armors_msg.data = std::vector(
+                reinterpret_cast<const uint8_t*>(json_str.data()),
+                reinterpret_cast<const uint8_t*>(json_str.data() + json_str.size()));
+            server.get().enqueue_message(std::move(armors_msg));
+        }
     }
 
     auto track(
@@ -156,10 +359,45 @@ struct FoxgloveWrapper {
         const auto_aim::Poses3D& poses3d) noexcept -> void {
         inner.get().track(tracker_soa, armor, poses3d);
 
-        // 发布目标位置信息
-        // TODO: 通过SceneMessage发送tracker信息
-        // server.get().enqueue_message(std::move(armor_msg));
-        // spdlog::debug("Target tracking completed with {} poses", poses3d.size());
+        // 发布跟踪目标信息 (JSON)
+        {
+            auto& target = inner.get().get_target();
+            nlohmann::json target_json;
+            target_json["timestamp_ns"] = armor.timestamp_ns;
+            target_json["state"] = std::string(talos::tracker_state(tracker_soa.state.load()));
+            target_json["position"]["x"] = tracker_soa.pos[0];
+            target_json["position"]["y"] = tracker_soa.pos[1];
+            target_json["position"]["z"] = tracker_soa.pos[2];
+            target_json["velocity"]["x"] = tracker_soa.vel[0];
+            target_json["velocity"]["y"] = tracker_soa.vel[1];
+            target_json["velocity"]["z"] = tracker_soa.vel[2];
+            target_json["yaw"] = tracker_soa.yaw;
+            target_json["v_yaw"] = tracker_soa.v_yaw;
+            target_json["radius"] = {tracker_soa.radius[0], tracker_soa.radius[1]};
+            target_json["detecting_count"] = tracker_soa.detecting_count;
+            target_json["lost_count"] = tracker_soa.lost_count;
+
+            // 装甲板列表 (从 Target 获取)
+            target_json["armor_list"] = nlohmann::json::array();
+            if (target.converged()) {
+                const auto armor_list = target.armor_xyza_list();
+                for (const auto& xyza : armor_list) {
+                    target_json["armor_list"].push_back({
+                        {"x", xyza[0]},
+                        {"y", xyza[1]},
+                        {"z", xyza[2]},
+                        {"angle", xyza[3]}
+                    });
+                }
+            }
+
+            std::string json_str = target_json.dump();
+            TargetMessage target_msg;
+            target_msg.data = std::vector(
+                reinterpret_cast<const uint8_t*>(json_str.data()),
+                reinterpret_cast<const uint8_t*>(json_str.data() + json_str.size()));
+            server.get().enqueue_message(std::move(target_msg));
+        }
     }
 
     auto solve(const talos::ArmorSlots& armor, auto_aim::Poses3D& poses3d) noexcept -> void {
@@ -289,6 +527,32 @@ struct FoxgloveWrapper {
                 reinterpret_cast<const uint8_t*>(json_str.data()),
                 reinterpret_cast<const uint8_t*>(json_str.data() + json_str.size()));
             server.get().enqueue_message(std::move(armor_msg));
+        }
+
+        // 发布测量值 (measurement) - 每个有效装甲板的3D位姿
+        {
+            nlohmann::json measurement_json;
+            measurement_json["timestamp_ns"] = armor.timestamp_ns;
+            measurement_json["measurements"] = nlohmann::json::array();
+            for (int i = 0; i < 10; i++) {
+                if (!armor.is_valid(i)) continue;
+                const auto& pose = poses3d[i];
+                nlohmann::json m;
+                m["id"] = i;
+                m["xyz_in_gimbal"] = {pose.xyz_in_gimbal[0], pose.xyz_in_gimbal[1], pose.xyz_in_gimbal[2]};
+                m["xyz_in_world"] = {pose.xyz_in_world[0], pose.xyz_in_world[1], pose.xyz_in_world[2]};
+                m["ypr_in_gimbal"] = {pose.ypr_in_gimbal[0], pose.ypr_in_gimbal[1], pose.ypr_in_gimbal[2]};
+                m["ypr_in_world"] = {pose.ypr_in_world[0], pose.ypr_in_world[1], pose.ypr_in_world[2]};
+                m["ypd_in_world"] = {pose.ypd_in_world[0], pose.ypd_in_world[1], pose.ypd_in_world[2]};
+                m["yaw_raw"] = pose.yaw_raw;
+                measurement_json["measurements"].push_back(m);
+            }
+            std::string json_str = measurement_json.dump();
+            MeasurementMessage measurement_msg;
+            measurement_msg.data = std::vector(
+                reinterpret_cast<const uint8_t*>(json_str.data()),
+                reinterpret_cast<const uint8_t*>(json_str.data() + json_str.size()));
+            server.get().enqueue_message(std::move(measurement_msg));
         }
     }
 

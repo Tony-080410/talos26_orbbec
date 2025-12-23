@@ -115,6 +115,12 @@ namespace scheduler {
 
         // Line 3: 预处理后图像（可选）
         alignas(CACHE_LINE_SIZE) ImagePtr preprocessed;
+
+        // Line 4: 调试数据 - 二值化图像
+        alignas(CACHE_LINE_SIZE) ImagePtr binary_img;
+
+        // Line 5: 调试数据 - 数字识别图案 (pattern)
+        alignas(CACHE_LINE_SIZE) ImagePtr pattern_img;
     };
 
     // ============ 运行时配置 ============
