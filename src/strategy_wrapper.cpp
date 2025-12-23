@@ -2,11 +2,11 @@
 #include <spdlog/spdlog.h>
 
 // FoxgloveServer 的构造函数实现
-FoxgloveServer::FoxgloveServer(uint16_t port, std::string_view host) {
+FoxgloveServer::FoxgloveServer(const uint16_t port, std::string host) noexcept {
     foxglove::setLogLevel(foxglove::LogLevel::Info);
 
     foxglove::WebSocketServerOptions ws;
-    ws.host = std::string(host);
+    ws.host = host;
     ws.port = port;
 
     auto server_r = foxglove::WebSocketServer::create(std::move(ws));
@@ -52,13 +52,9 @@ FoxgloveServer::FoxgloveServer(uint16_t port, std::string_view host) {
     sender_thread_ = std::thread(&FoxgloveServer::message_sender_thread, this);
 }
 
-FoxgloveServer::~FoxgloveServer() {
+FoxgloveServer::~FoxgloveServer() noexcept {
     // 关闭发送线程
-    {
-        std::lock_guard<std::mutex> lock(queue_mutex_);
-        should_stop_ = true;
-    }
-    queue_cv_.notify_one();
+    { should_stop_ = true; }
     if (sender_thread_.joinable()) {
         sender_thread_.join();
     }
@@ -66,23 +62,13 @@ FoxgloveServer::~FoxgloveServer() {
 
 void FoxgloveServer::message_sender_thread() {
     while (true) {
-        std::unique_lock<std::mutex> lock(queue_mutex_);
-
-        // 等待消息或停止信号
-        queue_cv_.wait(lock, [this] { return !message_queue_.empty() || should_stop_; });
-
-        if (should_stop_ && message_queue_.empty()) {
+        if (should_stop_) [[unlikely]] {
             break;
         }
-
-        if (message_queue_.empty()) {
+        FoxgloveMessage msg;
+        if (const auto success = message_queue_.try_pop(msg); !success) {
             continue;
         }
-
-        auto msg = std::move(message_queue_.front());
-        message_queue_.pop();
-
-        lock.unlock();
 
         // 处理消息 - 在锁外执行以避免阻塞
         std::visit(
@@ -111,14 +97,8 @@ void FoxgloveServer::message_sender_thread() {
     spdlog::info("Foxglove message sender thread stopped");
 }
 
-bool FoxgloveServer::is_initialized() const { return server_initialized_; }
+bool FoxgloveServer::is_initialized() const noexcept { return server_initialized_; }
 
-void FoxgloveServer::enqueue_message(FoxgloveMessage msg) {
-    {
-        std::lock_guard<std::mutex> lock(queue_mutex_);
-        if (!should_stop_) {
-            message_queue_.push(std::move(msg));
-        }
-    }
-    queue_cv_.notify_one();
+void FoxgloveServer::enqueue_message(FoxgloveMessage msg) noexcept {
+    message_queue_.push(std::move(msg));
 }

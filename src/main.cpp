@@ -96,8 +96,8 @@ int main() {
 
     std::optional<ipc::ShmClient> client;
     std::unique_ptr<hikcamera::ImageCapturer> camera_;
-    auto daedalus_or_camera = config.daedalus;
-    if (daedalus_or_camera) {
+    auto daedalus = config.daedalus;
+    if (daedalus) {
         while (!client) {
             if (auto result = ipc::ShmClient::connect()) {
                 // 连接成功，但需要确认是活跃的共享内存（防止连接到旧文件）
@@ -137,7 +137,7 @@ int main() {
     talos_gimbal::Stm32Impl<talos_gimbal::Stm32Parser> usb_device;
 
     // 初始化输出接口
-    if (daedalus_or_camera) {
+    if (daedalus) {
         // IPC 模式: 通过共享内存发送到 Rust 模拟器
         if (auto ipc_output = auto_aim::OutputInterface::create_ipc()) {
             strategy.set_output_interface(std::move(*ipc_output));
@@ -173,12 +173,12 @@ int main() {
     uint64_t last_seq = 0;
     while (true) {
         // 处理 USB 事件 (非阻塞)
-        if (!daedalus_or_camera && usb_device.is_connected()) {
+        if (!daedalus && usb_device.is_connected()) {
             usb_device.handle_events();
         }
 
         std::optional<ipc::ShmClient::ImageFrame> frame;
-        if (daedalus_or_camera) {
+        if (daedalus) {
             frame = client->recv_image();
         } else {
             auto img_result = camera_->read(100ms);
@@ -213,25 +213,24 @@ int main() {
         strategy.solver.set_R_gimbal2world(rx * ry * rz);
 
         // 跳帧检测
-        auto v = *frame;
-        // cv::Mat c = v.image.clone();
-        // cv::cvtColor(c, c, cv::COLOR_RGB2GRAY);
-        // cv::threshold(c, c, 50, 255, cv::THRESH_BINARY);
-        if (daedalus_or_camera) {
-            cv::cvtColor(v.image, v.image, cv::COLOR_RGB2BGR);
-        }
-        if (v.seq != last_seq + 1 && last_seq > 0) {
-            spdlog::info("skip {} frame", v.seq - last_seq - 1);
+        auto [image, seq, timestamp_ns] = *frame;
+        if (seq != last_seq + 1 && last_seq > 0) {
+            spdlog::info("skip {} frame", seq - last_seq - 1);
         }
 
-        // cv::imshow("FUCK", v.image);
-        // cv::imshow("GOD", c);
-        // cv::waitKey(1);
-        last_seq = v.seq;
+        last_seq = seq;
         // spdlog::info("处理 {} 帧", last_seq);
+        auto img = image;
+        if (daedalus) {
+            cv::cvtColor(image, image, cv::COLOR_RGB2BGR);
+            // v.image is &'loop ImageData,
+            // but we need to pass a &'pipeline ImageData
+            // we cannot assure 'loop is longer than 'pipeline so we must copy the data.
+            image.copyTo(img);
+        }
         sched.push_frame(
             scheduler::Frame{
-                v.seq, v.timestamp_ns, scheduler::ImageBuffer::from_mat(std::move(v.image))});
+                seq, timestamp_ns, scheduler::ImageBuffer::from_mat(std::move(image))});
         // std::this_thread::sleep_for(std::chrono::microseconds(1));
     }
 }

@@ -59,8 +59,8 @@ using FoxgloveMessage = std::variant<ImageMessage, SceneMessage, TfMessage, Armo
 // FoxgloveServer 类声明
 class FoxgloveServer {
 public:
-    explicit FoxgloveServer(uint16_t port = 8765, std::string_view host = "127.0.0.1");
-    ~FoxgloveServer();
+    explicit FoxgloveServer(uint16_t port = 8765, std::string host = "127.0.0.1") noexcept;
+    ~FoxgloveServer() noexcept;
 
     // 禁止拷贝和移动
     FoxgloveServer(const FoxgloveServer&)            = delete;
@@ -68,18 +68,17 @@ public:
     FoxgloveServer(FoxgloveServer&&)                 = delete;
     FoxgloveServer& operator=(FoxgloveServer&&)      = delete;
 
-    bool is_initialized() const;
+    bool is_initialized() const noexcept;
 
-    // 线程安全的消息入队方法 - 供装饰节点使用
-    void enqueue_message(FoxgloveMessage msg);
+    // 线程安全的消息入队方法 - 供其他调用者使用
+    void enqueue_message(FoxgloveMessage msg) noexcept;
 
 private:
     // 消息发送线程的主函数
     void message_sender_thread();
 
-private:
     bool server_initialized_{false};
-    bool should_stop_{false};
+    std::atomic<bool> should_stop_{false};
 
     std::optional<foxglove::WebSocketServer> server_;
     std::optional<foxglove::schemas::FrameTransformsChannel> tf_ch_;
@@ -87,10 +86,9 @@ private:
     std::optional<foxglove::schemas::CompressedImageChannel> img_ch_;
     std::optional<foxglove::RawChannel> armor_ch_;  // 用于发送装甲板JSON数据
 
-    // 消息队列及同步原语
-    std::queue<FoxgloveMessage> message_queue_;
-    std::mutex queue_mutex_;
-    std::condition_variable queue_cv_;
+    // 消息队列
+    alignas(std::hardware_destructive_interference_size)
+        tbb::concurrent_queue<FoxgloveMessage> message_queue_;
     std::thread sender_thread_;
 };
 
@@ -111,29 +109,30 @@ struct FoxgloveWrapper {
 
         // 第一步：完整克隆图像数据(防止数据竞争)
         auto img_bgr = feat.image->mat().clone();
+            spdlog::info("use {}",feat.frame_seq);
 
         // 绘制装甲板边框和标签
         for (const auto& a : armor.armors) {
-            cv::Point2f tl(a.pts[0], a.pts[1]);
-            cv::Point2f tr(a.pts[2], a.pts[3]);
-            cv::Point2f br(a.pts[4], a.pts[5]);
-            cv::Point2f bl(a.pts[6], a.pts[7]);
+            auto tl = cv::Point2f(a.pts[0], a.pts[1]);
+            auto tr = cv::Point2f(a.pts[2], a.pts[3]);
+            auto br = cv::Point2f(a.pts[4], a.pts[5]);
+            auto bl = cv::Point2f(a.pts[6], a.pts[7]);
             cv::line(img_bgr, tl, tr, cv::Scalar(0, 255, 0), 2);
             cv::line(img_bgr, tr, br, cv::Scalar(0, 255, 0), 2);
             cv::line(img_bgr, br, bl, cv::Scalar(0, 255, 0), 2);
             cv::line(img_bgr, bl, tl, cv::Scalar(0, 255, 0), 2);
 
-            const std::string_view type  = a.type == talos::ArmorType::big ? "big" : "small";
-            const std::string_view name  = talos::armor_name(static_cast<talos::ArmorName>(a.name));
-            const std::string_view color = talos::color_name(static_cast<talos::Color>(a.color));
+            const auto type  = a.type == talos::ArmorType::big ? "big" : "small";
+            const auto name  = talos::armor_name(a.name);
+            const auto color = talos::color_name(a.color);
             cv::putText(
-                img_bgr, std::string(name) + " " + std::string(type) + " " + std::string(color), tl,
-                cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(255, 0, 0), 1);
+                img_bgr, fmt::format("{} {} {}", name, type, color), tl, cv::FONT_HERSHEY_SIMPLEX,
+                0.5, cv::Scalar(255, 0, 0), 1);
         }
 
         // 第二步：使用OpenCV的imencode方法压缩为JPEG格式
         std::vector<uint8_t> compressed_data;
-        std::vector<int> encode_params{cv::IMWRITE_JPEG_QUALITY, 85};
+        std::vector encode_params{cv::IMWRITE_JPEG_QUALITY, 85};
 
         bool encode_success = cv::imencode(".jpg", img_bgr, compressed_data, encode_params);
         if (!encode_success) {
@@ -146,12 +145,10 @@ struct FoxgloveWrapper {
         img_msg.img.timestamp = fxglv_ts_from_ns(feat.timestamp_ns);
         img_msg.img.frame_id  = "camera_optical_frame";
         img_msg.img.format    = "jpeg";
-        img_msg.img.data      = std::vector<std::byte>(
+        img_msg.img.data      = std::vector(
             reinterpret_cast<const std::byte*>(compressed_data.data()),
             reinterpret_cast<const std::byte*>(compressed_data.data() + compressed_data.size()));
         server.get().enqueue_message(std::move(img_msg));
-
-
     }
 
     auto track(
@@ -218,12 +215,12 @@ struct FoxgloveWrapper {
             foxglove::schemas::CubePrimitive cube;
             cube.pose = p;
             cube.size = cube_size;
-            cube.color = fxgl_get_color(static_cast<talos::Color>(a.color));
+            cube.color = fxgl_get_color(a.color);
             entity.cubes.push_back(cube);
 
             // 创建文本标签
             foxglove::schemas::TextPrimitive text;
-            text.text = std::string(talos::armor_name(static_cast<talos::ArmorName>(a.name))) + " " +
+            text.text = std::string(talos::armor_name(a.name)) + " " +
                        std::string(a.type == talos::ArmorType::big ? "big" : "small");
             text.pose = p;
             text.font_size = 0.05;
@@ -246,7 +243,7 @@ struct FoxgloveWrapper {
             {
                 foxglove::schemas::KeyValuePair kv;
                 kv.key = "color";
-                kv.value = std::string(talos::color_name(static_cast<talos::Color>(a.color)));
+                kv.value = std::string(talos::color_name(a.color));
                 entity.metadata.push_back(kv);
             }
 
@@ -270,9 +267,9 @@ struct FoxgloveWrapper {
 
             nlohmann::json armor_obj;
             armor_obj["id"] = i;
-            armor_obj["name"] = std::string(talos::armor_name(static_cast<talos::ArmorName>(a.name)));
+            armor_obj["name"] = std::string(talos::armor_name(a.name));
             armor_obj["type"] = a.type == talos::ArmorType::big ? "big" : "small";
-            armor_obj["color"] = std::string(talos::color_name(static_cast<talos::Color>(a.color)));
+            armor_obj["color"] = std::string(talos::color_name(a.color));
             armor_obj["confidence"] = a.confidence;
             armor_obj["pose"]["position"]["x"] = pose.xyz_in_world[0];
             armor_obj["pose"]["position"]["y"] = pose.xyz_in_world[1];
@@ -288,7 +285,7 @@ struct FoxgloveWrapper {
         if (!armor_json.empty()) {
             std::string json_str = armor_json.dump();
             ArmorDataMessage armor_msg;
-            armor_msg.data = std::vector<uint8_t>(
+            armor_msg.data = std::vector(
                 reinterpret_cast<const uint8_t*>(json_str.data()),
                 reinterpret_cast<const uint8_t*>(json_str.data() + json_str.size()));
             server.get().enqueue_message(std::move(armor_msg));
@@ -298,7 +295,7 @@ struct FoxgloveWrapper {
     auto preprocess(scheduler::SharedFeature& sf) -> void { inner.get().preprocess(sf); }
 
     // 颜色映射函数
-    static inline foxglove::schemas::Color fxgl_get_color(talos::Color c) noexcept {
+    static foxglove::schemas::Color fxgl_get_color(const talos::Color c) noexcept {
         foxglove::schemas::Color color;
         color.a = 1.0;
         switch(c) {
@@ -320,7 +317,7 @@ struct FoxgloveWrapper {
         return color;
     }
 
-    static foxglove::schemas::Timestamp fxglv_ts_from_ns(uint64_t ns) {
+    static foxglove::schemas::Timestamp fxglv_ts_from_ns(const uint64_t ns) {
         using namespace std::chrono;
         foxglove::schemas::Timestamp t;
         t.nsec = static_cast<uint32_t>(ns);
