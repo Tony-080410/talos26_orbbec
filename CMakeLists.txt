@@ -285,6 +285,20 @@ target_link_libraries(detector_benchmark PRIVATE
         auto_aim
 )
 
+# Detector parameter tuning tool (multi-objective optimization)
+add_executable(detector_tuner
+        test/detector_tuner.cpp
+        src/auto_aim/detector_tuner.cpp
+)
+
+target_include_directories(detector_tuner PRIVATE include)
+
+target_link_libraries(detector_tuner PRIVATE
+        auto_aim
+        TBB::tbb
+        ${OpenCV_LIBS}
+)
+
 # CMake package configuration for hikcamera
 if (CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_SYSTEM_PROCESSOR STREQUAL "x86_64")
     include(CMakePackageConfigHelpers)

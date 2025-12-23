@@ -108,6 +108,7 @@ namespace auto_aim {
     class TraditionalDetector {
     public:
         explicit TraditionalDetector(const SpVisionConfig &config, bool debug = false);
+        explicit TraditionalDetector(const SpVisionConfig &config, Classifier classifier);
 
         void preprocess(const cv::Mat &bgr_img, const cv::Mat &binary_img) const noexcept;
 

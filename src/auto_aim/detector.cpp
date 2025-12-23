@@ -66,6 +66,15 @@ namespace auto_aim {
         max_rectangular_error_rad_ = config_.max_rectangular_error / 57.3;
     }
 
+    TraditionalDetector::TraditionalDetector(const SpVisionConfig &config, Classifier classifier)
+        : config_(DetectorConfig::from(config.detector))
+        , classifier_(classifier)
+        , debug_(false) {
+        // 预转换角度为弧度
+        max_angle_error_rad_       = config_.max_angle_error / 57.3;
+        max_rectangular_error_rad_ = config_.max_rectangular_error / 57.3;
+    }
+
     void TraditionalDetector::preprocess(const cv::Mat &bgr_img, const cv::Mat &binary_img) const noexcept {
         cv::cvtColor(bgr_img, binary_img, cv::COLOR_BGR2GRAY);
         cv::threshold(binary_img, binary_img, config_.threshold, 255, cv::THRESH_BINARY);
@@ -296,7 +305,7 @@ namespace auto_aim {
 
         // 出现 5号 则显示 debug 信息。但不过滤。
         if (armor.name == talos::ArmorName::five) {
-            std::cerr << "classifier detected an armor five, which is outdated";
+            //std::cerr << "classifier detected an armor five, which is outdated";
         }
 
         return name_ok;
@@ -310,9 +319,9 @@ namespace auto_aim {
         // cv::imshow("ROI", armor.pattern);
         // 保存异常的图案，用于分类器的迭代
         if (!name_ok) {
-            spdlog::warn("classifier detected a strange armor {} with type {}",
-                         talos::ARMOR_NAMES[static_cast<uint8_t>(armor.name)],
-                         talos::ARMOR_TYPES[static_cast<uint8_t>(armor.type)]);
+            //spdlog::warn("classifier detected a strange armor {} with type {}",
+            //             talos::ARMOR_NAMES[static_cast<uint8_t>(armor.name)],
+            //             talos::ARMOR_TYPES[static_cast<uint8_t>(armor.type)]);
             //if (debug_) {
               //  cv::imshow("ROI", armor.pattern);
             //}

@@ -180,6 +180,15 @@ int main() {
         std::optional<ipc::ShmClient::ImageFrame> frame;
         if (daedalus) {
             frame = client->recv_image();
+            auto pose = client->recv_pose(ipc::POSE_GIMBAL);
+            if (pose) {
+                Eigen::Quaterniond q(pose->qw, pose->qx, pose->qy, pose->qz);
+                strategy.solver.set_R_gimbal2world(q);
+
+                // Extract yaw from quaternion for gimbal tracking
+                auto euler = q.toRotationMatrix().canonicalEulerAngles(2, 1, 0); // ZYX order
+                strategy.set_gimbal_yaw(euler[0]);
+            }
         } else {
             auto img_result = camera_->read(100ms);
             if (img_result) {

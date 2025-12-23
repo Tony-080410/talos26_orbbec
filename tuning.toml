@@ -1,0 +1,75 @@
+# Detector Parameter Tuning Configuration
+#
+# This file defines the search space and algorithm parameters
+# for multi-resolution grid search optimization.
+
+[tuning]
+# Algorithm parameters
+max_iterations = 1          # Maximum refinement iterations
+convergence_threshold = 0.01 # Stop if improvement < 1%
+num_clusters = 4            # K-means clusters for top candidates
+top_percentile = 0.2        # Top 20% for clustering
+max_pareto_solutions = 3    # Maximum Pareto solutions to return
+
+[search_space]
+# Each parameter defines: min, max, initial_points (coarse grid samples)
+
+[search_space.threshold]
+# Binary threshold for grayscale image
+min = 60.0
+max = 180.0
+initial_points = 4
+
+[search_space.max_angle_error]
+# Maximum angle deviation from vertical (degrees)
+min = 30.0
+max = 55.0
+initial_points = 3
+
+[search_space.min_lightbar_ratio]
+# Minimum lightbar length/width ratio
+min = 1.2
+max = 2.5
+initial_points = 3
+
+[search_space.max_lightbar_ratio]
+# Maximum lightbar length/width ratio
+min = 15.0
+max = 25.0
+initial_points = 3
+
+[search_space.min_lightbar_length]
+# Minimum lightbar length in pixels
+min = 5.0
+max = 12.0
+initial_points = 3
+
+[search_space.min_armor_ratio]
+# Minimum armor width / max lightbar length
+min = 0.8
+max = 1.5
+initial_points = 3
+
+[search_space.max_armor_ratio]
+# Maximum armor width / max lightbar length
+min = 3.5
+max = 6.0
+initial_points = 3
+
+[search_space.max_side_ratio]
+# Maximum long/short lightbar ratio
+min = 1.2
+max = 2.0
+initial_points = 3
+
+[search_space.min_confidence]
+# Minimum classifier confidence threshold
+min = 0.65
+max = 0.90
+initial_points = 4
+
+[search_space.max_rectangular_error]
+# Maximum rectangular error (degrees)
+min = 18.0
+max = 35.0
+initial_points = 3
