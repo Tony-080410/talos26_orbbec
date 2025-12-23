@@ -83,7 +83,7 @@ static void BM_Pipeline_EmptyCallbacks(benchmark::State &state) {
     std::atomic<uint64_t> processed{0};
     TestStrategy strategy;
 
-    strategy.set_detect([&](const SharedFeature &, talos::ArmorSlots &) {
+    strategy.set_detect([&](const Captured &, talos::ArmorSlots &) {
         processed.fetch_add(1, std::memory_order_relaxed);
     });
 
@@ -121,7 +121,7 @@ static void BM_Pipeline_WithImage(benchmark::State &state) {
 
     std::atomic<uint64_t> processed{0};
 
-    strategy.set_detect([&](const SharedFeature &, talos::ArmorSlots &) {
+    strategy.set_detect([&](const Captured &, talos::ArmorSlots &) {
         processed.fetch_add(1, std::memory_order_relaxed);
     });
 
@@ -154,13 +154,13 @@ static void BM_Pipeline_WithPreprocess(benchmark::State &state) {
     std::atomic<uint64_t> processed{0};
     TestStrategy strategy;
 
-    strategy.set_preprocess([](SharedFeature &sf) {
+    strategy.set_preprocess([](Captured &sf) {
         if (sf.image && sf.image->rows() > 0) {
             sf.preprocessed = ImageBuffer::create(sf.image->rows() / 2, sf.image->cols() / 2, CV_8UC1);
         }
     });
 
-    strategy.set_detect([&](const SharedFeature &, talos::ArmorSlots &) {
+    strategy.set_detect([&](const Captured &, talos::ArmorSlots &) {
         processed.fetch_add(1, std::memory_order_relaxed);
     });
 
@@ -193,7 +193,7 @@ static void BM_Pipeline_WithParallelPreprocess(benchmark::State &state) {
 
     std::atomic<uint64_t> processed{0};
 
-    strategy.set_preprocess([](SharedFeature &sf) {
+    strategy.set_preprocess([](Captured &sf) {
         if (sf.image && sf.image->rows() > 0) {
             sf.preprocessed = ImageBuffer::create(sf.image->rows() / 2, sf.image->cols() / 2, CV_8UC1);
             auto &src = sf.image->mat();
@@ -210,7 +210,7 @@ static void BM_Pipeline_WithParallelPreprocess(benchmark::State &state) {
         }
     });
 
-    strategy.set_detect([&](const SharedFeature &, talos::ArmorSlots &) {
+    strategy.set_detect([&](const Captured &, talos::ArmorSlots &) {
         processed.fetch_add(1, std::memory_order_relaxed);
     });
 
@@ -246,7 +246,7 @@ static void BM_RealWorld_160Hz(benchmark::State &state) {
     std::atomic<uint64_t> processed{0};
     std::vector<uint8_t> camera_buffer(480 * 640 * 3, 100);
 
-    strategy.set_detect([&](const SharedFeature &, talos::ArmorSlots &) {
+    strategy.set_detect([&](const Captured &, talos::ArmorSlots &) {
         processed.fetch_add(1, std::memory_order_relaxed);
         // 模拟 1ms 检测延迟
         std::this_thread::sleep_for(std::chrono::microseconds(1000));
@@ -300,7 +300,7 @@ static void BM_E2E_Latency_Measurement(benchmark::State &state) {
     std::atomic last_seq{UINT64_MAX};
     std::atomic<uint64_t> push_timestamp{0};
 
-    strategy.set_detect([](const SharedFeature &, talos::ArmorSlots &) {});
+    strategy.set_detect([](const Captured &, talos::ArmorSlots &) {});
 
     strategy.set_track([](talos::TrackerSoA &, const talos::ArmorSlots &, const std::array<auto_aim::ArmorPose3D, 10> &) {});
 

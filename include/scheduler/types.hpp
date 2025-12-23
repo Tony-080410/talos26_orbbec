@@ -104,7 +104,7 @@ namespace scheduler {
         }
     };
 
-    struct SharedFeature {
+    struct Captured {
         // Line 1: 帧元数据（detector写，tracker读）
         alignas(CACHE_LINE_SIZE) uint64_t frame_seq{0};
         uint64_t timestamp_ns{0};

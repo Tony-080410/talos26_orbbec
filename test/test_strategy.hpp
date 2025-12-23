@@ -16,11 +16,11 @@ namespace scheduler::test {
      */
     class TestStrategy {
     public:
-        using DetectCb = std::function<void(const SharedFeature &, talos::ArmorSlots &)>;
+        using DetectCb = std::function<void(const Captured &, talos::ArmorSlots &)>;
         using SolveCb = std::function<void(const talos::ArmorSlots &, std::array<auto_aim::ArmorPose3D, 10> &)>;
         using TrackCb = std::function<void(talos::TrackerSoA &, const talos::ArmorSlots &,
                                            const std::array<auto_aim::ArmorPose3D, 10> &)>;
-        using PreprocessCb = std::function<void(SharedFeature &)>;
+        using PreprocessCb = std::function<void(Captured &)>;
         using OutputCb = std::function<void()>;
 
         // 设置回调
@@ -31,12 +31,12 @@ namespace scheduler::test {
         void set_output(const OutputCb &cb) { output_cb_ = cb; }
 
         // SchedulerStrategy concept实现
-        void preprocess(SharedFeature &f) const {
+        void preprocess(Captured &f) const {
             if (preprocess_cb_)
                 preprocess_cb_(f);
         }
 
-        void detect(const SharedFeature &f, talos::ArmorSlots &armor) const noexcept {
+        void detect(const Captured &f, talos::ArmorSlots &armor) const noexcept {
             if (detect_cb_)
                 detect_cb_(f, armor);
         }

@@ -79,7 +79,7 @@ BENCHMARK(BM_LatencyHistogram_Record);
 static void BM_Scheduler_PushFrame(benchmark::State &state) {
     auto strategy = TestStrategy{};
     // 空回调，只测调度开销
-    strategy.set_detect([](const SharedFeature &, talos::ArmorSlots &) {});
+    strategy.set_detect([](const Captured &, talos::ArmorSlots &) {});
     Scheduler<TestStrategy> sched;
     constexpr RuntimeConfig config;
     sched.init(config, &strategy);
@@ -109,7 +109,7 @@ BENCHMARK(BM_Scheduler_PushFrame);
 static void BM_Scheduler_E2E_Latency(benchmark::State &state) {
     std::atomic<uint64_t> processed{0};
     auto strategy = TestStrategy{};
-    strategy.set_detect([](const SharedFeature &, talos::ArmorSlots &) {});
+    strategy.set_detect([](const Captured &, talos::ArmorSlots &) {});
     strategy.set_track([](talos::TrackerSoA &, const talos::ArmorSlots &, const std::array<auto_aim::ArmorPose3D, 10> &) {});
     strategy.set_solve([](const talos::ArmorSlots &, std::array<auto_aim::ArmorPose3D, 10> &) {});
     strategy.set_output([&]() { processed.fetch_add(1, std::memory_order_release); });
@@ -143,7 +143,7 @@ BENCHMARK(BM_Scheduler_E2E_Latency);
 static void BM_Scheduler_Throughput(benchmark::State &state) {
     std::atomic<uint64_t> processed{0};
     auto strategy = TestStrategy{};
-    strategy.set_detect([&](const SharedFeature &, talos::ArmorSlots &) {
+    strategy.set_detect([&](const Captured &, talos::ArmorSlots &) {
         processed.fetch_add(1, std::memory_order_relaxed);
     });
 

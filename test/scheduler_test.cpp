@@ -53,7 +53,7 @@ TEST(SchedulerTest, FullPipeline) {
     std::atomic solve_count{0};
     std::atomic output_count{0};
 
-    strategy.set_detect([&](const SharedFeature &, talos::ArmorSlots &) {
+    strategy.set_detect([&](const Captured &, talos::ArmorSlots &) {
         detect_count.fetch_add(1, std::memory_order_relaxed);
     });
 
@@ -208,13 +208,13 @@ TEST(SchedulerTest, PreprocessorCallback) {
 
     std::atomic preprocess_count{0};
 
-    strategy.set_preprocess([&](SharedFeature &sf) {
+    strategy.set_preprocess([&](Captured &sf) {
         preprocess_count.fetch_add(1, std::memory_order_relaxed);
         // 模拟预处理: 可以用 TBB parallel_for
         sf.preprocessed = ImageBuffer::create(100, 100, CV_8UC1);
     });
 
-    strategy.set_detect([](const SharedFeature &, talos::ArmorSlots &) {});
+    strategy.set_detect([](const Captured &, talos::ArmorSlots &) {});
 
     sched.start();
 
@@ -237,7 +237,7 @@ TEST(SchedulerTest, HighFrequencyFrames) {
 
     std::atomic detect_count{0};
 
-    strategy.set_detect([&](const SharedFeature &, talos::ArmorSlots &) {
+    strategy.set_detect([&](const Captured &, talos::ArmorSlots &) {
         detect_count.fetch_add(1, std::memory_order_relaxed);
     });
 
@@ -272,7 +272,7 @@ TEST(SchedulerTest, HighFrequencyFrames) {
 TEST(SchedulerTest, LatencyHistogramStats) {
     TestStrategy strategy;
 
-    strategy.set_detect([](const SharedFeature &, talos::ArmorSlots &) {
+    strategy.set_detect([](const Captured &, talos::ArmorSlots &) {
         // 模拟一些处理延迟
         std::this_thread::sleep_for(std::chrono::microseconds(100));
     });

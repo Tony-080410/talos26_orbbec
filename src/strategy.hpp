@@ -13,14 +13,14 @@
 class TalosStrategy {
 public:
     // SchedulerStrategy concept methods
-    void detect(const scheduler::SharedFeature &feat, talos::ArmorSlots &armor) noexcept;
+    void detect(const scheduler::Captured &feat, talos::ArmorSlots &armor) noexcept;
     void solve(const talos::ArmorSlots &armor, auto_aim::Poses3D &poses3d) const noexcept;
     void track(talos::TrackerSoA &tracker_soa, const talos::ArmorSlots &armor,
                const auto_aim::Poses3D &poses3d) noexcept;
     void output() noexcept;
 
     // Additional methods (not part of concept)
-    void preprocess(scheduler::SharedFeature &sf);
+    void preprocess(scheduler::Captured &sf);
 
     TalosStrategy(const bool debug, const SpVisionConfig &config, const size_t buffer_count, const int rows,
                   const int cols) noexcept :

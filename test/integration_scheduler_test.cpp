@@ -51,7 +51,7 @@ TEST_F(SchedulerIntegrationTest, ZeroCopyVerification) {
 
     std::atomic<void *> detected_ptr{nullptr};
 
-    strategy_.set_detect([&](const SharedFeature &sf, talos::ArmorSlots &) {
+    strategy_.set_detect([&](const Captured &sf, talos::ArmorSlots &) {
         if (sf.image) {
             detected_ptr.store(sf.image->data(), std::memory_order_release);
         }
@@ -77,7 +77,7 @@ TEST_F(SchedulerIntegrationTest, ZeroCopyFromMat) {
 
     std::atomic<void *> detected_ptr{nullptr};
 
-    strategy_.set_detect([&](const SharedFeature &sf, talos::ArmorSlots &) {
+    strategy_.set_detect([&](const Captured &sf, talos::ArmorSlots &) {
         if (sf.image) {
             detected_ptr.store(sf.image->data(), std::memory_order_release);
         }
@@ -108,7 +108,7 @@ TEST_F(SchedulerIntegrationTest, FullPipelineWithRealImage) {
     std::atomic output_count{0};
 
     // 预处理: 使用 TBB 并行处理
-    strategy_.set_preprocess([&](SharedFeature &sf) {
+    strategy_.set_preprocess([&](Captured &sf) {
         preprocess_count.fetch_add(1, std::memory_order_relaxed);
         if (sf.image && sf.image->rows() > 0) {
             // 创建预处理结果
@@ -124,7 +124,7 @@ TEST_F(SchedulerIntegrationTest, FullPipelineWithRealImage) {
         }
     });
 
-    strategy_.set_detect([&](const SharedFeature &, talos::ArmorSlots &) {
+    strategy_.set_detect([&](const Captured &, talos::ArmorSlots &) {
         detect_count.fetch_add(1, std::memory_order_relaxed);
     });
 
@@ -171,7 +171,7 @@ TEST_F(SchedulerIntegrationTest, HighLoadStressTest) {
     std::atomic<uint64_t> frame_sent{0};
     std::atomic<uint64_t> frame_processed{0};
 
-    strategy_.set_detect([&](const SharedFeature &, talos::ArmorSlots &) {
+    strategy_.set_detect([&](const Captured &, talos::ArmorSlots &) {
         frame_processed.fetch_add(1, std::memory_order_relaxed);
     });
 
@@ -210,7 +210,7 @@ TEST_F(SchedulerIntegrationTest, HighLoadStressTest) {
 
 TEST_F(SchedulerIntegrationTest, SchedulingOverheadVerification) {
     // 空回调，只测量调度开销
-    strategy_.set_detect([](const SharedFeature &, talos::ArmorSlots &) {});
+    strategy_.set_detect([](const Captured &, talos::ArmorSlots &) {});
 
     sched_.start();
 
@@ -251,7 +251,7 @@ TEST_F(SchedulerIntegrationTest, SchedulingOverheadVerification) {
 
 TEST_F(SchedulerIntegrationTest, LatencyHistogramVerification) {
     // 设置有一定延迟的回调
-    strategy_.set_detect([](const SharedFeature &, talos::ArmorSlots &) {
+    strategy_.set_detect([](const Captured &, talos::ArmorSlots &) {
         std::this_thread::sleep_for(std::chrono::microseconds(100));
     });
 
@@ -320,7 +320,7 @@ TEST_F(SchedulerIntegrationTest, LatencyHistogramVerification) {
 TEST_F(SchedulerIntegrationTest, ConfigHotUpdateUnderLoad) {
     std::atomic mode_at_detect{-1};
 
-    strategy_.set_detect([&](const SharedFeature &, talos::ArmorSlots &) {
+    strategy_.set_detect([&](const Captured &, talos::ArmorSlots &) {
         const auto cfg = sched_.get_config();
         mode_at_detect.store(cfg.detector_mode, std::memory_order_relaxed);
     });
@@ -365,7 +365,7 @@ TEST_F(SchedulerIntegrationTest, MultipleProducers) {
 
     std::atomic detect_count{0};
 
-    strategy_.set_detect([&](const SharedFeature &, talos::ArmorSlots &) {
+    strategy_.set_detect([&](const Captured &, talos::ArmorSlots &) {
         detect_count.fetch_add(1, std::memory_order_relaxed);
     });
 

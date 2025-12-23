@@ -104,7 +104,7 @@ struct FoxgloveWrapper {
 
     auto output() noexcept -> void { inner.get().output(); }
 
-    auto detect(const scheduler::SharedFeature& feat, talos::ArmorSlots& armor) noexcept -> void {
+    auto detect(const scheduler::Captured& feat, talos::ArmorSlots& armor) noexcept -> void {
         inner.get().detect(feat, armor);
 
         // 第一步：完整克隆图像数据(防止数据竞争)
@@ -292,7 +292,7 @@ struct FoxgloveWrapper {
         }
     }
 
-    auto preprocess(scheduler::SharedFeature& sf) -> void { inner.get().preprocess(sf); }
+    auto preprocess(scheduler::Captured& sf) -> void { inner.get().preprocess(sf); }
 
     // 颜色映射函数
     static foxglove::schemas::Color fxgl_get_color(const talos::Color c) noexcept {

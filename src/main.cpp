@@ -231,6 +231,7 @@ int main() {
         sched.push_frame(
             scheduler::Frame{
                 seq, timestamp_ns, scheduler::ImageBuffer::from_mat(std::move(image))});
+        sched.tracker_event_.wait_for(1);
         // std::this_thread::sleep_for(std::chrono::microseconds(1));
     }
 }

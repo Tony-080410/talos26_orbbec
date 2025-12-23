@@ -19,7 +19,7 @@ namespace scheduler {
      * - Strategy 持有: Target, DetectorWorkBuffers (内部状态)
      */
     template<typename T>
-    concept SchedulerStrategy = requires(T &strategy, const SharedFeature &feat, talos::ArmorSlots &armor_mut,
+    concept SchedulerStrategy = requires(T &strategy, const Captured &feat, talos::ArmorSlots &armor_mut,
                                          const talos::ArmorSlots &armor_const, talos::TrackerSoA &tracker_mut,
                                          auto_aim::Poses3D &poses3d_mut,
                                          const auto_aim::Poses3D &poses3d_const) {

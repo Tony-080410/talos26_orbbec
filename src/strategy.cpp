@@ -3,7 +3,7 @@
 
 #include <opencv2/imgproc.hpp>
 
-auto TalosStrategy::preprocess(scheduler::SharedFeature& sf) -> void {
+auto TalosStrategy::preprocess(scheduler::Captured& sf) -> void {
     const auto t0 = std::chrono::steady_clock::now();
 
     const auto small = small_pool.acquire();
@@ -15,7 +15,7 @@ auto TalosStrategy::preprocess(scheduler::SharedFeature& sf) -> void {
         std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count());
 }
 
-auto TalosStrategy::detect(const scheduler::SharedFeature& feat, talos::ArmorSlots& armor) noexcept
+auto TalosStrategy::detect(const scheduler::Captured& feat, talos::ArmorSlots& armor) noexcept
     -> void {
     const auto t0 = std::chrono::steady_clock::now();
 

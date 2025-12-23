@@ -146,7 +146,9 @@ public:
             return false;
         }
 
-        frame_queue_.push(std::move(frame));
+        auto& mut = frame_queue_.borrow_mut();
+        mut       = std::move(frame);
+        frame_queue_.publish();
         frame_queue_size_.fetch_add(1, std::memory_order_relaxed);
         frame_event_.notify_one();
         return true;
@@ -159,7 +161,7 @@ public:
      */
     void update_config(const RuntimeConfig& config) noexcept {
         config_ = std::make_shared<RuntimeConfig>(config);
-        spdlog::debug("[scheduler] config updated");
+        spdlog::info("[scheduler] config updated");
     }
 
     /**
@@ -172,17 +174,21 @@ public:
     [[nodiscard]] const Stats& stats() const noexcept { return stats_; }
     void reset_stats() noexcept { stats_.reset(); }
 
+    // Event驱动
+    alignas(CACHE_LINE_SIZE) NativeEvent tracker_event_; // 通知tracker有新detection
+    alignas(CACHE_LINE_SIZE) NativeEvent output_event_;  // 通知output线程
+
 private:
     // ============ 数据通道 ============
 
     // Frame队列 + Event驱动detector
-    tbb::concurrent_queue<Frame> frame_queue_;
+    TripleBuffer<Frame> frame_queue_;
     alignas(CACHE_LINE_SIZE) std::atomic<size_t> frame_queue_size_{0};
     static constexpr size_t kMaxFrameQueueSize = 8;
     NativeEvent frame_event_; // 通知detector有新帧
 
     // Triple Buffer: 共享特征缓冲（zero-copy）
-    alignas(CACHE_LINE_SIZE) TripleBuffer<SharedFeature> shared_buffer_;
+    alignas(CACHE_LINE_SIZE) TripleBuffer<Captured> shared_buffer_;
 
     // ArmorSlots + poses3d: 检测和解算结果缓冲
     struct DetectionResult {
@@ -193,10 +199,6 @@ private:
 
     // Scheduler 持有的状态
     alignas(CACHE_LINE_SIZE) talos::TrackerSoA tracker_soa_{};
-
-    // Event驱动
-    NativeEvent tracker_event_; // 通知tracker有新detection
-    NativeEvent output_event_;  // 通知output线程
 
     // ============ 配置 + 策略 ============
 
@@ -216,7 +218,7 @@ private:
 
     // ============ 热循环 ============
 
-    constexpr auto realtime_policy(const std::string& prefix, const uint32_t core) {
+    static constexpr auto realtime_policy(const std::string& prefix, const uint32_t core) {
         if (const auto result = ThreadAffinity::pin_to_core(core); !result) {
             spdlog::warn("[{}] failed to pin: {}", prefix, error_message(result.error()));
         } else if (const auto realtime_result = ThreadAffinity::set_realtime_priority();
@@ -236,7 +238,6 @@ private:
      */
     void detector_loop() noexcept {
         realtime_policy(__FUNCTION__, 0);
-        Frame frame;
         while (LIKELY(running_.load(std::memory_order_relaxed))) {
             // 等待新帧通知
             if (UNLIKELY(!frame_event_.wait_for(100))) {
@@ -244,46 +245,48 @@ private:
             }
 
             // 处理队列中所有帧
-            while (frame_queue_.try_pop(frame)) {
-                frame_queue_size_.fetch_sub(1, std::memory_order_relaxed);
-
-                // 写入共享缓冲
-                auto& shared        = shared_buffer_.borrow_mut();
-                shared.frame_seq    = frame.seq;
-                shared.timestamp_ns = frame.timestamp_ns;
-                shared.image        = std::move(frame.image);
-
-                // 预处理
-                strategy_->preprocess(shared);
-                shared_buffer_.publish();
-
-                // 检测
-                auto& result              = detection_buffer_.borrow_mut();
-                const auto t_detect_start = std::chrono::steady_clock::now();
-                strategy_->detect(shared, result.armor_slots);
-                const auto t_detect_end = std::chrono::steady_clock::now();
-
-                // 解算
-                strategy_->solve(result.armor_slots, result.poses3d);
-                const auto t_solve_end = std::chrono::steady_clock::now();
-
-                detection_buffer_.publish();
-
-                // 通知 tracker
-                tracker_event_.notify_one();
-
-                // 记录延迟
-                const auto detect_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
-                                           t_detect_end - t_detect_start)
-                                           .count();
-                const auto solve_ns =
-                    std::chrono::duration_cast<std::chrono::nanoseconds>(t_solve_end - t_detect_end)
-                        .count();
-                stats_.detect_latency.store(detect_ns, std::memory_order_relaxed);
-                stats_.detect_hist.record(detect_ns);
-                stats_.solve_latency.store(solve_ns, std::memory_order_relaxed);
-                stats_.solve_hist.record(solve_ns);
+            const auto borrow = frame_queue_.borrow();
+            if (!borrow) {
+                continue;
             }
+            frame_queue_size_.fetch_sub(1, std::memory_order_relaxed);
+
+            // 写入共享缓冲
+            auto& shared        = shared_buffer_.borrow_mut();
+            shared.frame_seq    = (*borrow)->seq;
+            shared.timestamp_ns = (*borrow)->timestamp_ns;
+            shared.image        = std::move((*borrow)->image);
+
+            // 预处理
+            strategy_->preprocess(shared);
+            shared_buffer_.publish();
+
+            // 检测
+            auto& result              = detection_buffer_.borrow_mut();
+            const auto t_detect_start = std::chrono::steady_clock::now();
+            strategy_->detect(shared, result.armor_slots);
+            const auto t_detect_end = std::chrono::steady_clock::now();
+
+            // 解算
+            strategy_->solve(result.armor_slots, result.poses3d);
+            const auto t_solve_end = std::chrono::steady_clock::now();
+
+            detection_buffer_.publish();
+
+            // 通知 tracker
+            tracker_event_.notify_one();
+
+            // 记录延迟
+            const auto detect_ns =
+                std::chrono::duration_cast<std::chrono::nanoseconds>(t_detect_end - t_detect_start)
+                    .count();
+            const auto solve_ns =
+                std::chrono::duration_cast<std::chrono::nanoseconds>(t_solve_end - t_detect_end)
+                    .count();
+            stats_.detect_latency.store(detect_ns, std::memory_order_relaxed);
+            stats_.detect_hist.record(detect_ns);
+            stats_.solve_latency.store(solve_ns, std::memory_order_relaxed);
+            stats_.solve_hist.record(solve_ns);
         }
     }
 
