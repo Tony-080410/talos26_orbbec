@@ -50,7 +50,7 @@ struct TfMessage {
 };
 
 struct ArmorDataMessage {
-    std::vector<uint8_t> data;  // JSON序列化数据
+    std::vector<uint8_t> data; // JSON序列化数据
 };
 
 // 新增: 调试图像消息
@@ -85,18 +85,9 @@ struct GimbalCmdMessage {
 };
 
 using FoxgloveMessage = std::variant<
-    ImageMessage,
-    SceneMessage,
-    TfMessage,
-    ArmorDataMessage,
-    BinaryImageMessage,
-    PatternImageMessage,
-    DebugLightsMessage,
-    DebugArmorsMessage,
-    MeasurementMessage,
-    TargetMessage,
-    GimbalCmdMessage
->;
+    ImageMessage, SceneMessage, TfMessage, ArmorDataMessage, BinaryImageMessage,
+    PatternImageMessage, DebugLightsMessage, DebugArmorsMessage, MeasurementMessage, TargetMessage,
+    GimbalCmdMessage>;
 
 // FoxgloveServer 类声明
 class FoxgloveServer {
@@ -121,8 +112,8 @@ public:
     // 相机标定信息发布
     void publish_camera_calibration(
         uint32_t width, uint32_t height,
-        const std::array<double, 9>& camera_matrix,  // row-major [fx, 0, cx, 0, fy, cy, 0, 0, 1]
-        const std::vector<double>& distortion,       // [k1, k2, p1, p2, k3]
+        const std::array<double, 9>& camera_matrix, // row-major [fx, 0, cx, 0, fy, cy, 0, 0, 1]
+        const std::vector<double>& distortion,      // [k1, k2, p1, p2, k3]
         uint64_t timestamp_ns = 0) noexcept;
 
 private:
@@ -136,21 +127,21 @@ private:
     std::optional<foxglove::schemas::FrameTransformsChannel> tf_ch_;
     std::optional<foxglove::schemas::SceneUpdateChannel> scene_ch_;
     std::optional<foxglove::schemas::CompressedImageChannel> img_ch_;
-    std::optional<foxglove::RawChannel> armor_ch_;  // 用于发送装甲板JSON数据
+    std::optional<foxglove::RawChannel> armor_ch_; // 用于发送装甲板JSON数据
 
     // 新增: 调试 channels
-    std::optional<foxglove::schemas::CompressedImageChannel> binary_img_ch_;   // /debug/binary_img
-    std::optional<foxglove::schemas::CompressedImageChannel> pattern_img_ch_;  // /debug/number_img
-    std::optional<foxglove::RawChannel> debug_lights_ch_;   // /debug/lights (JSON)
-    std::optional<foxglove::RawChannel> debug_armors_ch_;   // /debug/armors (JSON)
+    std::optional<foxglove::schemas::CompressedImageChannel> binary_img_ch_;  // /debug/binary_img
+    std::optional<foxglove::schemas::CompressedImageChannel> pattern_img_ch_; // /debug/number_img
+    std::optional<foxglove::RawChannel> debug_lights_ch_; // /debug/lights (JSON)
+    std::optional<foxglove::RawChannel> debug_armors_ch_; // /debug/armors (JSON)
 
     // 新增: 解算/追踪 channels
-    std::optional<foxglove::RawChannel> measurement_ch_;    // /solver/measurement (JSON)
-    std::optional<foxglove::RawChannel> target_ch_;         // /solver/target (JSON)
-    std::optional<foxglove::RawChannel> cmd_gimbal_ch_;     // /solver/cmd_gimbal (JSON)
+    std::optional<foxglove::RawChannel> measurement_ch_; // /solver/measurement (JSON)
+    std::optional<foxglove::RawChannel> target_ch_;      // /solver/target (JSON)
+    std::optional<foxglove::RawChannel> cmd_gimbal_ch_;  // /solver/cmd_gimbal (JSON)
 
     // 相机标定 channel
-    std::optional<foxglove::schemas::CameraCalibrationChannel> camera_calib_ch_;  // /camera_info
+    std::optional<foxglove::schemas::CameraCalibrationChannel> camera_calib_ch_; // /camera_info
 
     // TF Manager
     std::unique_ptr<fast_tf::infantry::InfantryTFManager> tf_manager_;
@@ -178,11 +169,11 @@ struct FoxgloveWrapper {
         const auto& cmd = inner.get().get_last_gimbal_cmd();
         {
             nlohmann::json cmd_json;
-            cmd_json["valid"] = cmd.valid;
+            cmd_json["valid"]       = cmd.valid;
             cmd_json["fire_advice"] = cmd.fire_advice;
-            cmd_json["yaw"] = cmd.yaw;
-            cmd_json["pitch"] = cmd.pitch;
-            cmd_json["distance"] = cmd.distance;
+            cmd_json["yaw"]         = cmd.yaw;
+            cmd_json["pitch"]       = cmd.pitch;
+            cmd_json["distance"]    = cmd.distance;
 
             std::string json_str = cmd_json.dump();
             GimbalCmdMessage cmd_msg;
@@ -194,7 +185,8 @@ struct FoxgloveWrapper {
 
         // 更新 TF (使用统一时间戳发布完整 TF 树)
         uint64_t tf_ts = std::chrono::duration_cast<std::chrono::nanoseconds>(
-            std::chrono::steady_clock::now().time_since_epoch()).count();
+                             std::chrono::steady_clock::now().time_since_epoch())
+                             .count();
         server.get().publish_tf(cmd.yaw, cmd.pitch, tf_ts);
     }
 
@@ -207,13 +199,13 @@ struct FoxgloveWrapper {
             inner.get().get_image_width(), inner.get().get_image_height(),
             inner.get().get_camera_matrix(), inner.get().get_distortion(), feat.timestamp_ns);
 
-
         // 第一步：完整克隆图像数据(防止数据竞争)
         auto img_bgr = feat.image->mat().clone();
 
         // 绘制装甲板边框和标签
         for (const auto& a : armor.armors) {
-            if (!armor.is_valid(static_cast<int>(&a - armor.armors.data()))) continue;
+            if (!armor.is_valid(static_cast<int>(&a - armor.armors.data())))
+                continue;
             auto tl = cv::Point2f(a.pts[0], a.pts[1]);
             auto tr = cv::Point2f(a.pts[2], a.pts[3]);
             auto br = cv::Point2f(a.pts[4], a.pts[5]);
@@ -227,7 +219,7 @@ struct FoxgloveWrapper {
             const auto name  = talos::armor_name(a.name);
             const auto color = talos::color_name(a.color);
             cv::putText(
-                img_bgr, fmt::format("{} {} {}", name, type, color), tl, cv::FONT_HERSHEY_SIMPLEX,
+                img_bgr, fmt::format("{} {} {}", name, type, color), tl, cv::FONT_HERSHEY_COMPLEX,
                 0.5, cv::Scalar(255, 0, 0), 1);
         }
 
@@ -265,7 +257,8 @@ struct FoxgloveWrapper {
                 binary_msg.img.format    = "jpeg";
                 binary_msg.img.data      = std::vector(
                     reinterpret_cast<const std::byte*>(binary_compressed.data()),
-                    reinterpret_cast<const std::byte*>(binary_compressed.data() + binary_compressed.size()));
+                    reinterpret_cast<const std::byte*>(
+                        binary_compressed.data() + binary_compressed.size()));
                 server.get().enqueue_message(std::move(binary_msg));
             }
         }
@@ -291,7 +284,8 @@ struct FoxgloveWrapper {
                     pattern_msg.img.format    = "jpeg";
                     pattern_msg.img.data      = std::vector(
                         reinterpret_cast<const std::byte*>(pattern_compressed.data()),
-                        reinterpret_cast<const std::byte*>(pattern_compressed.data() + pattern_compressed.size()));
+                        reinterpret_cast<const std::byte*>(
+                            pattern_compressed.data() + pattern_compressed.size()));
                     server.get().enqueue_message(std::move(pattern_msg));
                 }
             }
@@ -301,17 +295,17 @@ struct FoxgloveWrapper {
         {
             nlohmann::json lights_json;
             lights_json["timestamp_ns"] = feat.timestamp_ns;
-            lights_json["lights"] = nlohmann::json::array();
+            lights_json["lights"]       = nlohmann::json::array();
             for (const auto& light : buffers.lightbars) {
                 nlohmann::json light_obj;
-                light_obj["x"] = light.center.x;
-                light_obj["y"] = light.center.y;
-                light_obj["angle"] = light.angle;
+                light_obj["x"]           = light.center.x;
+                light_obj["y"]           = light.center.y;
+                light_obj["angle"]       = light.angle;
                 light_obj["angle_error"] = light.angle_error;
-                light_obj["length"] = light.length;
-                light_obj["width"] = light.width;
-                light_obj["ratio"] = light.ratio;
-                light_obj["color"] = std::string(talos::color_name(light.color));
+                light_obj["length"]      = light.length;
+                light_obj["width"]       = light.width;
+                light_obj["ratio"]       = light.ratio;
+                light_obj["color"]       = std::string(talos::color_name(light.color));
                 lights_json["lights"].push_back(light_obj);
             }
             std::string json_str = lights_json.dump();
@@ -326,23 +320,23 @@ struct FoxgloveWrapper {
         {
             nlohmann::json armors_json;
             armors_json["timestamp_ns"] = feat.timestamp_ns;
-            armors_json["armors"] = nlohmann::json::array();
+            armors_json["armors"]       = nlohmann::json::array();
             for (const auto& a : buffers.armors) {
                 nlohmann::json armor_obj;
                 armor_obj["center"]["x"] = a.center.x;
                 armor_obj["center"]["y"] = a.center.y;
-                armor_obj["pts"] = nlohmann::json::array();
+                armor_obj["pts"]         = nlohmann::json::array();
                 for (const auto& pt : a.points) {
                     armor_obj["pts"].push_back({pt.x, pt.y});
                 }
-                armor_obj["ratio"] = a.ratio;
-                armor_obj["side_ratio"] = a.side_ratio;
+                armor_obj["ratio"]             = a.ratio;
+                armor_obj["side_ratio"]        = a.side_ratio;
                 armor_obj["rectangular_error"] = a.rectangular_error;
-                armor_obj["confidence"] = a.confidence;
-                armor_obj["color"] = std::string(talos::color_name(a.color));
-                armor_obj["type"] = a.type == talos::ArmorType::big ? "big" : "small";
-                armor_obj["name"] = std::string(talos::armor_name(a.name));
-                armor_obj["duplicated"] = a.duplicated;
+                armor_obj["confidence"]        = a.confidence;
+                armor_obj["color"]             = std::string(talos::color_name(a.color));
+                armor_obj["type"]              = a.type == talos::ArmorType::big ? "big" : "small";
+                armor_obj["name"]              = std::string(talos::armor_name(a.name));
+                armor_obj["duplicated"]        = a.duplicated;
                 armors_json["armors"].push_back(armor_obj);
             }
             std::string json_str = armors_json.dump();
@@ -365,30 +359,102 @@ struct FoxgloveWrapper {
             nlohmann::json target_json;
             target_json["timestamp_ns"] = armor.timestamp_ns;
             target_json["state"] = std::string(talos::tracker_state(tracker_soa.state.load()));
-            target_json["position"]["x"] = tracker_soa.pos[0];
-            target_json["position"]["y"] = tracker_soa.pos[1];
-            target_json["position"]["z"] = tracker_soa.pos[2];
-            target_json["velocity"]["x"] = tracker_soa.vel[0];
-            target_json["velocity"]["y"] = tracker_soa.vel[1];
-            target_json["velocity"]["z"] = tracker_soa.vel[2];
-            target_json["yaw"] = tracker_soa.yaw;
-            target_json["v_yaw"] = tracker_soa.v_yaw;
-            target_json["radius"] = {tracker_soa.radius[0], tracker_soa.radius[1]};
+            target_json["position"]["x"]   = tracker_soa.pos[0];
+            target_json["position"]["y"]   = tracker_soa.pos[1];
+            target_json["position"]["z"]   = tracker_soa.pos[2];
+            target_json["velocity"]["x"]   = tracker_soa.vel[0];
+            target_json["velocity"]["y"]   = tracker_soa.vel[1];
+            target_json["velocity"]["z"]   = tracker_soa.vel[2];
+            target_json["yaw"]             = tracker_soa.yaw;
+            target_json["v_yaw"]           = tracker_soa.v_yaw;
+            target_json["radius"]          = {tracker_soa.radius[0], tracker_soa.radius[1]};
             target_json["detecting_count"] = tracker_soa.detecting_count;
-            target_json["lost_count"] = tracker_soa.lost_count;
+            target_json["lost_count"]      = tracker_soa.lost_count;
 
             // 装甲板列表 (从 Target 获取)
             target_json["armor_list"] = nlohmann::json::array();
+            std::vector<foxglove::schemas::SceneEntity> scene_entities;
             if (target.converged()) {
                 const auto armor_list = target.armor_xyza_list();
+
+                int i = 0;
                 for (const auto& xyza : armor_list) {
+                    // 创建SceneEntity
+                    foxglove::schemas::SceneEntity entity;
+                    entity.id        = "armor_" + std::to_string(i++);
+                    entity.frame_id  = "odom";
+                    entity.timestamp = fxglv_ts_from_ns(armor.timestamp_ns);
+
+                    // 构造位置和方向
+                    foxglove::schemas::Vector3 position;
+                    position.x = xyza[0];
+                    position.y = xyza[1];
+                    position.z = xyza[2];
+
+                    foxglove::schemas::Quaternion orientation;
+                    Eigen::AngleAxisd yaw(xyza[3], Eigen::Vector3d::UnitZ());
+                    Eigen::AngleAxisd pitch(
+                        15. * std::numbers::pi / 180., Eigen::Vector3d::UnitY());
+                    Eigen::Quaterniond q = yaw * pitch;
+                    orientation.x        = q.x();
+                    orientation.y        = q.y();
+                    orientation.z        = q.z();
+                    orientation.w        = q.w();
+
+                    foxglove::schemas::Pose p;
+                    p.position    = position;
+                    p.orientation = orientation;
+
+                    // 创建立方体 (装甲板)
+                    foxglove::schemas::Vector3 cube_size;
+                    cube_size.x = 0.03;
+                    cube_size.y = 0.15;
+                    cube_size.z = 0.125;
+
+                    foxglove::schemas::CubePrimitive cube;
+                    cube.pose  = p;
+                    cube.size  = cube_size;
+                    cube.color = foxglove::schemas::Color{.r = 0.5, .g = 0.5, .b = 0.8, .a = 0.3};
+                    entity.cubes.push_back(cube);
+                    foxglove::schemas::TextPrimitive text;
+                    text.text = std::to_string(i);
+                    text.pose = p;
+                    if (text.pose.has_value() && text.pose->position.has_value()) {
+                        text.pose->position->z += 0.1;
+                    }
+                    text.font_size = 0.05;
+                    foxglove::schemas::Color text_color;
+                    text_color.r   = 1.0; // 白色
+                    text_color.g   = 1.0;
+                    text_color.b   = 1.0;
+                    text_color.a   = 0.9;
+                    text.color     = text_color;
+                    text.billboard = true;
+
+                    entity.texts.push_back(text);
+
+                    // 添加元数据
+                    {
+                        foxglove::schemas::KeyValuePair kv;
+                        kv.key   = "armor_id";
+                        kv.value = std::to_string(i);
+                        entity.metadata.push_back(kv);
+                    }
+
+                    scene_entities.push_back(entity);
+
                     target_json["armor_list"].push_back({
-                        {"x", xyza[0]},
-                        {"y", xyza[1]},
-                        {"z", xyza[2]},
+                        {    "x", xyza[0]},
+                        {    "y", xyza[1]},
+                        {    "z", xyza[2]},
                         {"angle", xyza[3]}
                     });
                 }
+            }
+            if (!scene_entities.empty()) {
+                SceneMessage scene_msg;
+                scene_msg.scene.entities = std::move(scene_entities);
+                server.get().enqueue_message(std::move(scene_msg));
             }
 
             std::string json_str = target_json.dump();
@@ -400,87 +466,88 @@ struct FoxgloveWrapper {
         }
     }
 
+    auto create_armor_scene(const talos::Armor& armor) {}
+
     auto solve(const talos::ArmorSlots& armor, auto_aim::Poses3D& poses3d) noexcept -> void {
         inner.get().solve(armor, poses3d);
 
         std::vector<foxglove::schemas::SceneEntity> scene_entities;
         for (int i = 0; i < 10; i++) {
-            if (!armor.is_valid(i)) continue;
+            if (!armor.is_valid(i))
+                continue;
 
-            const auto& a = armor.armors[i];
+            const auto& a    = armor.armors[i];
             const auto& pose = poses3d[i];
 
             // 创建SceneEntity
             foxglove::schemas::SceneEntity entity;
-            entity.id = "armor_" + std::to_string(i);
-            entity.frame_id = "world";
+            entity.id        = "armor_" + std::to_string(i);
+            entity.frame_id  = "camera_optical_frame";
             entity.timestamp = fxglv_ts_from_ns(armor.timestamp_ns);
 
             // 构造位置和方向
             foxglove::schemas::Vector3 position;
-            position.x = pose.xyz_in_world[0];
-            position.y = pose.xyz_in_world[1];
-            position.z = pose.xyz_in_world[2];
+            position.x = pose.xyz_in_camera[0];
+            position.y = pose.xyz_in_camera[1];
+            position.z = pose.xyz_in_camera[2];
 
-            // yaw pitch roll -> qx qy qz qw
-            Eigen::AngleAxisd yawz(pose.ypr_in_world[0], Eigen::Vector3d::UnitZ());
-            Eigen::AngleAxisd pitchy(pose.ypr_in_world[1], Eigen::Vector3d::UnitY());
-            Eigen::AngleAxisd rollx(pose.ypr_in_world[2], Eigen::Vector3d::UnitX());
-
-            Eigen::Quaterniond q = yawz * pitchy * rollx;
             foxglove::schemas::Quaternion orientation;
+            Eigen::Quaterniond q(pose.R_in_camera);
             orientation.x = q.x();
             orientation.y = q.y();
             orientation.z = q.z();
             orientation.w = q.w();
 
             foxglove::schemas::Pose p;
-            p.position = position;
+            p.position    = position;
             p.orientation = orientation;
 
             // 创建立方体 (装甲板)
             foxglove::schemas::Vector3 cube_size;
             if (a.type == talos::ArmorType::big) {
-                cube_size.x = 0.225;
-                cube_size.y = 0.27;
-                cube_size.z = 0.02;
+                cube_size.x = 0.03;
+                cube_size.y = 0.15;
+                cube_size.z = 0.125;
             } else {
-                cube_size.x = 0.115;
-                cube_size.y = 0.27;
-                cube_size.z = 0.02;
+                cube_size.x = 0.03;
+                cube_size.y = 0.15;
+                cube_size.z = 0.125;
             }
 
             foxglove::schemas::CubePrimitive cube;
-            cube.pose = p;
-            cube.size = cube_size;
+            cube.pose  = p;
+            cube.size  = cube_size;
             cube.color = fxgl_get_color(a.color);
             entity.cubes.push_back(cube);
 
             // 创建文本标签
             foxglove::schemas::TextPrimitive text;
-            text.text = std::string(talos::armor_name(a.name)) + " " +
-                       std::string(a.type == talos::ArmorType::big ? "big" : "small");
+            text.text = std::string(talos::armor_name(a.name)) + " "
+                      + std::string(a.type == talos::ArmorType::big ? "big" : "small");
             text.pose = p;
+            if (text.pose.has_value() && text.pose->position.has_value()) {
+                text.pose->position->y -= 0.1;
+            }
             text.font_size = 0.05;
             foxglove::schemas::Color text_color;
-            text_color.r = 1.0;  // 白色
-            text_color.g = 1.0;
-            text_color.b = 1.0;
-            text_color.a = 1.0;
-            text.color = text_color;
+            text_color.r   = 1.0; // 白色
+            text_color.g   = 1.0;
+            text_color.b   = 1.0;
+            text_color.a   = 0.9;
+            text.color     = text_color;
             text.billboard = true;
             entity.texts.push_back(text);
 
             // 添加元数据
             {
                 foxglove::schemas::KeyValuePair kv;
-                kv.key = "confidence";
+                kv.key   = "confidence";
                 kv.value = std::to_string(a.confidence);
                 entity.metadata.push_back(kv);
             }
             {
                 foxglove::schemas::KeyValuePair kv;
-                kv.key = "color";
+                kv.key   = "color";
                 kv.value = std::string(talos::color_name(a.color));
                 entity.metadata.push_back(kv);
             }
@@ -498,23 +565,24 @@ struct FoxgloveWrapper {
         // 第五步：构造和发送JSON装甲板数据
         nlohmann::json armor_json = nlohmann::json::array();
         for (int i = 0; i < 10; i++) {
-            if (!armor.is_valid(i)) continue;
+            if (!armor.is_valid(i))
+                continue;
 
-            const auto& a = armor.armors[i];
+            const auto& a    = armor.armors[i];
             const auto& pose = poses3d[i];
 
             nlohmann::json armor_obj;
-            armor_obj["id"] = i;
-            armor_obj["name"] = std::string(talos::armor_name(a.name));
-            armor_obj["type"] = a.type == talos::ArmorType::big ? "big" : "small";
-            armor_obj["color"] = std::string(talos::color_name(a.color));
-            armor_obj["confidence"] = a.confidence;
-            armor_obj["pose"]["position"]["x"] = pose.xyz_in_world[0];
-            armor_obj["pose"]["position"]["y"] = pose.xyz_in_world[1];
-            armor_obj["pose"]["position"]["z"] = pose.xyz_in_world[2];
-            armor_obj["pose"]["euler"]["yaw"] = pose.ypr_in_world[0];
+            armor_obj["id"]                     = i;
+            armor_obj["name"]                   = std::string(talos::armor_name(a.name));
+            armor_obj["type"]                   = a.type == talos::ArmorType::big ? "big" : "small";
+            armor_obj["color"]                  = std::string(talos::color_name(a.color));
+            armor_obj["confidence"]             = a.confidence;
+            armor_obj["pose"]["position"]["x"]  = pose.xyz_in_world[0];
+            armor_obj["pose"]["position"]["y"]  = pose.xyz_in_world[1];
+            armor_obj["pose"]["position"]["z"]  = pose.xyz_in_world[2];
+            armor_obj["pose"]["euler"]["yaw"]   = pose.ypr_in_world[0];
             armor_obj["pose"]["euler"]["pitch"] = pose.ypr_in_world[1];
-            armor_obj["pose"]["euler"]["roll"] = pose.ypr_in_world[2];
+            armor_obj["pose"]["euler"]["roll"]  = pose.ypr_in_world[2];
 
             armor_json.push_back(armor_obj);
         }
@@ -535,15 +603,21 @@ struct FoxgloveWrapper {
             measurement_json["timestamp_ns"] = armor.timestamp_ns;
             measurement_json["measurements"] = nlohmann::json::array();
             for (int i = 0; i < 10; i++) {
-                if (!armor.is_valid(i)) continue;
+                if (!armor.is_valid(i))
+                    continue;
                 const auto& pose = poses3d[i];
                 nlohmann::json m;
-                m["id"] = i;
-                m["xyz_in_gimbal"] = {pose.xyz_in_gimbal[0], pose.xyz_in_gimbal[1], pose.xyz_in_gimbal[2]};
-                m["xyz_in_world"] = {pose.xyz_in_world[0], pose.xyz_in_world[1], pose.xyz_in_world[2]};
-                m["ypr_in_gimbal"] = {pose.ypr_in_gimbal[0], pose.ypr_in_gimbal[1], pose.ypr_in_gimbal[2]};
-                m["ypr_in_world"] = {pose.ypr_in_world[0], pose.ypr_in_world[1], pose.ypr_in_world[2]};
-                m["ypd_in_world"] = {pose.ypd_in_world[0], pose.ypd_in_world[1], pose.ypd_in_world[2]};
+                m["id"]            = i;
+                m["xyz_in_gimbal"] = {
+                    pose.xyz_in_gimbal[0], pose.xyz_in_gimbal[1], pose.xyz_in_gimbal[2]};
+                m["xyz_in_world"] = {
+                    pose.xyz_in_world[0], pose.xyz_in_world[1], pose.xyz_in_world[2]};
+                m["ypr_in_gimbal"] = {
+                    pose.ypr_in_gimbal[0], pose.ypr_in_gimbal[1], pose.ypr_in_gimbal[2]};
+                m["ypr_in_world"] = {
+                    pose.ypr_in_world[0], pose.ypr_in_world[1], pose.ypr_in_world[2]};
+                m["ypd_in_world"] = {
+                    pose.ypd_in_world[0], pose.ypd_in_world[1], pose.ypd_in_world[2]};
                 m["yaw_raw"] = pose.yaw_raw;
                 measurement_json["measurements"].push_back(m);
             }
@@ -562,21 +636,36 @@ struct FoxgloveWrapper {
     static foxglove::schemas::Color fxgl_get_color(const talos::Color c) noexcept {
         foxglove::schemas::Color color;
         color.a = 1.0;
-        switch(c) {
-            case talos::Color::red:
-                color.r = 1.0; color.g = 0.0; color.b = 0.0;
-                break;
-            case talos::Color::blue:
-                color.r = 0.0; color.g = 0.0; color.b = 1.0;
-                break;
-            case talos::Color::extinguish:
-                color.r = 1.0; color.g = 1.0; color.b = 0.0;  // 黄色
-                break;
-            case talos::Color::purple:
-                color.r = 1.0; color.g = 0.0; color.b = 1.0;  // 紫色
-                break;
-            default:
-                color.r = 0.5; color.g = 0.5; color.b = 0.5;  // 灰色
+        switch (c) {
+        case talos::Color::red:
+            color.r = 1.0;
+            color.g = 0.0;
+            color.b = 0.0;
+            color.a = 0.3;
+            break;
+        case talos::Color::blue:
+            color.r = 0.0;
+            color.g = 0.0;
+            color.b = 1.0;
+            color.a = 0.3;
+            break;
+        case talos::Color::extinguish:
+            color.r = 1.0;
+            color.g = 1.0;
+            color.b = 0.0; // 黄色
+            color.a = 0.3;
+            break;
+        case talos::Color::purple:
+            color.r = 1.0;
+            color.g = 0.0;
+            color.b = 1.0; // 紫色
+            color.a = 0.3;
+            break;
+        default:
+            color.r = 0.5;
+            color.g = 0.5;
+            color.b = 0.5; // 灰色
+            color.a = 0.3;
         }
         return color;
     }

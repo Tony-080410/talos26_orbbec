@@ -67,7 +67,7 @@ namespace talos {
         static constexpr uint8_t FLAG_NEW = 0x80;
         static constexpr uint8_t INDEX_MASK = 0x03;
 
-        alignas(64) std::array<T, 3> slots_{};
+        alignas(std::hardware_destructive_interference_size) std::array<T, 3> slots_{};
 
         // Writer 私有
         alignas(64) uint8_t write_idx_{0};
