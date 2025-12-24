@@ -22,9 +22,10 @@
 #include <optional>
 #include <string_view>
 
-#include "frame_hierarchy.hpp"
-#include "frame_types.hpp"
-#include "static_transforms.hpp"
+#include "frame_id.hpp"
+#include "frame_path.hpp"
+#include "matrix.hpp"
+#include "static_tf.hpp"
 
 #include <spdlog/spdlog.h>
 

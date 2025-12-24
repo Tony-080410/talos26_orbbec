@@ -2,11 +2,7 @@
 #include <random>
 #include <vector>
 
-#include "fast_tf/frame_id.hpp"
-#include "fast_tf/frame_types.hpp"
-#include "fast_tf/transform_buffer.hpp"
-#include "fast_tf/transform_tree.hpp"
-#include "fast_tf/tree_structure.hpp"
+#include "fast_tf/mod.hpp"
 
 using namespace fast_tf;
 

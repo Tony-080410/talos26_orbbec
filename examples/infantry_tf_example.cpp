@@ -9,19 +9,19 @@
  * - Camera calibration
  */
 
-#include <iostream>
-#include <iomanip>
+#include <chrono>
 #include <cmath>
+#include <iomanip>
+#include <iostream>
 #include <memory>
 #include <thread>
-#include <chrono>
 
 #include "fast_tf/infantry_tf.hpp"
 #include <foxglove/foxglove.hpp>
-#include <foxglove/server.hpp>
 #include <foxglove/schemas.hpp>
-#include <spdlog/spdlog.h>
+#include <foxglove/server.hpp>
 #include <spdlog/sinks/stdout_color_sinks.h>
+#include <spdlog/spdlog.h>
 
 using namespace fast_tf;
 using namespace fast_tf::infantry;
@@ -35,24 +35,24 @@ using namespace fast_tf::infantry;
  * In real code, this would come from your target tracking algorithm.
  */
 struct GimbalState {
-    double yaw = 0.0;
-    double pitch = 0.0;
+    double yaw       = 0.0;
+    double pitch     = 0.0;
     double timestamp = 0.0;
 
     void simulate_tracking(double elapsed_time) {
         // Simulate smooth gimbal movement (sinusoidal tracking)
-        const double frequency = 0.5;  // Hz
-        const double max_yaw = M_PI / 4;  // ±45°
-        const double max_pitch = M_PI / 6;  // ±30°
+        const double frequency = 0.5;      // Hz
+        const double max_yaw   = M_PI / 4; // ±45°
+        const double max_pitch = M_PI / 6; // ±30°
 
-        yaw = max_yaw * std::sin(2 * M_PI * frequency * elapsed_time);
-        pitch = max_pitch * std::cos(2 * M_PI * frequency * elapsed_time);
+        yaw       = max_yaw * std::sin(2 * M_PI * frequency * elapsed_time);
+        pitch     = max_pitch * std::cos(2 * M_PI * frequency * elapsed_time);
         timestamp = elapsed_time;
     }
 
     void print() const {
-        std::cout << "  Gimbal State: yaw=" << std::fixed << std::setprecision(4)
-                  << yaw << " rad (" << (yaw * 180 / M_PI) << "°), "
+        std::cout << "  Gimbal State: yaw=" << std::fixed << std::setprecision(4) << yaw << " rad ("
+                  << (yaw * 180 / M_PI) << "°), "
                   << "pitch=" << pitch << " rad (" << (pitch * 180 / M_PI) << "°)\n";
     }
 };
@@ -62,28 +62,28 @@ struct GimbalState {
  * In real code, this would come from your localization system.
  */
 struct OdometryState {
-    double x = 0.0;
-    double y = 0.0;
-    double theta = 0.0;
+    double x         = 0.0;
+    double y         = 0.0;
+    double theta     = 0.0;
     double timestamp = 0.0;
 
     void simulate_movement(double elapsed_time) {
         // Simulate circular motion
-        const double radius = 2.0;  // 2 meters
-        const double angular_vel = 0.5;  // rad/s
+        const double radius      = 2.0; // 2 meters
+        const double angular_vel = 0.5; // rad/s
 
         double angle = angular_vel * elapsed_time;
 
-        x = radius * std::cos(angle);
-        y = radius * std::sin(angle);
-        theta = angle;
+        x         = radius * std::cos(angle);
+        y         = radius * std::sin(angle);
+        theta     = angle;
         timestamp = elapsed_time;
     }
 
     void print() const {
-        std::cout << "  Odometry State: x=" << std::fixed << std::setprecision(4)
-                  << x << " m, y=" << y << " m, theta=" << theta
-                  << " rad (" << (theta * 180 / M_PI) << "°)\n";
+        std::cout << "  Odometry State: x=" << std::fixed << std::setprecision(4) << x
+                  << " m, y=" << y << " m, theta=" << theta << " rad (" << (theta * 180 / M_PI)
+                  << "°)\n";
     }
 };
 
@@ -94,7 +94,7 @@ struct OdometryState {
 int main() {
     // Setup logging
     auto console_sink = std::make_shared<spdlog::sinks::stdout_color_sink_mt>();
-    auto logger = std::make_shared<spdlog::logger>("infantry_tf", console_sink);
+    auto logger       = std::make_shared<spdlog::logger>("infantry_tf", console_sink);
     spdlog::set_default_logger(logger);
     spdlog::set_level(spdlog::level::debug);
 
@@ -122,14 +122,12 @@ int main() {
         return 1;
     }
 
-    auto server = std::make_unique<foxglove::WebSocketServer>(
-        std::move(server_result.value()));
+    auto server = std::make_unique<foxglove::WebSocketServer>(std::move(server_result.value()));
 
     std::cout << "  ✓ Foxglove WebSocket server listening on ws://127.0.0.1:8765\n";
 
     // Create TF channel
-    auto tf_channel_result =
-        foxglove::schemas::FrameTransformsChannel::create("/tf");
+    auto tf_channel_result = foxglove::schemas::FrameTransformsChannel::create("/tf");
     if (!tf_channel_result.has_value()) {
         std::cerr << "Failed to create TF channel: "
                   << foxglove::strerror(tf_channel_result.error()) << "\n";
@@ -160,27 +158,25 @@ int main() {
     std::cout << "\n[3] Frame Hierarchy Verification (Compile-Time)...\n";
 
     std::cout << "  Frame types and relationships:\n";
-    std::cout << "    " << world_Frame::frame_name << " (root)\n";
-    std::cout << "    └── " << odom_Frame::frame_name << "\n";
-    std::cout << "        └── " << gimbal_link_Frame::frame_name << "\n";
-    std::cout << "            ├── " << camera_link_Frame::frame_name << "\n";
-    std::cout << "            │   └── " << camera_optical_frame_Frame::frame_name
-              << "\n";
-    std::cout << "            └── " << muzzle_link_Frame::frame_name << "\n";
+    std::cout << "    " << world_frame::frame_name << " (root)\n";
+    std::cout << "    └── " << odom_frame::frame_name << "\n";
+    std::cout << "        └── " << gimbal_link_frame::frame_name << "\n";
+    std::cout << "            ├── " << camera_link_frame::frame_name << "\n";
+    std::cout << "            │   └── " << camera_optical_frame_frame::frame_name << "\n";
+    std::cout << "            └── " << muzzle_link_frame::frame_name << "\n";
 
     // Verify static transforms
     std::cout << "\n  Static transforms registered:\n";
 
-    if (tf_manager->has_static_transform<camera_link_Frame, gimbal_link_Frame>()) {
+    if (tf_manager->has_static_transform<camera_link_frame, gimbal_link_frame>()) {
         std::cout << "    ✓ camera_link -> gimbal_link\n";
     }
 
-    if (tf_manager->has_static_transform<
-            camera_optical_frame_Frame, camera_link_Frame>()) {
+    if (tf_manager->has_static_transform<camera_optical_frame_frame, camera_link_frame>()) {
         std::cout << "    ✓ camera_optical_frame -> camera_link\n";
     }
 
-    if (tf_manager->has_static_transform<muzzle_link_Frame, gimbal_link_Frame>()) {
+    if (tf_manager->has_static_transform<muzzle_link_frame, gimbal_link_frame>()) {
         std::cout << "    ✓ muzzle_link -> gimbal_link\n";
     }
 
@@ -194,7 +190,7 @@ int main() {
     OdometryState odometry;
 
     const int simulation_steps = 10;
-    const double dt = 0.5;  // 500ms per step
+    const double dt            = 0.5; // 500ms per step
 
     for (int step = 0; step < simulation_steps; ++step) {
         double elapsed_time = step * dt;
@@ -204,12 +200,11 @@ int main() {
         odometry.simulate_movement(elapsed_time);
 
         // Publish to TF
-        tf_manager->update_gimbal(gimbal.yaw, gimbal.pitch);
+        tf_manager->update_gimbal(0.0, gimbal.pitch, gimbal.yaw);
         tf_manager->update_odometry(odometry.x, odometry.y, odometry.theta);
 
         std::cout << "\n  [Step " << (step + 1) << "/" << simulation_steps << "] "
-                  << "t=" << std::fixed << std::setprecision(2) << elapsed_time
-                  << "s\n";
+                  << "t=" << std::fixed << std::setprecision(2) << elapsed_time << "s\n";
 
         gimbal.print();
         odometry.print();
@@ -225,22 +220,19 @@ int main() {
     std::cout << "\n[5] Demonstrating Type-Safe Query API...\n";
 
     // Example: Get camera calibration
-    if (auto camera_tf =
-            tf_manager->get_static_transform<camera_link_Frame, gimbal_link_Frame>()) {
+    if (auto camera_tf = tf_manager->get_static_transform<camera_link_frame, gimbal_link_frame>()) {
         std::cout << "  ✓ Retrieved camera calibration transform\n";
-        std::cout << "    Camera position: ("
-                  << camera_tf->translation().x() << ", "
-                  << camera_tf->translation().y() << ", "
-                  << camera_tf->translation().z() << ")\n";
+        std::cout << "    Camera position: (" << camera_tf->translation().x() << ", "
+                  << camera_tf->translation().y() << ", " << camera_tf->translation().z() << ")\n";
     }
 
     // Example: Get optical frame calibration
-    if (auto optical_tf = tf_manager->get_static_transform<
-            camera_optical_frame_Frame, camera_link_Frame>()) {
+    if (auto optical_tf =
+            tf_manager->get_static_transform<camera_optical_frame_frame, camera_link_frame>()) {
         std::cout << "  ✓ Retrieved optical frame transformation\n";
         auto quat = optical_tf->quaternion();
-        std::cout << "    Quaternion: (w=" << quat.w() << ", x=" << quat.x()
-                  << ", y=" << quat.y() << ", z=" << quat.z() << ")\n";
+        std::cout << "    Quaternion: (w=" << quat.w() << ", x=" << quat.x() << ", y=" << quat.y()
+                  << ", z=" << quat.z() << ")\n";
     }
 
     // ========================================================================

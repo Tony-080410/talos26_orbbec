@@ -3,13 +3,7 @@
 #include <thread>
 #include <vector>
 
-#include "fast_tf/frame_hierarchy.hpp"
-#include "fast_tf/frame_id.hpp"
-#include "fast_tf/frame_types.hpp"
-#include "fast_tf/static_transforms.hpp"
-#include "fast_tf/transform_buffer.hpp"
-#include "fast_tf/transform_tree.hpp"
-#include "fast_tf/tree_structure.hpp"
+#include "fast_tf/mod.hpp"
 
 using namespace fast_tf;
 
@@ -190,7 +184,7 @@ TEST_F(CircularTransformBufferTest, ThreadSafety) {
     for (int t = 0; t < 3; ++t) {
         readers.emplace_back([&buffer]() {
             for (int i = 0; i < 50; ++i) {
-                buffer.latest();
+                (void)buffer.latest();
                 std::this_thread::sleep_for(std::chrono::milliseconds(2));
             }
         });
@@ -225,6 +219,185 @@ TEST_F(CircularTransformBufferTest, ThreadSafety) {
 // ============================================================================
 // Note: Static transform functionality is also validated through compile-time
 // frame hierarchy tests which are part of the broader test suite.
+
+// ============================================================================
+// Type-Safe Query Builder Tests
+// ============================================================================
+
+// Define test frame hierarchy
+DECLARE_FRAME(test_world);
+DECLARE_FRAME(test_base, test_world);
+DECLARE_FRAME(test_sensor, test_base);
+
+class QueryBuilderTest : public ::testing::Test {
+protected:
+    const double EPSILON = 1e-10;
+};
+
+TEST_F(QueryBuilderTest, SameFrameReturnsIdentity) {
+    using TestTreeStructure = TransformTreeStructure<
+        TreeNode<fnv1a_hash("test_world"), NullParent>,
+        TreeNode<fnv1a_hash("test_base"), ParentRef<0>>,
+        TreeNode<fnv1a_hash("test_sensor"), ParentRef<1>>>;
+
+    TransformTree<TestTreeStructure> tree;
+
+    // Query same frame should return identity
+    auto result = tree.transform<test_world_frame>().to<test_world_frame>().at(1000);
+
+    ASSERT_TRUE(result.has_value());
+    EXPECT_EQ(result->timestamp, 1000);
+    EXPECT_FALSE(result->is_interpolated);
+
+    // Check identity transform
+    auto trans = result->transform.translation();
+    EXPECT_NEAR(trans.x(), 0.0, EPSILON);
+    EXPECT_NEAR(trans.y(), 0.0, EPSILON);
+    EXPECT_NEAR(trans.z(), 0.0, EPSILON);
+}
+
+TEST_F(QueryBuilderTest, LatestSameFrameReturnsIdentity) {
+    using TestTreeStructure = TransformTreeStructure<
+        TreeNode<fnv1a_hash("test_world"), NullParent>,
+        TreeNode<fnv1a_hash("test_base"), ParentRef<0>>,
+        TreeNode<fnv1a_hash("test_sensor"), ParentRef<1>>>;
+
+    TransformTree<TestTreeStructure> tree;
+
+    // Query latest for same frame
+    auto result = tree.transform<test_base_frame>().to<test_base_frame>().latest();
+
+    ASSERT_TRUE(result.has_value());
+    EXPECT_FALSE(result->is_interpolated);
+}
+
+TEST_F(QueryBuilderTest, ErrorTypeOnNoData) {
+    using TestTreeStructure = TransformTreeStructure<
+        TreeNode<fnv1a_hash("test_world"), NullParent>,
+        TreeNode<fnv1a_hash("test_base"), ParentRef<0>>>;
+
+    TransformTree<TestTreeStructure> tree;
+
+    // Query different frames without data should return error
+    auto result = tree.transform<test_base_frame>().to<test_world_frame>().at(1000);
+
+    // Should fail since no transforms were set
+    EXPECT_FALSE(result.has_value());
+    // Verify error type is accessible
+    EXPECT_TRUE(
+        result.error() == TransformError::PathNotFound
+        || result.error() == TransformError::NoDataAvailable);
+}
+
+TEST_F(QueryBuilderTest, ErrorToStringWorks) {
+    // Test all error types
+    EXPECT_STREQ(to_string(TransformError::FrameNotFound), "frame not found");
+    EXPECT_STREQ(to_string(TransformError::NoDataAvailable), "no data available");
+    EXPECT_STREQ(to_string(TransformError::ExtrapolationRequired), "extrapolation required");
+    EXPECT_STREQ(to_string(TransformError::Timeout), "timeout");
+    EXPECT_STREQ(to_string(TransformError::PathNotFound), "path not found");
+}
+
+// ============================================================================
+// Buffer std::expected Tests
+// ============================================================================
+
+class BufferExpectedTest : public ::testing::Test {
+protected:
+    static constexpr int BUFFER_SIZE = 10;
+    using TestBuffer                 = CircularTransformBuffer<BUFFER_SIZE>;
+    const double EPSILON             = 1e-10;
+};
+
+TEST_F(BufferExpectedTest, EmptyBufferReturnsError) {
+    TestBuffer buffer;
+
+    auto latest = buffer.latest();
+    EXPECT_FALSE(latest.has_value());
+    EXPECT_EQ(latest.error(), TransformError::NoDataAvailable);
+
+    auto at_result = buffer.at(1000);
+    EXPECT_FALSE(at_result.has_value());
+    EXPECT_EQ(at_result.error(), TransformError::NoDataAvailable);
+
+    auto interp = buffer.at_interpolated(1000);
+    EXPECT_FALSE(interp.has_value());
+    EXPECT_EQ(interp.error(), TransformError::NoDataAvailable);
+}
+
+TEST_F(BufferExpectedTest, LatestReturnsValue) {
+    TestBuffer buffer;
+
+    auto tf = TransformMatrix4d::from_rpy(0.0, 0.0, 0.0, 1.0, 2.0, 3.0);
+    buffer.push(1000, tf);
+
+    auto latest = buffer.latest();
+    ASSERT_TRUE(latest.has_value());
+    EXPECT_EQ(latest->timestamp_ns, 1000);
+    EXPECT_NEAR(latest->transform.translation().x(), 1.0, EPSILON);
+}
+
+TEST_F(BufferExpectedTest, AtReturnsExactMatch) {
+    TestBuffer buffer;
+
+    auto tf1 = TransformMatrix4d::from_rpy(0.0, 0.0, 0.0, 1.0, 0.0, 0.0);
+    auto tf2 = TransformMatrix4d::from_rpy(0.0, 0.0, 0.0, 2.0, 0.0, 0.0);
+
+    buffer.push(1000, tf1);
+    buffer.push(2000, tf2);
+
+    auto result = buffer.at(1000);
+    ASSERT_TRUE(result.has_value());
+    EXPECT_EQ(result->timestamp_ns, 1000);
+    EXPECT_NEAR(result->transform.translation().x(), 1.0, EPSILON);
+}
+
+TEST_F(BufferExpectedTest, AtReturnsExtrapolationErrorForMissing) {
+    TestBuffer buffer;
+
+    auto tf = TransformMatrix4d::from_rpy(0.0, 0.0, 0.0, 1.0, 0.0, 0.0);
+    buffer.push(1000, tf);
+
+    auto result = buffer.at(2000);
+    EXPECT_FALSE(result.has_value());
+    EXPECT_EQ(result.error(), TransformError::ExtrapolationRequired);
+}
+
+TEST_F(BufferExpectedTest, AtInterpolatedWorks) {
+    TestBuffer buffer;
+
+    auto tf1 = TransformMatrix4d::from_rpy(0.0, 0.0, 0.0, 0.0, 0.0, 0.0);
+    auto tf2 = TransformMatrix4d::from_rpy(0.0, 0.0, 0.0, 10.0, 0.0, 0.0);
+
+    buffer.push(1000, tf1);
+    buffer.push(2000, tf2);
+
+    // Query at midpoint
+    auto result = buffer.at_interpolated(1500);
+    ASSERT_TRUE(result.has_value());
+    EXPECT_EQ(result->timestamp_ns, 1500);
+    // Should interpolate to x=5.0
+    EXPECT_NEAR(result->transform.translation().x(), 5.0, EPSILON);
+}
+
+TEST_F(BufferExpectedTest, AtInterpolatedExtrapolationError) {
+    TestBuffer buffer;
+
+    auto tf1 = TransformMatrix4d::from_rpy(0.0, 0.0, 0.0, 0.0, 0.0, 0.0);
+    auto tf2 = TransformMatrix4d::from_rpy(0.0, 0.0, 0.0, 10.0, 0.0, 0.0);
+
+    buffer.push(1000, tf1);
+    buffer.push(2000, tf2);
+
+    // Query outside range
+    auto before = buffer.at_interpolated(500);
+    EXPECT_FALSE(before.has_value());
+    EXPECT_EQ(before.error(), TransformError::ExtrapolationRequired);
+
+    auto after = buffer.at_interpolated(3000);
+    EXPECT_FALSE(after.has_value());
+    EXPECT_EQ(after.error(), TransformError::ExtrapolationRequired);
+}
 
 // ============================================================================
 // Integration Tests
