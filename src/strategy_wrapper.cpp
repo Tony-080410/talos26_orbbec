@@ -129,8 +129,6 @@ FoxgloveServer::FoxgloveServer(const uint16_t port, std::string host) noexcept {
     uint64_t init_ts = std::chrono::duration_cast<std::chrono::nanoseconds>(
                            std::chrono::steady_clock::now().time_since_epoch())
                            .count();
-    publish_tf(0.0, 0.0, 0.0, init_ts);
-
     server_initialized_ = true;
 
     // 启动消息发送线程
@@ -223,47 +221,6 @@ bool FoxgloveServer::is_initialized() const noexcept { return server_initialized
 
 void FoxgloveServer::enqueue_message(FoxgloveMessage msg) noexcept {
     message_queue_.push(std::move(msg));
-}
-
-void FoxgloveServer::publish_tf(
-    double gimbal_roll, double gimbal_pitch, double gimbal_yaw, uint64_t timestamp_ns) noexcept {
-    if (!tf_manager_) {
-        return;
-    }
-
-    auto& publisher = tf_manager_->get_publisher();
-
-    // 1. world -> odom (identity)
-    fast_tf::TransformMatrix4d odom_tf = fast_tf::TransformMatrix4d::from_rpy(
-        0.0, 0.0, 0.0, // roll, pitch, yaw
-        0.0, 0.0, 0.0  // x, y, z
-    );
-    publisher.publish_transform<fast_tf::odom_Frame, fast_tf::world_Frame>(odom_tf, timestamp_ns);
-
-    // 2. odom -> gimbal_link (云台姿态)
-    fast_tf::TransformMatrix4d gimbal_tf = fast_tf::TransformMatrix4d::from_rpy(
-        gimbal_roll, gimbal_pitch, gimbal_yaw, // roll, pitch, yaw
-        0.0, 0.0, 0.0                          // x, y, z
-    );
-    publisher.publish_transform<fast_tf::gimbal_link_Frame, fast_tf::odom_Frame>(
-        gimbal_tf, timestamp_ns);
-
-    // 3. gimbal_link -> camera_link (静态: x=0.04444)
-    fast_tf::TransformMatrix4d camera_tf = fast_tf::TransformMatrix4d::from_rpy(
-        0.0, 0.0, 0.0,    // roll, pitch, yaw
-        0.04444, 0.0, 0.0 // x, y, z
-    );
-    publisher.publish_transform<fast_tf::camera_link_Frame, fast_tf::gimbal_link_Frame>(
-        camera_tf, timestamp_ns);
-
-    // 4. camera_link -> camera_optical_frame (静态: ROS 相机光学坐标系)
-    const double pi_2                     = M_PI / 2.0;
-    fast_tf::TransformMatrix4d optical_tf = fast_tf::TransformMatrix4d::from_rpy(
-        -pi_2, 0.0, -pi_2, // roll, pitch, yaw
-        0.0, 0.0, 0.0      // x, y, z
-    );
-    publisher.publish_transform<fast_tf::camera_optical_frame_Frame, fast_tf::camera_link_Frame>(
-        optical_tf, timestamp_ns);
 }
 
 void FoxgloveServer::publish_camera_calibration(

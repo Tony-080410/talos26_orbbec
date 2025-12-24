@@ -42,7 +42,7 @@ constexpr auto compile_time_hash(std::string_view str, uint64_t hash = 146959810
  */
 template <typename Frame>
 struct parent_frame {
-    using type = void; // Default: no parent (root frame)
+    using parent_type = void; // Default: no parent (root frame)
 };
 
 /**
@@ -66,7 +66,7 @@ template <typename Current, typename Target>
 struct is_ancestor_of {
     static constexpr bool value =
         is_same_frame<Current, Target>::value
-        || is_ancestor_of<typename parent_frame<Current>::type, Target>::value;
+        || is_ancestor_of<typename parent_frame<Current>::parent_type, Target>::value;
 };
 
 // Specialization for void (end of hierarchy)
@@ -84,16 +84,16 @@ struct is_ancestor_of<void, Target> {
  */
 template <typename Frame>
 struct find_root {
-    using type = Frame;
+    using parent_type = Frame;
 };
 
 template <typename Frame>
-requires(!std::is_same_v<typename parent_frame<Frame>::type, void>) struct find_root<Frame> {
-    using type = typename find_root<typename parent_frame<Frame>::type>::type;
+requires(!std::is_same_v<typename parent_frame<Frame>::parent_type, void>) struct find_root<Frame> {
+    using parent_type = find_root<typename parent_frame<Frame>::parent_type>::parent_type;
 };
 
 template <typename Frame>
-using find_root_t = typename find_root<Frame>::type;
+using find_root_t = find_root<Frame>::parent_type;
 
 /**
  * Check if two frame types are in the same hierarchy.
@@ -115,33 +115,33 @@ struct frames_in_same_tree {
  *   DECLARE_FRAME(world);              // Root frame
  *   DECLARE_FRAME(base_link, world);   // Child frame with parent
  *
- * Creates types named name##_Frame
+ * Creates types named name##_frame
  */
 
 /**
  * Single-argument version: root frame
  */
 #define DECLARE_FRAME_1(name)                                                             \
-    struct name##_Frame {                                                                 \
+    struct name##_frame {                                                                 \
         static constexpr std::string_view frame_name = #name;                             \
         static constexpr uint64_t frame_id           = fast_tf::compile_time_hash(#name); \
     };                                                                                    \
     template <>                                                                           \
-    struct parent_frame<name##_Frame> {                                                   \
-        using type = void;                                                                \
+    struct parent_frame<name##_frame> {                                                   \
+        using parent_type = void;                                                         \
     }
 
 /**
  * Two-argument version: child frame with parent
  */
 #define DECLARE_FRAME_2(name, parent)                                                     \
-    struct name##_Frame {                                                                 \
+    struct name##_frame {                                                                 \
         static constexpr std::string_view frame_name = #name;                             \
         static constexpr uint64_t frame_id           = fast_tf::compile_time_hash(#name); \
     };                                                                                    \
     template <>                                                                           \
-    struct parent_frame<name##_Frame> {                                                   \
-        using type = parent##_Frame;                                                      \
+    struct parent_frame<name##_frame> {                                                   \
+        using parent_type = parent##_frame;                                               \
     }
 
 // ============================================================================

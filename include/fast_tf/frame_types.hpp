@@ -184,7 +184,7 @@ public:
 
         Eigen::Quaterniond q(w, x, y, z);
         q.normalize();
-        // todo check wheter eigen provide this method
+        // todo check whether eigen provide this method
         Matrix m            = Matrix::Identity();
         m.block<3, 3>(0, 0) = q.toRotationMatrix();
         m(0, 3)             = tx;

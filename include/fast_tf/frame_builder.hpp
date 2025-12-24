@@ -82,21 +82,3 @@ namespace fast_tf {
 // Inline definition for header-only library
 inline std::unordered_map<std::string, std::size_t> FrameBufferConfig::buffer_sizes;
 } // namespace fast_tf
-
-// ============================================================================
-// Predefined Frame Names (for convenience)
-// ============================================================================
-
-namespace fast_tf::predef {
-
-// Common frame name string literals
-constexpr std::string_view WORLD          = "world";
-constexpr std::string_view ODOM           = "odom";
-constexpr std::string_view BASE_LINK      = "base_link";
-constexpr std::string_view BASE_FOOTPRINT = "base_footprint";
-constexpr std::string_view MAP            = "map";
-constexpr std::string_view CAMERA         = "camera";
-constexpr std::string_view LIDAR          = "lidar";
-constexpr std::string_view IMU            = "imu";
-
-} // namespace fast_tf::predef

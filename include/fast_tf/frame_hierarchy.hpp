@@ -26,9 +26,9 @@ struct find_lca {
 };
 
 // If From is ancestor of To, LCA is From
-template <typename From, typename To>
-requires is_ancestor_of<From, To>::value struct find_lca<From, To> {
-    using type = From;
+template <typename Child, typename Parent>
+requires is_ancestor_of<Child, Parent>::value struct find_lca<Child, Parent> {
+    using type = Child;
 };
 
 // If To is ancestor of From, LCA is To

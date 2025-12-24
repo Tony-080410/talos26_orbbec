@@ -182,16 +182,28 @@ int main() {
 
         std::optional<ipc::ShmClient::ImageFrame> frame;
         if (daedalus) {
-            frame     = client->recv_image();
-            auto pose = client->recv_pose(ipc::POSE_CAMERA);
-            if (pose) {
+            frame = client->recv_image();
+            if (auto pose = client->recv_pose(ipc::POSE_GIMBAL)) {
                 Eigen::Quaterniond q(pose->qw, pose->qx, pose->qy, pose->qz);
 
                 // Extract yaw/pitch from quaternion for gimbal tracking
-                auto euler          = q.toRotationMatrix().eulerAngles(1, 0, 2); // ZYX order
-                imu_data.data.yaw   = euler[0];
-                imu_data.data.pitch = -euler[1];
-                imu_data.data.roll  = euler[2];
+                auto rpy            = q.toRotationMatrix().eulerAngles(0, 1, 2);
+                imu_data.data.roll  = rpy[0];
+                imu_data.data.pitch = rpy[1];
+                imu_data.data.yaw   = rpy[2];
+                foxglove_server.get_tf_manager().update_gimbal(pose->x, pose->y, pose->z);
+            }
+            if (auto odom = client->recv_pose(ipc::POSE_ODOM)) {
+                foxglove_server.get_tf_manager().update_odometry(odom->x, odom->y, odom->z);
+            }
+            if (auto optical = client->recv_pose(ipc::POSE_CAMERA); optical) {
+                Eigen::Quaterniond q(optical->qw, optical->qx, optical->qy, optical->qz);
+                // Extract yaw/pitch from quaternion for gimbal tracking
+                auto rpy = q.toRotationMatrix().eulerAngles(0, 1, 2);
+                foxglove_server.get_tf_manager().update_camera_optical(rpy[0], rpy[1], rpy[2]);
+            }
+            if (auto muzzle = client->recv_pose(ipc::POSE_MUZZLE); muzzle) {
+                // TODO
             }
         } else {
             auto img_result = camera_->read(100ms);
@@ -200,6 +212,15 @@ int main() {
                 auto img            = img_result.value();
                 frame               = ipc::ShmClient::ImageFrame{
                                   .image = std::move(img), .seq = seq++, .timestamp_ns = now_ns()};
+
+                // 从 IMU 获取姿态角 (USB 模式)
+                double roll          = imu_data.data.roll;
+                double pitch         = imu_data.data.pitch;
+                double yaw           = imu_data.data.yaw;
+                strategy.gimbal_yaw_ = yaw;
+
+                // USB模式也需要更新 tf_manager (daedalus模式在上面已经更新)
+                foxglove_server.get_tf_manager().update_gimbal(roll, yaw, pitch);
             } else {
                 spdlog::critical("read hikcamera image: {}", img_result.error().what());
                 return 2;
@@ -211,18 +232,8 @@ int main() {
             continue;
         }
 
-        // 从 IMU 获取姿态角 (USB 模式)
-        double roll  = imu_data.data.roll;
-        double pitch = imu_data.data.pitch;
-        double yaw   = imu_data.data.yaw;
-
         // 更新 strategy 的弹速和云台姿态
         strategy.set_bullet_speed(imu_data.data.bullet_speed);
-        strategy.set_gimbal_pose(roll, pitch, yaw);
-
-        // USB模式也需要更新 tf_manager (daedalus模式在上面已经更新)
-
-        foxglove_server.get_tf_manager().update_gimbal(yaw, pitch);
 
         // 跳帧检测
         auto [image, seq, timestamp_ns] = *frame;

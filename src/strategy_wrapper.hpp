@@ -113,10 +113,6 @@ public:
     // 线程安全的消息入队方法 - 供其他调用者使用
     void enqueue_message(FoxgloveMessage msg) noexcept;
 
-    // TF 更新方法 (使用统一时间戳发布完整 TF 树)
-    void publish_tf(
-        double gimbal_roll, double gimbal_pitch, double gimbal_yaw, uint64_t timestamp_ns) noexcept;
-
     // 相机标定信息发布
     void publish_camera_calibration(
         uint32_t width, uint32_t height,
@@ -191,14 +187,6 @@ struct FoxgloveWrapper {
                 reinterpret_cast<const uint8_t*>(json_str.data() + json_str.size()));
             server.get().enqueue_message(std::move(cmd_msg));
         }
-
-        // 更新 TF (使用统一时间戳发布完整 TF 树)
-        uint64_t tf_ts = std::chrono::duration_cast<std::chrono::nanoseconds>(
-                             std::chrono::steady_clock::now().time_since_epoch())
-                             .count();
-        server.get().publish_tf(
-            inner.get().get_gimbal_roll(), inner.get().get_gimbal_pitch(),
-            inner.get().get_gimbal_yaw(), tf_ts);
     }
 
     auto detect(const scheduler::Captured& feat, talos::ArmorSlots& armor) noexcept -> void {

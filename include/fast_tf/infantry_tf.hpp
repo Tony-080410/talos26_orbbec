@@ -103,7 +103,7 @@ public:
             0.0,     // Y offset
             0.0      // Z offset
         );
-        StaticTransformStore::register_transform<camera_link_Frame, gimbal_link_Frame>(
+        StaticTransformStore::register_transform<camera_link_frame, gimbal_link_frame>(
             camera_to_gimbal);
 
         // Camera optical frame rotation
@@ -114,7 +114,7 @@ public:
             0.0,   // Pitch
             -pi_2, // Yaw: -90°
             0.0, 0.0, 0.0);
-        StaticTransformStore::register_transform<camera_optical_frame_Frame, camera_link_Frame>(
+        StaticTransformStore::register_transform<camera_optical_frame_frame, camera_link_frame>(
             optical_to_camera);
 
         // Muzzle offset from gimbal
@@ -127,27 +127,27 @@ public:
             0.0,    // Y offset
             -0.0874 // Z offset
         );
-        StaticTransformStore::register_transform<muzzle_link_Frame, gimbal_link_Frame>(
+        StaticTransformStore::register_transform<muzzle_link_frame, gimbal_link_frame>(
             muzzle_to_gimbal);
 
         // World to odom (identity initially)
         TransformMatrix4d world_to_odom = TransformMatrix4d::from_rpy(0.0, 0.0, 0.0, 0.0, 0.0, 0.0);
-        StaticTransformStore::register_transform<odom_Frame, world_Frame>(world_to_odom);
+        StaticTransformStore::register_transform<odom_frame, world_frame>(world_to_odom);
 
         spdlog::info("Infantry robot TF configuration initialized");
     }
 
     // Infantry-specific accessors
     static const TransformMatrix4d* get_camera_offset() {
-        return StaticTransformStore::get_transform<camera_link_Frame, gimbal_link_Frame>();
+        return StaticTransformStore::get_transform<camera_link_frame, gimbal_link_frame>();
     }
 
     static const TransformMatrix4d* get_muzzle_offset() {
-        return StaticTransformStore::get_transform<muzzle_link_Frame, gimbal_link_Frame>();
+        return StaticTransformStore::get_transform<muzzle_link_frame, gimbal_link_frame>();
     }
 
     static const TransformMatrix4d* get_optical_frame_transform() {
-        return StaticTransformStore::get_transform<camera_optical_frame_Frame, camera_link_Frame>();
+        return StaticTransformStore::get_transform<camera_optical_frame_frame, camera_link_frame>();
     }
 };
 
@@ -170,15 +170,13 @@ public:
         : RobotTFManager(std::make_unique<InfantryTFConfig>(), std::move(foxglove_channel)) {}
 
     /**
-     * Update gimbal orientation (yaw and pitch angles).
-     * Creates a rotation transform from odom to gimbal_link.
+     * Update camera optical orientation (rpy).
+     * Creates a rotation transform from gimbal_link to camera optical.
      * Thread-safe: can be called concurrently from multiple threads.
      */
-    void update_gimbal(double yaw, double pitch) {
-        // Use from_rpy to create gimbal transform
-        // Roll is typically 0 for gimbal, pitch and yaw are the active angles
-        TransformMatrix4d gimbal_transform = TransformMatrix4d::from_rpy(
-            0.0,   // Roll
+    void update_camera_optical(const double roll, const double pitch, const double yaw) noexcept {
+        const auto gimbal_transform = TransformMatrix4d::from_rpy(
+            roll,  // Roll
             pitch, // Pitch
             yaw,   // Yaw
             0.0,   // X translation
@@ -186,46 +184,62 @@ public:
             0.0    // Z translation
         );
 
-        // Publish the gimbal transform with thread safety
-        uint64_t timestamp_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
-                                    std::chrono::steady_clock::now().time_since_epoch())
-                                    .count();
+        const auto timestamp_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                      std::chrono::steady_clock::now().time_since_epoch())
+                                      .count();
 
-        {
-            std::unique_lock<std::shared_mutex> lock(publish_mutex_);
-            gimbal_to_odom_ = gimbal_transform;
-            get_publisher().publish_transform<gimbal_link_Frame, odom_Frame>(
-                gimbal_transform, timestamp_ns);
-        }
+        std::unique_lock lock(publish_mutex_);
+        gimbal_to_odom_ = gimbal_transform;
+        get_publisher().publish_transform<camera_link_frame, gimbal_link_frame>(
+            gimbal_transform, timestamp_ns);
+        get_publisher().publish_transform<camera_optical_frame_frame, camera_link_frame>(
+            gimbal_transform, timestamp_ns);
     }
 
     /**
-     * Update robot odometry (position and heading).
-     * Creates a transform from world to odom based on x, y position and theta heading.
+     * Update gimbal orientation (rpy).
+     * Creates a rotation transform from odom to gimbal_link.
      * Thread-safe: can be called concurrently from multiple threads.
      */
-    void update_odometry(double x, double y, double theta) {
-        // Create odometry transform with heading angle and position
-        TransformMatrix4d odom_transform = TransformMatrix4d::from_rpy(
-            0.0,   // Roll
-            0.0,   // Pitch
-            theta, // Yaw (heading)
-            x,     // X translation
-            y,     // Y translation
+    void update_gimbal(const double roll, const double pitch, const double yaw) noexcept {
+        const auto gimbal_transform = TransformMatrix4d::from_rpy(
+            roll,  // Roll
+            pitch, // Pitch
+            yaw,   // Yaw
+            0.0,   // X translation
+            0.0,   // Y translation
             0.0    // Z translation
         );
 
-        // Publish the odometry transform with thread safety
-        uint64_t timestamp_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
-                                    std::chrono::steady_clock::now().time_since_epoch())
-                                    .count();
+        const auto timestamp_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                      std::chrono::steady_clock::now().time_since_epoch())
+                                      .count();
 
-        {
-            std::unique_lock<std::shared_mutex> lock(publish_mutex_);
-            odom_to_world_ = odom_transform;
-            get_publisher().publish_transform<odom_Frame, world_Frame>(
-                odom_transform, timestamp_ns);
-        }
+        std::unique_lock lock(publish_mutex_);
+        gimbal_to_odom_ = gimbal_transform;
+        get_publisher().publish_transform<gimbal_link_frame, odom_frame>(
+            gimbal_transform, timestamp_ns);
+    }
+
+    /**
+     * Update robot odometry (position).
+     * Thread-safe: can be called concurrently from multiple threads.
+     */
+    void update_odometry(const double x, const double y, const double z) {
+        const auto odom_transform = TransformMatrix4d::from_rpy(
+            0.0, // Roll
+            0.0, // Pitch
+            0.0, // Yaw
+            x,   // X translation
+            y,   // Y translation
+            z    // Z translation
+        );
+        const auto timestamp_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                      std::chrono::steady_clock::now().time_since_epoch())
+                                      .count();
+        std::unique_lock lock(publish_mutex_);
+        odom_to_world_ = odom_transform;
+        get_publisher().publish_transform<odom_frame, world_frame>(odom_transform, timestamp_ns);
     }
 
     /**
@@ -264,9 +278,9 @@ public:
     [[nodiscard]] TransformMatrix4d get_camera_optical_to_gimbal() const {
         // Get static transforms
         const auto* optical_to_camera =
-            StaticTransformStore::get_transform<camera_optical_frame_Frame, camera_link_Frame>();
+            StaticTransformStore::get_transform<camera_optical_frame_frame, camera_link_frame>();
         const auto* camera_to_gimbal =
-            StaticTransformStore::get_transform<camera_link_Frame, gimbal_link_Frame>();
+            StaticTransformStore::get_transform<camera_link_frame, gimbal_link_frame>();
 
         if (!optical_to_camera || !camera_to_gimbal) {
             spdlog::warn(
@@ -298,7 +312,7 @@ public:
      */
     void publish_object_pose(const TransformMatrix4d& T_object_to_optical, uint64_t timestamp_ns) {
         std::unique_lock<std::shared_mutex> lock(publish_mutex_);
-        get_publisher().publish_transform<object_Frame, camera_optical_frame_Frame>(
+        get_publisher().publish_transform<object_frame, camera_optical_frame_frame>(
             T_object_to_optical, timestamp_ns);
     }
 
@@ -327,7 +341,7 @@ public:
 
         {
             std::unique_lock<std::shared_mutex> lock(publish_mutex_);
-            get_publisher().publish_transform<imu_link_Frame, gimbal_link_Frame>(
+            get_publisher().publish_transform<imu_link_frame, gimbal_link_frame>(
                 imu_transform, timestamp_ns);
         }
     }
@@ -349,7 +363,7 @@ public:
  *       std::move(infantry_config), foxglove_tf_channel);
  *
  *   // Update gimbal angle
- *   tf_manager->get_publisher().publish_transform<gimbal_link_Frame, odom_Frame>(
+ *   tf_manager->get_publisher().publish_transform<gimbal_link_frame, odom_frame>(
  *       gimbal_transform, timestamp_ns);
  *
  *

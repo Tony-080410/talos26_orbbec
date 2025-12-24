@@ -82,11 +82,11 @@ public:
     /**
      * Publish a generic transform by frame type.
      */
-    template <typename FromFrame, typename ToFrame>
-    requires validate_frames_same_tree<FromFrame, ToFrame>::value
+    template <typename Child, typename Parent>
+    requires validate_frames_same_tree<Child, Parent>::value
     void publish_transform(const TransformMatrix4d& transform, uint64_t timestamp_ns = 0) {
 
-        publish_transform(transform, timestamp_ns, FromFrame::frame_name, ToFrame::frame_name);
+        publish_transform(transform, timestamp_ns, Child::frame_name, Parent::frame_name);
     }
 
     /**
