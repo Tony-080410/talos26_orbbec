@@ -1,6 +1,7 @@
 #pragma once
 #include "aimer.hpp"
 #include "detector.hpp"
+#include "fast_tf/infantry_tf.hpp"
 #include "output_interface.hpp"
 #include "primitives/buffer_pool.hpp"
 #include "primitives/latency_stats.hpp"
@@ -25,10 +26,11 @@ public:
 
     TalosStrategy(
         const bool debug, const SpVisionConfig& config, const size_t buffer_count, const int rows,
-        const int cols) noexcept
+        const int cols, fast_tf::infantry::InfantryTFManager& tf_manager) noexcept
         : detector(config, debug)
         , solver(config.solver)
-        , tracker(config.tracker)
+        , tracker(config.tracker, tf_manager)
+        , tf_manager_(tf_manager)
         , aimer_(to_aimer_config(config.aimer))
         , shooter_(to_shooter_config(config.shooter))
         , frame_pool(buffer_count, rows, cols, CV_8UC3)
@@ -158,6 +160,9 @@ private:
     auto_aim::Target target_{};                        // EKF 跟踪目标
     auto_aim::DetectorWorkBuffers detector_buffers_{}; // 检测器工作缓冲
     auto_aim::GimbalCommand last_gimbal_cmd_{};        // 最近一次云台命令 (用于可视化)
+
+    // TF 管理器引用
+    fast_tf::infantry::InfantryTFManager& tf_manager_;
 
     // Aimer + Shooter
     auto_aim::Aimer aimer_;

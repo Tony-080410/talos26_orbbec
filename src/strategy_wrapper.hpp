@@ -107,6 +107,9 @@ public:
 
     bool is_initialized() const noexcept;
 
+    // 获取 TF Manager (供其他组件使用)
+    fast_tf::infantry::InfantryTFManager& get_tf_manager() noexcept { return *tf_manager_; }
+
     // 线程安全的消息入队方法 - 供其他调用者使用
     void enqueue_message(FoxgloveMessage msg) noexcept;
 

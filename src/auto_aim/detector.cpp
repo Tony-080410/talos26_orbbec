@@ -663,4 +663,37 @@ void TraditionalDetector::show_result(
     cv::imshow("detection", detection_resized);
 }
 
+// ============ DetectorConcept 方法实现 ============
+
+void TraditionalDetector::detect(
+    const PreprocessedFrame& frame, DetectionResult& out, DebugData& debug) noexcept {
+    if (!frame.binary || frame.binary->rows() <= 0) [[unlikely]] {
+        out = std::monostate{};
+        return;
+    }
+
+    // 调用原有检测方法
+    auto& slots = out.emplace<talos::ArmorSlots>();
+    slots       = detect(
+        buffers_, frame.rgb->mat(), frame.binary->mat(), frame.frame_seq, frame.timestamp_ns);
+
+    // 填充调试数据
+    debug.frame_seq    = frame.frame_seq;
+    debug.timestamp_ns = frame.timestamp_ns;
+    debug.binary_img   = frame.binary;
+
+    // 收集灯条调试信息
+    debug.all_lightbars.clear();
+    debug.all_lightbars.reserve(buffers_.lightbars.size());
+    for (const auto& lb : buffers_.lightbars) {
+        talos::Lightbar out_lb{};
+        out_lb.x           = lb.center.x;
+        out_lb.y           = lb.center.y;
+        out_lb.angle_error = static_cast<float>(lb.angle_error);
+        out_lb.ratio       = static_cast<float>(lb.ratio);
+        out_lb.color       = static_cast<uint8_t>(lb.color);
+        debug.all_lightbars.push_back(out_lb);
+    }
+}
+
 } // namespace auto_aim

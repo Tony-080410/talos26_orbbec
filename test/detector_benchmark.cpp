@@ -21,6 +21,7 @@
 #include "auto_aim/detector.hpp"
 #include "auto_aim/solver.hpp"
 #include "auto_aim/tracker.hpp"
+#include "fast_tf/infantry_tf.hpp"
 
 using namespace auto_aim;
 using namespace std::chrono;
@@ -316,13 +317,12 @@ int main(int argc, char** argv) {
     // Initialize pipeline components
     TraditionalDetector detector(config, false);
     Solver solver(config.solver);
-    Tracker tracker(config.tracker);
+    fast_tf::infantry::InfantryTFManager tf_manager{
+        std::nullopt}; // 创建本地tf_manager用于benchmark (无foxglove发布)
+    Tracker tracker(config.tracker, tf_manager);
     DetectorWorkBuffers detector_buffers;
     talos::TrackerSoA tracker_soa;
     Target target;
-
-    // Set default gimbal orientation (identity for benchmark)
-    solver.set_R_gimbal2world(Eigen::Quaterniond::Identity());
 
     // Metrics
     PipelineMetrics metrics;

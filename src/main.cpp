@@ -129,7 +129,11 @@ int main() {
         camera_ = std::move(*x);
     }
 
-    TalosStrategy strategy(false, config, 6, 1080, 1440);
+    // 创建 Foxglove 服务器 (必须在 TalosStrategy 之前，因为提供 tf_manager)
+    FoxgloveServer foxglove_server(8765);
+
+    // 使用 FoxgloveServer 的 tf_manager 创建策略
+    TalosStrategy strategy(false, config, 6, 1080, 1440, foxglove_server.get_tf_manager());
 
     // USB 设备和 IMU 数据存储
     talos_gimbal::ReceiveImuData imu_data{};
@@ -159,7 +163,6 @@ int main() {
         }
     }
 
-    FoxgloveServer foxglove_server(8765);
     FoxgloveWrapper wrapper(strategy, foxglove_server);
     scheduler::Scheduler<decltype(wrapper)> sched;
     sched.init(config, &wrapper);
@@ -183,9 +186,8 @@ int main() {
             auto pose = client->recv_pose(ipc::POSE_CAMERA);
             if (pose) {
                 Eigen::Quaterniond q(pose->qw, pose->qx, pose->qy, pose->qz);
-                strategy.solver.set_R_gimbal2world(q);
 
-                // Extract yaw from quaternion for gimbal tracking
+                // Extract yaw/pitch from quaternion for gimbal tracking
                 auto euler          = q.toRotationMatrix().eulerAngles(1, 0, 2); // ZYX order
                 imu_data.data.yaw   = euler[0];
                 imu_data.data.pitch = -euler[1];
@@ -218,10 +220,9 @@ int main() {
         strategy.set_bullet_speed(imu_data.data.bullet_speed);
         strategy.set_gimbal_pose(roll, pitch, yaw);
 
-        Eigen::AngleAxisd rx(roll, Eigen::Vector3d::UnitX());
-        Eigen::AngleAxisd ry(pitch, Eigen::Vector3d::UnitY());
-        Eigen::AngleAxisd rz(yaw, Eigen::Vector3d::UnitZ());
-        strategy.solver.set_R_gimbal2world(rx * ry * rz);
+        // USB模式也需要更新 tf_manager (daedalus模式在上面已经更新)
+
+        foxglove_server.get_tf_manager().update_gimbal(yaw, pitch);
 
         // 跳帧检测
         auto [image, seq, timestamp_ns] = *frame;

@@ -66,6 +66,12 @@ target_include_directories(auto_aim PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/include/auto_aim
 )
 
+# Add foxglove headers for fast_tf support
+target_include_directories(auto_aim SYSTEM PUBLIC
+        ${foxglove_SOURCE_DIR}/include
+        ${foxglove_SOURCE_DIR}/include/foxglove
+)
+
 # Add OpenVINO include directories if found
 if (OpenVINO_FOUND)
     # Get include path from OpenVINO runtime target
@@ -277,12 +283,18 @@ target_link_libraries(infantry_tf_example PRIVATE
 # Detector benchmark (accuracy testing against dataset)
 add_executable(detector_benchmark
         test/detector_benchmark.cpp
+        ${FOXGLOVE_SOURCES}
 )
 
 target_include_directories(detector_benchmark PRIVATE include)
+target_include_directories(detector_benchmark SYSTEM PRIVATE ${foxglove_SOURCE_DIR}/include)
 
 target_link_libraries(detector_benchmark PRIVATE
         auto_aim
+        ${foxglove_SOURCE_DIR}/lib/libfoxglove.a
+        "$<$<PLATFORM_ID:Darwin>:-framework Security>"
+        "$<$<PLATFORM_ID:Darwin>:-framework CoreFoundation>"
+        "$<$<PLATFORM_ID:Darwin>:-framework SystemConfiguration>"
 )
 
 # Detector parameter tuning tool (multi-objective optimization)

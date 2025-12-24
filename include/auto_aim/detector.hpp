@@ -3,6 +3,7 @@
 #include "classifier.hpp"
 #include "config.hpp"
 #include "detector_state.hpp"
+#include "pipeline_types.hpp"
 #include <list>
 #include <opencv2/opencv.hpp>
 #include <vector>
@@ -110,10 +111,29 @@ public:
     explicit TraditionalDetector(const SpVisionConfig& config, bool debug = false);
     explicit TraditionalDetector(const SpVisionConfig& config, Classifier classifier);
 
+    // ============ DetectorConcept 方法 ============
+
+    /**
+     * @brief Concept 兼容的检测方法
+     * @param frame 预处理后的帧
+     * @param out 检测结果 (variant)
+     * @param debug 调试数据
+     */
+    void detect(const PreprocessedFrame& frame, DetectionResult& out, DebugData& debug) noexcept;
+
+    /**
+     * @brief 返回所需预处理类型
+     */
+    static constexpr PreprocessType preprocess_type() noexcept {
+        return PreprocessType::GrayAndBinary;
+    }
+
+    // ============ 原有方法 ============
+
     void preprocess(const cv::Mat& bgr_img, const cv::Mat& binary_img) const noexcept;
 
     /**
-     * @brief 全图检测装甲板
+     * @brief 全图检测装甲板 (原有接口)
      * @param buffers 工作缓冲区 (输入/输出)
      * @param bgr_img BGR彩色图像
      * @param binary_img 二值化图像
@@ -150,6 +170,9 @@ private:
     double max_angle_error_rad_;
     double max_rectangular_error_rad_;
 
+    // 内部缓冲区 (Concept 方法使用)
+    mutable DetectorWorkBuffers buffers_;
+
     // ============ 几何检查 ============
     [[nodiscard]] bool check_geometry(const talos::LightbarFull& lightbar) const;
     [[nodiscard]] bool check_geometry(const talos::ArmorFull& armor) const;
@@ -177,6 +200,21 @@ private:
     void show_result(
         const DetectorWorkBuffers& buffers, const cv::Mat& binary_img, const cv::Mat& bgr_img,
         int frame_count) const;
+};
+
+/**
+ * @brief NN 检测器占位符
+ *
+ * Phase 6 实现，目前只提供空实现以满足 variant 定义。
+ */
+class NNDetector {
+public:
+    void detect(
+        const PreprocessedFrame& /*frame*/, DetectionResult& out, DebugData& /*debug*/) noexcept {
+        out = std::monostate{};
+    }
+
+    static constexpr PreprocessType preprocess_type() noexcept { return PreprocessType::None; }
 };
 
 } // namespace auto_aim

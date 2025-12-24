@@ -3,10 +3,14 @@
 #include <numeric>
 #include <spdlog/spdlog.h>
 
+#include "solver.hpp" // for math::eulers, math::xyz2ypd
+
 namespace auto_aim {
 
-Tracker::Tracker(const SpVisionTrackerConfig& config)
-    : enemy_color_(static_cast<talos::Color>(config.enemy_color))
+Tracker::Tracker(
+    const SpVisionTrackerConfig& config, fast_tf::infantry::InfantryTFManager& tf_manager)
+    : tf_manager_(tf_manager)
+    , enemy_color_(static_cast<talos::Color>(config.enemy_color))
     , min_detect_count_(config.min_detect_count)
     , normal_temp_lost_count_(config.max_temp_lost_count)
     , outpost_max_temp_lost_count_(config.outpost_max_temp_lost_count) {}
@@ -255,5 +259,86 @@ bool Tracker::update_target(
 
     return found_count > 0;
 }
+
+// ============ TrackerConcept 方法实现 ============
+
+void Tracker::transform_poses_to_world(
+    Poses3D& poses, [[maybe_unused]] uint64_t timestamp_ns) const {
+    // 获取坐标变换矩阵
+    const fast_tf::TransformMatrix4d T_optical_to_gimbal =
+        tf_manager_.get_camera_optical_to_gimbal();
+    const fast_tf::TransformMatrix4d T_gimbal_to_world  = tf_manager_.get_gimbal_to_world();
+    const fast_tf::TransformMatrix4d T_optical_to_world = T_optical_to_gimbal * T_gimbal_to_world;
+
+    // 提取旋转矩阵
+    const Eigen::Matrix3d R_optical_to_gimbal = T_optical_to_gimbal.rotation();
+    const Eigen::Matrix3d R_gimbal_to_world   = T_gimbal_to_world.rotation();
+    const Eigen::Matrix3d R_optical_to_world  = T_optical_to_world.rotation();
+
+    for (auto& pose : poses) {
+        if (!pose.valid) {
+            continue;
+        }
+
+        // ========== camera_optical_frame → gimbal_link ==========
+        // 变换位置
+        Eigen::Vector4d p_optical(
+            pose.xyz_in_camera[0], pose.xyz_in_camera[1], pose.xyz_in_camera[2], 1.0);
+        Eigen::Vector4d p_gimbal = T_optical_to_gimbal.matrix() * p_optical;
+        pose.xyz_in_gimbal       = p_gimbal.head<3>();
+
+        // 变换旋转（装甲板在gimbal坐标系下的姿态）
+        Eigen::Matrix3d R_armor_in_gimbal = R_optical_to_gimbal * pose.R_in_camera;
+
+        // 提取yaw, pitch, roll (ZYX顺序)
+        pose.ypr_in_gimbal = math::eulers(R_armor_in_gimbal, 2, 1, 0);
+
+        // ========== gimbal_link → world ==========
+        // 变换位置
+        Eigen::Vector4d p_world = T_optical_to_world.matrix() * p_optical;
+        pose.xyz_in_world       = p_world.head<3>();
+
+        // 变换旋转（装甲板在world坐标系下的姿态）
+        Eigen::Matrix3d R_armor_in_world = R_optical_to_world * pose.R_in_camera;
+        pose.ypr_in_world                = math::eulers(R_armor_in_world, 2, 1, 0);
+
+        // 计算球坐标 (yaw, pitch, distance)
+        pose.ypd_in_world = math::xyz2ypd(pose.xyz_in_world);
+
+        // NOTE: object变换的发布由主程序负责，Tracker只做坐标变换
+    }
+}
+
+void Tracker::track(
+    const DetectionResult& det, const SolveResult& solve, TrackerOutput& out,
+    DebugData& debug) noexcept {
+    const auto* slots     = get_armor_slots(det);
+    const auto* poses_raw = get_poses3d(solve);
+
+    if (!slots || !poses_raw) {
+        // 无输入，执行预测
+        debug.tracker_state = out.state.load(std::memory_order_relaxed);
+        return;
+    }
+
+    // 复制poses并进行坐标变换
+    Poses3D poses               = *poses_raw;
+    const uint64_t timestamp_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                      std::chrono::steady_clock::now().time_since_epoch())
+                                      .count();
+    transform_poses_to_world(poses, timestamp_ns);
+
+    const auto timestamp = std::chrono::steady_clock::now();
+    track(out, target_, *slots, poses, timestamp);
+
+    // 更新调试数据
+    debug.tracker_state = out.state.load(std::memory_order_relaxed);
+    if (target_.converged()) {
+        const auto ekf_x    = target_.ekf_x();
+        debug.predicted_pos = Eigen::Vector3d(ekf_x(0), ekf_x(2), ekf_x(4));
+    }
+}
+
+void Tracker::reset() noexcept { target_ = Target{}; }
 
 } // namespace auto_aim

@@ -9,6 +9,7 @@
 #include <thread>
 #include <utility>
 
+#include "auto_aim/pipeline_types.hpp"
 #include "auto_aim/types.hpp"
 #include "detector_state.hpp"
 #include "primitives/native_event.hpp"
@@ -191,11 +192,13 @@ private:
     alignas(CACHE_LINE_SIZE) TripleBuffer<Captured> shared_buffer_;
 
     // ArmorSlots + poses3d: 检测和解算结果缓冲
-    struct DetectionResult {
+    // 注: 命名为 DetectSolveBundle 避免与 auto_aim::DetectionResult variant 冲突
+    // Phase 2 将迁移到 variant 类型
+    struct DetectSolveBundle {
         talos::ArmorSlots armor_slots{};
         auto_aim::Poses3D poses3d{};
     };
-    alignas(CACHE_LINE_SIZE) TripleBuffer<DetectionResult> detection_buffer_;
+    alignas(CACHE_LINE_SIZE) TripleBuffer<DetectSolveBundle> detection_buffer_;
 
     // Scheduler 持有的状态
     alignas(CACHE_LINE_SIZE) talos::TrackerSoA tracker_soa_{};

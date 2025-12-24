@@ -5,6 +5,7 @@
 
 #include "config.hpp"
 #include "detector_state.hpp"
+#include "pipeline_types.hpp"
 #include "types.hpp"
 
 namespace auto_aim {
@@ -17,108 +18,66 @@ constexpr double SMALL_ARMOR_WIDTH = 135e-3; // m
 /**
  * @brief PnP解算器
  *
- * 移植自 sp_vision_25/tasks/auto_aim/solver
- * 功能：
- * 1. 对检测到的装甲板执行PnP解算，获取3D位姿
- * 2. 坐标系变换：camera_optical->ROS相机->云台->世界
- * 3. Yaw角优化（通过重投影误差最小化）
+ * 功能：对检测到的装甲板执行PnP解算，获取3D位姿
  *
- * 坐标系定义（ROS标准REP0103）：
- * - camera_optical坐标系（OpenCV/PnP输出）：x右 y下 z前（沿光轴）
- * - ROS相机坐标系（标准）：x前 y左 z上
- * - 云台/世界坐标系：x前 y左 z上（当相机正向安装时）
+ * 坐标系输出：
+ * - camera_optical_frame (OpenCV/PnP输出)：x右 y下 z前（沿光轴）
+ * - 其他坐标系的转换由 Tracker 通过 fast_tf 完成
  *
- * 完整转换链：
- * camera_optical → [R_cameraOptical_to_ros] → ROS相机
- *                → [R_camera2gimbal_] → 云台
- *                → [R_gimbal2world_] → 世界
+ * 设计说明：
+ * - Solver 只负责 PnP 解算，输出 camera_optical_frame 坐标系数据
+ * - tf 发布和坐标转换由 Tracker 负责
  */
 class Solver {
 public:
+    /**
+     * @brief 构造解算器
+     * @param config 配置（相机内参）
+     */
     explicit Solver(const SpVisionSolverConfig& config);
 
-    /**
-     * @brief 设置云台到世界的旋转矩阵
-     * @param q IMU四元数 (从IMU body到IMU abs)
-     */
-    void set_R_gimbal2world(const Eigen::Quaterniond& q);
+    // ============ SolverConcept 方法 ============
 
     /**
-     * @brief 获取当前云台到世界的旋转矩阵
+     * @brief Concept 兼容的解算方法
+     * @param det 检测结果 (variant)
+     * @param out 解算结果 (variant)
+     * @param debug 调试数据
      */
-    [[nodiscard]] Eigen::Matrix3d R_gimbal2world() const { return R_gimbal2world_; }
+    void solve(const DetectionResult& det, SolveResult& out, DebugData& debug) noexcept;
+
+    // ============ 核心方法 ============
 
     /**
      * @brief 对单个装甲板执行PnP解算
      * @param armor 检测到的装甲板数据
-     * @param pose3d 输出的3D位姿
-     * @param optimize_yaw 是否执行yaw优化 (平衡步兵不做yaw优化)
+     * @param pose3d 输出的3D位姿 (camera_optical_frame坐标系)
      * @return 是否解算成功
      */
-    bool solve(const talos::Armor& armor, ArmorPose3D& pose3d, bool optimize_yaw = true) const;
+    bool solve(const talos::Armor& armor, ArmorPose3D& pose3d) const;
 
     /**
      * @brief 对ArmorSlots中的所有装甲板执行PnP解算
-     * @param slots 检测结果，poses数组会被填充
-     * @param poses3d 输出的详细3D位姿数组
+     * @param slots 检测结果
+     * @param poses3d 输出的3D位姿数组 (camera_optical_frame坐标系)
      */
     void solve_all(const talos::ArmorSlots& slots, std::array<ArmorPose3D, 10>& poses3d) const;
 
     /**
      * @brief 重投影装甲板角点到图像平面
-     * @param xyz_in_world 世界坐标系下的位置
-     * @param yaw 装甲板yaw角
+     * @param xyz_in_camera 相机光学坐标系下的位置
+     * @param R_in_camera 相机光学坐标系下的旋转矩阵
      * @param type 装甲板类型
-     * @param name 装甲板名称
      * @return 重投影的四个角点
      */
     [[nodiscard]] std::vector<cv::Point2f> reproject_armor(
-        const Eigen::Vector3d& xyz_in_world, double yaw, talos::ArmorType type,
-        talos::ArmorName name) const;
-
-    /**
-     * @brief 世界坐标到像素坐标的转换
-     * @param world_points 世界坐标点列表
-     * @return 像素坐标点列表
-     */
-    [[nodiscard]] std::vector<cv::Point2f>
-        world2pixel(const std::vector<cv::Point3f>& world_points) const;
+        const Eigen::Vector3d& xyz_in_camera, const Eigen::Matrix3d& R_in_camera,
+        talos::ArmorType type) const;
 
 private:
-    // 相机参数
+    // 相机内参
     cv::Mat camera_matrix_;
     cv::Mat distort_coeffs_;
-
-    // 外参矩阵和坐标系转换
-    Eigen::Matrix3d R_gimbal2imubody_;
-    Eigen::Matrix3d R_camera2gimbal_;
-    Eigen::Vector3d t_camera2gimbal_;
-    Eigen::Matrix3d R_gimbal2world_;
-
-    // camera_optical到ROS标准相机坐标系的转换矩阵
-    // OpenCV/PnP输出 camera_optical (x右, y下, z前)
-    // → ROS标准 (x前, y左, z上)
-    Eigen::Matrix3d R_cameraOptical_to_ros_;
-
-    /**
-     * @brief 执行Yaw角优化
-     * @param armor 装甲板数据
-     * @param pose3d 3D位姿 (ypr_in_world[0]会被更新)
-     */
-    void optimize_yaw(const talos::Armor& armor, ArmorPose3D& pose3d) const;
-
-    /**
-     * @brief 计算装甲板重投影误差
-     * @param armor 装甲板数据
-     * @param xyz_in_world 世界坐标系位置
-     * @param yaw 假设的yaw角
-     * @param type 装甲板类型
-     * @param name 装甲板名称
-     * @return 重投影误差
-     */
-    [[nodiscard]] double armor_reprojection_error(
-        const talos::Armor& armor, const Eigen::Vector3d& xyz_in_world, double yaw,
-        talos::ArmorType type, talos::ArmorName name) const;
 };
 
 // ============ 数学工具函数 ============
@@ -161,5 +120,17 @@ Eigen::MatrixXd xyz2ypd_jacobian(const Eigen::Vector3d& xyz);
 Eigen::Vector3d ypd2xyz(const Eigen::Vector3d& ypd);
 
 } // namespace math
+
+/**
+ * @brief BA 解算器占位符
+ *
+ * 未来扩展，目前只提供空实现以满足 variant 定义。
+ */
+class BASolver {
+public:
+    void solve(const DetectionResult& /*det*/, SolveResult& out, DebugData& /*debug*/) noexcept {
+        out = std::monostate{};
+    }
+};
 
 } // namespace auto_aim
