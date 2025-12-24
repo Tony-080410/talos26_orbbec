@@ -218,9 +218,14 @@ int main() {
                 double pitch         = imu_data.data.pitch;
                 double yaw           = imu_data.data.yaw;
                 strategy.gimbal_yaw_ = yaw;
-
+                foxglove_server.get_tf_manager().update_gimbal(roll, pitch, yaw);
+                foxglove_server.get_tf_manager().update_odometry(0.0, 0.0, 0.0);
+                // const auto stati =
+                // foxglove_server.get_tf_manager().get_static_transform<fast_tf::camera_link_frame,
+                // fast_tf::camera_optical_frame_frame>();
+                foxglove_server.get_tf_manager().update_camera_optical(
+                    -CV_PI / 2.0, 0.0, -CV_PI / 2.0);
                 // USB模式也需要更新 tf_manager (daedalus模式在上面已经更新)
-                foxglove_server.get_tf_manager().update_gimbal(roll, yaw, pitch);
             } else {
                 spdlog::critical("read hikcamera image: {}", img_result.error().what());
                 return 2;

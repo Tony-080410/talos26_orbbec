@@ -1,6 +1,5 @@
 #pragma once
 
-#include <__new/interference_size.h>
 #include <array>
 #include <atomic>
 #include <optional>

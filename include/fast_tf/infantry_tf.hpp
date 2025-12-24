@@ -193,7 +193,7 @@ public:
         get_publisher().publish_transform<camera_link_frame, gimbal_link_frame>(
             gimbal_transform, timestamp_ns);
         get_publisher().publish_transform<camera_optical_frame_frame, camera_link_frame>(
-            gimbal_transform, timestamp_ns);
+            TransformMatrix4d::from_rpy(0.0, 0.0, 0.0, 0.0, 0.0, 0.0), timestamp_ns);
     }
 
     /**
