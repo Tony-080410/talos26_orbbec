@@ -24,6 +24,11 @@ namespace auto_aim {
 
         cv::eigen2cv(config.camera_matrix, camera_matrix_);
         cv::eigen2cv(config.distort_coefficient, distort_coeffs_);
+
+        // 初始化camera_optical到ROS标准相机坐标系的转换矩阵
+        // camera_optical (OpenCV/PnP): x右, y下, z前
+        // ROS标准相机: x前, y左, z上
+        R_cameraOptical_to_ros_ << 0, 0, 1, -1, 0, 0, 0, -1, 0;
     }
 
     void Solver::set_R_gimbal2world(const Eigen::Quaterniond &q) {
@@ -53,23 +58,58 @@ namespace auto_aim {
             return false;
         }
 
-        // 坐标变换：相机 -> 云台 -> 世界
-        Eigen::Vector3d xyz_in_camera;
-        cv::cv2eigen(tvec, xyz_in_camera);
-        pose3d.xyz_in_gimbal = R_camera2gimbal_ * xyz_in_camera + t_camera2gimbal_;
+        // ========== 坐标系转换说明 ==========
+        // PnP解算结果在camera_optical坐标系 (x右, y下, z前)
+        // 目标：转换到world坐标系 (ROS标准: x前, y左, z上)
+        // 转换链：camera_optical → ROS camera → gimbal → world
+        // ========================================
+
+        // 位置转换：camera_optical → ROS camera → gimbal → world
+        Eigen::Vector3d xyz_in_camera_optical;
+        cv::cv2eigen(tvec, xyz_in_camera_optical);
+
+        pose3d.xyz_in_gimbal = R_cameraOptical_to_ros_ * xyz_in_camera_optical + t_camera2gimbal_;
         pose3d.xyz_in_world = R_gimbal2world_ * pose3d.xyz_in_gimbal;
 
-        // 姿态变换
+        // 深度有效性检查
+        assert(xyz_in_camera_optical[2] > 0 && "PnP depth must be positive (camera_optical z-axis)");
+
+        // 距离合理性检查
+        const double distance = pose3d.xyz_in_world.norm();
+        if (distance < 0.5 || distance > 15.0)
+        {
+            spdlog::warn(
+                "[Solver] Unreasonable distance: {:.2f}m (armor at camera_optical: [{:.3f}, {:.3f}, {:.3f}])",
+                distance, xyz_in_camera_optical[0], xyz_in_camera_optical[1], xyz_in_camera_optical[2]);
+            pose3d.valid = false;
+            return false;
+        }
+
+        // 姿态转换：camera_optical → ROS camera → gimbal → world
         cv::Mat rmat;
         cv::Rodrigues(rvec, rmat);
-        Eigen::Matrix3d R_armor2camera;
-        cv::cv2eigen(rmat, R_armor2camera);
-        const Eigen::Matrix3d R_armor2gimbal = R_camera2gimbal_ * R_armor2camera;
+        Eigen::Matrix3d R_armor2camera_optical; // 装甲板在camera_optical系的姿态
+        cv::cv2eigen(rmat, R_armor2camera_optical);
+
+        // CRITICAL: 应用camera_optical到ROS标准系的转换
+        const Eigen::Matrix3d R_armor2camera_ros = R_cameraOptical_to_ros_ * R_armor2camera_optical;
+        const Eigen::Matrix3d R_armor2gimbal = R_camera2gimbal_ * R_armor2camera_ros;
         const Eigen::Matrix3d R_armor2world = R_gimbal2world_ * R_armor2gimbal;
 
-        pose3d.ypr_in_gimbal = math::eulers(R_armor2gimbal, 2, 1, 0);
-        pose3d.ypr_in_world = math::eulers(R_armor2world, 2, 1, 0);
-        pose3d.ypd_in_world = math::xyz2ypd(pose3d.xyz_in_world);
+        // 旋转矩阵有效性检查
+        assert(
+            std::abs(R_armor2camera_optical.determinant() - 1.0) < 1e-6 &&
+            "Rotation matrix must have determinant 1");
+        assert(
+            std::abs(R_armor2camera_ros.determinant() - 1.0) < 1e-6 &&
+            "Transformed rotation matrix must have determinant 1");
+
+        // 填充pose3d结构
+        pose3d.R_in_camera = R_armor2camera_optical; // [camera_optical系] 用于调试
+        pose3d.xyz_in_camera = xyz_in_camera_optical; // [camera_optical系] 用于调试
+        pose3d.ypr_in_gimbal = math::eulers(R_armor2gimbal, 2, 1, 0); // [gimbal系]
+        pose3d.ypr_in_world = math::eulers(R_armor2world, 2, 1, 0); // [world系]
+        pose3d.ypd_in_world = math::xyz2ypd(pose3d.xyz_in_world); // [world系, 球坐标]
 
         // 判断是否为平衡步兵（平衡不做yaw优化）
         const auto name = static_cast<talos::ArmorName>(armor.name);
@@ -112,7 +152,7 @@ namespace auto_aim {
         const auto sin_pitch = std::sin(pitch);
         auto cos_pitch = std::cos(pitch);
 
-        // clang-format off
+    // clang-format off
     const Eigen::Matrix3d R_armor2world {
         {cos_yaw * cos_pitch, -sin_yaw, cos_yaw * sin_pitch},
         {sin_yaw * cos_pitch,  cos_yaw, sin_yaw * sin_pitch},
@@ -120,19 +160,40 @@ namespace auto_aim {
     };
         // clang-format on
 
-        // 计算 R_armor2camera 和 t_armor2camera
-        const Eigen::Vector3d &t_armor2world = xyz_in_world;
-        const Eigen::Matrix3d R_armor2camera =
-                R_camera2gimbal_.transpose() * R_gimbal2world_.transpose() * R_armor2world;
-        Eigen::Vector3d t_armor2camera =
-                R_camera2gimbal_.transpose() * (R_gimbal2world_.transpose() * t_armor2world - t_camera2gimbal_);
+        // ========== 重投影坐标系转换说明 ==========
+        // 目标：将world系的装甲板姿态转换回camera_optical系用于OpenCV投影
+        // 转换链：world → gimbal → ROS camera → camera_optical
+        // ==========================================
 
-        // 转换为OpenCV格式
+        // 计算 R_armor2camera_ros 和 t_armor2camera_ros (ROS camera系)
+        const Eigen::Vector3d& t_armor2world = xyz_in_world;
+        const Eigen::Matrix3d R_armor2camera_ros =
+            R_camera2gimbal_.transpose() * R_gimbal2world_.transpose() * R_armor2world;
+        Eigen::Vector3d t_armor2camera_ros =
+            R_camera2gimbal_.transpose()
+            * (R_gimbal2world_.transpose() * t_armor2world - t_camera2gimbal_);
+
+        // CRITICAL FIX: 转换到camera_optical系用于OpenCV投影
+        // ROS camera → camera_optical
+        const Eigen::Matrix3d R_armor2camera_optical =
+            R_cameraOptical_to_ros_.transpose() * R_armor2camera_ros;
+        const Eigen::Vector3d t_armor2camera_optical =
+            R_cameraOptical_to_ros_.transpose() * t_armor2camera_ros;
+
+        // 深度有效性检查
+        if (t_armor2camera_optical[2] <= 0) {
+            spdlog::warn(
+                "[Solver] Reprojection depth negative: {:.3f} (world pos: [{:.3f}, {:.3f}, {:.3f}])",
+                t_armor2camera_optical[2], xyz_in_world[0], xyz_in_world[1], xyz_in_world[2]);
+            return {}; // 返回空向量表示投影失败
+        }
+
+        // 转换为OpenCV格式 (使用camera_optical系的转换)
         cv::Vec3d rvec;
         cv::Mat R_armor2camera_cv;
-        cv::eigen2cv(R_armor2camera, R_armor2camera_cv);
+        cv::eigen2cv(R_armor2camera_optical, R_armor2camera_cv);
         cv::Rodrigues(R_armor2camera_cv, rvec);
-        const cv::Vec3d tvec(t_armor2camera[0], t_armor2camera[1], t_armor2camera[2]);
+        const cv::Vec3d tvec(t_armor2camera_optical[0], t_armor2camera_optical[1], t_armor2camera_optical[2]);
 
         // 重投影
         std::vector<cv::Point2f> image_points;
@@ -143,19 +204,31 @@ namespace auto_aim {
     }
 
     std::vector<cv::Point2f> Solver::world2pixel(const std::vector<cv::Point3f> &world_points) const {
-        const Eigen::Matrix3d R_world2camera = R_camera2gimbal_.transpose() * R_gimbal2world_.transpose();
-        const Eigen::Vector3d t_world2camera = -R_camera2gimbal_.transpose() * t_camera2gimbal_;
+        // ========== 世界到相机坐标系转换说明 ==========
+        // 目标：将world系点转换回camera_optical系用于OpenCV投影
+        // 转换链：world → gimbal → ROS camera → camera_optical
+        // ==========================================
+
+        // world → ROS camera
+        const Eigen::Matrix3d R_world2camera_ros = R_camera2gimbal_.transpose() * R_gimbal2world_.transpose();
+        const Eigen::Vector3d t_world2camera_ros = -R_camera2gimbal_.transpose() * t_camera2gimbal_;
+
+        // CRITICAL FIX: ROS camera → camera_optical
+        const Eigen::Matrix3d R_world2camera_optical =
+            R_cameraOptical_to_ros_.transpose() * R_world2camera_ros;
+        const Eigen::Vector3d t_world2camera_optical =
+            R_cameraOptical_to_ros_.transpose() * t_world2camera_ros;
 
         cv::Mat rvec, tvec;
-        cv::eigen2cv(R_world2camera, rvec);
-        cv::eigen2cv(t_world2camera, tvec);
+        cv::eigen2cv(R_world2camera_optical, rvec);
+        cv::eigen2cv(t_world2camera_optical, tvec);
 
         // 过滤掉相机后方的点
         std::vector<cv::Point3f> valid_world_points;
         for (const auto &world_point: world_points) {
             Eigen::Vector3d world_point_eigen(world_point.x, world_point.y, world_point.z);
 
-            if (Eigen::Vector3d camera_point = R_world2camera * world_point_eigen + t_world2camera;
+            if (Eigen::Vector3d camera_point = R_world2camera_optical * world_point_eigen + t_world2camera_optical;
                 camera_point.z() > 0) {
                 valid_world_points.push_back(world_point);
             }

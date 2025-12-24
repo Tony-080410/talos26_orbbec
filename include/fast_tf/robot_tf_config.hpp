@@ -19,22 +19,12 @@
 #include <memory>
 #include <optional>
 #include <chrono>
+#include <foxglove/foxglove.hpp>
+#include <foxglove/schemas.hpp>
 
 #include "frame_hierarchy.hpp"
 #include "static_transforms.hpp"
 #include "frame_types.hpp"
-
-#ifdef FOXGLOVE_SDK_AVAILABLE
-    #include <foxglove/schemas.hpp>
-#else
-    namespace foxglove {
-        namespace schemas {
-            struct FrameTransform;
-            struct FrameTransforms;
-            struct FrameTransformsChannel;
-        }
-    }
-#endif
 
 #include <spdlog/spdlog.h>
 

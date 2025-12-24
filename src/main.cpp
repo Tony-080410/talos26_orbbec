@@ -1,11 +1,10 @@
 #include "auto_aim/config.hpp"
 #include "auto_aim/detector.hpp"
-#include "auto_aim/output_interface.hpp"
 #include "camera/hik_camera.hpp"
+#include "fast_tf/infantry_tf.hpp"
 #include "ipc/shm_client.hpp"
 #include "spdlog_hook.hpp"
 #include "strategy_wrapper.hpp"
-#include "talos_gimbal/packet.hpp"
 #include "talos_gimbal/stm32.hpp"
 #include "tracker.hpp"
 #include <chrono>
@@ -181,14 +180,16 @@ int main() {
         std::optional<ipc::ShmClient::ImageFrame> frame;
         if (daedalus) {
             frame = client->recv_image();
-            auto pose = client->recv_pose(ipc::POSE_GIMBAL);
+            auto pose = client->recv_pose(ipc::POSE_CAMERA);
             if (pose) {
                 Eigen::Quaterniond q(pose->qw, pose->qx, pose->qy, pose->qz);
                 strategy.solver.set_R_gimbal2world(q);
 
                 // Extract yaw from quaternion for gimbal tracking
-                auto euler = q.toRotationMatrix().eulerAngles(2, 1, 0); // ZYX order
-                strategy.set_gimbal_yaw(euler[0]);
+                auto euler = q.toRotationMatrix().eulerAngles(1,0,2); // ZYX order
+                imu_data.data.yaw = euler[0];
+                imu_data.data.pitch = -euler[1] ;
+                imu_data.data.roll = euler[2] ;
             }
         } else {
             auto img_result = camera_->read(100ms);
@@ -232,15 +233,16 @@ int main() {
         // spdlog::info("处理 {} 帧", last_seq);
         auto img = image;
         if (daedalus) {
-            cv::cvtColor(image, image, cv::COLOR_RGB2BGR);
+            img = cv::Mat();
+            image.copyTo(img);
+            cv::cvtColor(img, img, cv::COLOR_RGB2BGR);
             // v.image is &'loop ImageData,
             // but we need to pass a &'pipeline ImageData
             // we cannot assure 'loop is longer than 'pipeline so we must copy the data.
-            image.copyTo(img);
         }
         sched.push_frame(
             scheduler::Frame{
-                seq, timestamp_ns, scheduler::ImageBuffer::from_mat(std::move(image))});
+                seq, timestamp_ns, scheduler::ImageBuffer::from_mat(std::move(img))});
         sched.tracker_event_.wait_for(1);
         // std::this_thread::sleep_for(std::chrono::microseconds(1));
     }

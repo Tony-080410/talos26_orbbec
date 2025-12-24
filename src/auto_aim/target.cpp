@@ -7,27 +7,55 @@ namespace auto_aim {
     Target::Target(const talos::Armor &armor, const ArmorPose3D &pose3d, const std::chrono::steady_clock::time_point t,
                    const double radius, const int armor_num, const Eigen::VectorXd &P0_dig) :
         name(static_cast<talos::ArmorName>(armor.name)), armor_type(static_cast<talos::ArmorType>(armor.type)), armor_num_(armor_num), t_(t) {
+        // ========== 坐标系说明 ==========
+        // 所有输入数据都在world坐标系 (ROS标准: x前, y左, z上)
+        // xyz_in_world: 装甲板在world系的位置 [m]
+        // ypr_in_world: 装甲板在world系的姿态 [rad]
+        // 状态向量表示旋转中心在world系的位置和速度
+        // ================================
+
+        // 输入参数有效性检查
+        assert(pose3d.valid && "pose3d must be valid");
+        assert(radius > 0.05 && radius < 0.5 && "Radius must be in range (0.05, 0.5)m");
+        assert((armor_num == 2 || armor_num == 3 || armor_num == 4) && "Armor num must be 2, 3, or 4");
+        assert(P0_dig.size() == 11 && "P0_dig must have 11 elements");
+
         auto r = radius;
-        const Eigen::Vector3d &xyz = pose3d.xyz_in_world;
-        const Eigen::Vector3d &ypr = pose3d.ypr_in_world;
+        const Eigen::Vector3d &xyz = pose3d.xyz_in_world; // [world系]
+        const Eigen::Vector3d &ypr = pose3d.ypr_in_world; // [world系]
 
-        // 旋转中心的坐标
-        auto center_x = xyz[0] + r * std::cos(ypr[0]);
-        auto center_y = xyz[1] + r * std::sin(ypr[0]);
-        auto center_z = xyz[2];
+        // Runtime检查: pose3d坐标系一致性
+        const double distance = xyz.norm();
+        if (distance < 0.5 || distance > 15.0) {
+            spdlog::warn("[Target] Initial position unreasonable: distance={:.2f}m", distance);
+        }
 
-        // 状态向量: x vx y vy z vz a w r l h
-        // a: angle
-        // w: angular velocity
-        // l: r2 - r1
-        // h: z2 - z1
+        // 检查: 验证ypd_in_world与xyz_in_world一致性
+        const Eigen::Vector3d ypd_computed = math::xyz2ypd(xyz);
+        const double ypd_error = (ypd_computed - pose3d.ypd_in_world).norm();
+        assert(ypd_error < 1e-3 && "ypd_in_world must match xyz_in_world");
+
+        // 计算旋转中心的坐标 (world系)
+        // 从装甲板位置xyz反推旋转中心，假设装甲板在半径r处
+        auto center_x = xyz[0] + r * std::cos(ypr[0]); // [world系, m]
+        auto center_y = xyz[1] + r * std::sin(ypr[0]); // [world系, m]
+        auto center_z = xyz[2]; // [world系, m]
+
+        // 状态向量: x vx y vy z vz a w r l h (所有在world坐标系)
+        // x, y, z: 旋转中心位置 [m]
+        // vx, vy, vz: 旋转中心速度 [m/s]
+        // a: 装甲板角度 [rad]
+        // w: 角速度 [rad/s]
+        // r: 装甲板半径 [m]
+        // l: r2 - r1 (长短轴差) [m]
+        // h: z2 - z1 (高度差) [m]
         const Eigen::VectorXd x0{{center_x, 0, center_y, 0, center_z, 0, ypr[0], 0, r, 0, 0}};
         const Eigen::MatrixXd P0 = P0_dig.asDiagonal();
 
         // 防止夹角求和出现异常值
         auto x_add = [](const Eigen::VectorXd &a, const Eigen::VectorXd &b) -> Eigen::VectorXd {
             Eigen::VectorXd c = a + b;
-            c[6] = math::limit_rad(c[6]);
+            c[6] = math::limit_rad(c[6]); // 限制角度在(-pi, pi]
             return c;
         };
 
@@ -121,8 +149,9 @@ namespace auto_aim {
         const std::vector<Eigen::Vector4d> &xyza_list = armor_xyza_list();
 
         std::vector<std::pair<Eigen::Vector4d, int>> xyza_i_list;
+        xyza_i_list.reserve(armor_num_);
         for (int i = 0; i < armor_num_; i++) {
-            xyza_i_list.push_back({xyza_list[i], i});
+            xyza_i_list.emplace_back(xyza_list[i], i);
         }
 
         std::ranges::sort(xyza_i_list,
@@ -166,10 +195,29 @@ namespace auto_aim {
         update_ypda(pose3d, id);
     }
 
-    void Target::update_ypda(const ArmorPose3D &pose3d, const int id) {
+    void Target::update_ypda(const ArmorPose3D& pose3d, const int id)
+    {
+        // ========== 坐标系说明 ==========
+        // 所有观测数据都在world坐标系 (ROS标准: x前, y左, z上)
+        // ypd_in_world: 球坐标 [rad, rad, m]
+        // ypr_in_world: 欧拉角 [rad]
+        // EKF状态向量也在world坐标系
+        // ================================
+
+        // 观测有效性检查
+        assert(pose3d.valid && "pose3d must be valid for update");
+
+        // 检查: 观测距离合理性
+        const double observed_distance = pose3d.ypd_in_world[2];
+        if (observed_distance < 0.5 || observed_distance > 15.0) {
+            spdlog::warn("[Target] Observation distance unreasonable: {:.2f}m", observed_distance);
+            return; // 跳过此次更新
+        }
+
         // 观测雅可比
         const Eigen::MatrixXd H = h_jacobian(ekf_.x, id);
 
+        // 计算观测噪声权重 (world系)
         const auto center_yaw = std::atan2(pose3d.xyz_in_world[1], pose3d.xyz_in_world[0]);
         const auto delta_angle = math::limit_rad(pose3d.ypr_in_world[0] - center_yaw);
         const Eigen::VectorXd R_dig{{4e-3, 4e-3, std::log(std::abs(delta_angle) + 1) + 1,
@@ -177,26 +225,34 @@ namespace auto_aim {
 
         const Eigen::MatrixXd R = R_dig.asDiagonal();
 
-        // 定义非线性转换函数h: x -> z
+        // 定义非线性观测函数 h: x -> z (world系)
         auto h = [&](const Eigen::VectorXd &x) -> Eigen::Vector4d {
-            const Eigen::VectorXd xyz = h_armor_xyz(x, id);
-            Eigen::VectorXd ypd = math::xyz2ypd(xyz);
+            const Eigen::VectorXd xyz = h_armor_xyz(x, id); // [world系]
+            Eigen::VectorXd ypd = math::xyz2ypd(xyz); // [world系, 球坐标]
             auto angle = math::limit_rad(x[6] + id * 2 * CV_PI / armor_num_);
             return {ypd[0], ypd[1], ypd[2], angle};
         };
 
-        // 防止夹角求差出现异常值
+        // 防止角度环绕问题
         auto z_subtract = [](const Eigen::VectorXd &a, const Eigen::VectorXd &b) -> Eigen::VectorXd {
             Eigen::VectorXd c = a - b;
-            c[0] = math::limit_rad(c[0]);
-            c[1] = math::limit_rad(c[1]);
-            c[3] = math::limit_rad(c[3]);
+            c[0] = math::limit_rad(c[0]); // yaw wrap
+            c[1] = math::limit_rad(c[1]); // pitch wrap
+            c[3] = math::limit_rad(c[3]); // angle wrap
             return c;
         };
 
-        const Eigen::Vector3d &ypd = pose3d.ypd_in_world;
-        const Eigen::Vector3d &ypr = pose3d.ypr_in_world;
+        // 观测向量 (world系)
+        const Eigen::Vector3d &ypd = pose3d.ypd_in_world; // [world系, 球坐标]
+        const Eigen::Vector3d &ypr = pose3d.ypr_in_world; // [world系]
         const Eigen::VectorXd z{{ypd[0], ypd[1], ypd[2], ypr[0]}};
+
+        // 检查: 观测与预测的创新度
+        const Eigen::VectorXd predicted_xyz = h_armor_xyz(ekf_.x, id);
+        const double innovation = (predicted_xyz - pose3d.xyz_in_world).norm();
+        if (innovation > 2.0) {
+            spdlog::warn("[Target] Large innovation: {:.2f}m (may indicate coordinate mismatch)", innovation);
+        }
 
         ekf_.update(z, H, R, h, z_subtract);
     }
@@ -237,15 +293,25 @@ namespace auto_aim {
     }
 
     Eigen::Vector3d Target::h_armor_xyz(const Eigen::VectorXd &x, const int id) const {
+        // ========== 坐标系说明 ==========
+        // 输入: x - EKF状态向量 (world系)
+        // 输出: 装甲板位置 (world系)
+        // x[0], x[2], x[4]: 旋转中心的x, y, z (world系)
+        // x[6]: 装甲板角度 (world系)
+        // x[8]: 半径r (world系)
+        // ================================
+
         const auto angle = math::limit_rad(x[6] + id * 2 * CV_PI / armor_num_);
         const auto use_l_h = armor_num_ == 4 && (id == 1 || id == 3);
 
         const auto r = use_l_h ? x[8] + x[9] : x[8];
-        auto armor_x = x[0] - r * std::cos(angle);
-        auto armor_y = x[2] - r * std::sin(angle);
-        auto armor_z = use_l_h ? x[4] + x[10] : x[4];
 
-        return {armor_x, armor_y, armor_z};
+        // 从旋转中心推算装甲板位置 (world系)
+        auto armor_x = x[0] - r * std::cos(angle); // [world系, m]
+        auto armor_y = x[2] - r * std::sin(angle); // [world系, m]
+        auto armor_z = use_l_h ? x[4] + x[10] : x[4]; // [world系, m]
+
+        return {armor_x, armor_y, armor_z}; // [world系]
     }
 
     Eigen::MatrixXd Target::h_jacobian(const Eigen::VectorXd &x, const int id) const {

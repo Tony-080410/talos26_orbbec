@@ -140,6 +140,11 @@ namespace auto_aim {
     bool Tracker::set_target(talos::TrackerSoA &state, Target &target, const talos::ArmorSlots &slots,
                              const std::array<ArmorPose3D, 10> &poses3d,
                              const std::chrono::steady_clock::time_point t) const {// 找到第一个有效的敌方装甲板
+        // ========== 坐标系说明 ==========
+        // poses3d中的所有数据都在world坐标系
+        // xyz_in_world, ypr_in_world, ypd_in_world: [world系]
+        // ================================
+
         spdlog::debug("Setting target...");
         int best_idx = -1;
         float best_distance = 1e10f;
@@ -205,6 +210,11 @@ namespace auto_aim {
     bool Tracker::update_target([[maybe_unused]] talos::TrackerSoA &state, Target &target,
                                 const talos::ArmorSlots &slots, const Poses3D &poses3d,
                                 const std::chrono::steady_clock::time_point t) const {
+        // ========== 坐标系说明 ==========
+        // poses3d中的所有数据都在world坐标系
+        // xyz_in_world, ypr_in_world, ypd_in_world: [world系]
+        // ================================
+
         target.predict(t);
 
         int found_count = 0;
@@ -229,7 +239,7 @@ namespace auto_aim {
             }
 
             found_count++;
-            target.update(armor, poses3d[i]);
+            target.update(armor, poses3d[i]); // poses3d[i]在world系
         }
 
         return found_count > 0;
