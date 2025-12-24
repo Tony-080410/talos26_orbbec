@@ -1,12 +1,12 @@
 #include <benchmark/benchmark.h>
-#include <vector>
 #include <random>
+#include <vector>
 
+#include "fast_tf/frame_id.hpp"
 #include "fast_tf/frame_types.hpp"
 #include "fast_tf/transform_buffer.hpp"
-#include "fast_tf/frame_id.hpp"
-#include "fast_tf/tree_structure.hpp"
 #include "fast_tf/transform_tree.hpp"
+#include "fast_tf/tree_structure.hpp"
 
 using namespace fast_tf;
 
@@ -24,7 +24,7 @@ BENCHMARK(BM_TransformMatrix4d_Identity);
 
 static void BM_TransformMatrix4d_FromTranslation(benchmark::State& state) {
     for (auto _ : state) {
-        auto tf = TransformMatrix4d::from_rpy(0.0, 0.0, 0.0,1.0, 2.0, 3.0);
+        auto tf = TransformMatrix4d::from_rpy(0.0, 0.0, 0.0, 1.0, 2.0, 3.0);
         benchmark::DoNotOptimize(tf);
     }
 }
@@ -50,8 +50,8 @@ static void BM_TransformMatrix4d_FromQuaternion(benchmark::State& state) {
 BENCHMARK(BM_TransformMatrix4d_FromQuaternion);
 
 static void BM_TransformMatrix4d_Multiplication(benchmark::State& state) {
-    auto tf1 = TransformMatrix4d::from_rpy(0.0, 0.0, 0.0,1.0, 2.0, 3.0);
-    auto tf2 = TransformMatrix4d::from_rpy(0.0, 0.0, 0.0,4.0, 5.0, 6.0);
+    auto tf1 = TransformMatrix4d::from_rpy(0.0, 0.0, 0.0, 1.0, 2.0, 3.0);
+    auto tf2 = TransformMatrix4d::from_rpy(0.0, 0.0, 0.0, 4.0, 5.0, 6.0);
 
     for (auto _ : state) {
         auto result = tf1 * tf2;
@@ -71,7 +71,7 @@ static void BM_TransformMatrix4d_Inverse(benchmark::State& state) {
 BENCHMARK(BM_TransformMatrix4d_Inverse);
 
 static void BM_TransformMatrix4d_Translation(benchmark::State& state) {
-    auto tf = TransformMatrix4d::from_rpy(0.0, 0.0, 0.0,1.0, 2.0, 3.0);
+    auto tf = TransformMatrix4d::from_rpy(0.0, 0.0, 0.0, 1.0, 2.0, 3.0);
 
     for (auto _ : state) {
         auto result = tf.translation();
@@ -107,7 +107,7 @@ BENCHMARK(BM_TransformMatrix4d_Quaternion);
 static void BM_CircularTransformBuffer_Push(benchmark::State& state) {
     using Buffer = CircularTransformBuffer<100>;
     Buffer buffer;
-    auto tf = TransformMatrix4d::from_rpy(0.0, 0.0, 0.0,1.0, 2.0, 3.0);
+    auto tf            = TransformMatrix4d::from_rpy(0.0, 0.0, 0.0, 1.0, 2.0, 3.0);
     uint64_t timestamp = 0;
 
     for (auto _ : state) {
@@ -119,7 +119,7 @@ BENCHMARK(BM_CircularTransformBuffer_Push);
 static void BM_CircularTransformBuffer_At(benchmark::State& state) {
     using Buffer = CircularTransformBuffer<100>;
     Buffer buffer;
-    auto tf = TransformMatrix4d::from_rpy(0.0, 0.0, 0.0,1.0, 2.0, 3.0);
+    auto tf = TransformMatrix4d::from_rpy(0.0, 0.0, 0.0, 1.0, 2.0, 3.0);
 
     // Pre-fill buffer
     for (int i = 0; i < 50; ++i) {
@@ -136,8 +136,8 @@ BENCHMARK(BM_CircularTransformBuffer_At);
 static void BM_CircularTransformBuffer_AtInterpolated(benchmark::State& state) {
     using Buffer = CircularTransformBuffer<100>;
     Buffer buffer;
-    auto tf1 = TransformMatrix4d::from_rpy(0.0, 0.0, 0.0,0.0, 0.0, 0.0);
-    auto tf2 = TransformMatrix4d::from_rpy(0.0, 0.0, 0.0,10.0, 0.0, 0.0);
+    auto tf1 = TransformMatrix4d::from_rpy(0.0, 0.0, 0.0, 0.0, 0.0, 0.0);
+    auto tf2 = TransformMatrix4d::from_rpy(0.0, 0.0, 0.0, 10.0, 0.0, 0.0);
 
     // Create interpolation scenario
     for (int i = 0; i < 50; ++i) {
@@ -155,7 +155,7 @@ BENCHMARK(BM_CircularTransformBuffer_AtInterpolated);
 static void BM_CircularTransformBuffer_Latest(benchmark::State& state) {
     using Buffer = CircularTransformBuffer<100>;
     Buffer buffer;
-    auto tf = TransformMatrix4d::from_rpy(0.0, 0.0, 0.0,1.0, 2.0, 3.0);
+    auto tf = TransformMatrix4d::from_rpy(0.0, 0.0, 0.0, 1.0, 2.0, 3.0);
 
     // Pre-fill buffer
     for (int i = 0; i < 50; ++i) {
@@ -172,7 +172,7 @@ BENCHMARK(BM_CircularTransformBuffer_Latest);
 static void BM_CircularTransformBuffer_TimeRange(benchmark::State& state) {
     using Buffer = CircularTransformBuffer<100>;
     Buffer buffer;
-    auto tf = TransformMatrix4d::from_rpy(0.0, 0.0, 0.0,1.0, 2.0, 3.0);
+    auto tf = TransformMatrix4d::from_rpy(0.0, 0.0, 0.0, 1.0, 2.0, 3.0);
 
     // Pre-fill buffer
     for (int i = 0; i < 50; ++i) {
@@ -193,7 +193,7 @@ static void BM_CircularTransformBuffer_VariousCapacities(benchmark::State& state
     for (auto _ : state) {
         std::unique_ptr<char[]> buffer_storage(new char[capacity * sizeof(TransformEntry)]);
         // Simulate buffer operations
-        auto tf = TransformMatrix4d::from_rpy(0.0, 0.0, 0.0,1.0, 2.0, 3.0);
+        auto tf = TransformMatrix4d::from_rpy(0.0, 0.0, 0.0, 1.0, 2.0, 3.0);
         benchmark::DoNotOptimize(tf);
     }
 }

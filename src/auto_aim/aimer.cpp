@@ -12,15 +12,18 @@ namespace {
 /**
  * @brief 计算时间差 (秒)
  */
-double delta_time(std::chrono::steady_clock::time_point a, std::chrono::steady_clock::time_point b) noexcept {
+double delta_time(
+    std::chrono::steady_clock::time_point a, std::chrono::steady_clock::time_point b) noexcept {
     return std::chrono::duration<double>(a - b).count();
 }
 } // namespace
 
-Aimer::Aimer(const AimerConfig &config) noexcept : config_(config) {}
+Aimer::Aimer(const AimerConfig& config) noexcept
+    : config_(config) {}
 
-GimbalCommand Aimer::aim(Target &target, std::chrono::steady_clock::time_point timestamp, double bullet_speed,
-                         const bool to_now) noexcept {
+GimbalCommand Aimer::aim(
+    Target& target, std::chrono::steady_clock::time_point timestamp, double bullet_speed,
+    const bool to_now) noexcept {
     // 检查弹速合法性
     if (bullet_speed < 14) {
         bullet_speed = 23.0;
@@ -29,8 +32,9 @@ GimbalCommand Aimer::aim(Target &target, std::chrono::steady_clock::time_point t
     // 确定延时补偿
     // ekf_x()[7] = w (角速度)
     const Eigen::VectorXd ekf_x = target.ekf_x();
-    const double delay_time =
-        std::abs(ekf_x[7]) > config_.decision_speed ? config_.high_speed_delay_time : config_.low_speed_delay_time;
+    const double delay_time     = std::abs(ekf_x[7]) > config_.decision_speed
+                                    ? config_.high_speed_delay_time
+                                    : config_.low_speed_delay_time;
 
     // 预测目标到指定时刻
     auto future = timestamp;
@@ -45,41 +49,42 @@ GimbalCommand Aimer::aim(Target &target, std::chrono::steady_clock::time_point t
 
     // 初始瞄准点计算
     const auto aim_point0 = choose_aim_point(target);
-    debug_aim_point_ = aim_point0;
+    debug_aim_point_      = aim_point0;
     if (!aim_point0.valid) {
         return {false, false, 0, 0, 0};
     }
 
     // 初始弹道计算
     const Eigen::Vector3d xyz0 = aim_point0.xyza.head<3>();
-    const double d0 = std::sqrt(xyz0[0] * xyz0[0] + xyz0[1] * xyz0[1]);
-    auto traj0 = solve_trajectory(bullet_speed, d0, xyz0[2]);
+    const double d0            = std::sqrt(xyz0[0] * xyz0[0] + xyz0[1] * xyz0[1]);
+    auto traj0                 = solve_trajectory(bullet_speed, d0, xyz0[2]);
     if (!traj0) {
         debug_aim_point_.valid = false;
         return {false, false, 0, 0, 0};
     }
 
     // 迭代求解飞行时间 (最多10次, 收敛条件: 相邻两次 fly_time 差 < 0.001s)
-    double prev_fly_time = traj0->fly_time;
+    double prev_fly_time          = traj0->fly_time;
     TrajectoryResult current_traj = *traj0;
     std::vector<Target> iteration_targets(10, target);
 
     for (int iter = 0; iter < 10; ++iter) {
         // 预测目标在 future + prev_fly_time 时刻的位置
-        const auto predict_time = future + std::chrono::microseconds(static_cast<int>(prev_fly_time * 1e6));
+        const auto predict_time =
+            future + std::chrono::microseconds(static_cast<int>(prev_fly_time * 1e6));
         iteration_targets[iter].predict(predict_time);
 
         // 计算瞄准点
         const auto aim_point = choose_aim_point(iteration_targets[iter]);
-        debug_aim_point_ = aim_point;
+        debug_aim_point_     = aim_point;
         if (!aim_point.valid) {
             return {false, false, 0, 0, 0};
         }
 
         // 计算新弹道
         const Eigen::Vector3d xyz = aim_point.xyza.head<3>();
-        const double d = std::sqrt(xyz.x() * xyz.x() + xyz.y() * xyz.y());
-        auto traj = solve_trajectory(bullet_speed, d, xyz.z());
+        const double d            = std::sqrt(xyz.x() * xyz.x() + xyz.y() * xyz.y());
+        auto traj                 = solve_trajectory(bullet_speed, d, xyz.z());
         if (!traj) {
             debug_aim_point_.valid = false;
             return {false, false, 0, 0, 0};
@@ -95,18 +100,20 @@ GimbalCommand Aimer::aim(Target &target, std::chrono::steady_clock::time_point t
 
     // 计算最终角度
     const Eigen::Vector3d final_xyz = debug_aim_point_.xyza.head<3>();
-    const double yaw = std::atan2(final_xyz.y(), final_xyz.x()) + config_.yaw_offset;
-    const double pitch = -(current_traj.pitch + config_.pitch_offset); // 世界坐标系下 pitch 向上为负
-    const double distance = std::sqrt(final_xyz.x() * final_xyz.x() + final_xyz.y() * final_xyz.y() +
-                                      final_xyz.z() * final_xyz.z());
+    const double yaw                = std::atan2(final_xyz.y(), final_xyz.x()) + config_.yaw_offset;
+    const double pitch =
+        -(current_traj.pitch + config_.pitch_offset); // 世界坐标系下 pitch 向上为负
+    const double distance = std::sqrt(
+        final_xyz.x() * final_xyz.x() + final_xyz.y() * final_xyz.y()
+        + final_xyz.z() * final_xyz.z());
 
     return {true, false, yaw, pitch, distance};
 }
 
-AimPoint Aimer::choose_aim_point(const Target &target) noexcept {
-    const Eigen::VectorXd ekf_x = target.ekf_x();
+AimPoint Aimer::choose_aim_point(const Target& target) noexcept {
+    const Eigen::VectorXd ekf_x                        = target.ekf_x();
     const std::vector<Eigen::Vector4d> armor_xyza_list = target.armor_xyza_list();
-    const auto armor_num = static_cast<int>(armor_xyza_list.size());
+    const auto armor_num                               = static_cast<int>(armor_xyza_list.size());
 
     // 如果装甲板未发生过跳变, 只有当前装甲板的位置已知
     if (!target.jumped) {
@@ -149,7 +156,8 @@ AimPoint Aimer::choose_aim_point(const Target &target) noexcept {
 
             // 未处于锁定模式时, 选择 delta_angle 绝对值较小的装甲板, 进入锁定模式
             if (lock_id_ != id0 && lock_id_ != id1) {
-                lock_id_ = (std::abs(delta_angle_list[id0]) < std::abs(delta_angle_list[id1])) ? id0 : id1;
+                lock_id_ =
+                    (std::abs(delta_angle_list[id0]) < std::abs(delta_angle_list[id1])) ? id0 : id1;
             }
 
             return {true, armor_xyza_list[lock_id_]};
@@ -164,10 +172,10 @@ AimPoint Aimer::choose_aim_point(const Target &target) noexcept {
     double coming_angle;
     double leaving_angle;
     if (target.name == talos::ArmorName::outpost) {
-        coming_angle = 70.0 / 57.3;
+        coming_angle  = 70.0 / 57.3;
         leaving_angle = 30.0 / 57.3;
     } else {
-        coming_angle = config_.comming_angle;
+        coming_angle  = config_.comming_angle;
         leaving_angle = config_.leaving_angle;
     }
 

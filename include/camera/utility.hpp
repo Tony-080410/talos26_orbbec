@@ -15,12 +15,12 @@ namespace hikcamera::sdk {
 constexpr auto OK = MV_OK;
 
 enum class ExposureAutoMode {
-    OFF = MV_EXPOSURE_AUTO_MODE_OFF,
-    ONCE = MV_EXPOSURE_AUTO_MODE_ONCE,
+    OFF        = MV_EXPOSURE_AUTO_MODE_OFF,
+    ONCE       = MV_EXPOSURE_AUTO_MODE_ONCE,
     CONTINUOUS = MV_EXPOSURE_AUTO_MODE_CONTINUOUS,
 };
 enum class TriggerMode {
-    ON = MV_TRIGGER_MODE_ON,
+    ON  = MV_TRIGGER_MODE_ON,
     OFF = MV_TRIGGER_MODE_OFF,
 };
 enum class TriggerSource {
@@ -34,7 +34,7 @@ enum class TriggerSource {
 
 using Handler = void*;
 
-using DeviceInfo = MV_CC_DEVICE_INFO;
+using DeviceInfo     = MV_CC_DEVICE_INFO;
 using DeviceInfoList = MV_CC_DEVICE_INFO_LIST;
 
 using FrameOut = MV_FRAME_OUT;
@@ -42,16 +42,16 @@ using FrameOut = MV_FRAME_OUT;
 using ConvertParam = MV_CC_PIXEL_CONVERT_PARAM;
 
 namespace key {
-constexpr auto GevSCPSPacketSize = "GevSCPSPacketSize";
-constexpr auto ExposureAuto = "ExposureAuto";
+constexpr auto GevSCPSPacketSize          = "GevSCPSPacketSize";
+constexpr auto ExposureAuto               = "ExposureAuto";
 constexpr auto AcquisitionFrameRateEnable = "AcquisitionFrameRateEnable";
-constexpr auto AcquisitionFrameRate = "AcquisitionFrameRate";
-constexpr auto ReverseX = "ReverseX";
-constexpr auto ReverseY = "ReverseY";
-constexpr auto ExposureTime = "ExposureTime";
-constexpr auto Gain = "Gain";
-constexpr auto TriggerMode = "TriggerMode";
-constexpr auto TriggerSource = "TriggerSource";
+constexpr auto AcquisitionFrameRate       = "AcquisitionFrameRate";
+constexpr auto ReverseX                   = "ReverseX";
+constexpr auto ReverseY                   = "ReverseY";
+constexpr auto ExposureTime               = "ExposureTime";
+constexpr auto Gain                       = "Gain";
+constexpr auto TriggerMode                = "TriggerMode";
+constexpr auto TriggerSource              = "TriggerSource";
 } // namespace key
 
 } // namespace hikcamera::sdk

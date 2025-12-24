@@ -263,10 +263,10 @@ for (std::size_t i = 0; i < results.size(); ++i) {
 
 - **编译器**：GCC 13.2+ 或 Clang 17+（需要 C++23 支持）
 - **依赖**：
-  - Eigen3（线性代数）
-  - Intel TBB（并行计算）
-  - GTest（测试，可选）
-  - Google Benchmark（性能测试，可选）
+    - Eigen3（线性代数）
+    - Intel TBB（并行计算）
+    - GTest（测试，可选）
+    - Google Benchmark（性能测试，可选）
 
 ## 构建说明
 

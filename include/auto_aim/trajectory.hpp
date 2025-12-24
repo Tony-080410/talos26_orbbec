@@ -26,10 +26,8 @@ enum class TrajectoryError {
  */
 [[nodiscard]] constexpr std::string_view trajectory_error_message(TrajectoryError err) noexcept {
     switch (err) {
-        case TrajectoryError::UnsolvableTarget:
-            return "Target out of range";
-        case TrajectoryError::InvalidInput:
-            return "Invalid input parameters (v0 <= 0 or d <= 0)";
+    case TrajectoryError::UnsolvableTarget: return "Target out of range";
+    case TrajectoryError::InvalidInput: return "Invalid input parameters (v0 <= 0 or d <= 0)";
     }
     return "Unknown error";
 }
@@ -48,7 +46,7 @@ enum class TrajectoryError {
  * @param h 目标竖直高度 (m)
  * @return 弹道结果或错误
  */
-[[nodiscard]] std::expected<TrajectoryResult, TrajectoryError> solve_trajectory(double v0, double d,
-                                                                                 double h) noexcept;
+[[nodiscard]] std::expected<TrajectoryResult, TrajectoryError>
+    solve_trajectory(double v0, double d, double h) noexcept;
 
 } // namespace auto_aim

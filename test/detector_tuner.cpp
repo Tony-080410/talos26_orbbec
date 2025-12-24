@@ -22,14 +22,14 @@
 #include "auto_aim/detector_tuner.hpp"
 #include "spdlog_hook.hpp"
 
-int main(int argc, char **argv) {
+int main(int argc, char** argv) {
     hook_cstream();
 
-    std::string dataset_path = "./datasets";
+    std::string dataset_path       = "./datasets";
     std::string tuning_config_path = "tuning.toml";
-    std::string output_dir = "tuning_results";
-    std::string base_config_path = "sp_vision.toml";
-    bool quick_mode = false;
+    std::string output_dir         = "tuning_results";
+    std::string base_config_path   = "sp_vision.toml";
+    bool quick_mode                = false;
 
     // Parse arguments
     for (int i = 1; i < argc; i++) {
@@ -84,7 +84,7 @@ int main(int argc, char **argv) {
                 spdlog::critical("Failed to read base config: {}", result.error());
                 return 1;
             }
-        } catch (const toml::parse_error &e) {
+        } catch (const toml::parse_error& e) {
             spdlog::critical("Failed to parse {}: {}", base_config_path, e.what());
             return 1;
         }
@@ -102,7 +102,7 @@ int main(int argc, char **argv) {
                 spdlog::critical("Failed to read tuning config: {}", result.error());
                 return 1;
             }
-        } catch (const toml::parse_error &e) {
+        } catch (const toml::parse_error& e) {
             spdlog::critical("Failed to parse {}: {}", tuning_config_path, e.what());
             return 1;
         }
@@ -110,19 +110,19 @@ int main(int argc, char **argv) {
 
     // Apply quick mode overrides
     if (quick_mode) {
-        tuning_config.quick_mode = true;
+        tuning_config.quick_mode     = true;
         tuning_config.max_iterations = 1;
-        tuning_config.sample_ratio = 0.1;
+        tuning_config.sample_ratio   = 0.1;
         // Reduce initial points for faster search
-        tuning_config.threshold.initial_points = 3;
-        tuning_config.max_angle_error.initial_points = 2;
-        tuning_config.min_lightbar_ratio.initial_points = 2;
-        tuning_config.max_lightbar_ratio.initial_points = 2;
-        tuning_config.min_lightbar_length.initial_points = 2;
-        tuning_config.min_armor_ratio.initial_points = 2;
-        tuning_config.max_armor_ratio.initial_points = 2;
-        tuning_config.max_side_ratio.initial_points = 2;
-        tuning_config.min_confidence.initial_points = 3;
+        tuning_config.threshold.initial_points             = 3;
+        tuning_config.max_angle_error.initial_points       = 2;
+        tuning_config.min_lightbar_ratio.initial_points    = 2;
+        tuning_config.max_lightbar_ratio.initial_points    = 2;
+        tuning_config.min_lightbar_length.initial_points   = 2;
+        tuning_config.min_armor_ratio.initial_points       = 2;
+        tuning_config.max_armor_ratio.initial_points       = 2;
+        tuning_config.max_side_ratio.initial_points        = 2;
+        tuning_config.min_confidence.initial_points        = 3;
         tuning_config.max_rectangular_error.initial_points = 2;
     }
 
@@ -136,7 +136,7 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    const auto &tuning_result = *result;
+    const auto& tuning_result = *result;
 
     // Print summary
     spdlog::info("\n========================================");
@@ -147,7 +147,7 @@ int main(int argc, char **argv) {
 
     // Print Pareto front details
     for (size_t i = 0; i < tuning_result.pareto_front.size(); ++i) {
-        const auto &c = tuning_result.pareto_front[i];
+        const auto& c = tuning_result.pareto_front[i];
         spdlog::info("");
         spdlog::info("=== Solution {} ===", i + 1);
         spdlog::info("  F1 Score:  {:.4f}", c.objectives.f1_score);

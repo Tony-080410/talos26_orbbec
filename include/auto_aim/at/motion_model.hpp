@@ -30,13 +30,7 @@ enum OutpostState : uint8_t {
     O_STATE_MAX,
 };
 
-enum Measure : uint8_t {
-    WORLD_YAW,
-    WORLD_PITCH,
-    WORLD_DISTANCE,
-    ARMOR_YAW,
-    MEASURE_MAX
-};
+enum Measure : uint8_t { WORLD_YAW, WORLD_PITCH, WORLD_DISTANCE, ARMOR_YAW, MEASURE_MAX };
 
 inline Eigen::Vector3d xyz2ypd(const Eigen::Vector3d& xyz) {
     double x = xyz.x();
@@ -131,7 +125,7 @@ struct RobotModel {
     explicit RobotModel(const Params& p)
         : params(p) {}
 
-    static VecX f(const VecX& x, Scalar dt)  {
+    static VecX f(const VecX& x, Scalar dt) {
         VecX xn;
         // clang-format off
         xn << x(XC) + x(VX)*dt,
@@ -151,7 +145,7 @@ struct RobotModel {
 
     VecZ h(const VecX& x) const { return h(x, armor_id); }
 
-    static VecZ h(const VecX& x, int id)  {
+    static VecZ h(const VecX& x, int id) {
         VecZ z;
         assert(id >= 0 && id <= ARMORS_NUM - 1);
 
@@ -165,10 +159,10 @@ struct RobotModel {
         Scalar armor_z;
         if (id == 1 || id == 3) {
             armor_z = x(Z0) + x[H];
-            radius = x[R_1];
+            radius  = x[R_1];
         } else {
             armor_z = x(Z0);
-            radius = x[R_0];
+            radius  = x[R_0];
         }
 
         armor_x = x(XC) - radius * std::cos(tmp_yaw);
@@ -284,7 +278,7 @@ struct OutpostModel {
 
     VecZ h(const VecX& x) const { return h(x, armor_id); }
 
-    static VecZ h(const VecX& x, int id)  {
+    static VecZ h(const VecX& x, int id) {
         VecZ z;
         assert(id >= 0 && id <= ARMORS_NUM - 1);
         const Scalar angle_step = 2.0 * M_PI / static_cast<Scalar>(ARMORS_NUM);
@@ -342,7 +336,7 @@ struct OutpostModel {
         return S;
     }
 
-    static Eigen::Matrix<Scalar, NZ, 1> R_diag(const VecZ& z)  {
+    static Eigen::Matrix<Scalar, NZ, 1> R_diag(const VecZ& z) {
         const double delta_angle = shortest_rad(z[0], z[3]);
         Eigen::Matrix<Scalar, NZ, 1> R_dig;
         R_dig << 4e-3, 4e-3, std::log(std::abs(delta_angle) + 1.0) + 1.0,
@@ -350,13 +344,11 @@ struct OutpostModel {
         return R_dig;
     }
 
-    static Eigen::Matrix<Scalar, NZ, Eigen::Dynamic> R_sqrt(const VecZ& z)  {
+    static Eigen::Matrix<Scalar, NZ, Eigen::Dynamic> R_sqrt(const VecZ& z) {
         Eigen::Matrix<Scalar, NZ, NZ> Rs = Eigen::Matrix<Scalar, NZ, NZ>::Zero();
         Rs.diagonal()                    = R_diag(z).cwiseSqrt();
         return Rs;
     }
 };
 
-
-
-}
+} // namespace auto_aim::at

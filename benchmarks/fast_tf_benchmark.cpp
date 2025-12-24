@@ -3,10 +3,10 @@
  * 与ROS2 tf2进行比较（如果可用）
  */
 
+#include "fast_tf/core.hpp"
 #include <benchmark/benchmark.h>
 #include <chrono>
 #include <random>
-#include "fast_tf/core.hpp"
 
 using namespace fast_tf;
 
@@ -19,9 +19,8 @@ public:
     void SetUp(const ::benchmark::State&) override {
         // 初始化缓冲区
         for (int i = 0; i < 1000; ++i) {
-            double x = static_cast<double>(i) * 0.1;
-            TransformMatrix4d tf =
-                TransformMatrix4d::from_rpy(0.0, 0.0, 0.0, x, 0, 0);
+            double x             = static_cast<double>(i) * 0.1;
+            TransformMatrix4d tf = TransformMatrix4d::from_rpy(0.0, 0.0, 0.0, x, 0, 0);
             buffer.push(i * 1000, tf);
         }
     }
@@ -34,8 +33,7 @@ public:
 // ============================================================================
 
 BENCHMARK_F(FastTFBenchmark, PushOperation)(benchmark::State& state) {
-    TransformMatrix4d tf =
-        TransformMatrix4d::from_rpy(0.1, 0.2, 0.3, 1, 2, 3);
+    TransformMatrix4d tf = TransformMatrix4d::from_rpy(0.1, 0.2, 0.3, 1, 2, 3);
 
     for (auto _ : state) {
         buffer.push(state.iterations() * 1000, tf);
@@ -61,10 +59,8 @@ BENCHMARK_F(FastTFBenchmark, InterpolatedLookup)(benchmark::State& state) {
 // ============================================================================
 
 BENCHMARK(TransformMatrixMultiplication)(benchmark::State& state) {
-    TransformMatrix4d tf1 =
-        TransformMatrix4d::from_rpy(0.1, 0.2, 0.3, 1, 2, 3);
-    TransformMatrix4d tf2 =
-        TransformMatrix4d::from_rpy(0.2, 0.3, 0.4, 2, 3, 4);
+    TransformMatrix4d tf1 = TransformMatrix4d::from_rpy(0.1, 0.2, 0.3, 1, 2, 3);
+    TransformMatrix4d tf2 = TransformMatrix4d::from_rpy(0.2, 0.3, 0.4, 2, 3, 4);
 
     for (auto _ : state) {
         auto result = tf1 * tf2;
@@ -73,8 +69,7 @@ BENCHMARK(TransformMatrixMultiplication)(benchmark::State& state) {
 }
 
 BENCHMARK(TransformMatrixInverse)(benchmark::State& state) {
-    TransformMatrix4d tf =
-        TransformMatrix4d::from_rpy(0.1, 0.2, 0.3, 1, 2, 3);
+    TransformMatrix4d tf = TransformMatrix4d::from_rpy(0.1, 0.2, 0.3, 1, 2, 3);
 
     for (auto _ : state) {
         auto inv = tf.inverse();
@@ -83,10 +78,8 @@ BENCHMARK(TransformMatrixInverse)(benchmark::State& state) {
 }
 
 BENCHMARK(TransformMatrixInterpolation)(benchmark::State& state) {
-    TransformMatrix4d tf1 =
-        TransformMatrix4d::from_rpy(0.0, 0.0, 0.0, 0, 0, 0);
-    TransformMatrix4d tf2 =
-        TransformMatrix4d::from_rpy(0.1, 0.1, 0.1, 1, 1, 1);
+    TransformMatrix4d tf1 = TransformMatrix4d::from_rpy(0.0, 0.0, 0.0, 0, 0, 0);
+    TransformMatrix4d tf2 = TransformMatrix4d::from_rpy(0.1, 0.1, 0.1, 1, 1, 1);
 
     for (auto _ : state) {
         auto result = TransformMatrix4d::lerp(tf1, tf2, 0.5);
@@ -137,7 +130,7 @@ void FrameRegistration(benchmark::State& state) {
 
         for (int i = 0; i < 100; ++i) {
             std::string name = "frame_" + std::to_string(i);
-            uint64_t id = hash_string_view(name);
+            uint64_t id      = hash_string_view(name);
             FrameRegistry::register_frame(name, id);
         }
 
@@ -153,8 +146,7 @@ BENCHMARK(FrameRegistration);
 
 void ParallelBufferQueries(benchmark::State& state) {
     CircularTransformBuffer<100> buffer;
-    TransformMatrix4d tf =
-        TransformMatrix4d::from_rpy(0.1, 0.2, 0.3, 1, 2, 3);
+    TransformMatrix4d tf = TransformMatrix4d::from_rpy(0.1, 0.2, 0.3, 1, 2, 3);
 
     for (int i = 0; i < 100; ++i) {
         buffer.push(i * 10000, tf);
@@ -183,9 +175,8 @@ void LargeCachedLookup(benchmark::State& state) {
     std::uniform_real_distribution<> dis(-1.0, 1.0);
 
     for (int i = 0; i < 10000; ++i) {
-        TransformMatrix4d tf = TransformMatrix4d::from_rpy(
-            dis(gen), dis(gen), dis(gen),
-            dis(gen), dis(gen), dis(gen));
+        TransformMatrix4d tf =
+            TransformMatrix4d::from_rpy(dis(gen), dis(gen), dis(gen), dis(gen), dis(gen), dis(gen));
         buffer.push(i * 1000, tf);
     }
 
@@ -193,7 +184,7 @@ void LargeCachedLookup(benchmark::State& state) {
 
     for (auto _ : state) {
         uint64_t ts = time_dis(gen);
-        auto entry = buffer.at_interpolated(ts);
+        auto entry  = buffer.at_interpolated(ts);
         benchmark::DoNotOptimize(entry);
     }
 }
@@ -208,8 +199,7 @@ void MemoryUsage(benchmark::State& state) {
     for (auto _ : state) {
         CircularTransformBuffer<1000> buffer;
 
-        TransformMatrix4d tf =
-            TransformMatrix4d::from_rpy(0, 0, 0, 0, 0, 0);
+        TransformMatrix4d tf = TransformMatrix4d::from_rpy(0, 0, 0, 0, 0, 0);
 
         for (int i = 0; i < 1000; ++i) {
             buffer.push(i * 1000, tf);
@@ -232,8 +222,7 @@ void CacheEfficiency(benchmark::State& state) {
     // 小缓冲区应该更高效
     CircularTransformBuffer<64> buffer;
 
-    TransformMatrix4d tf =
-        TransformMatrix4d::from_rpy(0, 0, 0, 1, 2, 3);
+    TransformMatrix4d tf = TransformMatrix4d::from_rpy(0, 0, 0, 1, 2, 3);
 
     for (int i = 0; i < 64; ++i) {
         buffer.push(i * 1000, tf);
@@ -258,8 +247,7 @@ void ThreadSafeRead(benchmark::State& state) {
     CircularTransformBuffer<100> buffer;
 
     for (int i = 0; i < 100; ++i) {
-        TransformMatrix4d tf =
-            TransformMatrix4d::from_rpy(0, 0, 0, i * 0.1, 0, 0);
+        TransformMatrix4d tf = TransformMatrix4d::from_rpy(0, 0, 0, i * 0.1, 0, 0);
         buffer.push(i * 1000, tf);
     }
 

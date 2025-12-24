@@ -1,7 +1,7 @@
-#include "fast_tf/frame_types.hpp"
 #include "fast_tf/frame_builder.hpp"
-#include <unordered_map>
+#include "fast_tf/frame_types.hpp"
 #include <string>
+#include <unordered_map>
 
 namespace fast_tf {
 
@@ -51,7 +51,7 @@ void init_simd_optimization() {
     // 创建示例矩阵并执行基本操作
     Eigen::Matrix4d a = Eigen::Matrix4d::Identity();
     Eigen::Matrix4d b = Eigen::Matrix4d::Identity();
-    auto _ = a * b;  // SIMD操作预热
+    auto _            = a * b; // SIMD操作预热
 }
 
 } // namespace fast_tf

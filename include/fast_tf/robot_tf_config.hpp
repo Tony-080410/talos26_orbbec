@@ -14,17 +14,17 @@
  *   3. Create RobotTFManager instance
  */
 
-#include <string_view>
-#include <cstdint>
-#include <memory>
-#include <optional>
 #include <chrono>
+#include <cstdint>
 #include <foxglove/foxglove.hpp>
 #include <foxglove/schemas.hpp>
+#include <memory>
+#include <optional>
+#include <string_view>
 
 #include "frame_hierarchy.hpp"
-#include "static_transforms.hpp"
 #include "frame_types.hpp"
+#include "static_transforms.hpp"
 
 #include <spdlog/spdlog.h>
 
@@ -76,30 +76,24 @@ public:
  */
 class RobotTFPublisher {
 public:
-    explicit RobotTFPublisher(
-        std::optional<foxglove::schemas::FrameTransformsChannel> channel)
+    explicit RobotTFPublisher(std::optional<foxglove::schemas::FrameTransformsChannel> channel)
         : channel_(std::move(channel)) {}
 
     /**
      * Publish a generic transform by frame type.
      */
-    template<typename FromFrame, typename ToFrame>
+    template <typename FromFrame, typename ToFrame>
     requires validate_frames_same_tree<FromFrame, ToFrame>::value
-    void publish_transform(
-        const TransformMatrix4d& transform,
-        uint64_t timestamp_ns = 0) {
+    void publish_transform(const TransformMatrix4d& transform, uint64_t timestamp_ns = 0) {
 
-        publish_transform(transform, timestamp_ns,
-            FromFrame::frame_name, ToFrame::frame_name);
+        publish_transform(transform, timestamp_ns, FromFrame::frame_name, ToFrame::frame_name);
     }
 
     /**
      * Publish a transform by frame names (runtime lookup).
      */
     void publish_transform(
-        const TransformMatrix4d& transform,
-        uint64_t timestamp_ns,
-        std::string_view from_name,
+        const TransformMatrix4d& transform, uint64_t timestamp_ns, std::string_view from_name,
         std::string_view to_name) {
 
         if (!channel_) {
@@ -115,17 +109,12 @@ public:
         // Create Foxglove FrameTransform
         foxglove::schemas::FrameTransform frame_transform;
         frame_transform.parent_frame_id = std::string(to_name);
-        frame_transform.child_frame_id = std::string(from_name);
-        frame_transform.timestamp = {
+        frame_transform.child_frame_id  = std::string(from_name);
+        frame_transform.timestamp       = {
             static_cast<uint32_t>(timestamp_ns / 1'000'000'000),
-            static_cast<uint32_t>(timestamp_ns % 1'000'000'000)
-        };
-        frame_transform.translation = {
-            translation.x(), translation.y(), translation.z()
-        };
-        frame_transform.rotation = {
-            quat.x(), quat.y(), quat.z(), quat.w()
-        };
+            static_cast<uint32_t>(timestamp_ns % 1'000'000'000)};
+        frame_transform.translation = {translation.x(), translation.y(), translation.z()};
+        frame_transform.rotation    = {quat.x(), quat.y(), quat.z(), quat.w()};
 
         // Publish
         foxglove::schemas::FrameTransforms transforms_msg;
@@ -177,8 +166,7 @@ public:
             publisher_->publish_static_transforms();
         }
 
-        spdlog::info("RobotTFManager initialized for {} robot",
-            config_->robot_type());
+        spdlog::info("RobotTFManager initialized for {} robot", config_->robot_type());
     }
 
     /**
@@ -194,7 +182,7 @@ public:
     /**
      * Get a static transform using template-based query.
      */
-    template<typename FromFrame, typename ToFrame>
+    template <typename FromFrame, typename ToFrame>
     requires validate_frames_same_tree<FromFrame, ToFrame>::value
     const TransformMatrix4d* get_static_transform() {
         return StaticTransformStore::get_transform<FromFrame, ToFrame>();
@@ -203,7 +191,7 @@ public:
     /**
      * Check if a static transform exists.
      */
-    template<typename FromFrame, typename ToFrame>
+    template <typename FromFrame, typename ToFrame>
     requires validate_frames_same_tree<FromFrame, ToFrame>::value
     bool has_static_transform() const {
         return StaticTransformStore::has_transform<FromFrame, ToFrame>();
@@ -212,18 +200,17 @@ public:
     /**
      * Manually set a static transform (for calibration/testing).
      */
-    template<typename FromFrame, typename ToFrame>
+    template <typename FromFrame, typename ToFrame>
     requires validate_frames_same_tree<FromFrame, ToFrame>::value
     void set_static_transform(const TransformMatrix4d& transform) {
         StaticTransformStore::register_transform<FromFrame, ToFrame>(transform);
 
         // Also publish to Foxglove if available
         if (publisher_->is_connected()) {
-            uint64_t timestamp_ns = std::chrono::duration_cast<
-                std::chrono::nanoseconds>(
-                std::chrono::steady_clock::now().time_since_epoch()).count();
-            publisher_->publish_transform<FromFrame, ToFrame>(
-                transform, timestamp_ns);
+            uint64_t timestamp_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                        std::chrono::steady_clock::now().time_since_epoch())
+                                        .count();
+            publisher_->publish_transform<FromFrame, ToFrame>(transform, timestamp_ns);
         }
     }
 

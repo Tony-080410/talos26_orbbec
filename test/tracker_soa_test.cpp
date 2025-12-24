@@ -1,154 +1,155 @@
-#include "tracker_soa.hpp"
-#include <gtest/gtest.h>
 #include "detector_state.hpp"
+#include "tracker_soa.hpp"
 #include "triple_buffer.hpp"
+#include <gtest/gtest.h>
 
 namespace talos::test {
-    // ============================================================================
-    // Test: Memory Layout Verification
-    // ============================================================================
+// ============================================================================
+// Test: Memory Layout Verification
+// ============================================================================
 
-    TEST(MemoryLayout, ArmorSlotsSize) {
-        EXPECT_LE(sizeof(talos::ArmorSlots), 2048) << "ArmorSlots exceeds 2KB budget";
-        EXPECT_GE(sizeof(talos::ArmorSlots), 512) << "ArmorSlots seems too small";
+TEST(MemoryLayout, ArmorSlotsSize) {
+    EXPECT_LE(sizeof(talos::ArmorSlots), 2048) << "ArmorSlots exceeds 2KB budget";
+    EXPECT_GE(sizeof(talos::ArmorSlots), 512) << "ArmorSlots seems too small";
+}
+
+TEST(MemoryLayout, ArmorSlotsAlignment) {
+    EXPECT_EQ(alignof(talos::ArmorSlots), 64) << "ArmorSlots must be 64-byte cache-line aligned";
+}
+
+TEST(MemoryLayout, TrackerSoAExactSize) {
+    // Critical: must be exactly 64 bytes
+    EXPECT_EQ(sizeof(talos::TrackerSoA), 64)
+        << "TrackerSoA must be exactly 64 bytes for L1 cache residence";
+}
+
+TEST(MemoryLayout, TrackerSoAAlignment) {
+    EXPECT_EQ(alignof(talos::TrackerSoA), 64) << "TrackerSoA must be 64-byte aligned";
+}
+
+TEST(MemoryLayout, TrackerSoACacheLine) {
+    // Verify that instances can be placed contiguously without false sharing
+    TrackerSoA tracker1;
+    TrackerSoA tracker2;
+
+    const auto addr1 = reinterpret_cast<uintptr_t>(&tracker1);
+    const auto addr2 = reinterpret_cast<uintptr_t>(&tracker2);
+
+    // Addresses should differ by exactly 64 bytes (if allocated sequentially)
+    EXPECT_EQ(addr1 % 64, 0) << "TrackerSoA should be 64-byte aligned";
+    EXPECT_EQ(addr2 % 64, 0) << "TrackerSoA should be 64-byte aligned";
+}
+
+// ============================================================================
+// Test: ArmorSlots Functionality
+// ============================================================================
+
+TEST(ArmorSlots, DefaultConstruction) {
+    constexpr ArmorSlots slots;
+    EXPECT_EQ(slots.valid_mask, 0);
+    EXPECT_EQ(slots.count_valid(), 0);
+}
+
+TEST(ArmorSlots, SetValid) {
+    ArmorSlots slots;
+    slots.set_valid(0);
+    slots.set_valid(5);
+
+    EXPECT_TRUE(slots.is_valid(0));
+    EXPECT_FALSE(slots.is_valid(1));
+    EXPECT_TRUE(slots.is_valid(5));
+    EXPECT_EQ(slots.count_valid(), 2);
+}
+
+TEST(ArmorSlots, SetInvalid) {
+    ArmorSlots slots;
+    slots.valid_mask = 0xFF; // All 8 bits set
+    EXPECT_EQ(slots.count_valid(), 8);
+
+    slots.set_invalid(3);
+    EXPECT_EQ(slots.count_valid(), 7);
+    EXPECT_FALSE(slots.is_valid(3));
+}
+
+TEST(ArmorSlots, PopcountPerformance) {
+    ArmorSlots slots;
+    // Valid mask with various patterns
+    for (int pattern = 0; pattern < 256; pattern++) {
+        slots.valid_mask = pattern;
+        int expected     = __builtin_popcount(pattern);
+        EXPECT_EQ(slots.count_valid(), expected);
     }
+}
 
-    TEST(MemoryLayout, ArmorSlotsAlignment) {
-        EXPECT_EQ(alignof(talos::ArmorSlots), 64) << "ArmorSlots must be 64-byte cache-line aligned";
-    }
+TEST(ArmorSlots, Clear) {
+    ArmorSlots slots;
+    slots.valid_mask = 0xFF;
+    slots.clear();
+    EXPECT_EQ(slots.valid_mask, 0);
+    EXPECT_EQ(slots.count_valid(), 0);
+}
 
-    TEST(MemoryLayout, TrackerSoAExactSize) {
-        // Critical: must be exactly 64 bytes
-        EXPECT_EQ(sizeof(talos::TrackerSoA), 64) << "TrackerSoA must be exactly 64 bytes for L1 cache residence";
-    }
+// ============================================================================
+// Test: TrackerSoA State Machine
+// ============================================================================
 
-    TEST(MemoryLayout, TrackerSoAAlignment) {
-        EXPECT_EQ(alignof(talos::TrackerSoA), 64) << "TrackerSoA must be 64-byte aligned";
-    }
+TEST(TrackerSoA, DefaultState) {
+    TrackerSoA tracker;
+    EXPECT_EQ(tracker.state.load(), talos::TrackerState::IDLE);
+    EXPECT_EQ(tracker.detecting_count, 0);
+    EXPECT_EQ(tracker.lost_count, 0);
+}
 
-    TEST(MemoryLayout, TrackerSoACacheLine) {
-        // Verify that instances can be placed contiguously without false sharing
-        TrackerSoA tracker1;
-        TrackerSoA tracker2;
+TEST(TrackerSoA, StateTransitionIDLEtoDETECTING) {
+    TrackerSoA tracker;
+    EXPECT_TRUE(tracker.try_start_detecting());
+    EXPECT_EQ(tracker.state.load(), talos::TrackerState::DETECTING);
 
-        const auto addr1 = reinterpret_cast<uintptr_t>(&tracker1);
-        const auto addr2 = reinterpret_cast<uintptr_t>(&tracker2);
+    // Second call should fail (already in DETECTING)
+    EXPECT_FALSE(tracker.try_start_detecting());
+}
 
-        // Addresses should differ by exactly 64 bytes (if allocated sequentially)
-        EXPECT_EQ(addr1 % 64, 0) << "TrackerSoA should be 64-byte aligned";
-        EXPECT_EQ(addr2 % 64, 0) << "TrackerSoA should be 64-byte aligned";
-    }
+TEST(TrackerSoA, StateTransitionDETECTINGtoTRACKING) {
+    TrackerSoA tracker;
+    tracker.state.store(TrackerState::DETECTING, std::memory_order_relaxed);
 
-    // ============================================================================
-    // Test: ArmorSlots Functionality
-    // ============================================================================
+    EXPECT_TRUE(tracker.try_confirm_tracking());
+    EXPECT_EQ(tracker.state.load(), talos::TrackerState::TRACKING);
+}
 
-    TEST(ArmorSlots, DefaultConstruction) {
-        constexpr ArmorSlots slots;
-        EXPECT_EQ(slots.valid_mask, 0);
-        EXPECT_EQ(slots.count_valid(), 0);
-    }
+TEST(TrackerSoA, StateTransitionTRACKINGtoTEMP_LOST) {
+    TrackerSoA tracker;
+    tracker.state.store(TrackerState::TRACKING, std::memory_order_relaxed);
 
-    TEST(ArmorSlots, SetValid) {
-        ArmorSlots slots;
-        slots.set_valid(0);
-        slots.set_valid(5);
+    EXPECT_TRUE(tracker.try_enter_lost());
+    EXPECT_EQ(tracker.state.load(), talos::TrackerState::TEMP_LOST);
+}
 
-        EXPECT_TRUE(slots.is_valid(0));
-        EXPECT_FALSE(slots.is_valid(1));
-        EXPECT_TRUE(slots.is_valid(5));
-        EXPECT_EQ(slots.count_valid(), 2);
-    }
+TEST(TrackerSoA, StateTransitionTEMP_LOSTtoTRACKING) {
+    TrackerSoA tracker;
+    tracker.state.store(TrackerState::TEMP_LOST, std::memory_order_relaxed);
 
-    TEST(ArmorSlots, SetInvalid) {
-        ArmorSlots slots;
-        slots.valid_mask = 0xFF; // All 8 bits set
-        EXPECT_EQ(slots.count_valid(), 8);
+    EXPECT_TRUE(tracker.try_restore_tracking());
+    EXPECT_EQ(tracker.state.load(), talos::TrackerState::TRACKING);
+}
 
-        slots.set_invalid(3);
-        EXPECT_EQ(slots.count_valid(), 7);
-        EXPECT_FALSE(slots.is_valid(3));
-    }
+TEST(TrackerSoA, StateTransitionReset) {
+    TrackerSoA tracker;
+    tracker.state.store(TrackerState::TRACKING, std::memory_order_relaxed);
 
-    TEST(ArmorSlots, PopcountPerformance) {
-        ArmorSlots slots;
-        // Valid mask with various patterns
-        for (int pattern = 0; pattern < 256; pattern++) {
-            slots.valid_mask = pattern;
-            int expected = __builtin_popcount(pattern);
-            EXPECT_EQ(slots.count_valid(), expected);
-        }
-    }
+    EXPECT_TRUE(tracker.try_reset_idle());
+    EXPECT_EQ(tracker.state.load(), talos::TrackerState::IDLE);
+}
 
-    TEST(ArmorSlots, Clear) {
-        ArmorSlots slots;
-        slots.valid_mask = 0xFF;
-        slots.clear();
-        EXPECT_EQ(slots.valid_mask, 0);
-        EXPECT_EQ(slots.count_valid(), 0);
-    }
+TEST(TrackerSoA, GenerationCounter) {
+    TrackerSoA tracker;
+    const auto gen0 = tracker.generation;
+    tracker.next_generation();
+    const auto gen1 = tracker.generation;
+    tracker.next_generation();
+    const auto gen2 = tracker.generation;
 
-    // ============================================================================
-    // Test: TrackerSoA State Machine
-    // ============================================================================
-
-    TEST(TrackerSoA, DefaultState) {
-        TrackerSoA tracker;
-        EXPECT_EQ(tracker.state.load(), talos::TrackerState::IDLE);
-        EXPECT_EQ(tracker.detecting_count, 0);
-        EXPECT_EQ(tracker.lost_count, 0);
-    }
-
-    TEST(TrackerSoA, StateTransitionIDLEtoDETECTING) {
-        TrackerSoA tracker;
-        EXPECT_TRUE(tracker.try_start_detecting());
-        EXPECT_EQ(tracker.state.load(), talos::TrackerState::DETECTING);
-
-        // Second call should fail (already in DETECTING)
-        EXPECT_FALSE(tracker.try_start_detecting());
-    }
-
-    TEST(TrackerSoA, StateTransitionDETECTINGtoTRACKING) {
-        TrackerSoA tracker;
-        tracker.state.store(TrackerState::DETECTING, std::memory_order_relaxed);
-
-        EXPECT_TRUE(tracker.try_confirm_tracking());
-        EXPECT_EQ(tracker.state.load(), talos::TrackerState::TRACKING);
-    }
-
-    TEST(TrackerSoA, StateTransitionTRACKINGtoTEMP_LOST) {
-        TrackerSoA tracker;
-        tracker.state.store(TrackerState::TRACKING, std::memory_order_relaxed);
-
-        EXPECT_TRUE(tracker.try_enter_lost());
-        EXPECT_EQ(tracker.state.load(), talos::TrackerState::TEMP_LOST);
-    }
-
-    TEST(TrackerSoA, StateTransitionTEMP_LOSTtoTRACKING) {
-        TrackerSoA tracker;
-        tracker.state.store(TrackerState::TEMP_LOST, std::memory_order_relaxed);
-
-        EXPECT_TRUE(tracker.try_restore_tracking());
-        EXPECT_EQ(tracker.state.load(), talos::TrackerState::TRACKING);
-    }
-
-    TEST(TrackerSoA, StateTransitionReset) {
-        TrackerSoA tracker;
-        tracker.state.store(TrackerState::TRACKING, std::memory_order_relaxed);
-
-        EXPECT_TRUE(tracker.try_reset_idle());
-        EXPECT_EQ(tracker.state.load(), talos::TrackerState::IDLE);
-    }
-
-    TEST(TrackerSoA, GenerationCounter) {
-        TrackerSoA tracker;
-        const auto gen0 = tracker.generation;
-        tracker.next_generation();
-        const auto gen1 = tracker.generation;
-        tracker.next_generation();
-        const auto gen2 = tracker.generation;
-
-        EXPECT_NE(gen0, gen1);
-        EXPECT_NE(gen1, gen2);
-    }
+    EXPECT_NE(gen0, gen1);
+    EXPECT_NE(gen1, gen2);
+}
 } // namespace talos::test

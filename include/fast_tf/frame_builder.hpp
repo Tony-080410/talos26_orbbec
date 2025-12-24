@@ -1,8 +1,8 @@
 #pragma once
 
+#include <string>
 #include <string_view>
 #include <unordered_map>
-#include <string>
 
 namespace fast_tf {
 
@@ -24,7 +24,7 @@ public:
      *   FrameBufferConfig::set_buffer_size<world_Frame>(100);
      *   FrameBufferConfig::set_buffer_size<camera_Frame>(50);
      */
-    template<typename FrameType>
+    template <typename FrameType>
     static void set_buffer_size(std::size_t capacity) {
         buffer_sizes[std::string(FrameType::frame_name)] = capacity;
     }
@@ -38,13 +38,13 @@ public:
         if (it != buffer_sizes.end()) {
             return it->second;
         }
-        return 100;  // Default buffer size
+        return 100; // Default buffer size
     }
 
     /**
      * Get buffer size for a frame type using template parameter.
      */
-    template<typename FrameType>
+    template <typename FrameType>
     static std::size_t get_buffer_size() {
         return get_buffer_size(FrameType::frame_name);
     }
@@ -65,10 +65,10 @@ private:
  *   register_frame<world_Frame>();
  *   register_frame<base_link_Frame>();
  */
-template<typename FrameType>
+template <typename FrameType>
 void register_frame() {
     // Store frame name in registry for runtime lookup
-    FrameBufferConfig::set_buffer_size<FrameType>(100);  // Default size
+    FrameBufferConfig::set_buffer_size<FrameType>(100); // Default size
 }
 
 } // namespace fast_tf
@@ -81,7 +81,7 @@ void register_frame() {
 namespace fast_tf {
 // Inline definition for header-only library
 inline std::unordered_map<std::string, std::size_t> FrameBufferConfig::buffer_sizes;
-}
+} // namespace fast_tf
 
 // ============================================================================
 // Predefined Frame Names (for convenience)
@@ -90,13 +90,13 @@ inline std::unordered_map<std::string, std::size_t> FrameBufferConfig::buffer_si
 namespace fast_tf::predef {
 
 // Common frame name string literals
-constexpr std::string_view WORLD = "world";
-constexpr std::string_view ODOM = "odom";
-constexpr std::string_view BASE_LINK = "base_link";
+constexpr std::string_view WORLD          = "world";
+constexpr std::string_view ODOM           = "odom";
+constexpr std::string_view BASE_LINK      = "base_link";
 constexpr std::string_view BASE_FOOTPRINT = "base_footprint";
-constexpr std::string_view MAP = "map";
-constexpr std::string_view CAMERA = "camera";
-constexpr std::string_view LIDAR = "lidar";
-constexpr std::string_view IMU = "imu";
+constexpr std::string_view MAP            = "map";
+constexpr std::string_view CAMERA         = "camera";
+constexpr std::string_view LIDAR          = "lidar";
+constexpr std::string_view IMU            = "imu";
 
 } // namespace fast_tf::predef

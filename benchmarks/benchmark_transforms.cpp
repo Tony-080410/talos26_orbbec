@@ -9,9 +9,9 @@
  * - Interpolation performance
  */
 
+#include "fast_tf/core.hpp"
 #include <benchmark/benchmark.h>
 #include <vector>
-#include "fast_tf/core.hpp"
 
 using namespace fast_tf;
 
@@ -26,8 +26,7 @@ DECLARE_FRAME(bench_camera, bench_base);
 
 static void BenchmarkCreateFromRPY(benchmark::State& state) {
     for (auto _ : state) {
-        TransformMatrix4d tf = TransformMatrix4d::from_rpy(
-            0.1, 0.2, 0.3, 1.0, 2.0, 3.0);
+        TransformMatrix4d tf = TransformMatrix4d::from_rpy(0.1, 0.2, 0.3, 1.0, 2.0, 3.0);
         benchmark::DoNotOptimize(tf);
     }
 }
@@ -35,8 +34,8 @@ BENCHMARK(BenchmarkCreateFromRPY);
 
 static void BenchmarkCreateFromQuaternion(benchmark::State& state) {
     for (auto _ : state) {
-        TransformMatrix4d tf = TransformMatrix4d::from_quaternion(
-            1.0, 0.0, 0.0, 0.0, 1.0, 2.0, 3.0);
+        TransformMatrix4d tf =
+            TransformMatrix4d::from_quaternion(1.0, 0.0, 0.0, 0.0, 1.0, 2.0, 3.0);
         benchmark::DoNotOptimize(tf);
     }
 }
@@ -119,8 +118,7 @@ static void BenchmarkBufferInsertion(benchmark::State& state) {
     uint64_t timestamp = 1000000;
 
     for (auto _ : state) {
-        TransformMatrix4d tf = TransformMatrix4d::from_rpy(
-            0.1, 0.2, 0.3, 1.0, 2.0, 3.0);
+        TransformMatrix4d tf = TransformMatrix4d::from_rpy(0.1, 0.2, 0.3, 1.0, 2.0, 3.0);
         buffer.push(timestamp++, tf);
     }
 }
@@ -131,8 +129,8 @@ static void BenchmarkBufferQuery(benchmark::State& state) {
 
     // Pre-populate buffer
     for (int i = 0; i < 100; ++i) {
-        TransformMatrix4d tf = TransformMatrix4d::from_rpy(
-            0.1, 0.2, 0.3, static_cast<double>(i), 0.0, 0.0);
+        TransformMatrix4d tf =
+            TransformMatrix4d::from_rpy(0.1, 0.2, 0.3, static_cast<double>(i), 0.0, 0.0);
         buffer.push(1000000 + i * 1000, tf);
     }
 
@@ -150,8 +148,7 @@ static void BenchmarkSmallBufferInsertion(benchmark::State& state) {
     uint64_t timestamp = 1000000;
 
     for (auto _ : state) {
-        TransformMatrix4d tf = TransformMatrix4d::from_rpy(
-            0.1, 0.2, 0.3, 1.0, 2.0, 3.0);
+        TransformMatrix4d tf = TransformMatrix4d::from_rpy(0.1, 0.2, 0.3, 1.0, 2.0, 3.0);
         buffer.push(timestamp++, tf);
     }
 }
@@ -162,8 +159,7 @@ static void BenchmarkLargeBufferInsertion(benchmark::State& state) {
     uint64_t timestamp = 1000000;
 
     for (auto _ : state) {
-        TransformMatrix4d tf = TransformMatrix4d::from_rpy(
-            0.1, 0.2, 0.3, 1.0, 2.0, 3.0);
+        TransformMatrix4d tf = TransformMatrix4d::from_rpy(0.1, 0.2, 0.3, 1.0, 2.0, 3.0);
         buffer.push(timestamp++, tf);
     }
 }

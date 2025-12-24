@@ -1,15 +1,15 @@
-#include <gtest/gtest.h>
 #include <cmath>
+#include <gtest/gtest.h>
 #include <thread>
 #include <vector>
 
-#include "fast_tf/frame_types.hpp"
-#include "fast_tf/transform_buffer.hpp"
-#include "fast_tf/frame_id.hpp"
 #include "fast_tf/frame_hierarchy.hpp"
-#include "fast_tf/tree_structure.hpp"
-#include "fast_tf/transform_tree.hpp"
+#include "fast_tf/frame_id.hpp"
+#include "fast_tf/frame_types.hpp"
 #include "fast_tf/static_transforms.hpp"
+#include "fast_tf/transform_buffer.hpp"
+#include "fast_tf/transform_tree.hpp"
+#include "fast_tf/tree_structure.hpp"
 
 using namespace fast_tf;
 
@@ -21,13 +21,14 @@ class TransformMatrix4dTest : public ::testing::Test {
 protected:
     const double EPSILON = 1e-10;
 
-    bool matrices_equal(const TransformMatrix4d& a, const TransformMatrix4d& b, double eps = 1e-10) {
+    bool
+        matrices_equal(const TransformMatrix4d& a, const TransformMatrix4d& b, double eps = 1e-10) {
         return (a.matrix() - b.matrix()).cwiseAbs().maxCoeff() < eps;
     }
 };
 
 TEST_F(TransformMatrix4dTest, IdentityTransform) {
-    auto identity = TransformMatrix4d();
+    auto identity  = TransformMatrix4d();
     auto identity2 = TransformMatrix4d();
     EXPECT_TRUE(matrices_equal(identity, identity2));
 
@@ -40,7 +41,7 @@ TEST_F(TransformMatrix4dTest, IdentityTransform) {
 
 TEST_F(TransformMatrix4dTest, CreationFromTranslation) {
     // Create pure translation using from_rpy with zero rotation
-    auto tf = TransformMatrix4d::from_rpy(0.0, 0.0, 0.0, 1.0, 2.0, 3.0);
+    auto tf    = TransformMatrix4d::from_rpy(0.0, 0.0, 0.0, 1.0, 2.0, 3.0);
     auto trans = tf.translation();
 
     EXPECT_NEAR(trans.x(), 1.0, EPSILON);
@@ -50,7 +51,7 @@ TEST_F(TransformMatrix4dTest, CreationFromTranslation) {
 
 TEST_F(TransformMatrix4dTest, CreationFromRPY) {
     // Create from RPY: Roll=0.5, Pitch=0.3, Yaw=0.1 rad
-    auto tf = TransformMatrix4d::from_rpy(0.5, 0.3, 0.1, 1.0, 2.0, 3.0);
+    auto tf    = TransformMatrix4d::from_rpy(0.5, 0.3, 0.1, 1.0, 2.0, 3.0);
     auto trans = tf.translation();
 
     EXPECT_NEAR(trans.x(), 1.0, EPSILON);
@@ -58,16 +59,16 @@ TEST_F(TransformMatrix4dTest, CreationFromRPY) {
     EXPECT_NEAR(trans.z(), 3.0, EPSILON);
 
     // Verify it's a valid rotation matrix (determinant = 1)
-    auto rot = tf.rotation();
+    auto rot   = tf.rotation();
     double det = rot.determinant();
     EXPECT_NEAR(det, 1.0, EPSILON);
 }
 
 TEST_F(TransformMatrix4dTest, CreationFromQuaternion) {
     // Create quaternion (w, x, y, z) for 90-degree rotation around Z
-    double w = std::cos(M_PI/4);
-    double z = std::sin(M_PI/4);
-    auto tf = TransformMatrix4d::from_quaternion(w, 0.0, 0.0, z, 1.0, 2.0, 3.0);
+    double w = std::cos(M_PI / 4);
+    double z = std::sin(M_PI / 4);
+    auto tf  = TransformMatrix4d::from_quaternion(w, 0.0, 0.0, z, 1.0, 2.0, 3.0);
 
     auto trans = tf.translation();
     EXPECT_NEAR(trans.x(), 1.0, EPSILON);
@@ -77,13 +78,13 @@ TEST_F(TransformMatrix4dTest, CreationFromQuaternion) {
 
 TEST_F(TransformMatrix4dTest, TransformComposition) {
     // T1: translate by (1, 0, 0)
-    auto tf1 = TransformMatrix4d::from_rpy(0.0, 0.0, 0.0,1.0, 0.0, 0.0);
+    auto tf1 = TransformMatrix4d::from_rpy(0.0, 0.0, 0.0, 1.0, 0.0, 0.0);
     // T2: translate by (0, 1, 0)
-    auto tf2 = TransformMatrix4d::from_rpy(0.0, 0.0, 0.0,0.0, 1.0, 0.0);
+    auto tf2 = TransformMatrix4d::from_rpy(0.0, 0.0, 0.0, 0.0, 1.0, 0.0);
 
     // T_combined = T2 * T1
     auto combined = tf2 * tf1;
-    auto trans = combined.translation();
+    auto trans    = combined.translation();
 
     EXPECT_NEAR(trans.x(), 1.0, EPSILON);
     EXPECT_NEAR(trans.y(), 1.0, EPSILON);
@@ -91,7 +92,7 @@ TEST_F(TransformMatrix4dTest, TransformComposition) {
 }
 
 TEST_F(TransformMatrix4dTest, InverseTransform) {
-    auto tf = TransformMatrix4d::from_rpy(0.0, 0.0, 0.0,1.0, 2.0, 3.0);
+    auto tf     = TransformMatrix4d::from_rpy(0.0, 0.0, 0.0, 1.0, 2.0, 3.0);
     auto tf_inv = tf.inverse();
 
     auto identity = tf * tf_inv;
@@ -101,18 +102,18 @@ TEST_F(TransformMatrix4dTest, InverseTransform) {
 TEST_F(TransformMatrix4dTest, QuaternionRoundTrip) {
     // Create a transform with known values and verify quaternion round-trip
     auto tf = TransformMatrix4d::from_rpy(0.5, 0.3, 0.1, 1.0, 2.0, 3.0);
-    auto q = tf.quaternion();
+    auto q  = tf.quaternion();
 
     // Verify quaternion represents the same rotation
     auto tf2 = TransformMatrix4d::from_quaternion(q.w(), q.x(), q.y(), q.z(), 1.0, 2.0, 3.0);
-    auto q2 = tf2.quaternion();
+    auto q2  = tf2.quaternion();
 
     // Quaternions might differ by sign, but rotations should be equivalent
     EXPECT_NEAR((tf.rotation() - tf2.rotation()).cwiseAbs().maxCoeff(), 0.0, EPSILON);
 }
 
 TEST_F(TransformMatrix4dTest, PointTransformation) {
-    auto tf = TransformMatrix4d::from_rpy(0.0, 0.0, 0.0,1.0, 2.0, 3.0);
+    auto tf = TransformMatrix4d::from_rpy(0.0, 0.0, 0.0, 1.0, 2.0, 3.0);
     Eigen::Vector3d point(0.0, 0.0, 0.0);
     Eigen::Vector4d point_homo(point.x(), point.y(), point.z(), 1.0);
 
@@ -131,7 +132,7 @@ TEST_F(TransformMatrix4dTest, PointTransformation) {
 class CircularTransformBufferTest : public ::testing::Test {
 protected:
     static constexpr int BUFFER_SIZE = 10;
-    using TestBuffer = CircularTransformBuffer<BUFFER_SIZE>;
+    using TestBuffer                 = CircularTransformBuffer<BUFFER_SIZE>;
 
     const double EPSILON = 1e-10;
 };
@@ -141,9 +142,9 @@ protected:
 TEST_F(CircularTransformBufferTest, LatestTransformTracking) {
     TestBuffer buffer;
 
-    auto tf1 = TransformMatrix4d::from_rpy(0.0, 0.0, 0.0,1.0, 0.0, 0.0);
-    auto tf2 = TransformMatrix4d::from_rpy(0.0, 0.0, 0.0,2.0, 0.0, 0.0);
-    auto tf3 = TransformMatrix4d::from_rpy(0.0, 0.0, 0.0,3.0, 0.0, 0.0);
+    auto tf1 = TransformMatrix4d::from_rpy(0.0, 0.0, 0.0, 1.0, 0.0, 0.0);
+    auto tf2 = TransformMatrix4d::from_rpy(0.0, 0.0, 0.0, 2.0, 0.0, 0.0);
+    auto tf3 = TransformMatrix4d::from_rpy(0.0, 0.0, 0.0, 3.0, 0.0, 0.0);
 
     buffer.push(1000, tf1);
     buffer.push(2000, tf2);
@@ -161,7 +162,7 @@ TEST_F(CircularTransformBufferTest, BufferWraparound) {
 
     // Fill buffer beyond capacity
     for (int i = 0; i < BUFFER_SIZE + 5; ++i) {
-        auto tf = TransformMatrix4d::from_rpy(0.0, 0.0, 0.0,i, 0.0, 0.0);
+        auto tf = TransformMatrix4d::from_rpy(0.0, 0.0, 0.0, i, 0.0, 0.0);
         buffer.push(1000 + i * 100, tf);
     }
 
@@ -178,7 +179,7 @@ TEST_F(CircularTransformBufferTest, ThreadSafety) {
     // Writer thread
     std::thread writer([&buffer]() {
         for (int i = 0; i < 50; ++i) {
-            auto tf = TransformMatrix4d::from_rpy(0.0, 0.0, 0.0,i, 0.0, 0.0);
+            auto tf = TransformMatrix4d::from_rpy(0.0, 0.0, 0.0, i, 0.0, 0.0);
             buffer.push(1000 + i * 10, tf);
             std::this_thread::sleep_for(std::chrono::milliseconds(1));
         }
@@ -200,7 +201,7 @@ TEST_F(CircularTransformBufferTest, ThreadSafety) {
         r.join();
     }
 
-    SUCCEED();  // If we get here without deadlock, test passes
+    SUCCEED(); // If we get here without deadlock, test passes
 }
 
 // ============================================================================

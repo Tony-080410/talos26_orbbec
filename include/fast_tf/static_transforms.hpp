@@ -1,10 +1,10 @@
 #pragma once
 
-#include <unordered_map>
-#include <string>
-#include <memory>
 #include "frame_hierarchy.hpp"
-#include "frame_types.hpp"  // For TransformMatrix4d
+#include "frame_types.hpp" // For TransformMatrix4d
+#include <memory>
+#include <string>
+#include <unordered_map>
 
 namespace fast_tf {
 
@@ -38,7 +38,7 @@ public:
      *   StaticTransformStore::register_transform<camera_Frame, base_link_Frame>(
      *       camera_offset);
      */
-    template<typename FromFrame, typename ToFrame>
+    template <typename FromFrame, typename ToFrame>
     requires validate_frames_same_tree<FromFrame, ToFrame>::value
     static void register_transform(const TransformMatrix4d& transform) {
         std::string key = make_key<FromFrame, ToFrame>();
@@ -49,11 +49,11 @@ public:
      * Look up a static transform between two frames.
      * Returns nullptr if no static transform is registered.
      */
-    template<typename FromFrame, typename ToFrame>
+    template <typename FromFrame, typename ToFrame>
     requires validate_frames_same_tree<FromFrame, ToFrame>::value
     static const TransformMatrix4d* get_transform() {
         std::string key = make_key<FromFrame, ToFrame>();
-        auto it = transforms.find(key);
+        auto it         = transforms.find(key);
         if (it != transforms.end()) {
             return it->second.get();
         }
@@ -64,11 +64,10 @@ public:
      * Look up a static transform by string names (runtime lookup).
      * Returns nullptr if not found.
      */
-    static const TransformMatrix4d* get_transform(
-        std::string_view from_name,
-        std::string_view to_name) {
+    static const TransformMatrix4d*
+        get_transform(std::string_view from_name, std::string_view to_name) {
         std::string key = make_key_str(from_name, to_name);
-        auto it = transforms.find(key);
+        auto it         = transforms.find(key);
         if (it != transforms.end()) {
             return it->second.get();
         }
@@ -78,9 +77,8 @@ public:
     /**
      * Check if a static transform exists between two frames.
      */
-    template<typename FromFrame, typename ToFrame>
-    requires validate_frames_same_tree<FromFrame, ToFrame>::value
-    static bool has_transform() {
+    template <typename FromFrame, typename ToFrame>
+    requires validate_frames_same_tree<FromFrame, ToFrame>::value static bool has_transform() {
         return get_transform<FromFrame, ToFrame>() != nullptr;
     }
 
@@ -94,16 +92,12 @@ public:
     /**
      * Clear all registered static transforms (useful for testing).
      */
-    static void clear() {
-        transforms.clear();
-    }
+    static void clear() { transforms.clear(); }
 
     /**
      * Get the number of registered static transforms (for debugging).
      */
-    static std::size_t count() {
-        return transforms.size();
-    }
+    static std::size_t count() { return transforms.size(); }
 
 private:
     // Storage: key is "from_frame_name->to_frame_name"
@@ -112,7 +106,7 @@ private:
     /**
      * Create a unique key for a frame pair.
      */
-    template<typename FromFrame, typename ToFrame>
+    template <typename FromFrame, typename ToFrame>
     static std::string make_key() {
         return make_key_str(FromFrame::frame_name, ToFrame::frame_name);
     }
@@ -135,9 +129,11 @@ private:
  */
 class StaticTransformQuery {
 public:
-    StaticTransformQuery() : transform(nullptr) {}
+    StaticTransformQuery()
+        : transform(nullptr) {}
 
-    explicit StaticTransformQuery(const TransformMatrix4d* tf) : transform(tf) {}
+    explicit StaticTransformQuery(const TransformMatrix4d* tf)
+        : transform(tf) {}
 
     /**
      * Check if a static transform was found.
@@ -147,9 +143,7 @@ public:
     /**
      * Get the transform (only valid if has_value() is true).
      */
-    const TransformMatrix4d& value() const {
-        return *transform;
-    }
+    const TransformMatrix4d& value() const { return *transform; }
 
     /**
      * Get the transform or nullptr if not found.
@@ -180,9 +174,8 @@ struct TransformComposition {
      * Compose two transforms: left × right
      * Used when we have both static and dynamic transforms in a path.
      */
-    static TransformMatrix4d compose(
-        const TransformMatrix4d& left,
-        const TransformMatrix4d& right) {
+    static TransformMatrix4d
+        compose(const TransformMatrix4d& left, const TransformMatrix4d& right) {
         return left * right;
     }
 
@@ -190,8 +183,7 @@ struct TransformComposition {
      * Check if a path contains any static transforms and compose accordingly.
      */
     static TransformMatrix4d compose_path(
-        const TransformMatrix4d& base_transform,
-        const TransformMatrix4d& remaining_transform) {
+        const TransformMatrix4d& base_transform, const TransformMatrix4d& remaining_transform) {
         // Check if there's a static transform in the path
         // For now, simple composition: base * remaining
         return base_transform * remaining_transform;
@@ -208,4 +200,4 @@ namespace fast_tf {
 // Inline definition for header-only library
 inline std::unordered_map<std::string, std::unique_ptr<TransformMatrix4d>>
     StaticTransformStore::transforms;
-}
+} // namespace fast_tf

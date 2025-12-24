@@ -1,9 +1,9 @@
 #pragma once
 
 #include "toml++/toml.hpp"
+#include <Eigen/Dense>
 #include <expected>
 #include <optional>
-#include <Eigen/Dense>
 
 template <typename Mat>
 requires(Mat::RowsAtCompileTime != Eigen::Dynamic && Mat::ColsAtCompileTime != Eigen::Dynamic)

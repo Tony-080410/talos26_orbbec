@@ -7,8 +7,8 @@ namespace auto_aim::at {
 struct Tracker {
     Tracker() = default;
     void update();
-private:
 
+private:
 };
 
-}
+} // namespace auto_aim::at

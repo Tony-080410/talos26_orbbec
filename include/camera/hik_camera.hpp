@@ -6,10 +6,10 @@
 #pragma once
 
 #include <chrono>
-#include <ratio>
-#include <tuple>
 #include <expected>
+#include <ratio>
 #include <string>
+#include <tuple>
 
 #include <opencv2/core/mat.hpp>
 
@@ -47,9 +47,9 @@ public:
     };
 
     // Factory method for creating ImageCapturer with std::expected
-    static std::expected<std::unique_ptr<ImageCapturer>, CameraError>
-        create(const CameraProfile& profile = CameraProfile{}, const char* user_defined_name = nullptr,
-            const SyncMode& sync_mode = SyncMode::NONE);
+    static std::expected<std::unique_ptr<ImageCapturer>, CameraError> create(
+        const CameraProfile& profile = CameraProfile{}, const char* user_defined_name = nullptr,
+        const SyncMode& sync_mode = SyncMode::NONE);
 
     ImageCapturer(const ImageCapturer&)            = delete;
     ImageCapturer& operator=(const ImageCapturer&) = delete;
@@ -62,7 +62,8 @@ public:
     [[nodiscard]] std::expected<std::tuple<int, int>, CameraError> get_width_height() const;
 
     [[nodiscard]] std::expected<void, CameraError> software_trigger_on();
-    [[nodiscard]] std::expected<void, CameraError> set_frame_rate_inner_trigger_mode(float frame_rate);
+    [[nodiscard]] std::expected<void, CameraError>
+        set_frame_rate_inner_trigger_mode(float frame_rate);
 
 private:
     // Default constructor for internal use by create()
@@ -71,8 +72,8 @@ private:
     [[nodiscard]] std::expected<void, CameraError> init(
         const CameraProfile& profile, const char* user_defined_name, const SyncMode& sync_mode);
 
-    friend std::expected<std::unique_ptr<ImageCapturer>, CameraError> ImageCapturer::create(
-        const CameraProfile&, const char*, const SyncMode&);
+    friend std::expected<std::unique_ptr<ImageCapturer>, CameraError>
+        ImageCapturer::create(const CameraProfile&, const char*, const SyncMode&);
 
     class Impl;
     Impl* impl_;

@@ -59,17 +59,18 @@ struct OptimizationObjectives {
     /**
      * @brief Check if this solution Pareto-dominates another
      * @param other The solution to compare against
-     * @return true if this dominates other (better or equal in all, strictly better in at least one)
+     * @return true if this dominates other (better or equal in all, strictly better in at least
+     * one)
      */
-    [[nodiscard]] bool dominates(const OptimizationObjectives &other) const {
+    [[nodiscard]] bool dominates(const OptimizationObjectives& other) const {
         // For F1 and IoU: higher is better
         // For latency: lower is better
-        const bool ge_f1 = f1_score >= other.f1_score;
-        const bool ge_iou = mean_iou >= other.mean_iou;
+        const bool ge_f1      = f1_score >= other.f1_score;
+        const bool ge_iou     = mean_iou >= other.mean_iou;
         const bool le_latency = latency_ms <= other.latency_ms;
 
-        const bool strictly_better = (f1_score > other.f1_score) || (mean_iou > other.mean_iou) ||
-                                     (latency_ms < other.latency_ms);
+        const bool strictly_better = (f1_score > other.f1_score) || (mean_iou > other.mean_iou)
+                                  || (latency_ms < other.latency_ms);
 
         return (ge_f1 && ge_iou && le_latency) && strictly_better;
     }
@@ -77,9 +78,9 @@ struct OptimizationObjectives {
     /**
      * @brief Compute Euclidean distance in normalized objective space
      */
-    [[nodiscard]] double distance_to(const OptimizationObjectives &other) const {
+    [[nodiscard]] double distance_to(const OptimizationObjectives& other) const {
         // Normalize: F1 and IoU in [0,1], latency normalized to [0,1] assuming max 10ms
-        const double d_f1 = f1_score - other.f1_score;
+        const double d_f1  = f1_score - other.f1_score;
         const double d_iou = mean_iou - other.mean_iou;
         const double d_lat = (latency_ms - other.latency_ms) / 10.0; // Normalize by 10ms
         return std::sqrt(d_f1 * d_f1 + d_iou * d_iou + d_lat * d_lat);
@@ -104,16 +105,16 @@ struct ParameterCandidate {
     [[nodiscard]] std::array<double, 10> normalized_params() const {
         // Normalization ranges (based on typical search space)
         return {
-            (config.threshold - 50.0) / 200.0,             // threshold: 50-250
-            (config.max_angle_error - 20.0) / 50.0,        // angle: 20-70
-            (config.min_lightbar_ratio - 1.0) / 3.0,       // min_lb_ratio: 1-4
-            (config.max_lightbar_ratio - 10.0) / 20.0,     // max_lb_ratio: 10-30
-            (config.min_lightbar_length - 3.0) / 15.0,     // min_lb_len: 3-18
-            (config.min_armor_ratio - 0.5) / 2.0,          // min_armor: 0.5-2.5
-            (config.max_armor_ratio - 2.0) / 6.0,          // max_armor: 2-8
-            (config.max_side_ratio - 1.0) / 2.0,           // side_ratio: 1-3
-            (config.min_confidence - 0.4) / 0.6,           // confidence: 0.4-1.0
-            (config.max_rectangular_error - 10.0) / 40.0   // rect_err: 10-50
+            (config.threshold - 50.0) / 200.0,           // threshold: 50-250
+            (config.max_angle_error - 20.0) / 50.0,      // angle: 20-70
+            (config.min_lightbar_ratio - 1.0) / 3.0,     // min_lb_ratio: 1-4
+            (config.max_lightbar_ratio - 10.0) / 20.0,   // max_lb_ratio: 10-30
+            (config.min_lightbar_length - 3.0) / 15.0,   // min_lb_len: 3-18
+            (config.min_armor_ratio - 0.5) / 2.0,        // min_armor: 0.5-2.5
+            (config.max_armor_ratio - 2.0) / 6.0,        // max_armor: 2-8
+            (config.max_side_ratio - 1.0) / 2.0,         // side_ratio: 1-3
+            (config.min_confidence - 0.4) / 0.6,         // confidence: 0.4-1.0
+            (config.max_rectangular_error - 10.0) / 40.0 // rect_err: 10-50
         };
     }
 };
@@ -142,13 +143,13 @@ struct TuningConfig {
     size_t max_pareto_solutions{3};     // Maximum Pareto solutions to return
 
     // Quick mode for local testing
-    bool quick_mode{false};             // Enable quick mode
-    double sample_ratio{1.0};           // Fraction of dataset to use (0.0-1.0)
+    bool quick_mode{false};   // Enable quick mode
+    double sample_ratio{1.0}; // Fraction of dataset to use (0.0-1.0)
 
     /**
      * @brief Read configuration from TOML table
      */
-    [[nodiscard]] std::expected<void, std::string> read_from(const toml::table &tbl);
+    [[nodiscard]] std::expected<void, std::string> read_from(const toml::table& tbl);
 
     /**
      * @brief Get default tuning configuration
@@ -183,12 +184,12 @@ struct TuningResult {
     /**
      * @brief Save best configurations to TOML file
      */
-    void save_to_toml(const std::string &path) const;
+    void save_to_toml(const std::string& path) const;
 
     /**
      * @brief Generate visualization images
      */
-    void visualize(const std::string &output_dir) const;
+    void visualize(const std::string& output_dir) const;
 };
 
 /**
@@ -198,14 +199,15 @@ struct TuningResult {
  * and Pareto multi-objective optimization.
  */
 class DetectorTuner {
-  public:
+public:
     /**
      * @brief Construct tuner with configuration
      * @param tuning_config Search space and algorithm configuration
      * @param dataset Dataset for evaluation
      * @param base_config Base SpVisionConfig (non-detector params)
      */
-    DetectorTuner(TuningConfig tuning_config, const DatasetLoader &dataset, SpVisionConfig base_config);
+    DetectorTuner(
+        TuningConfig tuning_config, const DatasetLoader& dataset, SpVisionConfig base_config);
 
     /**
      * @brief Run the full tuning pipeline
@@ -213,9 +215,9 @@ class DetectorTuner {
      */
     [[nodiscard]] std::expected<TuningResult, std::string> run();
 
-  private:
+private:
     TuningConfig tuning_config_;
-    const DatasetLoader &dataset_;
+    const DatasetLoader& dataset_;
     SpVisionConfig base_config_;
 
     // === Core Algorithm Steps ===
@@ -228,36 +230,37 @@ class DetectorTuner {
     /**
      * @brief Evaluate all configs in parallel using TBB
      */
-    [[nodiscard]] std::vector<ParameterCandidate> evaluate_parallel(const std::vector<DetectorConfig> &configs) const;
+    [[nodiscard]] std::vector<ParameterCandidate>
+        evaluate_parallel(const std::vector<DetectorConfig>& configs) const;
 
     /**
      * @brief Evaluate single config on entire dataset
      */
-    [[nodiscard]] ParameterCandidate evaluate_single(const DetectorConfig &config) const;
+    [[nodiscard]] ParameterCandidate evaluate_single(const DetectorConfig& config) const;
 
     /**
      * @brief Select top candidates and cluster into search regions
      */
     [[nodiscard]] std::vector<SearchRegion>
-    cluster_top_candidates(const std::vector<ParameterCandidate> &candidates) const;
+        cluster_top_candidates(const std::vector<ParameterCandidate>& candidates) const;
 
     /**
      * @brief Extract Pareto-optimal solutions
      */
     [[nodiscard]] std::vector<ParameterCandidate>
-    extract_pareto_front(const std::vector<ParameterCandidate> &candidates) const;
+        extract_pareto_front(const std::vector<ParameterCandidate>& candidates) const;
 
     /**
      * @brief K-means clustering in normalized parameter space
      */
     [[nodiscard]] std::vector<std::vector<ParameterCandidate>>
-    kmeans_cluster(const std::vector<ParameterCandidate> &candidates, size_t k) const;
+        kmeans_cluster(const std::vector<ParameterCandidate>& candidates, size_t k) const;
 
     /**
      * @brief Select diverse subset from Pareto front
      */
-    [[nodiscard]] std::vector<ParameterCandidate>
-    select_diverse_pareto(const std::vector<ParameterCandidate> &pareto_front, size_t max_count) const;
+    [[nodiscard]] std::vector<ParameterCandidate> select_diverse_pareto(
+        const std::vector<ParameterCandidate>& pareto_front, size_t max_count) const;
 };
 
 // === Visualization Utilities ===
@@ -265,12 +268,13 @@ class DetectorTuner {
 /**
  * @brief Plot Pareto front projections (F1 vs IoU, F1 vs Latency, IoU vs Latency)
  */
-void plot_pareto_front(const std::vector<ParameterCandidate> &all_candidates,
-                       const std::vector<ParameterCandidate> &pareto_front, const std::string &output_path);
+void plot_pareto_front(
+    const std::vector<ParameterCandidate>& all_candidates,
+    const std::vector<ParameterCandidate>& pareto_front, const std::string& output_path);
 
 /**
  * @brief Plot convergence history
  */
-void plot_convergence(const std::vector<double> &iteration_scores, const std::string &output_path);
+void plot_convergence(const std::vector<double>& iteration_scores, const std::string& output_path);
 
 } // namespace auto_aim

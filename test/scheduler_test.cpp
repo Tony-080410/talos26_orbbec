@@ -1,7 +1,7 @@
-#include "scheduler/scheduler.hpp"
-#include <gtest/gtest.h>
 #include "scheduler/primitives/latency_histogram.hpp"
+#include "scheduler/scheduler.hpp"
 #include "test_strategy.hpp"
+#include <gtest/gtest.h>
 
 #include <atomic>
 #include <chrono>
@@ -53,16 +53,16 @@ TEST(SchedulerTest, FullPipeline) {
     std::atomic solve_count{0};
     std::atomic output_count{0};
 
-    strategy.set_detect([&](const Captured &, talos::ArmorSlots &) {
+    strategy.set_detect([&](const Captured&, talos::ArmorSlots&) {
         detect_count.fetch_add(1, std::memory_order_relaxed);
     });
 
-    strategy.set_solve([&](const talos::ArmorSlots &, std::array<auto_aim::ArmorPose3D, 10> &) {
+    strategy.set_solve([&](const talos::ArmorSlots&, std::array<auto_aim::ArmorPose3D, 10>&) {
         solve_count.fetch_add(1, std::memory_order_relaxed);
     });
 
-    strategy.set_track([&](talos::TrackerSoA &, const talos::ArmorSlots &,
-                           const std::array<auto_aim::ArmorPose3D, 10> &) {
+    strategy.set_track([&](talos::TrackerSoA&, const talos::ArmorSlots&,
+                           const std::array<auto_aim::ArmorPose3D, 10>&) {
         track_count.fetch_add(1, std::memory_order_relaxed);
     });
 
@@ -76,7 +76,7 @@ TEST(SchedulerTest, FullPipeline) {
     // 推送一些帧
     for (int i = 0; i < 10; ++i) {
         Frame frame;
-        frame.seq = i;
+        frame.seq          = i;
         frame.timestamp_ns = i * 1000000;
         sched.push_frame(std::move(frame));
     }
@@ -177,7 +177,7 @@ TEST(LatencyHistogramTest, Reset) {
 
 TEST(LatencyHistogramTest, ConcurrentRecord) {
     LatencyHistogram hist;
-    constexpr int kThreads = 4;
+    constexpr int kThreads          = 4;
     constexpr int kSamplesPerThread = 10000;
 
     std::vector<std::thread> threads;
@@ -191,7 +191,7 @@ TEST(LatencyHistogramTest, ConcurrentRecord) {
         });
     }
 
-    for (auto &th: threads) {
+    for (auto& th : threads) {
         th.join();
     }
 
@@ -208,13 +208,13 @@ TEST(SchedulerTest, PreprocessorCallback) {
 
     std::atomic preprocess_count{0};
 
-    strategy.set_preprocess([&](Captured &sf) {
+    strategy.set_preprocess([&](Captured& sf) {
         preprocess_count.fetch_add(1, std::memory_order_relaxed);
         // 模拟预处理: 可以用 TBB parallel_for
         sf.preprocessed = ImageBuffer::create(100, 100, CV_8UC1);
     });
 
-    strategy.set_detect([](const Captured &, talos::ArmorSlots &) {});
+    strategy.set_detect([](const Captured&, talos::ArmorSlots&) {});
 
     sched.start();
 
@@ -237,14 +237,14 @@ TEST(SchedulerTest, HighFrequencyFrames) {
 
     std::atomic detect_count{0};
 
-    strategy.set_detect([&](const Captured &, talos::ArmorSlots &) {
+    strategy.set_detect([&](const Captured&, talos::ArmorSlots&) {
         detect_count.fetch_add(1, std::memory_order_relaxed);
     });
 
-    strategy.set_track([](talos::TrackerSoA &, const talos::ArmorSlots &,
-                          const std::array<auto_aim::ArmorPose3D, 10> &) {});
+    strategy.set_track([](talos::TrackerSoA&, const talos::ArmorSlots&,
+                          const std::array<auto_aim::ArmorPose3D, 10>&) {});
 
-    strategy.set_solve([](const talos::ArmorSlots &, std::array<auto_aim::ArmorPose3D, 10> &) {});
+    strategy.set_solve([](const talos::ArmorSlots&, std::array<auto_aim::ArmorPose3D, 10>&) {});
 
     Scheduler<TestStrategy> sched;
     constexpr RuntimeConfig config;
@@ -253,10 +253,10 @@ TEST(SchedulerTest, HighFrequencyFrames) {
     sched.start();
 
     // 模拟 160Hz 输入，持续 500ms
-    constexpr int kFrameCount = 80; // 160Hz * 0.5s
+    constexpr int kFrameCount = 80;       // 160Hz * 0.5s
     for (int i = 0; i < kFrameCount; ++i) {
         Frame frame;
-        frame.seq = i;
+        frame.seq          = i;
         frame.timestamp_ns = i * 6250000; // 160Hz = 6.25ms
         sched.push_frame(std::move(frame));
         std::this_thread::sleep_for(std::chrono::microseconds(6250));
@@ -272,17 +272,17 @@ TEST(SchedulerTest, HighFrequencyFrames) {
 TEST(SchedulerTest, LatencyHistogramStats) {
     TestStrategy strategy;
 
-    strategy.set_detect([](const Captured &, talos::ArmorSlots &) {
+    strategy.set_detect([](const Captured&, talos::ArmorSlots&) {
         // 模拟一些处理延迟
         std::this_thread::sleep_for(std::chrono::microseconds(100));
     });
 
-    strategy.set_solve([](const talos::ArmorSlots &, std::array<auto_aim::ArmorPose3D, 10> &) {
+    strategy.set_solve([](const talos::ArmorSlots&, std::array<auto_aim::ArmorPose3D, 10>&) {
         std::this_thread::sleep_for(std::chrono::microseconds(50));
     });
 
-    strategy.set_track([](talos::TrackerSoA &, const talos::ArmorSlots &,
-                          const std::array<auto_aim::ArmorPose3D, 10> &) {
+    strategy.set_track([](talos::TrackerSoA&, const talos::ArmorSlots&,
+                          const std::array<auto_aim::ArmorPose3D, 10>&) {
         std::this_thread::sleep_for(std::chrono::microseconds(50));
     });
 
@@ -302,11 +302,11 @@ TEST(SchedulerTest, LatencyHistogramStats) {
     sched.stop();
 
     // 验证直方图有数据
-    const auto &stats = sched.stats();
+    const auto& stats = sched.stats();
     EXPECT_GT(stats.detect_hist.count(), 0);
     EXPECT_GT(stats.detect_hist.p50(), 0);
 
     // 验证延迟在合理范围 (100us = 100000ns 左右)
-    EXPECT_GE(stats.detect_hist.min(), 50000); // >= 50us
+    EXPECT_GE(stats.detect_hist.min(), 50000);    // >= 50us
     EXPECT_LE(stats.detect_hist.max(), 10000000); // <= 10ms
 }

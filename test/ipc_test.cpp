@@ -30,7 +30,7 @@ namespace ipc::test {
 class ShmRegionTest : public ::testing::Test {
 protected:
     static constexpr std::string_view TEST_SHM_NAME = "ipc_test_region";
-    static constexpr size_t TEST_SIZE = 4096;
+    static constexpr size_t TEST_SIZE               = 4096;
 
     void TearDown() override {
         // Cleanup test shared memory files
@@ -79,7 +79,7 @@ TEST_F(ShmRegionTest, MoveSemantics) {
     auto result = ShmRegion::create(TEST_SHM_NAME, TEST_SIZE);
     ASSERT_TRUE(result.has_value());
 
-    void* original_ptr = result->data();
+    void* original_ptr         = result->data();
     const size_t original_size = result->size();
 
     // Move construct
@@ -142,7 +142,8 @@ protected:
         std::array<uint64_t, 64> values{}; // 512 bytes
 
         void fill(uint64_t v) {
-            for (auto& x : values) x = v;
+            for (auto& x : values)
+                x = v;
         }
 
         [[nodiscard]] bool is_consistent() const {
@@ -165,8 +166,8 @@ TEST_F(TripleBufferAtomicityTest, BasicOperation) {
     EXPECT_EQ(ops.borrow(), std::nullopt);
 
     // Write and publish
-    auto& slot = ops.borrow_mut();
-    slot.seq = 42;
+    auto& slot        = ops.borrow_mut();
+    slot.seq          = 42;
     slot.timestamp_ns = 1234567890;
     ops.publish();
 
@@ -254,8 +255,8 @@ TEST_F(TripleBufferAtomicityTest, StressMonotonicity) {
     producer.join();
     consumer.join();
 
-    std::cout << "[Monotonicity] Reads: " << reads.load()
-              << ", Violations: " << violations.load() << std::endl;
+    std::cout << "[Monotonicity] Reads: " << reads.load() << ", Violations: " << violations.load()
+              << std::endl;
     EXPECT_EQ(violations.load(), 0);
     EXPECT_GT(reads.load(), 1000);
 }
@@ -274,11 +275,11 @@ TEST_F(TripleBufferAtomicityTest, StressPoseDataIntegrity) {
         while (!stop.load(std::memory_order_relaxed)) {
             auto& slot = ops.borrow_mut();
             // Fill with consistent data
-            const float fv = static_cast<float>(v);
-            slot.timestamp_ns = v;
-            slot.position[0] = fv;
-            slot.position[1] = fv;
-            slot.position[2] = fv;
+            const float fv     = static_cast<float>(v);
+            slot.timestamp_ns  = v;
+            slot.position[0]   = fv;
+            slot.position[1]   = fv;
+            slot.position[2]   = fv;
             slot.quaternion[0] = fv;
             slot.quaternion[1] = fv;
             slot.quaternion[2] = fv;
@@ -297,13 +298,10 @@ TEST_F(TripleBufferAtomicityTest, StressPoseDataIntegrity) {
                 // Check consistency: all values should be from same write
                 const float expected = static_cast<float>(pose.timestamp_ns);
                 const bool consistent =
-                    pose.position[0] == expected &&
-                    pose.position[1] == expected &&
-                    pose.position[2] == expected &&
-                    pose.quaternion[0] == expected &&
-                    pose.quaternion[1] == expected &&
-                    pose.quaternion[2] == expected &&
-                    pose.quaternion[3] == expected;
+                    pose.position[0] == expected && pose.position[1] == expected
+                    && pose.position[2] == expected && pose.quaternion[0] == expected
+                    && pose.quaternion[1] == expected && pose.quaternion[2] == expected
+                    && pose.quaternion[3] == expected;
                 if (!consistent) {
                     corrupted.fetch_add(1, std::memory_order_relaxed);
                 }
@@ -316,8 +314,8 @@ TEST_F(TripleBufferAtomicityTest, StressPoseDataIntegrity) {
     producer.join();
     consumer.join();
 
-    std::cout << "[PoseIntegrity] Reads: " << reads.load()
-              << ", Corrupted: " << corrupted.load() << std::endl;
+    std::cout << "[PoseIntegrity] Reads: " << reads.load() << ", Corrupted: " << corrupted.load()
+              << std::endl;
     EXPECT_EQ(corrupted.load(), 0);
     EXPECT_GT(reads.load(), 1000);
 }
@@ -333,13 +331,13 @@ TEST_F(TripleBufferAtomicityTest, StressGimbalCmdIntegrity) {
         GimbalOps ops(&buffer);
         uint64_t v = 1;
         while (!stop.load(std::memory_order_relaxed)) {
-            auto& cmd = ops.borrow_mut();
-            const float fv = static_cast<float>(v);
+            auto& cmd        = ops.borrow_mut();
+            const float fv   = static_cast<float>(v);
             cmd.timestamp_ns = v;
-            cmd.yaw_deg = fv;
-            cmd.pitch_deg = fv;
-            cmd.distance_m = fv;
-            cmd.fire_advice = static_cast<uint8_t>(v % 2);
+            cmd.yaw_deg      = fv;
+            cmd.pitch_deg    = fv;
+            cmd.distance_m   = fv;
+            cmd.fire_advice  = static_cast<uint8_t>(v % 2);
             ops.publish();
             ++v;
         }
@@ -350,12 +348,10 @@ TEST_F(TripleBufferAtomicityTest, StressGimbalCmdIntegrity) {
         while (!stop.load(std::memory_order_relaxed)) {
             if (auto result = ops.borrow()) {
                 reads.fetch_add(1, std::memory_order_relaxed);
-                const auto& cmd = **result;
-                const float expected = static_cast<float>(cmd.timestamp_ns);
-                const bool consistent =
-                    cmd.yaw_deg == expected &&
-                    cmd.pitch_deg == expected &&
-                    cmd.distance_m == expected;
+                const auto& cmd       = **result;
+                const float expected  = static_cast<float>(cmd.timestamp_ns);
+                const bool consistent = cmd.yaw_deg == expected && cmd.pitch_deg == expected
+                                     && cmd.distance_m == expected;
                 if (!consistent) {
                     corrupted.fetch_add(1, std::memory_order_relaxed);
                 }
@@ -368,8 +364,8 @@ TEST_F(TripleBufferAtomicityTest, StressGimbalCmdIntegrity) {
     producer.join();
     consumer.join();
 
-    std::cout << "[GimbalIntegrity] Reads: " << reads.load()
-              << ", Corrupted: " << corrupted.load() << std::endl;
+    std::cout << "[GimbalIntegrity] Reads: " << reads.load() << ", Corrupted: " << corrupted.load()
+              << std::endl;
     EXPECT_EQ(corrupted.load(), 0);
     EXPECT_GT(reads.load(), 1000);
 }
@@ -460,8 +456,8 @@ TEST_F(TripleBufferAtomicityTest, SlowProducerFastConsumer) {
     consumer.join();
 
     std::cout << "[SlowProd/FastCons] Valid: " << valid_reads.load()
-              << ", Empty: " << empty_reads.load()
-              << ", Violations: " << violations.load() << std::endl;
+              << ", Empty: " << empty_reads.load() << ", Violations: " << violations.load()
+              << std::endl;
     EXPECT_EQ(violations.load(), 0);
     EXPECT_GT(empty_reads.load(), valid_reads.load()); // More empty reads expected
 }
@@ -473,7 +469,7 @@ TEST_F(TripleBufferAtomicityTest, SlowProducerFastConsumer) {
 class ShmIPCTest : public ::testing::Test {
 protected:
     static constexpr std::string_view TEST_META_SHM = "ipc_test_meta";
-    static constexpr size_t META_SIZE = sizeof(ShmMetaRegion);
+    static constexpr size_t META_SIZE               = sizeof(ShmMetaRegion);
 
     /**
      * @brief Initialize a TripleBuffer to correct initial state
@@ -486,16 +482,16 @@ protected:
      * - write_idx = 0 (producer writes to slot 0)
      * - read_idx = 2 (consumer last read slot 2)
      */
-    template<typename TripleBuffer>
+    template <typename TripleBuffer>
     static void init_triple_buffer(TripleBuffer& buf) {
         buf.state.store(1, std::memory_order_relaxed);
         buf.write_idx = 0;
-        buf.read_idx = 2;
+        buf.read_idx  = 2;
     }
 
     static void init_meta_region(ShmMetaRegion* meta) {
         // Initialize header
-        meta->header.magic = SHM_MAGIC;
+        meta->header.magic   = SHM_MAGIC;
         meta->header.version = SHM_VERSION;
 
         // Initialize all triple buffers (CRITICAL: memset corrupts default initializers)
@@ -506,9 +502,7 @@ protected:
         init_triple_buffer(meta->gimbal_cmd);
     }
 
-    void TearDown() override {
-        std::filesystem::remove(shm_path(TEST_META_SHM));
-    }
+    void TearDown() override { std::filesystem::remove(shm_path(TEST_META_SHM)); }
 };
 
 TEST_F(ShmIPCTest, ProducerConsumerCommunication) {
@@ -529,10 +523,10 @@ TEST_F(ShmIPCTest, ProducerConsumerCommunication) {
         uint64_t seq = 1;
         while (!stop.load(std::memory_order_relaxed)) {
             auto& slot = ops.borrow_mut();
-            slot.seq = seq++;
-            slot.timestamp_ns = static_cast<uint64_t>(
-                std::chrono::steady_clock::now().time_since_epoch().count());
-            slot.width = IMAGE_WIDTH;
+            slot.seq   = seq++;
+            slot.timestamp_ns =
+                static_cast<uint64_t>(std::chrono::steady_clock::now().time_since_epoch().count());
+            slot.width  = IMAGE_WIDTH;
             slot.height = IMAGE_HEIGHT;
             ops.publish();
         }
@@ -563,8 +557,8 @@ TEST_F(ShmIPCTest, ProducerConsumerCommunication) {
     producer.join();
     consumer.join();
 
-    std::cout << "[ShmIPC] Reads: " << reads.load()
-              << ", Violations: " << violations.load() << std::endl;
+    std::cout << "[ShmIPC] Reads: " << reads.load() << ", Violations: " << violations.load()
+              << std::endl;
     EXPECT_EQ(violations.load(), 0);
     EXPECT_GT(reads.load(), 1000);
 }
@@ -617,7 +611,8 @@ TEST_F(ShmIPCTest, MultipleTopics) {
         uint64_t last = 0;
         while (!stop.load(std::memory_order_relaxed)) {
             if (auto r = ops.borrow()) {
-                if ((*r)->seq <= last) image_violations.fetch_add(1, std::memory_order_relaxed);
+                if ((*r)->seq <= last)
+                    image_violations.fetch_add(1, std::memory_order_relaxed);
                 last = (*r)->seq;
             }
         }
@@ -629,7 +624,8 @@ TEST_F(ShmIPCTest, MultipleTopics) {
         uint64_t last = 0;
         while (!stop.load(std::memory_order_relaxed)) {
             if (auto r = ops.borrow()) {
-                if ((*r)->timestamp_ns <= last) pose_violations.fetch_add(1, std::memory_order_relaxed);
+                if ((*r)->timestamp_ns <= last)
+                    pose_violations.fetch_add(1, std::memory_order_relaxed);
                 last = (*r)->timestamp_ns;
             }
         }
@@ -641,7 +637,8 @@ TEST_F(ShmIPCTest, MultipleTopics) {
         uint64_t last = 0;
         while (!stop.load(std::memory_order_relaxed)) {
             if (auto r = ops.borrow()) {
-                if ((*r)->timestamp_ns <= last) gimbal_violations.fetch_add(1, std::memory_order_relaxed);
+                if ((*r)->timestamp_ns <= last)
+                    gimbal_violations.fetch_add(1, std::memory_order_relaxed);
                 last = (*r)->timestamp_ns;
             }
         }
@@ -737,8 +734,10 @@ TEST(ShmLayoutTest, AtomicStateCacheLineIsolation) {
     EXPECT_EQ(reinterpret_cast<uintptr_t>(&gimbal_buf.state) % CACHE_LINE_SIZE, 0);
 
     // Slots should be at next cache line or beyond
-    EXPECT_GE(reinterpret_cast<uintptr_t>(&img_buf.slots[0]) -
-              reinterpret_cast<uintptr_t>(&img_buf.state), CACHE_LINE_SIZE);
+    EXPECT_GE(
+        reinterpret_cast<uintptr_t>(&img_buf.slots[0])
+            - reinterpret_cast<uintptr_t>(&img_buf.state),
+        CACHE_LINE_SIZE);
 }
 
 // ============================================================================
@@ -805,7 +804,8 @@ TEST(TripleBufferMemorySafetyTest, ConcurrentAccessNoUseAfterFree) {
         std::array<uint64_t, 128> data{}; // 1KB
 
         void fill(uint64_t v) {
-            for (auto& x : data) x = v;
+            for (auto& x : data)
+                x = v;
         }
 
         [[nodiscard]] bool is_consistent() const {
@@ -840,7 +840,8 @@ TEST(TripleBufferMemorySafetyTest, ConcurrentAccessNoUseAfterFree) {
             }
 
             // Publish
-            const auto old = buffer.state.exchange(buffer.write_idx | FLAG_NEW, std::memory_order_acq_rel);
+            const auto old =
+                buffer.state.exchange(buffer.write_idx | FLAG_NEW, std::memory_order_acq_rel);
             buffer.write_idx = old & INDEX_MASK;
             ++v;
         }
@@ -849,23 +850,25 @@ TEST(TripleBufferMemorySafetyTest, ConcurrentAccessNoUseAfterFree) {
     std::thread consumer([&] {
         while (!stop.load(std::memory_order_relaxed)) {
             auto expected = buffer.state.load(std::memory_order_acquire);
-            if (!(expected & FLAG_NEW)) continue;
+            if (!(expected & FLAG_NEW))
+                continue;
 
             auto ready_idx = expected & INDEX_MASK;
-            auto desired = buffer.read_idx;
+            auto desired   = buffer.read_idx;
 
-            if (!buffer.state.compare_exchange_strong(expected, desired,
-                    std::memory_order_acq_rel, std::memory_order_acquire)) {
-                if (!(expected & FLAG_NEW)) continue;
+            if (!buffer.state.compare_exchange_strong(
+                    expected, desired, std::memory_order_acq_rel, std::memory_order_acquire)) {
+                if (!(expected & FLAG_NEW))
+                    continue;
                 ready_idx = expected & INDEX_MASK;
-                desired = buffer.read_idx;
-                if (!buffer.state.compare_exchange_strong(expected, desired,
-                        std::memory_order_acq_rel, std::memory_order_relaxed)) {
+                desired   = buffer.read_idx;
+                if (!buffer.state.compare_exchange_strong(
+                        expected, desired, std::memory_order_acq_rel, std::memory_order_relaxed)) {
                     continue;
                 }
             }
 
-            buffer.read_idx = ready_idx;
+            buffer.read_idx  = ready_idx;
             const auto& slot = buffer.slots[ready_idx];
 
             reads.fetch_add(1, std::memory_order_relaxed);
@@ -882,8 +885,8 @@ TEST(TripleBufferMemorySafetyTest, ConcurrentAccessNoUseAfterFree) {
     producer.join();
     consumer.join();
 
-    std::cout << "[MemorySafety] Reads: " << reads.load()
-              << ", Corrupted: " << corrupted.load() << std::endl;
+    std::cout << "[MemorySafety] Reads: " << reads.load() << ", Corrupted: " << corrupted.load()
+              << std::endl;
     EXPECT_EQ(corrupted.load(), 0);
     EXPECT_GT(reads.load(), 1000);
 }

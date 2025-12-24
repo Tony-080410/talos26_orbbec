@@ -9,17 +9,17 @@
  * 4. 延迟分布验证 - 确保满足 <1us 调度开销
  */
 
+#include "scheduler/scheduler.hpp"
 #include <gtest/gtest.h>
 #include <oneapi/tbb/parallel_for.h>
-#include "scheduler/scheduler.hpp"
 
+#include "test_strategy.hpp"
 #include <atomic>
 #include <chrono>
 #include <numeric>
 #include <ranges>
 #include <thread>
 #include <vector>
-#include "test_strategy.hpp"
 
 using namespace scheduler;
 using namespace scheduler::test;
@@ -47,11 +47,11 @@ TEST_F(SchedulerIntegrationTest, ZeroCopyVerification) {
     constexpr int kRows = 480;
     constexpr int kCols = 640;
     std::vector<uint8_t> camera_buffer(kRows * kCols, 0xAB); // 模拟相机缓冲
-    void *original_ptr = camera_buffer.data();
+    void* original_ptr = camera_buffer.data();
 
-    std::atomic<void *> detected_ptr{nullptr};
+    std::atomic<void*> detected_ptr{nullptr};
 
-    strategy_.set_detect([&](const Captured &sf, talos::ArmorSlots &) {
+    strategy_.set_detect([&](const Captured& sf, talos::ArmorSlots&) {
         if (sf.image) {
             detected_ptr.store(sf.image->data(), std::memory_order_release);
         }
@@ -75,9 +75,9 @@ TEST_F(SchedulerIntegrationTest, ZeroCopyFromMat) {
     cv::Mat mat(480, 640, CV_8UC3);
     mat.setTo(cv::Scalar(100, 150, 200));
 
-    std::atomic<void *> detected_ptr{nullptr};
+    std::atomic<void*> detected_ptr{nullptr};
 
-    strategy_.set_detect([&](const Captured &sf, talos::ArmorSlots &) {
+    strategy_.set_detect([&](const Captured& sf, talos::ArmorSlots&) {
         if (sf.image) {
             detected_ptr.store(sf.image->data(), std::memory_order_release);
         }
@@ -85,8 +85,8 @@ TEST_F(SchedulerIntegrationTest, ZeroCopyFromMat) {
 
     sched_.start();
 
-    auto frame = Frame::from_mat(0, 1000000, std::move(mat));
-    void *frame_ptr = frame.image->data();
+    auto frame      = Frame::from_mat(0, 1000000, std::move(mat));
+    void* frame_ptr = frame.image->data();
     sched_.push_frame(std::move(frame));
 
     std::this_thread::sleep_for(200ms);
@@ -108,14 +108,15 @@ TEST_F(SchedulerIntegrationTest, FullPipelineWithRealImage) {
     std::atomic output_count{0};
 
     // 预处理: 使用 TBB 并行处理
-    strategy_.set_preprocess([&](Captured &sf) {
+    strategy_.set_preprocess([&](Captured& sf) {
         preprocess_count.fetch_add(1, std::memory_order_relaxed);
         if (sf.image && sf.image->rows() > 0) {
             // 创建预处理结果
-            sf.preprocessed = ImageBuffer::create(sf.image->rows() / 2, sf.image->cols() / 2, CV_8UC1);
+            sf.preprocessed =
+                ImageBuffer::create(sf.image->rows() / 2, sf.image->cols() / 2, CV_8UC1);
             // 模拟并行预处理
-            auto &src = sf.image->mat();
-            auto &dst = sf.preprocessed->mat();
+            auto& src = sf.image->mat();
+            auto& dst = sf.preprocessed->mat();
             tbb::parallel_for(0, dst.rows, [&](const int y) {
                 for (int x = 0; x < dst.cols; ++x) {
                     dst.at<uint8_t>(y, x) = src.at<cv::Vec3b>(y * 2, x * 2)[0];
@@ -124,28 +125,27 @@ TEST_F(SchedulerIntegrationTest, FullPipelineWithRealImage) {
         }
     });
 
-    strategy_.set_detect([&](const Captured &, talos::ArmorSlots &) {
+    strategy_.set_detect([&](const Captured&, talos::ArmorSlots&) {
         detect_count.fetch_add(1, std::memory_order_relaxed);
     });
 
-    strategy_.set_track([&](talos::TrackerSoA &, const talos::ArmorSlots &, const std::array<auto_aim::ArmorPose3D, 10> &) {
+    strategy_.set_track([&](talos::TrackerSoA&, const talos::ArmorSlots&,
+                            const std::array<auto_aim::ArmorPose3D, 10>&) {
         track_count.fetch_add(1, std::memory_order_relaxed);
     });
 
-    strategy_.set_solve([&](const talos::ArmorSlots &, std::array<auto_aim::ArmorPose3D, 10> &) {
+    strategy_.set_solve([&](const talos::ArmorSlots&, std::array<auto_aim::ArmorPose3D, 10>&) {
         solve_count.fetch_add(1, std::memory_order_relaxed);
     });
 
-    strategy_.set_output([&]() {
-        output_count.fetch_add(1, std::memory_order_relaxed);
-    });
+    strategy_.set_output([&]() { output_count.fetch_add(1, std::memory_order_relaxed); });
 
     sched_.start();
 
     // 推送帧
     for (int i = 0; i < kFrameCount; ++i) {
         cv::Mat img(480, 640, CV_8UC3, cv::Scalar(i % 256, 128, 64));
-        auto ts = std::chrono::steady_clock::now().time_since_epoch().count();
+        auto ts    = std::chrono::steady_clock::now().time_since_epoch().count();
         auto frame = Frame::from_mat(i, ts, std::move(img));
         sched_.push_frame(std::move(frame));
         std::this_thread::sleep_for(6ms); // ~160 Hz
@@ -164,27 +164,28 @@ TEST_F(SchedulerIntegrationTest, FullPipelineWithRealImage) {
 
 // ============ 高负载压力测试 ============
 
-constexpr int kDurationMs = 2000;
+constexpr int kDurationMs      = 2000;
 constexpr int kFrameIntervalUs = 6250; // 160 Hz
 TEST_F(SchedulerIntegrationTest, HighLoadStressTest) {
 
     std::atomic<uint64_t> frame_sent{0};
     std::atomic<uint64_t> frame_processed{0};
 
-    strategy_.set_detect([&](const Captured &, talos::ArmorSlots &) {
+    strategy_.set_detect([&](const Captured&, talos::ArmorSlots&) {
         frame_processed.fetch_add(1, std::memory_order_relaxed);
     });
 
     sched_.start();
 
-    const auto start = std::chrono::steady_clock::now();
+    const auto start    = std::chrono::steady_clock::now();
     const auto deadline = start + std::chrono::milliseconds(kDurationMs);
 
     while (std::chrono::steady_clock::now() < deadline) {
         cv::Mat img(480, 640, CV_8UC1);
         const auto ts = std::chrono::steady_clock::now().time_since_epoch().count();
 
-        if (auto frame = Frame::from_mat(frame_sent.load(), ts, std::move(img)); sched_.push_frame(std::move(frame))) {
+        if (auto frame = Frame::from_mat(frame_sent.load(), ts, std::move(img));
+            sched_.push_frame(std::move(frame))) {
             frame_sent.fetch_add(1, std::memory_order_relaxed);
         }
 
@@ -194,12 +195,13 @@ TEST_F(SchedulerIntegrationTest, HighLoadStressTest) {
     std::this_thread::sleep_for(500ms);
     sched_.stop();
 
-    const auto sent = frame_sent.load();
+    const auto sent      = frame_sent.load();
     const auto processed = frame_processed.load();
-    const auto dropped = sched_.stats().frame_drop.load();
+    const auto dropped   = sched_.stats().frame_drop.load();
 
-    std::cout << "[Stress Test] Sent: " << sent << ", Processed: " << processed << ", Dropped: " << dropped
-              << ", Rate: " << (processed * 100.0 / sent) << "%" << std::endl;
+    std::cout << "[Stress Test] Sent: " << sent << ", Processed: " << processed
+              << ", Dropped: " << dropped << ", Rate: " << (processed * 100.0 / sent) << "%"
+              << std::endl;
 
     // 验证处理率
     EXPECT_GE(processed, sent * 0.8) << "Should process at least 80% of frames";
@@ -210,7 +212,7 @@ TEST_F(SchedulerIntegrationTest, HighLoadStressTest) {
 
 TEST_F(SchedulerIntegrationTest, SchedulingOverheadVerification) {
     // 空回调，只测量调度开销
-    strategy_.set_detect([](const Captured &, talos::ArmorSlots &) {});
+    strategy_.set_detect([](const Captured&, talos::ArmorSlots&) {});
 
     sched_.start();
 
@@ -219,14 +221,15 @@ TEST_F(SchedulerIntegrationTest, SchedulingOverheadVerification) {
 
     for (int i = 0; i < 1000; ++i) {
         Frame frame;
-        frame.seq = i;
+        frame.seq          = i;
         frame.timestamp_ns = std::chrono::steady_clock::now().time_since_epoch().count();
 
         auto t0 = std::chrono::steady_clock::now();
         sched_.push_frame(std::move(frame));
         auto t1 = std::chrono::steady_clock::now();
 
-        push_latencies.push_back(std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count());
+        push_latencies.push_back(
+            std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count());
     }
 
     std::this_thread::sleep_for(200ms);
@@ -234,8 +237,8 @@ TEST_F(SchedulerIntegrationTest, SchedulingOverheadVerification) {
 
     // 计算统计
     std::ranges::sort(push_latencies);
-    const auto p50 = push_latencies[push_latencies.size() / 2];
-    const auto p99 = push_latencies[push_latencies.size() * 99 / 100];
+    const auto p50     = push_latencies[push_latencies.size() / 2];
+    const auto p99     = push_latencies[push_latencies.size() * 99 / 100];
     const auto max_lat = push_latencies.back();
 
     std::cout << "[Scheduling Overhead] p50: " << p50 << "ns, "
@@ -251,21 +254,20 @@ TEST_F(SchedulerIntegrationTest, SchedulingOverheadVerification) {
 
 TEST_F(SchedulerIntegrationTest, LatencyHistogramVerification) {
     // 设置有一定延迟的回调
-    strategy_.set_detect([](const Captured &, talos::ArmorSlots &) {
+    strategy_.set_detect([](const Captured&, talos::ArmorSlots&) {
         std::this_thread::sleep_for(std::chrono::microseconds(100));
     });
 
-    strategy_.set_solve([](const talos::ArmorSlots &, std::array<auto_aim::ArmorPose3D, 10> &) {
+    strategy_.set_solve([](const talos::ArmorSlots&, std::array<auto_aim::ArmorPose3D, 10>&) {
         std::this_thread::sleep_for(std::chrono::microseconds(30));
     });
 
-    strategy_.set_track([](talos::TrackerSoA &, const talos::ArmorSlots &, const std::array<auto_aim::ArmorPose3D, 10> &) {
+    strategy_.set_track([](talos::TrackerSoA&, const talos::ArmorSlots&,
+                           const std::array<auto_aim::ArmorPose3D, 10>&) {
         std::this_thread::sleep_for(std::chrono::microseconds(50));
     });
 
-    strategy_.set_output([&]() {
-        std::this_thread::sleep_for(std::chrono::microseconds(20));
-    });
+    strategy_.set_output([&]() { std::this_thread::sleep_for(std::chrono::microseconds(20)); });
 
     sched_.start();
 
@@ -279,7 +281,7 @@ TEST_F(SchedulerIntegrationTest, LatencyHistogramVerification) {
     std::this_thread::sleep_for(500ms);
     sched_.stop();
 
-    const auto &stats = sched_.stats();
+    const auto& stats = sched_.stats();
 
     // 验证直方图有数据
     EXPECT_GT(stats.detect_hist.count(), 80);
@@ -309,10 +311,10 @@ TEST_F(SchedulerIntegrationTest, LatencyHistogramVerification) {
               << ", max: " << stats.output_hist.max() / 1000.0 << "us" << std::endl;
 
     // 验证延迟在预期范围
-    EXPECT_GE(stats.detect_hist.p50(), 50000);  // >= 50us (设置了100us sleep)
-    EXPECT_GE(stats.solve_hist.p50(), 15000);   // >= 15us (设置了30us sleep)
-    EXPECT_GE(stats.track_hist.p50(), 20000);   // >= 20us (设置了50us sleep)
-    EXPECT_GE(stats.output_hist.p50(), 10000);  // >= 10us (设置了20us sleep)
+    EXPECT_GE(stats.detect_hist.p50(), 50000); // >= 50us (设置了100us sleep)
+    EXPECT_GE(stats.solve_hist.p50(), 15000);  // >= 15us (设置了30us sleep)
+    EXPECT_GE(stats.track_hist.p50(), 20000);  // >= 20us (设置了50us sleep)
+    EXPECT_GE(stats.output_hist.p50(), 10000); // >= 10us (设置了20us sleep)
 }
 
 // ============ 配置热更新测试 ============
@@ -320,7 +322,7 @@ TEST_F(SchedulerIntegrationTest, LatencyHistogramVerification) {
 TEST_F(SchedulerIntegrationTest, ConfigHotUpdateUnderLoad) {
     std::atomic mode_at_detect{-1};
 
-    strategy_.set_detect([&](const Captured &, talos::ArmorSlots &) {
+    strategy_.set_detect([&](const Captured&, talos::ArmorSlots&) {
         const auto cfg = sched_.get_config();
         mode_at_detect.store(cfg.detector_mode, std::memory_order_relaxed);
     });
@@ -360,12 +362,12 @@ TEST_F(SchedulerIntegrationTest, ConfigHotUpdateUnderLoad) {
 // ============ 多生产者测试 ============
 
 TEST_F(SchedulerIntegrationTest, MultipleProducers) {
-    constexpr int kProducers = 4;
+    constexpr int kProducers         = 4;
     constexpr int kFramesPerProducer = 50;
 
     std::atomic detect_count{0};
 
-    strategy_.set_detect([&](const Captured &, talos::ArmorSlots &) {
+    strategy_.set_detect([&](const Captured&, talos::ArmorSlots&) {
         detect_count.fetch_add(1, std::memory_order_relaxed);
     });
 
@@ -383,7 +385,7 @@ TEST_F(SchedulerIntegrationTest, MultipleProducers) {
         });
     }
 
-    for (auto &th: producers) {
+    for (auto& th : producers) {
         th.join();
     }
 
@@ -391,11 +393,11 @@ TEST_F(SchedulerIntegrationTest, MultipleProducers) {
     sched_.stop();
 
     constexpr auto total_sent = kProducers * kFramesPerProducer;
-    const auto processed = detect_count.load();
-    const auto dropped = sched_.stats().frame_drop.load();
+    const auto processed      = detect_count.load();
+    const auto dropped        = sched_.stats().frame_drop.load();
 
-    std::cout << "[Multi-Producer] Sent: " << total_sent << ", Processed: " << processed << ", Dropped: " << dropped
-              << std::endl;
+    std::cout << "[Multi-Producer] Sent: " << total_sent << ", Processed: " << processed
+              << ", Dropped: " << dropped << std::endl;
 
     EXPECT_GE(processed + dropped, total_sent * 0.9);
 }

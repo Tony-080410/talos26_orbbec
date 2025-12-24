@@ -11,7 +11,7 @@ struct LargeFrame {
     std::array<uint64_t, 64> data{}; // 512 bytes
 
     void fill(const auto v) {
-        for (auto &x: data)
+        for (auto& x : data)
             x = v;
     }
 
@@ -74,7 +74,8 @@ TEST(TripleBufferTest, CurrentAlwaysValid) {
     buffer.borrow_mut() = 42;
     buffer.publish();
     const auto current = buffer.borrow();
-    EXPECT_EQ(current.has_value(), true) << "Previously we published data, so we must receive the data";
+    EXPECT_EQ(current.has_value(), true)
+        << "Previously we published data, so we must receive the data";
 
     // borrow 后 current 返回刚读的值
     EXPECT_EQ(*current.value(), 42);

@@ -255,9 +255,8 @@ struct SpVisionConfig : scheduler::RuntimeConfig {
         SUB(detector, tbl);
         SUB(solver, tbl);
         SUB(tracker, tbl);
-        // aimer 和 shooter 是可选的，使用默认值
-        (void)aimer.read_from(tbl);
-        (void)shooter.read_from(tbl);
+        SUB(aimer, tbl);
+        SUB(shooter, tbl);
         return {};
     }
 };

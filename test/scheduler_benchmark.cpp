@@ -1,8 +1,8 @@
-#include <benchmark/benchmark.h>
 #include "scheduler/primitives/latency_histogram.hpp"
 #include "scheduler/primitives/native_event.hpp"
 #include "scheduler/primitives/triple_buffer.hpp"
 #include "scheduler/scheduler.hpp"
+#include <benchmark/benchmark.h>
 
 #include <atomic>
 #include <thread>
@@ -15,13 +15,13 @@ using namespace scheduler::test;
 // ============ 基础组件 Benchmark ============
 
 // TripleBuffer 写入开销
-static void BM_TripleBuffer_Write(benchmark::State &state) {
+static void BM_TripleBuffer_Write(benchmark::State& state) {
     talos::TripleBuffer<uint64_t> buffer;
     uint64_t seq = 0;
 
-    for ([[maybe_unused]] auto _: state) {
-        auto &slot = buffer.borrow_mut();
-        slot = seq++;
+    for ([[maybe_unused]] auto _ : state) {
+        auto& slot = buffer.borrow_mut();
+        slot       = seq++;
         buffer.publish();
     }
 
@@ -30,15 +30,15 @@ static void BM_TripleBuffer_Write(benchmark::State &state) {
 BENCHMARK(BM_TripleBuffer_Write);
 
 // TripleBuffer 读取开销
-static void BM_TripleBuffer_Read(benchmark::State &state) {
+static void BM_TripleBuffer_Read(benchmark::State& state) {
     talos::TripleBuffer<uint64_t> buffer;
 
     // 预写入数据
-    auto &slot = buffer.borrow_mut();
-    slot = 42;
+    auto& slot = buffer.borrow_mut();
+    slot       = 42;
     buffer.publish();
 
-    for ([[maybe_unused]] auto _: state) {
+    for ([[maybe_unused]] auto _ : state) {
         auto result = buffer.borrow();
         benchmark::DoNotOptimize(result);
     }
@@ -48,10 +48,10 @@ static void BM_TripleBuffer_Read(benchmark::State &state) {
 BENCHMARK(BM_TripleBuffer_Read);
 
 // EventFlag notify 开销 (无等待者)
-static void BM_EventFlag_Notify_NoWaiter(benchmark::State &state) {
+static void BM_EventFlag_Notify_NoWaiter(benchmark::State& state) {
     NativeEvent flag;
 
-    for ([[maybe_unused]] auto _: state) {
+    for ([[maybe_unused]] auto _ : state) {
         flag.notify_one();
     }
 
@@ -60,11 +60,11 @@ static void BM_EventFlag_Notify_NoWaiter(benchmark::State &state) {
 BENCHMARK(BM_EventFlag_Notify_NoWaiter);
 
 // LatencyHistogram record 开销
-static void BM_LatencyHistogram_Record(benchmark::State &state) {
+static void BM_LatencyHistogram_Record(benchmark::State& state) {
     LatencyHistogram hist;
     uint64_t latency = 1000;
 
-    for ([[maybe_unused]] auto _: state) {
+    for ([[maybe_unused]] auto _ : state) {
         hist.record(latency);
         latency = (latency + 1) % 100000;
     }
@@ -76,10 +76,10 @@ BENCHMARK(BM_LatencyHistogram_Record);
 // ============ Scheduler Benchmark ============
 
 // push_frame 调度开销 (空回调)
-static void BM_Scheduler_PushFrame(benchmark::State &state) {
+static void BM_Scheduler_PushFrame(benchmark::State& state) {
     auto strategy = TestStrategy{};
     // 空回调，只测调度开销
-    strategy.set_detect([](const Captured &, talos::ArmorSlots &) {});
+    strategy.set_detect([](const Captured&, talos::ArmorSlots&) {});
     Scheduler<TestStrategy> sched;
     constexpr RuntimeConfig config;
     sched.init(config, &strategy);
@@ -87,9 +87,9 @@ static void BM_Scheduler_PushFrame(benchmark::State &state) {
     sched.start();
 
     uint64_t seq = 0;
-    for ([[maybe_unused]] auto _: state) {
+    for ([[maybe_unused]] auto _ : state) {
         Frame frame;
-        frame.seq = seq++;
+        frame.seq          = seq++;
         frame.timestamp_ns = seq * 1000000;
 
         auto t0 = std::chrono::steady_clock::now();
@@ -106,12 +106,13 @@ static void BM_Scheduler_PushFrame(benchmark::State &state) {
 BENCHMARK(BM_Scheduler_PushFrame);
 
 // 端到端延迟测量 (简化版，避免死锁)
-static void BM_Scheduler_E2E_Latency(benchmark::State &state) {
+static void BM_Scheduler_E2E_Latency(benchmark::State& state) {
     std::atomic<uint64_t> processed{0};
     auto strategy = TestStrategy{};
-    strategy.set_detect([](const Captured &, talos::ArmorSlots &) {});
-    strategy.set_track([](talos::TrackerSoA &, const talos::ArmorSlots &, const std::array<auto_aim::ArmorPose3D, 10> &) {});
-    strategy.set_solve([](const talos::ArmorSlots &, std::array<auto_aim::ArmorPose3D, 10> &) {});
+    strategy.set_detect([](const Captured&, talos::ArmorSlots&) {});
+    strategy.set_track([](talos::TrackerSoA&, const talos::ArmorSlots&,
+                          const std::array<auto_aim::ArmorPose3D, 10>&) {});
+    strategy.set_solve([](const talos::ArmorSlots&, std::array<auto_aim::ArmorPose3D, 10>&) {});
     strategy.set_output([&]() { processed.fetch_add(1, std::memory_order_release); });
 
     Scheduler<TestStrategy> sched;
@@ -121,16 +122,17 @@ static void BM_Scheduler_E2E_Latency(benchmark::State &state) {
     sched.start();
 
     uint64_t seq = 0;
-    for ([[maybe_unused]] auto _: state) {
+    for ([[maybe_unused]] auto _ : state) {
         Frame frame;
-        frame.seq = seq++;
+        frame.seq          = seq++;
         frame.timestamp_ns = std::chrono::steady_clock::now().time_since_epoch().count();
         sched.push_frame(std::move(frame));
     }
 
     // 等待处理完成 (带超时)
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
-    while (processed.load(std::memory_order_acquire) < seq && std::chrono::steady_clock::now() < deadline) {
+    while (processed.load(std::memory_order_acquire) < seq
+           && std::chrono::steady_clock::now() < deadline) {
         std::this_thread::yield();
     }
 
@@ -140,10 +142,10 @@ static void BM_Scheduler_E2E_Latency(benchmark::State &state) {
 BENCHMARK(BM_Scheduler_E2E_Latency);
 
 // 高吞吐量测试
-static void BM_Scheduler_Throughput(benchmark::State &state) {
+static void BM_Scheduler_Throughput(benchmark::State& state) {
     std::atomic<uint64_t> processed{0};
     auto strategy = TestStrategy{};
-    strategy.set_detect([&](const Captured &, talos::ArmorSlots &) {
+    strategy.set_detect([&](const Captured&, talos::ArmorSlots&) {
         processed.fetch_add(1, std::memory_order_relaxed);
     });
 
@@ -154,7 +156,7 @@ static void BM_Scheduler_Throughput(benchmark::State &state) {
     sched.start();
 
     uint64_t seq = 0;
-    for ([[maybe_unused]] auto _: state) {
+    for ([[maybe_unused]] auto _ : state) {
         Frame frame;
         frame.seq = seq++;
         sched.push_frame(std::move(frame));
@@ -162,7 +164,8 @@ static void BM_Scheduler_Throughput(benchmark::State &state) {
 
     // 等待处理完成 (带超时)
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
-    while (processed.load(std::memory_order_acquire) < seq && std::chrono::steady_clock::now() < deadline) {
+    while (processed.load(std::memory_order_acquire) < seq
+           && std::chrono::steady_clock::now() < deadline) {
         std::this_thread::yield();
     }
 
@@ -172,11 +175,11 @@ static void BM_Scheduler_Throughput(benchmark::State &state) {
 BENCHMARK(BM_Scheduler_Throughput);
 
 // TBB concurrent_queue push/pop 开销
-static void BM_TBB_ConcurrentQueue_Push(benchmark::State &state) {
+static void BM_TBB_ConcurrentQueue_Push(benchmark::State& state) {
     tbb::concurrent_queue<uint64_t> queue;
     uint64_t seq = 0;
 
-    for ([[maybe_unused]] auto _: state) {
+    for ([[maybe_unused]] auto _ : state) {
         queue.push(seq++);
     }
 
@@ -184,7 +187,7 @@ static void BM_TBB_ConcurrentQueue_Push(benchmark::State &state) {
 }
 BENCHMARK(BM_TBB_ConcurrentQueue_Push);
 
-static void BM_TBB_ConcurrentQueue_TryPop(benchmark::State &state) {
+static void BM_TBB_ConcurrentQueue_TryPop(benchmark::State& state) {
     tbb::concurrent_queue<uint64_t> queue;
 
     // 预填充
@@ -193,7 +196,7 @@ static void BM_TBB_ConcurrentQueue_TryPop(benchmark::State &state) {
     }
 
     uint64_t value;
-    for ([[maybe_unused]] auto _: state) {
+    for ([[maybe_unused]] auto _ : state) {
         if (!queue.try_pop(value)) {
             queue.push(value); // 保持队列有数据
         }

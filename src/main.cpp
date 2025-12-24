@@ -7,8 +7,8 @@
 #include "strategy_wrapper.hpp"
 #include "talos_gimbal/stm32.hpp"
 #include "tracker.hpp"
-#include <chrono>
 #include <Eigen/Geometry>
+#include <chrono>
 
 struct TalosConfig : SpVisionConfig {
     bool daedalus;
@@ -179,17 +179,17 @@ int main() {
 
         std::optional<ipc::ShmClient::ImageFrame> frame;
         if (daedalus) {
-            frame = client->recv_image();
+            frame     = client->recv_image();
             auto pose = client->recv_pose(ipc::POSE_CAMERA);
             if (pose) {
                 Eigen::Quaterniond q(pose->qw, pose->qx, pose->qy, pose->qz);
                 strategy.solver.set_R_gimbal2world(q);
 
                 // Extract yaw from quaternion for gimbal tracking
-                auto euler = q.toRotationMatrix().eulerAngles(1,0,2); // ZYX order
-                imu_data.data.yaw = euler[0];
-                imu_data.data.pitch = -euler[1] ;
-                imu_data.data.roll = euler[2] ;
+                auto euler          = q.toRotationMatrix().eulerAngles(1, 0, 2); // ZYX order
+                imu_data.data.yaw   = euler[0];
+                imu_data.data.pitch = -euler[1];
+                imu_data.data.roll  = euler[2];
             }
         } else {
             auto img_result = camera_->read(100ms);
@@ -241,8 +241,7 @@ int main() {
             // we cannot assure 'loop is longer than 'pipeline so we must copy the data.
         }
         sched.push_frame(
-            scheduler::Frame{
-                seq, timestamp_ns, scheduler::ImageBuffer::from_mat(std::move(img))});
+            scheduler::Frame{seq, timestamp_ns, scheduler::ImageBuffer::from_mat(std::move(img))});
         sched.tracker_event_.wait_for(1);
         // std::this_thread::sleep_for(std::chrono::microseconds(1));
     }

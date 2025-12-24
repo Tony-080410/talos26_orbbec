@@ -1,5 +1,5 @@
-#include <gtest/gtest.h>
 #include "ukf_logic.hpp"
+#include <gtest/gtest.h>
 
 using namespace talos;
 
@@ -11,17 +11,17 @@ protected:
     void SetUp() override {
         tracker.state.store(IDLE);
         tracker.detecting_count = 0;
-        tracker.lost_count = 0;
-        tracker.generation = 0;
+        tracker.lost_count      = 0;
+        tracker.generation      = 0;
         for (int i = 0; i < 3; ++i) {
             tracker.pos[i] = 0.0f;
             tracker.vel[i] = 0.0f;
         }
-        tracker.yaw = 0.0f;
-        tracker.v_yaw = 0.0f;
+        tracker.yaw       = 0.0f;
+        tracker.v_yaw     = 0.0f;
         tracker.radius[0] = 1.0f;
         tracker.radius[1] = 1.0f;
-        ukf = UKFState{};
+        ukf               = UKFState{};
     }
 };
 

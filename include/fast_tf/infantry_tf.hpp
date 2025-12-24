@@ -127,15 +127,15 @@ public:
     }
 
     // Infantry-specific accessors
-    static const TransformMatrix4d* get_camera_offset()  {
+    static const TransformMatrix4d* get_camera_offset() {
         return StaticTransformStore::get_transform<camera_link_Frame, gimbal_link_Frame>();
     }
 
-    static const TransformMatrix4d* get_muzzle_offset()  {
+    static const TransformMatrix4d* get_muzzle_offset() {
         return StaticTransformStore::get_transform<muzzle_link_Frame, gimbal_link_Frame>();
     }
 
-    static const TransformMatrix4d* get_optical_frame_transform()  {
+    static const TransformMatrix4d* get_optical_frame_transform() {
         return StaticTransformStore::get_transform<camera_optical_frame_Frame, camera_link_Frame>();
     }
 };

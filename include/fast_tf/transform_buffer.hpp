@@ -1,14 +1,14 @@
 #pragma once
 
+#include "frame_types.hpp"
+#include <Eigen/Dense>
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <mutex>
-#include <shared_mutex>
 #include <optional>
-#include <algorithm>
+#include <shared_mutex>
 #include <tbb/spin_rw_mutex.h>
-#include <Eigen/Dense>
-#include "frame_types.hpp"
 
 namespace fast_tf {
 
@@ -17,22 +17,20 @@ namespace fast_tf {
 // ============================================================================
 
 struct TransformEntry {
-    uint64_t timestamp_ns;  // 纳秒级时间戳
+    uint64_t timestamp_ns; // 纳秒级时间戳
     TransformMatrix4d transform;
 
-    TransformEntry() : timestamp_ns(0) {}
+    TransformEntry()
+        : timestamp_ns(0) {}
 
     TransformEntry(uint64_t ts, const TransformMatrix4d& tf)
-        : timestamp_ns(ts), transform(tf) {}
+        : timestamp_ns(ts)
+        , transform(tf) {}
 
     // 比较操作
-    bool operator<(const TransformEntry& other) const {
-        return timestamp_ns < other.timestamp_ns;
-    }
+    bool operator<(const TransformEntry& other) const { return timestamp_ns < other.timestamp_ns; }
 
-    bool operator>(const TransformEntry& other) const {
-        return timestamp_ns > other.timestamp_ns;
-    }
+    bool operator>(const TransformEntry& other) const { return timestamp_ns > other.timestamp_ns; }
 
     bool operator==(const TransformEntry& other) const {
         return timestamp_ns == other.timestamp_ns;
@@ -43,7 +41,7 @@ struct TransformEntry {
 // 固定大小的循环缓冲区
 // ============================================================================
 
-template<std::size_t Capacity>
+template <std::size_t Capacity>
 class CircularTransformBuffer {
 public:
     static_assert(Capacity > 0, "Capacity must be greater than 0");
@@ -52,14 +50,16 @@ public:
     using value_type = TransformEntry;
     using mutex_type = tbb::spin_rw_mutex;
 
-    CircularTransformBuffer() : head_(0), size_(0) {}
+    CircularTransformBuffer()
+        : head_(0)
+        , size_(0) {}
 
     // 禁用复制
-    CircularTransformBuffer(const CircularTransformBuffer&) = delete;
+    CircularTransformBuffer(const CircularTransformBuffer&)            = delete;
     CircularTransformBuffer& operator=(const CircularTransformBuffer&) = delete;
 
     // 默认移动构造函数
-    CircularTransformBuffer(CircularTransformBuffer&&) = default;
+    CircularTransformBuffer(CircularTransformBuffer&&)            = default;
     CircularTransformBuffer& operator=(CircularTransformBuffer&&) = default;
 
     // 向缓冲区添加变换
@@ -67,7 +67,7 @@ public:
         typename mutex_type::scoped_lock lock(mutex_);
 
         buffer_[head_] = TransformEntry(timestamp_ns, transform);
-        head_ = (head_ + 1) % Capacity;
+        head_          = (head_ + 1) % Capacity;
 
         if (size_ < Capacity) {
             size_++;
@@ -126,8 +126,8 @@ public:
         std::sort(entries.begin(), entries.end());
 
         // 查找目标时间戳
-        auto it = std::lower_bound(entries.begin(), entries.end(),
-                                   TransformEntry(timestamp_ns, {}));
+        auto it =
+            std::lower_bound(entries.begin(), entries.end(), TransformEntry(timestamp_ns, {}));
 
         if (it != entries.end() && it->timestamp_ns == timestamp_ns) {
             return *it;
@@ -138,11 +138,10 @@ public:
             auto prev = std::prev(it);
 
             // 检查是否可以插值
-            if (prev->timestamp_ns < timestamp_ns &&
-                timestamp_ns < it->timestamp_ns) {
+            if (prev->timestamp_ns < timestamp_ns && timestamp_ns < it->timestamp_ns) {
                 uint64_t dt = it->timestamp_ns - prev->timestamp_ns;
-                double t = static_cast<double>(timestamp_ns - prev->timestamp_ns) /
-                          static_cast<double>(dt);
+                double t    = static_cast<double>(timestamp_ns - prev->timestamp_ns)
+                         / static_cast<double>(dt);
 
                 TransformMatrix4d interpolated =
                     TransformMatrix4d::lerp(prev->transform, it->transform, t);
@@ -167,8 +166,8 @@ public:
 
         for (std::size_t i = 0; i < size_; ++i) {
             std::size_t idx = (head_ + i) % Capacity;
-            min_time = std::min(min_time, buffer_[idx].timestamp_ns);
-            max_time = std::max(max_time, buffer_[idx].timestamp_ns);
+            min_time        = std::min(min_time, buffer_[idx].timestamp_ns);
+            max_time        = std::max(max_time, buffer_[idx].timestamp_ns);
         }
 
         return std::make_pair(min_time, max_time);
@@ -188,9 +187,7 @@ public:
     }
 
     // 获取缓冲区容量
-    [[nodiscard]] constexpr std::size_t capacity() const {
-        return Capacity;
-    }
+    [[nodiscard]] constexpr std::size_t capacity() const { return Capacity; }
 
     // 检查缓冲区是否满
     [[nodiscard]] bool is_full() const {
@@ -238,8 +235,8 @@ public:
 
 private:
     std::array<TransformEntry, Capacity> buffer_;
-    std::size_t head_ = 0;  // 下一个写入位置
-    std::size_t size_ = 0;  // 当前条目数
+    std::size_t head_ = 0; // 下一个写入位置
+    std::size_t size_ = 0; // 当前条目数
     mutable mutex_type mutex_;
 };
 
@@ -247,10 +244,10 @@ private:
 // 便捷的树定义宏
 // ============================================================================
 
-template<std::size_t N>
+template <std::size_t N>
 struct BufferCapacity {
     static constexpr std::size_t value = N;
-    using buffer_type = CircularTransformBuffer<N>;
+    using buffer_type                  = CircularTransformBuffer<N>;
 };
 
 // 别名（避免与模板类重复）
