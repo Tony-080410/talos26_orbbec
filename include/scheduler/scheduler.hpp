@@ -195,6 +195,7 @@ private:
     // 注: 命名为 DetectSolveBundle 避免与 auto_aim::DetectionResult variant 冲突
     // Phase 2 将迁移到 variant 类型
     struct DetectSolveBundle {
+        uint64_t timestamp_ns{0}; // 帧时间戳 (用于tf查询)
         talos::ArmorSlots armor_slots{};
         auto_aim::Poses3D poses3d{};
     };
@@ -266,12 +267,13 @@ private:
 
             // 检测
             auto& result              = detection_buffer_.borrow_mut();
+            result.timestamp_ns       = shared.timestamp_ns; // 保存帧时间戳
             const auto t_detect_start = std::chrono::steady_clock::now();
             strategy_->detect(shared, result.armor_slots);
             const auto t_detect_end = std::chrono::steady_clock::now();
 
-            // 解算
-            strategy_->solve(result.armor_slots, result.poses3d);
+            // 解算 (传递帧时间戳用于tf查询)
+            strategy_->solve(result.armor_slots, result.poses3d, result.timestamp_ns);
             const auto t_solve_end = std::chrono::steady_clock::now();
 
             detection_buffer_.publish();
@@ -317,8 +319,8 @@ private:
 
             const auto& result = **detection_opt;
 
-            // 调用 track，传入 scheduler 持有的 TrackerSoA
-            strategy_->track(tracker_soa_, result.armor_slots, result.poses3d);
+            // 调用 track，传入 scheduler 持有的 TrackerSoA 和帧时间戳
+            strategy_->track(tracker_soa_, result.armor_slots, result.poses3d, result.timestamp_ns);
 
             // 通知 output
             output_event_.notify_one();

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <Eigen/Geometry>
+#include <cstdint>
 #include <opencv2/opencv.hpp>
 
 #include "config.hpp"
@@ -22,11 +23,12 @@ constexpr double SMALL_ARMOR_WIDTH = 135e-3; // m
  *
  * 坐标系输出：
  * - camera_optical_frame (OpenCV/PnP输出)：x右 y下 z前（沿光轴）
- * - 其他坐标系的转换由 Tracker 通过 fast_tf 完成
+ * - 其他坐标系的转换由使用者通过 fast_tf 完成
  *
  * 设计说明：
  * - Solver 只负责 PnP 解算，输出 camera_optical_frame 坐标系数据
- * - tf 发布和坐标转换由 Tracker 负责
+ * - 解算结果带有帧时间戳 (timestamp_ns)，用于 fast_tf 时间插值查询
+ * - tf 发布和坐标转换由 Tracker/Target 负责
  */
 class Solver {
 public:
@@ -52,16 +54,20 @@ public:
      * @brief 对单个装甲板执行PnP解算
      * @param armor 检测到的装甲板数据
      * @param pose3d 输出的3D位姿 (camera_optical_frame坐标系)
+     * @param timestamp_ns 帧时间戳 (纳秒)
      * @return 是否解算成功
      */
-    bool solve(const talos::Armor& armor, ArmorPose3D& pose3d) const;
+    bool solve(const talos::Armor& armor, ArmorPose3D& pose3d, uint64_t timestamp_ns) const;
 
     /**
      * @brief 对ArmorSlots中的所有装甲板执行PnP解算
      * @param slots 检测结果
      * @param poses3d 输出的3D位姿数组 (camera_optical_frame坐标系)
+     * @param timestamp_ns 帧时间戳 (纳秒)
      */
-    void solve_all(const talos::ArmorSlots& slots, std::array<ArmorPose3D, 10>& poses3d) const;
+    void solve_all(
+        const talos::ArmorSlots& slots, std::array<ArmorPose3D, 10>& poses3d,
+        uint64_t timestamp_ns) const;
 
     /**
      * @brief 重投影装甲板角点到图像平面

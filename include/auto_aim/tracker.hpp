@@ -97,13 +97,6 @@ private:
     Target target_;
 
     /**
-     * @brief 将poses从camera_optical_frame转换到world坐标系
-     * @param poses 输入/输出的位姿数组
-     * @param timestamp_ns 时间戳（纳秒）
-     */
-    void transform_poses_to_world(Poses3D& poses, uint64_t timestamp_ns) const;
-
-    /**
      * @brief 状态机更新
      */
     void state_machine(talos::TrackerSoA& state, const Target& target, bool found) const;

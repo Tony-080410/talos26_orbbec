@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <string_view>
 
 namespace fast_tf {
 
@@ -18,7 +19,7 @@ enum class TransformError : uint8_t {
 };
 
 /// Convert error to string (constexpr for compile-time use)
-constexpr const char* to_string(TransformError e) noexcept {
+constexpr std::string_view to_string(TransformError e) noexcept {
     switch (e) {
     case TransformError::FrameNotFound: return "frame not found";
     case TransformError::NoDataAvailable: return "no data available";

@@ -35,14 +35,15 @@ auto TalosStrategy::detect(const scheduler::Captured& feat, talos::ArmorSlots& a
 }
 
 auto TalosStrategy::solve(
-    const talos::ArmorSlots& armor, std::array<auto_aim::ArmorPose3D, 10>& poses3d) const noexcept
-    -> void {
-    solver.solve_all(armor, poses3d);
+    const talos::ArmorSlots& armor, std::array<auto_aim::ArmorPose3D, 10>& poses3d,
+    uint64_t timestamp_ns) const noexcept -> void {
+    solver.solve_all(armor, poses3d, timestamp_ns);
 }
 
 auto TalosStrategy::track(
     talos::TrackerSoA& tracker_soa, const talos::ArmorSlots& armor,
-    const std::array<auto_aim::ArmorPose3D, 10>& poses3d) noexcept -> void {
+    const std::array<auto_aim::ArmorPose3D, 10>& poses3d,
+    [[maybe_unused]] uint64_t timestamp_ns) noexcept -> void {
     const auto t0 = std::chrono::steady_clock::now();
 
     const auto timestamp = std::chrono::steady_clock::now();

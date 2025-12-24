@@ -26,7 +26,7 @@ Solver::Solver(const SpVisionSolverConfig& config) {
     cv::eigen2cv(config.distort_coefficient, distort_coeffs_);
 }
 
-bool Solver::solve(const talos::Armor& armor, ArmorPose3D& pose3d) const {
+bool Solver::solve(const talos::Armor& armor, ArmorPose3D& pose3d, uint64_t timestamp_ns) const {
     // 从armor.pts提取角点
     std::vector<cv::Point2f> image_points(4);
     image_points[0] = {armor.pts[0], armor.pts[1]}; // tl
@@ -55,6 +55,9 @@ bool Solver::solve(const talos::Armor& armor, ArmorPose3D& pose3d) const {
     // tvec: object原点在camera_optical_frame中的位置
     // rvec: object坐标系相对于camera_optical_frame的旋转
     // ====================================
+
+    // 填充帧时间戳 (用于fast_tf查询)
+    pose3d.timestamp_ns = timestamp_ns;
 
     // 位置 (camera_optical_frame坐标系)
     cv::cv2eigen(tvec, pose3d.xyz_in_camera);
@@ -95,14 +98,16 @@ bool Solver::solve(const talos::Armor& armor, ArmorPose3D& pose3d) const {
     return true;
 }
 
-void Solver::solve_all(const talos::ArmorSlots& slots, std::array<ArmorPose3D, 10>& poses3d) const {
+void Solver::solve_all(
+    const talos::ArmorSlots& slots, std::array<ArmorPose3D, 10>& poses3d,
+    uint64_t timestamp_ns) const {
     for (int i = 0; i < 10; ++i) {
         if (!slots.is_valid(i)) {
             poses3d[i].valid = false;
             continue;
         }
 
-        if (ArmorPose3D pose3d; solve(slots.armors[i], pose3d)) {
+        if (ArmorPose3D pose3d; solve(slots.armors[i], pose3d, timestamp_ns)) {
             poses3d[i] = pose3d;
         } else {
             poses3d[i].valid = false;
@@ -112,7 +117,7 @@ void Solver::solve_all(const talos::ArmorSlots& slots, std::array<ArmorPose3D, 1
 
 // ============ SolverConcept 方法实现 ============
 
-void Solver::solve(const DetectionResult& det, SolveResult& out, DebugData& /*debug*/) noexcept {
+void Solver::solve(const DetectionResult& det, SolveResult& out, DebugData& debug) noexcept {
     const auto* slots = get_armor_slots(det);
     if (!slots) {
         out = std::monostate{};
@@ -120,7 +125,14 @@ void Solver::solve(const DetectionResult& det, SolveResult& out, DebugData& /*de
     }
 
     auto& poses = out.emplace<Poses3D>();
-    solve_all(*slots, poses);
+    // 使用 debug 中的时间戳，如果为0则使用当前时间
+    const uint64_t timestamp_ns =
+        debug.timestamp_ns != 0
+            ? debug.timestamp_ns
+            : static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                        std::chrono::steady_clock::now().time_since_epoch())
+                                        .count());
+    solve_all(*slots, poses, timestamp_ns);
 }
 
 std::vector<cv::Point2f> Solver::reproject_armor(

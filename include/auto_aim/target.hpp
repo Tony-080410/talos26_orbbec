@@ -6,6 +6,7 @@
 
 #include "detector_state.hpp"
 #include "extended_kalman_filter.hpp"
+#include "fast_tf/infantry_tf.hpp"
 #include "solver.hpp"
 
 namespace auto_aim {
@@ -25,6 +26,10 @@ namespace auto_aim {
  * - r: 装甲板半径 (基准)
  * - l: r2 - r1 (长短轴差)
  * - h: z2 - z1 (高度差)
+ *
+ * 坐标系说明:
+ * - 所有输入使用ArmorPose3D (camera_optical坐标系 + timestamp_ns)
+ * - 内部通过fast_tf查询转换到world坐标系进行EKF计算
  */
 class Target {
 public:
@@ -38,7 +43,8 @@ public:
     /**
      * @brief 从检测结果初始化目标
      * @param armor 检测到的装甲板（用于名称、类型）
-     * @param pose3d 解算得到的3D位姿
+     * @param pose3d 解算得到的3D位姿 (camera_optical坐标系 + timestamp_ns)
+     * @param tf_manager TF管理器引用，用于坐标变换
      * @param t 时间戳
      * @param radius 初始半径估计
      * @param armor_num 装甲板数量（2/3/4）
@@ -46,6 +52,7 @@ public:
      */
     Target(
         const talos::Armor& armor, const ArmorPose3D& pose3d,
+        const fast_tf::infantry::InfantryTFManager& tf_manager,
         std::chrono::steady_clock::time_point t, double radius, int armor_num,
         const Eigen::VectorXd& P0_dig);
 
@@ -67,9 +74,12 @@ public:
     /**
      * @brief 用观测更新滤波器
      * @param armor 检测到的装甲板
-     * @param pose3d 解算得到的3D位姿
+     * @param pose3d 解算得到的3D位姿 (camera_optical坐标系 + timestamp_ns)
+     * @param tf_manager TF管理器引用，用于坐标变换
      */
-    void update(const talos::Armor& armor, const ArmorPose3D& pose3d);
+    void update(
+        const talos::Armor& armor, const ArmorPose3D& pose3d,
+        const fast_tf::infantry::InfantryTFManager& tf_manager);
 
     /**
      * @brief 获取EKF状态向量
@@ -109,9 +119,15 @@ private:
     std::chrono::steady_clock::time_point t_;
 
     /**
-     * @brief 使用球坐标系更新
+     * @brief 使用球坐标系更新 (world坐标系)
+     * @param xyz_world 装甲板在world系的位置
+     * @param ypr_world 装甲板在world系的欧拉角
+     * @param ypd_world 装甲板在world系的球坐标
+     * @param id 装甲板ID
      */
-    void update_ypda(const ArmorPose3D& pose3d, int id);
+    void update_ypda(
+        const Eigen::Vector3d& xyz_world, const Eigen::Vector3d& ypr_world,
+        const Eigen::Vector3d& ypd_world, int id);
 
     /**
      * @brief 计算装甲板在世界坐标系中的位置

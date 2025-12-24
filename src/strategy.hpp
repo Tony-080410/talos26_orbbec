@@ -15,10 +15,11 @@ class TalosStrategy {
 public:
     // SchedulerStrategy concept methods
     void detect(const scheduler::Captured& feat, talos::ArmorSlots& armor) noexcept;
-    void solve(const talos::ArmorSlots& armor, auto_aim::Poses3D& poses3d) const noexcept;
+    void solve(const talos::ArmorSlots& armor, auto_aim::Poses3D& poses3d, uint64_t timestamp_ns)
+        const noexcept;
     void track(
         talos::TrackerSoA& tracker_soa, const talos::ArmorSlots& armor,
-        const auto_aim::Poses3D& poses3d) noexcept;
+        const auto_aim::Poses3D& poses3d, uint64_t timestamp_ns) noexcept;
     void output() noexcept;
 
     // Additional methods (not part of concept)

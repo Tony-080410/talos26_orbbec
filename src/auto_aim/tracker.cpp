@@ -144,10 +144,10 @@ void Tracker::state_machine(
 bool Tracker::set_target(
     talos::TrackerSoA& state, Target& target, const talos::ArmorSlots& slots,
     const std::array<ArmorPose3D, 10>& poses3d,
-    const std::chrono::steady_clock::time_point t) const { // 找到第一个有效的敌方装甲板
+    const std::chrono::steady_clock::time_point t) const {
     // ========== 坐标系说明 ==========
-    // poses3d中的所有数据都在world坐标系
-    // xyz_in_world, ypr_in_world, ypd_in_world: [world系]
+    // poses3d中的数据在camera_optical坐标系
+    // Target构造时通过tf_manager查询world坐标
     // ================================
 
     spdlog::debug("Setting target...");
@@ -167,8 +167,8 @@ bool Tracker::set_target(
             continue;
         }
 
-        // 选择距离最近的
-        if (const float distance = static_cast<float>(poses3d[i].ypd_in_world[2]);
+        // 使用camera坐标系中的距离选择最近目标
+        if (const float distance = static_cast<float>(poses3d[i].xyz_in_camera.norm());
             distance < best_distance) {
             spdlog::debug("Slot {} has better distance: {}", i, distance);
             best_distance = distance;
@@ -198,22 +198,22 @@ bool Tracker::set_target(
         const Eigen::VectorXd P0_dig{
             {1, 64, 1, 64, 1, 64, 0.4, 100, 1, 1, 1}
         };
-        target = Target(armor, pose3d, t, 0.2, 2, P0_dig);
+        target = Target(armor, pose3d, tf_manager_, t, 0.2, 2, P0_dig);
     } else if (name == talos::ArmorName::outpost) {
         const Eigen::VectorXd P0_dig{
             {1, 64, 1, 64, 1, 81, 0.4, 100, 1e-4, 0, 0}
         };
-        target = Target(armor, pose3d, t, 0.2765, 3, P0_dig);
+        target = Target(armor, pose3d, tf_manager_, t, 0.2765, 3, P0_dig);
     } else if (name == talos::ArmorName::base) {
         const Eigen::VectorXd P0_dig{
             {1, 64, 1, 64, 1, 64, 0.4, 100, 1e-4, 0, 0}
         };
-        target = Target(armor, pose3d, t, 0.3205, 3, P0_dig);
+        target = Target(armor, pose3d, tf_manager_, t, 0.3205, 3, P0_dig);
     } else {
         const Eigen::VectorXd P0_dig{
             {1, 64, 1, 64, 1, 64, 0.4, 100, 1, 1, 1}
         };
-        target = Target(armor, pose3d, t, 0.2, 4, P0_dig);
+        target = Target(armor, pose3d, tf_manager_, t, 0.2, 4, P0_dig);
     }
 
     // 更新 generation 用于 ABA 防护
@@ -226,8 +226,8 @@ bool Tracker::update_target(
     [[maybe_unused]] talos::TrackerSoA& state, Target& target, const talos::ArmorSlots& slots,
     const Poses3D& poses3d, const std::chrono::steady_clock::time_point t) const {
     // ========== 坐标系说明 ==========
-    // poses3d中的所有数据都在world坐标系
-    // xyz_in_world, ypr_in_world, ypd_in_world: [world系]
+    // poses3d中的数据在camera_optical坐标系
+    // Target::update时通过tf_manager查询world坐标
     // ================================
 
     target.predict(t);
@@ -254,7 +254,7 @@ bool Tracker::update_target(
         }
 
         found_count++;
-        target.update(armor, poses3d[i]); // poses3d[i]在world系
+        target.update(armor, poses3d[i], tf_manager_);
     }
 
     return found_count > 0;
@@ -262,74 +262,22 @@ bool Tracker::update_target(
 
 // ============ TrackerConcept 方法实现 ============
 
-void Tracker::transform_poses_to_world(
-    Poses3D& poses, [[maybe_unused]] uint64_t timestamp_ns) const {
-    // 获取坐标变换矩阵
-    const fast_tf::TransformMatrix4d T_optical_to_gimbal =
-        tf_manager_.get_camera_optical_to_gimbal();
-    const fast_tf::TransformMatrix4d T_gimbal_to_world  = tf_manager_.get_gimbal_to_world();
-    const fast_tf::TransformMatrix4d T_optical_to_world = T_optical_to_gimbal * T_gimbal_to_world;
-
-    // 提取旋转矩阵
-    const Eigen::Matrix3d R_optical_to_gimbal = T_optical_to_gimbal.rotation();
-    const Eigen::Matrix3d R_gimbal_to_world   = T_gimbal_to_world.rotation();
-    const Eigen::Matrix3d R_optical_to_world  = T_optical_to_world.rotation();
-
-    for (auto& pose : poses) {
-        if (!pose.valid) {
-            continue;
-        }
-
-        // ========== camera_optical_frame → gimbal_link ==========
-        // 变换位置
-        Eigen::Vector4d p_optical(
-            pose.xyz_in_camera[0], pose.xyz_in_camera[1], pose.xyz_in_camera[2], 1.0);
-        Eigen::Vector4d p_gimbal = T_optical_to_gimbal.matrix() * p_optical;
-        pose.xyz_in_gimbal       = p_gimbal.head<3>();
-
-        // 变换旋转（装甲板在gimbal坐标系下的姿态）
-        Eigen::Matrix3d R_armor_in_gimbal = R_optical_to_gimbal * pose.R_in_camera;
-
-        // 提取yaw, pitch, roll (ZYX顺序)
-        pose.ypr_in_gimbal = math::eulers(R_armor_in_gimbal, 2, 1, 0);
-
-        // ========== gimbal_link → world ==========
-        // 变换位置
-        Eigen::Vector4d p_world = T_optical_to_world.matrix() * p_optical;
-        pose.xyz_in_world       = p_world.head<3>();
-
-        // 变换旋转（装甲板在world坐标系下的姿态）
-        Eigen::Matrix3d R_armor_in_world = R_optical_to_world * pose.R_in_camera;
-        pose.ypr_in_world                = math::eulers(R_armor_in_world, 2, 1, 0);
-
-        // 计算球坐标 (yaw, pitch, distance)
-        pose.ypd_in_world = math::xyz2ypd(pose.xyz_in_world);
-
-        // NOTE: object变换的发布由主程序负责，Tracker只做坐标变换
-    }
-}
-
 void Tracker::track(
     const DetectionResult& det, const SolveResult& solve, TrackerOutput& out,
     DebugData& debug) noexcept {
-    const auto* slots     = get_armor_slots(det);
-    const auto* poses_raw = get_poses3d(solve);
+    const auto* slots = get_armor_slots(det);
+    const auto* poses = get_poses3d(solve);
 
-    if (!slots || !poses_raw) {
+    if (!slots || !poses) {
         // 无输入，执行预测
         debug.tracker_state = out.state.load(std::memory_order_relaxed);
         return;
     }
 
-    // 复制poses并进行坐标变换
-    Poses3D poses               = *poses_raw;
-    const uint64_t timestamp_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
-                                      std::chrono::steady_clock::now().time_since_epoch())
-                                      .count();
-    transform_poses_to_world(poses, timestamp_ns);
-
+    // 不再需要坐标变换，直接使用 camera_optical 坐标
+    // Target 构造/update 时会通过 tf_manager 查询 world 坐标
     const auto timestamp = std::chrono::steady_clock::now();
-    track(out, target_, *slots, poses, timestamp);
+    track(out, target_, *slots, *poses, timestamp);
 
     // 更新调试数据
     debug.tracker_state = out.state.load(std::memory_order_relaxed);

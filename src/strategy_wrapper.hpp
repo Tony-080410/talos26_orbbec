@@ -349,8 +349,8 @@ struct FoxgloveWrapper {
 
     auto track(
         talos::TrackerSoA& tracker_soa, const talos::ArmorSlots& armor,
-        const auto_aim::Poses3D& poses3d) noexcept -> void {
-        inner.get().track(tracker_soa, armor, poses3d);
+        const auto_aim::Poses3D& poses3d, uint64_t timestamp_ns) noexcept -> void {
+        inner.get().track(tracker_soa, armor, poses3d, timestamp_ns);
 
         // 发布跟踪目标信息 (JSON)
         {
@@ -464,8 +464,10 @@ struct FoxgloveWrapper {
         }
     }
 
-    auto solve(const talos::ArmorSlots& armor, auto_aim::Poses3D& poses3d) noexcept -> void {
-        inner.get().solve(armor, poses3d);
+    auto solve(
+        const talos::ArmorSlots& armor, auto_aim::Poses3D& poses3d, uint64_t timestamp_ns) noexcept
+        -> void {
+        inner.get().solve(armor, poses3d, timestamp_ns);
 
         std::vector<foxglove::schemas::SceneEntity> scene_entities;
         for (int i = 0; i < 10; i++) {
@@ -558,7 +560,7 @@ struct FoxgloveWrapper {
             server.get().enqueue_message(std::move(scene_msg));
         }
 
-        // 第五步：构造和发送JSON装甲板数据
+        // 第五步：构造和发送JSON装甲板数据 (camera_optical坐标系)
         nlohmann::json armor_json = nlohmann::json::array();
         for (int i = 0; i < 10; i++) {
             if (!armor.is_valid(i))
@@ -568,17 +570,15 @@ struct FoxgloveWrapper {
             const auto& pose = poses3d[i];
 
             nlohmann::json armor_obj;
-            armor_obj["id"]                     = i;
-            armor_obj["name"]                   = std::string(talos::armor_name(a.name));
-            armor_obj["type"]                   = a.type == talos::ArmorType::big ? "big" : "small";
-            armor_obj["color"]                  = std::string(talos::color_name(a.color));
-            armor_obj["confidence"]             = a.confidence;
-            armor_obj["pose"]["position"]["x"]  = pose.xyz_in_world[0];
-            armor_obj["pose"]["position"]["y"]  = pose.xyz_in_world[1];
-            armor_obj["pose"]["position"]["z"]  = pose.xyz_in_world[2];
-            armor_obj["pose"]["euler"]["yaw"]   = pose.ypr_in_world[0];
-            armor_obj["pose"]["euler"]["pitch"] = pose.ypr_in_world[1];
-            armor_obj["pose"]["euler"]["roll"]  = pose.ypr_in_world[2];
+            armor_obj["id"]                    = i;
+            armor_obj["name"]                  = std::string(talos::armor_name(a.name));
+            armor_obj["type"]                  = a.type == talos::ArmorType::big ? "big" : "small";
+            armor_obj["color"]                 = std::string(talos::color_name(a.color));
+            armor_obj["confidence"]            = a.confidence;
+            armor_obj["pose"]["position"]["x"] = pose.xyz_in_camera[0];
+            armor_obj["pose"]["position"]["y"] = pose.xyz_in_camera[1];
+            armor_obj["pose"]["position"]["z"] = pose.xyz_in_camera[2];
+            armor_obj["pose"]["yaw_raw"]       = pose.yaw_raw;
 
             armor_json.push_back(armor_obj);
         }
@@ -593,7 +593,7 @@ struct FoxgloveWrapper {
             server.get().enqueue_message(std::move(armor_msg));
         }
 
-        // 发布测量值 (measurement) - 每个有效装甲板的3D位姿
+        // 发布测量值 (measurement) - 每个有效装甲板的3D位姿 (camera_optical坐标系)
         {
             nlohmann::json measurement_json;
             measurement_json["timestamp_ns"] = armor.timestamp_ns;
@@ -604,16 +604,8 @@ struct FoxgloveWrapper {
                 const auto& pose = poses3d[i];
                 nlohmann::json m;
                 m["id"]            = i;
-                m["xyz_in_gimbal"] = {
-                    pose.xyz_in_gimbal[0], pose.xyz_in_gimbal[1], pose.xyz_in_gimbal[2]};
-                m["xyz_in_world"] = {
-                    pose.xyz_in_world[0], pose.xyz_in_world[1], pose.xyz_in_world[2]};
-                m["ypr_in_gimbal"] = {
-                    pose.ypr_in_gimbal[0], pose.ypr_in_gimbal[1], pose.ypr_in_gimbal[2]};
-                m["ypr_in_world"] = {
-                    pose.ypr_in_world[0], pose.ypr_in_world[1], pose.ypr_in_world[2]};
-                m["ypd_in_world"] = {
-                    pose.ypd_in_world[0], pose.ypd_in_world[1], pose.ypd_in_world[2]};
+                m["xyz_in_camera"] = {
+                    pose.xyz_in_camera[0], pose.xyz_in_camera[1], pose.xyz_in_camera[2]};
                 m["yaw_raw"] = pose.yaw_raw;
                 measurement_json["measurements"].push_back(m);
             }
