@@ -221,7 +221,7 @@ void visualize_frame(
             // Show 3D distance if solved
             if (pose.valid) {
                 cv::putText(
-                    display, fmt::format("{:.2f}m", pose.ypd_in_world[2]),
+                    display, fmt::format("{:.2f}m", pose.xyz_in_camera.norm()),
                     cv::Point(pts[0].x, pts[0].y - 5), cv::FONT_HERSHEY_SIMPLEX, 0.4, color, 1);
             }
         }
@@ -350,7 +350,7 @@ int main(int argc, char** argv) {
         auto t1 = steady_clock::now();
 
         // === Stage 3: Solver ===
-        solver.solve_all(detections, poses3d);
+        solver.solve_all(detections, poses3d, 0);
         auto t2 = steady_clock::now();
 
         // Count solver success
@@ -359,7 +359,7 @@ int main(int argc, char** argv) {
                 metrics.solver_total++;
                 if (poses3d[j].valid) {
                     metrics.solver_success++;
-                    metrics.total_distance += poses3d[j].ypd_in_world[2];
+                    metrics.total_distance += poses3d[j].xyz_in_camera.norm();
                 }
             }
         }

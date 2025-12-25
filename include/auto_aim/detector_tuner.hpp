@@ -48,6 +48,44 @@ struct ParameterRange {
 };
 
 /**
+ * @brief Tuning search space configuration
+ */
+struct TuningConfig {
+    // Parameter search ranges
+    ParameterRange threshold;
+    ParameterRange max_angle_error;
+    ParameterRange min_lightbar_ratio;
+    ParameterRange max_lightbar_ratio;
+    ParameterRange min_lightbar_length;
+    ParameterRange min_armor_ratio;
+    ParameterRange max_armor_ratio;
+    ParameterRange max_side_ratio;
+    ParameterRange min_confidence;
+    ParameterRange max_rectangular_error;
+
+    // Algorithm parameters
+    size_t max_iterations{5};
+    double convergence_threshold{0.01}; // Stop if improvement < 1%
+    size_t num_clusters{4};             // K-means clusters
+    double top_percentile{0.2};         // Top 20% for clustering
+    size_t max_pareto_solutions{3};     // Maximum Pareto solutions to return
+
+    // Quick mode for local testing
+    bool quick_mode{false};   // Enable quick mode
+    double sample_ratio{1.0}; // Fraction of dataset to use (0.0-1.0)
+
+    /**
+     * @brief Read configuration from TOML table
+     */
+    [[nodiscard]] std::expected<void, std::string> read_from(const toml::table& tbl);
+
+    /**
+     * @brief Get default tuning configuration
+     */
+    [[nodiscard]] static TuningConfig default_config();
+};
+
+/**
  * @brief Multi-objective optimization targets
  * Maximize F1 and IoU, minimize latency
  */
@@ -102,59 +140,25 @@ struct ParameterCandidate {
      * @brief Convert config to normalized parameter vector for clustering
      * @return 10-element array of normalized parameters [0,1]
      */
-    [[nodiscard]] std::array<double, 10> normalized_params() const {
-        // Normalization ranges (based on typical search space)
-        return {
-            (config.threshold - 50.0) / 200.0,           // threshold: 50-250
-            (config.max_angle_error - 20.0) / 50.0,      // angle: 20-70
-            (config.min_lightbar_ratio - 1.0) / 3.0,     // min_lb_ratio: 1-4
-            (config.max_lightbar_ratio - 10.0) / 20.0,   // max_lb_ratio: 10-30
-            (config.min_lightbar_length - 3.0) / 15.0,   // min_lb_len: 3-18
-            (config.min_armor_ratio - 0.5) / 2.0,        // min_armor: 0.5-2.5
-            (config.max_armor_ratio - 2.0) / 6.0,        // max_armor: 2-8
-            (config.max_side_ratio - 1.0) / 2.0,         // side_ratio: 1-3
-            (config.min_confidence - 0.4) / 0.6,         // confidence: 0.4-1.0
-            (config.max_rectangular_error - 10.0) / 40.0 // rect_err: 10-50
+    [[nodiscard]] std::array<double, 10> normalized_params(const TuningConfig& tc) const {
+        auto norm = [](double val, const ParameterRange& r) {
+            // 防止除以 0，且保证结果在 0-1 之间
+            double range = r.max - r.min;
+            return (range > 1e-6) ? (val - r.min) / range : 0.5;
         };
+
+        return {
+            norm(config.threshold, tc.threshold),
+            norm(config.max_angle_error, tc.max_angle_error),
+            norm(config.min_lightbar_ratio, tc.min_lightbar_ratio),
+            norm(config.max_lightbar_ratio, tc.max_lightbar_ratio),
+            norm(config.min_lightbar_length, tc.min_lightbar_length),
+            norm(config.min_armor_ratio, tc.min_armor_ratio),
+            norm(config.max_armor_ratio, tc.max_armor_ratio),
+            norm(config.max_side_ratio, tc.max_side_ratio),
+            norm(config.min_confidence, tc.min_confidence),
+            norm(config.max_rectangular_error, tc.max_rectangular_error)};
     }
-};
-
-/**
- * @brief Tuning search space configuration
- */
-struct TuningConfig {
-    // Parameter search ranges
-    ParameterRange threshold;
-    ParameterRange max_angle_error;
-    ParameterRange min_lightbar_ratio;
-    ParameterRange max_lightbar_ratio;
-    ParameterRange min_lightbar_length;
-    ParameterRange min_armor_ratio;
-    ParameterRange max_armor_ratio;
-    ParameterRange max_side_ratio;
-    ParameterRange min_confidence;
-    ParameterRange max_rectangular_error;
-
-    // Algorithm parameters
-    size_t max_iterations{5};
-    double convergence_threshold{0.01}; // Stop if improvement < 1%
-    size_t num_clusters{4};             // K-means clusters
-    double top_percentile{0.2};         // Top 20% for clustering
-    size_t max_pareto_solutions{3};     // Maximum Pareto solutions to return
-
-    // Quick mode for local testing
-    bool quick_mode{false};   // Enable quick mode
-    double sample_ratio{1.0}; // Fraction of dataset to use (0.0-1.0)
-
-    /**
-     * @brief Read configuration from TOML table
-     */
-    [[nodiscard]] std::expected<void, std::string> read_from(const toml::table& tbl);
-
-    /**
-     * @brief Get default tuning configuration
-     */
-    [[nodiscard]] static TuningConfig default_config();
 };
 
 /**

@@ -121,12 +121,12 @@ private:
     /**
      * @brief 使用球坐标系更新 (world坐标系)
      * @param xyz_world 装甲板在world系的位置
-     * @param ypr_world 装甲板在world系的欧拉角
+     * @param rpy_world 装甲板在world系的欧拉角 [roll, pitch, yaw]
      * @param ypd_world 装甲板在world系的球坐标
      * @param id 装甲板ID
      */
     void update_ypda(
-        const Eigen::Vector3d& xyz_world, const Eigen::Vector3d& ypr_world,
+        const Eigen::Vector3d& xyz_world, const Eigen::Vector3d& rpy_world,
         const Eigen::Vector3d& ypd_world, int id);
 
     /**

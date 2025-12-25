@@ -197,7 +197,7 @@ private:
  * 新增功能:
  * - CircularTransformBuffer 存储gimbal变换历史 (支持时间插值查询)
  * - get_*_at(timestamp_ns) 系列方法用于历史查询
- * - transform_point_to_world() / transform_rotation_to_world_ypr() 便捷方法
+ * - transform_point_to_world() / transform_rotation_to_world_rpy() 便捷方法
  */
 class InfantryTFManager : public RobotTFManager {
 public:
@@ -411,11 +411,13 @@ public:
      * @return Transform or error if timestamp out of range
      */
     [[nodiscard]] std::expected<TransformMatrix4d, TransformError>
-        get_gimbal_to_world_at(uint64_t timestamp_ns) const {
+        get_gimbal_to_world_at(uint64_t timestamp_ns, bool allow_extrapolation = true) const {
         std::shared_lock<std::shared_mutex> lock(publish_mutex_);
 
         auto gimbal_result =
-            gimbal_buffer_.at_interpolated(static_cast<timestamp_ns_t>(timestamp_ns));
+            allow_extrapolation
+                ? gimbal_buffer_.at_interpolated_clamped(static_cast<timestamp_ns_t>(timestamp_ns))
+                : gimbal_buffer_.at_interpolated(static_cast<timestamp_ns_t>(timestamp_ns));
         if (!gimbal_result) {
             return std::unexpected(gimbal_result.error());
         }
@@ -465,12 +467,12 @@ public:
 
     /**
      * Transform a rotation matrix from camera_optical_frame to world frame,
-     * and extract yaw-pitch-roll euler angles.
+     * and extract roll-pitch-yaw euler angles.
      * @param R_camera Rotation matrix in camera_optical_frame
      * @param timestamp_ns Timestamp for tf lookup
-     * @return YPR euler angles in world frame (rad), or error
+     * @return RPY euler angles in world frame (rad), or error
      */
-    [[nodiscard]] std::expected<Eigen::Vector3d, TransformError> transform_rotation_to_world_ypr(
+    [[nodiscard]] std::expected<Eigen::Vector3d, TransformError> transform_rotation_to_world_rpy(
         const Eigen::Matrix3d& R_camera, uint64_t timestamp_ns) const {
         auto T_result = get_camera_optical_to_world_at(timestamp_ns);
         if (!T_result) {
@@ -481,7 +483,7 @@ public:
 
         // Extract ZYX euler angles (yaw, pitch, roll)
         Eigen::Vector3d euler = R_world.eulerAngles(2, 1, 0); // ZYX order
-        return Eigen::Vector3d(euler[0], euler[1], euler[2]); // yaw, pitch, roll
+        return Eigen::Vector3d(euler[2], euler[1], euler[0]); // roll, pitch, yaw
     }
 
     /**

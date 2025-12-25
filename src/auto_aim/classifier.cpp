@@ -17,8 +17,12 @@ Classifier::Classifier(const SpVisionClassifierConfig& config) {
             spdlog::info("model loaded, compiling...");
             compiled_model_ = core_.compile_model(
                 ov_model, config_.device_type(),
-                ov::hint::performance_mode(ov::hint::PerformanceMode::LATENCY));
+                ov::hint::performance_mode(ov::hint::PerformanceMode::CUMULATIVE_THROUGHPUT));
             ov_initialized_ = true;
+            for (const auto actual_device = compiled_model_.get_property(ov::execution_devices);
+                 const auto& device : actual_device) {
+                spdlog::info("OpenVINO 实际运行设备: {}", device);
+            }
         } catch (const std::exception& e) {
             spdlog::error("openvino exception: {}", e.what());
             // OpenVINO 初始化失败，回退到 OpenCV DNN

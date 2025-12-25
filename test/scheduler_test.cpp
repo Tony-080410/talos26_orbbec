@@ -57,14 +57,12 @@ TEST(SchedulerTest, FullPipeline) {
         detect_count.fetch_add(1, std::memory_order_relaxed);
     });
 
-    strategy.set_solve([&](const talos::ArmorSlots&, std::array<auto_aim::ArmorPose3D, 10>&) {
+    strategy.set_solve([&](const talos::ArmorSlots&, auto_aim::Poses3D&, uint64_t) {
         solve_count.fetch_add(1, std::memory_order_relaxed);
     });
 
-    strategy.set_track([&](talos::TrackerSoA&, const talos::ArmorSlots&,
-                           const std::array<auto_aim::ArmorPose3D, 10>&) {
-        track_count.fetch_add(1, std::memory_order_relaxed);
-    });
+    strategy.set_track([&](talos::TrackerSoA&, const talos::ArmorSlots&, const auto_aim::Poses3D&,
+                           uint64_t) { track_count.fetch_add(1, std::memory_order_relaxed); });
 
     strategy.set_output([&]() { output_count.fetch_add(1, std::memory_order_relaxed); });
 
@@ -241,10 +239,10 @@ TEST(SchedulerTest, HighFrequencyFrames) {
         detect_count.fetch_add(1, std::memory_order_relaxed);
     });
 
-    strategy.set_track([](talos::TrackerSoA&, const talos::ArmorSlots&,
-                          const std::array<auto_aim::ArmorPose3D, 10>&) {});
+    strategy.set_track(
+        [](talos::TrackerSoA&, const talos::ArmorSlots&, const auto_aim::Poses3D&, uint64_t) {});
 
-    strategy.set_solve([](const talos::ArmorSlots&, std::array<auto_aim::ArmorPose3D, 10>&) {});
+    strategy.set_solve([](const talos::ArmorSlots&, auto_aim::Poses3D&, uint64_t) {});
 
     Scheduler<TestStrategy> sched;
     constexpr RuntimeConfig config;
@@ -277,14 +275,14 @@ TEST(SchedulerTest, LatencyHistogramStats) {
         std::this_thread::sleep_for(std::chrono::microseconds(100));
     });
 
-    strategy.set_solve([](const talos::ArmorSlots&, std::array<auto_aim::ArmorPose3D, 10>&) {
+    strategy.set_solve([](const talos::ArmorSlots&, auto_aim::Poses3D&, uint64_t) {
         std::this_thread::sleep_for(std::chrono::microseconds(50));
     });
 
-    strategy.set_track([](talos::TrackerSoA&, const talos::ArmorSlots&,
-                          const std::array<auto_aim::ArmorPose3D, 10>&) {
-        std::this_thread::sleep_for(std::chrono::microseconds(50));
-    });
+    strategy.set_track(
+        [](talos::TrackerSoA&, const talos::ArmorSlots&, const auto_aim::Poses3D&, uint64_t) {
+            std::this_thread::sleep_for(std::chrono::microseconds(50));
+        });
 
     Scheduler<TestStrategy> sched;
     constexpr RuntimeConfig config;

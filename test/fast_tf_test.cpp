@@ -291,11 +291,11 @@ TEST_F(QueryBuilderTest, ErrorTypeOnNoData) {
 
 TEST_F(QueryBuilderTest, ErrorToStringWorks) {
     // Test all error types
-    EXPECT_STREQ(to_string(TransformError::FrameNotFound), "frame not found");
-    EXPECT_STREQ(to_string(TransformError::NoDataAvailable), "no data available");
-    EXPECT_STREQ(to_string(TransformError::ExtrapolationRequired), "extrapolation required");
-    EXPECT_STREQ(to_string(TransformError::Timeout), "timeout");
-    EXPECT_STREQ(to_string(TransformError::PathNotFound), "path not found");
+    EXPECT_EQ(to_string(TransformError::FrameNotFound), "frame not found");
+    EXPECT_EQ(to_string(TransformError::NoDataAvailable), "no data available");
+    EXPECT_EQ(to_string(TransformError::ExtrapolationRequired), "extrapolation required");
+    EXPECT_EQ(to_string(TransformError::Timeout), "timeout");
+    EXPECT_EQ(to_string(TransformError::PathNotFound), "path not found");
 }
 
 // ============================================================================

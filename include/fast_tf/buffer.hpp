@@ -168,6 +168,70 @@ public:
         return std::unexpected(TransformError::ExtrapolationRequired);
     }
 
+    /**
+     * Get interpolated transform, clamping to nearest if extrapolation needed.
+     * Unlike at_interpolated(), this never fails due to out-of-range timestamps.
+     * @param timestamp_ns Target timestamp
+     * @return Transform entry (interpolated or clamped to boundary)
+     */
+    [[nodiscard]] std::expected<TransformEntry, TransformError>
+        at_interpolated_clamped(timestamp_ns_t timestamp_ns) const {
+        typename mutex_type::scoped_lock lock(mutex_, false);
+
+        if (size_ == 0) {
+            return std::unexpected(TransformError::NoDataAvailable);
+        }
+
+        if (size_ == 1) {
+            std::size_t idx = (head_ + Capacity - 1) % Capacity;
+            // 只有一个数据点时，直接返回该点（允许外推）
+            return buffer_[idx];
+        }
+
+        // Collect and sort entries
+        std::vector<TransformEntry> entries;
+        entries.reserve(size_);
+
+        for (std::size_t i = 0; i < size_; ++i) {
+            std::size_t idx = (head_ + Capacity - size_ + i) % Capacity;
+            entries.push_back(buffer_[idx]);
+        }
+
+        std::sort(entries.begin(), entries.end());
+
+        // Clamp to bounds instead of failing
+        if (timestamp_ns < entries.front().timestamp_ns) {
+            return entries.front();
+        }
+        if (timestamp_ns > entries.back().timestamp_ns) {
+            return entries.back();
+        }
+
+        // Find target timestamp
+        auto it =
+            std::lower_bound(entries.begin(), entries.end(), TransformEntry(timestamp_ns, {}));
+
+        if (it != entries.end() && it->timestamp_ns == timestamp_ns) {
+            return *it;
+        }
+
+        // Interpolate
+        if (it != entries.end() && it != entries.begin()) {
+            auto prev = std::prev(it);
+
+            uint64_t dt = it->timestamp_ns - prev->timestamp_ns;
+            fp_t t = static_cast<fp_t>(timestamp_ns - prev->timestamp_ns) / static_cast<fp_t>(dt);
+
+            TransformMatrix4d interpolated =
+                TransformMatrix4d::lerp(prev->transform, it->transform, t);
+
+            return TransformEntry(timestamp_ns, interpolated);
+        }
+
+        // Fallback (should not reach here)
+        return entries.back();
+    }
+
     // ========================================================================
     // Query Operations
     // ========================================================================

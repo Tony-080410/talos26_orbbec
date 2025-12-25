@@ -111,8 +111,9 @@ static void BM_Scheduler_E2E_Latency(benchmark::State& state) {
     auto strategy = TestStrategy{};
     strategy.set_detect([](const Captured&, talos::ArmorSlots&) {});
     strategy.set_track([](talos::TrackerSoA&, const talos::ArmorSlots&,
-                          const std::array<auto_aim::ArmorPose3D, 10>&) {});
-    strategy.set_solve([](const talos::ArmorSlots&, std::array<auto_aim::ArmorPose3D, 10>&) {});
+                          const std::array<auto_aim::ArmorPose3D, 10>&, uint64_t) {});
+    strategy.set_solve(
+        [](const talos::ArmorSlots&, std::array<auto_aim::ArmorPose3D, 10>&, uint64_t) {});
     strategy.set_output([&]() { processed.fetch_add(1, std::memory_order_release); });
 
     Scheduler<TestStrategy> sched;

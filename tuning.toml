@@ -5,7 +5,7 @@
 
 [tuning]
 # Algorithm parameters
-max_iterations = 1          # Maximum refinement iterations
+max_iterations = 100          # Maximum refinement iterations
 convergence_threshold = 0.01 # Stop if improvement < 1%
 num_clusters = 4            # K-means clusters for top candidates
 top_percentile = 0.2        # Top 20% for clustering
@@ -16,15 +16,15 @@ max_pareto_solutions = 3    # Maximum Pareto solutions to return
 
 [search_space.threshold]
 # Binary threshold for grayscale image
-min = 60.0
-max = 180.0
-initial_points = 4
+min = 40.0
+max = 200.0
+initial_points = 8
 
 [search_space.max_angle_error]
 # Maximum angle deviation from vertical (degrees)
 min = 30.0
 max = 55.0
-initial_points = 3
+initial_points = 6
 
 [search_space.min_lightbar_ratio]
 # Minimum lightbar length/width ratio
@@ -66,7 +66,7 @@ initial_points = 3
 # Minimum classifier confidence threshold
 min = 0.65
 max = 0.90
-initial_points = 4
+initial_points = 8
 
 [search_space.max_rectangular_error]
 # Maximum rectangular error (degrees)

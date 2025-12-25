@@ -241,93 +241,89 @@ DetectorTuner::DetectorTuner(
 
 std::expected<TuningResult, std::string> DetectorTuner::run() {
     TuningResult result;
-
-    if (dataset_.empty()) {
+    if (dataset_.empty())
         return std::unexpected("Dataset is empty");
-    }
 
-    // Step 1: Generate initial coarse grid
-    auto initial_grid = generate_initial_grid();
-    spdlog::info("Generated {} initial configurations", initial_grid.size());
+    auto current_configs = generate_initial_grid(); // 初始 LHS 采样
+    double ratio         = 0.0625;                  // 初始采样率 (1/16)，极速开局
+    const double factor  = 2.0;
+    double best_f1       = 0.0;
 
-    // Step 2: Evaluate all in parallel
-    auto candidates          = evaluate_parallel(initial_grid);
-    result.all_evaluated     = candidates;
-    result.total_evaluations = candidates.size();
-
-    // Track best F1 for convergence
-    double best_f1 = 0.0;
-    for (const auto& c : candidates) {
-        best_f1 = std::max(best_f1, c.objectives.f1_score);
-    }
-    result.iteration_best_f1.push_back(best_f1);
-    spdlog::info("Initial best F1: {:.4f}", best_f1);
-
-    // Iterative refinement loop
     for (size_t iter = 0; iter < tuning_config_.max_iterations; ++iter) {
-        spdlog::info("=== Iteration {} ===", iter + 1);
+        spdlog::info(
+            "=== Iteration {} (Ratio: {:.2f}, Configs: {}) ===", iter + 1, ratio,
+            current_configs.size());
 
-        // Step 3: Select top candidates
-        const size_t top_k = std::max(
-            size_t(1), static_cast<size_t>(candidates.size() * tuning_config_.top_percentile));
+        // 使用带 ratio 的评估
+        auto candidates = evaluate_parallel(current_configs);
 
+        // 更新结果统计
+        result.all_evaluated.insert(
+            result.all_evaluated.end(), candidates.begin(), candidates.end());
+        result.total_evaluations += candidates.size();
+
+        // 寻找当前最优
+        double iter_best = 0.0;
+        for (const auto& c : candidates)
+            iter_best = std::max(iter_best, c.objectives.f1_score);
+        result.iteration_best_f1.push_back(iter_best);
+
+        // 检查收敛
+        if (iter > 0) {
+            double improvement = (iter_best - best_f1) / (best_f1 + 1e-10);
+            if (improvement < tuning_config_.convergence_threshold) {
+                spdlog::info("Converged at iteration {}", iter + 1);
+                break;
+            }
+        }
+        best_f1 = iter_best;
+
+        // 筛选 Top 选手进入复赛
         std::partial_sort(
-            candidates.begin(), candidates.begin() + static_cast<ptrdiff_t>(top_k),
+            candidates.begin(), candidates.begin() + std::min(candidates.size(), size_t(50)),
             candidates.end(), [](const auto& a, const auto& b) {
                 return a.objectives.f1_score > b.objectives.f1_score;
             });
+        candidates.resize(std::min(candidates.size(), size_t(50)));
 
-        std::vector<ParameterCandidate> top_candidates(
-            candidates.begin(), candidates.begin() + static_cast<ptrdiff_t>(top_k));
+        // 聚类
+        auto regions = cluster_top_candidates(candidates);
 
-        spdlog::info("Selected top {} candidates", top_k);
-
-        // Step 4: Cluster into regions
-        auto regions = cluster_top_candidates(top_candidates);
-        spdlog::info("Clustered into {} regions", regions.size());
-
-        // Step 5: Generate refined grid (2x resolution)
-        std::vector<DetectorConfig> refined_grid;
+        // --- 核心优化：手动生成局部随机样本，跳过 SearchRegion::generate_grid 的嵌套循环 ---
+        current_configs.clear();
+        std::mt19937 local_rng(iter);
         for (const auto& region : regions) {
-            auto local_grid = region.generate_grid(3); // 3 points per dimension in refined search
-            refined_grid.insert(refined_grid.end(), local_grid.begin(), local_grid.end());
+            for (int i = 0; i < 250; ++i) {    // 每个簇只取 250 个点，总共 4*250=1000 点
+                DetectorConfig cfg = region.center;
+                auto perturb       = [&](double val, double rad, const ParameterRange& r) {
+                    std::uniform_real_distribution<double> dist(
+                        std::max(r.min, val - rad), std::min(r.max, val + rad));
+                    return dist(local_rng);
+                };
+                cfg.threshold = perturb(cfg.threshold, region.radii[0], tuning_config_.threshold);
+                cfg.max_angle_error =
+                    perturb(cfg.max_angle_error, region.radii[1], tuning_config_.max_angle_error);
+                cfg.min_lightbar_ratio = perturb(
+                    cfg.min_lightbar_ratio, region.radii[2], tuning_config_.min_lightbar_ratio);
+                cfg.max_lightbar_ratio = perturb(
+                    cfg.max_lightbar_ratio, region.radii[3], tuning_config_.max_lightbar_ratio);
+                cfg.min_lightbar_length = perturb(
+                    cfg.min_lightbar_length, region.radii[4], tuning_config_.min_lightbar_length);
+                cfg.min_armor_ratio =
+                    perturb(cfg.min_armor_ratio, region.radii[5], tuning_config_.min_armor_ratio);
+                cfg.max_armor_ratio =
+                    perturb(cfg.max_armor_ratio, region.radii[6], tuning_config_.max_armor_ratio);
+                cfg.max_side_ratio =
+                    perturb(cfg.max_side_ratio, region.radii[7], tuning_config_.max_side_ratio);
+                cfg.min_confidence =
+                    perturb(cfg.min_confidence, region.radii[8], tuning_config_.min_confidence);
+                cfg.max_rectangular_error = perturb(
+                    cfg.max_rectangular_error, region.radii[9],
+                    tuning_config_.max_rectangular_error);
+                current_configs.push_back(cfg);
+            }
         }
-
-        if (refined_grid.empty()) {
-            spdlog::info("No refined candidates generated, stopping");
-            break;
-        }
-
-        spdlog::info("Generated {} refined configurations", refined_grid.size());
-
-        // Step 6: Evaluate refined grid
-        auto refined_candidates = evaluate_parallel(refined_grid);
-        result.all_evaluated.insert(
-            result.all_evaluated.end(), refined_candidates.begin(), refined_candidates.end());
-        result.total_evaluations += refined_candidates.size();
-
-        // Step 7: Check convergence
-        double new_best_f1 = best_f1;
-        for (const auto& c : refined_candidates) {
-            new_best_f1 = std::max(new_best_f1, c.objectives.f1_score);
-        }
-
-        const double improvement = (new_best_f1 - best_f1) / (best_f1 + 1e-10);
-        result.iteration_best_f1.push_back(new_best_f1);
-
-        spdlog::info(
-            "Best F1: {:.4f} -> {:.4f} (improvement: {:.2f}%)", best_f1, new_best_f1,
-            improvement * 100);
-
-        if (improvement < tuning_config_.convergence_threshold) {
-            spdlog::info("Converged after {} iterations", iter + 1);
-            break;
-        }
-
-        best_f1 = new_best_f1;
-
-        // Merge candidates for next iteration
-        candidates.insert(candidates.end(), refined_candidates.begin(), refined_candidates.end());
+        ratio = std::min(1.0, ratio * factor); // 资源翻倍
     }
 
     // Step 8: Extract final Pareto front
@@ -340,67 +336,58 @@ std::expected<TuningResult, std::string> DetectorTuner::run() {
 }
 
 std::vector<DetectorConfig> DetectorTuner::generate_initial_grid() const {
+    // 设定你想要的初始采样总数（比如 500 次），而不是死板的 3^10 次
+    const size_t num_samples = 500;
     std::vector<DetectorConfig> configs;
+    configs.reserve(num_samples);
 
-    const auto v0 = tuning_config_.threshold.sample_grid(tuning_config_.threshold.initial_points);
-    const auto v1 =
-        tuning_config_.max_angle_error.sample_grid(tuning_config_.max_angle_error.initial_points);
-    const auto v2 = tuning_config_.min_lightbar_ratio.sample_grid(
-        tuning_config_.min_lightbar_ratio.initial_points);
-    const auto v3 = tuning_config_.max_lightbar_ratio.sample_grid(
-        tuning_config_.max_lightbar_ratio.initial_points);
-    const auto v4 = tuning_config_.min_lightbar_length.sample_grid(
-        tuning_config_.min_lightbar_length.initial_points);
-    const auto v5 =
-        tuning_config_.min_armor_ratio.sample_grid(tuning_config_.min_armor_ratio.initial_points);
-    const auto v6 =
-        tuning_config_.max_armor_ratio.sample_grid(tuning_config_.max_armor_ratio.initial_points);
-    const auto v7 =
-        tuning_config_.max_side_ratio.sample_grid(tuning_config_.max_side_ratio.initial_points);
-    const auto v8 =
-        tuning_config_.min_confidence.sample_grid(tuning_config_.min_confidence.initial_points);
-    const auto v9 = tuning_config_.max_rectangular_error.sample_grid(
-        tuning_config_.max_rectangular_error.initial_points);
+    std::mt19937 rng(42); // 固定随机种子
 
-    // Calculate total combinations
-    const size_t total = v0.size() * v1.size() * v2.size() * v3.size() * v4.size() * v5.size()
-                       * v6.size() * v7.size() * v8.size() * v9.size();
-    configs.reserve(total);
-
-    // Generate all combinations
-    for (double d0 : v0) {
-        for (double d1 : v1) {
-            for (double d2 : v2) {
-                for (double d3 : v3) {
-                    for (double d4 : v4) {
-                        for (double d5 : v5) {
-                            for (double d6 : v6) {
-                                for (double d7 : v7) {
-                                    for (double d8 : v8) {
-                                        for (double d9 : v9) {
-                                            DetectorConfig cfg;
-                                            cfg.threshold             = d0;
-                                            cfg.max_angle_error       = d1;
-                                            cfg.min_lightbar_ratio    = d2;
-                                            cfg.max_lightbar_ratio    = d3;
-                                            cfg.min_lightbar_length   = d4;
-                                            cfg.min_armor_ratio       = d5;
-                                            cfg.max_armor_ratio       = d6;
-                                            cfg.max_side_ratio        = d7;
-                                            cfg.min_confidence        = d8;
-                                            cfg.max_rectangular_error = d9;
-                                            configs.push_back(cfg);
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
+    // 1. 为 10 个维度分别生成均匀分布的采样点
+    auto gen_lhs_dim = [&](const ParameterRange& range) {
+        std::vector<double> dim_values;
+        dim_values.reserve(num_samples);
+        double step = (range.max - range.min) / num_samples;
+        for (size_t i = 0; i < num_samples; ++i) {
+            // 在每个小区间内随机取一个点，保证“每一行、每一列只有一个棋子”
+            std::uniform_real_distribution<double> dist(
+                range.min + i * step, range.min + (i + 1) * step);
+            dim_values.push_back(dist(rng));
         }
+        // 打乱这一维的顺序，打破维度间的线性相关
+        std::shuffle(dim_values.begin(), dim_values.end(), rng);
+        return dim_values;
+    };
+
+    // 为 10 个参数分别生成打乱后的序列
+    auto v0 = gen_lhs_dim(tuning_config_.threshold);
+    auto v1 = gen_lhs_dim(tuning_config_.max_angle_error);
+    auto v2 = gen_lhs_dim(tuning_config_.min_lightbar_ratio);
+    auto v3 = gen_lhs_dim(tuning_config_.max_lightbar_ratio);
+    auto v4 = gen_lhs_dim(tuning_config_.min_lightbar_length);
+    auto v5 = gen_lhs_dim(tuning_config_.min_armor_ratio);
+    auto v6 = gen_lhs_dim(tuning_config_.max_armor_ratio);
+    auto v7 = gen_lhs_dim(tuning_config_.max_side_ratio);
+    auto v8 = gen_lhs_dim(tuning_config_.min_confidence);
+    auto v9 = gen_lhs_dim(tuning_config_.max_rectangular_error);
+
+    // 2. 将这 10 个序列横向组合成配置
+    for (size_t i = 0; i < num_samples; ++i) {
+        DetectorConfig cfg;
+        cfg.threshold             = v0[i];
+        cfg.max_angle_error       = v1[i];
+        cfg.min_lightbar_ratio    = v2[i];
+        cfg.max_lightbar_ratio    = v3[i];
+        cfg.min_lightbar_length   = v4[i];
+        cfg.min_armor_ratio       = v5[i];
+        cfg.max_armor_ratio       = v6[i];
+        cfg.max_side_ratio        = v7[i];
+        cfg.min_confidence        = v8[i];
+        cfg.max_rectangular_error = v9[i];
+        configs.push_back(cfg);
     }
 
+    spdlog::info("LHS initial grid generated with {} samples.", num_samples);
     return configs;
 }
 
@@ -413,13 +400,17 @@ std::vector<ParameterCandidate>
     const size_t total    = configs.size();
     const auto start_time = std::chrono::steady_clock::now();
 
-    // Progress display interval based on total count
-    const size_t report_interval = std::max(size_t(1), total / 100); // Report every 1%
+    // 进度条显示间隔：每完成 1% 报告一次
+    const size_t report_interval = std::max(size_t(1), total / 100);
 
+    // 并行遍历
     tbb::parallel_for(size_t(0), configs.size(), [&](size_t i) {
+        // 【核心修改】：将 ratio 传给单例评估函数
+        // 注意：你需要同步修改 evaluate_single 的声明，让它接受 ratio
         auto candidate = evaluate_single(configs[i]);
         results.push_back(candidate);
 
+        // --- 进度显示逻辑（保持不变，但现在的 rate 是基于采样后的速度） ---
         const size_t done = ++progress;
         if (done % report_interval == 0 || done == total) {
             const auto now           = std::chrono::steady_clock::now();
@@ -427,7 +418,6 @@ std::vector<ParameterCandidate>
             const double rate        = static_cast<double>(done) / elapsed_sec;
             const double eta_sec     = (total - done) / rate;
 
-            // Build progress bar
             const int bar_width = 30;
             const double pct    = static_cast<double>(done) / static_cast<double>(total);
             const int filled    = static_cast<int>(pct * bar_width);
@@ -438,8 +428,9 @@ std::vector<ParameterCandidate>
             if (filled < bar_width)
                 bar[filled] = '>';
 
+            // 在日志里多打印一个采样率，方便监控
             spdlog::info(
-                "[{}] {:5.1f}% ({}/{}) | {:.0f}/s | ETA: {:.0f}s", bar, pct * 100, done, total,
+                "[{}] {:5.1f}% ({}/{}) | {:.1f} cfg/s | ETA: {:.0f}s", bar, pct * 100, done, total,
                 rate, eta_sec);
         }
     });
@@ -469,7 +460,7 @@ ParameterCandidate DetectorTuner::evaluate_single(const DetectorConfig& config) 
     std::vector<double> latencies;
 
     // Calculate frame step based on sample_ratio
-    const size_t total_frames = 1000;
+    const size_t total_frames = 100;
     const size_t sample_count =
         std::max(size_t(1), static_cast<size_t>(total_frames * tuning_config_.sample_ratio));
     const size_t step = std::max(size_t(1), total_frames / sample_count);
@@ -683,14 +674,14 @@ std::vector<std::vector<ParameterCandidate>> DetectorTuner::kmeans_cluster(
     std::uniform_int_distribution<size_t> dist(0, candidates.size() - 1);
 
     // First centroid: random
-    centroids.push_back(candidates[dist(rng)].normalized_params());
+    centroids.push_back(candidates[dist(rng)].normalized_params(tuning_config_));
 
     // Remaining centroids: k-means++ initialization
     for (size_t i = 1; i < k; ++i) {
         std::vector<double> min_distances(candidates.size());
 
         for (size_t j = 0; j < candidates.size(); ++j) {
-            const auto params = candidates[j].normalized_params();
+            const auto params = candidates[j].normalized_params(tuning_config_);
             double min_dist   = std::numeric_limits<double>::max();
 
             for (const auto& centroid : centroids) {
@@ -706,7 +697,7 @@ std::vector<std::vector<ParameterCandidate>> DetectorTuner::kmeans_cluster(
         // Sample proportional to squared distance
         std::discrete_distribution<size_t> weighted_dist(
             min_distances.begin(), min_distances.end());
-        centroids.push_back(candidates[weighted_dist(rng)].normalized_params());
+        centroids.push_back(candidates[weighted_dist(rng)].normalized_params(tuning_config_));
     }
 
     // K-means iterations
@@ -718,7 +709,7 @@ std::vector<std::vector<ParameterCandidate>> DetectorTuner::kmeans_cluster(
 
         // Assign points to nearest centroid
         for (size_t i = 0; i < candidates.size(); ++i) {
-            const auto params   = candidates[i].normalized_params();
+            const auto params   = candidates[i].normalized_params(tuning_config_);
             double min_dist     = std::numeric_limits<double>::max();
             size_t best_cluster = 0;
 
@@ -749,7 +740,7 @@ std::vector<std::vector<ParameterCandidate>> DetectorTuner::kmeans_cluster(
 
         for (size_t i = 0; i < candidates.size(); ++i) {
             const size_t c    = assignments[i];
-            const auto params = candidates[i].normalized_params();
+            const auto params = candidates[i].normalized_params(tuning_config_);
             for (size_t d = 0; d < 10; ++d) {
                 new_centroids[c][d] += params[d];
             }

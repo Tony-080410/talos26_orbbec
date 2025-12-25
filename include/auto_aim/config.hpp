@@ -55,6 +55,7 @@ enum DeviceType : int {
     Auto = 0,
     Cpu  = 1,
     Gpu  = 2,
+    Npu  = 3,
 };
 
 /**
@@ -63,7 +64,7 @@ enum DeviceType : int {
 struct SpVisionClassifierConfig {
     std::string model_path;  // ONNX 模型路径
     bool use_openvino{true}; // 是否使用 OpenVINO (否则用 OpenCV DNN)
-    DeviceType device{Auto}; // OpenVINO 设备: "AUTO", "CPU", "GPU"
+    DeviceType device{Auto}; // OpenVINO 设备: "AUTO", "CPU", "GPU", "NPU"
 
     [[nodiscard]] constexpr std::string device_type() const noexcept {
         if (device == Auto) {
@@ -74,6 +75,9 @@ struct SpVisionClassifierConfig {
         }
         if (device == Gpu) {
             return "GPU";
+        }
+        if (device == Npu) {
+            return "NPU";
         }
         return {};
     }
@@ -93,6 +97,8 @@ struct SpVisionClassifierConfig {
                 device = Cpu;
             } else if (dev == "GPU") {
                 device = Gpu;
+            } else if (dev == "NPU") {
+                device = Npu;
             } else {
                 return std::unexpected("invalid device type: " + dev);
             }

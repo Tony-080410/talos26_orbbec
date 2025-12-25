@@ -88,9 +88,10 @@ static void BM_Pipeline_EmptyCallbacks(benchmark::State& state) {
     });
 
     strategy.set_track([](talos::TrackerSoA&, const talos::ArmorSlots&,
-                          const std::array<auto_aim::ArmorPose3D, 10>&) {});
+                          const std::array<auto_aim::ArmorPose3D, 10>&, uint64_t) {});
 
-    strategy.set_solve([](const talos::ArmorSlots&, std::array<auto_aim::ArmorPose3D, 10>&) {});
+    strategy.set_solve(
+        [](const talos::ArmorSlots&, std::array<auto_aim::ArmorPose3D, 10>&, uint64_t) {});
 
     Scheduler<TestStrategy> sched;
     constexpr RuntimeConfig config;
@@ -255,15 +256,16 @@ static void BM_RealWorld_160Hz(benchmark::State& state) {
     });
 
     strategy.set_track([](talos::TrackerSoA&, const talos::ArmorSlots&,
-                          const std::array<auto_aim::ArmorPose3D, 10>&) {
+                          const std::array<auto_aim::ArmorPose3D, 10>&, uint64_t) {
         // 模拟 500us 跟踪延迟
         std::this_thread::sleep_for(std::chrono::microseconds(500));
     });
 
-    strategy.set_solve([](const talos::ArmorSlots&, std::array<auto_aim::ArmorPose3D, 10>&) {
-        // 模拟 200us 解算延迟
-        std::this_thread::sleep_for(std::chrono::microseconds(200));
-    });
+    strategy.set_solve(
+        [](const talos::ArmorSlots&, std::array<auto_aim::ArmorPose3D, 10>&, uint64_t) {
+            // 模拟 200us 解算延迟
+            std::this_thread::sleep_for(std::chrono::microseconds(200));
+        });
 
     Scheduler<TestStrategy> sched;
     constexpr RuntimeConfig config;
@@ -306,9 +308,10 @@ static void BM_E2E_Latency_Measurement(benchmark::State& state) {
     strategy.set_detect([](const Captured&, talos::ArmorSlots&) {});
 
     strategy.set_track([](talos::TrackerSoA&, const talos::ArmorSlots&,
-                          const std::array<auto_aim::ArmorPose3D, 10>&) {});
+                          const std::array<auto_aim::ArmorPose3D, 10>&, uint64_t) {});
 
-    strategy.set_solve([](const talos::ArmorSlots&, std::array<auto_aim::ArmorPose3D, 10>&) {});
+    strategy.set_solve(
+        [](const talos::ArmorSlots&, std::array<auto_aim::ArmorPose3D, 10>&, uint64_t) {});
 
     strategy.set_output([&]() {
         last_output_ts.store(

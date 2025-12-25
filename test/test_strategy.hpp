@@ -17,11 +17,9 @@ namespace scheduler::test {
 class TestStrategy {
 public:
     using DetectCb = std::function<void(const Captured&, talos::ArmorSlots&)>;
-    using SolveCb =
-        std::function<void(const talos::ArmorSlots&, std::array<auto_aim::ArmorPose3D, 10>&)>;
-    using TrackCb      = std::function<void(
-        talos::TrackerSoA&, const talos::ArmorSlots&,
-        const std::array<auto_aim::ArmorPose3D, 10>&)>;
+    using SolveCb  = std::function<void(const talos::ArmorSlots&, auto_aim::Poses3D&, uint64_t)>;
+    using TrackCb  = std::function<void(
+        talos::TrackerSoA&, const talos::ArmorSlots&, const auto_aim::Poses3D&, uint64_t)>;
     using PreprocessCb = std::function<void(Captured&)>;
     using OutputCb     = std::function<void()>;
 
@@ -43,17 +41,17 @@ public:
             detect_cb_(f, armor);
     }
 
-    void solve(const talos::ArmorSlots& armor, std::array<auto_aim::ArmorPose3D, 10>& poses3d)
+    void solve(const talos::ArmorSlots& armor, auto_aim::Poses3D& poses3d, uint64_t timestamp_ns)
         const noexcept {
         if (solve_cb_)
-            solve_cb_(armor, poses3d);
+            solve_cb_(armor, poses3d, timestamp_ns);
     }
 
     void track(
         talos::TrackerSoA& tracker_soa, const talos::ArmorSlots& armor,
-        const std::array<auto_aim::ArmorPose3D, 10>& poses3d) const noexcept {
+        const auto_aim::Poses3D& poses3d, uint64_t timestamp_ns) const noexcept {
         if (track_cb_)
-            track_cb_(tracker_soa, armor, poses3d);
+            track_cb_(tracker_soa, armor, poses3d, timestamp_ns);
     }
 
     void output() const noexcept {

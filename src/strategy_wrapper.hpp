@@ -152,8 +152,7 @@ private:
     std::unique_ptr<fast_tf::infantry::InfantryTFManager> tf_manager_;
 
     // 消息队列
-    alignas(std::hardware_destructive_interference_size)
-        tbb::concurrent_queue<FoxgloveMessage> message_queue_;
+    alignas(64) tbb::concurrent_queue<FoxgloveMessage> message_queue_;
     std::thread sender_thread_;
 };
 
@@ -382,6 +381,7 @@ struct FoxgloveWrapper {
                     foxglove::schemas::SceneEntity entity;
                     entity.id        = "armor_" + std::to_string(i);
                     entity.frame_id  = "odom";
+                    entity.lifetime  = foxglove::schemas::Duration{.nsec = 100000000};
                     entity.timestamp = fxglv_ts_from_ns(armor.timestamp_ns);
 
                     // 构造位置和方向
@@ -481,6 +481,7 @@ struct FoxgloveWrapper {
             foxglove::schemas::SceneEntity entity;
             entity.id        = "armor_" + std::to_string(i);
             entity.frame_id  = "camera_optical_frame";
+            entity.lifetime  = foxglove::schemas::Duration{.nsec = 100000000};
             entity.timestamp = fxglv_ts_from_ns(armor.timestamp_ns);
 
             // 构造位置和方向

@@ -27,14 +27,14 @@ Target::Target(
     // 通过 tf_manager 查询 world 坐标
     auto xyz_result =
         tf_manager.transform_point_to_world(pose3d.xyz_in_camera, pose3d.timestamp_ns);
-    auto ypr_result =
-        tf_manager.transform_rotation_to_world_ypr(pose3d.R_in_camera, pose3d.timestamp_ns);
+    auto rpy_result =
+        tf_manager.transform_rotation_to_world_rpy(pose3d.R_in_camera, pose3d.timestamp_ns);
 
     // 变换失败时使用camera坐标作为fallback (在world≈camera情况下可接受)
     const Eigen::Vector3d xyz = xyz_result.value_or(pose3d.xyz_in_camera);
-    const Eigen::Vector3d ypr = ypr_result.value_or(Eigen::Vector3d(pose3d.yaw_raw, 0, 0));
+    const Eigen::Vector3d rpy = rpy_result.value_or(Eigen::Vector3d(0, 0, pose3d.yaw_raw));
 
-    if (!xyz_result || !ypr_result) {
+    if (!xyz_result || !rpy_result) {
         spdlog::warn(
             "[Target] TF lookup failed at timestamp {}ns, using fallback", pose3d.timestamp_ns);
     }
@@ -49,8 +49,8 @@ Target::Target(
 
     // 计算旋转中心的坐标 (world系)
     // 从装甲板位置xyz反推旋转中心，假设装甲板在半径r处
-    auto center_x = xyz[0] + r * std::cos(ypr[0]); // [world系, m]
-    auto center_y = xyz[1] + r * std::sin(ypr[0]); // [world系, m]
+    auto center_x = xyz[0] + r * std::cos(rpy[2]); // [world系, m], rpy[2]=yaw
+    auto center_y = xyz[1] + r * std::sin(rpy[2]); // [world系, m]
     auto center_z = xyz[2];                        // [world系, m]
 
     // 状态向量: x vx y vy z vz a w r l h (所有在world坐标系)
@@ -62,7 +62,7 @@ Target::Target(
     // l: r2 - r1 (长短轴差) [m]
     // h: z2 - z1 (高度差) [m]
     const Eigen::VectorXd x0{
-        {center_x, 0, center_y, 0, center_z, 0, ypr[0], 0, r, 0, 0}
+        {center_x, 0, center_y, 0, center_z, 0, rpy[2], 0, r, 0, 0}
     };
     const Eigen::MatrixXd P0 = P0_dig.asDiagonal();
 
@@ -167,8 +167,8 @@ void Target::update(
     // 通过 tf_manager 查询 world 坐标
     auto xyz_result =
         tf_manager.transform_point_to_world(pose3d.xyz_in_camera, pose3d.timestamp_ns);
-    auto ypr_result =
-        tf_manager.transform_rotation_to_world_ypr(pose3d.R_in_camera, pose3d.timestamp_ns);
+    auto rpy_result =
+        tf_manager.transform_rotation_to_world_rpy(pose3d.R_in_camera, pose3d.timestamp_ns);
 
     // 变换失败时跳过此次更新
     if (!xyz_result) {
@@ -179,15 +179,15 @@ void Target::update(
     }
 
     // 变换失败时跳过此次更新
-    if (!ypr_result) {
+    if (!rpy_result) {
         spdlog::warn(
-            "[Target::update] ypr lookup failed at timestamp {}ns: {}", pose3d.timestamp_ns,
-            fast_tf::to_string(xyz_result.error()));
+            "[Target::update] rpy lookup failed at timestamp {}ns: {}", pose3d.timestamp_ns,
+            fast_tf::to_string(rpy_result.error()));
         return;
     }
 
     const Eigen::Vector3d xyz_world = *xyz_result;
-    const Eigen::Vector3d ypr_world = *ypr_result;
+    const Eigen::Vector3d rpy_world = *rpy_result;
     const Eigen::Vector3d ypd_world = math::xyz2ypd(xyz_world);
 
     // 装甲板匹配
@@ -214,7 +214,7 @@ void Target::update(
     for (int i = 0; i < compare_num; i++) {
         const auto& xyza       = xyza_i_list[i].first;
         Eigen::Vector3d ypd    = math::xyz2ypd(xyza.head(3));
-        const auto angle_error = std::abs(math::limit_rad(ypr_world[0] - xyza[3]))
+        const auto angle_error = std::abs(math::limit_rad(rpy_world[2] - xyza[3])) // rpy[2]=yaw
                                + std::abs(math::limit_rad(ypd_world[0] - ypd[0]));
 
         if (std::abs(angle_error) < std::abs(min_angle_error)) {
@@ -240,16 +240,16 @@ void Target::update(
     last_id = id;
     update_count_++;
 
-    update_ypda(xyz_world, ypr_world, ypd_world, id);
+    update_ypda(xyz_world, rpy_world, ypd_world, id);
 }
 
 void Target::update_ypda(
-    const Eigen::Vector3d& xyz_world, const Eigen::Vector3d& ypr_world,
+    const Eigen::Vector3d& xyz_world, const Eigen::Vector3d& rpy_world,
     const Eigen::Vector3d& ypd_world, const int id) {
     // ========== 坐标系说明 ==========
     // 所有观测数据都在world坐标系 (ROS标准: x前, y左, z上)
     // ypd_world: 球坐标 [rad, rad, m]
-    // ypr_world: 欧拉角 [rad]
+    // rpy_world: 欧拉角 [roll, pitch, yaw] [rad]
     // EKF状态向量也在world坐标系
     // ================================
 
@@ -265,7 +265,7 @@ void Target::update_ypda(
 
     // 计算观测噪声权重 (world系)
     const auto center_yaw  = std::atan2(xyz_world[1], xyz_world[0]);
-    const auto delta_angle = math::limit_rad(ypr_world[0] - center_yaw);
+    const auto delta_angle = math::limit_rad(rpy_world[2] - center_yaw); // rpy[2]=yaw
     const Eigen::VectorXd R_dig{
         {4e-3, 4e-3, std::log(std::abs(delta_angle) + 1) + 1,
          std::log(std::abs(ypd_world[2]) + 1) / 200 + 9e-2}
@@ -292,7 +292,7 @@ void Target::update_ypda(
 
     // 观测向量 (world系)
     const Eigen::VectorXd z{
-        {ypd_world[0], ypd_world[1], ypd_world[2], ypr_world[0]}
+        {ypd_world[0], ypd_world[1], ypd_world[2], rpy_world[2]}  // rpy[2]=yaw
     };
 
     // 检查: 观测与预测的创新度
