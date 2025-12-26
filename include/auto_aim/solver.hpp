@@ -95,22 +95,6 @@ namespace math {
 double limit_rad(double angle);
 
 /**
- * @brief 旋转矩阵转欧拉角 (ZYX顺序)
- * @param R 旋转矩阵
- * @param axis0 , axis1 , axis2 轴顺序 (0=x, 1=y, 2=z)
- * @param extrinsic 是否为外旋
- * @return 欧拉角向量
- */
-Eigen::Vector3d
-    eulers(const Eigen::Matrix3d& R, int axis0, int axis1, int axis2, bool extrinsic = false);
-
-/**
- * @brief 四元数转欧拉角
- */
-Eigen::Vector3d
-    eulers(const Eigen::Quaterniond& q, int axis0, int axis1, int axis2, bool extrinsic = false);
-
-/**
  * @brief 直角坐标系转球坐标系 (yaw, pitch, distance)
  */
 Eigen::Vector3d xyz2ypd(const Eigen::Vector3d& xyz);

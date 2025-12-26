@@ -34,17 +34,6 @@ static void BM_TransformMatrix4d_FromRPY(benchmark::State& state) {
 }
 BENCHMARK(BM_TransformMatrix4d_FromRPY);
 
-static void BM_TransformMatrix4d_FromQuaternion(benchmark::State& state) {
-    double w = 0.707;
-    double z = 0.707;
-
-    for (auto _ : state) {
-        auto tf = TransformMatrix4d::from_quaternion(w, 0.0, 0.0, z, 1.0, 2.0, 3.0);
-        benchmark::DoNotOptimize(tf);
-    }
-}
-BENCHMARK(BM_TransformMatrix4d_FromQuaternion);
-
 static void BM_TransformMatrix4d_Multiplication(benchmark::State& state) {
     auto tf1 = TransformMatrix4d::from_rpy(0.0, 0.0, 0.0, 1.0, 2.0, 3.0);
     auto tf2 = TransformMatrix4d::from_rpy(0.0, 0.0, 0.0, 4.0, 5.0, 6.0);

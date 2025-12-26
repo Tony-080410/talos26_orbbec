@@ -197,7 +197,7 @@ private:
     struct DetectSolveBundle {
         uint64_t timestamp_ns{0}; // 帧时间戳 (用于tf查询)
         talos::ArmorSlots armor_slots{};
-        auto_aim::Poses3D poses3d{};
+        auto_aim::Poses3D poses3d = {};
     };
     alignas(CACHE_LINE_SIZE) TripleBuffer<DetectSolveBundle> detection_buffer_;
 

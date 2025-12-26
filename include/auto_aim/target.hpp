@@ -6,7 +6,7 @@
 
 #include "detector_state.hpp"
 #include "extended_kalman_filter.hpp"
-#include "fast_tf/infantry_tf.hpp"
+#include "fast_tf/frame.hpp"
 #include "solver.hpp"
 
 namespace auto_aim {
@@ -38,13 +38,14 @@ public:
     bool jumped{false};
     int last_id{0};
 
-    Target() = default;
+    explicit Target(const std::reference_wrapper<fast_tf::CoordinateSystem<100>> buf)
+        : tf_buffer(buf) {}
 
     /**
      * @brief 从检测结果初始化目标
      * @param armor 检测到的装甲板（用于名称、类型）
      * @param pose3d 解算得到的3D位姿 (camera_optical坐标系 + timestamp_ns)
-     * @param tf_manager TF管理器引用，用于坐标变换
+     * @param tf_buffer TF缓冲区引用，用于坐标变换
      * @param t 时间戳
      * @param radius 初始半径估计
      * @param armor_num 装甲板数量（2/3/4）
@@ -52,15 +53,27 @@ public:
      */
     Target(
         const talos::Armor& armor, const ArmorPose3D& pose3d,
-        const fast_tf::infantry::InfantryTFManager& tf_manager,
+        std::reference_wrapper<fast_tf::CoordinateSystem<100>> tf_buffer,
         std::chrono::steady_clock::time_point t, double radius, int armor_num,
         const Eigen::VectorXd& P0_dig);
 
-    /**
-     * @brief 用于测试的简化构造
-     */
-    Target(double x, double vyaw, double radius, double h);
-
+    Target& operator=(const Target& other) {
+        if (this != &other) {
+            name          = other.name;
+            armor_type    = other.armor_type;
+            jumped        = other.jumped;
+            last_id       = other.last_id;
+            armor_num_    = other.armor_num_;
+            switch_count_ = other.switch_count_;
+            update_count_ = other.update_count_;
+            tf_buffer     = other.tf_buffer;
+            is_switch_    = other.is_switch_;
+            is_converged_ = other.is_converged_;
+            ekf_          = other.ekf_;
+            t_            = other.t_;
+        }
+        return *this;
+    }
     /**
      * @brief 预测到指定时间
      */
@@ -75,11 +88,8 @@ public:
      * @brief 用观测更新滤波器
      * @param armor 检测到的装甲板
      * @param pose3d 解算得到的3D位姿 (camera_optical坐标系 + timestamp_ns)
-     * @param tf_manager TF管理器引用，用于坐标变换
      */
-    void update(
-        const talos::Armor& armor, const ArmorPose3D& pose3d,
-        const fast_tf::infantry::InfantryTFManager& tf_manager);
+    void update(const talos::Armor& armor, const ArmorPose3D& pose3d);
 
     /**
      * @brief 获取EKF状态向量
@@ -111,7 +121,7 @@ private:
     int armor_num_{4};
     int switch_count_{0};
     int update_count_{0};
-
+    std::reference_wrapper<fast_tf::CoordinateSystem<100>> tf_buffer;
     bool is_switch_{false};
     bool is_converged_{false};
 
@@ -126,7 +136,7 @@ private:
      * @param id 装甲板ID
      */
     void update_ypda(
-        const Eigen::Vector3d& xyz_world, const Eigen::Vector3d& rpy_world,
+        const Eigen::Vector3d& xyz_world, const math_fuxk::Ros2EulerRotd& rpy_world,
         const Eigen::Vector3d& ypd_world, int id);
 
     /**

@@ -1,5 +1,9 @@
 #include "solver.hpp"
 
+#include "fast_tf/frame.hpp"
+#include "fast_tf/matrix.hpp"
+#include "math.hpp"
+
 #include <opencv2/core/eigen.hpp>
 
 namespace auto_aim {
@@ -26,7 +30,8 @@ Solver::Solver(const SpVisionSolverConfig& config) {
     cv::eigen2cv(config.distort_coefficient, distort_coeffs_);
 }
 
-bool Solver::solve(const talos::Armor& armor, ArmorPose3D& pose3d, uint64_t timestamp_ns) const {
+bool Solver::solve(
+    const talos::Armor& armor, ArmorPose3D& pose3d, const uint64_t timestamp_ns) const {
     // 从armor.pts提取角点
     std::vector<cv::Point2f> image_points(4);
     image_points[0] = {armor.pts[0], armor.pts[1]}; // tl
@@ -39,7 +44,11 @@ bool Solver::solve(const talos::Armor& armor, ArmorPose3D& pose3d, uint64_t time
     const auto& object_points =
         type == talos::ArmorType::big ? BIG_ARMOR_POINTS : SMALL_ARMOR_POINTS;
 
-    // PnP解算
+    // ========== PnP输出说明 ==========
+    // PnP解算结果在camera_optical_frame坐标系 (x右, y下, z前)
+    // tvec: object原点在camera_optical_frame中的位置
+    // rvec: object坐标系相对于camera_optical_frame的旋转
+    // ====================================
     cv::Vec3d rvec, tvec;
     const bool success = cv::solvePnP(
         object_points, image_points, camera_matrix_, distort_coeffs_, rvec, tvec, false,
@@ -50,47 +59,31 @@ bool Solver::solve(const talos::Armor& armor, ArmorPose3D& pose3d, uint64_t time
         return false;
     }
 
-    // ========== PnP输出说明 ==========
-    // PnP解算结果在camera_optical_frame坐标系 (x右, y下, z前)
-    // tvec: object原点在camera_optical_frame中的位置
-    // rvec: object坐标系相对于camera_optical_frame的旋转
-    // ====================================
-
     // 填充帧时间戳 (用于fast_tf查询)
     pose3d.timestamp_ns = timestamp_ns;
+    pose3d.pnp          = fast_tf::FuckTransform<fast_tf::camera_optical_fuxk_frame>(
+        fast_tf::TransformMatrix4d::from_pnp(rvec, tvec));
 
-    // 位置 (camera_optical_frame坐标系)
-    cv::cv2eigen(tvec, pose3d.xyz_in_camera);
-
+    const auto translation = pose3d.pnp->translation();
     // 深度有效性检查
-    if (pose3d.xyz_in_camera[2] <= 0) {
-        spdlog::warn("[Solver] PnP depth negative: {:.3f}", pose3d.xyz_in_camera[2]);
+    if (translation[2] <= 0) {
+        spdlog::warn("[Solver] PnP depth negative: {:.3f}", translation[2]);
         pose3d.valid = false;
         return false;
     }
 
     // 距离合理性检查
-    const double distance = pose3d.xyz_in_camera.norm();
-    if (distance < 0.5 || distance > 15.0) {
+    if (const double distance = translation.norm(); distance < 0.5 || distance > 15.0) {
         spdlog::warn(
             "[Solver] Unreasonable distance: {:.2f}m (camera_optical: [{:.3f}, {:.3f}, {:.3f}])",
-            distance, pose3d.xyz_in_camera[0], pose3d.xyz_in_camera[1], pose3d.xyz_in_camera[2]);
+            distance, translation[0], translation[1], translation[2]);
         pose3d.valid = false;
         return false;
     }
 
-    // 旋转矩阵 (camera_optical_frame坐标系)
-    cv::Mat rmat;
-    cv::Rodrigues(rvec, rmat);
-    cv::cv2eigen(rmat, pose3d.R_in_camera);
-
-    // 旋转矩阵有效性检查
-    assert(
-        std::abs(pose3d.R_in_camera.determinant() - 1.0) < 1e-6
-        && "Rotation matrix must have determinant 1");
-
+    const auto [r, p, y] = math_fuxk::rpy(pose3d.pnp->rotation()).rpy();
     // 提取yaw角 (camera_optical_frame坐标系)
-    pose3d.yaw_raw = math::eulers(pose3d.R_in_camera, 2, 1, 0)[0];
+    pose3d.yaw_raw = decltype(pose3d.yaw_raw)(y);
 
     // NOTE: object变换的发布由Tracker负责，Solver只做PnP解算
 
@@ -100,7 +93,7 @@ bool Solver::solve(const talos::Armor& armor, ArmorPose3D& pose3d, uint64_t time
 
 void Solver::solve_all(
     const talos::ArmorSlots& slots, std::array<ArmorPose3D, 10>& poses3d,
-    uint64_t timestamp_ns) const {
+    const uint64_t timestamp_ns) const {
     for (int i = 0; i < 10; ++i) {
         if (!slots.is_valid(i)) {
             poses3d[i].valid = false;
@@ -166,84 +159,6 @@ double limit_rad(double angle) {
     return angle;
 }
 
-Eigen::Vector3d eulers(
-    const Eigen::Quaterniond& q, int axis0, const int axis1, int axis2, const bool extrinsic) {
-    if (!extrinsic)
-        std::swap(axis0, axis2);
-
-    const auto i         = axis0;
-    const auto j         = axis1;
-    auto k               = axis2;
-    const auto is_proper = i == k;
-    if (is_proper)
-        k = 3 - i - j;
-    const auto sign = (i - j) * (j - k) * (k - i) / 2;
-
-    double a, b, c, d;
-    Eigen::Vector4d xyzw = q.coeffs();
-    if (is_proper) {
-        a = xyzw[3];
-        b = xyzw[i];
-        c = xyzw[j];
-        d = xyzw[k] * sign;
-    } else {
-        a = xyzw[3] - xyzw[j];
-        b = xyzw[i] + xyzw[k] * sign;
-        c = xyzw[j] + xyzw[3];
-        d = xyzw[k] * sign - xyzw[i];
-    }
-
-    Eigen::Vector3d result;
-    const auto n2 = a * a + b * b + c * c + d * d;
-    result[1]     = std::acos(2 * (a * a + b * b) / n2 - 1);
-
-    const auto half_sum  = std::atan2(b, a);
-    const auto half_diff = std::atan2(-d, c);
-
-    constexpr auto eps = 1e-7;
-    const auto safe1   = std::abs(result[1]) >= eps;
-    const auto safe2   = std::abs(result[1] - CV_PI) >= eps;
-
-    if (safe1 && safe2) {
-        result[0] = half_sum + half_diff;
-        result[2] = half_sum - half_diff;
-    } else {
-        if (!extrinsic) {
-            result[0] = 0;
-            if (!safe1)
-                result[2] = 2 * half_sum;
-            if (!safe2)
-                result[2] = -2 * half_diff;
-        } else {
-            result[2] = 0;
-            if (!safe1)
-                result[0] = 2 * half_sum;
-            if (!safe2)
-                result[0] = 2 * half_diff;
-        }
-    }
-
-    for (int idx = 0; idx < 3; idx++)
-        result[idx] = limit_rad(result[idx]);
-
-    if (!is_proper) {
-        result[2] *= sign;
-        result[1] -= CV_PI / 2;
-    }
-
-    if (!extrinsic)
-        std::swap(result[0], result[2]);
-
-    return result;
-}
-
-Eigen::Vector3d eulers(
-    const Eigen::Matrix3d& R, const int axis0, const int axis1, const int axis2,
-    const bool extrinsic) {
-    const Eigen::Quaterniond q(R);
-    return eulers(q, axis0, axis1, axis2, extrinsic);
-}
-
 Eigen::Vector3d xyz2ypd(const Eigen::Vector3d& xyz) {
     const auto x = xyz[0], y = xyz[1], z = xyz[2];
     auto yaw      = std::atan2(y, x);
@@ -282,7 +197,6 @@ Eigen::Vector3d ypd2xyz(const Eigen::Vector3d& ypd) {
     auto z = distance * std::sin(pitch);
     return {x, y, z};
 }
-
 } // namespace math
 
 } // namespace auto_aim

@@ -33,7 +33,7 @@
 # pragma clang diagnostic pop
 #endif
 
-#include <fast_tf/infantry_tf.hpp>
+#include <fast_tf/foxglove_export.hpp>
 #include <spdlog/spdlog.h>
 
 // 消息队列消息类型定义
@@ -107,8 +107,8 @@ public:
 
     bool is_initialized() const noexcept;
 
-    // 获取 TF Manager (供其他组件使用)
-    fast_tf::infantry::InfantryTFManager& get_tf_manager() noexcept { return *tf_manager_; }
+    // 获取 TF Buffer (供其他组件使用)
+    fast_tf::CoordinateSystem<100>& get_tf_buffer() noexcept { return *tf_buffer_; }
 
     // 线程安全的消息入队方法 - 供其他调用者使用
     void enqueue_message(FoxgloveMessage msg) noexcept;
@@ -119,6 +119,9 @@ public:
         const std::array<double, 9>& camera_matrix, // row-major [fx, 0, cx, 0, fy, cy, 0, 0, 1]
         const std::vector<double>& distortion,      // [k1, k2, p1, p2, k3]
         uint64_t timestamp_ns = 0) noexcept;
+
+    // TF 树发布 (每帧调用)
+    void publish_tf(uint64_t timestamp_ns) noexcept;
 
 private:
     // 消息发送线程的主函数
@@ -148,8 +151,9 @@ private:
     // 相机标定 channel
     std::optional<foxglove::schemas::CameraCalibrationChannel> camera_calib_ch_; // /camera_info
 
-    // TF Manager
-    std::unique_ptr<fast_tf::infantry::InfantryTFManager> tf_manager_;
+    // TF Buffer and Exporter (decoupled)
+    std::unique_ptr<fast_tf::CoordinateSystem<100>> tf_buffer_;
+    std::optional<fast_tf::FoxgloveExporter> tf_exporter_;
 
     // 消息队列
     alignas(64) tbb::concurrent_queue<FoxgloveMessage> message_queue_;
@@ -189,6 +193,9 @@ struct FoxgloveWrapper {
     }
 
     auto detect(const scheduler::Captured& feat, talos::ArmorSlots& armor) noexcept -> void {
+        // 每帧发布 TF 树 (与图像时间戳同步)
+        server.get().publish_tf(feat.timestamp_ns);
+
         inner.get().detect(feat, armor);
 
         // 首次发布相机标定信息
@@ -357,14 +364,16 @@ struct FoxgloveWrapper {
             nlohmann::json target_json;
             target_json["timestamp_ns"] = armor.timestamp_ns;
             target_json["state"] = std::string(talos::tracker_state(tracker_soa.state.load()));
-            target_json["position"]["x"]   = tracker_soa.pos[0];
-            target_json["position"]["y"]   = tracker_soa.pos[1];
-            target_json["position"]["z"]   = tracker_soa.pos[2];
-            target_json["velocity"]["x"]   = tracker_soa.vel[0];
-            target_json["velocity"]["y"]   = tracker_soa.vel[1];
-            target_json["velocity"]["z"]   = tracker_soa.vel[2];
-            target_json["yaw"]             = tracker_soa.yaw;
-            target_json["v_yaw"]           = tracker_soa.v_yaw;
+            const auto pos       = *tracker_soa.pos;
+            target_json["position"]["x"]   = pos[0];
+            target_json["position"]["y"]   = pos[1];
+            target_json["position"]["z"]   = pos[2];
+            const auto vel                 = *tracker_soa.vel;
+            target_json["velocity"]["x"]   = vel[0];
+            target_json["velocity"]["y"]   = vel[1];
+            target_json["velocity"]["z"]   = vel[2];
+            target_json["yaw"]             = *tracker_soa.yaw;
+            target_json["v_yaw"]           = *tracker_soa.v_yaw;
             target_json["radius"]          = {tracker_soa.radius[0], tracker_soa.radius[1]};
             target_json["detecting_count"] = tracker_soa.detecting_count;
             target_json["lost_count"]      = tracker_soa.lost_count;
@@ -380,7 +389,7 @@ struct FoxgloveWrapper {
                     // 创建SceneEntity
                     foxglove::schemas::SceneEntity entity;
                     entity.id        = "armor_" + std::to_string(i);
-                    entity.frame_id  = "odom";
+                    entity.frame_id  = "world";
                     entity.lifetime  = foxglove::schemas::Duration{.nsec = 100000000};
                     entity.timestamp = fxglv_ts_from_ns(armor.timestamp_ns);
 
@@ -486,12 +495,13 @@ struct FoxgloveWrapper {
 
             // 构造位置和方向
             foxglove::schemas::Vector3 position;
-            position.x = pose.xyz_in_camera[0];
-            position.y = pose.xyz_in_camera[1];
-            position.z = pose.xyz_in_camera[2];
+            const auto translation = pose.pnp->translation();
+            position.x             = translation[0];
+            position.y             = translation[1];
+            position.z             = translation[2];
 
+            const auto q = pose.pnp->quaternion();
             foxglove::schemas::Quaternion orientation;
-            Eigen::Quaterniond q(pose.R_in_camera);
             orientation.x = q.x();
             orientation.y = q.y();
             orientation.z = q.z();
@@ -571,15 +581,22 @@ struct FoxgloveWrapper {
             const auto& pose = poses3d[i];
 
             nlohmann::json armor_obj;
-            armor_obj["id"]                    = i;
-            armor_obj["name"]                  = std::string(talos::armor_name(a.name));
-            armor_obj["type"]                  = a.type == talos::ArmorType::big ? "big" : "small";
-            armor_obj["color"]                 = std::string(talos::color_name(a.color));
-            armor_obj["confidence"]            = a.confidence;
-            armor_obj["pose"]["position"]["x"] = pose.xyz_in_camera[0];
-            armor_obj["pose"]["position"]["y"] = pose.xyz_in_camera[1];
-            armor_obj["pose"]["position"]["z"] = pose.xyz_in_camera[2];
-            armor_obj["pose"]["yaw_raw"]       = pose.yaw_raw;
+            armor_obj["id"]         = i;
+            armor_obj["name"]       = std::string(talos::armor_name(a.name));
+            armor_obj["type"]       = a.type == talos::ArmorType::big ? "big" : "small";
+            armor_obj["color"]      = std::string(talos::color_name(a.color));
+            armor_obj["confidence"] = a.confidence;
+
+            const auto translation        = pose.pnp->translation();
+            const auto [roll, pitch, yaw] = pose.pnp->euler_rot().rpy();
+
+            armor_obj["pose"]["position"]["x"]  = translation[0];
+            armor_obj["pose"]["position"]["y"]  = translation[1];
+            armor_obj["pose"]["position"]["z"]  = translation[2];
+            armor_obj["pose"]["euler"]["roll"]  = roll;
+            armor_obj["pose"]["euler"]["pitch"] = pitch;
+            armor_obj["pose"]["euler"]["yaw"]   = yaw;
+            armor_obj["pose"]["yaw_raw"]        = *pose.yaw_raw;
 
             armor_json.push_back(armor_obj);
         }
@@ -604,10 +621,10 @@ struct FoxgloveWrapper {
                     continue;
                 const auto& pose = poses3d[i];
                 nlohmann::json m;
-                m["id"]            = i;
-                m["xyz_in_camera"] = {
-                    pose.xyz_in_camera[0], pose.xyz_in_camera[1], pose.xyz_in_camera[2]};
-                m["yaw_raw"] = pose.yaw_raw;
+                m["id"]                = i;
+                const auto translation = pose.pnp->translation();
+                m["xyz_in_camera"]     = {translation[0], translation[1], translation[2]};
+                m["yaw_raw"]           = *pose.yaw_raw;
                 measurement_json["measurements"].push_back(m);
             }
             std::string json_str = measurement_json.dump();
@@ -657,8 +674,8 @@ struct FoxgloveWrapper {
     static foxglove::schemas::Timestamp fxglv_ts_from_ns(const uint64_t ns) {
         using namespace std::chrono;
         foxglove::schemas::Timestamp t;
-        t.nsec = static_cast<uint32_t>(ns);
-        t.sec  = static_cast<int32_t>(ns / 1'000'000'000);
+        t.sec  = static_cast<decltype(t.sec)>(ns / 1'000'000'000ULL);
+        t.nsec = static_cast<decltype(t.nsec)>(ns % 1'000'000'000ULL);
         return t;
     }
 };

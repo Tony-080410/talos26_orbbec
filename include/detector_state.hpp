@@ -1,6 +1,7 @@
 #pragma once
 
 #include <array>
+#include <cassert>
 #include <cstdint>
 #include <string>
 
@@ -30,7 +31,8 @@ struct Lightbar {
     float angle_error; // Error from ideal angle (4B)
     float ratio;       // length / width (4B)
     uint8_t color;     // 0=red, 1=blue, 2=extinguish, 3=purple (1B)
-    uint8_t _pad[3];   // Padding (3B)
+    bool valid;
+    uint8_t pad_[2];
 };
 static_assert(sizeof(Lightbar) == 20, "Lightbar must be exactly 20 bytes");
 
@@ -44,74 +46,73 @@ struct Armor {
     Color color;      // Color enum (1B)
     ArmorType type;   // ArmorType enum (1B)
     ArmorName name;   // ArmorName enum (1B)
-    uint8_t _pad;     // Padding (1B)
+    bool valid;
 };
 static_assert(sizeof(Armor) == 48, "Armor must be exactly 48 bytes");
 
 /**
- * @brief PnP pose result - 3D location and orientation
- */
-struct Pose {
-    float x, y, z;        // 3D position in world frame
-    float qx, qy, qz, qw; // Unit quaternion (normalized)
-};
-
-/**
  * @brief ArmorSlots - Structure-of-Arrays layout for detector output
- *
- * Memory layout (cache-friendly):
- * ┌────────────────────────────────────────────────────────┐
- * │ valid_mask (2 bytes) + lightbar_count (1B) + pad (5B)  │
- * │ armors[0..9] (10 × 48B = 480B)                         │
- * │ poses[0..9] (10 × 28B = 280B)                          │
- * │ lightbars[0..19] (20 × 20B = 400B)                     │
- * │ timestamp_ns (8 bytes)                                 │
- * │ frame_id (8 bytes)                                     │
- * └────────────────────────────────────────────────────────┘
- * Total: ~1184 bytes
  */
-struct alignas(64) ArmorSlots {
-    uint16_t valid_mask{0};    // Bitmask: bit i = 1 iff armors[i] valid
+struct ArmorSlots {
     uint8_t lightbar_count{0}; // Number of detected lightbars
     uint8_t armor_count{0};    // Number of valid armors
-    uint8_t padding_[4]{};     // Alignment padding
 
     std::array<Armor, 10> armors{};
-    std::array<Pose, 10> poses{};
     std::array<Lightbar, 20> lightbars{};
 
     uint64_t timestamp_ns{0};
     uint64_t frame_id{0};
 
-    [[nodiscard]] constexpr std::size_t count_valid() const {
-        return __builtin_popcount(valid_mask);
-    }
-
-    constexpr void set_valid(const int slot) {
-        if (slot >= 0 && slot < 10) {
-            valid_mask |= 1u << slot;
+    [[nodiscard]] constexpr uint8_t count_valid() const noexcept {
+        if (armor_count == 0) {
+            return 0;
         }
-    }
-
-    constexpr void set_invalid(const int slot) {
-        if (slot >= 0 && slot < 10) {
-            valid_mask &= ~(1u << slot);
+        auto count = 0;
+        for (auto i = 0; i < armor_count; ++i) {
+            if (armors[i].valid) {
+                count++;
+            }
         }
+        return count;
     }
 
-    [[nodiscard]] constexpr bool is_valid(const int slot) const {
-        return (valid_mask & 1u << slot) != 0;
+    /**
+     * @deprecated set valid in Armor directly
+     */
+    constexpr void set_valid(const uint8_t slot) noexcept {
+        assert(slot < 10);
+        armors[slot].valid = true;
     }
 
-    constexpr void clear() {
-        valid_mask     = 0;
+    /**
+     * @deprecated set invalid in Armor directly
+     */
+    constexpr void set_invalid(const uint8_t slot) noexcept {
+        assert(slot < 10);
+        armors[slot].valid = false;
+    }
+
+    /**
+     * @deprecated use valid in Armor directly
+     */
+    [[nodiscard]] constexpr bool is_valid(const uint8_t slot) const noexcept {
+        assert(slot < 10);
+        return armors[slot].valid;
+    }
+
+    constexpr void clear() noexcept {
         lightbar_count = 0;
         armor_count    = 0;
+        for (auto i = 0; i < 10; ++i) {
+            armors[i].valid = false;
+        }
+        for (auto i = 0; i < 20; ++i) {
+            lightbars[i].valid = false;
+        }
     }
 };
 
 // Verify memory layout
-static_assert(sizeof(ArmorSlots) <= 2048, "ArmorSlots exceeds 2KB budget");
-static_assert(alignof(ArmorSlots) == 64, "ArmorSlots must be cache-line aligned");
+static_assert(sizeof(ArmorSlots) <= 1024, "ArmorSlots exceeds 1KB budget");
 
 } // namespace talos

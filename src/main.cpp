@@ -1,12 +1,14 @@
 #include "auto_aim/config.hpp"
 #include "auto_aim/detector.hpp"
 #include "camera/hik_camera.hpp"
-#include "fast_tf/infantry_tf.hpp"
+#include "fast_tf/infantry.hpp"
 #include "ipc/shm_client.hpp"
+#include "math.hpp"
 #include "spdlog_hook.hpp"
 #include "strategy_wrapper.hpp"
 #include "talos_gimbal/stm32.hpp"
 #include "tracker.hpp"
+
 #include <Eigen/Geometry>
 #include <chrono>
 
@@ -74,6 +76,10 @@ static uint64_t now_ns() {
 }
 
 int main() {
+    const auto [r, p, y] = math_fuxk::rpy(math_fuxk::rpy(1.0, 0.5, 3.0).quat()).rpy();
+    spdlog::info("r: {} ", r);
+    spdlog::info("p: {} ", p);
+    spdlog::info("y: {} ", y);
     init_logger();
     // spdlog::set_level(spdlog::level::debug);
     spdlog::info("talos is initializing...");
@@ -132,8 +138,8 @@ int main() {
     // 创建 Foxglove 服务器 (必须在 TalosStrategy 之前，因为提供 tf_manager)
     FoxgloveServer foxglove_server(8765);
 
-    // 使用 FoxgloveServer 的 tf_manager 创建策略
-    TalosStrategy strategy(false, config, 6, 1080, 1440, foxglove_server.get_tf_manager());
+    // 使用 FoxgloveServer 的 tf_buffer 创建策略
+    TalosStrategy strategy(false, config, 6, 1080, 1440, foxglove_server.get_tf_buffer());
 
     // USB 设备和 IMU 数据存储
     talos_gimbal::ReceiveImuData imu_data{};
@@ -182,17 +188,14 @@ int main() {
 
         std::optional<ipc::ShmClient::ImageFrame> frame;
         if (daedalus) {
-            frame     = client->recv_image();
-            auto pose = client->recv_pose(ipc::POSE_CAMERA);
-            if (pose) {
+            frame = client->recv_image();
+            if (auto pose = client->recv_pose(ipc::POSE_GIMBAL)) {
                 Eigen::Quaterniond q(pose->qw, pose->qx, pose->qy, pose->qz);
-                // bad strategy.solver.set_R_gimbal2world(q);
+                auto [roll, pitch, yaw] = math_fuxk::rpy(q).rpy();
 
-                // Extract yaw from quaternion for gimbal tracking
-                auto euler          = q.toRotationMatrix().eulerAngles(0, 1, 2); // ZYX order
-                imu_data.data.roll  = euler[0];
-                imu_data.data.pitch = euler[1];
-                imu_data.data.yaw   = euler[2];
+                imu_data.data.roll  = roll;
+                imu_data.data.pitch = pitch;
+                imu_data.data.yaw   = yaw;
             }
         } else {
             auto img_result = camera_->read(100ms);
@@ -212,28 +215,25 @@ int main() {
             continue;
         }
 
-        // 从 IMU 获取姿态角 (USB 模式)
-        // double roll  = imu_data.data.roll;
-        // double pitch = imu_data.data.pitch;
-        // double yaw   = imu_data.data.yaw;
-        double roll  = 0;
-        double pitch = 0;
-        double yaw   = 0;
-
-        // 更新 strategy 的弹速和云台姿态
-        strategy.set_bullet_speed(imu_data.data.bullet_speed);
-        foxglove_server.get_tf_manager().update_gimbal(roll, pitch, yaw);
-        foxglove_server.get_tf_manager().update_camera_optical(-CV_PI / 2.0, 0.0, -CV_PI / 2.0);
-        Eigen::AngleAxisd rx(roll, Eigen::Vector3d::UnitX());
-        Eigen::AngleAxisd ry(pitch, Eigen::Vector3d::UnitY());
-        Eigen::AngleAxisd rz(yaw, Eigen::Vector3d::UnitZ());
-        // strategy.solver.set_R_gimbal2world(rx * ry * rz);
-
         // 跳帧检测
         auto [image, seq, timestamp_ns] = *frame;
         if (seq != last_seq + 1 && last_seq > 0) {
             spdlog::info("skip {} frame", seq - last_seq - 1);
         }
+
+        // 从 IMU 获取姿态角 (USB 模式)
+        double roll  = imu_data.data.roll;
+        double pitch = imu_data.data.pitch;
+        double yaw   = imu_data.data.yaw;
+        // double roll  = 0;
+        // double pitch = 0;
+        // double yaw   = 0;
+
+        // 更新 strategy 的弹速和云台姿态
+        strategy.set_bullet_speed(imu_data.data.bullet_speed);
+        // fast_tf::tick_infantry_static(timestamp_ns,foxglove_server.get_tf_buffer());
+        foxglove_server.get_tf_buffer()[fast_tf::gimbal_link_fuxk_frame::index].push(
+            timestamp_ns, fast_tf::TransformMatrix4d::from_rpy(roll, pitch, yaw));
 
         last_seq = seq;
         // spdlog::info("处理 {} 帧", last_seq);

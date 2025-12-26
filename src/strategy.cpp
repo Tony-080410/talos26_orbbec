@@ -54,6 +54,12 @@ auto TalosStrategy::track(
     track_latency.record(std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count());
 }
 
+[[nodiscard]] static uint64_t now_ns() {
+    return static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                     std::chrono::system_clock::now().time_since_epoch())
+                                     .count());
+}
+
 auto TalosStrategy::output() noexcept -> void {
     output_count.fetch_add(1, std::memory_order_relaxed);
 
@@ -82,8 +88,14 @@ auto TalosStrategy::output() noexcept -> void {
     }
 
     // 2. Shooter: 判断是否发射
-    const bool should_fire = shooter_.should_shoot(cmd, aimer_, target_, gimbal_yaw_);
-    cmd.fire_advice        = should_fire;
+    const auto fuck =
+        tf_buffer_[fast_tf::gimbal_link_fuxk_frame::index].at_interpolated_clamped(now_ns());
+    if (!fuck) {
+        spdlog::error("what the fuck: {}", fast_tf::to_string(fuck.error()));
+    }
+    const auto [roll, pitch, yaw] = fuck->transform.euler_rot().rpy();
+    const bool should_fire        = shooter_.should_shoot(cmd, aimer_, target_, yaw);
+    cmd.fire_advice               = should_fire;
     if (should_fire) {
         spdlog::info("fire!!!");
     }

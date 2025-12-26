@@ -28,3 +28,4 @@ thirdparty
 .cache
 build-asan/
 build-tsan/
+build-test/

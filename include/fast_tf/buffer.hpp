@@ -68,7 +68,7 @@ public:
     // ========================================================================
 
     void push(timestamp_ns_t timestamp_ns, const TransformMatrix4d& transform) {
-        typename mutex_type::scoped_lock lock(mutex_);
+        mutex_type::scoped_lock lock(mutex_);
 
         buffer_[head_] = TransformEntry(timestamp_ns, transform);
         head_          = (head_ + 1) % Capacity;
@@ -83,7 +83,7 @@ public:
     // ========================================================================
 
     [[nodiscard]] std::expected<TransformEntry, TransformError> latest() const {
-        typename mutex_type::scoped_lock lock(mutex_, false);
+        mutex_type::scoped_lock lock(mutex_, false);
 
         if (size_ == 0) {
             return std::unexpected(TransformError::NoDataAvailable);
@@ -95,7 +95,7 @@ public:
 
     [[nodiscard]] std::expected<TransformEntry, TransformError>
         at(timestamp_ns_t timestamp_ns) const {
-        typename mutex_type::scoped_lock lock(mutex_, false);
+        mutex_type::scoped_lock lock(mutex_, false);
 
         if (size_ == 0) {
             return std::unexpected(TransformError::NoDataAvailable);
@@ -113,7 +113,7 @@ public:
 
     [[nodiscard]] std::expected<TransformEntry, TransformError>
         at_interpolated(timestamp_ns_t timestamp_ns) const {
-        typename mutex_type::scoped_lock lock(mutex_, false);
+        mutex_type::scoped_lock lock(mutex_, false);
 
         if (size_ == 0) {
             return std::unexpected(TransformError::NoDataAvailable);
@@ -145,8 +145,8 @@ public:
         }
 
         // Find target timestamp
-        auto it =
-            std::lower_bound(entries.begin(), entries.end(), TransformEntry(timestamp_ns, {}));
+        auto it = std::lower_bound(
+            entries.begin(), entries.end(), TransformEntry(timestamp_ns, TransformMatrix4d()));
 
         if (it != entries.end() && it->timestamp_ns == timestamp_ns) {
             return *it;
@@ -176,7 +176,7 @@ public:
      */
     [[nodiscard]] std::expected<TransformEntry, TransformError>
         at_interpolated_clamped(timestamp_ns_t timestamp_ns) const {
-        typename mutex_type::scoped_lock lock(mutex_, false);
+        mutex_type::scoped_lock lock(mutex_, false);
 
         if (size_ == 0) {
             return std::unexpected(TransformError::NoDataAvailable);
@@ -208,8 +208,8 @@ public:
         }
 
         // Find target timestamp
-        auto it =
-            std::lower_bound(entries.begin(), entries.end(), TransformEntry(timestamp_ns, {}));
+        auto it = std::lower_bound(
+            entries.begin(), entries.end(), TransformEntry(timestamp_ns, TransformMatrix4d()));
 
         if (it != entries.end() && it->timestamp_ns == timestamp_ns) {
             return *it;
@@ -237,7 +237,7 @@ public:
     // ========================================================================
 
     std::optional<std::pair<timestamp_ns_t, timestamp_ns_t>> time_range() const {
-        typename mutex_type::scoped_lock lock(mutex_, false);
+        mutex_type::scoped_lock lock(mutex_, false);
 
         if (size_ == 0) {
             return std::nullopt;
@@ -256,19 +256,19 @@ public:
     }
 
     [[nodiscard]] std::size_t size() const {
-        typename mutex_type::scoped_lock lock(mutex_, false);
+        mutex_type::scoped_lock lock(mutex_, false);
         return size_;
     }
 
     [[nodiscard]] constexpr std::size_t capacity() const { return Capacity; }
 
     [[nodiscard]] bool is_full() const {
-        typename mutex_type::scoped_lock lock(mutex_, false);
+        mutex_type::scoped_lock lock(mutex_, false);
         return size_ == Capacity;
     }
 
     [[nodiscard]] bool is_empty() const {
-        typename mutex_type::scoped_lock lock(mutex_, false);
+        mutex_type::scoped_lock lock(mutex_, false);
         return size_ == 0;
     }
 
@@ -281,13 +281,13 @@ public:
     }
 
     void clear() {
-        typename mutex_type::scoped_lock lock(mutex_);
+        mutex_type::scoped_lock lock(mutex_);
         head_ = 0;
         size_ = 0;
     }
 
     std::vector<TransformEntry> get_all_entries() const {
-        typename mutex_type::scoped_lock lock(mutex_, false);
+        mutex_type::scoped_lock lock(mutex_, false);
 
         std::vector<TransformEntry> entries;
         entries.reserve(size_);

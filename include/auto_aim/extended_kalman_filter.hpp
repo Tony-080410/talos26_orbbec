@@ -1,5 +1,7 @@
 #pragma once
 
+#include "fast_tf/frame.hpp"
+
 #include <Eigen/Dense>
 #include <deque>
 #include <functional>
@@ -32,18 +34,10 @@ public:
      * @param P0 初始协方差
      * @param x_add 状态加法函数（用于角度wrap）
      */
-    ExtendedKalmanFilter(
+    explicit ExtendedKalmanFilter(
         const Eigen::VectorXd& x0, const Eigen::MatrixXd& P0,
         const std::function<Eigen::VectorXd(const Eigen::VectorXd&, const Eigen::VectorXd&)>&
             x_add = [](const Eigen::VectorXd& a, const Eigen::VectorXd& b) { return a + b; });
-
-    /**
-     * @brief 线性预测
-     * @param F 状态转移矩阵
-     * @param Q 过程噪声
-     * @return 预测后的状态
-     */
-    Eigen::VectorXd predict(const Eigen::MatrixXd& F, const Eigen::MatrixXd& Q);
 
     /**
      * @brief 非线性预测
@@ -55,19 +49,6 @@ public:
     Eigen::VectorXd predict(
         const Eigen::MatrixXd& F, const Eigen::MatrixXd& Q,
         const std::function<Eigen::VectorXd(const Eigen::VectorXd&)>& f);
-
-    /**
-     * @brief 线性更新
-     * @param z 观测向量
-     * @param H 观测矩阵
-     * @param R 观测噪声
-     * @param z_subtract 观测减法函数（用于角度wrap）
-     * @return 更新后的状态
-     */
-    Eigen::VectorXd update(
-        const Eigen::VectorXd& z, const Eigen::MatrixXd& H, const Eigen::MatrixXd& R,
-        const std::function<Eigen::VectorXd(const Eigen::VectorXd&, const Eigen::VectorXd&)>&
-            z_subtract = [](const Eigen::VectorXd& a, const Eigen::VectorXd& b) { return a - b; });
 
     /**
      * @brief 非线性更新

@@ -21,7 +21,6 @@
 #include "auto_aim/detector.hpp"
 #include "auto_aim/solver.hpp"
 #include "auto_aim/tracker.hpp"
-#include "fast_tf/infantry_tf.hpp"
 
 using namespace auto_aim;
 using namespace std::chrono;
@@ -317,9 +316,12 @@ int main(int argc, char** argv) {
     // Initialize pipeline components
     TraditionalDetector detector(config, false);
     Solver solver(config.solver);
-    fast_tf::infantry::InfantryTFManager tf_manager{
-        std::nullopt}; // 创建本地tf_manager用于benchmark (无foxglove发布)
-    Tracker tracker(config.tracker, tf_manager);
+    // 创建本地 tf_buffer 用于 benchmark (使用默认 Infantry 配置)
+    const Eigen::Vector3d t_camera{0.04444, 0.0, -0.0363};
+    const Eigen::Matrix3d R_camera = Eigen::Matrix3d::Identity();
+    const Eigen::Vector3d t_muzzle{0.0874, 0.0, -0.0874};
+    fast_tf::TransformBuffer<100> tf_buffer(t_camera, R_camera, t_muzzle);
+    Tracker tracker(config.tracker, tf_buffer);
     DetectorWorkBuffers detector_buffers;
     talos::TrackerSoA tracker_soa;
     Target target;

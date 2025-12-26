@@ -1,4 +1,7 @@
 #include "strategy_wrapper.hpp"
+
+#include "fast_tf/infantry.hpp"
+
 #include <spdlog/spdlog.h>
 
 // FoxgloveServer 的构造函数实现
@@ -121,14 +124,19 @@ FoxgloveServer::FoxgloveServer(const uint16_t port, std::string host) noexcept {
     }
     camera_calib_ch_.emplace(std::move(camera_calib_r.value()));
 
-    // 创建 TF Manager (将 tf_ch_ 移动给它)
-    tf_manager_ = std::make_unique<fast_tf::infantry::InfantryTFManager>(std::move(tf_ch_));
-    tf_ch_.reset(); // 清空，因为已经移动给 tf_manager_
+    tf_buffer_ = fast_tf::infantry_new<100>(0);
 
-    // 发布初始 TF (建立完整的 TF 树)
-    uint64_t init_ts = std::chrono::duration_cast<std::chrono::nanoseconds>(
-                           std::chrono::steady_clock::now().time_since_epoch())
-                           .count();
+    // 创建 Foxglove Exporter 用于发布 TF
+    if (tf_ch_) {
+        tf_exporter_.emplace(std::move(*tf_ch_));
+        tf_ch_.reset();
+
+        // 发布初始 TF 树
+        uint64_t init_ts = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                               std::chrono::steady_clock::now().time_since_epoch())
+                               .count();
+        tf_exporter_->publish_entire<fast_tf::camera_optical_fuxk_frame>(*tf_buffer_, init_ts);
+    }
     server_initialized_ = true;
 
     // 启动消息发送线程
@@ -278,4 +286,10 @@ void FoxgloveServer::publish_camera_calibration(
     };
 
     camera_calib_ch_->log(calib);
+}
+
+void FoxgloveServer::publish_tf(uint64_t timestamp_ns) noexcept {
+    if (tf_exporter_) {
+        tf_exporter_->publish_entire<fast_tf::camera_optical_fuxk_frame>(*tf_buffer_, timestamp_ns);
+    }
 }

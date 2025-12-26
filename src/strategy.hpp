@@ -1,7 +1,6 @@
 #pragma once
 #include "aimer.hpp"
 #include "detector.hpp"
-#include "fast_tf/infantry_tf.hpp"
 #include "output_interface.hpp"
 #include "primitives/buffer_pool.hpp"
 #include "primitives/latency_stats.hpp"
@@ -27,16 +26,17 @@ public:
 
     TalosStrategy(
         const bool debug, const SpVisionConfig& config, const size_t buffer_count, const int rows,
-        const int cols, fast_tf::infantry::InfantryTFManager& tf_manager) noexcept
+        const int cols, fast_tf::CoordinateSystem<100>& tf_buffer) noexcept
         : detector(config, debug)
         , solver(config.solver)
-        , tracker(config.tracker, tf_manager)
-        , tf_manager_(tf_manager)
+        , tracker(config.tracker, tf_buffer)
         , aimer_(to_aimer_config(config.aimer))
         , shooter_(to_shooter_config(config.shooter))
         , frame_pool(buffer_count, rows, cols, CV_8UC3)
         , gray_pool(buffer_count, rows, cols, CV_8UC1)
         , small_pool(buffer_count, rows, cols, CV_8UC1)
+        , tf_buffer_(tf_buffer)
+        , target_(tf_buffer)
         , image_width_(static_cast<uint32_t>(cols))
         , image_height_(static_cast<uint32_t>(rows)) {
         // 存储相机标定参数
@@ -90,6 +90,8 @@ public:
     }
     [[nodiscard]] const std::vector<double>& get_distortion() const noexcept { return distortion_; }
 
+    fast_tf::CoordinateSystem<100>& tf_buffer_;
+
     // Initialize pipeline components (stateless)
     auto_aim::TraditionalDetector detector;
     auto_aim::Solver solver;
@@ -110,8 +112,6 @@ public:
     std::atomic<uint64_t> frame_count{0};
     std::atomic<uint64_t> processed_count{0};
     std::atomic<uint64_t> output_count{0};
-
-    double gimbal_yaw_{0.0}; // rad (当前云台 yaw)
 
 private:
     // 配置转换辅助函数
@@ -139,12 +139,9 @@ private:
     }
 
     // Internal state owned by strategy
-    auto_aim::Target target_{};                        // EKF 跟踪目标
+    auto_aim::Target target_;                          // EKF 跟踪目标
     auto_aim::DetectorWorkBuffers detector_buffers_{}; // 检测器工作缓冲
     auto_aim::GimbalCommand last_gimbal_cmd_{};        // 最近一次云台命令 (用于可视化)
-
-    // TF 管理器引用
-    fast_tf::infantry::InfantryTFManager& tf_manager_;
 
     // Aimer + Shooter
     auto_aim::Aimer aimer_;

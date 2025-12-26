@@ -1,7 +1,8 @@
 #pragma once
 
+#include "fast_tf/frame.hpp"
+
 #include <array>
-#include <atomic>
 #include <string>
 #include <string_view>
 
@@ -30,126 +31,67 @@ constexpr std::string_view tracker_state(const TrackerState c) noexcept {
 }
 
 /**
- * @brief Tracker state - optimized for L1 cache residence
- *
- * Critical design constraint: sizeof(TrackerSoA) == 64 bytes EXACTLY
- * This ensures the entire tracker state fits in a single L1 cache line,
- * guaranteeing 100% cache hit rate on all state reads/writes.
- *
- * Precision trade-off: Using float32 instead of double64 to fit in 64 bytes.
- * This is acceptable because:
- * - Armor position accuracy is limited by camera resolution (~0.1-0.2 pixels)
- * - UKF prediction uses numerical integration (Rk4 covariance evolution)
- * - float32 precision (~7 decimal digits) is sufficient for ~1mm accuracy
- *
- * Memory layout (all fields packed):
- * ┌─────────────────────────────────────────────────────────────┐
- * │ Offset  │ Field               │ Size  │ Total Offset         │
- * ├─────────┼─────────────────────┼───────┼──────────────────────┤
- * │  0      │ state (atomic<u8>)  │  1    │  1                   │
- * │  1      │ detecting_count     │  1    │  2                   │
- * │  2      │ lost_count          │  1    │  3                   │
- * │  3      │ generation          │  1    │  4                   │
- * │  4      │ pos[3] (float)      │ 12    │ 16                   │
- * │ 16      │ vel[3] (float)      │ 12    │ 28                   │
- * │ 28      │ yaw, v_yaw (float)  │  8    │ 36                   │
- * │ 36      │ radius[2] (float)   │  8    │ 44                   │
- * │ 44      │ max_temp_lost_count │  4    │ 48                   │
- * │ 48      │ last_timestamp_ns   │  8    │ 56                   │
- * │ 56      │ padding             │  8    │ 64                   │
- * └─────────┴─────────────────────┴───────┴──────────────────────┘
- *
- * Total: 64 bytes (single L1 cache line)
- *
- * Access patterns:
- * - Predict: read pos/vel/yaw/v_yaw, write pos/yaw
- * - Update: read all (11D), compute Kalman gain, write all
- * - State transition: read/write state (atomic)
- * All operations are contained within the 64-byte cache line.
+ * @brief Tracker state - cpu cache friendly
  */
 struct alignas(64) TrackerSoA {
-    // === State Machine (4 bytes) ===
-    std::atomic<TrackerState> state{IDLE}; // Atomic for CAS operations
-    int8_t detecting_count{0};             // Frames since DETECTING started
-    int8_t lost_count{0};                  // Frames since tracking lost
-    uint8_t generation{0};                 // Version counter for ABA prevention
+    std::atomic<TrackerState> state{IDLE};
+    uint8_t detecting_count{0};                              // Frames since DETECTING started
+    uint8_t lost_count{0};                                   // Frames since tracking lost
+    uint8_t generation{0};                                   // Version counter for ABA prevention
 
-    // === 11D State Vector (44 bytes) ===
-    // Position (3D)
-    float pos[3]{0.0f, 0.0f, 0.0f}; // [x, y, z] world position
+    fast_tf::Fuck<fast_tf::world_fuxk_frame, std::array<float, 3>>
+        pos{};                                               // [x, y, z] world position
+    fast_tf::Fuck<fast_tf::world_fuxk_frame, std::array<float, 3>>
+        vel{};                                               // [vx, vy, vz] linear velocity
 
-    // Velocity (3D)
-    float vel[3]{0.0f, 0.0f, 0.0f}; // [vx, vy, vz] linear velocity
-
-    // Rotation (2D)
-    float yaw{0.0f};   // Rotation angle (radians)
-    float v_yaw{0.0f}; // Angular vel{}ocity (rad/s)
+    fast_tf::Fuck<fast_tf::world_fuxk_frame, float> yaw{};   // Rotation angle (radians)
+    fast_tf::Fuck<fast_tf::world_fuxk_frame, float> v_yaw{}; // Angular velocity (rad/s)
 
     // Shape (2D)
-    float radius[2]{1.0f, 1.0f}; // [radius_x, radius_y] armor dimensions ratio
+    float radius[2]{1.0f, 1.0f};      // [radius_x, radius_y] armor dimensions ratio
 
-    // === Runtime State (使用 padding 空间) ===
-    int32_t max_temp_lost_count{10}; // 动态丢失阈值, 4 bytes (offset 44-48)
-    int64_t last_timestamp_ns{0};    // 上次更新时间戳 (ns), 8 bytes (offset 48-56, 8字节对齐)
+    uint32_t max_temp_lost_count{10}; // 动态丢失阈值, 4 bytes (offset 44-48)
+    uint64_t last_timestamp_ns{0};    // 上次更新时间戳 (ns), 8 bytes (offset 48-56, 8字节对齐)
 
-    // === Cache Line Padding (8 bytes) ===
-    char _padding[8];
+    explicit TrackerSoA() noexcept = default;
+    // 禁止拷贝
+    TrackerSoA(const TrackerSoA&)            = delete;
+    TrackerSoA& operator=(const TrackerSoA&) = delete;
 
-    /**
-     * @brief Verify this tracker fits in exactly one cache line
-     */
-    static constexpr void static_checks() {
-        static_assert(
-            sizeof(TrackerSoA) == 64, "TrackerSoA must be exactly 64 bytes for L1 cache residence");
-        static_assert(
-            alignof(TrackerSoA) == 64, "TrackerSoA must be 64-byte aligned (cache line alignment)");
+    TrackerSoA(TrackerSoA&&)            = default;
+    TrackerSoA& operator=(TrackerSoA&&) = default;
+
+    auto detect() noexcept {
+        if (state != IDLE) {
+            return false;
+        }
+        state = DETECTING;
+        return true;
     }
 
-    /**
-     * @brief State machine transition: IDLE -> DETECTING
-     * Called when first armor detected in IDLE state
-     */
-    bool try_start_detecting() {
-        auto expected = IDLE;
-        return state.compare_exchange_strong(
-            expected, DETECTING, std::memory_order_release, std::memory_order_relaxed);
+    auto track() noexcept {
+        if (state == DETECTING || state == TEMP_LOST) {
+            return false;
+        }
+        state = TRACKING;
+        return true;
     }
 
-    /**
-     * @brief State machine transition: DETECTING -> TRACKING
-     * Called when detection confidence threshold reached
-     */
-    bool try_confirm_tracking() {
-        auto expected = DETECTING;
-        return state.compare_exchange_strong(
-            expected, TRACKING, std::memory_order_release, std::memory_order_relaxed);
+    auto temporary_lost() noexcept {
+        if (state != TRACKING) {
+            return false;
+        }
+        state = TEMP_LOST;
+        return true;
     }
 
-    /**
-     * @brief State machine transition: TRACKING -> TEMP_LOST
-     * Called when detection missed
-     */
-    bool try_enter_lost() {
-        auto expected = TRACKING;
-        return state.compare_exchange_strong(
-            expected, TEMP_LOST, std::memory_order_release, std::memory_order_relaxed);
+    auto idle() noexcept {
+        if (state == IDLE) {
+            return false;
+        }
+        state = IDLE;
+        return true;
     }
-
-    /**
-     * @brief State machine transition: TEMP_LOST -> TRACKING
-     * Called when target re-detected after being lost
-     */
-    bool try_restore_tracking() {
-        auto expected = TEMP_LOST;
-        return state.compare_exchange_strong(
-            expected, TRACKING, std::memory_order_release, std::memory_order_relaxed);
-    }
-
-    /**
-     * @brief State machine transition: * -> IDLE
-     * Called when timeout (too many consecutive misses)
-     */
-    bool try_reset_idle() { return state.exchange(IDLE, std::memory_order_release) != IDLE; }
 
     /**
      * @brief Increment generation counter for ABA prevention
@@ -158,8 +100,6 @@ struct alignas(64) TrackerSoA {
         generation++; // Wrap-around is intentional and safe
     }
 };
+static_assert(sizeof(TrackerSoA) <= 64, "ArmorSlots exceeds 64B budget");
 
-// Compile-time verification
-static_assert(sizeof(TrackerSoA) == 64, "TrackerSoA size verification failed");
-static_assert(alignof(TrackerSoA) == 64, "TrackerSoA alignment verification failed");
 } // namespace talos

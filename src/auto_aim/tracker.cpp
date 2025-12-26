@@ -7,23 +7,12 @@
 
 namespace auto_aim {
 
-Tracker::Tracker(
-    const SpVisionTrackerConfig& config, fast_tf::infantry::InfantryTFManager& tf_manager)
-    : tf_manager_(tf_manager)
+Tracker::Tracker(const SpVisionTrackerConfig& config, fast_tf::CoordinateSystem<100>& tf_buffer)
+    : tf_buffer_(tf_buffer)
     , enemy_color_(static_cast<talos::Color>(config.enemy_color))
     , min_detect_count_(config.min_detect_count)
     , normal_temp_lost_count_(config.max_temp_lost_count)
     , outpost_max_temp_lost_count_(config.outpost_max_temp_lost_count) {}
-
-std::string Tracker::state_string(const talos::TrackerSoA& state) {
-    switch (state.state.load(std::memory_order_acquire)) {
-    case talos::TrackerState::IDLE: return "idle";
-    case talos::TrackerState::DETECTING: return "detecting";
-    case talos::TrackerState::TRACKING: return "tracking";
-    case talos::TrackerState::TEMP_LOST: return "temp_lost";
-    default: return "unknown";
-    }
-}
 
 bool Tracker::track(
     talos::TrackerSoA& state, Target& target, const talos::ArmorSlots& slots,
@@ -37,10 +26,11 @@ bool Tracker::track(
     // 时间间隔过长，说明可能发生了相机离线
     if (current_state != talos::TrackerState::IDLE && dt > 0.1) {
         spdlog::warn("[Tracker] Large dt: {:.3f}s", dt);
-        state.try_reset_idle();
+        state.idle();
     }
 
-    spdlog::debug("Tracker state: {}", state_string(state));
+    spdlog::debug(
+        "Tracker state: {}", talos::tracker_state(state.state.load(std::memory_order_acquire)));
     bool found;
     if (current_state == talos::TrackerState::IDLE) {
         found = set_target(state, target, slots, poses3d, t);
@@ -53,9 +43,9 @@ bool Tracker::track(
 
     // 发散检测
     if (state.state.load(std::memory_order_acquire) != talos::TrackerState::IDLE
-        && target.diverged()) {
+        && target.name != talos::ArmorName::not_armor && target.diverged()) {
         spdlog::debug("[Tracker] Target diverged!");
-        state.try_reset_idle();
+        state.idle();
         return false;
     }
 
@@ -65,9 +55,25 @@ bool Tracker::track(
             target.ekf().recent_nis_failures.begin(), target.ekf().recent_nis_failures.end(), 0);
         if (recent_failures >= static_cast<int>(0.4 * target.ekf().window_size)) {
             spdlog::debug("[Tracker] Bad Converge Found!");
-            state.try_reset_idle();
+            state.idle();
             return false;
         }
+    }
+
+    // 同步 EKF 状态到 TrackerSoA (用于 Foxglove 发布)
+    if (target.converged()) {
+        const auto& x = target.ekf_x();
+        // EKF 状态向量: [x, vx, y, vy, z, vz, yaw, v_yaw, r, l, h]
+        //               0   1   2   3   4   5    6     7   8  9  10
+        state.pos = decltype(state.pos)(
+            {static_cast<float>(x(0)), static_cast<float>(x(2)), static_cast<float>(x(4))});
+        state.vel = decltype(state.vel)(
+            {static_cast<float>(x(1)), static_cast<float>(x(3)), static_cast<float>(x(5))});
+
+        state.yaw       = decltype(state.yaw)(static_cast<float>(x(6)));   // yaw
+        state.v_yaw     = decltype(state.v_yaw)(static_cast<float>(x(7))); // v_yaw
+        state.radius[0] = static_cast<float>(x(8));                        // r
+        state.radius[1] = static_cast<float>(x(8) + x(9));                 // r + l
     }
 
     return state.state.load(std::memory_order_acquire) != talos::TrackerState::IDLE;
@@ -86,57 +92,61 @@ void Tracker::state_machine(
     const auto current_state = state.state.load(std::memory_order_acquire);
 
     if (current_state == talos::TrackerState::IDLE) {
-        if (!found)
+        if (!found) {
             return;
-
+        }
         // IDLE -> DETECTING
-        if (state.try_start_detecting()) {
+        if (state.detect()) {
             state.detecting_count = 1;
         }
+        return;
     }
 
-    else if (current_state == talos::TrackerState::DETECTING) {
+    if (current_state == talos::TrackerState::DETECTING) {
         if (found) {
             state.detecting_count++;
             if (state.detecting_count >= min_detect_count_) {
                 // DETECTING -> TRACKING
-                state.try_confirm_tracking();
+                state.track();
             }
-        } else {
-            // DETECTING -> IDLE
-            state.detecting_count = 0;
-            state.try_reset_idle();
+            return;
         }
+        // DETECTING -> IDLE
+        state.detecting_count = 0;
+        state.idle();
+        return;
     }
 
-    else if (current_state == talos::TrackerState::TRACKING) {
-        if (found)
+    if (current_state == talos::TrackerState::TRACKING) {
+        if (found) {
             return;
+        }
 
         // TRACKING -> TEMP_LOST
-        if (state.try_enter_lost()) {
+        if (state.temporary_lost()) {
             state.lost_count = 1;
         }
+        return;
     }
 
-    else if (current_state == talos::TrackerState::TEMP_LOST) {
+    if (current_state == talos::TrackerState::TEMP_LOST) {
         if (found) {
             // TEMP_LOST -> TRACKING
-            state.try_restore_tracking();
+            state.track();
+            return;
+        }
+        state.lost_count++;
+
+        // 前哨站特殊处理
+        if (target.name == talos::ArmorName::outpost) {
+            state.max_temp_lost_count = outpost_max_temp_lost_count_;
         } else {
-            state.lost_count++;
+            state.max_temp_lost_count = normal_temp_lost_count_;
+        }
 
-            // 前哨站特殊处理
-            if (target.name == talos::ArmorName::outpost) {
-                state.max_temp_lost_count = outpost_max_temp_lost_count_;
-            } else {
-                state.max_temp_lost_count = normal_temp_lost_count_;
-            }
-
-            if (state.lost_count > state.max_temp_lost_count) {
-                // TEMP_LOST -> IDLE
-                state.try_reset_idle();
-            }
+        if (state.lost_count > state.max_temp_lost_count) {
+            // TEMP_LOST -> IDLE
+            state.idle();
         }
     }
 }
@@ -168,7 +178,7 @@ bool Tracker::set_target(
         }
 
         // 使用camera坐标系中的距离选择最近目标
-        if (const float distance = static_cast<float>(poses3d[i].xyz_in_camera.norm());
+        if (const float distance = static_cast<float>(poses3d[i].pnp->matrix().norm());
             distance < best_distance) {
             spdlog::debug("Slot {} has better distance: {}", i, distance);
             best_distance = distance;
@@ -198,22 +208,22 @@ bool Tracker::set_target(
         const Eigen::VectorXd P0_dig{
             {1, 64, 1, 64, 1, 64, 0.4, 100, 1, 1, 1}
         };
-        target = Target(armor, pose3d, tf_manager_, t, 0.2, 2, P0_dig);
+        target = Target(armor, pose3d, tf_buffer_, t, 0.2, 2, P0_dig);
     } else if (name == talos::ArmorName::outpost) {
         const Eigen::VectorXd P0_dig{
             {1, 64, 1, 64, 1, 81, 0.4, 100, 1e-4, 0, 0}
         };
-        target = Target(armor, pose3d, tf_manager_, t, 0.2765, 3, P0_dig);
+        target = Target(armor, pose3d, tf_buffer_, t, 0.2765, 3, P0_dig);
     } else if (name == talos::ArmorName::base) {
         const Eigen::VectorXd P0_dig{
             {1, 64, 1, 64, 1, 64, 0.4, 100, 1e-4, 0, 0}
         };
-        target = Target(armor, pose3d, tf_manager_, t, 0.3205, 3, P0_dig);
+        target = Target(armor, pose3d, tf_buffer_, t, 0.3205, 3, P0_dig);
     } else {
         const Eigen::VectorXd P0_dig{
             {1, 64, 1, 64, 1, 64, 0.4, 100, 1, 1, 1}
         };
-        target = Target(armor, pose3d, tf_manager_, t, 0.2, 4, P0_dig);
+        target = Target(armor, pose3d, tf_buffer_, t, 0.2, 4, P0_dig);
     }
 
     // 更新 generation 用于 ABA 防护
@@ -254,7 +264,7 @@ bool Tracker::update_target(
         }
 
         found_count++;
-        target.update(armor, poses3d[i], tf_manager_);
+        target.update(armor, poses3d[i]);
     }
 
     return found_count > 0;
@@ -273,20 +283,20 @@ void Tracker::track(
         debug.tracker_state = out.state.load(std::memory_order_relaxed);
         return;
     }
-
-    // 不再需要坐标变换，直接使用 camera_optical 坐标
-    // Target 构造/update 时会通过 tf_manager 查询 world 坐标
-    const auto timestamp = std::chrono::steady_clock::now();
-    track(out, target_, *slots, *poses, timestamp);
-
-    // 更新调试数据
-    debug.tracker_state = out.state.load(std::memory_order_relaxed);
-    if (target_.converged()) {
-        const auto ekf_x    = target_.ekf_x();
-        debug.predicted_pos = Eigen::Vector3d(ekf_x(0), ekf_x(2), ekf_x(4));
-    }
+    abort();
+    //     // 不再需要坐标变换，直接使用 camera_optical 坐标
+    //     // Target 构造/update 时会通过 tf_manager 查询 world 坐标
+    //     const auto timestamp = std::chrono::steady_clock::now();
+    //     track(out, target_, *slots, *poses, timestamp);
+    //
+    //     // 更新调试数据
+    //     debug.tracker_state = out.state.load(std::memory_order_relaxed);
+    //     if (target_.converged()) {
+    //         const auto ekf_x    = target_.ekf_x();
+    //         debug.predicted_pos = Eigen::Vector3d(ekf_x(0), ekf_x(2), ekf_x(4));
+    //     }
 }
 
-void Tracker::reset() noexcept { target_ = Target{}; }
+void Tracker::reset() noexcept {}
 
 } // namespace auto_aim

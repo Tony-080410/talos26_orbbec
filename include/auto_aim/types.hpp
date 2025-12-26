@@ -1,5 +1,7 @@
 #pragma once
 
+#include "fast_tf/frame.hpp"
+
 #include <Eigen/Core>
 #include <array>
 #include <cstdint>
@@ -30,11 +32,10 @@ struct ArmorPose3D {
     uint64_t timestamp_ns{0};
 
     // ===== Solver 填充 (camera_optical_frame 坐标系) =====
-    Eigen::Vector3d xyz_in_camera{0, 0, 0};                   // [camera_optical系] 位置 (m)
-    Eigen::Matrix3d R_in_camera{Eigen::Matrix3d::Identity()}; // [camera_optical系] 旋转矩阵
-    double yaw_raw{0};                                        // PnP原始yaw值 (rad)
+    fast_tf::FuckTransform<fast_tf::camera_optical_fuxk_frame> pnp{};
+    fast_tf::Fuck<fast_tf::camera_optical_fuxk_frame, double> yaw_raw{0}; // PnP原始yaw值 (rad)
 
-    bool valid{false};                                        // 位姿是否有效
+    bool valid{false};                                                    // 位姿是否有效
 };
 
 using Poses3D = std::array<ArmorPose3D, 10>;

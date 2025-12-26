@@ -1,8 +1,13 @@
 #pragma once
 
-#include "concepts.hpp"
+#include "auto_aim/math.hpp"
 #include "types.hpp"
+
 #include <Eigen/Dense>
+#include <opencv2/calib3d.hpp>
+#include <opencv2/core/eigen.hpp>
+#include <opencv2/core/matx.hpp>
+#include <utility>
 
 namespace fast_tf {
 
@@ -11,6 +16,7 @@ namespace fast_tf {
 // ============================================================================
 
 /// 4x4 Transform matrix wrapper with utility methods
+
 class TransformMatrix4d {
 public:
     using Matrix = Eigen::Matrix4d;
@@ -18,41 +24,50 @@ public:
     TransformMatrix4d()
         : matrix_(Matrix::Identity()) {}
 
-    explicit TransformMatrix4d(const Matrix& m)
-        : matrix_(m) {}
+    explicit TransformMatrix4d(Matrix m)
+        : matrix_(std::move(m)) {}
 
     // ========================================================================
     // Factory Methods
     // ========================================================================
 
-    /// Create from RPY angles and translation
-    static TransformMatrix4d from_rpy(fp_t roll, fp_t pitch, fp_t yaw, fp_t x, fp_t y, fp_t z) {
-        Eigen::AngleAxisd rx(roll, Eigen::Vector3d::UnitX());
-        Eigen::AngleAxisd ry(pitch, Eigen::Vector3d::UnitY());
-        Eigen::AngleAxisd rz(yaw, Eigen::Vector3d::UnitZ());
-        Eigen::Quaterniond q = rz * ry * rx;
+    static TransformMatrix4d from_pnp(cv::Vec3d rvec, cv::Vec3d tvec) {
+        cv::Mat rmat;
+        cv::Rodrigues(std::move(rvec), rmat);
+
+        // 旋转矩阵有效性检查
+        assert(
+            std::abs(cv::determinant(rmat) - 1.0) < 1e-6
+            && "Rotation matrix must have determinant 1");
+
+        Matrix m = Matrix::Identity();
+
+        // 复制旋转矩阵
+        for (int i = 0; i < 3; ++i) {
+            for (int j = 0; j < 3; ++j) {
+                m(i, j) = rmat.at<double>(i, j);
+            }
+        }
+
+        // 复制平移向量
+        m(0, 3) = tvec[0];
+        m(1, 3) = tvec[1];
+        m(2, 3) = tvec[2];
+
+        return TransformMatrix4d(m);
+    }
+
+    /// Create EulerRot::XYZ intrinsic
+    static TransformMatrix4d from_rpy(
+        const fp_t roll, const fp_t pitch, const fp_t yaw, const fp_t x = 0.0, const fp_t y = 0.0,
+        const fp_t z = 0.0) {
+        const auto q = math_fuxk::rpy(roll, pitch, yaw).quat();
 
         Matrix m            = Matrix::Identity();
         m.block<3, 3>(0, 0) = q.toRotationMatrix();
         m(0, 3)             = x;
         m(1, 3)             = y;
         m(2, 3)             = z;
-
-        return TransformMatrix4d(m);
-    }
-
-    /// Create from quaternion and translation
-    static TransformMatrix4d
-        from_quaternion(fp_t w, fp_t x, fp_t y, fp_t z, fp_t tx, fp_t ty, fp_t tz) {
-        Eigen::Quaterniond q(w, x, y, z);
-        q.normalize();
-
-        Matrix m            = Matrix::Identity();
-        m.block<3, 3>(0, 0) = q.toRotationMatrix();
-        m(0, 3)             = tx;
-        m(1, 3)             = ty;
-        m(2, 3)             = tz;
-
         return TransformMatrix4d(m);
     }
 
@@ -62,6 +77,10 @@ public:
 
     TransformMatrix4d operator*(const TransformMatrix4d& other) const {
         return TransformMatrix4d(matrix_ * other.matrix_);
+    }
+
+    [[nodiscard]] TransformMatrix4d reparent_to(const TransformMatrix4d& parent_tf) const {
+        return parent_tf * *this;
     }
 
     // ========================================================================
@@ -74,6 +93,9 @@ public:
     [[nodiscard]] Matrix& matrix() { return matrix_; }
 
     [[nodiscard]] Eigen::Vector3d translation() const { return matrix_.block<3, 1>(0, 3); }
+    [[nodiscard]] math_fuxk::Ros2EulerRotd euler_rot() const {
+        return math_fuxk::rpy<double>(quaternion());
+    }
 
     [[nodiscard]] Eigen::Matrix3d rotation() const { return matrix_.block<3, 3>(0, 0); }
 
@@ -83,14 +105,15 @@ public:
     // Interpolation
     // ========================================================================
 
-    static TransformMatrix4d lerp(const TransformMatrix4d& a, const TransformMatrix4d& b, fp_t t) {
+    static TransformMatrix4d
+        lerp(const TransformMatrix4d& a, const TransformMatrix4d& b, const fp_t t) {
         // Position linear interpolation
-        Eigen::Vector3d pos = a.translation() * (1.0 - t) + b.translation() * t;
+        const Eigen::Vector3d pos = a.translation() * (1.0 - t) + b.translation() * t;
 
         // Quaternion spherical linear interpolation
-        Eigen::Quaterniond qa(a.rotation());
-        Eigen::Quaterniond qb(b.rotation());
-        Eigen::Quaterniond q = qa.slerp(t, qb);
+        const Eigen::Quaterniond qa(a.rotation());
+        const Eigen::Quaterniond qb(b.rotation());
+        const Eigen::Quaterniond q = qa.slerp(t, qb);
 
         Matrix m            = Matrix::Identity();
         m.block<3, 3>(0, 0) = q.toRotationMatrix();
@@ -102,28 +125,4 @@ public:
 private:
     Matrix matrix_;
 };
-
-// ============================================================================
-// Into Specializations for TransformMatrix4d
-// ============================================================================
-
-// Forward declaration needed for concept-constrained template
-struct RPYTransformData;
-struct QuaternionTransformData;
-
 } // namespace fast_tf
-
-// ============================================================================
-// std::hash specialization
-// ============================================================================
-
-namespace std {
-
-template <>
-struct hash<fast_tf::TransformMatrix4d> {
-    size_t operator()(const fast_tf::TransformMatrix4d& tm) const {
-        return hash<double>()(tm.matrix()(0, 0));
-    }
-};
-
-} // namespace std

@@ -1,20 +1,23 @@
 #include "target.hpp"
 
+#include "fast_tf/frame.hpp"
+
 #include <ranges>
 
 namespace auto_aim {
 
 Target::Target(
     const talos::Armor& armor, const ArmorPose3D& pose3d,
-    const fast_tf::infantry::InfantryTFManager& tf_manager,
+    const std::reference_wrapper<fast_tf::CoordinateSystem<100>> tf_buffer,
     const std::chrono::steady_clock::time_point t, const double radius, const int armor_num,
     const Eigen::VectorXd& P0_dig)
     : name(static_cast<talos::ArmorName>(armor.name))
     , armor_type(static_cast<talos::ArmorType>(armor.type))
     , armor_num_(armor_num)
+    , tf_buffer(tf_buffer)
     , t_(t) {
     // ========== 坐标系说明 ==========
-    // 输入数据在camera_optical坐标系，通过tf_manager查询world坐标
+    // 输入数据在camera_optical坐标系，通过tf_buffer查询world坐标
     // 状态向量表示旋转中心在world系的位置和速度
     // ================================
 
@@ -24,24 +27,20 @@ Target::Target(
     assert((armor_num == 2 || armor_num == 3 || armor_num == 4) && "Armor num must be 2, 3, or 4");
     assert(P0_dig.size() == 11 && "P0_dig must have 11 elements");
 
-    // 通过 tf_manager 查询 world 坐标
-    auto xyz_result =
-        tf_manager.transform_point_to_world(pose3d.xyz_in_camera, pose3d.timestamp_ns);
-    auto rpy_result =
-        tf_manager.transform_rotation_to_world_rpy(pose3d.R_in_camera, pose3d.timestamp_ns);
-
-    // 变换失败时使用camera坐标作为fallback (在world≈camera情况下可接受)
-    const Eigen::Vector3d xyz = xyz_result.value_or(pose3d.xyz_in_camera);
-    const Eigen::Vector3d rpy = rpy_result.value_or(Eigen::Vector3d(0, 0, pose3d.yaw_raw));
-
-    if (!xyz_result || !rpy_result) {
-        spdlog::warn(
-            "[Target] TF lookup failed at timestamp {}ns, using fallback", pose3d.timestamp_ns);
+    // 通过 tf_buffer 查询 world 坐标
+    auto result = fast_tf::lookup<fast_tf::world_fuxk_frame>(
+        tf_buffer.get(), pose3d.pnp, pose3d.timestamp_ns);
+    if (!result) {
+        spdlog::error("FIXME: unreasonable fallback: {}", fast_tf::to_string(result.error()));
+        abort();
     }
+    const auto transform = *result;
+
+    const auto xyz                = transform->translation();
+    const auto [roll, pitch, yaw] = transform->euler_rot().rpy();
 
     // Runtime检查: pose3d坐标系一致性
-    const double distance = xyz.norm();
-    if (distance < 0.5 || distance > 15.0) {
+    if (const double distance = xyz.norm(); distance < 0.5 || distance > 15.0) {
         spdlog::warn("[Target] Initial position unreasonable: distance={:.2f}m", distance);
     }
 
@@ -49,9 +48,9 @@ Target::Target(
 
     // 计算旋转中心的坐标 (world系)
     // 从装甲板位置xyz反推旋转中心，假设装甲板在半径r处
-    auto center_x = xyz[0] + r * std::cos(rpy[2]); // [world系, m], rpy[2]=yaw
-    auto center_y = xyz[1] + r * std::sin(rpy[2]); // [world系, m]
-    auto center_z = xyz[2];                        // [world系, m]
+    auto center_x = xyz[0] + r * std::cos(yaw); // [world系, m], rpy[2]=yaw
+    auto center_y = xyz[1] + r * std::sin(yaw); // [world系, m]
+    auto center_z = xyz[2];                     // [world系, m]
 
     // 状态向量: x vx y vy z vz a w r l h (所有在world坐标系)
     // x, y, z: 旋转中心位置 [m]
@@ -62,7 +61,7 @@ Target::Target(
     // l: r2 - r1 (长短轴差) [m]
     // h: z2 - z1 (高度差) [m]
     const Eigen::VectorXd x0{
-        {center_x, 0, center_y, 0, center_z, 0, rpy[2], 0, r, 0, 0}
+        {center_x, 0, center_y, 0, center_z, 0, yaw, 0, r, 0, 0}
     };
     const Eigen::MatrixXd P0 = P0_dig.asDiagonal();
 
@@ -70,24 +69,6 @@ Target::Target(
     auto x_add = [](const Eigen::VectorXd& a, const Eigen::VectorXd& b) -> Eigen::VectorXd {
         Eigen::VectorXd c = a + b;
         c[6]              = math::limit_rad(c[6]); // 限制角度在(-pi, pi]
-        return c;
-    };
-
-    ekf_ = ExtendedKalmanFilter(x0, P0, x_add);
-}
-
-Target::Target(double x, double vyaw, double radius, double h) {
-    const Eigen::VectorXd x0{
-        {x, 0, 0, 0, 0, 0, 0, vyaw, radius, 0, h}
-    };
-    const Eigen::VectorXd P0_dig{
-        {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}
-    };
-    const Eigen::MatrixXd P0 = P0_dig.asDiagonal();
-
-    auto x_add = [](const Eigen::VectorXd& a, const Eigen::VectorXd& b) -> Eigen::VectorXd {
-        Eigen::VectorXd c = a + b;
-        c[6]              = math::limit_rad(c[6]);
         return c;
     };
 
@@ -161,38 +142,28 @@ void Target::predict(double dt) {
     ekf_.predict(F, Q, f);
 }
 
-void Target::update(
-    [[maybe_unused]] const talos::Armor& armor, const ArmorPose3D& pose3d,
-    const fast_tf::infantry::InfantryTFManager& tf_manager) {
-    // 通过 tf_manager 查询 world 坐标
-    auto xyz_result =
-        tf_manager.transform_point_to_world(pose3d.xyz_in_camera, pose3d.timestamp_ns);
-    auto rpy_result =
-        tf_manager.transform_rotation_to_world_rpy(pose3d.R_in_camera, pose3d.timestamp_ns);
-
+void Target::update([[maybe_unused]] const talos::Armor& armor, const ArmorPose3D& pose3d) {
+    // 通过 tf_buffer 查询 world 坐标
+    auto result = fast_tf::lookup<fast_tf::world_fuxk_frame>(
+        tf_buffer.get(), pose3d.pnp, pose3d.timestamp_ns);
     // 变换失败时跳过此次更新
-    if (!xyz_result) {
+    if (!result) {
         spdlog::warn(
-            "[Target::update] xyz lookup failed at timestamp {}ns: {}", pose3d.timestamp_ns,
-            fast_tf::to_string(xyz_result.error()));
+            "[Target::update] lookup failed at timestamp {}ns: {}", pose3d.timestamp_ns,
+            fast_tf::to_string(result.error()));
         return;
     }
 
-    // 变换失败时跳过此次更新
-    if (!rpy_result) {
-        spdlog::warn(
-            "[Target::update] rpy lookup failed at timestamp {}ns: {}", pose3d.timestamp_ns,
-            fast_tf::to_string(rpy_result.error()));
-        return;
-    }
-
-    const Eigen::Vector3d xyz_world = *xyz_result;
-    const Eigen::Vector3d rpy_world = *rpy_result;
+    const Eigen::Vector3d xyz_world = (*result)->translation();
     const Eigen::Vector3d ypd_world = math::xyz2ypd(xyz_world);
 
+    const auto euler              = (*result)->euler_rot();
+    const auto [roll, pitch, yaw] = euler.rpy();
+
     // 装甲板匹配
-    int id                                        = 0;
-    auto min_angle_error                          = 1e10;
+    int id             = 0;
+    auto min_yaw_error = 1e10;
+
     const std::vector<Eigen::Vector4d>& xyza_list = armor_xyza_list();
 
     std::vector<std::pair<Eigen::Vector4d, int>> xyza_i_list;
@@ -212,14 +183,14 @@ void Target::update(
     // 取前3个distance最小的装甲板
     const int compare_num = std::min(3, armor_num_);
     for (int i = 0; i < compare_num; i++) {
-        const auto& xyza       = xyza_i_list[i].first;
-        Eigen::Vector3d ypd    = math::xyz2ypd(xyza.head(3));
-        const auto angle_error = std::abs(math::limit_rad(rpy_world[2] - xyza[3])) // rpy[2]=yaw
-                               + std::abs(math::limit_rad(ypd_world[0] - ypd[0]));
+        const auto& xyza     = xyza_i_list[i].first;
+        Eigen::Vector3d ypd  = math::xyz2ypd(xyza.head(3));
+        const auto yaw_error = std::abs(math::limit_rad(yaw - xyza[3])) // rpy[2]=yaw
+                             + std::abs(math::limit_rad(ypd_world[0] - ypd[0]));
 
-        if (std::abs(angle_error) < std::abs(min_angle_error)) {
-            id              = xyza_i_list[i].second;
-            min_angle_error = angle_error;
+        if (std::abs(yaw_error) < std::abs(min_yaw_error)) {
+            id            = xyza_i_list[i].second;
+            min_yaw_error = yaw_error;
         }
     }
 
@@ -240,11 +211,11 @@ void Target::update(
     last_id = id;
     update_count_++;
 
-    update_ypda(xyz_world, rpy_world, ypd_world, id);
+    update_ypda(xyz_world, euler, ypd_world, id);
 }
 
 void Target::update_ypda(
-    const Eigen::Vector3d& xyz_world, const Eigen::Vector3d& rpy_world,
+    const Eigen::Vector3d& xyz_world, const math_fuxk::Ros2EulerRotd& rpy_world,
     const Eigen::Vector3d& ypd_world, const int id) {
     // ========== 坐标系说明 ==========
     // 所有观测数据都在world坐标系 (ROS标准: x前, y左, z上)
@@ -254,8 +225,8 @@ void Target::update_ypda(
     // ================================
 
     // 检查: 观测距离合理性
-    const double observed_distance = ypd_world[2];
-    if (observed_distance < 0.5 || observed_distance > 15.0) {
+    if (const double observed_distance = ypd_world[2];
+        observed_distance < 0.5 || observed_distance > 15.0) {
         spdlog::warn("[Target] Observation distance unreasonable: {:.2f}m", observed_distance);
         return; // 跳过此次更新
     }
@@ -263,9 +234,10 @@ void Target::update_ypda(
     // 观测雅可比
     const Eigen::MatrixXd H = h_jacobian(ekf_.x, id);
 
+    const auto [roll, pitch, yaw] = rpy_world.rpy();
     // 计算观测噪声权重 (world系)
     const auto center_yaw  = std::atan2(xyz_world[1], xyz_world[0]);
-    const auto delta_angle = math::limit_rad(rpy_world[2] - center_yaw); // rpy[2]=yaw
+    const auto delta_angle = math::limit_rad(yaw - center_yaw); // rpy[2]=yaw
     const Eigen::VectorXd R_dig{
         {4e-3, 4e-3, std::log(std::abs(delta_angle) + 1) + 1,
          std::log(std::abs(ypd_world[2]) + 1) / 200 + 9e-2}
@@ -292,13 +264,12 @@ void Target::update_ypda(
 
     // 观测向量 (world系)
     const Eigen::VectorXd z{
-        {ypd_world[0], ypd_world[1], ypd_world[2], rpy_world[2]}  // rpy[2]=yaw
+        {ypd_world[0], ypd_world[1], ypd_world[2], yaw}  // rpy[2]=yaw
     };
 
     // 检查: 观测与预测的创新度
     const Eigen::VectorXd predicted_xyz = h_armor_xyz(ekf_.x, id);
-    const double innovation             = (predicted_xyz - xyz_world).norm();
-    if (innovation > 2.0) {
+    if (const double innovation = (predicted_xyz - xyz_world).norm(); innovation > 2.0) {
         spdlog::warn(
             "[Target] Large innovation: {:.2f}m (may indicate coordinate mismatch)", innovation);
     }

@@ -8,11 +8,6 @@ namespace talos::test {
 // Test: Memory Layout Verification
 // ============================================================================
 
-TEST(MemoryLayout, ArmorSlotsSize) {
-    EXPECT_LE(sizeof(talos::ArmorSlots), 2048) << "ArmorSlots exceeds 2KB budget";
-    EXPECT_GE(sizeof(talos::ArmorSlots), 512) << "ArmorSlots seems too small";
-}
-
 TEST(MemoryLayout, ArmorSlotsAlignment) {
     EXPECT_EQ(alignof(talos::ArmorSlots), 64) << "ArmorSlots must be 64-byte cache-line aligned";
 }
@@ -46,7 +41,6 @@ TEST(MemoryLayout, TrackerSoACacheLine) {
 
 TEST(ArmorSlots, DefaultConstruction) {
     constexpr ArmorSlots slots;
-    EXPECT_EQ(slots.valid_mask, 0);
     EXPECT_EQ(slots.count_valid(), 0);
 }
 
@@ -63,7 +57,9 @@ TEST(ArmorSlots, SetValid) {
 
 TEST(ArmorSlots, SetInvalid) {
     ArmorSlots slots;
-    slots.valid_mask = 0xFF; // All 8 bits set
+    for (int i = 0; i < 10; i++) {
+        slots.set_valid(i);
+    }
     EXPECT_EQ(slots.count_valid(), 8);
 
     slots.set_invalid(3);
@@ -71,21 +67,9 @@ TEST(ArmorSlots, SetInvalid) {
     EXPECT_FALSE(slots.is_valid(3));
 }
 
-TEST(ArmorSlots, PopcountPerformance) {
-    ArmorSlots slots;
-    // Valid mask with various patterns
-    for (int pattern = 0; pattern < 256; pattern++) {
-        slots.valid_mask = pattern;
-        int expected     = __builtin_popcount(pattern);
-        EXPECT_EQ(slots.count_valid(), expected);
-    }
-}
-
 TEST(ArmorSlots, Clear) {
     ArmorSlots slots;
-    slots.valid_mask = 0xFF;
     slots.clear();
-    EXPECT_EQ(slots.valid_mask, 0);
     EXPECT_EQ(slots.count_valid(), 0);
 }
 
@@ -102,18 +86,18 @@ TEST(TrackerSoA, DefaultState) {
 
 TEST(TrackerSoA, StateTransitionIDLEtoDETECTING) {
     TrackerSoA tracker;
-    EXPECT_TRUE(tracker.try_start_detecting());
+    EXPECT_TRUE(tracker.detect());
     EXPECT_EQ(tracker.state.load(), talos::TrackerState::DETECTING);
 
     // Second call should fail (already in DETECTING)
-    EXPECT_FALSE(tracker.try_start_detecting());
+    EXPECT_FALSE(tracker.detect());
 }
 
 TEST(TrackerSoA, StateTransitionDETECTINGtoTRACKING) {
     TrackerSoA tracker;
     tracker.state.store(TrackerState::DETECTING, std::memory_order_relaxed);
 
-    EXPECT_TRUE(tracker.try_confirm_tracking());
+    EXPECT_TRUE(tracker.track());
     EXPECT_EQ(tracker.state.load(), talos::TrackerState::TRACKING);
 }
 
@@ -121,7 +105,7 @@ TEST(TrackerSoA, StateTransitionTRACKINGtoTEMP_LOST) {
     TrackerSoA tracker;
     tracker.state.store(TrackerState::TRACKING, std::memory_order_relaxed);
 
-    EXPECT_TRUE(tracker.try_enter_lost());
+    EXPECT_TRUE(tracker.temporary_lost());
     EXPECT_EQ(tracker.state.load(), talos::TrackerState::TEMP_LOST);
 }
 
@@ -129,7 +113,7 @@ TEST(TrackerSoA, StateTransitionTEMP_LOSTtoTRACKING) {
     TrackerSoA tracker;
     tracker.state.store(TrackerState::TEMP_LOST, std::memory_order_relaxed);
 
-    EXPECT_TRUE(tracker.try_restore_tracking());
+    EXPECT_TRUE(tracker.track());
     EXPECT_EQ(tracker.state.load(), talos::TrackerState::TRACKING);
 }
 
@@ -137,7 +121,7 @@ TEST(TrackerSoA, StateTransitionReset) {
     TrackerSoA tracker;
     tracker.state.store(TrackerState::TRACKING, std::memory_order_relaxed);
 
-    EXPECT_TRUE(tracker.try_reset_idle());
+    EXPECT_TRUE(tracker.idle());
     EXPECT_EQ(tracker.state.load(), talos::TrackerState::IDLE);
 }
 

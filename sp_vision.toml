@@ -7,19 +7,19 @@ daedalus = true
 [classifier]
 model_path = "tiny_resnet.onnx"
 use_openvino = true
-device = "AUTO"
+device = "GPU"
 
 [detector]
 threshold = 90
-max_angle_error = 34.5 # degree
-min_lightbar_ratio = 1.41
-max_lightbar_ratio = 20.8
+max_angle_error = 45 # degree
+min_lightbar_ratio = 1.5
+max_lightbar_ratio = 20
 min_lightbar_length = 8
-min_armor_ratio = 1.29
-max_armor_ratio = 4.4
-max_side_ratio = 1.87
-max_rectangular_error = 27.6 # degree
-min_confidence = 0.68
+min_armor_ratio = 1
+max_armor_ratio = 5
+max_side_ratio = 1.5
+max_rectangular_error = 25 # degree
+min_confidence = 0.8
 
 [solver]
 # 相机内参 (3x3 row-major)

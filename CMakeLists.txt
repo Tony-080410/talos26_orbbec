@@ -252,34 +252,6 @@ target_link_libraries(fast_tf_compiled PUBLIC
         fast_tf
 )
 
-# Infantry Robot TF Integration Example
-# Demonstrates type-safe frame hierarchy + Foxglove SDK integration
-add_executable(infantry_tf_example
-        examples/infantry_tf_example.cpp
-        src/fast_tf.cpp
-        ${FOXGLOVE_SOURCES}
-)
-
-target_include_directories(infantry_tf_example PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/include
-        ${foxglove_SOURCE_DIR}/include
-)
-
-target_compile_definitions(infantry_tf_example PRIVATE
-        FOXGLOVE_SDK_AVAILABLE
-)
-
-target_link_libraries(infantry_tf_example PRIVATE
-        fast_tf
-        Eigen3::Eigen
-        TBB::tbb
-        spdlog::spdlog
-        ${foxglove_SOURCE_DIR}/lib/libfoxglove.a
-        "$<$<PLATFORM_ID:Darwin>:-framework Security>"
-        "$<$<PLATFORM_ID:Darwin>:-framework CoreFoundation>"
-        "$<$<PLATFORM_ID:Darwin>:-framework SystemConfiguration>"
-)
-
 # Detector benchmark (accuracy testing against dataset)
 add_executable(detector_benchmark
         test/detector_benchmark.cpp

@@ -1,5 +1,7 @@
 #include "extended_kalman_filter.hpp"
 
+#include "fast_tf/frame.hpp"
+
 #include <numeric>
 
 namespace auto_aim {
@@ -22,23 +24,12 @@ ExtendedKalmanFilter::ExtendedKalmanFilter(
     data["recent_nis_failures"] = 0.0;
 }
 
-Eigen::VectorXd ExtendedKalmanFilter::predict(const Eigen::MatrixXd& F, const Eigen::MatrixXd& Q) {
-    return predict(F, Q, [&](const Eigen::VectorXd& vec) { return F * vec; });
-}
-
 Eigen::VectorXd ExtendedKalmanFilter::predict(
     const Eigen::MatrixXd& F, const Eigen::MatrixXd& Q,
     const std::function<Eigen::VectorXd(const Eigen::VectorXd&)>& f) {
     P = F * P * F.transpose() + Q;
     x = f(x);
     return x;
-}
-
-Eigen::VectorXd ExtendedKalmanFilter::update(
-    const Eigen::VectorXd& z, const Eigen::MatrixXd& H, const Eigen::MatrixXd& R,
-    const std::function<Eigen::VectorXd(const Eigen::VectorXd&, const Eigen::VectorXd&)>&
-        z_subtract) {
-    return update(z, H, R, [&](const Eigen::VectorXd& vec) { return H * vec; }, z_subtract);
 }
 
 Eigen::VectorXd ExtendedKalmanFilter::update(

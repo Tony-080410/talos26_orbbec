@@ -58,18 +58,6 @@ TEST_F(TransformMatrix4dTest, CreationFromRPY) {
     EXPECT_NEAR(det, 1.0, EPSILON);
 }
 
-TEST_F(TransformMatrix4dTest, CreationFromQuaternion) {
-    // Create quaternion (w, x, y, z) for 90-degree rotation around Z
-    double w = std::cos(M_PI / 4);
-    double z = std::sin(M_PI / 4);
-    auto tf  = TransformMatrix4d::from_quaternion(w, 0.0, 0.0, z, 1.0, 2.0, 3.0);
-
-    auto trans = tf.translation();
-    EXPECT_NEAR(trans.x(), 1.0, EPSILON);
-    EXPECT_NEAR(trans.y(), 2.0, EPSILON);
-    EXPECT_NEAR(trans.z(), 3.0, EPSILON);
-}
-
 TEST_F(TransformMatrix4dTest, TransformComposition) {
     // T1: translate by (1, 0, 0)
     auto tf1 = TransformMatrix4d::from_rpy(0.0, 0.0, 0.0, 1.0, 0.0, 0.0);
@@ -91,19 +79,6 @@ TEST_F(TransformMatrix4dTest, InverseTransform) {
 
     auto identity = tf * tf_inv;
     EXPECT_TRUE(matrices_equal(identity, TransformMatrix4d()));
-}
-
-TEST_F(TransformMatrix4dTest, QuaternionRoundTrip) {
-    // Create a transform with known values and verify quaternion round-trip
-    auto tf = TransformMatrix4d::from_rpy(0.5, 0.3, 0.1, 1.0, 2.0, 3.0);
-    auto q  = tf.quaternion();
-
-    // Verify quaternion represents the same rotation
-    auto tf2 = TransformMatrix4d::from_quaternion(q.w(), q.x(), q.y(), q.z(), 1.0, 2.0, 3.0);
-    auto q2  = tf2.quaternion();
-
-    // Quaternions might differ by sign, but rotations should be equivalent
-    EXPECT_NEAR((tf.rotation() - tf2.rotation()).cwiseAbs().maxCoeff(), 0.0, EPSILON);
 }
 
 TEST_F(TransformMatrix4dTest, PointTransformation) {
@@ -196,106 +171,6 @@ TEST_F(CircularTransformBufferTest, ThreadSafety) {
     }
 
     SUCCEED(); // If we get here without deadlock, test passes
-}
-
-// ============================================================================
-// Frame Hierarchy Tests
-// ============================================================================
-// Note: Frame hierarchy compile-time tests are complex and require careful
-// setup with DECLARE_FRAME macros. For this suite, we focus on runtime behavior
-// of TransformMatrix4d and CircularTransformBuffer which demonstrate the core
-// fast_tf functionality and can be compiled independently.
-
-// ============================================================================
-// TransformTree Tests
-// ============================================================================
-// Note: TransformTree tests require compile-time frame definitions using
-// DECLARE_FRAME macros. These compile-time checks are validated separately.
-// This test suite focuses on runtime validation of TransformMatrix4d and
-// CircularTransformBuffer which are the core performance-critical components.
-
-// ============================================================================
-// Static Transform Tests
-// ============================================================================
-// Note: Static transform functionality is also validated through compile-time
-// frame hierarchy tests which are part of the broader test suite.
-
-// ============================================================================
-// Type-Safe Query Builder Tests
-// ============================================================================
-
-// Define test frame hierarchy
-DECLARE_FRAME(test_world);
-DECLARE_FRAME(test_base, test_world);
-DECLARE_FRAME(test_sensor, test_base);
-
-class QueryBuilderTest : public ::testing::Test {
-protected:
-    const double EPSILON = 1e-10;
-};
-
-TEST_F(QueryBuilderTest, SameFrameReturnsIdentity) {
-    using TestTreeStructure = TransformTreeStructure<
-        TreeNode<fnv1a_hash("test_world"), NullParent>,
-        TreeNode<fnv1a_hash("test_base"), ParentRef<0>>,
-        TreeNode<fnv1a_hash("test_sensor"), ParentRef<1>>>;
-
-    TransformTree<TestTreeStructure> tree;
-
-    // Query same frame should return identity
-    auto result = tree.transform<test_world_frame>().to<test_world_frame>().at(1000);
-
-    ASSERT_TRUE(result.has_value());
-    EXPECT_EQ(result->timestamp, 1000);
-    EXPECT_FALSE(result->is_interpolated);
-
-    // Check identity transform
-    auto trans = result->transform.translation();
-    EXPECT_NEAR(trans.x(), 0.0, EPSILON);
-    EXPECT_NEAR(trans.y(), 0.0, EPSILON);
-    EXPECT_NEAR(trans.z(), 0.0, EPSILON);
-}
-
-TEST_F(QueryBuilderTest, LatestSameFrameReturnsIdentity) {
-    using TestTreeStructure = TransformTreeStructure<
-        TreeNode<fnv1a_hash("test_world"), NullParent>,
-        TreeNode<fnv1a_hash("test_base"), ParentRef<0>>,
-        TreeNode<fnv1a_hash("test_sensor"), ParentRef<1>>>;
-
-    TransformTree<TestTreeStructure> tree;
-
-    // Query latest for same frame
-    auto result = tree.transform<test_base_frame>().to<test_base_frame>().latest();
-
-    ASSERT_TRUE(result.has_value());
-    EXPECT_FALSE(result->is_interpolated);
-}
-
-TEST_F(QueryBuilderTest, ErrorTypeOnNoData) {
-    using TestTreeStructure = TransformTreeStructure<
-        TreeNode<fnv1a_hash("test_world"), NullParent>,
-        TreeNode<fnv1a_hash("test_base"), ParentRef<0>>>;
-
-    TransformTree<TestTreeStructure> tree;
-
-    // Query different frames without data should return error
-    auto result = tree.transform<test_base_frame>().to<test_world_frame>().at(1000);
-
-    // Should fail since no transforms were set
-    EXPECT_FALSE(result.has_value());
-    // Verify error type is accessible
-    EXPECT_TRUE(
-        result.error() == TransformError::PathNotFound
-        || result.error() == TransformError::NoDataAvailable);
-}
-
-TEST_F(QueryBuilderTest, ErrorToStringWorks) {
-    // Test all error types
-    EXPECT_EQ(to_string(TransformError::FrameNotFound), "frame not found");
-    EXPECT_EQ(to_string(TransformError::NoDataAvailable), "no data available");
-    EXPECT_EQ(to_string(TransformError::ExtrapolationRequired), "extrapolation required");
-    EXPECT_EQ(to_string(TransformError::Timeout), "timeout");
-    EXPECT_EQ(to_string(TransformError::PathNotFound), "path not found");
 }
 
 // ============================================================================
@@ -400,10 +275,147 @@ TEST_F(BufferExpectedTest, AtInterpolatedExtrapolationError) {
 }
 
 // ============================================================================
-// Integration Tests
+// TransformBuffer Tests (New API)
 // ============================================================================
-// Note: Integration tests for the full TransformTree and frame hierarchy
-// are validated separately in compilation tests and examples.
+
+class TransformBufferTest : public ::testing::Test {
+protected:
+    const double EPSILON = 1e-6;
+
+    // Default Infantry config
+    Eigen::Vector3d t_camera{0.04444, 0.0, -0.0363};
+    Eigen::Matrix3d R_camera = Eigen::Matrix3d::Identity();
+    Eigen::Vector3d t_muzzle{0.0874, 0.0, -0.0874};
+};
+
+TEST_F(TransformBufferTest, Construction) {
+    TransformBuffer<100> buffer(t_camera, R_camera, t_muzzle);
+
+    // Buffer should be empty initially
+    EXPECT_TRUE(buffer.buffer_empty());
+    EXPECT_EQ(buffer.buffer_size(), 0);
+}
+
+TEST_F(TransformBufferTest, UpdateGimbal) {
+    TransformBuffer<100> buffer(t_camera, R_camera, t_muzzle);
+
+    buffer.update_gimbal(0.1, 0.2, 0.3, 1000);
+    buffer.update_gimbal(0.2, 0.3, 0.4, 2000);
+
+    EXPECT_FALSE(buffer.buffer_empty());
+    EXPECT_EQ(buffer.buffer_size(), 2);
+
+    auto range = buffer.get_buffer_time_range();
+    ASSERT_TRUE(range.has_value());
+    EXPECT_EQ(range->first, 1000);
+    EXPECT_EQ(range->second, 2000);
+}
+
+TEST_F(TransformBufferTest, TransformPointToWorld) {
+    TransformBuffer<100> buffer(t_camera, R_camera, t_muzzle);
+
+    // Set gimbal to identity
+    buffer.update_gimbal(0.0, 0.0, 0.0, 1000);
+
+    // Transform origin point
+    Eigen::Vector3d p_camera(0.0, 0.0, 1.0); // 1m forward in camera frame
+    auto result = buffer.transform_point_to_world(p_camera, 1000);
+
+    ASSERT_TRUE(result.has_value());
+    // Point should be transformed through optical → camera → gimbal → world
+}
+
+TEST_F(TransformBufferTest, GetGimbalTransform) {
+    TransformBuffer<100> buffer(t_camera, R_camera, t_muzzle);
+
+    buffer.update_gimbal(0.1, 0.2, 0.3, 1000);
+
+    auto gimbal = buffer.get_gimbal_transform();
+    // Verify it's not identity (has rotation)
+    auto rot = gimbal.rotation();
+    EXPECT_NE(rot(0, 0), 1.0);
+}
+
+TEST_F(TransformBufferTest, StaticTransformGetters) {
+    TransformBuffer<100> buffer(t_camera, R_camera, t_muzzle);
+
+    // Verify camera offset
+    auto camera = buffer.get_camera_to_gimbal();
+    auto trans  = camera.translation();
+    EXPECT_NEAR(trans.x(), t_camera.x(), EPSILON);
+    EXPECT_NEAR(trans.y(), t_camera.y(), EPSILON);
+    EXPECT_NEAR(trans.z(), t_camera.z(), EPSILON);
+
+    // Verify muzzle offset
+    auto muzzle       = buffer.get_muzzle_to_gimbal();
+    auto muzzle_trans = muzzle.translation();
+    EXPECT_NEAR(muzzle_trans.x(), t_muzzle.x(), EPSILON);
+    EXPECT_NEAR(muzzle_trans.y(), t_muzzle.y(), EPSILON);
+    EXPECT_NEAR(muzzle_trans.z(), t_muzzle.z(), EPSILON);
+}
+
+TEST_F(TransformBufferTest, GetTransformTemplate) {
+    TransformBuffer<100> buffer(t_camera, R_camera, t_muzzle);
+    buffer.update_gimbal(0.1, 0.2, 0.3, 1000);
+
+    // Test template-based transform query
+    auto gimbal  = buffer.get_transform<gimbal_link_frame, odom_frame>();
+    auto camera  = buffer.get_transform<camera_link_frame, gimbal_link_frame>();
+    auto optical = buffer.get_transform<camera_optical_frame_frame, camera_link_frame>();
+    auto muzzle  = buffer.get_transform<muzzle_link_frame, gimbal_link_frame>();
+    auto odom    = buffer.get_transform<odom_frame, world_frame>();
+
+    // odom → world should be identity
+    auto odom_trans = odom.translation();
+    EXPECT_NEAR(odom_trans.x(), 0.0, EPSILON);
+    EXPECT_NEAR(odom_trans.y(), 0.0, EPSILON);
+    EXPECT_NEAR(odom_trans.z(), 0.0, EPSILON);
+}
+
+// ============================================================================
+// Error Handling Tests
+// ============================================================================
+
+TEST(ErrorTest, ErrorToStringWorks) {
+    EXPECT_EQ(to_string(TransformError::FrameNotFound), "frame not found");
+    EXPECT_EQ(to_string(TransformError::NoDataAvailable), "no data available");
+    EXPECT_EQ(to_string(TransformError::ExtrapolationRequired), "extrapolation required");
+    EXPECT_EQ(to_string(TransformError::Timeout), "timeout");
+    EXPECT_EQ(to_string(TransformError::PathNotFound), "path not found");
+}
+
+// ============================================================================
+// Frame Hierarchy Tests
+// ============================================================================
+
+TEST(FrameTest, FrameNamesAreCorrect) {
+    EXPECT_EQ(world_frame::frame_name, "world");
+    EXPECT_EQ(odom_frame::frame_name, "odom");
+    EXPECT_EQ(gimbal_link_frame::frame_name, "gimbal_link");
+    EXPECT_EQ(camera_link_frame::frame_name, "camera_link");
+    EXPECT_EQ(camera_optical_frame_frame::frame_name, "camera_optical_frame");
+    EXPECT_EQ(muzzle_link_frame::frame_name, "muzzle_link");
+}
+
+TEST(FrameTest, FrameParentRelations) {
+    // Check parent types
+    static_assert(std::is_same_v<odom_frame::parent, world_frame>);
+    static_assert(std::is_same_v<gimbal_link_frame::parent, odom_frame>);
+    static_assert(std::is_same_v<camera_link_frame::parent, gimbal_link_frame>);
+    static_assert(std::is_same_v<camera_optical_frame_frame::parent, camera_link_frame>);
+    static_assert(std::is_same_v<muzzle_link_frame::parent, gimbal_link_frame>);
+
+    SUCCEED();
+}
+
+TEST(FrameTest, FrameValidation) {
+    // These should compile (same tree)
+    static_assert(validate_frames_same_tree<camera_optical_frame_frame, world_frame>::value);
+    static_assert(validate_frames_same_tree<muzzle_link_frame, odom_frame>::value);
+    static_assert(validate_frames_same_tree<gimbal_link_frame, camera_link_frame>::value);
+
+    SUCCEED();
+}
 
 int main(int argc, char** argv) {
     ::testing::InitGoogleTest(&argc, argv);

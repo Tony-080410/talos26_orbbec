@@ -4,7 +4,7 @@
 #include <string>
 
 #include "detector_state.hpp"
-#include "fast_tf/infantry_tf.hpp"
+#include "fast_tf/frame.hpp"
 #include "pipeline_types.hpp"
 #include "target.hpp"
 #include "tracker_soa.hpp"
@@ -31,10 +31,10 @@ public:
     /**
      * @brief 构造跟踪器
      * @param config 跟踪器配置
-     * @param tf_manager TF管理器引用（用于坐标变换）
+     * @param tf_buffer TF缓冲区引用（用于坐标变换）
      */
     explicit Tracker(
-        const SpVisionTrackerConfig& config, fast_tf::infantry::InfantryTFManager& tf_manager);
+        const SpVisionTrackerConfig& config, fast_tf::CoordinateSystem<100>& tf_buffer);
 
     // ============ TrackerConcept 方法 ============
 
@@ -53,12 +53,6 @@ public:
      * @brief 重置追踪器状态
      */
     void reset() noexcept;
-
-    /**
-     * @brief 获取跟踪目标 (用于 Aimer/Shooter)
-     */
-    [[nodiscard]] Target& target() noexcept { return target_; }
-    [[nodiscard]] const Target& target() const noexcept { return target_; }
 
     // ============ 原有方法 ============
 
@@ -81,20 +75,12 @@ public:
     [[nodiscard]] static std::vector<Eigen::Vector4d>
         armor_xyza_list(const talos::TrackerSoA& state, const Target& target);
 
-    /**
-     * @brief 获取状态字符串
-     */
-    [[nodiscard]] static std::string state_string(const talos::TrackerSoA& state);
-
 private:
-    fast_tf::infantry::InfantryTFManager& tf_manager_;
+    fast_tf::CoordinateSystem<100>& tf_buffer_;
     talos::Color enemy_color_;
     int min_detect_count_;
     int normal_temp_lost_count_;
     int outpost_max_temp_lost_count_;
-
-    // 内部状态 (Concept 方法使用)
-    Target target_;
 
     /**
      * @brief 状态机更新
