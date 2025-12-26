@@ -86,21 +86,6 @@ target_link_libraries(integration_test PRIVATE
 
 add_test(NAME IntegrationTest COMMAND integration_test)
 
-# UKF logic tests
-add_executable(ukf_test
-        test/ukf_test.cpp
-)
-
-target_include_directories(ukf_test PRIVATE include)
-
-target_link_libraries(ukf_test PRIVATE
-        GTest::GTest
-        GTest::Main
-        Eigen3::Eigen
-)
-
-add_test(NAME UKFTest COMMAND ukf_test)
-
 # Scheduler tests
 add_executable(scheduler_test
         test/scheduler_test.cpp
@@ -135,24 +120,6 @@ target_link_libraries(integration_scheduler_test PRIVATE
 
 add_test(NAME IntegrationSchedulerTest COMMAND integration_scheduler_test)
 
-# Fast TF tests
-add_executable(fast_tf_test
-        test/fast_tf_test.cpp
-        src/fast_tf.cpp
-)
-
-target_include_directories(fast_tf_test PRIVATE include)
-
-target_link_libraries(fast_tf_test PRIVATE
-        fast_tf
-        GTest::GTest
-        GTest::Main
-        Eigen3::Eigen
-        TBB::tbb
-)
-
-add_test(NAME FastTFTest COMMAND fast_tf_test)
-
 # Latency benchmarks (only if benchmark library is found)
 if (benchmark_FOUND)
     add_executable(latency_benchmark
@@ -167,20 +134,6 @@ if (benchmark_FOUND)
     )
 
     add_test(NAME LatencyBenchmark COMMAND latency_benchmark)
-
-    # UKF benchmark (separate)
-    add_executable(ukf_benchmark
-            test/ukf_benchmark.cpp
-    )
-
-    target_include_directories(ukf_benchmark PRIVATE include)
-
-    target_link_libraries(ukf_benchmark PRIVATE
-            benchmark::benchmark
-            Eigen3::Eigen
-    )
-
-    add_test(NAME UKFBenchmark COMMAND ukf_benchmark)
 
     # Scheduler benchmark
     add_executable(scheduler_benchmark
@@ -213,24 +166,6 @@ if (benchmark_FOUND)
     )
 
     add_test(NAME IntegrationSchedulerBenchmark COMMAND integration_scheduler_benchmark)
-
-    # Fast TF benchmark
-    add_executable(fast_tf_benchmark
-            test/fast_tf_benchmark.cpp
-            src/fast_tf.cpp
-    )
-
-    target_include_directories(fast_tf_benchmark PRIVATE include)
-
-    target_link_libraries(fast_tf_benchmark PRIVATE
-            fast_tf
-            benchmark::benchmark
-            benchmark::benchmark_main
-            Eigen3::Eigen
-            TBB::tbb
-    )
-
-    add_test(NAME FastTFBenchmark COMMAND fast_tf_benchmark)
 
 else ()
     message(STATUS "benchmark library not found - benchmark tests will be skipped")

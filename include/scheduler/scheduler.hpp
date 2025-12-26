@@ -249,26 +249,32 @@ private:
             }
 
             // 处理队列中所有帧
-            const auto borrow = frame_queue_.borrow();
-            if (!borrow) {
+            const auto borrow_ = frame_queue_.borrow();
+            if (!borrow_) {
                 continue;
             }
             frame_queue_size_.fetch_sub(1, std::memory_order_relaxed);
 
+            const auto borrow = *borrow_;
+
             // 写入共享缓冲
             auto& shared        = shared_buffer_.borrow_mut();
-            shared.frame_seq    = (*borrow)->seq;
-            shared.timestamp_ns = (*borrow)->timestamp_ns;
-            shared.image        = std::move((*borrow)->image);
+            shared.frame_seq    = borrow->seq;
+            shared.timestamp_ns = borrow->timestamp_ns;
+            shared.image        = borrow->image;
 
             // 预处理
             strategy_->preprocess(shared);
             shared_buffer_.publish();
 
             // 检测
-            auto& result              = detection_buffer_.borrow_mut();
-            result.timestamp_ns       = shared.timestamp_ns; // 保存帧时间戳
+            auto& result = detection_buffer_.borrow_mut();
+
+            result.timestamp_ns             = borrow->timestamp_ns; // 保存帧时间戳
+            result.armor_slots.timestamp_ns = borrow->timestamp_ns;
+
             const auto t_detect_start = std::chrono::steady_clock::now();
+            result.armor_slots.clear();
             strategy_->detect(shared, result.armor_slots);
             const auto t_detect_end = std::chrono::steady_clock::now();
 
@@ -317,10 +323,11 @@ private:
                 continue;
             }
 
-            const auto& result = **detection_opt;
+            const auto result = *detection_opt;
 
             // 调用 track，传入 scheduler 持有的 TrackerSoA 和帧时间戳
-            strategy_->track(tracker_soa_, result.armor_slots, result.poses3d, result.timestamp_ns);
+            strategy_->track(
+                tracker_soa_, result->armor_slots, result->poses3d, result->timestamp_ns);
 
             // 通知 output
             output_event_.notify_one();

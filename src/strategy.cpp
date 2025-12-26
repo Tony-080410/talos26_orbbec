@@ -24,7 +24,8 @@ auto TalosStrategy::detect(const scheduler::Captured& feat, talos::ArmorSlots& a
     }
 
     armor = detector.detect(
-        detector_buffers_, feat.image->mat(), feat.preprocessed->mat(), feat.frame_seq, 0);
+        detector_buffers_, feat.image->mat(), feat.preprocessed->mat(), feat.frame_seq,
+        armor.timestamp_ns);
 
     processed_count.fetch_add(1, std::memory_order_relaxed);
 

@@ -381,7 +381,7 @@ struct FoxgloveWrapper {
             // 装甲板列表 (从 Target 获取)
             target_json["armor_list"] = nlohmann::json::array();
             std::vector<foxglove::schemas::SceneEntity> scene_entities;
-            if (target.converged()) {
+            if (tracker_soa.state != talos::TrackerState::IDLE && target.converged()) {
                 const auto armor_list = target.armor_xyza_list();
 
                 int i = 0;
@@ -480,11 +480,15 @@ struct FoxgloveWrapper {
 
         std::vector<foxglove::schemas::SceneEntity> scene_entities;
         for (int i = 0; i < 10; i++) {
-            if (!armor.is_valid(i))
+            if (!armor.is_valid(i)) {
                 continue;
+            }
 
             const auto& a    = armor.armors[i];
             const auto& pose = poses3d[i];
+            if (!pose.valid) {
+                continue;
+            }
 
             // 创建SceneEntity
             foxglove::schemas::SceneEntity entity;

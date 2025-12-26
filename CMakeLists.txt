@@ -23,7 +23,6 @@ add_library(talos_std INTERFACE
         include/toml_helper.hpp
         include/tracker_soa.hpp
         include/triple_buffer.hpp
-        include/ukf_logic.hpp
 )
 
 target_include_directories(talos_std INTERFACE include)
@@ -237,19 +236,6 @@ target_include_directories(fast_tf INTERFACE
 target_link_libraries(fast_tf INTERFACE
         Eigen3::Eigen
         TBB::tbb
-)
-
-# Fast TF compiled support
-add_library(fast_tf_compiled OBJECT
-        src/fast_tf.cpp
-)
-
-target_include_directories(fast_tf_compiled PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/include
-)
-
-target_link_libraries(fast_tf_compiled PUBLIC
-        fast_tf
 )
 
 # Detector benchmark (accuracy testing against dataset)

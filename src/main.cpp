@@ -191,7 +191,7 @@ int main() {
             frame = client->recv_image();
             if (auto pose = client->recv_pose(ipc::POSE_GIMBAL)) {
                 Eigen::Quaterniond q(pose->qw, pose->qx, pose->qy, pose->qz);
-                auto [roll, pitch, yaw] = math_fuxk::rpy(q).rpy();
+                const auto [roll, pitch, yaw] = math_fuxk::rpy(q).rpy();
 
                 imu_data.data.roll  = roll;
                 imu_data.data.pitch = pitch;

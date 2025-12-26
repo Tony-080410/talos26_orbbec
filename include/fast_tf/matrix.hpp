@@ -32,28 +32,20 @@ public:
     // ========================================================================
 
     static TransformMatrix4d from_pnp(cv::Vec3d rvec, cv::Vec3d tvec) {
-        cv::Mat rmat;
-        cv::Rodrigues(std::move(rvec), rmat);
+        cv::Mat rmat_;
+        cv::Rodrigues(rvec, rmat_);
+        Eigen::Matrix3d rmat;
+        cv::cv2eigen(rmat_, rmat);
 
         // 旋转矩阵有效性检查
         assert(
-            std::abs(cv::determinant(rmat) - 1.0) < 1e-6
-            && "Rotation matrix must have determinant 1");
+            std::abs(rmat.determinant() - 1.0) < 1e-6 && "Rotation matrix must have determinant 1");
 
-        Matrix m = Matrix::Identity();
-
-        // 复制旋转矩阵
-        for (int i = 0; i < 3; ++i) {
-            for (int j = 0; j < 3; ++j) {
-                m(i, j) = rmat.at<double>(i, j);
-            }
-        }
-
-        // 复制平移向量
-        m(0, 3) = tvec[0];
-        m(1, 3) = tvec[1];
-        m(2, 3) = tvec[2];
-
+        Matrix m            = Matrix::Identity();
+        m.block<3, 3>(0, 0) = rmat;
+        m(0, 3)             = tvec[0];
+        m(1, 3)             = tvec[1];
+        m(2, 3)             = tvec[2];
         return TransformMatrix4d(m);
     }
 

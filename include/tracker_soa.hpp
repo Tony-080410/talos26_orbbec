@@ -58,8 +58,8 @@ struct alignas(64) TrackerSoA {
     TrackerSoA(const TrackerSoA&)            = delete;
     TrackerSoA& operator=(const TrackerSoA&) = delete;
 
-    TrackerSoA(TrackerSoA&&)            = default;
-    TrackerSoA& operator=(TrackerSoA&&) = default;
+    TrackerSoA(TrackerSoA&&)            = delete;
+    TrackerSoA& operator=(TrackerSoA&&) = delete;
 
     auto detect() noexcept {
         if (state != IDLE) {

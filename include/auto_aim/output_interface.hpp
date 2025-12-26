@@ -23,7 +23,7 @@ constexpr double RAD_TO_DEG = 180.0 / M_PI;
 struct IpcOutput {
     ipc::ShmClient client;
 
-    void send(const GimbalCommand& cmd) noexcept {
+    void send(const GimbalCommand& cmd) const noexcept {
         // 转换: rad → deg
         const auto yaw_deg    = static_cast<float>(cmd.yaw * RAD_TO_DEG);
         const auto pitch_deg  = static_cast<float>(cmd.pitch * RAD_TO_DEG);
@@ -39,7 +39,7 @@ struct IpcOutput {
 struct UsbOutput {
     talos_gimbal::Stm32Impl<talos_gimbal::Stm32Parser>* device{nullptr};
 
-    void send(const GimbalCommand& cmd) noexcept {
+    void send(const GimbalCommand& cmd) const noexcept {
         if (!device || !device->is_connected()) {
             return;
         }
