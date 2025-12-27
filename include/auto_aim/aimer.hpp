@@ -1,7 +1,6 @@
 #pragma once
 
 #include <Eigen/Dense>
-#include <chrono>
 #include <optional>
 
 #include "target.hpp"
@@ -33,11 +32,11 @@ struct GimbalCommand {
 struct AimerConfig {
     double yaw_offset{0.0};                   // yaw 偏移 (rad)
     double pitch_offset{0.0};                 // pitch 偏移 (rad)
-    double comming_angle{70.0 / 57.3};        // 小陀螺来袭角度阈值 (rad)
-    double leaving_angle{30.0 / 57.3};        // 小陀螺离开角度阈值 (rad)
-    double high_speed_delay_time{0.1};        // 高速延时 (s)
-    double low_speed_delay_time{0.05};        // 低速延时 (s)
-    double decision_speed{2.0};               // 速度阈值 (rad/s)
+    double comming_angle{55.0 / 57.3};        // 小陀螺来袭角度阈值 (rad)
+    double leaving_angle{20.0 / 57.3};        // 小陀螺离开角度阈值 (rad)
+    double high_speed_delay_time{0.0};        // 高速延时 (s)
+    double low_speed_delay_time{0.0};         // 低速延时 (s)
+    double decision_speed{7.0};               // 速度阈值 (rad/s)
     std::optional<double> left_yaw_offset{};  // 左枪管偏移 (rad)
     std::optional<double> right_yaw_offset{}; // 右枪管偏移 (rad)
 };
@@ -59,13 +58,13 @@ public:
      * @brief 计算瞄准命令
      *
      * @param target 跟踪目标 (会被内部修改: predict调用)
-     * @param timestamp 当前时间戳
+     * @param timestamp_ns 当前时间戳
      * @param bullet_speed 弹速 (m/s)
      * @param to_now 是否补偿到当前时刻
      * @return 云台控制命令
      */
     [[nodiscard]] GimbalCommand
-        aim(Target& target, std::chrono::steady_clock::time_point timestamp, double bullet_speed,
+        aim(Target& target, uint64_t timestamp_ns, double bullet_speed,
             bool to_now = true) noexcept;
 
     /**

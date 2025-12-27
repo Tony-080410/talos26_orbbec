@@ -232,8 +232,11 @@ int main() {
         // 更新 strategy 的弹速和云台姿态
         strategy.set_bullet_speed(imu_data.data.bullet_speed);
         // fast_tf::tick_infantry_static(timestamp_ns,foxglove_server.get_tf_buffer());
-        foxglove_server.get_tf_buffer()[fast_tf::gimbal_link_fuxk_frame::index].push(
-            timestamp_ns, fast_tf::TransformMatrix4d::from_rpy(roll, pitch, yaw));
+        fast_tf::update(
+            foxglove_server.get_tf_buffer(),
+            fast_tf::FuckTransform<fast_tf::gimbal_link_fuxk_frame>(
+                fast_tf::TransformMatrix4d::from_rpy(roll, pitch, yaw)),
+            timestamp_ns);
 
         last_seq = seq;
         // spdlog::info("处理 {} 帧", last_seq);

@@ -48,10 +48,7 @@ struct alignas(64) TrackerSoA {
     fast_tf::Fuck<fast_tf::world_fuxk_frame, float> v_yaw{}; // Angular velocity (rad/s)
 
     // Shape (2D)
-    float radius[2]{1.0f, 1.0f};      // [radius_x, radius_y] armor dimensions ratio
-
-    uint32_t max_temp_lost_count{10}; // 动态丢失阈值, 4 bytes (offset 44-48)
-    uint64_t last_timestamp_ns{0};    // 上次更新时间戳 (ns), 8 bytes (offset 48-56, 8字节对齐)
+    float radius[2]{1.0f, 1.0f}; // [radius_x, radius_y] armor dimensions ratio
 
     explicit TrackerSoA() noexcept = default;
     // 禁止拷贝
@@ -70,7 +67,7 @@ struct alignas(64) TrackerSoA {
     }
 
     auto track() noexcept {
-        if (state == DETECTING || state == TEMP_LOST) {
+        if (state != DETECTING && state != TEMP_LOST) {
             return false;
         }
         state = TRACKING;

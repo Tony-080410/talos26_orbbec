@@ -1,7 +1,6 @@
 #pragma once
 
 #include <Eigen/Dense>
-#include <chrono>
 #include <vector>
 
 #include "detector_state.hpp"
@@ -39,14 +38,15 @@ public:
     int last_id{0};
 
     explicit Target(const std::reference_wrapper<fast_tf::CoordinateSystem<100>> buf)
-        : tf_buffer(buf) {}
+        : timestamp_ns_(0)
+        , tf_buffer(buf) {}
 
     /**
      * @brief 从检测结果初始化目标
      * @param armor 检测到的装甲板（用于名称、类型）
      * @param pose3d 解算得到的3D位姿 (camera_optical坐标系 + timestamp_ns)
      * @param tf_buffer TF缓冲区引用，用于坐标变换
-     * @param t 时间戳
+     * @param timestamp_ns 时间戳
      * @param radius 初始半径估计
      * @param armor_num 装甲板数量（2/3/4）
      * @param P0_dig 初始协方差对角线
@@ -54,8 +54,7 @@ public:
     Target(
         const talos::Armor& armor, const ArmorPose3D& pose3d,
         std::reference_wrapper<fast_tf::CoordinateSystem<100>> tf_buffer,
-        std::chrono::steady_clock::time_point t, double radius, int armor_num,
-        const Eigen::VectorXd& P0_dig);
+        const uint64_t timestamp_ns, double radius, int armor_num, const Eigen::VectorXd& P0_dig);
 
     Target& operator=(const Target& other) {
         if (this != &other) {
@@ -70,19 +69,19 @@ public:
             is_switch_    = other.is_switch_;
             is_converged_ = other.is_converged_;
             ekf_          = other.ekf_;
-            t_            = other.t_;
+            timestamp_ns_ = other.timestamp_ns_;
         }
         return *this;
     }
     /**
      * @brief 预测到指定时间
      */
-    void predict(std::chrono::steady_clock::time_point t);
+    void predict(uint64_t timestamp_ns);
 
     /**
      * @brief 预测指定时间间隔
      */
-    void predict(double dt);
+    void predict_impl(double dt);
 
     /**
      * @brief 用观测更新滤波器
@@ -117,6 +116,8 @@ public:
      */
     [[nodiscard]] bool converged();
 
+    uint64_t timestamp_ns_;
+
 private:
     int armor_num_{4};
     int switch_count_{0};
@@ -126,7 +127,6 @@ private:
     bool is_converged_{false};
 
     ExtendedKalmanFilter ekf_;
-    std::chrono::steady_clock::time_point t_;
 
     /**
      * @brief 使用球坐标系更新 (world坐标系)

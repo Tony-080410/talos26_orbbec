@@ -1,6 +1,10 @@
 #include "tracker.hpp"
 
+#include <algorithm>
+#include <cmath>
 #include <numeric>
+#include <vector>
+
 #include <spdlog/spdlog.h>
 
 #include "solver.hpp" // for math::eulers, math::xyz2ypd
@@ -12,32 +16,32 @@ Tracker::Tracker(const SpVisionTrackerConfig& config, fast_tf::CoordinateSystem<
     , enemy_color_(static_cast<talos::Color>(config.enemy_color))
     , min_detect_count_(config.min_detect_count)
     , normal_temp_lost_count_(config.max_temp_lost_count)
-    , outpost_max_temp_lost_count_(config.outpost_max_temp_lost_count) {}
+    , outpost_max_temp_lost_count_(config.outpost_max_temp_lost_count)
+    , image_width_(config.image_width)
+    , image_height_(config.image_height) {}
 
 bool Tracker::track(
     talos::TrackerSoA& state, Target& target, const talos::ArmorSlots& slots,
-    const std::array<ArmorPose3D, 10>& poses3d,
-    const std::chrono::steady_clock::time_point t) const {
+    const std::array<ArmorPose3D, 10>& poses3d, const uint64_t timestamp_ns) {
     const auto current_state = state.state.load(std::memory_order_acquire);
-    const auto current_ns    = t.time_since_epoch().count();
-    const auto dt            = static_cast<double>(current_ns - state.last_timestamp_ns) / 1e9;
-    state.last_timestamp_ns  = current_ns;
 
     // 时间间隔过长，说明可能发生了相机离线
-    if (current_state != talos::TrackerState::IDLE && dt > 0.1) {
+    if (const auto dt = static_cast<double>(timestamp_ns - target.timestamp_ns_) / 1e9;
+        current_state != talos::TrackerState::IDLE && dt > 0.1) {
         spdlog::warn("[Tracker] Large dt: {:.3f}s", dt);
         state.idle();
     }
-
+    // spdlog::info("[Tracker] ts={}, last_ts={}, dt={:.6f}s",timestamp_ns, target.timestamp_ns_,
+    // static_cast<double>(timestamp_ns - target.timestamp_ns_) * 1e-9);
     spdlog::debug(
         "Tracker state: {}", talos::tracker_state(state.state.load(std::memory_order_acquire)));
     bool found;
     if (current_state == talos::TrackerState::IDLE) {
-        found = set_target(state, target, slots, poses3d, t);
+        found = set_target(state, target, slots, poses3d, timestamp_ns);
     } else {
-        found = update_target(state, target, slots, poses3d, t);
+        found = update_target(state, target, slots, poses3d, timestamp_ns);
     }
-    spdlog::debug("Tracker found: {}", found ? "yes" : "no");
+    spdlog::info("Tracker found: {}", found ? "yes" : "no");
 
     state_machine(state, target, found);
 
@@ -87,8 +91,7 @@ std::vector<Eigen::Vector4d>
     return target.armor_xyza_list();
 }
 
-void Tracker::state_machine(
-    talos::TrackerSoA& state, const Target& target, const bool found) const {
+void Tracker::state_machine(talos::TrackerSoA& state, const Target& target, const bool found) {
     const auto current_state = state.state.load(std::memory_order_acquire);
 
     if (current_state == talos::TrackerState::IDLE) {
@@ -139,12 +142,12 @@ void Tracker::state_machine(
 
         // 前哨站特殊处理
         if (target.name == talos::ArmorName::outpost) {
-            state.max_temp_lost_count = outpost_max_temp_lost_count_;
+            max_temp_lost_count = outpost_max_temp_lost_count_;
         } else {
-            state.max_temp_lost_count = normal_temp_lost_count_;
+            max_temp_lost_count = normal_temp_lost_count_;
         }
 
-        if (state.lost_count > state.max_temp_lost_count) {
+        if (state.lost_count > max_temp_lost_count) {
             // TEMP_LOST -> IDLE
             state.idle();
         }
@@ -153,16 +156,25 @@ void Tracker::state_machine(
 
 bool Tracker::set_target(
     talos::TrackerSoA& state, Target& target, const talos::ArmorSlots& slots,
-    const std::array<ArmorPose3D, 10>& poses3d,
-    const std::chrono::steady_clock::time_point t) const {
+    const std::array<ArmorPose3D, 10>& poses3d, const uint64_t timestamp_ns) const {
     // ========== 坐标系说明 ==========
     // poses3d中的数据在camera_optical坐标系
     // Target构造时通过tf_manager查询world坐标
     // ================================
 
     spdlog::debug("Setting target...");
-    int best_idx        = -1;
-    float best_distance = 1e10f;
+
+    // 候选装甲板结构
+    struct Candidate {
+        int idx;
+        float center_dist; // 到图像中心的距离
+    };
+    std::vector<Candidate> candidates;
+    candidates.reserve(10);
+
+    // 计算图像中心
+    const float cx = static_cast<float>(image_width_) / 2.0f;
+    const float cy = static_cast<float>(image_height_) / 2.0f;
 
     for (int i = 0; i < 10; ++i) {
         if (!slots.is_valid(i) || !poses3d[i].valid) {
@@ -171,28 +183,32 @@ bool Tracker::set_target(
         }
 
         // 过滤非敌方颜色
-        if (const auto& armor = slots.armors[i];
-            static_cast<talos::Color>(armor.color) != enemy_color_) {
+        const auto& armor = slots.armors[i];
+        if (static_cast<talos::Color>(armor.color) != enemy_color_) {
             spdlog::debug("Slot {} is not enemy color", i);
             continue;
         }
 
-        // 使用camera坐标系中的距离选择最近目标
-        if (const float distance = static_cast<float>(poses3d[i].pnp->matrix().norm());
-            distance < best_distance) {
-            spdlog::debug("Slot {} has better distance: {}", i, distance);
-            best_distance = distance;
-            best_idx      = i;
-        } else {
-            spdlog::debug("Slot {} distance {} is worse than best {}", i, distance, best_distance);
-        }
+        // 计算到图像中心的距离 (对齐 sp_vision_25 的选择逻辑)
+        const float dx          = armor.x2d - cx;
+        const float dy          = armor.y2d - cy;
+        const float center_dist = std::sqrt(dx * dx + dy * dy);
+
+        spdlog::debug("Slot {} center_dist: {:.2f}", i, center_dist);
+        candidates.push_back({i, center_dist});
     }
 
-    if (best_idx < 0) {
+    if (candidates.empty()) {
         spdlog::debug("No valid target found");
         return false;
     }
-    spdlog::debug("Best target found at slot {}", best_idx);
+
+    // 按图像中心距离排序，选择最靠近图像中心的装甲板 (对齐 sp_vision_25)
+    std::ranges::sort(candidates, {}, &Candidate::center_dist);
+
+    const int best_idx = candidates[0].idx;
+    spdlog::debug(
+        "Best target found at slot {} (center_dist: {:.2f})", best_idx, candidates[0].center_dist);
 
     const auto& armor  = slots.armors[best_idx];
     const auto& pose3d = poses3d[best_idx];
@@ -208,22 +224,22 @@ bool Tracker::set_target(
         const Eigen::VectorXd P0_dig{
             {1, 64, 1, 64, 1, 64, 0.4, 100, 1, 1, 1}
         };
-        target = Target(armor, pose3d, tf_buffer_, t, 0.2, 2, P0_dig);
+        target = Target(armor, pose3d, tf_buffer_, timestamp_ns, 0.2, 2, P0_dig);
     } else if (name == talos::ArmorName::outpost) {
         const Eigen::VectorXd P0_dig{
             {1, 64, 1, 64, 1, 81, 0.4, 100, 1e-4, 0, 0}
         };
-        target = Target(armor, pose3d, tf_buffer_, t, 0.2765, 3, P0_dig);
+        target = Target(armor, pose3d, tf_buffer_, timestamp_ns, 0.2765, 3, P0_dig);
     } else if (name == talos::ArmorName::base) {
         const Eigen::VectorXd P0_dig{
             {1, 64, 1, 64, 1, 64, 0.4, 100, 1e-4, 0, 0}
         };
-        target = Target(armor, pose3d, tf_buffer_, t, 0.3205, 3, P0_dig);
+        target = Target(armor, pose3d, tf_buffer_, timestamp_ns, 0.3205, 3, P0_dig);
     } else {
         const Eigen::VectorXd P0_dig{
             {1, 64, 1, 64, 1, 64, 0.4, 100, 1, 1, 1}
         };
-        target = Target(armor, pose3d, tf_buffer_, t, 0.2, 4, P0_dig);
+        target = Target(armor, pose3d, tf_buffer_, timestamp_ns, 0.2, 4, P0_dig);
     }
 
     // 更新 generation 用于 ABA 防护
@@ -234,13 +250,13 @@ bool Tracker::set_target(
 
 bool Tracker::update_target(
     [[maybe_unused]] talos::TrackerSoA& state, Target& target, const talos::ArmorSlots& slots,
-    const Poses3D& poses3d, const std::chrono::steady_clock::time_point t) const {
+    const Poses3D& poses3d, const uint64_t timestamp_ns) const {
     // ========== 坐标系说明 ==========
     // poses3d中的数据在camera_optical坐标系
     // Target::update时通过tf_manager查询world坐标
     // ================================
 
-    target.predict(t);
+    target.predict(timestamp_ns);
 
     int found_count = 0;
 

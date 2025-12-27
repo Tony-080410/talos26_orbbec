@@ -7,23 +7,20 @@
 #include "trajectory.hpp" // solve_trajectory
 
 namespace auto_aim {
-
 namespace {
-/**
- * @brief 计算时间差 (秒)
- */
-double delta_time(
-    std::chrono::steady_clock::time_point a, std::chrono::steady_clock::time_point b) noexcept {
-    return std::chrono::duration<double>(a - b).count();
-}
-} // namespace
 
+static uint64_t now_ns() {
+    const auto now      = std::chrono::system_clock::now();
+    const auto duration = now.time_since_epoch();
+    return std::chrono::duration_cast<std::chrono::nanoseconds>(duration).count();
+}
+
+} // namespace
 Aimer::Aimer(const AimerConfig& config) noexcept
     : config_(config) {}
 
 GimbalCommand Aimer::aim(
-    Target& target, std::chrono::steady_clock::time_point timestamp, double bullet_speed,
-    const bool to_now) noexcept {
+    Target& target, uint64_t timestamp_ns, double bullet_speed, const bool to_now) noexcept {
     // 检查弹速合法性
     if (bullet_speed < 14) {
         bullet_speed = 23.0;
@@ -32,20 +29,24 @@ GimbalCommand Aimer::aim(
     // 确定延时补偿
     // ekf_x()[7] = w (角速度)
     const Eigen::VectorXd ekf_x = target.ekf_x();
-    const double delay_time     = std::abs(ekf_x[7]) > config_.decision_speed
+    const double delay_time_s   = std::abs(ekf_x[7]) > config_.decision_speed
                                     ? config_.high_speed_delay_time
                                     : config_.low_speed_delay_time;
 
-    // 预测目标到指定时刻
-    auto future = timestamp;
+    // 计算需要预测的时间间隔（从帧时间戳到目标时刻）
+    double predict_dt = delay_time_s;
+
     if (to_now) {
-        const double dt = delta_time(std::chrono::steady_clock::now(), timestamp) + delay_time;
-        future += std::chrono::microseconds(static_cast<int>(dt * 1e6));
+        if (const uint64_t now = now_ns(); now > timestamp_ns) {
+            predict_dt += static_cast<double>(now - timestamp_ns) * 1e-9;
+        }
     } else {
-        const double dt = 0.005 + delay_time; // detector-aimer 耗时 0.005 + 发弹延时
-        future += std::chrono::microseconds(static_cast<int>(dt * 1e6));
+        predict_dt += 0.005;
     }
-    target.predict(future);
+
+    // 使用 predict_impl 做临时预测，不更新 target.timestamp_ns_
+    // 注意：这会修改 target 的 EKF 状态，但不会更新时间戳
+    target.predict_impl(predict_dt);
 
     // 初始瞄准点计算
     const auto aim_point0 = choose_aim_point(target);
@@ -69,10 +70,8 @@ GimbalCommand Aimer::aim(
     std::vector<Target> iteration_targets(10, target);
 
     for (int iter = 0; iter < 10; ++iter) {
-        // 预测目标在 future + prev_fly_time 时刻的位置
-        const auto predict_time =
-            future + std::chrono::microseconds(static_cast<int>(prev_fly_time * 1e6));
-        iteration_targets[iter].predict(predict_time);
+        // 预测目标在飞行时间后的位置（相对于当前状态）
+        iteration_targets[iter].predict_impl(prev_fly_time);
 
         // 计算瞄准点
         const auto aim_point = choose_aim_point(iteration_targets[iter]);

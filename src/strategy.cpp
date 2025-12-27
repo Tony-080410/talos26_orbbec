@@ -47,8 +47,7 @@ auto TalosStrategy::track(
     [[maybe_unused]] uint64_t timestamp_ns) noexcept -> void {
     const auto t0 = std::chrono::steady_clock::now();
 
-    const auto timestamp = std::chrono::steady_clock::now();
-    tracker.track(tracker_soa, target_, armor, poses3d, timestamp);
+    tracker.track(tracker_soa, target_, armor, poses3d, timestamp_ns);
 
     spdlog::info("state={}", talos::tracker_state(tracker_soa.state.load()));
     const auto t1 = std::chrono::steady_clock::now();
@@ -79,8 +78,7 @@ auto TalosStrategy::output() noexcept -> void {
     }
 
     // 1. Aimer: 计算瞄准命令
-    const auto timestamp = std::chrono::steady_clock::now();
-    auto cmd             = aimer_.aim(target_, timestamp, bullet_speed_, true);
+    auto cmd = aimer_.aim(target_, target_.timestamp_ns_, bullet_speed_, true);
 
     if (!cmd.valid) {
         last_gimbal_cmd_ = cmd;
@@ -89,12 +87,13 @@ auto TalosStrategy::output() noexcept -> void {
     }
 
     // 2. Shooter: 判断是否发射
-    const auto fuck =
-        tf_buffer_[fast_tf::gimbal_link_fuxk_frame::index].at_interpolated_clamped(now_ns());
+    const auto fuck = fast_tf::lookup<fast_tf::odom_fuxk_frame>(
+        tf_buffer_, fast_tf::FuckTransform<fast_tf::gimbal_link_fuxk_frame>(), now_ns());
+
     if (!fuck) {
         spdlog::error("what the fuck: {}", fast_tf::to_string(fuck.error()));
     }
-    const auto [roll, pitch, yaw] = fuck->transform.euler_rot().rpy();
+    const auto [roll, pitch, yaw] = (*fuck)->euler_rot().rpy();
     const bool should_fire        = shooter_.should_shoot(cmd, aimer_, target_, yaw);
     cmd.fire_advice               = should_fire;
     if (should_fire) {

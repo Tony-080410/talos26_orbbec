@@ -52,7 +52,8 @@ enemy_color = 1           # "red" or "blue"
 min_detect_count = 3          # 确认跟踪所需的最小检测次数
 max_temp_lost_count = 30      # 临时丢失的最大帧数
 outpost_max_temp_lost_count = 100  # 前哨站临时丢失的最大帧数
-
+image_width = 1440
+image_height = 1080
 [aimer]
 yaw_offset = 2 # degree -2.5
 pitch_offset = 6.5 # degree 2

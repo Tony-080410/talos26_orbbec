@@ -9,13 +9,13 @@ namespace auto_aim {
 Target::Target(
     const talos::Armor& armor, const ArmorPose3D& pose3d,
     const std::reference_wrapper<fast_tf::CoordinateSystem<100>> tf_buffer,
-    const std::chrono::steady_clock::time_point t, const double radius, const int armor_num,
+    const uint64_t timestamp_ns, const double radius, const int armor_num,
     const Eigen::VectorXd& P0_dig)
     : name(static_cast<talos::ArmorName>(armor.name))
     , armor_type(static_cast<talos::ArmorType>(armor.type))
     , armor_num_(armor_num)
     , tf_buffer(tf_buffer)
-    , t_(t) {
+    , timestamp_ns_(timestamp_ns) {
     // ========== 坐标系说明 ==========
     // 输入数据在camera_optical坐标系，通过tf_buffer查询world坐标
     // 状态向量表示旋转中心在world系的位置和速度
@@ -26,7 +26,6 @@ Target::Target(
     assert(radius > 0.05 && radius < 0.5 && "Radius must be in range (0.05, 0.5)m");
     assert((armor_num == 2 || armor_num == 3 || armor_num == 4) && "Armor num must be 2, 3, or 4");
     assert(P0_dig.size() == 11 && "P0_dig must have 11 elements");
-
     // 通过 tf_buffer 查询 world 坐标
     auto result = fast_tf::lookup<fast_tf::world_fuxk_frame>(
         tf_buffer.get(), pose3d.pnp, pose3d.timestamp_ns);
@@ -75,13 +74,13 @@ Target::Target(
     ekf_ = ExtendedKalmanFilter(x0, P0, x_add);
 }
 
-void Target::predict(const std::chrono::steady_clock::time_point t) {
-    const auto dt = std::chrono::duration<double>(t - t_).count();
-    predict(dt);
-    t_ = t;
+void Target::predict(const uint64_t timestamp_ns) {
+    const double dt = static_cast<double>(timestamp_ns - timestamp_ns_) * 1e-9;
+    predict_impl(dt);
+    timestamp_ns_ = timestamp_ns;
 }
 
-void Target::predict(double dt) {
+void Target::predict_impl(double dt) {
     // 状态转移矩阵
     // clang-format off
     const Eigen::MatrixXd F{

@@ -183,10 +183,10 @@ private:
     // ============ 数据通道 ============
 
     // Frame队列 + Event驱动detector
-    TripleBuffer<Frame> frame_queue_;
+    alignas(CACHE_LINE_SIZE) TripleBuffer<Frame> frame_queue_;
     alignas(CACHE_LINE_SIZE) std::atomic<size_t> frame_queue_size_{0};
     static constexpr size_t kMaxFrameQueueSize = 8;
-    NativeEvent frame_event_; // 通知detector有新帧
+    alignas(CACHE_LINE_SIZE) NativeEvent frame_event_; // 通知detector有新帧
 
     // Triple Buffer: 共享特征缓冲（zero-copy）
     alignas(CACHE_LINE_SIZE) TripleBuffer<Captured> shared_buffer_;

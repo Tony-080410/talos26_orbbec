@@ -144,6 +144,10 @@ struct SpVisionTrackerConfig {
     uint16_t max_temp_lost_count{30};            // 临时丢失的最大帧数
     uint16_t outpost_max_temp_lost_count{100};   // 前哨站临时丢失的最大帧数
 
+    // 图像尺寸 (用于图像中心距离计算)
+    uint16_t image_width{1440};
+    uint16_t image_height{1080};
+
     std::expected<void, std::string> read_from(const toml::table& tbl) noexcept {
         if (const auto _t = tbl["tracker"].as_table()) {
             auto t = *_t;
@@ -152,6 +156,8 @@ struct SpVisionTrackerConfig {
             READ_KEY(t, min_detect_count);
             READ_KEY(t, max_temp_lost_count);
             READ_KEY(t, outpost_max_temp_lost_count);
+            READ_KEY(t, image_width);
+            READ_KEY(t, image_height);
 
             return {};
         }
@@ -165,11 +171,11 @@ struct SpVisionTrackerConfig {
 struct SpVisionAimerConfig {
     double yaw_offset{0.0};                   // yaw 偏移 (rad)
     double pitch_offset{0.0};                 // pitch 偏移 (rad)
-    double comming_angle{70.0 / 57.3};        // 小陀螺来袭角度阈值 (rad)
-    double leaving_angle{30.0 / 57.3};        // 小陀螺离开角度阈值 (rad)
-    double high_speed_delay_time{0.1};        // 高速延时 (s)
-    double low_speed_delay_time{0.05};        // 低速延时 (s)
-    double decision_speed{2.0};               // 速度阈值 (rad/s)
+    double comming_angle{55.0 / 57.3};        // 小陀螺来袭角度阈值 (rad)
+    double leaving_angle{20.0 / 57.3};        // 小陀螺离开角度阈值 (rad)
+    double high_speed_delay_time{0.0};        // 高速延时 (s)
+    double low_speed_delay_time{0.0};         // 低速延时 (s)
+    double decision_speed{7.0};               // 速度阈值 (rad/s)
     std::optional<double> left_yaw_offset{};  // 左枪管偏移 (rad)
     std::optional<double> right_yaw_offset{}; // 右枪管偏移 (rad)
 
@@ -213,10 +219,10 @@ struct SpVisionAimerConfig {
  * @brief 发射器配置
  */
 struct SpVisionShooterConfig {
-    double judge_distance{5.0};     // 距离判断阈值 (m)
-    double first_tolerance{0.087};  // 近距离容差 (rad, 约5度)
-    double second_tolerance{0.052}; // 远距离容差 (rad, 约3度)
-    bool auto_fire{true};           // 是否启用自动发射
+    double judge_distance{2.0};          // 距离判断阈值 (m)
+    double first_tolerance{3.0 / 57.3};  // 近距离容差 (rad, 约3度)
+    double second_tolerance{2.0 / 57.3}; // 远距离容差 (rad, 约2度)
+    bool auto_fire{true};                // 是否启用自动发射
 
     std::expected<void, std::string> read_from(const toml::table& tbl) noexcept {
         if (const auto _t = tbl["shooter"].as_table()) {

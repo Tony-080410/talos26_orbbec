@@ -1,6 +1,5 @@
 #pragma once
 
-#include <chrono>
 #include <string>
 
 #include "detector_state.hpp"
@@ -62,12 +61,12 @@ public:
      * @param target 跟踪目标 (输入/输出)
      * @param slots 检测结果
      * @param poses3d 解算得到的3D位姿
-     * @param t 时间戳
+     * @param timestamp_ns 时间戳
      * @return 是否有有效目标
      */
     bool track(
         talos::TrackerSoA& state, Target& target, const talos::ArmorSlots& slots,
-        const Poses3D& poses3d, std::chrono::steady_clock::time_point t) const;
+        const Poses3D& poses3d, uint64_t timestamp_ns);
 
     /**
      * @brief 获取目标装甲板列表 (预测位置)
@@ -78,28 +77,34 @@ public:
 private:
     fast_tf::CoordinateSystem<100>& tf_buffer_;
     talos::Color enemy_color_;
-    int min_detect_count_;
-    int normal_temp_lost_count_;
-    int outpost_max_temp_lost_count_;
+    uint32_t min_detect_count_;
+    uint32_t max_temp_lost_count{10};
+    uint32_t temp_lost_count_;
+    uint32_t outpost_max_temp_lost_count_;
+    uint32_t normal_temp_lost_count_;
+
+    // 图像尺寸 (用于图像中心距离计算)
+    uint16_t image_width_{1440};
+    uint16_t image_height_{1080};
 
     /**
      * @brief 状态机更新
      */
-    void state_machine(talos::TrackerSoA& state, const Target& target, bool found) const;
+    void state_machine(talos::TrackerSoA& state, const Target& target, bool found);
 
     /**
      * @brief 设置新目标
      */
     bool set_target(
         talos::TrackerSoA& state, Target& target, const talos::ArmorSlots& slots,
-        const Poses3D& poses3d, std::chrono::steady_clock::time_point t) const;
+        const Poses3D& poses3d, uint64_t timestamp_ns) const;
 
     /**
      * @brief 更新现有目标
      */
     bool update_target(
         talos::TrackerSoA& state, Target& target, const talos::ArmorSlots& slots,
-        const Poses3D& poses3d, std::chrono::steady_clock::time_point t) const;
+        const Poses3D& poses3d, uint64_t timestamp_ns) const;
 };
 
 /**

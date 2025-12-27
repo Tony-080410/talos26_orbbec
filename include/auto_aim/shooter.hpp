@@ -9,10 +9,10 @@ namespace auto_aim {
  * @brief Shooter 配置
  */
 struct ShooterConfig {
-    double judge_distance{5.0};     // 距离判断阈值 (米)
-    double first_tolerance{0.087};  // 近距离容差 (rad, 约5度)
-    double second_tolerance{0.052}; // 远距离容差 (rad, 约3度)
-    bool auto_fire{true};           // 是否启用自动发射
+    double judge_distance{2.0};          // 距离判断阈值 (米)
+    double first_tolerance{3.0 / 57.3};  // 近距离容差 (rad, 约3度)
+    double second_tolerance{2.0 / 57.3}; // 远距离容差 (rad, 约2度)
+    bool auto_fire{true};                // 是否启用自动发射
 };
 
 /**
