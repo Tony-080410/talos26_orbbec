@@ -113,6 +113,8 @@ public:
     std::atomic<uint64_t> processed_count{0};
     std::atomic<uint64_t> output_count{0};
 
+    auto debug_aim_point() const noexcept { return aimer_.debug_aim_point(); }
+
 private:
     // 配置转换辅助函数
     static auto_aim::AimerConfig to_aimer_config(const SpVisionAimerConfig& cfg) noexcept {

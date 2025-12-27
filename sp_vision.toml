@@ -55,8 +55,8 @@ outpost_max_temp_lost_count = 100  # 前哨站临时丢失的最大帧数
 image_width = 1440
 image_height = 1080
 [aimer]
-yaw_offset = 2 # degree -2.5
-pitch_offset = 6.5 # degree 2
+yaw_offset = 0.0 # degree -2.5
+pitch_offset = 0.0 # degree 2
 comming_angle = 55 # degree
 leaving_angle = 20 # degree
 decision_speed = 7 # rad/s

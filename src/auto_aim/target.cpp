@@ -6,6 +6,61 @@
 
 namespace auto_aim {
 
+namespace {
+
+/**
+ * @brief 纯函数：状态预测
+ */
+Eigen::VectorXd predict_state(const Eigen::VectorXd& x, double dt, talos::ArmorName name) {
+    // 状态转移矩阵
+    // clang-format off
+    const Eigen::MatrixXd F{
+        {1, dt,  0,  0,  0,  0,  0,  0,  0,  0,  0},
+        {0,  1,  0,  0,  0,  0,  0,  0,  0,  0,  0},
+        {0,  0,  1, dt,  0,  0,  0,  0,  0,  0,  0},
+        {0,  0,  0,  1,  0,  0,  0,  0,  0,  0,  0},
+        {0,  0,  0,  0,  1, dt,  0,  0,  0,  0,  0},
+        {0,  0,  0,  0,  0,  1,  0,  0,  0,  0,  0},
+        {0,  0,  0,  0,  0,  0,  1, dt,  0,  0,  0},
+        {0,  0,  0,  0,  0,  0,  0,  1,  0,  0,  0},
+        {0,  0,  0,  0,  0,  0,  0,  0,  1,  0,  0},
+        {0,  0,  0,  0,  0,  0,  0,  0,  0,  1,  0},
+        {0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  1}
+    };
+    // clang-format on
+
+    Eigen::VectorXd x_prior = F * x;
+    x_prior[6]              = math::limit_rad(x_prior[6]);
+
+    // 前哨站转速特判
+    if (name == talos::ArmorName::outpost && std::abs(x_prior[7]) > 2) {
+        x_prior[7] = x_prior[7] > 0 ? 2.51 : -2.51;
+    }
+
+    return x_prior;
+}
+
+/**
+ * @brief 纯函数：从状态向量计算装甲板列表
+ */
+std::vector<Eigen::Vector4d> armor_xyza_from_x(const Eigen::VectorXd& x, int armor_num) {
+    std::vector<Eigen::Vector4d> list;
+    list.reserve(armor_num);
+
+    for (int i = 0; i < armor_num; i++) {
+        const auto angle   = math::limit_rad(x[6] + i * 2 * CV_PI / armor_num);
+        const auto use_l_h = armor_num == 4 && (i == 1 || i == 3);
+        const auto r       = use_l_h ? x[8] + x[9] : x[8];
+        const auto armor_x = x[0] - r * std::cos(angle);
+        const auto armor_y = x[2] - r * std::sin(angle);
+        const auto armor_z = use_l_h ? x[4] + x[10] : x[4];
+        list.push_back({armor_x, armor_y, armor_z, angle});
+    }
+    return list;
+}
+
+} // namespace
+
 Target::Target(
     const talos::Armor& armor, const ArmorPose3D& pose3d,
     const std::reference_wrapper<fast_tf::CoordinateSystem<100>> tf_buffer,
@@ -369,6 +424,28 @@ Eigen::MatrixXd Target::h_jacobian(const Eigen::VectorXd& x, const int id) const
     // clang-format on
 
     return H_armor_ypda * H_armor_xyza;
+}
+
+PredictedState Target::predict_at(double dt) const noexcept {
+    const auto x_pred = predict_state(ekf_.x, dt, name);
+    return {
+        .x          = x_pred,
+        .armor_xyza = armor_xyza_from_x(x_pred, armor_num_),
+        .name       = name,
+        .armor_num  = armor_num_,
+        .jumped     = jumped,
+    };
+}
+
+PredictedState PredictedState::predict_dt(double dt) const noexcept {
+    const auto x_pred = predict_state(x, dt, name);
+    return {
+        .x          = x_pred,
+        .armor_xyza = armor_xyza_from_x(x_pred, armor_num),
+        .name       = name,
+        .armor_num  = armor_num,
+        .jumped     = jumped,
+    };
 }
 
 } // namespace auto_aim

@@ -36,13 +36,13 @@ public:
      * @brief 判断是否应该发射
      *
      * @param command 当前瞄准命令
-     * @param aimer 瞄准器 (用于获取 debug_aim_point)
-     * @param target 跟踪目标
+     * @param aim_point 瞄准点 (从 Aimer 获取)
+     * @param target_converged 目标是否收敛
      * @param gimbal_yaw 当前云台 yaw 角 (弧度)
      * @return 是否应该发射
      */
     [[nodiscard]] bool should_shoot(
-        const GimbalCommand& command, const Aimer& aimer, const Target& target,
+        const GimbalCommand& command, const AimPoint& aim_point, bool target_converged,
         double gimbal_yaw) noexcept;
 
 private:

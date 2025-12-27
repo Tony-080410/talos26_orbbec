@@ -11,6 +11,22 @@
 namespace auto_aim {
 
 /**
+ * @brief 预测状态（无副作用预测的返回值）
+ */
+struct PredictedState {
+    Eigen::VectorXd x;                       // 预测后的状态向量
+    std::vector<Eigen::Vector4d> armor_xyza; // 各装甲板 [x, y, z, angle]
+    talos::ArmorName name{talos::ArmorName::not_armor};
+    int armor_num{4};
+    bool jumped{false};
+
+    /**
+     * @brief 继续预测（用于迭代求解）
+     */
+    [[nodiscard]] PredictedState predict_dt(double dt) const noexcept;
+};
+
+/**
  * @brief 跟踪目标类
  *
  * 移植自 sp_vision_25/tasks/auto_aim/target
@@ -36,6 +52,7 @@ public:
     talos::ArmorType armor_type{talos::ArmorType::small};
     bool jumped{false};
     int last_id{0};
+    bool valid{false};
 
     explicit Target(const std::reference_wrapper<fast_tf::CoordinateSystem<100>> buf)
         : timestamp_ns_(0)
@@ -70,6 +87,7 @@ public:
             is_converged_ = other.is_converged_;
             ekf_          = other.ekf_;
             timestamp_ns_ = other.timestamp_ns_;
+            valid         = other.valid;
         }
         return *this;
     }
@@ -82,6 +100,13 @@ public:
      * @brief 预测指定时间间隔
      */
     void predict_impl(double dt);
+
+    /**
+     * @brief 预测指定时间间隔（无副作用）
+     * @param dt 时间间隔（秒）
+     * @return 预测后的状态
+     */
+    [[nodiscard]] PredictedState predict_at(double dt) const noexcept;
 
     /**
      * @brief 用观测更新滤波器

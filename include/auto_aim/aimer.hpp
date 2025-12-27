@@ -57,14 +57,14 @@ public:
     /**
      * @brief 计算瞄准命令
      *
-     * @param target 跟踪目标 (会被内部修改: predict调用)
+     * @param target 跟踪目标 (不会被修改)
      * @param timestamp_ns 当前时间戳
      * @param bullet_speed 弹速 (m/s)
      * @param to_now 是否补偿到当前时刻
      * @return 云台控制命令
      */
     [[nodiscard]] GimbalCommand
-        aim(Target& target, uint64_t timestamp_ns, double bullet_speed,
+        aim(const Target& target, uint64_t timestamp_ns, double bullet_speed,
             bool to_now = true) noexcept;
 
     /**
@@ -81,6 +81,11 @@ private:
      * @brief 选择瞄准点 (小陀螺/非小陀螺策略)
      */
     [[nodiscard]] AimPoint choose_aim_point(const Target& target) noexcept;
+
+    /**
+     * @brief 选择瞄准点 (从预测状态)
+     */
+    [[nodiscard]] AimPoint choose_aim_point(const PredictedState& predicted) noexcept;
 };
 
 } // namespace auto_aim

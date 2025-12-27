@@ -172,6 +172,63 @@ struct FoxgloveWrapper {
 
     auto output() noexcept -> void {
         inner.get().output();
+        const auto_aim::AimPoint point = inner.get().debug_aim_point();
+        std::vector<foxglove::schemas::SceneEntity> scene_entities;
+
+        Eigen::Vector3d translation = point.xyza.head(3);
+
+        // 创建SceneEntity
+        foxglove::schemas::SceneEntity entity;
+        entity.id       = "aim_point";
+        entity.frame_id = "world";
+        entity.lifetime = foxglove::schemas::Duration{.nsec = 100000000};
+        // entity.timestamp = fxglv_ts_from_ns();
+
+        // 构造位置和方向
+        foxglove::schemas::Vector3 position;
+        position.x = translation[0];
+        position.y = translation[1];
+        position.z = translation[2];
+
+        foxglove::schemas::Pose p;
+        p.position    = position;
+        p.orientation = foxglove::schemas::Quaternion{0, 0, 0, 1};
+
+        // 创建立方体 (装甲板)
+        foxglove::schemas::Vector3 cube_size;
+        cube_size.x = 0.03;
+        cube_size.y = 0.15;
+        cube_size.z = 0.125;
+
+        foxglove::schemas::SpherePrimitive sphere;
+        sphere.pose  = p;
+        sphere.size  = cube_size;
+        sphere.color = foxglove::schemas::Color{.r = 0.0, .g = 0.6, .b = 0.8, .a = 0.2};
+        entity.spheres.push_back(sphere);
+        foxglove::schemas::TextPrimitive text;
+        text.text = "aim_point";
+        text.pose = p;
+        if (text.pose.has_value() && text.pose->position.has_value()) {
+            text.pose->position->z += 0.1;
+        }
+        text.font_size = 0.05;
+        foxglove::schemas::Color text_color;
+        text_color.r   = 1.0; // 白色
+        text_color.g   = 1.0;
+        text_color.b   = 1.0;
+        text_color.a   = 0.9;
+        text.color     = text_color;
+        text.billboard = true;
+
+        entity.texts.push_back(text);
+
+        scene_entities.push_back(entity);
+
+        if (!scene_entities.empty()) {
+            TrackSceneMessage scene_msg;
+            scene_msg.scene.entities = std::move(scene_entities);
+            server.get().enqueue_message(std::move(scene_msg));
+        }
 
         // 发布云台控制命令 (JSON)
         const auto& cmd = inner.get().get_last_gimbal_cmd();

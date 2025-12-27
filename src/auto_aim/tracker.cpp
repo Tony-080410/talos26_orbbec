@@ -41,6 +41,7 @@ bool Tracker::track(
     } else {
         found = update_target(state, target, slots, poses3d, timestamp_ns);
     }
+    target.valid = false;
     spdlog::info("Tracker found: {}", found ? "yes" : "no");
 
     state_machine(state, target, found);
@@ -80,6 +81,7 @@ bool Tracker::track(
         state.radius[1] = static_cast<float>(x(8) + x(9));                 // r + l
     }
 
+    target.valid = state.state.load(std::memory_order_acquire) != talos::TrackerState::IDLE;
     return state.state.load(std::memory_order_acquire) != talos::TrackerState::IDLE;
 }
 

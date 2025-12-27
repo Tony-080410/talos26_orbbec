@@ -76,6 +76,12 @@ auto TalosStrategy::output() noexcept -> void {
         output_interface_->send(last_gimbal_cmd_);
         return;
     }
+    if (!target_.valid) {
+        last_gimbal_cmd_ = {false, false, 0.0, 0.0, 0.0};
+        output_interface_->send(last_gimbal_cmd_);
+        spdlog::info("invalid target, skipping");
+        return;
+    }
 
     // 1. Aimer: 计算瞄准命令
     auto cmd = aimer_.aim(target_, target_.timestamp_ns_, bullet_speed_, true);
@@ -94,8 +100,9 @@ auto TalosStrategy::output() noexcept -> void {
         spdlog::error("what the fuck: {}", fast_tf::to_string(fuck.error()));
     }
     const auto [roll, pitch, yaw] = (*fuck)->euler_rot().rpy();
-    const bool should_fire        = shooter_.should_shoot(cmd, aimer_, target_, yaw);
-    cmd.fire_advice               = should_fire;
+    const bool should_fire =
+        shooter_.should_shoot(cmd, aimer_.debug_aim_point(), target_.converged(), yaw);
+    cmd.fire_advice = should_fire;
     if (should_fire) {
         spdlog::info("fire!!!");
     }
