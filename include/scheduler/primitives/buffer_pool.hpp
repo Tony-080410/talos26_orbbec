@@ -1,10 +1,9 @@
 #pragma once
 
-#include "scheduler.hpp"
-
+#include "frame.hpp"
 #include <vector>
 
-namespace scheduler {
+namespace primitive {
 class BufferPool {
 public:
     explicit BufferPool(const size_t count, const int rows, const int cols, const int type)
@@ -53,4 +52,4 @@ private:
     std::mutex mutex_;
     int rows_, cols_, type_;
 };
-} // namespace scheduler
+} // namespace primitive

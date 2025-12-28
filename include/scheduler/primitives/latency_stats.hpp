@@ -7,7 +7,7 @@
 #include <ranges>
 #include <vector>
 
-namespace scheduler {
+namespace primitive {
 using namespace std::chrono_literals;
 
 // ============ 统计工具 ============
@@ -48,4 +48,4 @@ struct LatencyStats {
         samples.clear();
     }
 };
-} // namespace scheduler
+} // namespace primitive

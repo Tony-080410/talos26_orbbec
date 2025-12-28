@@ -30,7 +30,12 @@ std::expected<void, std::string>
     return std::unexpected(key + " not found");
 }
 
-#define PARSE_DOUBLE_MATRIX(var, t, container)                      \
+#define READ_SUB(val, tbl)                         \
+    if (auto read = (val).read_from(tbl); !read) { \
+        return read;                               \
+    }
+
+#define READ_MATRIX(var, t, container)                              \
     auto(var) = parse_double_linear_impl(t, #container, container); \
     if (!(var)) {                                                   \
         return std::unexpected((var).error());                      \
@@ -48,4 +53,11 @@ std::expected<void, std::string>
         (field) = *val;                                           \
     } else {                                                      \
         return std::unexpected(#field " not set or invalid");     \
+    }
+
+#define READ_ENUM(tbl, field)                                                             \
+    if (auto val = (tbl)[#field].value<std::underlying_type_t<decltype(field)>>(); val) { \
+        (field) = static_cast<decltype(field)>(*val);                                     \
+    } else {                                                                              \
+        return std::unexpected(#field " not set or invalid");                             \
     }

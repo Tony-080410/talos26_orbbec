@@ -12,7 +12,7 @@
 # include <mutex>
 #endif
 
-namespace scheduler {
+namespace primitive {
 
 /**
  * @brief 平台原生事件原语 - 提供高性能的线程同步
@@ -144,4 +144,4 @@ private:
 #endif
 };
 
-} // namespace scheduler
+} // namespace primitive

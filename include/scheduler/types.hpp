@@ -1,14 +1,28 @@
 #pragma once
 
+#include "primitives/frame.hpp"
+#include "primitives/latency_histogram.hpp"
 #include <atomic>
 #include <expected>
 #include <memory>
+#include <new>
 #include <opencv2/core.hpp>
 #include <vector>
 
-#include "primitives/latency_histogram.hpp"
+namespace scheduler {
+
+using primitive::LatencyHistogram;
+
+// Forward declarations for backward compatibility
+} // namespace scheduler
+
+// Re-export primitives in scheduler namespace (backward compatibility)
+#include "primitives/buffer_pool.hpp"
+#include "primitives/latency_stats.hpp"
 
 namespace scheduler {
+using primitive::BufferPool;
+using primitive::LatencyStats;
 
 // ============ 缓存行配置 ============
 
@@ -19,64 +33,13 @@ namespace scheduler {
  * 会导致缓存一致性协议的开销。通过alignas分离高频变量到不同的缓存行，
  * 消除缓存行竞争（cache line bouncing）。
  */
-static constexpr size_t CACHE_LINE_SIZE = 64;
+static constexpr size_t CACHE_LINE_SIZE = std::hardware_destructive_interference_size;
 
 // ============ 0-Copy 图像缓冲 ============
 
-/**
- * @brief 0-copy 图像缓冲包装器
- *
- * 支持两种模式:
- * 1. 外部缓冲 (相机直接提供): 持有指针，不负责释放
- * 2. 内部缓冲 (cv::Mat): 引用计数管理
- */
-class ImageBuffer {
-public:
-    // 从外部指针构造 (0-copy, 调用者负责生命周期)
-    static std::shared_ptr<ImageBuffer>
-        wrap(void* data, const int rows, const int cols, const int type) {
-        auto buf       = std::make_shared<ImageBuffer>();
-        buf->mat_      = cv::Mat(rows, cols, type, data);
-        buf->external_ = true;
-        return buf;
-    }
-
-    // 从 cv::Mat 构造 (引用计数，可能 0-copy)
-    static std::shared_ptr<ImageBuffer> from_mat(cv::Mat mat) {
-        auto buf       = std::make_shared<ImageBuffer>();
-        buf->mat_      = std::move(mat);
-        buf->external_ = false;
-        return buf;
-    }
-
-    // 创建空缓冲
-    static std::shared_ptr<ImageBuffer> create(const int rows, const int cols, const int type) {
-        auto buf       = std::make_shared<ImageBuffer>();
-        buf->mat_      = cv::Mat(rows, cols, type);
-        buf->external_ = false;
-        return buf;
-    }
-
-    [[nodiscard]] cv::Mat& mat() noexcept { return mat_; }
-    [[nodiscard]] const cv::Mat& mat() const noexcept { return mat_; }
-
-    [[nodiscard]] void* data() noexcept { return mat_.data; }
-    [[nodiscard]] const void* data() const noexcept { return mat_.data; }
-
-    [[nodiscard]] int rows() const noexcept { return mat_.rows; }
-    [[nodiscard]] int cols() const noexcept { return mat_.cols; }
-    [[nodiscard]] int type() const noexcept { return mat_.type(); }
-
-    [[nodiscard]] bool is_external() const noexcept { return external_; }
-
-    ImageBuffer() = default;
-
-private:
-    cv::Mat mat_;
-    bool external_{false};
-};
-
-using ImagePtr = std::shared_ptr<ImageBuffer>;
+// Use primitive::ImageBuffer for backward compatibility
+using ImageBuffer = primitive::ImageBuffer;
+using ImagePtr    = primitive::ImagePtr;
 
 // ============ 数据类型 ============
 

@@ -17,12 +17,10 @@ include(cmake/test.cmake)
 
 # talos std library (header-only)
 add_library(talos_std INTERFACE
-        include/detector_state.hpp
         include/performance_probe.hpp
         include/spdlog_hook.hpp
         include/toml_helper.hpp
-        include/tracker_soa.hpp
-        include/triple_buffer.hpp
+        include/scheduler/primitives/triple_buffer.hpp
 )
 
 target_include_directories(talos_std INTERFACE include)
@@ -48,46 +46,16 @@ target_link_libraries(scheduler INTERFACE
         TBB::tbb
 )
 
-# auto aim library
-add_library(auto_aim SHARED
-        src/auto_aim/aimer.cpp
-        src/auto_aim/classifier.cpp
-        src/auto_aim/detector.cpp
-        src/auto_aim/extended_kalman_filter.cpp
-        src/auto_aim/shooter.cpp
-        src/auto_aim/solver.cpp
-        src/auto_aim/target.cpp
-        src/auto_aim/tracker.cpp
-        src/auto_aim/trajectory.cpp
-)
+# auto aim library (header-only during refactoring)
+add_library(auto_aim INTERFACE)
 
-target_include_directories(auto_aim PUBLIC
+target_include_directories(auto_aim INTERFACE
         ${CMAKE_CURRENT_SOURCE_DIR}/include/auto_aim
-)
-
-# Add foxglove headers for fast_tf support
-target_include_directories(auto_aim SYSTEM PUBLIC
         ${foxglove_SOURCE_DIR}/include
         ${foxglove_SOURCE_DIR}/include/foxglove
 )
 
-# Add OpenVINO include directories if found
-if (OpenVINO_FOUND)
-    # Get include path from OpenVINO runtime target
-    if (TARGET openvino::runtime)
-        get_target_property(_openvino_include openvino::runtime INTERFACE_INCLUDE_DIRECTORIES)
-        if (_openvino_include)
-            target_include_directories(auto_aim PUBLIC ${_openvino_include})
-        else ()
-            # Fallback to known OpenVINO installation path
-            target_include_directories(auto_aim PUBLIC
-                    ${OpenVINO_DIR}/../../../include
-            )
-        endif ()
-    endif ()
-endif ()
-
-target_link_libraries(auto_aim PUBLIC
+target_link_libraries(auto_aim INTERFACE
         talos_std
         scheduler
         ${OpenCV_LIBS}
@@ -105,18 +73,47 @@ target_link_libraries(ipc INTERFACE
         ${OpenCV_LIBS}
 )
 
-# talos gimbal library
-add_library(talos_gimbal SHARED
-        src/talos_gimbal/usb.cpp
-)
+# talos gimbal library (header-only during refactoring)
+add_library(talos_gimbal INTERFACE)
 
-target_include_directories(talos_gimbal PUBLIC
+target_include_directories(talos_gimbal INTERFACE
         ${LIBUSB_INCLUDE_DIRS}
         ${CMAKE_CURRENT_SOURCE_DIR}/include/talos_gimbal
 )
 
-target_link_libraries(talos_gimbal PRIVATE
+target_link_libraries(talos_gimbal INTERFACE
         talos_std
+        ${LIBUSB_LINK_LIBRARIES}
+)
+
+# FCS library (Fire Control System - refactored architecture)
+add_library(fcs SHARED
+        src/fcs/L1_sensor/input_interface.cpp
+        src/fcs/L1_sensor/output_interface.cpp
+        src/fcs/L2_perception/detector.cpp
+        src/fcs/L2_perception/solver.cpp
+        src/fcs/L3_estimation/estimator.cpp
+        src/fcs/L5_weapon/fire_control.cpp
+)
+
+target_include_directories(fcs PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/include/fcs
+)
+
+# Add foxglove headers for fast_tf support
+target_include_directories(fcs SYSTEM PUBLIC
+        ${foxglove_SOURCE_DIR}/include
+        ${foxglove_SOURCE_DIR}/include/foxglove
+)
+
+target_link_libraries(fcs PUBLIC
+        talos_std
+        talos_gimbal
+        ipc
+        ${OpenCV_LIBS}
+        Eigen3::Eigen
+        spdlog::spdlog
         ${LIBUSB_LINK_LIBRARIES}
 )
 
@@ -168,10 +165,7 @@ endif ()
 # Main executable
 add_executable(${PROJECT_NAME}
         src/main.cpp
-        src/strategy.cpp
-        src/strategy_wrapper.cpp
         ${FOXGLOVE_SOURCES}
-        include/toml_helper.hpp
 )
 
 target_include_directories(${PROJECT_NAME} PRIVATE include)
@@ -196,35 +190,7 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
         "$<$<PLATFORM_ID:Darwin>:-framework SystemConfiguration>"
 )
 
-# sp_vision executable
-add_executable(sp_vision
-        src/sp_vision/sp_vision.cpp
-        ${FOXGLOVE_SOURCES}
-)
-
-
-target_include_directories(sp_vision PRIVATE include)
-target_include_directories(sp_vision PRIVATE ${foxglove_SOURCE_DIR}/include)
-target_include_directories(sp_vision PRIVATE ${foxglove_SOURCE_DIR}/include/foxglove)
-
-target_link_libraries(sp_vision PRIVATE
-        talos_gimbal
-        ${LIBUSB_LINK_LIBRARIES}
-        scheduler
-        auto_aim
-        ${OpenCV_LIBS}
-        spdlog::spdlog
-        fmt::fmt
-        Eigen3::Eigen
-        TBB::tbb
-        tomlplusplus::tomlplusplus
-        $<$<TARGET_EXISTS:openvino::runtime>:openvino::runtime>
-        ${foxglove_SOURCE_DIR}/lib/libfoxglove.a
-        nlohmann_json::nlohmann_json
-        "$<$<PLATFORM_ID:Darwin>:-framework Security>"
-        "$<$<PLATFORM_ID:Darwin>:-framework CoreFoundation>"
-        "$<$<PLATFORM_ID:Darwin>:-framework SystemConfiguration>"
-)
+# sp_vision executable (removed during refactoring)
 
 # Fast TF library (header-only + compiled support)
 add_library(fast_tf INTERFACE)
@@ -238,36 +204,7 @@ target_link_libraries(fast_tf INTERFACE
         TBB::tbb
 )
 
-# Detector benchmark (accuracy testing against dataset)
-add_executable(detector_benchmark
-        test/detector_benchmark.cpp
-        ${FOXGLOVE_SOURCES}
-)
-
-target_include_directories(detector_benchmark PRIVATE include)
-target_include_directories(detector_benchmark SYSTEM PRIVATE ${foxglove_SOURCE_DIR}/include)
-
-target_link_libraries(detector_benchmark PRIVATE
-        auto_aim
-        ${foxglove_SOURCE_DIR}/lib/libfoxglove.a
-        "$<$<PLATFORM_ID:Darwin>:-framework Security>"
-        "$<$<PLATFORM_ID:Darwin>:-framework CoreFoundation>"
-        "$<$<PLATFORM_ID:Darwin>:-framework SystemConfiguration>"
-)
-
-# Detector parameter tuning tool (multi-objective optimization)
-add_executable(detector_tuner
-        test/detector_tuner.cpp
-        src/auto_aim/detector_tuner.cpp
-)
-
-target_include_directories(detector_tuner PRIVATE include)
-
-target_link_libraries(detector_tuner PRIVATE
-        auto_aim
-        TBB::tbb
-        ${OpenCV_LIBS}
-)
+# NOTE: detector_benchmark and detector_tuner removed - test files deleted during refactoring
 
 # CMake package configuration for hikcamera
 if (CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_SYSTEM_PROCESSOR STREQUAL "x86_64")

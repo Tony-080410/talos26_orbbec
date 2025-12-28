@@ -3,8 +3,9 @@
 #include <array>
 #include <atomic>
 #include <cstdint>
+#include <new>
 
-namespace scheduler {
+namespace primitive {
 
 /**
  * @brief 无锁延迟直方图
@@ -192,11 +193,12 @@ private:
         return (kBucketBounds[bucket - 1] + kBucketBounds[bucket]) / 2;
     }
 
-    alignas(64) std::array<std::atomic<uint64_t>, kNumBuckets> buckets_{};
-    alignas(64) std::atomic<uint64_t> count_{0};
-    alignas(64) std::atomic<uint64_t> sum_{0};
-    alignas(64) std::atomic<uint64_t> min_{UINT64_MAX};
-    alignas(64) std::atomic<uint64_t> max_{0};
+    alignas(std::hardware_destructive_interference_size)
+        std::array<std::atomic<uint64_t>, kNumBuckets> buckets_{};
+    alignas(std::hardware_destructive_interference_size) std::atomic<uint64_t> count_{0};
+    alignas(std::hardware_destructive_interference_size) std::atomic<uint64_t> sum_{0};
+    alignas(std::hardware_destructive_interference_size) std::atomic<uint64_t> min_{UINT64_MAX};
+    alignas(std::hardware_destructive_interference_size) std::atomic<uint64_t> max_{0};
 };
 
-} // namespace scheduler
+} // namespace primitive

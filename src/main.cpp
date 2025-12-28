@@ -1,16 +1,20 @@
+#include "../include/math/euler.hpp"
+#include "../include/scheduler/parcel/tracker.hpp"
 #include "auto_aim/config.hpp"
 #include "auto_aim/detector.hpp"
-#include "camera/hik_camera.hpp"
-#include "fast_tf/infantry.hpp"
-#include "ipc/shm_client.hpp"
-#include "math.hpp"
+#include "fcs/L1_sensor/input_interface.hpp"
+#include "math/fast_tf/infantry.hpp"
 #include "spdlog_hook.hpp"
-#include "strategy_wrapper.hpp"
 #include "talos_gimbal/stm32.hpp"
-#include "tracker.hpp"
 
 #include <Eigen/Geometry>
+#include <atomic>
 #include <chrono>
+#include <tbb/parallel_pipeline.h>
+
+// ============================================================================
+// Config
+// ============================================================================
 
 struct TalosConfig : SpVisionConfig {
     bool daedalus;
@@ -35,7 +39,6 @@ template <class... Ts>
 overloaded(Ts...) -> overloaded<Ts...>;
 
 using read_config_error = std::variant<toml::parse_error, std::string>;
-
 using namespace std::chrono_literals;
 
 inline std::expected<TalosConfig, read_config_error> read_config() {
@@ -52,38 +55,55 @@ inline std::expected<TalosConfig, read_config_error> read_config() {
     return config;
 }
 
-// using RecvImageError = std::variant<hikcamera::CameraError, ipc::ShmError>;
-// template<typename T>
-// concept Camera = requires(T &camera) {
-//     typename T::CameraProfile;
-//     { camera.recv_image() } -> std::convertible_to<std::expected<ipc::ShmClient::ImageFrame,
-//     RecvImageError>>;
-// };
-
-// hikcamera::ImageCapturer::recv_image() -> std::expected<ipc::ShmClient::ImageFrame,
-// RecvImageError> {
-//     return read(100ms);
-// }
-
-/**
- * @brief Get current time in nanoseconds
- * Uses std::chrono::high_resolution_clock for portability
- */
 static uint64_t now_ns() {
-    const auto now      = std::chrono::high_resolution_clock::now();
-    const auto duration = now.time_since_epoch();
-    return std::chrono::duration_cast<std::chrono::nanoseconds>(duration).count();
+    const auto now = std::chrono::high_resolution_clock::now();
+    return std::chrono::duration_cast<std::chrono::nanoseconds>(now.time_since_epoch()).count();
 }
 
+// ============================================================================
+// Pipeline Token - 在各阶段间传递的数据包
+// ============================================================================
+
+struct PipelineToken {
+    // 输入数据
+    cv::Mat image;
+    uint64_t seq          = 0;
+    uint64_t timestamp_ns = 0;
+
+    // IMU 数据快照
+    double roll         = 0;
+    double pitch        = 0;
+    double yaw          = 0;
+    double bullet_speed = 0;
+
+    // 预处理结果
+    cv::Mat gray;
+    cv::Mat binary;
+
+    // 感知结果
+    std::vector<Detection> detections;
+    std::vector<Measurement> measurements;
+
+    // 跟踪结果
+    bool has_track = false;
+    TrackState track;
+    GimbalCommand command;
+
+    bool valid = true;
+};
+
+// ============================================================================
+// Main
+// ============================================================================
+
 int main() {
-    const auto [r, p, y] = math_fuxk::rpy(math_fuxk::rpy(1.0, 0.5, 3.0).quat()).rpy();
-    spdlog::info("r: {} ", r);
-    spdlog::info("p: {} ", p);
-    spdlog::info("y: {} ", y);
     init_logger();
-    // spdlog::set_level(spdlog::level::debug);
     spdlog::info("talos is initializing...");
-    const auto start   = std::chrono::system_clock::now();
+    const auto start = std::chrono::system_clock::now();
+
+    // ------------------------------------------------------------------------
+    // 1. 读取配置
+    // ------------------------------------------------------------------------
     auto config_result = read_config();
     if (!config_result.has_value()) {
         std::visit(
@@ -98,69 +118,70 @@ int main() {
             config_result.error());
         return 1;
     }
-    auto& config = config_result.value();
+    auto& config        = config_result.value();
+    const bool daedalus = config.daedalus;
 
-    std::optional<ipc::ShmClient> client;
-    std::unique_ptr<hikcamera::ImageCapturer> camera_;
-    auto daedalus = config.daedalus;
+    // ------------------------------------------------------------------------
+    // 2. 初始化相机
+    // ------------------------------------------------------------------------
+    auto input_result = daedalus ? fcs::InputInterface::create_ipc()
+                                 : fcs::InputInterface::create_hik({}, config.solver.camera_info);
+
+    if (!input_result) {
+        std::visit(
+            overloaded{
+                [](fcs::Timeout) { spdlog::critical("input: timeout"); },
+                [](fcs::Disconnected) { spdlog::critical("input: disconnected"); },
+                [](fcs::ProducerNotAvailable) {
+                    spdlog::critical("input: producer not available");
+                },
+                [](const hikcamera::CameraError& e) { spdlog::critical("input: {}", e.what()); },
+                [](ipc::ShmError e) { spdlog::critical("input: {}", ipc::to_string(e)); },
+            },
+            input_result.error());
+        return 2;
+    }
+    auto input = std::move(*input_result);
+
+    // IPC 模式下更新相机内参
     if (daedalus) {
-        while (!client) {
-            if (auto result = ipc::ShmClient::connect()) {
-                // 连接成功，但需要确认是活跃的共享内存（防止连接到旧文件）
-                if (result->wait_for_producer(std::chrono::seconds(2))) {
-                    client = std::move(*result);
-                    spdlog::info("daedalus client connected");
-
-                    const auto info = client->camera_info();
-                    config.solver.camera_matrix << info.fx, 0.0, info.cx, 0.0, info.fy, info.cy,
-                        0.0, 0.0, 1.0;
-                    config.solver.distort_coefficient << info.distortion[0], info.distortion[1],
-                        info.distortion[2], info.distortion[3], info.distortion[4];
-                } else {
-                    // heartbeat 未更新，可能是旧文件，等待 Rust 端重新创建
-                    std::cout << "x" << std::flush;
-                }
-            } else {
-                std::cout << "." << std::flush;
-                std::this_thread::sleep_for(500ms);
-            }
-        }
-    } else {
-        hikcamera::ImageCapturer::CameraProfile profile;
-        auto x = hikcamera::ImageCapturer::create(profile);
-        if (!x) {
-            spdlog::critical("hikcamera: {}", x.error().what());
-            return 2;
-        }
-        camera_ = std::move(*x);
+        const auto& info                  = input.camera_info();
+        config.solver.camera_matrix       = info.camera_matrix;
+        config.solver.distort_coefficient = info.distort_coefficient;
+        config.solver.camera_info         = info;
     }
 
-    // 创建 Foxglove 服务器 (必须在 TalosStrategy 之前，因为提供 tf_manager)
+    // ------------------------------------------------------------------------
+    // 3. 初始化各组件
+    // ------------------------------------------------------------------------
     FoxgloveServer foxglove_server(8765);
+    auto& tf_buffer = foxglove_server.get_tf_buffer();
 
-    // 使用 FoxgloveServer 的 tf_buffer 创建策略
-    TalosStrategy strategy(false, config, 6, 1080, 1440, foxglove_server.get_tf_buffer());
+    // 处理组件（部分需要线程安全）
+    Detector detector(config.detector);    // 并行阶段使用，需线程安全
+    Solver solver(config.solver);          // 并行阶段使用，需线程安全
+    Estimator estimator(config.estimator); // 串行阶段使用
+    FireControl fire_control(config.fire_control);
 
-    // USB 设备和 IMU 数据存储
+    // USB 设备和 IMU
     talos_gimbal::ReceiveImuData imu_data{};
     talos_gimbal::Stm32Parser::latest_imu = &imu_data;
     talos_gimbal::Stm32Impl<talos_gimbal::Stm32Parser> usb_device;
 
-    // 初始化输出接口
+    // 输出接口
+    std::unique_ptr<auto_aim::OutputInterface> output_interface;
     if (daedalus) {
-        // IPC 模式: 通过共享内存发送到 Rust 模拟器
         if (auto ipc_output = auto_aim::OutputInterface::create_ipc()) {
-            strategy.set_output_interface(std::move(*ipc_output));
+            output_interface = std::make_unique<auto_aim::OutputInterface>(std::move(*ipc_output));
             spdlog::info("endpoint: daedalus");
         } else {
             spdlog::critical("init daedalus endpoint: {}", ipc_output.error());
             return 2;
         }
     } else {
-        // USB 模式: 通过串口发送到 STM32
         if (auto result = usb_device.connect(0x0483, 0x5740); result) {
-            strategy.set_output_interface(
-                auto_aim::OutputInterface(auto_aim::UsbOutput{&usb_device}));
+            output_interface =
+                std::make_unique<auto_aim::OutputInterface>(auto_aim::UsbOutput{&usb_device});
             spdlog::info("endpoint: USB (STM32)");
         } else {
             spdlog::critical(
@@ -169,89 +190,266 @@ int main() {
         }
     }
 
-    FoxgloveWrapper wrapper(strategy, foxglove_server);
-    scheduler::Scheduler<decltype(wrapper)> sched;
-    sched.init(config, &wrapper);
-    sched.start();
-
     spdlog::info(
-        "done. ({}ms)", std::chrono::duration_cast<std::chrono::milliseconds>(
-                            std::chrono::system_clock::now() - start)
-                            .count());
+        "init done. ({}ms)", std::chrono::duration_cast<std::chrono::milliseconds>(
+                                 std::chrono::system_clock::now() - start)
+                                 .count());
 
-    uint64_t last_seq = 0;
-    while (true) {
-        // 处理 USB 事件 (非阻塞)
-        if (!daedalus && usb_device.is_connected()) {
-            usb_device.handle_events();
-        }
+    // ------------------------------------------------------------------------
+    // 4. 流水线状态
+    // ------------------------------------------------------------------------
+    std::atomic<bool> running{true};
+    std::atomic<uint64_t> last_seq{0};
 
-        std::optional<ipc::ShmClient::ImageFrame> frame;
-        if (daedalus) {
-            frame = client->recv_image();
-            if (auto pose = client->recv_pose(ipc::POSE_GIMBAL)) {
-                Eigen::Quaterniond q(pose->qw, pose->qx, pose->qy, pose->qz);
-                const auto [roll, pitch, yaw] = math_fuxk::rpy(q).rpy();
+    // 共享的 IMU 数据（输入阶段读取，估计阶段使用）
+    struct ImuSnapshot {
+        double roll, pitch, yaw, bullet_speed;
+    };
 
-                imu_data.data.roll  = roll;
-                imu_data.data.pitch = pitch;
-                imu_data.data.yaw   = yaw;
-            }
-        } else {
-            auto img_result = camera_->read(100ms);
-            if (img_result) {
-                static uint64_t seq = 0;
-                auto img            = img_result.value();
-                frame               = ipc::ShmClient::ImageFrame{
-                                  .image = std::move(img), .seq = seq++, .timestamp_ns = now_ns()};
-            } else {
-                spdlog::critical("read hikcamera image: {}", img_result.error().what());
-                return 2;
-            }
-        }
+    // ------------------------------------------------------------------------
+    // 5. 启动流水线
+    // ------------------------------------------------------------------------
+    constexpr size_t MAX_TOKENS = 4; // 同时处理的帧数
 
-        if (!frame.has_value()) {
-            // 没有新图像
-            continue;
-        }
+    tbb::parallel_pipeline(
+        MAX_TOKENS,
 
-        // 跳帧检测
-        auto [image, seq, timestamp_ns] = *frame;
-        if (seq != last_seq + 1 && last_seq > 0) {
-            spdlog::info("skip {} frame", seq - last_seq - 1);
-        }
+        // ====================================================================
+        // Stage 1: 输入 (串行) - 获取图像和 IMU 数据
+        // ====================================================================
+        tbb::make_filter<void, std::shared_ptr<PipelineToken>>(
+            tbb::filter_mode::serial_in_order,
+            [&](tbb::flow_control& fc) -> std::shared_ptr<PipelineToken> {
+                if (!running.load(std::memory_order_acquire)) {
+                    fc.stop();
+                    return nullptr;
+                }
 
-        // 从 IMU 获取姿态角 (USB 模式)
-        double roll  = imu_data.data.roll;
-        double pitch = imu_data.data.pitch;
-        double yaw   = imu_data.data.yaw;
-        // double roll  = 0;
-        // double pitch = 0;
-        // double yaw   = 0;
+                // 处理 USB 事件
+                if (!daedalus && usb_device.is_connected()) {
+                    usb_device.handle_events();
+                }
 
-        // 更新 strategy 的弹速和云台姿态
-        strategy.set_bullet_speed(imu_data.data.bullet_speed);
-        // fast_tf::tick_infantry_static(timestamp_ns,foxglove_server.get_tf_buffer());
-        fast_tf::update(
-            foxglove_server.get_tf_buffer(),
-            fast_tf::FuckTransform<fast_tf::gimbal_link_fuxk_frame>(
-                fast_tf::TransformMatrix4d::from_rpy(roll, pitch, yaw)),
-            timestamp_ns);
+                // 获取图像帧
+                auto frame = input.try_recv();
+                if (!frame) {
+                    return nullptr;
+                }
 
-        last_seq = seq;
-        // spdlog::info("处理 {} 帧", last_seq);
-        auto img = image;
-        if (daedalus) {
-            img = cv::Mat();
-            image.copyTo(img);
-            cv::cvtColor(img, img, cv::COLOR_RGB2BGR);
-            // v.image is &'loop ImageData,
-            // but we need to pass a &'pipeline ImageData
-            // we cannot assure 'loop is longer than 'pipeline so we must copy the data.
-        }
-        sched.push_frame(
-            scheduler::Frame{seq, timestamp_ns, scheduler::ImageBuffer::from_mat(std::move(img))});
-        sched.tracker_event_.wait_for(1);
-        // std::this_thread::sleep_for(std::chrono::microseconds(1));
-    }
+                // IPC 模式下获取位姿数据
+                if (auto* ipc_input = input.as_ipc()) {
+                    if (auto pose = ipc_input->client().recv_pose(ipc::POSE_GIMBAL)) {
+                        Eigen::Quaterniond q(pose->qw, pose->qx, pose->qy, pose->qz);
+                        const auto [r, p, y] = math_fuxk::rpy(q).rpy();
+                        imu_data.data.roll   = r;
+                        imu_data.data.pitch  = p;
+                        imu_data.data.yaw    = y;
+                    }
+                }
+
+                auto [seq, timestamp_ns, image] = *frame;
+
+                // 跳帧检测
+                uint64_t prev_seq = last_seq.load();
+                if (seq != prev_seq + 1 && prev_seq > 0) {
+                    spdlog::warn("skip {} frames", seq - prev_seq - 1);
+                }
+                last_seq.store(seq);
+
+                // 创建 token
+                auto token          = std::make_shared<PipelineToken>();
+                token->seq          = seq;
+                token->timestamp_ns = timestamp_ns;
+
+                // 拷贝图像（daedalus 模式需要转换颜色空间）
+                if (daedalus) {
+                    cv::cvtColor(image, token->image, cv::COLOR_RGB2BGR);
+                } else {
+                    token->image = std::move(image);
+                }
+
+                // 快照 IMU 数据
+                token->roll         = imu_data.data.roll;
+                token->pitch        = imu_data.data.pitch;
+                token->yaw          = imu_data.data.yaw;
+                token->bullet_speed = imu_data.data.bullet_speed;
+
+                // 更新 TF
+                fast_tf::update(
+                    tf_buffer,
+                    fast_tf::FuckTransform<fast_tf::gimbal_link_fuxk_frame>(
+                        fast_tf::TransformMatrix4d::from_rpy(
+                            token->roll, token->pitch, token->yaw)),
+                    timestamp_ns);
+
+                return token;
+            })
+            &
+
+            // ====================================================================
+            // Stage 2: 预处理 (并行) - 灰度化 + 二值化
+            // ====================================================================
+            tbb::make_filter<std::shared_ptr<PipelineToken>, std::shared_ptr<PipelineToken>>(
+                tbb::filter_mode::parallel,
+                [&](std::shared_ptr<PipelineToken> token) -> std::shared_ptr<PipelineToken> {
+                    if (!token || token->image.empty()) {
+                        return token;
+                    }
+
+                    cv::cvtColor(token->image, token->gray, cv::COLOR_BGR2GRAY);
+                    cv::threshold(
+                        token->gray, token->binary, config.detector.binary_threshold, 255,
+                        cv::THRESH_BINARY);
+
+                    return token;
+                })
+            &
+
+            // ====================================================================
+            // Stage 3: 感知 (并行) - 检测 + PnP 解算
+            // ====================================================================
+            tbb::make_filter<std::shared_ptr<PipelineToken>, std::shared_ptr<PipelineToken>>(
+                tbb::filter_mode::parallel,
+                [&](std::shared_ptr<PipelineToken> token) -> std::shared_ptr<PipelineToken> {
+                    if (!token || token->image.empty()) {
+                        return token;
+                    }
+
+                    // 检测装甲板
+                    auto detections = detector.detect(
+                        token->image, token->binary, token->timestamp_ns, token->seq);
+
+                    // PnP 解算
+                    for (const auto& det : detections) {
+                        if (auto meas = solver.solve(det)) {
+                            token->detections.push_back(det);
+                            token->measurements.push_back(*meas);
+                        }
+                    }
+
+                    spdlog::debug(
+                        "[Pipeline] frame {} detected {} armors", token->seq,
+                        token->measurements.size());
+
+                    return token;
+                })
+            &
+
+            // ====================================================================
+            // Stage 4: 估计 (串行) - 跟踪 + 火控
+            // ====================================================================
+            tbb::make_filter<std::shared_ptr<PipelineToken>, std::shared_ptr<PipelineToken>>(
+                tbb::filter_mode::serial_in_order,
+                [&](std::shared_ptr<PipelineToken> token) -> std::shared_ptr<PipelineToken> {
+                    if (!token)
+                        return token;
+
+                    // 预测
+                    if (estimator.has_track()) {
+                        estimator.predict(token->timestamp_ns);
+                    }
+
+                    // 寻找最佳量测
+                    std::optional<size_t> best_idx;
+                    double min_distance = 1e10;
+
+                    for (size_t i = 0; i < token->measurements.size(); ++i) {
+                        const auto& meas = token->measurements[i];
+
+                        // 坐标变换到世界系
+                        auto world_result = fast_tf::lookup<fast_tf::world_fuxk_frame>(
+                            tf_buffer,
+                            fast_tf::FuckTransform<fast_tf::camera_optical_fuxk_frame>(
+                                fast_tf::TransformMatrix4d::from_translation(
+                                    meas.position[0], meas.position[1], meas.position[2])),
+                            meas.timestamp_ns);
+
+                        if (!world_result)
+                            continue;
+
+                        const auto world_xyz = (*world_result)->translation();
+
+                        if (estimator.has_track()) {
+                            const auto& state = estimator.state();
+                            Eigen::Vector3d track_pos(state.pos_x(), state.pos_y(), state.pos_z());
+                            double dist = (world_xyz - track_pos).norm();
+                            if (dist < min_distance) {
+                                min_distance = dist;
+                                best_idx     = i;
+                            }
+                        } else {
+                            if (meas.distance < min_distance) {
+                                min_distance = meas.distance;
+                                best_idx     = i;
+                            }
+                        }
+                    }
+
+                    // 更新或初始化航迹
+                    if (best_idx) {
+                        const auto& meas = token->measurements[*best_idx];
+
+                        auto world_result = fast_tf::lookup<fast_tf::world_fuxk_frame>(
+                            tf_buffer,
+                            fast_tf::FuckTransform<fast_tf::camera_optical_fuxk_frame>(
+                                fast_tf::TransformMatrix4d::from_translation(
+                                    meas.position[0], meas.position[1], meas.position[2])),
+                            meas.timestamp_ns);
+
+                        if (world_result) {
+                            const auto world_xyz          = (*world_result)->translation();
+                            const auto [roll, pitch, yaw] = (*world_result)->euler_rot().rpy();
+
+                            int armor_num = 4;
+                            if (meas.name == ArmorName::Outpost || meas.name == ArmorName::Base) {
+                                armor_num = 3;
+                            } else if (meas.type == ArmorType::Big) {
+                                armor_num = 2;
+                            }
+
+                            if (estimator.has_track()) {
+                                estimator.update(meas, world_xyz, yaw);
+                            } else {
+                                estimator.init(meas, world_xyz, yaw, armor_num);
+                            }
+                        }
+                    }
+
+                    // 输出
+                    if (estimator.has_track() && estimator.converged()) {
+                        token->has_track = true;
+                        token->track     = estimator.state();
+                        token->command   = fire_control.solve(
+                            token->track, token->bullet_speed,
+                            token->yaw, // gimbal_yaw
+                            token->timestamp_ns);
+                    }
+
+                    return token;
+                })
+            &
+
+            // ====================================================================
+            // Stage 5: 输出 (串行) - 发送控制指令
+            // ====================================================================
+            tbb::make_filter<std::shared_ptr<PipelineToken>, void>(
+                tbb::filter_mode::serial_in_order, [&](std::shared_ptr<PipelineToken> token) {
+                    if (!token)
+                        return;
+
+                    if (token->has_track && token->command.valid) {
+                        output_interface->send(token->command);
+
+                        spdlog::debug(
+                            "[Pipeline] frame {} output: yaw={:.3f} pitch={:.3f} fire={}",
+                            token->seq, token->command.yaw, token->command.pitch,
+                            token->command.fire);
+                    }
+
+                    // 可在此处发布 Foxglove 可视化数据
+                    // foxglove_server.publish(...);
+                }));
+
+    spdlog::info("pipeline stopped");
+    return 0;
 }

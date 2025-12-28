@@ -99,6 +99,7 @@ struct Stm32Impl {
                 return std::unexpected(result.error());
             product_id = *result;
         }
+        vid_ = vendor_id;
         pid_ = *product_id;
 
         if (auto err = open_device(vendor_id, *product_id)) {
@@ -291,7 +292,7 @@ private:
 
     void reconnect() noexcept {
         close_device();
-        if (!open_device(VID, pid_) && !setup_transfer()) {
+        if (!open_device(vid_, pid_) && !setup_transfer()) {
             state_    = State::Connected;
             first_rx_ = true;
         }
@@ -346,6 +347,7 @@ private:
     libusb_hotplug_callback_handle hp_handle_ = 0;
 
     std::array<uint8_t, 64> rx_buf_{};
+    uint16_t vid_ = 0;
     uint16_t pid_ = 0;
 
     State state_   = State::Disconnected;

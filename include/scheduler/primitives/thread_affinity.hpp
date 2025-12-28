@@ -13,7 +13,7 @@
 # include <sched.h>
 #endif
 
-namespace scheduler {
+namespace primitive {
 
 /**
  * @brief 线程亲和性操作的错误类型
@@ -234,4 +234,4 @@ public:
     }
 };
 
-} // namespace scheduler
+} // namespace primitive

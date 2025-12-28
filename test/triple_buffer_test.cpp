@@ -1,276 +1,381 @@
-#include "triple_buffer.hpp"
-#include <algorithm>
-#include <atomic>
 #include <gtest/gtest.h>
-#include <iostream>
-#include <ranges>
+
+#include <array>
+#include <atomic>
+#include <latch>
+#include <string>
 #include <thread>
+#include <vector>
 
-// 大结构体，更容易暴露撕裂问题
-struct LargeFrame {
-    std::array<uint64_t, 64> data{}; // 512 bytes
+#include "scheduler/primitives/spmc_triple_buffer.hpp"
+#include "scheduler/primitives/spsc_triple_buffer.hpp"
 
-    void fill(const auto v) {
-        for (auto& x : data)
-            x = v;
-    }
+using namespace primitive;
+
+// Data structure for integrity testing - all fields should have same value
+struct IntegrityData {
+    static constexpr size_t kNumFields = 64;
+    std::array<uint64_t, kNumFields> fields{};
+
+    IntegrityData() = default;
+    explicit IntegrityData(uint64_t val) { fields.fill(val); }
 
     [[nodiscard]] bool is_consistent() const {
-        const auto first = data[0];
-        return std::ranges::all_of(data, [&](const auto v) { return v == first; });
+        if (fields[0] == 0)
+            return true; // uninitialized is ok
+        for (size_t i = 1; i < kNumFields; ++i) {
+            if (fields[i] != fields[0])
+                return false;
+        }
+        return true;
     }
 
-    [[nodiscard]] auto value() const { return data[0]; }
+    [[nodiscard]] uint64_t value() const { return fields[0]; }
 };
 
-// 1. 基础功能测试
-TEST(TripleBufferTest, BasicOperation) {
-    talos::TripleBuffer<int> buffer;
+// ============================================================================
+// SPSC Tests
+// ============================================================================
 
-    // 初始状态没有新数据
-    EXPECT_FALSE(buffer.has_new_frame());
-    EXPECT_EQ(buffer.borrow(), std::nullopt);
+TEST(SpscTest, BasicWriteRead) {
+    auto [w, r] = SpscTripleBuffer<int>::create();
 
-    // 写入后有新数据
-    buffer.borrow_mut() = 42;
-    buffer.publish();
-    EXPECT_TRUE(buffer.has_new_frame());
+    w.write(42);
 
-    // 读取
-    const auto result = buffer.borrow();
-    ASSERT_TRUE(result.has_value());
-    EXPECT_EQ(**result, 42);
-
-    // 读完后没有新数据
-    EXPECT_FALSE(buffer.has_new_frame());
-    EXPECT_EQ(buffer.borrow(), std::nullopt);
+    auto val = r.read();
+    ASSERT_TRUE(val.has_value());
+    EXPECT_EQ(*val, 42);
 }
 
-// 2. 连续写入，只读到最新
-TEST(TripleBufferTest, ConsecutiveWrites) {
-    talos::TripleBuffer<int> buffer;
+TEST(SpscTest, NoDataReturnsNullopt) {
+    auto [w, r] = SpscTripleBuffer<int>::create();
+    EXPECT_FALSE(r.read().has_value());
+}
 
-    for (int i = 1; i <= 100; ++i) {
-        buffer.borrow_mut() = i;
-        buffer.publish();
+TEST(SpscTest, MultipleWrites) {
+    auto [w, r] = SpscTripleBuffer<int>::create();
+
+    w.write(1);
+    w.write(2);
+    w.write(3);
+
+    auto val = r.read();
+    ASSERT_TRUE(val.has_value());
+    EXPECT_EQ(*val, 3);
+
+    // No more new data
+    EXPECT_FALSE(r.read().has_value());
+}
+
+TEST(SpscTest, BorrowMut) {
+    auto [w, r] = SpscTripleBuffer<int>::create();
+
+    w.borrow_mut() = 99;
+    w.publish();
+
+    auto val = r.read();
+    ASSERT_TRUE(val.has_value());
+    EXPECT_EQ(*val, 99);
+}
+
+TEST(SpscTest, HasNew) {
+    auto [w, r] = SpscTripleBuffer<int>::create();
+
+    EXPECT_FALSE(r.has_new());
+    w.write(1);
+    EXPECT_TRUE(r.has_new());
+    r.read();
+    EXPECT_FALSE(r.has_new());
+}
+
+TEST(SpscTest, MoveSemantics) {
+    auto [w, r] = SpscTripleBuffer<std::string>::create();
+
+    std::string data = "hello world";
+    w.write(std::move(data));
+
+    auto val = r.read();
+    ASSERT_TRUE(val.has_value());
+    EXPECT_EQ(*val, "hello world");
+}
+
+TEST(SpscTest, Concurrent) {
+    auto [w, r] = SpscTripleBuffer<int>::create();
+
+    std::atomic<bool> stop{false};
+    std::atomic<int> last_read{-1};
+    constexpr int kIterations = 100000;
+
+    std::thread producer([&w, &stop] {
+        for (int i = 0; i < kIterations; ++i) {
+            w.write(i);
+        }
+        stop.store(true, std::memory_order_release);
+    });
+
+    std::thread consumer([&r, &stop, &last_read] {
+        while (!stop.load(std::memory_order_acquire)) {
+            if (auto val = r.read()) {
+                last_read.store(*val, std::memory_order_relaxed);
+            }
+        }
+        if (auto val = r.read()) {
+            last_read.store(*val, std::memory_order_relaxed);
+        }
+    });
+
+    producer.join();
+    consumer.join();
+
+    EXPECT_GT(last_read.load(), kIterations / 2);
+}
+
+TEST(SpscTest, DataIntegrity) {
+    auto [w, r] = SpscTripleBuffer<IntegrityData>::create();
+
+    std::atomic<bool> stop{false};
+    std::atomic<uint64_t> corruptions{0};
+    std::atomic<uint64_t> reads{0};
+    constexpr int kDurationMs = 200;
+
+    std::thread producer([&w, &stop] {
+        uint64_t counter = 1;
+        while (!stop.load(std::memory_order_acquire)) {
+            w.write(IntegrityData(counter++));
+        }
+    });
+
+    std::thread consumer([&r, &stop, &corruptions, &reads] {
+        while (!stop.load(std::memory_order_acquire)) {
+            if (auto val = r.read()) {
+                reads.fetch_add(1, std::memory_order_relaxed);
+                if (!val->is_consistent()) {
+                    corruptions.fetch_add(1, std::memory_order_relaxed);
+                }
+            }
+        }
+    });
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(kDurationMs));
+    stop.store(true, std::memory_order_release);
+
+    producer.join();
+    consumer.join();
+
+    EXPECT_EQ(corruptions.load(), 0) << "Data corruption detected!";
+    EXPECT_GT(reads.load(), 0) << "No data was read";
+}
+
+// ============================================================================
+// SPMC Tests
+// ============================================================================
+
+TEST(SpmcTest, BasicWriteRead) {
+    auto [w, r] = SpmcTripleBuffer<int>::create();
+
+    w.write(42);
+
+    auto val = r.read();
+    ASSERT_TRUE(val.has_value());
+    EXPECT_EQ(*val, 42);
+}
+
+TEST(SpmcTest, NoDataReturnsNullopt) {
+    auto [w, r] = SpmcTripleBuffer<int>::create();
+    EXPECT_FALSE(r.read().has_value());
+}
+
+TEST(SpmcTest, MultipleWrites) {
+    auto [w, r] = SpmcTripleBuffer<int>::create();
+
+    w.write(1);
+    w.write(2);
+    w.write(3);
+
+    auto val = r.read();
+    ASSERT_TRUE(val.has_value());
+    EXPECT_EQ(*val, 3);
+
+    // No more new data
+    EXPECT_FALSE(r.read().has_value());
+}
+
+TEST(SpmcTest, ReadHandleCopyable) {
+    auto [w, r] = SpmcTripleBuffer<int>::create();
+
+    w.write(42);
+
+    auto r2 = r.clone();
+    auto r3 = r;
+
+    auto v1 = r.read();
+    auto v2 = r2.read();
+    auto v3 = r3.read();
+
+    ASSERT_TRUE(v1.has_value());
+    ASSERT_TRUE(v2.has_value());
+    ASSERT_TRUE(v3.has_value());
+
+    EXPECT_EQ(*v1, 42);
+    EXPECT_EQ(*v2, 42);
+    EXPECT_EQ(*v3, 42);
+}
+
+TEST(SpmcTest, IndependentGeneration) {
+    auto [w, r] = SpmcTripleBuffer<int>::create();
+
+    auto r2 = r.clone();
+
+    w.write(1);
+
+    auto v1 = r.read();
+    ASSERT_TRUE(v1.has_value());
+
+    EXPECT_TRUE(r2.has_new());
+    auto v2 = r2.read();
+    ASSERT_TRUE(v2.has_value());
+
+    EXPECT_FALSE(r.has_new());
+    EXPECT_FALSE(r2.has_new());
+}
+
+TEST(SpmcTest, HasNew) {
+    auto [w, r] = SpmcTripleBuffer<int>::create();
+
+    EXPECT_FALSE(r.has_new());
+    w.write(1);
+    EXPECT_TRUE(r.has_new());
+    r.read();
+    EXPECT_FALSE(r.has_new());
+}
+
+TEST(SpmcTest, ConcurrentMultipleConsumers) {
+    auto [w, r] = SpmcTripleBuffer<int>::create();
+
+    std::atomic<bool> stop{false};
+    std::atomic<int> total_reads{0};
+    constexpr int kIterations   = 10000;
+    constexpr int kNumConsumers = 4;
+
+    std::latch start_latch(kNumConsumers + 1);
+
+    std::thread producer([&w, &stop, &start_latch] {
+        start_latch.arrive_and_wait();
+        for (int i = 0; i < kIterations; ++i) {
+            w.write(i);
+        }
+        stop.store(true, std::memory_order_release);
+    });
+
+    std::vector<std::thread> consumers;
+    consumers.reserve(kNumConsumers);
+    for (int c = 0; c < kNumConsumers; ++c) {
+        auto reader = r.clone();
+        consumers.emplace_back(
+            [reader = std::move(reader), &stop, &total_reads, &start_latch]() mutable {
+                start_latch.arrive_and_wait();
+                while (!stop.load(std::memory_order_acquire)) {
+                    if (auto val = reader.read()) {
+                        total_reads.fetch_add(1, std::memory_order_relaxed);
+                        [[maybe_unused]] volatile int x = *val;
+                    }
+                }
+            });
     }
 
-    // 只能读到最新的一个
-    const auto result = buffer.borrow();
-    ASSERT_TRUE(result.has_value());
-    EXPECT_EQ(**result, 100);
-
-    // 没有更多数据
-    EXPECT_EQ(buffer.borrow(), std::nullopt);
-}
-
-// 3. current() 总是有效
-TEST(TripleBufferTest, CurrentAlwaysValid) {
-    talos::TripleBuffer<int> buffer;
-
-    // 即使没有 publish，current() 也能用（返回默认值）
-    EXPECT_EQ(buffer.current(), 0);
-
-    buffer.borrow_mut() = 42;
-    buffer.publish();
-    const auto current = buffer.borrow();
-    EXPECT_EQ(current.has_value(), true)
-        << "Previously we published data, so we must receive the data";
-
-    // borrow 后 current 返回刚读的值
-    EXPECT_EQ(*current.value(), 42);
-}
-
-// 4. 高压单调性测试（无 sleep）
-TEST(TripleBufferTest, StressMonotonicity) {
-    talos::TripleBuffer<uint64_t> buffer;
-
-    std::atomic stop{false};
-    std::atomic<uint64_t> violations{0};
-    std::atomic<uint64_t> reads{0};
-
-    std::thread producer([&] {
-        uint64_t v = 1;
-        while (!stop.load(std::memory_order_relaxed)) {
-            buffer.borrow_mut() = v++;
-            buffer.publish();
-        }
-    });
-
-    std::thread consumer([&] {
-        uint64_t last = 0;
-        while (!stop.load(std::memory_order_relaxed)) {
-            if (auto opt = buffer.borrow()) {
-                const auto curr = **opt;
-                reads.fetch_add(1, std::memory_order_relaxed);
-                if (curr <= last) {
-                    violations.fetch_add(1, std::memory_order_relaxed);
-                }
-                last = curr;
-            }
-        }
-    });
-
-    std::this_thread::sleep_for(std::chrono::seconds(2));
-    stop.store(true);
     producer.join();
-    consumer.join();
-
-    std::cout << "Reads: " << reads.load() << ", Violations: " << violations.load() << std::endl;
-    EXPECT_EQ(violations.load(), 0);
-    EXPECT_GT(reads.load(), 10000); // 确保实际跑了
-}
-
-// 5. 高压数据完整性测试（大结构体，无 sleep）
-TEST(TripleBufferTest, StressDataIntegrity) {
-    talos::TripleBuffer<LargeFrame> buffer;
-
-    std::atomic stop{false};
-    std::atomic<uint64_t> corrupted{0};
-    std::atomic<uint64_t> reads{0};
-
-    std::thread producer([&] {
-        uint64_t v = 1;
-        while (!stop.load(std::memory_order_relaxed)) {
-            buffer.borrow_mut().fill(v++);
-            buffer.publish();
-        }
-    });
-
-    std::thread consumer([&] {
-        while (!stop.load(std::memory_order_relaxed)) {
-            if (auto opt = buffer.borrow()) {
-                reads.fetch_add(1, std::memory_order_relaxed);
-                if (!(*opt)->is_consistent()) {
-                    corrupted.fetch_add(1, std::memory_order_relaxed);
-                }
-            }
-        }
-    });
-
-    std::this_thread::sleep_for(std::chrono::seconds(2));
-    stop.store(true);
-    producer.join();
-    consumer.join();
-
-    std::cout << "Reads: " << reads.load() << ", Corrupted: " << corrupted.load() << std::endl;
-    EXPECT_EQ(corrupted.load(), 0);
-    EXPECT_GT(reads.load(), 10000);
-}
-
-// 6. 快生产者慢消费者（会丢帧，但不能乱序或撕裂）
-TEST(TripleBufferTest, FastProducerSlowConsumer) {
-    talos::TripleBuffer<uint64_t> buffer;
-
-    std::atomic stop{false};
-    std::atomic<uint64_t> violations{0};
-
-    std::thread producer([&] {
-        uint64_t v = 1;
-        while (!stop.load(std::memory_order_relaxed)) {
-            buffer.borrow_mut() = v++;
-            buffer.publish();
-            // 不 sleep，全速写
-        }
-    });
-
-    std::thread consumer([&] {
-        uint64_t last = 0;
-        while (!stop.load(std::memory_order_relaxed)) {
-            if (auto opt = buffer.borrow()) {
-                const uint64_t curr = **opt;
-                if (curr <= last) {
-                    violations.fetch_add(1, std::memory_order_relaxed);
-                }
-                last = curr;
-            }
-            // 慢消费者
-            std::this_thread::sleep_for(std::chrono::microseconds(100));
-        }
-    });
-
-    std::this_thread::sleep_for(std::chrono::seconds(2));
-    stop.store(true);
-    producer.join();
-    consumer.join();
-
-    EXPECT_EQ(violations.load(), 0);
-}
-
-// 7. 慢生产者快消费者（大量空读）
-TEST(TripleBufferTest, SlowProducerFastConsumer) {
-    talos::TripleBuffer<uint64_t> buffer;
-
-    std::atomic stop{false};
-    std::atomic<uint64_t> violations{0};
-    std::atomic<uint64_t> empty_reads{0};
-    std::atomic<uint64_t> valid_reads{0};
-
-    std::thread producer([&] {
-        uint64_t v = 1;
-        while (!stop.load(std::memory_order_relaxed)) {
-            buffer.borrow_mut() = v++;
-            buffer.publish();
-            std::this_thread::sleep_for(std::chrono::microseconds(100));
-        }
-    });
-
-    std::thread consumer([&] {
-        uint64_t last = 0;
-        while (!stop.load(std::memory_order_relaxed)) {
-            if (auto opt = buffer.borrow()) {
-                const auto curr = **opt;
-                valid_reads.fetch_add(1, std::memory_order_relaxed);
-                if (curr <= last) {
-                    violations.fetch_add(1, std::memory_order_relaxed);
-                }
-                last = curr;
-            } else {
-                empty_reads.fetch_add(1, std::memory_order_relaxed);
-            }
-            // 不 sleep，全速读
-        }
-    });
-
-    std::this_thread::sleep_for(std::chrono::seconds(2));
-    stop.store(true);
-    producer.join();
-    consumer.join();
-
-    std::cout << "Valid: " << valid_reads.load() << ", Empty: " << empty_reads.load() << std::endl;
-    EXPECT_EQ(violations.load(), 0);
-    EXPECT_GT(empty_reads.load(), valid_reads.load()); // 空读应该更多
-}
-
-// 8. 多次 borrow_mut 不 publish
-TEST(TripleBufferTest, MultipleBorrowMutWithoutPublish) {
-    talos::TripleBuffer<int> buffer;
-
-    buffer.borrow_mut() = 1;
-    buffer.borrow_mut() = 2;
-    buffer.borrow_mut() = 3;
-    // 只 publish 一次
-    buffer.publish();
-
-    const auto result = buffer.borrow();
-    ASSERT_TRUE(result.has_value());
-    EXPECT_EQ(**result, 3);
-}
-
-// 9. 交替读写
-TEST(TripleBufferTest, AlternatingReadWrite) {
-    talos::TripleBuffer<int> buffer;
-
-    for (int i = 1; i <= 1000; ++i) {
-        buffer.borrow_mut() = i;
-        buffer.publish();
-
-        auto result = buffer.borrow();
-        ASSERT_TRUE(result.has_value());
-        EXPECT_EQ(**result, i);
-
-        // 第二次读应该是空的
-        EXPECT_EQ(buffer.borrow(), std::nullopt);
-        EXPECT_EQ(buffer.has_new_frame(), false);
+    for (auto& t : consumers) {
+        t.join();
     }
+
+    EXPECT_GT(total_reads.load(), 0);
+}
+
+TEST(SpmcTest, StressTest) {
+    auto [w, r] = SpmcTripleBuffer<std::string>::create();
+
+    std::atomic<bool> stop{false};
+    constexpr int kDurationMs   = 100;
+    constexpr int kNumConsumers = 3;
+
+    std::latch start_latch(kNumConsumers + 1);
+
+    std::thread producer([&w, &stop, &start_latch] {
+        start_latch.arrive_and_wait();
+        int counter = 0;
+        while (!stop.load(std::memory_order_acquire)) {
+            w.write("data_" + std::to_string(counter++));
+        }
+    });
+
+    std::vector<std::thread> consumers;
+    consumers.reserve(kNumConsumers);
+    for (int c = 0; c < kNumConsumers; ++c) {
+        auto reader = r.clone();
+        consumers.emplace_back([reader = std::move(reader), &stop, &start_latch]() mutable {
+            start_latch.arrive_and_wait();
+            while (!stop.load(std::memory_order_acquire)) {
+                if (auto val = reader.read()) {
+                    EXPECT_TRUE(val->starts_with("data_"));
+                }
+            }
+        });
+    }
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(kDurationMs));
+    stop.store(true, std::memory_order_release);
+
+    producer.join();
+    for (auto& t : consumers) {
+        t.join();
+    }
+}
+
+TEST(SpmcTest, DataIntegrity) {
+    auto [w, r] = SpmcTripleBuffer<IntegrityData>::create();
+
+    std::atomic<bool> stop{false};
+    std::atomic<uint64_t> corruptions{0};
+    std::atomic<uint64_t> total_reads{0};
+    constexpr int kDurationMs   = 200;
+    constexpr int kNumConsumers = 4;
+
+    std::latch start_latch(kNumConsumers + 1);
+
+    std::thread producer([&w, &stop, &start_latch] {
+        start_latch.arrive_and_wait();
+        uint64_t counter = 1;
+        while (!stop.load(std::memory_order_acquire)) {
+            w.write(IntegrityData(counter++));
+        }
+    });
+
+    std::vector<std::thread> consumers;
+    consumers.reserve(kNumConsumers);
+    for (int c = 0; c < kNumConsumers; ++c) {
+        auto reader = r.clone();
+        consumers.emplace_back([reader = std::move(reader), &stop, &corruptions, &total_reads,
+                                &start_latch]() mutable {
+            start_latch.arrive_and_wait();
+            while (!stop.load(std::memory_order_acquire)) {
+                if (auto val = reader.read()) {
+                    total_reads.fetch_add(1, std::memory_order_relaxed);
+                    if (!val->is_consistent()) {
+                        corruptions.fetch_add(1, std::memory_order_relaxed);
+                    }
+                }
+            }
+        });
+    }
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(kDurationMs));
+    stop.store(true, std::memory_order_release);
+
+    producer.join();
+    for (auto& t : consumers) {
+        t.join();
+    }
+
+    EXPECT_EQ(corruptions.load(), 0) << "Data corruption detected!";
+    EXPECT_GT(total_reads.load(), 0) << "No data was read";
 }

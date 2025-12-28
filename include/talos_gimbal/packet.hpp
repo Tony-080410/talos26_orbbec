@@ -1,10 +1,25 @@
 #pragma once
-#include "detector_state.hpp"
 #include <cstdint>
 #include <iomanip>
 #include <iostream>
+#include <string_view>
 
 namespace talos_gimbal {
+
+// 机器人自身颜色 (来自裁判系统)
+enum class Color : uint8_t {
+    Red  = 0,
+    Blue = 1,
+};
+
+constexpr std::string_view color_name(Color c) {
+    switch (c) {
+    case Color::Red: return "RED";
+    case Color::Blue: return "BLUE";
+    }
+    return "UNKNOWN";
+}
+
 #pragma pack(1)
 struct HeaderFrame {
     static constexpr uint8_t SoF() { return 0x5A; }
@@ -20,7 +35,7 @@ struct ReceiveImuData {
     HeaderFrame header;
     uint32_t time_stamp;
     struct {
-        talos::Color self_color;
+        Color self_color;
         float bullet_speed;
         float yaw;
         float pitch;
@@ -57,7 +72,7 @@ inline void print_imu(const ReceiveImuData& imu) {
     std::cout << "\r" << std::string(120, ' ') << "\r"; // 清空整行
 
     std::cout << "IMU | stamp: " << std::setw(8) << imu.time_stamp << " ms | "
-              << "color: " << talos::color_name(imu.data.self_color) << " | "
+              << "color: " << color_name(imu.data.self_color) << " | "
               << "yaw: " << std::setw(7) << imu.data.yaw * RAD2DEG << "° | "
               << "pitch: " << std::setw(7) << imu.data.pitch * RAD2DEG << "° | "
               << "roll: " << std::setw(7) << imu.data.roll * RAD2DEG << "° | "
