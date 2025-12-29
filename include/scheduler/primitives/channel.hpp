@@ -43,7 +43,7 @@ public:
     using value_type  = T;
     using buffer_type = Buffer;
 
-    TrackedWriter(Inner w, const char* file, const int line) noexcept
+    TrackedWriter(Inner w, const std::string_view file, const int line) noexcept
         : LocStorage(file, line)
         , inner_(std::move(w)) {}
 
@@ -90,7 +90,7 @@ public:
     using value_type  = T;
     using buffer_type = Buffer;
 
-    TrackedReader(Inner r, const char* file, const int line) noexcept
+    TrackedReader(Inner r, const std::string_view file, const int line) noexcept
         : LocStorage(file, line)
         , inner_(std::move(r)) {}
 
@@ -165,7 +165,7 @@ public:
     static constexpr bool is_spmc = detail::SpmcLike<Buffer, T>;
     static constexpr bool is_spsc = detail::SpscLike<Buffer, T>;
 
-    TrackedChannel(WriteInner w, ReadInner r, const char* file, const int line) noexcept
+    TrackedChannel(WriteInner w, ReadInner r, const std::string_view file, const int line) noexcept
         : LocStorage(file, line)
         , writer_(std::move(w))
         , reader_(std::move(r)) {}
@@ -192,7 +192,7 @@ public:
     // ========================================================================
 
     [[nodiscard]] Reader
-        clone_reader(const char* file = __builtin_FILE(), int line = __builtin_LINE()) const
+        clone_reader(std::string_view file = __builtin_FILE(), int line = __builtin_LINE()) const
         requires is_spmc {
         register_flow_edge(this->loc(), NodeId{file, line}, typeid(T).name());
         return Reader(reader_.clone(), file, line);
@@ -203,7 +203,7 @@ public:
     // ========================================================================
 
     [[nodiscard]] Reader
-        take_reader(const char* file = __builtin_FILE(), int line = __builtin_LINE()) {
+        take_reader(std::string_view file = __builtin_FILE(), int line = __builtin_LINE()) {
         register_flow_edge(this->loc(), NodeId{file, line}, typeid(T).name());
         return Reader(std::move(reader_), file, line);
     }
@@ -218,7 +218,7 @@ public:
     };
 
     [[nodiscard]] SplitResult
-        split(const char* file = __builtin_FILE(), int line = __builtin_LINE()) {
+        split(std::string_view file = __builtin_FILE(), int line = __builtin_LINE()) {
         register_flow_edge(this->loc(), NodeId{file, line}, typeid(T).name());
         return SplitResult{
             Writer(std::move(writer_), this->loc().file, this->loc().line),
@@ -238,8 +238,9 @@ public:
 // ============================================================================
 
 template <template <typename> class Buffer, typename T>
-[[nodiscard]] auto tracked_create(const char* file = __builtin_FILE(), int line = __builtin_LINE())
-    -> TrackedChannel<T, Buffer<T>> {
+[[nodiscard]] auto
+    tracked_create(std::string_view file = __builtin_FILE(), int line = __builtin_LINE())
+        -> TrackedChannel<T, Buffer<T>> {
     auto [w, r] = Buffer<T>::create();
     return TrackedChannel<T, Buffer<T>>(std::move(w), std::move(r), file, line);
 }
@@ -256,16 +257,16 @@ using SpscChannel = TrackedChannel<T, SpscTripleBuffer<T>>;
 
 // Convenience factory functions
 template <typename T>
-[[nodiscard]] auto
-    make_spmc_channel(const char* file = __builtin_FILE(), const int line = __builtin_LINE())
-        -> SpmcChannel<T> {
+[[nodiscard]] auto make_spmc_channel(
+    const std::string_view file = __builtin_FILE(), const int line = __builtin_LINE())
+    -> SpmcChannel<T> {
     return tracked_create<SpmcTripleBuffer, T>(file, line);
 }
 
 template <typename T>
-[[nodiscard]] auto
-    make_spsc_channel(const char* file = __builtin_FILE(), const int line = __builtin_LINE())
-        -> SpscChannel<T> {
+[[nodiscard]] auto make_spsc_channel(
+    const std::string_view file = __builtin_FILE(), const int line = __builtin_LINE())
+    -> SpscChannel<T> {
     return tracked_create<SpscTripleBuffer, T>(file, line);
 }
 

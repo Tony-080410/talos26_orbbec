@@ -19,7 +19,7 @@ struct TestData {
 
 } // namespace
 
-class FlowGraphTest : public ::testing::Test {
+class FlowGraphTest : public testing::Test {
 protected:
     void SetUp() override { global_flow_graph().clear(); }
 };
@@ -32,15 +32,15 @@ TEST_F(FlowGraphTest, ChannelCreateRecordsNothing) {
 }
 
 TEST_F(FlowGraphTest, CloneReaderRecordsEdge) {
-    auto ch     = make_spmc_channel<TestData>();
-    auto reader = ch.clone_reader();
+    const auto ch = make_spmc_channel<TestData>();
+    auto reader   = ch.clone_reader();
 
     EXPECT_EQ(global_flow_graph().edge_count(), 1);
     EXPECT_EQ(global_flow_graph().node_count(), 2);
 }
 
 TEST_F(FlowGraphTest, MultipleReadersCreateMultipleEdges) {
-    auto ch = make_spmc_channel<TestData>();
+    const auto ch = make_spmc_channel<TestData>();
 
     auto r1 = ch.clone_reader();
     auto r2 = ch.clone_reader();
@@ -52,20 +52,20 @@ TEST_F(FlowGraphTest, MultipleReadersCreateMultipleEdges) {
 }
 
 TEST_F(FlowGraphTest, TopologicalSortWorks) {
-    auto ch1 = make_spmc_channel<TestData>(); // source
-    auto r1  = ch1.clone_reader();            // mid
+    const auto ch1 = make_spmc_channel<TestData>(); // source
+    auto r1        = ch1.clone_reader();            // mid
 
-    auto ch2 = make_spmc_channel<int>();      // mid
-    auto r2  = ch2.clone_reader();            // sink
+    const auto ch2 = make_spmc_channel<int>();      // mid
+    auto r2        = ch2.clone_reader();            // sink
 
-    const auto result = global_flow_graph().topological_sort();
+    const auto [order, has_cycle] = global_flow_graph().topological_sort();
 
-    EXPECT_FALSE(result.has_cycle);
-    EXPECT_EQ(result.order.size(), global_flow_graph().node_count());
+    EXPECT_FALSE(has_cycle);
+    EXPECT_EQ(order.size(), global_flow_graph().node_count());
 }
 
 TEST_F(FlowGraphTest, SourcesAndSinks) {
-    auto ch = make_spmc_channel<TestData>();
+    const auto ch = make_spmc_channel<TestData>();
 
     auto r1 = ch.clone_reader();
     auto r2 = ch.clone_reader();
@@ -73,13 +73,13 @@ TEST_F(FlowGraphTest, SourcesAndSinks) {
     const auto sources = global_flow_graph().sources();
     const auto sinks   = global_flow_graph().sinks();
 
-    EXPECT_EQ(sources.size(), 1);             // producer
-    EXPECT_EQ(sinks.size(), 2);               // two consumers
+    EXPECT_EQ(sources.size(), 1);                   // producer
+    EXPECT_EQ(sinks.size(), 2);                     // two consumers
 }
 
 TEST_F(FlowGraphTest, ExportToDot) {
-    auto ch     = make_spmc_channel<TestData>();
-    auto reader = ch.clone_reader();
+    const auto ch = make_spmc_channel<TestData>();
+    auto reader   = ch.clone_reader();
 
     const auto dot = global_flow_graph().to_dot("TestGraph");
 
@@ -88,8 +88,8 @@ TEST_F(FlowGraphTest, ExportToDot) {
 }
 
 TEST_F(FlowGraphTest, ExportToJson) {
-    auto ch     = make_spmc_channel<TestData>();
-    auto reader = ch.clone_reader();
+    const auto ch = make_spmc_channel<TestData>();
+    auto reader   = ch.clone_reader();
 
     const auto json = global_flow_graph().to_json();
 
@@ -103,7 +103,7 @@ TEST_F(FlowGraphTest, ChannelReadWriteWorks) {
 
     ch.write(TestData{42});
 
-    auto data = reader.read();
+    const auto data = reader.read();
     ASSERT_TRUE(data.has_value());
     EXPECT_EQ(data->value, 42);
 }
@@ -114,7 +114,7 @@ TEST_F(FlowGraphTest, SplitWorks) {
 
     writer.write(TestData{123});
 
-    auto data = reader.read();
+    const auto data = reader.read();
     ASSERT_TRUE(data.has_value());
     EXPECT_EQ(data->value, 123);
 
@@ -165,7 +165,7 @@ TEST_F(FlowGraphTest, SpscChannelWorks) {
 
     writer.write(TestData{99});
 
-    auto data = reader.read();
+    const auto data = reader.read();
     ASSERT_TRUE(data.has_value());
     EXPECT_EQ(data->value, 99);
 
@@ -180,7 +180,7 @@ TEST_F(FlowGraphTest, SpscBorrowMutPublish) {
     writer.borrow_mut().value = 42;
     writer.publish();
 
-    auto data = reader.read();
+    const auto data = reader.read();
     ASSERT_TRUE(data.has_value());
     EXPECT_EQ(data->value, 42);
 }
@@ -203,9 +203,9 @@ TEST_F(FlowGraphTest, MixedPipeline) {
     auto spsc_ch                           = make_spsc_channel<int>(); // sensor -> processor
     auto [sensor_writer, processor_reader] = spsc_ch.split();
 
-    auto spmc_ch   = make_spmc_channel<int>();      // processor -> multiple consumers
-    auto consumer1 = spmc_ch.clone_reader();
-    auto consumer2 = spmc_ch.clone_reader();
+    const auto spmc_ch = make_spmc_channel<int>();  // processor -> multiple consumers
+    auto consumer1     = spmc_ch.clone_reader();
+    auto consumer2     = spmc_ch.clone_reader();
 
     EXPECT_EQ(global_flow_graph().edge_count(), 3); // 1 SPSC + 2 SPMC
 }

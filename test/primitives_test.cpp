@@ -29,7 +29,7 @@ namespace {
 
 class CoutRedirect {
 public:
-    explicit CoutRedirect(std::ostream& to)
+    explicit CoutRedirect(const std::ostream& to)
         : old_(std::cout.rdbuf(to.rdbuf())) {}
 
     ~CoutRedirect() { std::cout.rdbuf(old_); }
@@ -47,7 +47,7 @@ private:
 
 TEST(AutoResetEventTest, SignalWakesOne) {
     AutoResetEvent ev;
-    std::atomic<bool> woke{false};
+    std::atomic woke{false};
 
     std::thread waiter([&] {
         const auto st = ev.wait();
@@ -73,7 +73,7 @@ TEST(AutoResetEventTest, SignalBeforeWaitIsConsumedOnce) {
 TEST(AutoResetEventTest, SignalWakesExactlyOneWaiter) {
     AutoResetEvent ev;
 
-    std::atomic<int> woke{0};
+    std::atomic woke{0};
     std::latch ready(2);
 
     std::thread a([&] {
@@ -112,7 +112,7 @@ TEST(AutoResetEventTest, WaitForTimeout) {
 
 TEST(AutoResetEventTest, CloseUnblocks) {
     AutoResetEvent ev;
-    std::atomic<WaitStatus> st{WaitStatus::Timeout};
+    std::atomic st{WaitStatus::Timeout};
 
     std::thread waiter([&] { st.store(ev.wait(), std::memory_order_release); });
     std::this_thread::sleep_for(10ms);
@@ -135,7 +135,7 @@ TEST(ManualResetEventTest, SetWakesAllWaiters) {
     ManualResetEvent ev;
 
     constexpr int kWaiters = 4;
-    std::atomic<int> woke{0};
+    std::atomic woke{0};
     std::latch ready(kWaiters);
 
     std::vector<std::thread> threads;
@@ -178,7 +178,7 @@ TEST(NativeEventTest, BackwardCompatibleApi) {
 TEST(NativeEventTest, NotifyAllActsAsSingleSignal) {
     NativeEvent ev;
 
-    std::atomic<int> woke{0};
+    std::atomic woke{0};
     std::latch ready(2);
 
     std::thread a([&] {
@@ -226,7 +226,7 @@ TEST(BufferPoolTest, ReturnsToPoolOnLastRef) {
     copy.reset();
     EXPECT_EQ(pool.available_approx(), 1U);
 
-    auto b = pool.acquire();
+    const auto b = pool.acquire();
     ASSERT_TRUE(static_cast<bool>(b));
     EXPECT_EQ(b.get(), addr_a);             // same pooled object reused
 }
@@ -234,8 +234,8 @@ TEST(BufferPoolTest, ReturnsToPoolOnLastRef) {
 TEST(BufferPoolTest, FailPolicyReturnsNullWhenExhausted) {
     BufferPool pool(2, 8, 8, CV_8UC1, BufferPool::ExhaustPolicy::Fail);
 
-    auto a = pool.acquire();
-    auto b = pool.acquire();
+    auto a       = pool.acquire();
+    const auto b = pool.acquire();
     ASSERT_TRUE(static_cast<bool>(a));
     ASSERT_TRUE(static_cast<bool>(b));
     EXPECT_EQ(pool.available_approx(), 0U);
@@ -244,7 +244,7 @@ TEST(BufferPoolTest, FailPolicyReturnsNullWhenExhausted) {
 
     a.reset();
     EXPECT_EQ(pool.available_approx(), 1U);
-    auto c = pool.try_acquire();
+    const auto c = pool.try_acquire();
     ASSERT_TRUE(static_cast<bool>(c));
 }
 
@@ -277,7 +277,7 @@ TEST(BufferPoolTest, AllocatePolicyOverflowDoesNotReturnToPool) {
 
 TEST(BufferPoolTest, AllocateOnExhaustion) {
     BufferPool pool(0, 8, 8, CV_8UC1, BufferPool::ExhaustPolicy::Allocate);
-    auto a = pool.acquire();
+    const auto a = pool.acquire();
     ASSERT_TRUE(static_cast<bool>(a));
     EXPECT_GE(pool.overflow_allocations(), 1U);
 }
@@ -288,14 +288,14 @@ TEST(BufferPoolTest, BlockPolicyBlocksUntilReturn) {
     auto a = pool.acquire();
     ASSERT_TRUE(static_cast<bool>(a));
 
-    std::atomic<bool> attempting{false};
-    std::atomic<bool> acquired{false};
+    std::atomic attempting{false};
+    std::atomic acquired{false};
     std::chrono::nanoseconds waited{0};
 
     std::thread t([&] {
         attempting.store(true, std::memory_order_release);
         const auto start = std::chrono::steady_clock::now();
-        auto b           = pool.acquire();
+        const auto b     = pool.acquire();
         waited           = std::chrono::steady_clock::now() - start;
         ASSERT_TRUE(static_cast<bool>(b));
         acquired.store(true, std::memory_order_release);
@@ -324,7 +324,7 @@ TEST(BufferPoolTest, NoDuplicateCheckoutUnderContention) {
 
     std::mutex mu;
     std::unordered_set<const void*> in_flight;
-    std::atomic<bool> violated{false};
+    std::atomic violated{false};
 
     std::latch start(kThreads);
     std::vector<std::thread> threads;
@@ -424,7 +424,7 @@ TEST(LatencyStatsTest, ConcurrentRecordAndPrintIsSafe) {
     std::ostringstream sink;
     CoutRedirect redirect(sink);
 
-    std::atomic<bool> stop{false};
+    std::atomic stop{false};
     std::thread printer([&] {
         while (!stop.load(std::memory_order_acquire)) {
             stats.print("test");
@@ -451,7 +451,7 @@ TEST(LatencyStatsTest, ConcurrentRecordAndPrintIsSafe) {
 }
 
 TEST(ImageBufferTest, WrapOwnedKeepsOwnerAlive) {
-    std::atomic<int> freed{0};
+    std::atomic freed{0};
     auto owner = std::shared_ptr<void>(new int(123), [&](void* p) {
         freed.fetch_add(1, std::memory_order_relaxed);
         delete static_cast<int*>(p);
@@ -478,8 +478,9 @@ struct GenData {
 
     [[nodiscard]] bool consistent() const noexcept {
         for (const auto v : pad) {
-            if (v != gen)
+            if (v != gen) {
                 return false;
+            }
         }
         return true;
     }
@@ -488,7 +489,7 @@ struct GenData {
 TEST(SpmcTripleBufferTest, ConcurrentReadersSeeConsistentSnapshots) {
     auto [w, r] = SpmcTripleBuffer<GenData>::create();
 
-    std::atomic<bool> stop{false};
+    std::atomic stop{false};
     constexpr int kReaders = 4;
 
     std::thread writer([&] {
@@ -498,7 +499,7 @@ TEST(SpmcTripleBufferTest, ConcurrentReadersSeeConsistentSnapshots) {
         }
     });
 
-    std::atomic<bool> violated{false};
+    std::atomic violated{false};
     std::vector<std::thread> readers;
     readers.reserve(kReaders);
     for (int i = 0; i < kReaders; ++i) {
@@ -506,7 +507,7 @@ TEST(SpmcTripleBufferTest, ConcurrentReadersSeeConsistentSnapshots) {
         readers.emplace_back([reader = std::move(reader), &stop, &violated]() mutable {
             std::uint64_t last = 0;
             while (!stop.load(std::memory_order_acquire)) {
-                if (auto v = reader.read()) {
+                if (const auto v = reader.read()) {
                     if (!v->consistent()) {
                         violated.store(true, std::memory_order_relaxed);
                     }

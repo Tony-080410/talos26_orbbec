@@ -42,7 +42,7 @@ TEST(SpscTest, BasicWriteRead) {
 
     w.write(42);
 
-    auto val = r.read();
+    const auto val = r.read();
     ASSERT_TRUE(val.has_value());
     EXPECT_EQ(*val, 42);
 }
@@ -59,7 +59,7 @@ TEST(SpscTest, MultipleWrites) {
     w.write(2);
     w.write(3);
 
-    auto val = r.read();
+    const auto val = r.read();
     ASSERT_TRUE(val.has_value());
     EXPECT_EQ(*val, 3);
 
@@ -73,7 +73,7 @@ TEST(SpscTest, BorrowMut) {
     w.borrow_mut() = 99;
     w.publish();
 
-    auto val = r.read();
+    const auto val = r.read();
     ASSERT_TRUE(val.has_value());
     EXPECT_EQ(*val, 99);
 }
@@ -94,7 +94,7 @@ TEST(SpscTest, MoveSemantics) {
     std::string data = "hello world";
     w.write(std::move(data));
 
-    auto val = r.read();
+    const auto val = r.read();
     ASSERT_TRUE(val.has_value());
     EXPECT_EQ(*val, "hello world");
 }
@@ -102,8 +102,8 @@ TEST(SpscTest, MoveSemantics) {
 TEST(SpscTest, Concurrent) {
     auto [w, r] = SpscTripleBuffer<int>::create();
 
-    std::atomic<bool> stop{false};
-    std::atomic<int> last_read{-1};
+    std::atomic stop{false};
+    std::atomic last_read{-1};
     constexpr int kIterations = 100000;
 
     std::thread producer([&w, &stop] {
@@ -119,7 +119,7 @@ TEST(SpscTest, Concurrent) {
                 last_read.store(*val, std::memory_order_relaxed);
             }
         }
-        if (auto val = r.read()) {
+        if (const auto val = r.read()) {
             last_read.store(*val, std::memory_order_relaxed);
         }
     });
@@ -133,7 +133,7 @@ TEST(SpscTest, Concurrent) {
 TEST(SpscTest, DataIntegrity) {
     auto [w, r] = SpscTripleBuffer<IntegrityData>::create();
 
-    std::atomic<bool> stop{false};
+    std::atomic stop{false};
     std::atomic<uint64_t> corruptions{0};
     std::atomic<uint64_t> reads{0};
     constexpr int kDurationMs = 200;
@@ -147,7 +147,7 @@ TEST(SpscTest, DataIntegrity) {
 
     std::thread consumer([&r, &stop, &corruptions, &reads] {
         while (!stop.load(std::memory_order_acquire)) {
-            if (auto val = r.read()) {
+            if (const auto val = r.read()) {
                 reads.fetch_add(1, std::memory_order_relaxed);
                 if (!val->is_consistent()) {
                     corruptions.fetch_add(1, std::memory_order_relaxed);
@@ -175,7 +175,7 @@ TEST(SpmcTest, BasicWriteRead) {
 
     w.write(42);
 
-    auto val = r.read();
+    const auto val = r.read();
     ASSERT_TRUE(val.has_value());
     EXPECT_EQ(*val, 42);
 }
@@ -192,7 +192,7 @@ TEST(SpmcTest, MultipleWrites) {
     w.write(2);
     w.write(3);
 
-    auto val = r.read();
+    const auto val = r.read();
     ASSERT_TRUE(val.has_value());
     EXPECT_EQ(*val, 3);
 
@@ -208,9 +208,9 @@ TEST(SpmcTest, ReadHandleCopyable) {
     auto r2 = r.clone();
     auto r3 = r;
 
-    auto v1 = r.read();
-    auto v2 = r2.read();
-    auto v3 = r3.read();
+    const auto v1 = r.read();
+    const auto v2 = r2.read();
+    const auto v3 = r3.read();
 
     ASSERT_TRUE(v1.has_value());
     ASSERT_TRUE(v2.has_value());
@@ -228,11 +228,11 @@ TEST(SpmcTest, IndependentGeneration) {
 
     w.write(1);
 
-    auto v1 = r.read();
+    const auto v1 = r.read();
     ASSERT_TRUE(v1.has_value());
 
     EXPECT_TRUE(r2.has_new());
-    auto v2 = r2.read();
+    const auto v2 = r2.read();
     ASSERT_TRUE(v2.has_value());
 
     EXPECT_FALSE(r.has_new());
@@ -252,8 +252,8 @@ TEST(SpmcTest, HasNew) {
 TEST(SpmcTest, ConcurrentMultipleConsumers) {
     auto [w, r] = SpmcTripleBuffer<int>::create();
 
-    std::atomic<bool> stop{false};
-    std::atomic<int> total_reads{0};
+    std::atomic stop{false};
+    std::atomic total_reads{0};
     constexpr int kIterations   = 10000;
     constexpr int kNumConsumers = 4;
 
@@ -294,7 +294,7 @@ TEST(SpmcTest, ConcurrentMultipleConsumers) {
 TEST(SpmcTest, StressTest) {
     auto [w, r] = SpmcTripleBuffer<std::string>::create();
 
-    std::atomic<bool> stop{false};
+    std::atomic stop{false};
     constexpr int kDurationMs   = 100;
     constexpr int kNumConsumers = 3;
 
@@ -315,7 +315,7 @@ TEST(SpmcTest, StressTest) {
         consumers.emplace_back([reader = std::move(reader), &stop, &start_latch]() mutable {
             start_latch.arrive_and_wait();
             while (!stop.load(std::memory_order_acquire)) {
-                if (auto val = reader.read()) {
+                if (const auto val = reader.read()) {
                     EXPECT_TRUE(val->starts_with("data_"));
                 }
             }
@@ -334,7 +334,7 @@ TEST(SpmcTest, StressTest) {
 TEST(SpmcTest, DataIntegrity) {
     auto [w, r] = SpmcTripleBuffer<IntegrityData>::create();
 
-    std::atomic<bool> stop{false};
+    std::atomic stop{false};
     std::atomic<uint64_t> corruptions{0};
     std::atomic<uint64_t> total_reads{0};
     constexpr int kDurationMs   = 200;
@@ -358,7 +358,7 @@ TEST(SpmcTest, DataIntegrity) {
                                 &start_latch]() mutable {
             start_latch.arrive_and_wait();
             while (!stop.load(std::memory_order_acquire)) {
-                if (auto val = reader.read()) {
+                if (const auto val = reader.read()) {
                     total_reads.fetch_add(1, std::memory_order_relaxed);
                     if (!val->is_consistent()) {
                         corruptions.fetch_add(1, std::memory_order_relaxed);
