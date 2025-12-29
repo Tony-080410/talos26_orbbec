@@ -2,6 +2,7 @@
 
 #include <array>
 #include <atomic>
+#include <cmath>
 #include <cstdint>
 #include <new>
 
@@ -110,12 +111,20 @@ public:
         if (total == 0)
             return 0;
 
-        const auto target   = static_cast<uint64_t>(p * static_cast<double>(total));
+        if (!(p > 0.0)) {
+            return min();
+        }
+        if (!(p < 1.0)) {
+            return max();
+        }
+
+        const auto target_rank =
+            static_cast<uint64_t>(std::ceil(p * static_cast<double>(total))); // 1..total
         uint64_t cumulative = 0;
 
         for (size_t i = 0; i < kNumBuckets; ++i) {
             cumulative += buckets_[i].load(std::memory_order_relaxed);
-            if (cumulative >= target) {
+            if (cumulative >= target_rank) {
                 return bucket_to_latency(i);
             }
         }
@@ -186,7 +195,8 @@ private:
         if (bucket == 0) {
             return 50; // 中点
         }
-        if (bucket >= kNumBuckets) {
+        if (bucket >= kNumBuckets - 1) {
+            // Last bucket is open-ended (>100ms); return its lower bound to avoid overflow.
             return kBucketBounds[kNumBuckets - 2];
         }
         // 返回桶的中点

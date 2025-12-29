@@ -36,6 +36,23 @@ target_link_libraries(triple_buffer_test PRIVATE
 
 add_test(NAME TripleBufferTest COMMAND triple_buffer_test)
 
+# Scheduler primitives tests
+add_executable(primitives_test
+    test/primitives_test.cpp
+)
+
+target_include_directories(primitives_test PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+
+target_link_libraries(primitives_test PRIVATE
+    GTest::gtest_main
+    Threads::Threads
+    ${OpenCV_LIBS}
+)
+
+add_test(NAME PrimitivesTest COMMAND primitives_test)
+
 # Fast TF tests
 add_executable(fast_tf_test
     test/fast_tf_test.cpp

@@ -58,12 +58,10 @@ public:
          */
         void write(U data) noexcept {
             auto ptr = std::make_shared<const U>(std::move(data));
-            {
-                state_->lock.lock();
-                state_->current = std::move(ptr);
-                state_->lock.unlock();
-            }
+            state_->lock.lock();
+            state_->current = std::move(ptr);
             state_->generation.fetch_add(1, std::memory_order_release);
+            state_->lock.unlock();
         }
 
         /**
@@ -117,9 +115,11 @@ public:
             }
 
             std::shared_ptr<const U> ptr;
+            uint64_t locked_gen = 0;
             {
                 state_->lock.lock();
-                ptr = state_->current;
+                ptr        = state_->current;
+                locked_gen = state_->generation.load(std::memory_order_acquire);
                 state_->lock.unlock();
             }
 
@@ -127,7 +127,7 @@ public:
                 return std::nullopt;
             }
 
-            last_gen_ = gen;
+            last_gen_ = locked_gen;
             return *ptr; // copy out
         }
 
@@ -136,16 +136,18 @@ public:
          */
         [[nodiscard]] std::optional<U> read_current() noexcept {
             std::shared_ptr<const U> ptr;
+            uint64_t locked_gen = 0;
             {
                 state_->lock.lock();
-                ptr = state_->current;
+                ptr        = state_->current;
+                locked_gen = state_->generation.load(std::memory_order_acquire);
                 state_->lock.unlock();
             }
 
             if (!ptr) {
                 return std::nullopt;
             }
-            last_gen_ = state_->generation.load(std::memory_order_acquire);
+            last_gen_ = locked_gen;
             return *ptr;
         }
 

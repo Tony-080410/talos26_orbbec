@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <expected>
 #include <string_view>
 #include <thread>
@@ -139,7 +140,7 @@ public:
         }
         return {};
 
-#elifdef __APPLE__
+#elif defined(__APPLE__)
         // macOS: 需要在线程内部设置
         static_cast<void>(thread);
         static_cast<void>(core_id);
@@ -184,7 +185,7 @@ public:
         }
         return {};
 
-#elifdef __APPLE__
+#elif defined(__APPLE__)
         thread_time_constraint_policy_data_t policy{};
         policy.period      = 0;
         policy.computation = static_cast<std::uint32_t>(config.computation_ns);
@@ -225,7 +226,7 @@ public:
             return std::unexpected(AffinityError::PlatformNotSupported);
         }
         return static_cast<std::uint32_t>(cpu);
-#elifdef __APPLE__
+#elif defined(__APPLE__)
         // macOS没有直接的API
         return std::unexpected(AffinityError::PlatformNotSupported);
 #else
