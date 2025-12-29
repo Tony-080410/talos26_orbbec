@@ -19,7 +19,6 @@ namespace primitive {
  */
 template <typename T>
 class SpmcTripleBuffer {
-private:
     class SpinLock {
     public:
         void lock() noexcept {
@@ -109,8 +108,8 @@ public:
          * @return Copy of data if new, nullopt otherwise
          */
         [[nodiscard]] std::optional<U> read() noexcept {
-            const uint64_t gen = state_->generation.load(std::memory_order_acquire);
-            if (gen <= last_gen_) {
+            if (const uint64_t gen = state_->generation.load(std::memory_order_acquire);
+                gen <= last_gen_) {
                 return std::nullopt;
             }
 
@@ -132,7 +131,7 @@ public:
         }
 
         /**
-         * @brief Force read current data (may be stale)
+         * @brief Force read current data (maybe stale)
          */
         [[nodiscard]] std::optional<U> read_current() noexcept {
             std::shared_ptr<const U> ptr;

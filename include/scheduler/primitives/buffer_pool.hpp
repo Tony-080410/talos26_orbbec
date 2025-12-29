@@ -55,7 +55,7 @@ public:
     [[nodiscard]] std::size_t capacity() const noexcept { return state_->buffers.size(); }
 
     [[nodiscard]] std::size_t available_approx() const noexcept {
-        return static_cast<std::size_t>(state_->available.load(std::memory_order_relaxed));
+        return state_->available.load(std::memory_order_relaxed);
     }
 
     [[nodiscard]] std::uint64_t overflow_allocations() const noexcept {
@@ -83,7 +83,7 @@ private:
             for (std::size_t i = 0; i < capacity_; ++i) {
                 buffers.push_back(std::make_unique<ImageBuffer>());
                 buffers.back()->mat() = cv::Mat(rows, cols, type);
-                next[i] = (i + 1 < capacity_) ? static_cast<std::uint32_t>(i + 1) : kNullIndex;
+                next[i] = i + 1 < capacity_ ? static_cast<std::uint32_t>(i + 1) : kNullIndex;
             }
 
             const std::uint32_t head_idx = capacity_ > 0 ? 0U : kNullIndex;
@@ -113,7 +113,7 @@ private:
 
         static constexpr std::uint64_t
             pack_head(const std::uint32_t idx, const std::uint32_t tag) noexcept {
-            return (static_cast<std::uint64_t>(tag) << 32) | static_cast<std::uint64_t>(idx);
+            return static_cast<std::uint64_t>(tag) << 32 | static_cast<std::uint64_t>(idx);
         }
 
         static constexpr std::uint32_t head_index(const std::uint64_t packed) noexcept {
@@ -133,11 +133,11 @@ private:
                 }
 
                 const std::uint32_t next_idx = next[idx];
-                const std::uint64_t desired  = pack_head(next_idx, head_tag(observed) + 1);
-                if (head.compare_exchange_weak(
+                if (const std::uint64_t desired = pack_head(next_idx, head_tag(observed) + 1);
+                    head.compare_exchange_weak(
                         observed, desired, std::memory_order_acq_rel, std::memory_order_acquire)) {
-                    const auto prev = available.fetch_sub(1, std::memory_order_relaxed);
-                    if (prev == 1) {
+                    if (const auto prev = available.fetch_sub(1, std::memory_order_relaxed);
+                        prev == 1) {
                         available_event.reset();
                     }
                     return idx;
@@ -148,15 +148,14 @@ private:
         void push_index(const std::uint32_t idx) noexcept {
             std::uint64_t observed = head.load(std::memory_order_acquire);
             while (true) {
-                next[idx]                   = head_index(observed);
-                const std::uint64_t desired = pack_head(idx, head_tag(observed) + 1);
-                if (head.compare_exchange_weak(
+                next[idx] = head_index(observed);
+                if (const std::uint64_t desired = pack_head(idx, head_tag(observed) + 1);
+                    head.compare_exchange_weak(
                         observed, desired, std::memory_order_release, std::memory_order_acquire)) {
                     break;
                 }
             }
-            const auto prev = available.fetch_add(1, std::memory_order_relaxed);
-            if (prev == 0) {
+            if (const auto prev = available.fetch_add(1, std::memory_order_relaxed); prev == 0) {
                 available_event.set();
             }
         }
@@ -166,17 +165,16 @@ private:
         std::shared_ptr<State> state;
         std::uint32_t index{kNullIndex};
 
-        void operator()(ImageBuffer* /*ptr*/) noexcept {
+        void operator()(ImageBuffer* /*ptr*/) const noexcept {
             if (index != kNullIndex) {
                 state->push_index(index);
             }
         }
     };
 
-    [[nodiscard]] ImagePtr acquire_impl(const bool blocking) noexcept {
+    [[nodiscard]] ImagePtr acquire_impl(const bool blocking) const noexcept {
         while (true) {
-            const std::uint32_t idx = state_->pop_index();
-            if (idx != kNullIndex) {
+            if (const std::uint32_t idx = state_->pop_index(); idx != kNullIndex) {
                 return ImagePtr(state_->buffers[idx].get(), ReturnToPoolDeleter{state_, idx});
             }
 
@@ -195,7 +193,6 @@ private:
                     return {};
                 }
                 (void)state_->available_event.wait();
-                continue;
             }
             }
         }

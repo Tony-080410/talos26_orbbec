@@ -4,9 +4,9 @@
 #include "camera/hik_camera.hpp"
 #include "fcs/L1_sensor/parcel.hpp"
 #include "ipc/shm_client.hpp"
-
 #include <chrono>
 #include <expected>
+#include <opencv2/opencv.hpp>
 #include <optional>
 #include <utility>
 #include <variant>

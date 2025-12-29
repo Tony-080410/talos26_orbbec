@@ -63,7 +63,7 @@ struct alignas(std::hardware_constructive_interference_size) PerceptionParcel {
     uint64_t timestamp_ns{0};
     uint8_t count{0};
     std::array<L2::Detection, 10> detections{};
-    std::array<L2::Measurement, 10> measurements{};
+    std::array<L2::Measurement, 10> measurements;
 
     void clear() noexcept {
         timestamp_ns = 0;

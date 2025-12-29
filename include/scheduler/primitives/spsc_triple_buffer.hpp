@@ -18,7 +18,6 @@ namespace primitive {
  */
 template <typename T>
 class SpscTripleBuffer {
-private:
     static constexpr uint8_t FLAG_NEW   = 0x80;
     static constexpr uint8_t INDEX_MASK = 0x03;
 
@@ -120,7 +119,7 @@ public:
         }
 
         /**
-         * @brief Get current data (may be stale, no ownership transfer)
+         * @brief Get current data (maybe stale, no ownership transfer)
          */
         [[nodiscard]] const U& current() const noexcept { return state_->slots[state_->read_idx]; }
 

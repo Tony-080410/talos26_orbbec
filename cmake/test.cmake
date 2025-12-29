@@ -53,6 +53,22 @@ target_link_libraries(primitives_test PRIVATE
 
 add_test(NAME PrimitivesTest COMMAND primitives_test)
 
+# Flow graph tests
+add_executable(flow_graph_test
+    test/flow_graph_test.cpp
+)
+
+target_include_directories(flow_graph_test PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+
+target_link_libraries(flow_graph_test PRIVATE
+    GTest::gtest_main
+    Threads::Threads
+)
+
+add_test(NAME FlowGraphTest COMMAND flow_graph_test)
+
 # Fast TF tests
 add_executable(fast_tf_test
     test/fast_tf_test.cpp
