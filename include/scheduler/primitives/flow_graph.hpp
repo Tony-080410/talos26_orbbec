@@ -341,7 +341,7 @@ inline void register_flow_edge(
     global_flow_graph().add_edge(producer, consumer, type);
 }
 #else
-inline void register_flow_edge(&NodeId, &NodeId, std::string_view) noexcept {}
+inline void register_flow_edge(const NodeId&, const NodeId&, std::string_view) noexcept {}
 #endif
 
 // ============================================================================

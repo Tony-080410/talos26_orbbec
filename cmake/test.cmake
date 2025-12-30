@@ -87,6 +87,38 @@ target_link_libraries(fast_tf_test PRIVATE
 
 add_test(NAME FastTfTest COMMAND fast_tf_test)
 
+# Bevy-style ECS tests
+add_executable(bevy_ecs_test
+    test/bevy_ecs_test.cpp
+)
+
+target_include_directories(bevy_ecs_test PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+
+target_link_libraries(bevy_ecs_test PRIVATE
+    Threads::Threads
+    TBB::tbb
+)
+
+add_test(NAME BevyEcsTest COMMAND bevy_ecs_test)
+
+# Scheduler tests
+add_executable(scheduler_ecs_test
+    test/scheduler_ecs_test.cpp
+)
+
+target_include_directories(scheduler_ecs_test PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+
+target_link_libraries(scheduler_ecs_test PRIVATE
+    scheduler
+    Threads::Threads
+)
+
+add_test(NAME SchedulerEcsTest COMMAND scheduler_ecs_test)
+
 if (ENABLE_COVERAGE)
     message(STATUS "Coverage enabled for FCS tests")
 endif ()

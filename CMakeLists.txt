@@ -20,7 +20,6 @@ add_library(talos_std INTERFACE
         include/performance_probe.hpp
         include/spdlog_hook.hpp
         include/toml_helper.hpp
-        include/scheduler/primitives/triple_buffer.hpp
 )
 
 target_include_directories(talos_std INTERFACE include)
@@ -34,13 +33,16 @@ target_link_libraries(talos_std INTERFACE
 
 
 # scheduler library
-add_library(scheduler INTERFACE)
-
-target_include_directories(scheduler INTERFACE
-        ${CMAKE_CURRENT_SOURCE_DIR}/include/scheduler
+add_library(scheduler SHARED
+        src/scheduler/scheduler.cpp
 )
 
-target_link_libraries(scheduler INTERFACE
+target_include_directories(scheduler PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/include/scheduler
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+
+target_link_libraries(scheduler PUBLIC
         talos_std
         ${OpenCV_LIBS}
         TBB::tbb
@@ -90,10 +92,6 @@ target_link_libraries(talos_gimbal INTERFACE
 add_library(fcs SHARED
         src/fcs/L1_sensor/input_interface.cpp
         src/fcs/L1_sensor/output_interface.cpp
-        src/fcs/L2_perception/detector.cpp
-        src/fcs/L2_perception/solver.cpp
-        src/fcs/L3_estimation/estimator.cpp
-        src/fcs/L5_weapon/fire_control.cpp
 )
 
 target_include_directories(fcs PUBLIC
@@ -111,6 +109,7 @@ target_link_libraries(fcs PUBLIC
         talos_std
         talos_gimbal
         ipc
+        hikcamera
         ${OpenCV_LIBS}
         Eigen3::Eigen
         spdlog::spdlog

@@ -1,0 +1,93 @@
+#pragma once
+
+#include "system_meta.hpp"
+#include "world.hpp"
+
+#include <functional>
+#include <memory>
+#include <utility>
+
+namespace talos {
+
+// ============================================================================
+// System Base Interface
+// ============================================================================
+
+class SystemBase {
+public:
+    virtual ~SystemBase()                  = default;
+    virtual void run(World& world)         = 0;
+    virtual const SystemMeta& meta() const = 0;
+};
+
+// ============================================================================
+// Argument Construction
+// ============================================================================
+
+namespace detail {
+
+template <typename T>
+auto make_arg(World& world) {
+    using Inner = inner_type_t<T>;
+    using Tag   = inner_tag_t<T>;
+
+    if constexpr (is_res_type<T>::value) {
+        return world.get_res<Inner>();
+    } else if constexpr (is_res_mut_type<T>::value) {
+        return world.get_res_mut<Inner>();
+    } else if constexpr (is_spsc_reader<T>::value) {
+        return world.get_spsc_reader<Inner, Tag>();
+    } else if constexpr (is_spsc_writer<T>::value) {
+        return world.get_spsc_writer<Inner, Tag>();
+    } else if constexpr (is_spmc_reader<T>::value) {
+        return world.get_spmc_reader<Inner, Tag>();
+    } else if constexpr (is_spmc_writer<T>::value) {
+        return world.get_spmc_writer<Inner, Tag>();
+    } else if constexpr (is_atomic_type<T>::value) {
+        return world.get_atomic<Inner, Tag>();
+    } else {
+        static_assert(sizeof(T) == 0, "Unknown parameter type");
+    }
+}
+
+} // namespace detail
+
+// ============================================================================
+// Concrete System Implementation
+// ============================================================================
+
+template <typename F, typename Policy = default_policy>
+class System : public SystemBase {
+    F func_;
+    SystemMeta meta_;
+
+public:
+    System(std::string name, F func)
+        : func_(std::move(func))
+        , meta_(extract_system_meta<F, Policy>(std::move(name))) {}
+
+    void run(World& world) override {
+        using traits = detail::function_traits<F>;
+        using args   = traits::args_tuple;
+
+        [&]<std::size_t... Is>(std::index_sequence<Is...>) {
+            func_(detail::make_arg<std::tuple_element_t<Is, args>>(world)...);
+        }(std::make_index_sequence<traits::arity>{});
+    }
+
+    const SystemMeta& meta() const override { return meta_; }
+};
+
+// ============================================================================
+// Type-erased System Runner (for scheduler)
+// ============================================================================
+
+using SystemRunner = std::function<void(World&)>;
+
+template <typename F, typename Policy = default_policy>
+[[nodiscard]] std::unique_ptr<SystemBase> make_system(std::string name, F&& func) {
+    return std::make_unique<System<std::decay_t<F>, Policy>>(
+        std::move(name), std::forward<F>(func));
+}
+
+} // namespace talos

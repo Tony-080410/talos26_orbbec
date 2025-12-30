@@ -421,7 +421,7 @@ TEST(LatencyStatsTest, ConcurrentRecordAndPrintIsSafe) {
     constexpr int kThreads    = 4;
     constexpr int kIterations = 20'000;
 
-    std::ostringstream sink;
+    const std::ostringstream sink;
     CoutRedirect redirect(sink);
 
     std::atomic stop{false};
