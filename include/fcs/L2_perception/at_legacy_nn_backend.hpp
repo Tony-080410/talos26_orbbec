@@ -2,6 +2,7 @@
 
 #include "at_legacy_detector_backend.hpp"
 
+#include <atomic>
 #include <memory>
 #include <string>
 #include <vector>
@@ -17,39 +18,21 @@ class InferRequest;
 
 namespace fcs {
 
-// ============================================================================
-// AT Legacy NN Backend Configuration
-// ============================================================================
-
-struct AtLegacyNNBackendConfig {
-    std::string model_path;
-    std::string device            = "AUTO";
-    std::string device_priorities = "GPU,CPU";
-    bool enable_profiling         = false;
-    bool enable_multi_thread      = false;
-
-    // Model parameters
-    int input_width  = 416;
-    int input_height = 416;
-    int num_classes  = 8;
-    int num_colors   = 4;
-
-    // Detection thresholds
-    float confidence_threshold = 0.75f;
-    float nms_threshold        = 0.30f;
-    int top_k                  = 128;
-};
+// Forward declare config (defined in at_legacy_config.hpp)
+struct AtLegacyNNConfig;
 
 // ============================================================================
 // AT Legacy NN Backend Implementation
 // ============================================================================
 
 /// Neural network detection backend using OpenVINO
+/// Uses atomic shared_ptr for config hot-reload
 class AtLegacyNNBackend : public AtLegacyDetectorBackendBase<AtLegacyNNBackend> {
 public:
     using DetectionResult = std::expected<std::vector<AtLegacyArmorDetection>, DetectorError>;
+    using ConfigPtr       = std::shared_ptr<const AtLegacyNNConfig>;
 
-    explicit AtLegacyNNBackend(const AtLegacyNNBackendConfig& config);
+    explicit AtLegacyNNBackend(ConfigPtr config);
     ~AtLegacyNNBackend();
 
     // Move-only (OpenVINO resources)
@@ -74,11 +57,13 @@ public:
     /// Get execution devices
     [[nodiscard]] std::vector<std::string> execution_devices() const;
 
-    /// Update detection thresholds
-    void set_thresholds(float confidence, float nms) {
-        config_.confidence_threshold = confidence;
-        config_.nms_threshold        = nms;
+    /// Hot-reload config (thread-safe)
+    void update_config(ConfigPtr new_config) noexcept {
+        std::atomic_store(&config_, std::move(new_config));
     }
+
+    /// Get current config (thread-safe)
+    [[nodiscard]] ConfigPtr get_config() const noexcept { return std::atomic_load(&config_); }
 
 private:
     /// Preprocess image for inference (letterbox + normalize)
@@ -90,13 +75,15 @@ private:
         float pad_y   = 0.0f; // Padding offset y
     };
 
-    [[nodiscard]] PreprocContext preprocess(const cv::Mat& image) const;
+    [[nodiscard]] PreprocContext
+        preprocess(const cv::Mat& image, const AtLegacyNNConfig& cfg) const;
 
     /// Run inference
     [[nodiscard]] bool infer(const PreprocContext& ctx);
 
     /// Postprocess inference output
-    [[nodiscard]] std::vector<AtLegacyArmorDetection> postprocess(const PreprocContext& ctx) const;
+    [[nodiscard]] std::vector<AtLegacyArmorDetection>
+        postprocess(const PreprocContext& ctx, const AtLegacyNNConfig& cfg) const;
 
     /// Transform coordinates from model output to original image
     void transform_coordinates(
@@ -104,10 +91,10 @@ private:
 
     /// Non-maximum suppression
     [[nodiscard]] std::vector<AtLegacyArmorDetection>
-        nms(std::vector<AtLegacyArmorDetection>& detections) const;
+        nms(std::vector<AtLegacyArmorDetection>& detections, const AtLegacyNNConfig& cfg) const;
 
 private:
-    AtLegacyNNBackendConfig config_;
+    ConfigPtr config_;     // Atomic shared_ptr for thread-safe config access
     int detect_color_ = 1; // 0=BLUE, 1=RED
     bool initialized_ = false;
 

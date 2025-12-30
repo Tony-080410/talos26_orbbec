@@ -94,6 +94,8 @@ add_library(fcs SHARED
         src/fcs/L1_sensor/output_interface.cpp
         src/fcs/L2_perception/at_legacy_detector_backend.cpp
         src/fcs/L2_perception/at_legacy_nn_backend.cpp
+        src/fcs/L2_perception/at_legacy_nn_tup_backend.cpp
+        src/fcs/L2_perception/at_legacy_traditional_backend.cpp
 )
 
 target_include_directories(fcs PUBLIC

@@ -76,14 +76,16 @@ protected:
 
 class AtLegacyTraditionalBackend;
 class AtLegacyNNBackend;
+class AtLegacyNNTupBackend;
 
 // ============================================================================
 // Runtime Polymorphic Backend Wrapper (using std::variant)
 // ============================================================================
 
 /// Backend variant type for runtime switching
-using AtLegacyDetectorBackendVariant =
-    std::variant<std::unique_ptr<AtLegacyTraditionalBackend>, std::unique_ptr<AtLegacyNNBackend>>;
+using AtLegacyDetectorBackendVariant = std::variant<
+    std::unique_ptr<AtLegacyTraditionalBackend>, std::unique_ptr<AtLegacyNNBackend>,
+    std::unique_ptr<AtLegacyNNTupBackend>>;
 
 /// Runtime-configurable detector backend wrapper
 /// Implementation methods are in at_legacy_detector_backend.cpp to avoid
@@ -106,6 +108,7 @@ public:
     /// Construct with a specific backend
     explicit AtLegacyDetectorBackend(std::unique_ptr<AtLegacyTraditionalBackend> backend);
     explicit AtLegacyDetectorBackend(std::unique_ptr<AtLegacyNNBackend> backend);
+    explicit AtLegacyDetectorBackend(std::unique_ptr<AtLegacyNNTupBackend> backend);
 
     /// Detect armors in image (dispatches to active backend)
     [[nodiscard]] DetectionResult detect(const cv::Mat& image);
@@ -119,6 +122,7 @@ public:
     /// Switch to a different backend
     void set_backend(std::unique_ptr<AtLegacyTraditionalBackend> backend);
     void set_backend(std::unique_ptr<AtLegacyNNBackend> backend);
+    void set_backend(std::unique_ptr<AtLegacyNNTupBackend> backend);
 
     /// Check if backend variant holds a specific type
     template <typename Backend>
@@ -142,31 +146,18 @@ private:
 };
 
 // ============================================================================
-// Backend Factory (for configuration-based creation)
+// Backend Factory (forward declarations)
 // ============================================================================
 
-enum class AtLegacyBackendType {
-    Traditional,
-    NeuralNetworkAt,
-};
+// Forward declare config types (defined in at_legacy_config.hpp)
+struct AtLegacyConfig;
+struct AtLegacyNNConfig;
+struct AtLegacyNNTupConfig;
+struct AtLegacyTraditionalConfig;
 
-/// Configuration for backend creation
-struct AtLegacyBackendConfig {
-    AtLegacyBackendType type = AtLegacyBackendType::NeuralNetworkAt;
-
-    // Traditional backend config
-    int binary_threshold = 160;
-
-    // NN backend config
-    std::string model_path;
-    int num_classes            = 9;
-    int num_colors             = 4;
-    float confidence_threshold = 0.5f;
-    float nms_threshold        = 0.45f;
-};
-
-// Factory function declared here, defined in implementation file
+/// Create detector backend from unified config
+/// Implementation in at_legacy_detector_backend.cpp
 [[nodiscard]] std::expected<AtLegacyDetectorBackend, DetectorError>
-    create_detector_backend(const AtLegacyBackendConfig& config);
+    create_detector_backend(const AtLegacyConfig& config);
 
 } // namespace fcs

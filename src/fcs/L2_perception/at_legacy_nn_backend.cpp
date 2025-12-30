@@ -1,5 +1,7 @@
 #include "fcs/L2_perception/at_legacy_nn_backend.hpp"
 
+#include "fcs/L2_perception/at_legacy_config.hpp"
+
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -54,8 +56,8 @@ namespace {
 // Constructor / Destructor
 // ============================================================================
 
-AtLegacyNNBackend::AtLegacyNNBackend(const AtLegacyNNBackendConfig& config)
-    : config_(config)
+AtLegacyNNBackend::AtLegacyNNBackend(ConfigPtr config)
+    : config_(std::move(config))
     , impl_(std::make_unique<Impl>()) {}
 
 AtLegacyNNBackend::~AtLegacyNNBackend() = default;
@@ -72,14 +74,20 @@ std::expected<void, DetectorError> AtLegacyNNBackend::init() {
         return {};
     }
 
+    auto cfg = get_config();
+    if (!cfg) {
+        spdlog::error("[AtLegacyNNBackend] Config is null");
+        return std::unexpected(DetectorError::InitFailed);
+    }
+
     try {
         // Enable profiling if requested
-        if (config_.enable_profiling) {
-            impl_->core.set_property(config_.device, ov::enable_profiling(true));
+        if (cfg->enable_profiling) {
+            impl_->core.set_property(cfg->device, ov::enable_profiling(true));
         }
 
         // Load model
-        impl_->model = impl_->core.read_model(config_.model_path);
+        impl_->model = impl_->core.read_model(cfg->model_path);
 
         // Configure preprocessing
         ov::preprocess::PrePostProcessor ppp(impl_->model);
@@ -91,32 +99,32 @@ std::expected<void, DetectorError> AtLegacyNNBackend::init() {
         // Compile options
         ov::AnyMap compile_opts;
         compile_opts.emplace(
-            ov::hint::performance_mode.name(), config_.enable_multi_thread
+            ov::hint::performance_mode.name(), cfg->enable_multi_thread
                                                    ? ov::hint::PerformanceMode::THROUGHPUT
                                                    : ov::hint::PerformanceMode::LATENCY);
 
-        if (config_.enable_multi_thread) {
+        if (cfg->enable_multi_thread) {
             compile_opts.emplace(ov::num_streams.name(), ov::streams::AUTO);
         } else {
             compile_opts.emplace(ov::num_streams.name(), 1);
         }
 
         // Set device priorities for AUTO/MULTI/HETERO
-        const auto& device = config_.device;
-        if (!config_.device_priorities.empty()
+        const auto& device = cfg->device;
+        if (!cfg->device_priorities.empty()
             && (device == "AUTO" || device.rfind("AUTO:", 0) == 0 || device == "MULTI"
                 || device.rfind("MULTI:", 0) == 0 || device == "HETERO"
                 || device.rfind("HETERO:", 0) == 0)) {
-            compile_opts.emplace(ov::device::priorities.name(), config_.device_priorities);
+            compile_opts.emplace(ov::device::priorities.name(), cfg->device_priorities);
         }
 
         // Compile model
-        impl_->compiled = impl_->core.compile_model(impl_->model, config_.device, compile_opts);
+        impl_->compiled = impl_->core.compile_model(impl_->model, cfg->device, compile_opts);
         impl_->request  = impl_->compiled.create_infer_request();
         impl_->loaded   = true;
         initialized_    = true;
 
-        spdlog::info("[AtLegacyNNBackend] Model loaded: {}", config_.model_path);
+        spdlog::info("[AtLegacyNNBackend] Model loaded: {}", cfg->model_path);
         const auto devices = execution_devices();
         if (!devices.empty()) {
             std::string dev_str;
@@ -139,7 +147,8 @@ std::expected<void, DetectorError> AtLegacyNNBackend::init() {
 // Preprocessing
 // ============================================================================
 
-AtLegacyNNBackend::PreprocContext AtLegacyNNBackend::preprocess(const cv::Mat& image) const {
+AtLegacyNNBackend::PreprocContext
+    AtLegacyNNBackend::preprocess(const cv::Mat& image, const AtLegacyNNConfig& /*cfg*/) const {
     PreprocContext ctx;
 
     // Get input shape from model
@@ -230,7 +239,7 @@ bool AtLegacyNNBackend::infer(const PreprocContext& ctx) {
 // ============================================================================
 
 std::vector<AtLegacyArmorDetection>
-    AtLegacyNNBackend::postprocess(const PreprocContext& ctx) const {
+    AtLegacyNNBackend::postprocess(const PreprocContext& ctx, const AtLegacyNNConfig& cfg) const {
     std::vector<AtLegacyArmorDetection> detections;
 
     ov::Tensor out = impl_->request.get_output_tensor(0);
@@ -278,6 +287,7 @@ std::vector<AtLegacyArmorDetection>
     };
 
     detections.reserve(128);
+    const float conf_thresh = static_cast<float>(cfg.confidence_threshold);
 
     for (int i = 0; i < anchors; ++i) {
         // 1) Get bbox (already decoded xywh)
@@ -304,7 +314,7 @@ std::vector<AtLegacyArmorDetection>
             }
         }
 
-        if (best_idx < 0 || best_score < config_.confidence_threshold) {
+        if (best_idx < 0 || best_score < conf_thresh) {
             continue;
         }
 
@@ -374,8 +384,8 @@ void AtLegacyNNBackend::transform_coordinates(
 // NMS
 // ============================================================================
 
-std::vector<AtLegacyArmorDetection>
-    AtLegacyNNBackend::nms(std::vector<AtLegacyArmorDetection>& detections) const {
+std::vector<AtLegacyArmorDetection> AtLegacyNNBackend::nms(
+    std::vector<AtLegacyArmorDetection>& detections, const AtLegacyNNConfig& cfg) const {
     if (detections.empty()) {
         return {};
     }
@@ -388,11 +398,12 @@ std::vector<AtLegacyArmorDetection>
         });
 
     // Keep top K
-    if (static_cast<int>(detections.size()) > config_.top_k) {
-        detections.resize(config_.top_k);
+    if (static_cast<int>(detections.size()) > cfg.top_k) {
+        detections.resize(cfg.top_k);
     }
 
     // NMS
+    const float nms_thresh = static_cast<float>(cfg.nms_threshold);
     std::vector<bool> suppressed(detections.size(), false);
     std::vector<AtLegacyArmorDetection> result;
     result.reserve(detections.size());
@@ -407,7 +418,7 @@ std::vector<AtLegacyArmorDetection>
             if (suppressed[j])
                 continue;
 
-            if (iou(detections[i].rect, detections[j].rect) > config_.nms_threshold) {
+            if (iou(detections[i].rect, detections[j].rect) > nms_thresh) {
                 suppressed[j] = true;
             }
         }
@@ -429,8 +440,14 @@ AtLegacyNNBackend::DetectionResult AtLegacyNNBackend::detect_impl(const cv::Mat&
         return std::unexpected(DetectorError::InvalidImage);
     }
 
+    // Get current config (atomic load for thread-safety)
+    auto cfg = get_config();
+    if (!cfg) {
+        return std::unexpected(DetectorError::NotInitialized);
+    }
+
     // Preprocess
-    auto ctx = preprocess(image);
+    auto ctx = preprocess(image, *cfg);
     if (ctx.preprocessed.empty()) {
         return std::unexpected(DetectorError::PreprocessFailed);
     }
@@ -441,10 +458,10 @@ AtLegacyNNBackend::DetectionResult AtLegacyNNBackend::detect_impl(const cv::Mat&
     }
 
     // Postprocess
-    auto detections = postprocess(ctx);
+    auto detections = postprocess(ctx, *cfg);
 
     // NMS
-    auto result = nms(detections);
+    auto result = nms(detections, *cfg);
 
     return result;
 }

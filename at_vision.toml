@@ -28,7 +28,7 @@ extrinsic_gimbal_imu = [
 ]
 
 [at_legacy_detector]
-backend_type = "nn"  # or "nn"
+backend_type = "nn_tup"  # or "nn"
 detect_color = 0              # 0=BLUE, 1=RED
 
 # Required if backend_type = "traditional"
@@ -59,3 +59,18 @@ num_colors = 4
 confidence_threshold = 0.75
 nms_threshold = 0.30
 top_k = 128
+
+[at_legacy_nn_tup]
+model_path = "opt-1208-001.onnx"
+device = "AUTO"
+device_priorities = "GPU,CPU"
+input_width = 416
+input_height = 416
+enable_profiling = false
+enable_multi_thread = false
+num_classes = 8
+num_colors = 4
+confidence_threshold = 0.5
+nms_threshold = 0.45
+top_k = 100
+strides = [8, 16, 32]

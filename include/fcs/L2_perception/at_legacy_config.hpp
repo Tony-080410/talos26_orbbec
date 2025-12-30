@@ -1,11 +1,10 @@
 #pragma once
 
 #include "../core/types.hpp"
-#include "at_legacy_detector_backend.hpp"
-#include "at_legacy_nn_backend.hpp"
-#include "at_legacy_traditional_backend.hpp"
 
+#include <array>
 #include <expected>
+#include <memory>
 #include <string>
 
 #include "toml_helper.hpp"
@@ -18,8 +17,9 @@ namespace fcs {
 // ============================================================================
 
 enum class AtLegacyBackendTypeConfig : int {
-    Traditional   = 0,
-    NeuralNetwork = 1,
+    Traditional      = 0,
+    NeuralNetwork    = 1, // AT model (YOLO11-pose)
+    NeuralNetworkTup = 2, // TUP model (YOLOX multi-scale)
 };
 
 // ============================================================================
@@ -62,27 +62,6 @@ struct AtLegacyTraditionalConfig {
             return {};
         }
         return std::unexpected("at_legacy_traditional section not found");
-    }
-
-    /// Convert to backend parameters
-    [[nodiscard]] AtLegacyTraditionalBackend::LightParams light_params() const noexcept {
-        return {
-            .min_ratio         = light_min_ratio,
-            .max_ratio         = light_max_ratio,
-            .max_angle         = light_max_angle,
-            .color_diff_thresh = light_color_diff_thresh,
-        };
-    }
-
-    [[nodiscard]] AtLegacyTraditionalBackend::ArmorParams armor_params() const noexcept {
-        return {
-            .min_light_ratio           = armor_min_light_ratio,
-            .min_small_center_distance = armor_min_small_center_distance,
-            .max_small_center_distance = armor_max_small_center_distance,
-            .min_large_center_distance = armor_min_large_center_distance,
-            .max_large_center_distance = armor_max_large_center_distance,
-            .max_angle                 = armor_max_angle,
-        };
     }
 };
 
@@ -127,23 +106,65 @@ struct AtLegacyNNConfig {
         }
         return std::unexpected("at_legacy_nn section not found");
     }
+};
 
-    /// Convert to backend config
-    [[nodiscard]] AtLegacyNNBackendConfig to_backend_config() const noexcept {
-        return {
-            .model_path           = model_path,
-            .device               = device,
-            .device_priorities    = device_priorities,
-            .enable_profiling     = enable_profiling,
-            .enable_multi_thread  = enable_multi_thread,
-            .input_width          = input_width,
-            .input_height         = input_height,
-            .num_classes          = num_classes,
-            .num_colors           = num_colors,
-            .confidence_threshold = static_cast<float>(confidence_threshold),
-            .nms_threshold        = static_cast<float>(nms_threshold),
-            .top_k                = top_k,
-        };
+// ============================================================================
+// AT Legacy NN TUP Backend Config (YOLOX multi-scale)
+// ============================================================================
+
+struct AtLegacyNNTupConfig {
+    std::string model_path;
+    std::string device;
+    std::string device_priorities;
+    bool enable_profiling;
+    bool enable_multi_thread;
+
+    int input_width;
+    int input_height;
+    int num_classes;
+    int num_colors;
+
+    double confidence_threshold;
+    double nms_threshold;
+    int top_k;
+
+    // TUP-specific: multi-scale strides
+    std::array<int, 3> strides;
+
+    std::expected<void, std::string> read_from(const toml::table& tbl) noexcept {
+        if (const auto _t = tbl["at_legacy_nn_tup"].as_table()) {
+            auto t = *_t;
+
+            READ_KEY(t, model_path);
+            READ_KEY(t, device);
+            READ_KEY(t, device_priorities);
+            READ_KEY(t, enable_profiling);
+            READ_KEY(t, enable_multi_thread);
+            READ_KEY(t, input_width);
+            READ_KEY(t, input_height);
+            READ_KEY(t, num_classes);
+            READ_KEY(t, num_colors);
+            READ_KEY(t, confidence_threshold);
+            READ_KEY(t, nms_threshold);
+            READ_KEY(t, top_k);
+
+            // Read strides array
+            if (auto arr = t["strides"].as_array()) {
+                if (arr->size() >= 3) {
+                    for (size_t i = 0; i < 3; ++i) {
+                        if (auto v = (*arr)[i].value<int64_t>()) {
+                            strides[i] = static_cast<int>(*v);
+                        }
+                    }
+                }
+            } else {
+                // Default strides
+                strides = {8, 16, 32};
+            }
+
+            return {};
+        }
+        return std::unexpected("at_legacy_nn_tup section not found");
     }
 };
 
@@ -155,9 +176,6 @@ struct AtLegacyDetectorConfig {
     AtLegacyBackendTypeConfig backend_type = AtLegacyBackendTypeConfig::Traditional;
     int detect_color; // 0=BLUE, 1=RED
 
-    AtLegacyTraditionalConfig traditional{};
-    AtLegacyNNConfig nn{};
-
     std::expected<void, std::string> read_from(const toml::table& tbl) noexcept {
         if (const auto _t = tbl["at_legacy_detector"].as_table()) {
             auto t = *_t;
@@ -168,6 +186,10 @@ struct AtLegacyDetectorConfig {
                     backend_type = AtLegacyBackendTypeConfig::Traditional;
                 } else if (*val == "nn" || *val == "neural_network" || *val == "NeuralNetwork") {
                     backend_type = AtLegacyBackendTypeConfig::NeuralNetwork;
+                } else if (
+                    *val == "nn_tup" || *val == "neural_network_tup"
+                    || *val == "NeuralNetworkTup") {
+                    backend_type = AtLegacyBackendTypeConfig::NeuralNetworkTup;
                 } else {
                     return std::unexpected("invalid backend_type: " + *val);
                 }
@@ -181,28 +203,6 @@ struct AtLegacyDetectorConfig {
         }
         return std::unexpected("at_legacy_detector section not found");
     }
-
-    /// Create detector backend based on config
-    [[nodiscard]] std::expected<AtLegacyDetectorBackend, DetectorError> create_backend() const {
-        switch (backend_type) {
-        case AtLegacyBackendTypeConfig::Traditional: {
-            auto backend = std::make_unique<AtLegacyTraditionalBackend>(
-                traditional.binary_threshold, traditional.light_params(),
-                traditional.armor_params());
-            backend->set_detect_color(detect_color == 0 ? ArmorColor::Blue : ArmorColor::Red);
-            return AtLegacyDetectorBackend(std::move(backend));
-        }
-        case AtLegacyBackendTypeConfig::NeuralNetwork: {
-            auto backend = std::make_unique<AtLegacyNNBackend>(nn.to_backend_config());
-            if (auto result = backend->init(); !result) {
-                return std::unexpected(result.error());
-            }
-            backend->set_detect_color(detect_color);
-            return AtLegacyDetectorBackend(std::move(backend));
-        }
-        }
-        return std::unexpected(DetectorError::NotInitialized);
-    }
 };
 
 // ============================================================================
@@ -213,20 +213,30 @@ struct AtLegacyConfig {
     AtLegacyDetectorConfig detector{};
     AtLegacyTraditionalConfig traditional{};
     AtLegacyNNConfig nn{};
+    AtLegacyNNTupConfig nn_tup{};
+
+    /// Get shared_ptr for atomic config distribution
+    [[nodiscard]] std::shared_ptr<const AtLegacyTraditionalConfig> traditional_ptr() const {
+        return std::make_shared<const AtLegacyTraditionalConfig>(traditional);
+    }
+
+    [[nodiscard]] std::shared_ptr<const AtLegacyNNConfig> nn_ptr() const {
+        return std::make_shared<const AtLegacyNNConfig>(nn);
+    }
+
+    [[nodiscard]] std::shared_ptr<const AtLegacyNNTupConfig> nn_tup_ptr() const {
+        return std::make_shared<const AtLegacyNNTupConfig>(nn_tup);
+    }
 
     std::expected<void, std::string> read_from(const toml::table& tbl) noexcept {
         READ_SUB(detector, tbl);
 
         // Read backend-specific config based on type
-        if (detector.backend_type == AtLegacyBackendTypeConfig::Traditional) {
-            READ_SUB(traditional, tbl);
-        } else {
-            READ_SUB(nn, tbl);
+        switch (detector.backend_type) {
+        case AtLegacyBackendTypeConfig::Traditional: READ_SUB(traditional, tbl); break;
+        case AtLegacyBackendTypeConfig::NeuralNetwork: READ_SUB(nn, tbl); break;
+        case AtLegacyBackendTypeConfig::NeuralNetworkTup: READ_SUB(nn_tup, tbl); break;
         }
-
-        // Copy to detector
-        detector.traditional = traditional;
-        detector.nn          = nn;
 
         return {};
     }

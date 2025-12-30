@@ -114,12 +114,6 @@ void register_at_legacy_detection_systems(App& app) {
 // Configuration Helpers
 // ============================================================================
 
-/// Create a traditional backend with default parameters
-[[nodiscard]] inline AtLegacyDetectorBackend
-    create_traditional_backend(int binary_threshold = 160) {
-    return AtLegacyDetectorBackend(std::make_unique<AtLegacyTraditionalBackend>(binary_threshold));
-}
-
 /// Create PnP solver from camera info
 /// @param camera_matrix 3x3 intrinsic matrix [fx, 0, cx, 0, fy, cy, 0, 0, 1]
 /// @param dist_coeffs Distortion coefficients [k1, k2, p1, p2, k3]
@@ -129,5 +123,8 @@ void register_at_legacy_detection_systems(App& app) {
     solver.init(camera_matrix, dist_coeffs);
     return solver;
 }
+
+// Note: Use create_detector_backend(const AtLegacyConfig&) from at_legacy_detector_backend.hpp
+// to create a detector backend with unified config management
 
 } // namespace fcs

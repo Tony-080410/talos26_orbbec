@@ -172,7 +172,7 @@ int main() {
     // ============================================================================
 
     // Create detector backend from config
-    auto backend_result = config.at_legacy.detector.create_backend();
+    auto backend_result = fcs::create_detector_backend(config.at_legacy);
     if (!backend_result) {
         spdlog::critical(
             "create detector backend: {}", fcs::detector_error_str(backend_result.error()));
@@ -261,6 +261,33 @@ int main() {
 
     // Measurement consumer (for debugging/logging)
     scheduler.add_system<talos::pool_compute>(
+        "debug_logger",
+        [](talos::spmc<fcs::AtLegacyImageFrame, fcs::AtLegacyImageChannelTag> cam_in,
+           talos::spmc<fcs::AtLegacyArmorDetectionBatch, fcs::AtLegacyDetectionChannelTag>
+               meas_in) {
+            if (!meas_in.has_new())
+                return;
+            auto batch = meas_in.read();
+            if (!batch || batch->empty())
+                return;
+            auto img_ = cam_in.read();
+            if (img_) {
+                auto img = img_->image;
+                for (const auto& m : batch->detections) {
+                    cv::line(
+                        img, m.corners[0], m.corners[1], cv::Scalar(0, 255, 0), 5, cv::LINE_AA);
+                    cv::line(
+                        img, m.corners[0], m.corners[3], cv::Scalar(0, 255, 0), 5, cv::LINE_AA);
+                    cv::line(
+                        img, m.corners[2], m.corners[1], cv::Scalar(0, 255, 0), 5, cv::LINE_AA);
+                    cv::line(
+                        img, m.corners[2], m.corners[3], cv::Scalar(0, 255, 0), 5, cv::LINE_AA);
+                    cv::circle(img, m.center(), 5, cv::Scalar(0, 255, 0), 5);
+                }
+                spdlog::info("ef");
+            }
+        });
+    scheduler.add_system<talos::pool_compute>(
         "measurement_logger",
         [](talos::spmc<fcs::AtLegacyArmorMeasurementBatch, fcs::AtLegacyMeasurementChannelTag>
                meas_in) {
@@ -269,7 +296,6 @@ int main() {
             auto batch = meas_in.read();
             if (!batch || batch->empty())
                 return;
-
             for (const auto& m : batch->measurements) {
                 spdlog::info(
                     "armor detected: {} {} @ ({:.3f}, {:.3f}, {:.3f}) dist={:.3f}m",
