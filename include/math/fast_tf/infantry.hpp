@@ -7,9 +7,20 @@
 #include <numbers>
 
 namespace fast_tf {
-
+/**
+ * @brief 创建步兵机器人的坐标系统，初始化固定变换
+ *
+ * TF 树结构:
+ *   world
+ *     └── odom
+ *           └── gimbal_link
+ *                 ├── camera_link
+ *                 │     └── camera_optical
+ *                 └── muzzle_link
+ */
 template <std::size_t N>
-void tick_infantry_static(timestamp_ns_t ts, CoordinateSystem<N>& system) {
+std::unique_ptr<CoordinateSystem<N>> infantry_new(timestamp_ns_t ts = 0) {
+    auto system       = std::make_unique<CoordinateSystem<N>>();
     constexpr fp_t pi = std::numbers::pi;
     // odom -> world
     update<odom_fuxk_frame>(system, FuckTransform<odom_fuxk_frame>{TransformMatrix4d{}}, ts);
@@ -41,23 +52,6 @@ void tick_infantry_static(timestamp_ns_t ts, CoordinateSystem<N>& system) {
         FuckTransform<muzzle_link_fuxk_frame>{
             TransformMatrix4d::from_rpy(0.0, 0.0, 0.0, 0.0, 0.0, -0.0)},
         ts);
-}
-/**
- * @brief 创建步兵机器人的坐标系统，初始化固定变换
- *
- * TF 树结构:
- *   world
- *     └── odom
- *           └── gimbal_link
- *                 ├── camera_link
- *                 │     └── camera_optical
- *                 └── muzzle_link
- */
-template <std::size_t N>
-std::unique_ptr<CoordinateSystem<N>> infantry_new(timestamp_ns_t ts = 0) {
-    auto system = std::make_unique<CoordinateSystem<N>>();
-    tick_infantry_static(ts, *system);
-
     return system;
 }
 

@@ -92,6 +92,8 @@ target_link_libraries(talos_gimbal INTERFACE
 add_library(fcs SHARED
         src/fcs/L1_sensor/input_interface.cpp
         src/fcs/L1_sensor/output_interface.cpp
+        src/fcs/L2_perception/at_legacy_detector_backend.cpp
+        src/fcs/L2_perception/at_legacy_nn_backend.cpp
 )
 
 target_include_directories(fcs PUBLIC
@@ -110,10 +112,12 @@ target_link_libraries(fcs PUBLIC
         talos_gimbal
         ipc
         hikcamera
+        scheduler
         ${OpenCV_LIBS}
         Eigen3::Eigen
         spdlog::spdlog
         ${LIBUSB_LINK_LIBRARIES}
+        $<$<TARGET_EXISTS:openvino::runtime>:openvino::runtime>
 )
 
 # hikcamera library (HIK SDK only available on Linux x86_64)

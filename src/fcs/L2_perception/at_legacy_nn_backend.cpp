@@ -1,0 +1,467 @@
+#include "fcs/L2_perception/at_legacy_nn_backend.hpp"
+
+#include <algorithm>
+#include <cmath>
+#include <cstring>
+
+#include <Eigen/Core>
+#include <opencv2/imgproc.hpp>
+#include <openvino/openvino.hpp>
+#include <spdlog/spdlog.h>
+
+namespace fcs {
+
+// ============================================================================
+// PIMPL Implementation
+// ============================================================================
+
+struct AtLegacyNNBackend::Impl {
+    ov::Core core;
+    std::shared_ptr<ov::Model> model;
+    ov::CompiledModel compiled;
+    ov::InferRequest request;
+
+    bool loaded = false;
+};
+
+// ============================================================================
+// Helper Functions
+// ============================================================================
+
+namespace {
+
+/// Calculate triangle area
+[[nodiscard]] inline float
+    tri_area(const cv::Point2f& a, const cv::Point2f& b, const cv::Point2f& c) noexcept {
+    return std::fabs(0.5f * ((b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x)));
+}
+
+/// Calculate quadrilateral area from 4 points
+[[nodiscard]] inline float quad_area(const std::array<cv::Point2f, 4>& p) noexcept {
+    return tri_area(p[0], p[1], p[2]) + tri_area(p[0], p[2], p[3]);
+}
+
+/// Calculate IoU between two rectangles
+[[nodiscard]] inline float iou(const cv::Rect2f& a, const cv::Rect2f& b) noexcept {
+    const float inter = (a & b).area();
+    const float uni   = a.area() + b.area() - inter;
+    return uni > 0 ? inter / uni : 0.0f;
+}
+
+} // namespace
+
+// ============================================================================
+// Constructor / Destructor
+// ============================================================================
+
+AtLegacyNNBackend::AtLegacyNNBackend(const AtLegacyNNBackendConfig& config)
+    : config_(config)
+    , impl_(std::make_unique<Impl>()) {}
+
+AtLegacyNNBackend::~AtLegacyNNBackend() = default;
+
+AtLegacyNNBackend::AtLegacyNNBackend(AtLegacyNNBackend&&) noexcept            = default;
+AtLegacyNNBackend& AtLegacyNNBackend::operator=(AtLegacyNNBackend&&) noexcept = default;
+
+// ============================================================================
+// Initialization
+// ============================================================================
+
+std::expected<void, DetectorError> AtLegacyNNBackend::init() {
+    if (initialized_) {
+        return {};
+    }
+
+    try {
+        // Enable profiling if requested
+        if (config_.enable_profiling) {
+            impl_->core.set_property(config_.device, ov::enable_profiling(true));
+        }
+
+        // Load model
+        impl_->model = impl_->core.read_model(config_.model_path);
+
+        // Configure preprocessing
+        ov::preprocess::PrePostProcessor ppp(impl_->model);
+        ppp.input().tensor().set_element_type(ov::element::f32).set_layout("NCHW");
+        ppp.input().model().set_layout("NCHW");
+        ppp.output().tensor().set_element_type(ov::element::f32);
+        impl_->model = ppp.build();
+
+        // Compile options
+        ov::AnyMap compile_opts;
+        compile_opts.emplace(
+            ov::hint::performance_mode.name(), config_.enable_multi_thread
+                                                   ? ov::hint::PerformanceMode::THROUGHPUT
+                                                   : ov::hint::PerformanceMode::LATENCY);
+
+        if (config_.enable_multi_thread) {
+            compile_opts.emplace(ov::num_streams.name(), ov::streams::AUTO);
+        } else {
+            compile_opts.emplace(ov::num_streams.name(), 1);
+        }
+
+        // Set device priorities for AUTO/MULTI/HETERO
+        const auto& device = config_.device;
+        if (!config_.device_priorities.empty()
+            && (device == "AUTO" || device.rfind("AUTO:", 0) == 0 || device == "MULTI"
+                || device.rfind("MULTI:", 0) == 0 || device == "HETERO"
+                || device.rfind("HETERO:", 0) == 0)) {
+            compile_opts.emplace(ov::device::priorities.name(), config_.device_priorities);
+        }
+
+        // Compile model
+        impl_->compiled = impl_->core.compile_model(impl_->model, config_.device, compile_opts);
+        impl_->request  = impl_->compiled.create_infer_request();
+        impl_->loaded   = true;
+        initialized_    = true;
+
+        spdlog::info("[AtLegacyNNBackend] Model loaded: {}", config_.model_path);
+        const auto devices = execution_devices();
+        if (!devices.empty()) {
+            std::string dev_str;
+            for (const auto& d : devices) {
+                if (!dev_str.empty())
+                    dev_str += ", ";
+                dev_str += d;
+            }
+            spdlog::info("[AtLegacyNNBackend] Execution devices: {}", dev_str);
+        }
+
+        return {};
+    } catch (const std::exception& e) {
+        spdlog::error("[AtLegacyNNBackend] Init failed: {}", e.what());
+        return std::unexpected(DetectorError::InitFailed);
+    }
+}
+
+// ============================================================================
+// Preprocessing
+// ============================================================================
+
+AtLegacyNNBackend::PreprocContext AtLegacyNNBackend::preprocess(const cv::Mat& image) const {
+    PreprocContext ctx;
+
+    // Get input shape from model
+    auto ip         = impl_->compiled.input();
+    const auto& shp = ip.get_shape(); // [1, 3, H, W]
+
+    if (shp.size() != 4 || shp[1] != 3) {
+        spdlog::error("[AtLegacyNNBackend] Invalid input shape");
+        return ctx;
+    }
+
+    const int input_h = static_cast<int>(shp[2]);
+    const int input_w = static_cast<int>(shp[3]);
+
+    // Letterbox resize with symmetric padding
+    const float r = std::min(
+        static_cast<float>(input_w) / static_cast<float>(image.cols),
+        static_cast<float>(input_h) / static_cast<float>(image.rows));
+
+    const int unpad_w = static_cast<int>(r * static_cast<float>(image.cols));
+    const int unpad_h = static_cast<int>(r * static_cast<float>(image.rows));
+
+    int dw = input_w - unpad_w;
+    int dh = input_h - unpad_h;
+    dw /= 2;
+    dh /= 2;
+
+    // Store inverse transform parameters
+    ctx.scale_x = 1.0f / r;
+    ctx.scale_y = 1.0f / r;
+    ctx.pad_x   = static_cast<float>(dw);
+    ctx.pad_y   = static_cast<float>(dh);
+
+    // Resize and pad
+    cv::Mat resized;
+    cv::resize(image, resized, cv::Size(unpad_w, unpad_h));
+    cv::Mat pr;
+    cv::copyMakeBorder(resized, pr, dh, dh, dw, dw, cv::BORDER_CONSTANT);
+
+    // BGR -> RGB, normalize to [0, 1]
+    // cv::Mat rgb;
+    // cv::cvtColor(ctx.preprocessed, rgb, cv::COLOR_BGR2RGB);
+    pr.convertTo(pr, CV_32F, 1.0f / 255.0f);
+    ctx.preprocessed = pr;
+
+    return ctx;
+}
+
+// ============================================================================
+// Inference
+// ============================================================================
+
+bool AtLegacyNNBackend::infer(const PreprocContext& ctx) {
+    if (!impl_->loaded || ctx.preprocessed.empty()) {
+        return false;
+    }
+
+    try {
+        auto ip           = impl_->compiled.input();
+        const auto& shp   = ip.get_shape();
+        const int input_h = static_cast<int>(shp[2]);
+        const int input_w = static_cast<int>(shp[3]);
+
+        // Split channels (HWC -> CHW)
+        cv::Mat ch[3];
+        cv::split(ctx.preprocessed, ch);
+
+        // Create input tensor
+        ov::Tensor in(ip.get_element_type(), shp);
+        float* dst         = in.data<float>();
+        const size_t plane = static_cast<size_t>(input_w) * static_cast<size_t>(input_h);
+
+        std::memcpy(dst + plane * 0, ch[2].data, plane * sizeof(float));
+        std::memcpy(dst + plane * 1, ch[1].data, plane * sizeof(float));
+        std::memcpy(dst + plane * 2, ch[0].data, plane * sizeof(float));
+
+        impl_->request.set_input_tensor(in);
+        impl_->request.infer();
+        return true;
+    } catch (const std::exception& e) {
+        spdlog::error("[AtLegacyNNBackend] Inference failed: {}", e.what());
+        return false;
+    }
+}
+
+// ============================================================================
+// Postprocessing
+// ============================================================================
+
+std::vector<AtLegacyArmorDetection>
+    AtLegacyNNBackend::postprocess(const PreprocContext& ctx) const {
+    std::vector<AtLegacyArmorDetection> detections;
+
+    ov::Tensor out = impl_->request.get_output_tensor(0);
+    const float* p = out.data<const float>();
+    if (!p)
+        return detections;
+
+    const auto& shape = out.get_shape();
+
+    // YOLO11-pose output: [1, C, anchors] or [1, anchors, C]
+    if (shape.size() != 3 || shape[0] != 1) {
+        spdlog::warn("[AtLegacyNNBackend] Unexpected output shape");
+        return detections;
+    }
+
+    const int dim1    = static_cast<int>(shape[1]);
+    const int dim2    = static_cast<int>(shape[2]);
+    const int dims    = std::min(dim1, dim2); // per-anchor dimension
+    const int anchors = std::max(dim1, dim2); // number of anchors
+
+    constexpr int nkpt    = 4;                // 4 keypoints
+    constexpr int kpt_dim = 2;                // x, y per keypoint
+    constexpr int nk      = nkpt * kpt_dim;
+
+    // dims = 4 (bbox) + num_cls + nk (keypoints)
+    const int num_cls = dims - 4 - nk;
+    if (num_cls <= 0) {
+        spdlog::error("[AtLegacyNNBackend] Invalid output dimensions");
+        return detections;
+    }
+
+    const bool channel_first = (dim1 < dim2);
+
+    auto get = [&](int anchor, int d) -> float {
+        if (channel_first) {
+            return p[static_cast<size_t>(d) * anchors + anchor];
+        } else {
+            return p[static_cast<size_t>(anchor) * dims + d];
+        }
+    };
+
+    // Transform from model coordinates to original image coordinates
+    auto map_point = [&](float x, float y) -> cv::Point2f {
+        return cv::Point2f((x - ctx.pad_x) * ctx.scale_x, (y - ctx.pad_y) * ctx.scale_y);
+    };
+
+    detections.reserve(128);
+
+    for (int i = 0; i < anchors; ++i) {
+        // 1) Get bbox (already decoded xywh)
+        const float cx = get(i, 0);
+        const float cy = get(i, 1);
+        const float w  = get(i, 2);
+        const float h  = get(i, 3);
+
+        if (!(std::isfinite(cx) && std::isfinite(cy) && std::isfinite(w) && std::isfinite(h))) {
+            continue;
+        }
+        if (w <= 0.0f || h <= 0.0f) {
+            continue;
+        }
+
+        // 2) Find best class
+        float best_score = 0.0f;
+        int best_idx     = -1;
+        for (int c = 0; c < num_cls; ++c) {
+            const float sc = get(i, 4 + c);
+            if (sc > best_score) {
+                best_score = sc;
+                best_idx   = c;
+            }
+        }
+
+        if (best_idx < 0 || best_score < config_.confidence_threshold) {
+            continue;
+        }
+
+        // Map combined class to color + cls
+        // Format: color * NUM_CLASSES + cls
+        constexpr int NUM_CLASSES = 13; // AT model classes
+        const int color           = best_idx / NUM_CLASSES;
+        const int cls             = best_idx % NUM_CLASSES;
+
+        // Filter by detect color (optional)
+        // 0=BLUE, 1=RED
+        if (detect_color_ >= 0 && detect_color_ <= 1) {
+            if (color != detect_color_ && color != 2 && color != 3) {
+                // Not matching color and not gray/purple
+                continue;
+            }
+        }
+
+        // 3) Get keypoints (4 corners)
+        std::array<cv::Point2f, 4> corners;
+        const int kp_base = 4 + num_cls;
+        bool kp_valid     = true;
+        for (int k = 0; k < nkpt; ++k) {
+            const float kx = get(i, kp_base + 2 * k);
+            const float ky = get(i, kp_base + 2 * k + 1);
+            if (!std::isfinite(kx) || !std::isfinite(ky)) {
+                kp_valid = false;
+                break;
+            }
+            corners[k] = map_point(kx, ky);
+        }
+
+        if (!kp_valid) {
+            // Fallback to bbox corners if keypoints invalid
+            const float x1 = cx - 0.5f * w;
+            const float y1 = cy - 0.5f * h;
+            const float x2 = cx + 0.5f * w;
+            const float y2 = cy + 0.5f * h;
+            corners[0]     = map_point(x1, y1); // TL
+            corners[1]     = map_point(x2, y1); // TR
+            corners[2]     = map_point(x2, y2); // BR
+            corners[3]     = map_point(x1, y2); // BL
+        }
+
+        // Create detection
+        AtLegacyArmorDetection det(corners, cls, color, best_score);
+        if (det.area > 0) {
+            detections.push_back(std::move(det));
+        }
+    }
+
+    return detections;
+}
+
+// ============================================================================
+// Coordinate Transform
+// ============================================================================
+
+void AtLegacyNNBackend::transform_coordinates(
+    std::vector<AtLegacyArmorDetection>& detections, const PreprocContext& ctx) const {
+    // Already done in postprocess via map_point
+    (void)detections;
+    (void)ctx;
+}
+
+// ============================================================================
+// NMS
+// ============================================================================
+
+std::vector<AtLegacyArmorDetection>
+    AtLegacyNNBackend::nms(std::vector<AtLegacyArmorDetection>& detections) const {
+    if (detections.empty()) {
+        return {};
+    }
+
+    // Sort by confidence (descending)
+    std::sort(
+        detections.begin(), detections.end(),
+        [](const AtLegacyArmorDetection& a, const AtLegacyArmorDetection& b) {
+            return a.confidence > b.confidence;
+        });
+
+    // Keep top K
+    if (static_cast<int>(detections.size()) > config_.top_k) {
+        detections.resize(config_.top_k);
+    }
+
+    // NMS
+    std::vector<bool> suppressed(detections.size(), false);
+    std::vector<AtLegacyArmorDetection> result;
+    result.reserve(detections.size());
+
+    for (size_t i = 0; i < detections.size(); ++i) {
+        if (suppressed[i])
+            continue;
+
+        result.push_back(detections[i]);
+
+        for (size_t j = i + 1; j < detections.size(); ++j) {
+            if (suppressed[j])
+                continue;
+
+            if (iou(detections[i].rect, detections[j].rect) > config_.nms_threshold) {
+                suppressed[j] = true;
+            }
+        }
+    }
+
+    return result;
+}
+
+// ============================================================================
+// Detection Entry Point
+// ============================================================================
+
+AtLegacyNNBackend::DetectionResult AtLegacyNNBackend::detect_impl(const cv::Mat& image) {
+    if (!initialized_) {
+        return std::unexpected(DetectorError::NotInitialized);
+    }
+
+    if (image.empty()) {
+        return std::unexpected(DetectorError::InvalidImage);
+    }
+
+    // Preprocess
+    auto ctx = preprocess(image);
+    if (ctx.preprocessed.empty()) {
+        return std::unexpected(DetectorError::PreprocessFailed);
+    }
+
+    // Infer
+    if (!infer(ctx)) {
+        return std::unexpected(DetectorError::InferenceFailed);
+    }
+
+    // Postprocess
+    auto detections = postprocess(ctx);
+
+    // NMS
+    auto result = nms(detections);
+
+    return result;
+}
+
+// ============================================================================
+// Utility
+// ============================================================================
+
+std::vector<std::string> AtLegacyNNBackend::execution_devices() const {
+    if (!impl_->loaded) {
+        return {};
+    }
+    try {
+        return impl_->compiled.get_property(ov::execution_devices);
+    } catch (...) {
+        return {};
+    }
+}
+
+} // namespace fcs

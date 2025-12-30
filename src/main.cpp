@@ -2,6 +2,7 @@
 #include "ecs/app.hpp"
 #include "fcs/L1_sensor/input_interface.hpp"
 #include "fcs/L1_sensor/output_interface.hpp"
+#include "fcs/L2_perception/at_legacy.hpp"
 #include "math/fast_tf/infantry.hpp"
 #include "scheduler/scheduler.hpp"
 #include "spdlog_hook.hpp"
@@ -17,18 +18,24 @@
 // ============================================================================
 
 struct ImuData;
-struct TalosConfig : SpVisionConfig {
+struct TalosConfig {
     bool daedalus;
+    fcs::AtVisionSolverConfig solver{};
+    fcs::AtLegacyConfig at_legacy{};
+
     std::expected<void, std::string> read_from(const toml::table& tbl) noexcept {
-        if (auto read = SpVisionConfig::read_from(tbl); !read) {
-            return read;
-        }
         if (const auto _t = tbl["runtime"].as_table()) {
             auto t = *_t;
             READ_KEY(t, daedalus);
-            return {};
+        } else {
+            return std::unexpected("runtime section not found");
         }
-        return std::unexpected("runtime section not found");
+
+        READ_SUB(solver, tbl);
+        // Read AT Legacy config (required)
+        READ_SUB(at_legacy, tbl);
+
+        return {};
     }
 };
 
@@ -46,7 +53,7 @@ inline std::expected<TalosConfig, read_config_error> read_config() {
     TalosConfig config;
     toml::table tbl;
     try {
-        tbl = toml::parse_file("sp_vision.toml");
+        tbl = toml::parse_file("at_vision.toml");
     } catch (const toml::parse_error& err) {
         return std::unexpected(err);
     }
@@ -160,6 +167,48 @@ int main() {
         double roll_deg, pitch_deg, yaw_deg, bullet_speed;
     };
 
+    // ============================================================================
+    // AT Legacy Detection Pipeline Setup
+    // ============================================================================
+
+    // Create detector backend from config
+    auto backend_result = config.at_legacy.detector.create_backend();
+    if (!backend_result) {
+        spdlog::critical(
+            "create detector backend: {}", fcs::detector_error_str(backend_result.error()));
+        return 3;
+    }
+    auto detector_backend = std::move(*backend_result);
+    spdlog::info(
+        "detector backend: {} (color={})", detector_backend.name(),
+        config.at_legacy.detector.detect_color == 0 ? "BLUE" : "RED");
+
+    // Create PnP solver with camera intrinsics from config
+    // Convert Eigen matrix to std::array
+    std::array<double, 9> camera_matrix_arr;
+    for (int i = 0; i < 3; ++i) {
+        for (int j = 0; j < 3; ++j) {
+            camera_matrix_arr[i * 3 + j] = config.solver.camera_matrix(i, j);
+        }
+    }
+    std::vector<double> dist_coeffs_vec(
+        config.solver.distort_coefficient.data(),
+        config.solver.distort_coefficient.data() + config.solver.distort_coefficient.size());
+
+    auto pnp_solver = fcs::create_pnp_solver(camera_matrix_arr, dist_coeffs_vec);
+    spdlog::info("PnP solver initialized");
+
+    // Insert resources (wrapped in shared_ptr for std::any compatibility)
+    world.insert_resource(
+        std::make_shared<fcs::AtLegacyDetectorBackend>(std::move(detector_backend)));
+    world.insert_resource(std::make_shared<fcs::AtLegacyPnPSolver>(std::move(pnp_solver)));
+
+    // Note: SPMC channels are auto-created when systems access them
+
+    // ============================================================================
+    // End AT Legacy Setup
+    // ============================================================================
+
     world.insert_resource(ImuSnapshot{});
     // IMU: 100Hz, silent update (no notify)
     scheduler.add_system<talos::exclusive_silent<1000>>(
@@ -183,10 +232,11 @@ int main() {
             }
         });
 
-    // Camera: 30Hz, notify (triggers compute)
+    // Camera: 160Hz, notify (triggers compute)
     scheduler.add_system<talos::exclusive<160>>(
-        "camera_reader", [daedalus, &ipc_device, &usb_device, &input,
-                          &last_seq](talos::spmc_mut<fcs::L1::Frame, ImageRawChannel> cam_out) {
+        "camera_reader",
+        [daedalus, &ipc_device, &input, &last_seq](
+            talos::spmc_mut<fcs::AtLegacyImageFrame, fcs::AtLegacyImageChannelTag> cam_out) {
             const auto frame = input.try_recv();
             if (!frame) {
                 return;
@@ -202,24 +252,31 @@ int main() {
                 img = cv::Mat();
                 frame->image.copyTo(img);
                 cv::cvtColor(img, img, cv::COLOR_RGB2BGR);
-                // v.image is &'loop ImageData,
-                // but we need to pass a &'pipeline ImageData
             }
-            cam_out.write(fcs::L1::Frame{seq, frame->timestamp_ns, img});
+            cam_out.write(fcs::AtLegacyImageFrame{std::move(img), frame->timestamp_ns, seq});
         });
 
-    scheduler.add_system("preprocessor", [](talos::spmc<fcs::L1::Frame, ImageRawChannel> cam_in) {
-        if (!cam_in.has_new()) {
-            return;
-        }
-        auto frame = cam_in.read();
-        if (!frame) {
-            return;
-        }
-        spdlog::info("camera in {}", frame->seq);
-        const auto image = frame->image;
-        spdlog::info("camera in {}", image.size.dims());
-    });
+    // Register AT Legacy detection pipeline systems
+    fcs::register_at_legacy_detection_systems(scheduler);
+
+    // Measurement consumer (for debugging/logging)
+    scheduler.add_system<talos::pool_compute>(
+        "measurement_logger",
+        [](talos::spmc<fcs::AtLegacyArmorMeasurementBatch, fcs::AtLegacyMeasurementChannelTag>
+               meas_in) {
+            if (!meas_in.has_new())
+                return;
+            auto batch = meas_in.read();
+            if (!batch || batch->empty())
+                return;
+
+            for (const auto& m : batch->measurements) {
+                spdlog::info(
+                    "armor detected: {} {} @ ({:.3f}, {:.3f}, {:.3f}) dist={:.3f}m",
+                    fcs::armor_name(m.name), fcs::armor_color(m.color), m.position.x(),
+                    m.position.y(), m.position.z(), m.distance());
+            }
+        });
 
     scheduler.print_systems();
 
