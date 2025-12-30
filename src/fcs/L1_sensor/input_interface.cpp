@@ -2,7 +2,7 @@
 
 #include <spdlog/spdlog.h>
 
-namespace fcs {
+namespace fcs::L1 {
 
 std::expected<InputInterface, InputError>
     InputInterface::create_ipc(std::shared_ptr<ipc::ShmClient> client) noexcept {
@@ -28,4 +28,4 @@ std::expected<InputInterface, InputError> InputInterface::create_hik(
     return InputInterface(HikInput(std::move(*result), info));
 }
 
-} // namespace fcs
+} // namespace fcs::L1

@@ -11,7 +11,7 @@
 #include <utility>
 #include <variant>
 
-namespace fcs {
+namespace fcs::L1 {
 
 struct Timeout {};
 struct Disconnected {};
@@ -167,4 +167,4 @@ private:
     InputMode mode_;
 };
 
-} // namespace fcs
+} // namespace fcs::L1

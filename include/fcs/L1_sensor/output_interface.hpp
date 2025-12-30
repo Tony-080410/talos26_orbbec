@@ -1,7 +1,7 @@
 #pragma once
 
+#include "../../ipc/shm_client.hpp"
 #include "../L5_weapon/fire_control.hpp"
-#include "shm_client.hpp"
 #include "stm32.hpp"
 
 #include <cmath>
@@ -10,7 +10,7 @@
 #include <string>
 #include <variant>
 
-namespace fcs {
+namespace fcs::L1 {
 
 namespace detail {
 constexpr double RAD_TO_DEG = 180.0 / M_PI;
@@ -37,12 +37,12 @@ private:
 class UsbOutput {
 public:
     explicit UsbOutput(
-        std::unique_ptr<talos_gimbal::Stm32Impl<talos_gimbal::Stm32Parser>> device) noexcept;
+        std::shared_ptr<talos_gimbal::Stm32Impl<talos_gimbal::Stm32Parser>> device) noexcept;
 
     void send(const L5::WeaponCommand& cmd) const noexcept;
 
 private:
-    std::unique_ptr<talos_gimbal::Stm32Impl<talos_gimbal::Stm32Parser>> device_;
+    std::shared_ptr<talos_gimbal::Stm32Impl<talos_gimbal::Stm32Parser>> device_;
 };
 
 // ============================================================================
@@ -97,4 +97,4 @@ private:
     OutputMode mode_;
 };
 
-} // namespace fcs
+} // namespace fcs::L1

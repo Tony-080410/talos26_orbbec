@@ -11,7 +11,7 @@
 #include <new>
 #include <opencv2/core.hpp>
 
-namespace fcs {
+namespace fcs::L1 {
 
 // ============================================================================
 // ImageBuffer - 图像数据所有权管理
@@ -26,7 +26,8 @@ struct ImageBuffer {
         return buf;
     }
 
-    static std::shared_ptr<ImageBuffer> wrap(void* ptr, int rows, int cols, int type) {
+    static std::shared_ptr<ImageBuffer>
+        wrap(void* ptr, const int rows, const int cols, const int type) {
         auto buf  = std::make_shared<ImageBuffer>();
         buf->data = cv::Mat(rows, cols, type, ptr);
         return buf;
@@ -103,9 +104,9 @@ struct Frame {
     uint64_t timestamp_ns{0};
     cv::Mat image;
 
-    static Frame from_mat(uint64_t seq, uint64_t ts, cv::Mat mat) {
+    static Frame from_mat(const uint64_t seq, const uint64_t ts, cv::Mat mat) {
         return Frame{seq, ts, std::move(mat)};
     }
 };
 
-} // namespace fcs
+} // namespace fcs::L1

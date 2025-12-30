@@ -58,8 +58,12 @@ auto make_arg(World& world) {
 
 template <typename F, typename Policy = default_policy>
 class System : public SystemBase {
+    using traits     = detail::function_traits<F>;
+    using args_tuple = traits::args_tuple;
+
     F func_;
     SystemMeta meta_;
+    std::optional<args_tuple> cached_args_;
 
 public:
     System(std::string name, F func)
@@ -67,12 +71,14 @@ public:
         , meta_(extract_system_meta<F, Policy>(std::move(name))) {}
 
     void run(World& world) override {
-        using traits = detail::function_traits<F>;
-        using args   = traits::args_tuple;
+        // Cache arguments on first run (readers/writers created once, reused)
+        if (!cached_args_) {
+            cached_args_ = [&]<std::size_t... Is>(std::index_sequence<Is...>) {
+                return args_tuple{detail::make_arg<std::tuple_element_t<Is, args_tuple>>(world)...};
+            }(std::make_index_sequence<traits::arity>{});
+        }
 
-        [&]<std::size_t... Is>(std::index_sequence<Is...>) {
-            func_(detail::make_arg<std::tuple_element_t<Is, args>>(world)...);
-        }(std::make_index_sequence<traits::arity>{});
+        std::apply(func_, *cached_args_);
     }
 
     const SystemMeta& meta() const override { return meta_; }

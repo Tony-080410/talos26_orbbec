@@ -5,7 +5,7 @@
 
 #include <spdlog/spdlog.h>
 
-namespace fcs {
+namespace fcs::L1 {
 
 namespace {
 constexpr double RAD_TO_DEG = 180.0 / M_PI;
@@ -36,7 +36,7 @@ void IpcOutput::send(const L5::WeaponCommand& cmd) const noexcept {
 // ============================================================================
 
 UsbOutput::UsbOutput(
-    std::unique_ptr<talos_gimbal::Stm32Impl<talos_gimbal::Stm32Parser>> device) noexcept
+    std::shared_ptr<talos_gimbal::Stm32Impl<talos_gimbal::Stm32Parser>> device) noexcept
     : device_(std::move(device)) {}
 
 void UsbOutput::send(const L5::WeaponCommand& cmd) const noexcept {
@@ -96,4 +96,4 @@ std::expected<OutputInterface, std::string> OutputInterface::create_usb(
     return OutputInterface(UsbOutput(std::move(device)));
 }
 
-} // namespace fcs
+} // namespace fcs::L1

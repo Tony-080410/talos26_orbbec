@@ -176,6 +176,8 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
         scheduler
         auto_aim
         hikcamera
+        fcs
+        ipc
         ${OpenCV_LIBS}
         spdlog::spdlog
         fmt::fmt
