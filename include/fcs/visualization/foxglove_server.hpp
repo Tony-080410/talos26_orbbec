@@ -131,6 +131,7 @@ public:
         if (tf_exporter_) {
             tf_exporter_->publish_entire<fast_tf::camera_optical_fuxk_frame>(
                 tf_buffer, timestamp_ns);
+            tf_exporter_->publish_entire<fast_tf::muzzle_link_fuxk_frame>(tf_buffer, timestamp_ns);
         }
     }
 

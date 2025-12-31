@@ -47,7 +47,7 @@ armor_max_angle = 40.0
 
 # Required if backend_type = "nn"
 [at_legacy_nn]
-model_path = "/home/praysky/talos/opt-1208-001.onnx"
+model_path = "opt-1208-001.onnx"
 device = "AUTO"
 device_priorities = "GPU,CPU"
 enable_profiling = false
@@ -61,7 +61,7 @@ nms_threshold = 0.30
 top_k = 128
 
 [at_legacy_nn_tup]
-model_path = "/home/praysky/talos/opt-1208-001.onnx"
+model_path = "opt-1208-001.onnx"
 device = "AUTO"
 device_priorities = "GPU,CPU"
 input_width = 416
