@@ -198,7 +198,7 @@ struct AtLegacyArmorDetectionBatch {
 
 /// Single armor measurement (3D pose in camera_optical frame)
 struct AtLegacyArmorMeasurement {
-    fast_tf::FuckTransform<fast_tf::camera_optical_fuxk_frame> transform;
+    fast_tf::FuckTransform<fast_tf::odom_fuxk_frame> transform;
     ArmorName name        = ArmorName::Invalid;
     ArmorColor color      = ArmorColor::Neutral;
     ArmorType type        = ArmorType::Small;
@@ -215,7 +215,8 @@ struct AtLegacyArmorMeasurement {
         , type(det.type)
         , confidence(det.confidence)
         , timestamp_ns(ts) {
-        transform = fast_tf::FuckTransform<fast_tf::camera_optical_fuxk_frame>(
+        // really? no, camera_optical!
+        transform = fast_tf::FuckTransform<fast_tf::odom_fuxk_frame>(
             fast_tf::TransformMatrix4d::from_pnp(rvec, tvec));
     }
 

@@ -5,6 +5,8 @@
 #include "at_legacy_detector_backend.hpp"
 #include "at_legacy_pnp_solver.hpp"
 
+#include "math/fast_tf/infantry.hpp"
+
 #include <memory>
 #include <scheduler/bevy_ecs.hpp>
 
@@ -75,14 +77,15 @@ void register_at_legacy_detection_systems(App& app) {
                     std::move(*result), frame->timestamp_ns, frame->frame_id});
         });
 
-    // PnPSolverSystem: Detection → Measurement
+    // PnPSolverSystem: Detection → Measurement (in odom frame)
     // Triggered by Detection channel updates, runs in thread pool
     app.template add_system<talos::pool_compute>(
         "at_legacy_pnp_solver",
         [](talos::spmc<AtLegacyArmorDetectionBatch, AtLegacyDetectionChannelTag> detection_in,
            talos::spmc_mut<AtLegacyArmorMeasurementBatch, AtLegacyMeasurementChannelTag>
                measurement_out,
-           talos::res<std::shared_ptr<AtLegacyPnPSolver>> solver_ptr) {
+           talos::res<std::shared_ptr<AtLegacyPnPSolver>> solver_ptr,
+           talos::res<std::shared_ptr<fast_tf::CoordinateSystem<64>>> tf_system) {
             // Check for new detection
             if (!detection_in.has_new())
                 return;
@@ -100,8 +103,22 @@ void register_at_legacy_detection_systems(App& app) {
             if (!solver)
                 return;
 
-            // Solve PnP for all detections
+            // Solve PnP for all detections (in camera_optical frame)
             auto measurements = solver->solve_batch(batch->detections, batch->timestamp_ns);
+
+            // Transform each measurement from camera_optical to odom frame
+            for (auto& meas : measurements) {
+                auto tf_result =
+                    fast_tf::lookup<fast_tf::odom_fuxk_frame, fast_tf::camera_optical_fuxk_frame>(
+                        **tf_system,
+                        fast_tf::FuckTransform<fast_tf::camera_optical_fuxk_frame>(*meas.transform),
+                        batch->timestamp_ns);
+
+                if (tf_result) {
+                    // Replace with odom frame transform (type-erased)
+                    meas.transform = *tf_result;
+                }
+            }
 
             // Output measurement batch
             measurement_out.write(
