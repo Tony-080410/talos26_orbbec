@@ -4,6 +4,7 @@
 #include "armor_solver/tracker.hpp"
 #include "armor_solver/types.hpp"
 
+#include "ecs/execution_policy.hpp"
 #include "fcs/core/types.hpp"
 #include "math/fast_tf/infantry.hpp"
 #include "scheduler/ecs/channel_types.hpp"

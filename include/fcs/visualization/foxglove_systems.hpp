@@ -11,6 +11,7 @@
 #include "scheduler/ecs/channel_types.hpp"
 #include "scheduler/scheduler.hpp"
 
+#include <Eigen/Geometry>
 #include <nlohmann/json.hpp>
 #include <opencv2/imgcodecs.hpp>
 #include <opencv2/imgproc.hpp>
@@ -105,7 +106,9 @@ void register_foxglove_systems(App& app) {
             for (size_t i = 0; i < batch->detections.size(); ++i) {
                 const auto& det = batch->detections[i];
                 nlohmann::json obj;
-                obj["center"]  = {det.center().x, det.center().y};
+                obj["center"]["x"] = det.center().x;
+                obj["center"]["y"] = det.center().y;
+
                 obj["corners"] = nlohmann::json::array();
                 for (const auto& pt : det.corners) {
                     obj["corners"].push_back({pt.x, pt.y});
@@ -299,7 +302,7 @@ void register_foxglove_systems(App& app) {
                 std::vector<foxglove::schemas::SceneEntity> entities;
 
                 foxglove::schemas::SceneEntity entity;
-                entity.id        = "target_center";
+                entity.id        = "target";
                 entity.frame_id  = "odom";
                 entity.lifetime  = foxglove::schemas::Duration{.nsec = 100000000};
                 entity.timestamp = timestamp_from_ns(output->timestamp_ns);
@@ -314,7 +317,7 @@ void register_foxglove_systems(App& app) {
                     const auto& state = *output->outpost_state();
                     position.x        = state.position.x();
                     position.y        = state.position.y();
-                    position.z        = state.z[0];
+                    position.z        = (state.z[0] + state.z[1] + state.z[2]) / 3;
                 }
 
                 foxglove::schemas::Pose pose;
@@ -327,8 +330,35 @@ void register_foxglove_systems(App& app) {
                 sphere.color = foxglove::schemas::Color{0.0, 1.0, 0.0, 0.6};
                 entity.spheres.push_back(sphere);
 
-                entities.push_back(entity);
+                if (output->is_outpost()) {
+                    const auto& state = output->outpost_state();
+                    for (int i = 0; i < 3; i++) {}
+                } else if (output->is_robot()) {
+                    const auto& state = output->robot_state();
+                    bool is_big_armor = output->target_name == ArmorName::One
+                                     || output->target_name == ArmorName::Base;
+                    auto armor_poses = state->armor_poses();
+                    for (int i = 0; i < 4; i++) {
+                        foxglove::schemas::CubePrimitive cube;
+                        cube.pose = foxglove::schemas::Pose();
+                        cube.pose->position.emplace();
+                        cube.pose->orientation.emplace();
+                        double y = is_big_armor ? 0.23 : 0.135;
+                        cube.size.emplace(0.03, y, 0.125);
+                        cube.color.emplace(0.0, 1.0, 0.0, 0.3);
+                        cube.pose->position->x = armor_poses[i][0];
+                        cube.pose->position->y = armor_poses[i][1];
+                        cube.pose->position->z = armor_poses[i][2];
+                        Eigen::Quaterniond q =
+                            Eigen::AngleAxisd(armor_poses[i][3], Eigen::Vector3d::UnitZ())
+                            * Eigen::AngleAxisd(0.2618, Eigen::Vector3d::UnitY())
+                            * Eigen::AngleAxisd(0, Eigen::Vector3d::UnitX());
+                        cube.pose->orientation = {q.x(), q.y(), q.z(), q.w()};
+                        entity.cubes.emplace_back(cube);
+                    }
+                }
 
+                entities.push_back(entity);
                 TrackSceneMessage scene_msg;
                 scene_msg.scene.entities = std::move(entities);
                 (*server)->enqueue_message(std::move(scene_msg));

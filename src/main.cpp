@@ -37,7 +37,7 @@ inline std::expected<TalosConfig, read_config_error> read_config() {
     TalosConfig config;
     toml::table tbl;
     try {
-        tbl = toml::parse_file("at_vision.toml");
+        tbl = toml::parse_file("/home/praysky/talos/at_vision.toml");
     } catch (const toml::parse_error& err) {
         return std::unexpected(err);
     }
