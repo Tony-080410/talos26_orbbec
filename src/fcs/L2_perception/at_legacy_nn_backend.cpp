@@ -334,7 +334,9 @@ std::vector<AtLegacyArmorDetection>
         }
 
         // 3) Get keypoints (4 corners)
-        std::array<cv::Point2f, 4> corners;
+        // Model outputs corners in counter-clockwise order: TL, BL, BR, TR
+        // PnP expects clockwise order: TL, TR, BR, BL
+        std::array<cv::Point2f, 4> raw_corners;
         const int kp_base = 4 + num_cls;
         bool kp_valid     = true;
         for (int k = 0; k < nkpt; ++k) {
@@ -344,11 +346,12 @@ std::vector<AtLegacyArmorDetection>
                 kp_valid = false;
                 break;
             }
-            corners[k] = map_point(kx, ky);
+            raw_corners[k] = map_point(kx, ky);
         }
 
+        std::array<cv::Point2f, 4> corners;
         if (!kp_valid) {
-            // Fallback to bbox corners if keypoints invalid
+            // Fallback to bbox corners if keypoints invalid (already in correct order)
             const float x1 = cx - 0.5f * w;
             const float y1 = cy - 0.5f * h;
             const float x2 = cx + 0.5f * w;
@@ -357,6 +360,12 @@ std::vector<AtLegacyArmorDetection>
             corners[1]     = map_point(x2, y1); // TR
             corners[2]     = map_point(x2, y2); // BR
             corners[3]     = map_point(x1, y2); // BL
+        } else {
+            // Remap from counter-clockwise to clockwise
+            corners[0] = raw_corners[0]; // TL
+            corners[1] = raw_corners[3]; // TR (was raw[3])
+            corners[2] = raw_corners[2]; // BR
+            corners[3] = raw_corners[1]; // BL (was raw[1])
         }
 
         // Create detection

@@ -330,10 +330,15 @@ std::vector<AtLegacyArmorDetection> AtLegacyNNTupBackend::postprocess(
         Pn << x1, x2, x3, x4, y1, y2, y3, y4, 1.f, 1.f, 1.f, 1.f;
         Eigen::Matrix<float, 3, 4> Pd = ctx.T * Pn;
 
+        // Model outputs corners in counter-clockwise order: TL, BL, BR, TR
+        // PnP expects clockwise order: TL, TR, BR, BL
+        // Remap: corners[0]=raw[0](TL), corners[1]=raw[3](TR), corners[2]=raw[2](BR),
+        // corners[3]=raw[1](BL)
         std::array<cv::Point2f, 4> corners;
-        for (int k = 0; k < 4; ++k) {
-            corners[k] = cv::Point2f(Pd(0, k), Pd(1, k));
-        }
+        corners[0] = cv::Point2f(Pd(0, 0), Pd(1, 0)); // TL
+        corners[1] = cv::Point2f(Pd(0, 3), Pd(1, 3)); // TR (was raw[3])
+        corners[2] = cv::Point2f(Pd(0, 2), Pd(1, 2)); // BR
+        corners[3] = cv::Point2f(Pd(0, 1), Pd(1, 1)); // BL (was raw[1])
 
         // Calculate area
         const float poly_area = quad_area(corners);

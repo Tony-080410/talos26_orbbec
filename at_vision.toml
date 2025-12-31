@@ -78,6 +78,30 @@ strides = [8, 16, 32]
 # ============================================================================
 # L3 Estimation: Armor Solver (Ballistic Compensation)
 # ============================================================================
+[tracker]
+lost_thres = 1.0
+tracking_thres = 5
+matcher_gate = 10.0
+outpost_matcher_gate = 10.0
+
+[robot_model]
+sigma_a_xy = 10.0
+sigma_a_z = 2.0
+sigma_a_yaw = 20.0
+sigma_r0 = 1.0
+sigma_h = 0.8
+meas_dist_k = 1.0
+yaw_log_k = 0.005
+
+
+[outpost_model]
+sigma_q_xy = 10.0
+sigma_q_z = 1.7
+sigma_a_yaw = 0.5
+sigma_r0 = 1.0
+meas_dist_k = 0.2
+yaw_log_k = 0.005
+
 
 [armor_solver]
 # Shooting range (determines fire_advice trigger zone)
