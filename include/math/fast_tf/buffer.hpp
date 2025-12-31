@@ -62,7 +62,9 @@ public:
         if (newest_ts_ != 0 && timestamp_ns == newest_ts_) {
             return;
         }
-        assert(size_ == 0 || timestamp_ns > newest_ts_ && "Timestamps must be strictly increasing");
+        assert(
+            timestamp_ns == 0
+            || timestamp_ns > newest_ts_ && "Timestamps must be strictly increasing");
 
         buffer_[head_] = TransformEntry(timestamp_ns, transform);
 

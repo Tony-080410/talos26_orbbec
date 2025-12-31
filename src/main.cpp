@@ -4,6 +4,7 @@
 #include "fcs/L1_sensor/output_interface.hpp"
 #include "fcs/L2_perception/at_legacy.hpp"
 #include "fcs/L3_estimation/armor_solver.hpp"
+#include "fcs/L5_weapon/weapon_systems.hpp"
 #include "fcs/visualization/foxglove_systems.hpp"
 #include "math/fast_tf/infantry.hpp"
 #include "scheduler/scheduler.hpp"
@@ -299,8 +300,29 @@ int main() {
     // Register AT Legacy detection pipeline systems
     fcs::register_at_legacy_detection_systems(scheduler);
 
-    // Register L3 Tracker system (Measurement -> TrackerOutput)
-    fcs::L3::register_tracker_system(scheduler);
+    // Register L3 Armor Solver pipeline (Measurement -> TrackerOutput -> GimbalCommand)
+    fcs::L3::register_armor_solver_systems(scheduler);
+
+    // Register L5 Weapon System (GimbalCommand -> WeaponCommand)
+    fcs::L5::register_weapon_system(scheduler);
+
+    // L1 Output System: Send WeaponCommand to device
+    scheduler.add_system<talos::pool_compute>(
+        "weapon_output",
+        [&output_interface](
+            talos::spmc<fcs::L5::WeaponCommand, fcs::WeaponCommandChannelTag> cmd_in) {
+            if (!cmd_in.has_new()) {
+                return;
+            }
+
+            auto cmd = cmd_in.read();
+            if (!cmd || !cmd->valid) {
+                return;
+            }
+
+            // Send to device (USB or IPC)
+            output_interface->send(*cmd);
+        });
 
     // Tracker output consumer (for debugging/logging)
     scheduler.add_system<talos::pool_compute>(
