@@ -21,4 +21,18 @@ struct AtLegacyDetectionChannelTag {};
 /// Mode: SPMC (single producer, multiple consumers)
 struct AtLegacyMeasurementChannelTag {};
 
+// ============================================================================
+// L3 Estimation Pipeline Channel Tags
+// ============================================================================
+
+/// @brief Tracker output channel (Tracker → Solver)
+/// Data type: fcs::L3::TrackerOutput
+/// Mode: SPMC (single producer, multiple consumers)
+struct TrackerOutputChannelTag {};
+
+/// @brief Solver output channel (Solver → Gimbal Control)
+/// Data type: fcs::L3::GimbalCommand
+/// Mode: SPMC (single producer, multiple consumers)
+struct SolverOutputChannelTag {};
+
 } // namespace fcs

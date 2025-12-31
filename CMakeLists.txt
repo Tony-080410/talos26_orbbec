@@ -190,6 +190,7 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
         Eigen3::Eigen
         TBB::tbb
         tomlplusplus::tomlplusplus
+        nlohmann_json::nlohmann_json
         ${LIBUSB_LINK_LIBRARIES}
         ${foxglove_SOURCE_DIR}/lib/libfoxglove.a
         "$<$<PLATFORM_ID:Darwin>:-framework Security>"

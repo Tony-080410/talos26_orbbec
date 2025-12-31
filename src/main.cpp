@@ -3,6 +3,8 @@
 #include "fcs/L1_sensor/input_interface.hpp"
 #include "fcs/L1_sensor/output_interface.hpp"
 #include "fcs/L2_perception/at_legacy.hpp"
+#include "fcs/L3_estimation/armor_solver.hpp"
+#include "fcs/visualization/foxglove_systems.hpp"
 #include "math/fast_tf/infantry.hpp"
 #include "scheduler/scheduler.hpp"
 #include "spdlog_hook.hpp"
@@ -14,30 +16,11 @@
 #include <tbb/parallel_pipeline.h>
 
 // ============================================================================
-// Config
+// Config (使用 fcs::TalosConfig)
 // ============================================================================
 
 struct ImuData;
-struct TalosConfig {
-    bool daedalus;
-    fcs::AtVisionSolverConfig solver{};
-    fcs::AtLegacyConfig at_legacy{};
-
-    std::expected<void, std::string> read_from(const toml::table& tbl) noexcept {
-        if (const auto _t = tbl["runtime"].as_table()) {
-            auto t = *_t;
-            READ_KEY(t, daedalus);
-        } else {
-            return std::unexpected("runtime section not found");
-        }
-
-        READ_SUB(solver, tbl);
-        // Read AT Legacy config (required)
-        READ_SUB(at_legacy, tbl);
-
-        return {};
-    }
-};
+using TalosConfig = fcs::TalosConfig;
 
 template <class... Ts>
 struct overloaded : Ts... {
@@ -115,7 +98,7 @@ int main() {
             return 2;
         }
     } else {
-        input_result = fcs::L1::InputInterface::create_hik({}, config.solver.camera_info);
+        input_result = fcs::L1::InputInterface::create_hik({}, config.camera.camera_info);
         if (auto result = usb_device->connect(0x0483, 0x5740); result) {
             output_interface =
                 std::make_unique<fcs::L1::OutputInterface>(fcs::L1::UsbOutput{usb_device});
@@ -145,9 +128,9 @@ int main() {
     // IPC 模式下更新相机内参
     if (daedalus) {
         const auto& info                  = input.camera_info();
-        config.solver.camera_matrix       = info.camera_matrix;
-        config.solver.distort_coefficient = info.distort_coefficient;
-        config.solver.camera_info         = info;
+        config.camera.camera_matrix       = info.camera_matrix;
+        config.camera.distort_coefficient = info.distort_coefficient;
+        config.camera.camera_info         = info;
     }
 
     spdlog::info(
@@ -188,12 +171,12 @@ int main() {
     std::array<double, 9> camera_matrix_arr;
     for (int i = 0; i < 3; ++i) {
         for (int j = 0; j < 3; ++j) {
-            camera_matrix_arr[i * 3 + j] = config.solver.camera_matrix(i, j);
+            camera_matrix_arr[i * 3 + j] = config.camera.camera_matrix(i, j);
         }
     }
     std::vector<double> dist_coeffs_vec(
-        config.solver.distort_coefficient.data(),
-        config.solver.distort_coefficient.data() + config.solver.distort_coefficient.size());
+        config.camera.distort_coefficient.data(),
+        config.camera.distort_coefficient.data() + config.camera.distort_coefficient.size());
 
     auto pnp_solver = fcs::create_pnp_solver(camera_matrix_arr, dist_coeffs_vec);
     spdlog::info("PnP solver initialized");
@@ -207,6 +190,55 @@ int main() {
 
     // ============================================================================
     // End AT Legacy Setup
+    // ============================================================================
+
+    // ============================================================================
+    // L3 Armor Solver Setup
+    // ============================================================================
+
+    // Create Tracker using config from toml
+    world.insert_resource(std::make_shared<fcs::L3::Tracker>(config.tracker()));
+    spdlog::info(
+        "Tracker initialized (lost_thres={:.1f}s, tracking_thres={})", config.tracker().lost_thres,
+        config.tracker().tracking_thres);
+
+    // Create Solver using config from toml
+    world.insert_resource(std::make_shared<fcs::L3::Solver>(config.solver()));
+    spdlog::info(
+        "Solver initialized (bullet_speed={:.1f}m/s)", config.solver().trajectory.bullet_speed);
+
+    // Create coordinate system for fast_tf lookups
+    world.insert_resource(fast_tf::infantry_new<64>());
+
+    // Insert config as shared resource (for foxglove and other systems)
+    world.insert_resource(std::make_shared<fcs::TalosConfig>(config));
+
+    // ============================================================================
+    // End L3 Armor Solver Setup
+    // ============================================================================
+
+    // ============================================================================
+    // Foxglove Visualization Setup (Optional)
+    // ============================================================================
+
+    if (config.foxglove.enabled) {
+        auto foxglove_server =
+            std::make_shared<fcs::FoxgloveServer>(config.foxglove.port, config.foxglove.host);
+        if (foxglove_server->is_initialized()) {
+            world.insert_resource(foxglove_server);
+            fcs::register_foxglove_systems(scheduler);
+            spdlog::info(
+                "Foxglove server enabled on ws://{}:{}", config.foxglove.host,
+                config.foxglove.port);
+        } else {
+            spdlog::warn("Foxglove server failed to initialize, visualization disabled");
+        }
+    } else {
+        spdlog::info("Foxglove visualization disabled by config");
+    }
+
+    // ============================================================================
+    // End Foxglove Setup
     // ============================================================================
 
     world.insert_resource(ImuSnapshot{});
@@ -259,6 +291,39 @@ int main() {
     // Register AT Legacy detection pipeline systems
     fcs::register_at_legacy_detection_systems(scheduler);
 
+    // Register L3 Tracker system (Measurement -> TrackerOutput)
+    fcs::L3::register_tracker_system(scheduler);
+
+    // Tracker output consumer (for debugging/logging)
+    scheduler.add_system<talos::pool_compute>(
+        "tracker_logger",
+        [](talos::spmc<fcs::L3::TrackerOutput, fcs::TrackerOutputChannelTag> tracker_in) {
+            if (!tracker_in.has_new())
+                return;
+            auto output = tracker_in.read();
+            if (!output)
+                return;
+
+            const auto status_str = fcs::L3::to_string(output->status);
+            if (output->is_tracking()) {
+                if (output->is_robot()) {
+                    const auto& state = *output->robot_state();
+                    spdlog::info(
+                        "tracker [{}]: {} @ ({:.2f}, {:.2f}, {:.2f}) yaw={:.1f}deg "
+                        "v_yaw={:.1f}rad/s",
+                        status_str, fcs::to_string(output->target_name), state.position.x(),
+                        state.position.y(), state.position.z(), state.yaw * 180.0 / 3.14159,
+                        state.v_yaw);
+                } else if (output->is_outpost()) {
+                    const auto& state = *output->outpost_state();
+                    spdlog::info(
+                        "tracker [{}]: outpost @ ({:.2f}, {:.2f}) yaw={:.1f}deg v_yaw={:.1f}rad/s",
+                        status_str, state.position.x(), state.position.y(),
+                        state.yaw * 180.0 / 3.14159, state.v_yaw);
+                }
+            }
+        });
+
     // Measurement consumer (for debugging/logging)
     scheduler.add_system<talos::pool_compute>(
         "debug_logger",
@@ -299,8 +364,8 @@ int main() {
             for (const auto& m : batch->measurements) {
                 spdlog::info(
                     "armor detected: {} {} @ ({:.3f}, {:.3f}, {:.3f}) dist={:.3f}m",
-                    fcs::armor_name(m.name), fcs::armor_color(m.color), m.position.x(),
-                    m.position.y(), m.position.z(), m.distance());
+                    fcs::to_string(m.name), fcs::to_string(m.color), m.position.x(), m.position.y(),
+                    m.position.z(), m.distance());
             }
         });
 
@@ -309,7 +374,7 @@ int main() {
     // Build
     if (auto build_result = scheduler.build(); !build_result) {
         spdlog::critical(
-            "build scheduler: %s", talos::format_build_error(build_result.error()).c_str());
+            "build scheduler: {}", talos::format_build_error(build_result.error()).c_str());
         return 1;
     }
     if (const auto result = scheduler.run(); !result) {

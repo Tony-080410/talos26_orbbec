@@ -55,6 +55,11 @@ std::expected<void, std::string>
         return std::unexpected(#field " not set or invalid");     \
     }
 
+#define READ_KEY_OPT(tbl, field)                                  \
+    if (auto val = (tbl)[#field].value<decltype(field)>(); val) { \
+        (field) = *val;                                           \
+    }
+
 #define READ_ENUM(tbl, field)                                                             \
     if (auto val = (tbl)[#field].value<std::underlying_type_t<decltype(field)>>(); val) { \
         (field) = static_cast<decltype(field)>(*val);                                     \
