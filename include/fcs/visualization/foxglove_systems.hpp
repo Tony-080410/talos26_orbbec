@@ -168,9 +168,8 @@ void register_foxglove_systems(App& app) {
                 position.y = translation.y();
                 position.z = translation.z();
 
-                // 根据 yaw 计算四元数
+                const auto q = m.transform->quaternion();
                 foxglove::schemas::Quaternion orientation;
-                const auto q  = m.transform->quaternion();
                 orientation.x = q.x();
                 orientation.y = q.y();
                 orientation.z = q.z();
@@ -181,12 +180,59 @@ void register_foxglove_systems(App& app) {
                 pose.orientation = orientation;
 
                 foxglove::schemas::CubePrimitive cube;
-                cube.pose  = pose;
-                cube.size  = {0.03, 0.15, 0.12}; // 装甲板尺寸
+                cube.pose = pose;
+                if (m.type == ArmorType::Large) {
+                    cube.size = {0.03, 0.15, 0.125};   // 装甲板尺寸
+                } else {
+                    cube.size = {0.03, 0.15, 0.125};
+                }
                 cube.color = m.color == ArmorColor::Red
                                ? foxglove::schemas::Color{1.0, 0.0, 0.0, 0.5}
                                : foxglove::schemas::Color{0.0, 0.0, 1.0, 0.5};
                 entity.cubes.push_back(cube);
+
+                foxglove::schemas::SpherePrimitive sphere;
+                sphere.pose = pose;
+                if (m.type == ArmorType::Large) {
+                    sphere.size = {0.03, 0.15, 0.125}; // 装甲板尺寸
+                } else {
+                    sphere.size = {0.03, 0.15, 0.125};
+                }
+                sphere.color = m.color == ArmorColor::Red
+                                 ? foxglove::schemas::Color{1.0, 0.5, 0.0, 0.5}
+                                 : foxglove::schemas::Color{0.0, 0.5, 1.0, 0.5};
+                entity.spheres.push_back(sphere);
+
+                // 创建文本标签
+                foxglove::schemas::TextPrimitive text;
+                text.text = std::string(to_string(m.name)) + " " + std::string(to_string(m.type));
+                text.pose = pose;
+                if (text.pose.has_value() && text.pose->position.has_value()) {
+                    text.pose->position->y -= 0.1;
+                }
+                text.font_size = 0.05;
+                foxglove::schemas::Color text_color;
+                text_color.r   = 1.0; // 白色
+                text_color.g   = 1.0;
+                text_color.b   = 1.0;
+                text_color.a   = 0.9;
+                text.color     = text_color;
+                text.billboard = true;
+                entity.texts.push_back(text);
+
+                // 添加元数据
+                {
+                    foxglove::schemas::KeyValuePair kv;
+                    kv.key   = "confidence";
+                    kv.value = std::to_string(m.confidence);
+                    entity.metadata.push_back(kv);
+                }
+                {
+                    foxglove::schemas::KeyValuePair kv;
+                    kv.key   = "color";
+                    kv.value = std::string(to_string(m.color));
+                    entity.metadata.push_back(kv);
+                }
 
                 entities.push_back(entity);
             }

@@ -44,30 +44,16 @@ public:
 
     AtLegacyPnPSolver() = default;
 
-    /// Initialize with camera parameters
-    explicit AtLegacyPnPSolver(
-        const std::array<double, 9>& camera_matrix, const std::vector<double>& dist_coeffs) {
-        init(camera_matrix, dist_coeffs);
-    }
-
     /// Initialize camera parameters
-    /// @param camera_matrix 3x3 camera intrinsic matrix (row-major)
-    /// @param dist_coeffs Distortion coefficients [k1, k2, p1, p2, k3]
-    bool init(const std::array<double, 9>& camera_matrix, const std::vector<double>& dist_coeffs) {
-        camera_matrix_ = cv::Mat(3, 3, CV_64F);
-        for (int i = 0; i < 9; ++i) {
-            camera_matrix_.at<double>(i / 3, i % 3) = camera_matrix[i];
-        }
-
-        dist_coeffs_ = cv::Mat(1, static_cast<int>(dist_coeffs.size()), CV_64F);
-        for (size_t i = 0; i < dist_coeffs.size(); ++i) {
-            dist_coeffs_.at<double>(0, static_cast<int>(i)) = dist_coeffs[i];
-        }
+    /// @param config camera config
+    bool init(const CameraConfig& config) {
+        cv::eigen2cv(config.camera_matrix, camera_matrix_);
+        cv::eigen2cv(config.distort_coefficient, dist_coeffs_);
 
         // Pre-compute image center for distance calculation
         image_center_ = cv::Point2f(
-            static_cast<float>(camera_matrix[2]), // cx
-            static_cast<float>(camera_matrix[5])  // cy
+            config.width / 2.0, // cx
+            config.height / 2.0 // cy
         );
 
         build_model_points();

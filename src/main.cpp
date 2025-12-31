@@ -167,19 +167,7 @@ int main() {
         "detector backend: {} (color={})", detector_backend.name(),
         config.at_legacy.detector.detect_color == 0 ? "BLUE" : "RED");
 
-    // Create PnP solver with camera intrinsics from config
-    // Convert Eigen matrix to std::array
-    std::array<double, 9> camera_matrix_arr;
-    for (int i = 0; i < 3; ++i) {
-        for (int j = 0; j < 3; ++j) {
-            camera_matrix_arr[i * 3 + j] = config.camera.camera_matrix(i, j);
-        }
-    }
-    std::vector<double> dist_coeffs_vec(
-        config.camera.distort_coefficient.data(),
-        config.camera.distort_coefficient.data() + config.camera.distort_coefficient.size());
-
-    auto pnp_solver = fcs::create_pnp_solver(camera_matrix_arr, dist_coeffs_vec);
+    auto pnp_solver = fcs::create_pnp_solver(config.camera);
     spdlog::info("PnP solver initialized");
 
     // Insert resources (wrapped in shared_ptr for std::any compatibility)

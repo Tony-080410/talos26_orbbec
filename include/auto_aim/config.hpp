@@ -35,6 +35,8 @@ struct CameraConfig {
     // 相机内参
     Eigen::Matrix<double, 3, 3, Eigen::RowMajor> camera_matrix; // 3x3 row-major
     Eigen::Matrix<double, 1, 5> distort_coefficient;            // 1x5
+    uint32_t width{1440};
+    uint32_t height{1080};
 
     // 外参：相机到云台、云台到IMU
     Eigen::Matrix<double, 3, 3, Eigen::RowMajor> extrinsic_camera_gimbal; // 3x3 row-major
@@ -52,10 +54,14 @@ struct CameraConfig {
             READ_MATRIX(r, t, extrinsic_camera_gimbal);
             READ_MATRIX(tt, t, extrinsic_camera_gimbal_tf);
             READ_MATRIX(rr, t, extrinsic_gimbal_imu);
+            READ_KEY_OPT(t, width);
+            READ_KEY_OPT(t, height);
 
             // 填充 camera_info
             camera_info.camera_matrix       = camera_matrix;
             camera_info.distort_coefficient = distort_coefficient;
+            camera_info.width               = width;
+            camera_info.height              = height;
 
             return {};
         }

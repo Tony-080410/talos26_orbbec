@@ -27,7 +27,7 @@ enum class ArmorType : uint8_t {
     Invalid = 2,
 };
 
-const std::array<std::string, 2> ARMOR_TYPES = {"big", "small"};
+const std::array<std::string, 3> ARMOR_TYPES = {"small", "big", "invalid"};
 constexpr std::string_view to_string(const ArmorType c) noexcept {
     return ARMOR_TYPES[static_cast<uint8_t>(c)];
 }

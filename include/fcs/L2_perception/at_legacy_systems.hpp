@@ -115,12 +115,10 @@ void register_at_legacy_detection_systems(App& app) {
 // ============================================================================
 
 /// Create PnP solver from camera info
-/// @param camera_matrix 3x3 intrinsic matrix [fx, 0, cx, 0, fy, cy, 0, 0, 1]
-/// @param dist_coeffs Distortion coefficients [k1, k2, p1, p2, k3]
-[[nodiscard]] inline AtLegacyPnPSolver create_pnp_solver(
-    const std::array<double, 9>& camera_matrix, const std::vector<double>& dist_coeffs) {
+/// @param config camera config
+[[nodiscard]] inline AtLegacyPnPSolver create_pnp_solver(const CameraConfig& config) {
     AtLegacyPnPSolver solver;
-    solver.init(camera_matrix, dist_coeffs);
+    solver.init(config);
     return solver;
 }
 

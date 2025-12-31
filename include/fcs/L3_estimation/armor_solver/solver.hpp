@@ -57,12 +57,11 @@ public:
 
         // Extract muzzle position and orientation from transform
         Eigen::Vector3d muzzle_pos = muzzle_transform.translation();
-        Eigen::Matrix3d muzzle_rot = muzzle_transform.rotation();
 
         // Extract current gimbal angles (roll, pitch, yaw)
-        Eigen::Vector3d rpy = rotation_to_rpy(muzzle_rot);
-        double cur_pitch    = -rpy[1]; // Negate pitch convention
-        double cur_yaw      = rpy[2];
+        auto [roll, pitch, yaw] = muzzle_transform.euler_rot().rpy();
+        double cur_pitch        = -pitch; // Negate pitch convention
+        double cur_yaw          = yaw;
 
         // Calculate target center and parameters based on target type
         Eigen::Vector3d target_position;
@@ -170,7 +169,7 @@ public:
         }
 
         // Step 7: Calculate yaw and pitch with ballistic compensation
-        double yaw, pitch;
+
         calc_yaw_pitch(armor_position, yaw, pitch);
 
         // Step 8: Initialize gimbal command
@@ -303,14 +302,6 @@ private:
 
         return std::abs(normalize_rad(cur_yaw - target_yaw)) < shooting_range_yaw
             && std::abs(cur_pitch - target_pitch) < shooting_range_pitch;
-    }
-
-    /// Extract roll, pitch, yaw from rotation matrix
-    [[nodiscard]] static Eigen::Vector3d rotation_to_rpy(const Eigen::Matrix3d& R) noexcept {
-        double roll  = std::atan2(R(2, 1), R(2, 2));
-        double pitch = std::atan2(-R(2, 0), std::sqrt(R(2, 1) * R(2, 1) + R(2, 2) * R(2, 2)));
-        double yaw   = std::atan2(R(1, 0), R(0, 0));
-        return {roll, pitch, yaw};
     }
 };
 
