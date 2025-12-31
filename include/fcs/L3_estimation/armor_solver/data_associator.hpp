@@ -58,14 +58,14 @@ public:
         std::vector<VecZ> meas_list(n_obs);
         for (int j = 0; j < n_obs; ++j) {
             const auto& m  = observations.measurements[j];
-            const auto ypd = xyz2ypd(m.position);
+            const auto ypd = xyz2ypd(m.transform->translation());
 
             VecZ z;
             z[0] = ypd[0]; // yaw
             z[1] = ypd[1]; // pitch
             z[2] = ypd[2]; // distance
             // Extract yaw from quaternion orientation
-            z[3] = quaternion_to_yaw(m.orientation);
+            z[3] = m.transform->euler_rot().yaw;
 
             meas_list[j] = z;
         }
@@ -192,15 +192,6 @@ public:
         }
 
         return result;
-    }
-
-private:
-    /// Extract yaw from quaternion
-    [[nodiscard]] static double quaternion_to_yaw(const Eigen::Quaterniond& q) noexcept {
-        // Extract yaw (rotation around Z axis) from quaternion
-        const double siny_cosp = 2.0 * (q.w() * q.z() + q.x() * q.y());
-        const double cosy_cosp = 1.0 - 2.0 * (q.y() * q.y() + q.z() * q.z());
-        return std::atan2(siny_cosp, cosy_cosp);
     }
 };
 

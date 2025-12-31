@@ -1,5 +1,7 @@
 #pragma once
 
+#include "math/fast_tf/frame.hpp"
+
 #include <array>
 #include <cstdint>
 #include <optional>
@@ -196,8 +198,7 @@ struct AtLegacyArmorDetectionBatch {
 
 /// Single armor measurement (3D pose in camera_optical frame)
 struct AtLegacyArmorMeasurement {
-    Eigen::Vector3d position{0, 0, 0};          // Position in camera_optical frame
-    Eigen::Quaterniond orientation{1, 0, 0, 0}; // Orientation
+    fast_tf::FuckTransform<fast_tf::camera_optical_fuxk_frame> transform;
     ArmorName name        = ArmorName::Invalid;
     ArmorColor color      = ArmorColor::Neutral;
     ArmorType type        = ArmorType::Small;
@@ -214,32 +215,18 @@ struct AtLegacyArmorMeasurement {
         , type(det.type)
         , confidence(det.confidence)
         , timestamp_ns(ts) {
-        // Convert tvec to position
-        position = Eigen::Vector3d(tvec.at<double>(0), tvec.at<double>(1), tvec.at<double>(2));
-
-        // Convert rvec to quaternion
-        cv::Mat R;
-        cv::Rodrigues(rvec, R);
-        Eigen::Matrix3d eigen_R;
-        for (int i = 0; i < 3; ++i) {
-            for (int j = 0; j < 3; ++j) {
-                eigen_R(i, j) = R.at<double>(i, j);
-            }
-        }
-        orientation = Eigen::Quaterniond(eigen_R);
+        transform = fast_tf::FuckTransform<fast_tf::camera_optical_fuxk_frame>(
+            fast_tf::TransformMatrix4d::from_pnp(rvec, tvec));
     }
 
     /// Get distance to camera
-    [[nodiscard]] double distance() const noexcept { return position.norm(); }
+    [[nodiscard]] double distance() const noexcept { return transform->translation().norm(); }
 
     /// Get yaw angle (in radians)
-    [[nodiscard]] double yaw() const noexcept { return std::atan2(position.y(), position.x()); }
+    [[nodiscard]] double yaw() const noexcept { return transform->euler_rot().yaw; }
 
     /// Get pitch angle (in radians)
-    [[nodiscard]] double pitch() const noexcept {
-        return std::atan2(
-            -position.z(), std::sqrt(position.x() * position.x() + position.y() * position.y()));
-    }
+    [[nodiscard]] double pitch() const noexcept { return transform->euler_rot().pitch; }
 };
 
 /// Batch of measurements from a single frame

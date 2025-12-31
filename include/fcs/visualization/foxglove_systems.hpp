@@ -147,9 +147,10 @@ void register_foxglove_systems(App& app) {
             for (size_t i = 0; i < batch->measurements.size(); ++i) {
                 const auto& m = batch->measurements[i];
 
+                const auto translation = m.transform->translation();
                 nlohmann::json obj;
-                obj["position"] = {m.position.x(), m.position.y(), m.position.z()};
-                obj["yaw"]      = m.yaw();
+                obj["position"] = {translation.x(), translation.y(), translation.z()};
+                obj["rpy"]      = m.transform->euler_rot().rpy();
                 obj["color"]    = to_string(m.color);
                 obj["type"]     = to_string(m.type);
                 obj["name"]     = to_string(m.name);
@@ -163,14 +164,13 @@ void register_foxglove_systems(App& app) {
                 entity.timestamp = timestamp_from_ns(batch->timestamp_ns);
 
                 foxglove::schemas::Vector3 position;
-                position.x = m.position.x();
-                position.y = m.position.y();
-                position.z = m.position.z();
+                position.x = translation.x();
+                position.y = translation.y();
+                position.z = translation.z();
 
                 // 根据 yaw 计算四元数
-                double half_yaw = m.yaw() * 0.5;
                 foxglove::schemas::Quaternion orientation;
-                const auto q  = math_fuxk::rpy(0.0, m.pitch(), m.yaw()).quat();
+                const auto q  = m.transform->quaternion();
                 orientation.x = q.x();
                 orientation.y = q.y();
                 orientation.z = q.z();

@@ -59,6 +59,9 @@ public:
         mutex_type::scoped_lock lock(mutex_);
 
         // Debug: ensure timestamps are increasing
+        if (newest_ts_ != 0 && timestamp_ns == newest_ts_) {
+            return;
+        }
         assert(size_ == 0 || timestamp_ns > newest_ts_ && "Timestamps must be strictly increasing");
 
         buffer_[head_] = TransformEntry(timestamp_ns, transform);

@@ -244,8 +244,9 @@ int main() {
     world.insert_resource(ImuSnapshot{});
     // IMU: 100Hz, silent update (no notify)
     scheduler.add_system<talos::exclusive_silent<1000>>(
-        "imu_reader",
-        [daedalus, &ipc_device, &usb_device, &imu_data](talos::res_mut<ImuSnapshot> imu_out) {
+        "imu_reader", [daedalus, &ipc_device, &usb_device, &imu_data](
+                          talos::res_mut<std::shared_ptr<fast_tf::CoordinateSystem<64>>> tf_buffer,
+                          talos::res_mut<ImuSnapshot> imu_out) {
             if (daedalus) {
                 if (const auto pose = ipc_device->recv_pose(ipc::POSE_GIMBAL)) {
                     const Eigen::Quaterniond q(pose->qw, pose->qx, pose->qy, pose->qz);
@@ -262,6 +263,13 @@ int main() {
                 imu_out->pitch_deg = imu_data.data.pitch;
                 imu_out->yaw_deg   = imu_data.data.yaw;
             }
+            // strategy.set_bullet_speed(imu_data.data.bullet_speed);
+            fast_tf::update(
+                *tf_buffer->get(),
+                fast_tf::FuckTransform<fast_tf::gimbal_link_fuxk_frame>(
+                    fast_tf::TransformMatrix4d::from_rpy(
+                        imu_out->roll_deg, imu_out->pitch_deg, imu_out->yaw_deg)),
+                imu_out->timestamp);
         });
 
     // Camera: 160Hz, notify (triggers compute)
@@ -362,10 +370,11 @@ int main() {
             if (!batch || batch->empty())
                 return;
             for (const auto& m : batch->measurements) {
+                const auto translation = m.transform->translation();
                 spdlog::info(
                     "armor detected: {} {} @ ({:.3f}, {:.3f}, {:.3f}) dist={:.3f}m",
-                    fcs::to_string(m.name), fcs::to_string(m.color), m.position.x(), m.position.y(),
-                    m.position.z(), m.distance());
+                    fcs::to_string(m.name), fcs::to_string(m.color), translation.x(),
+                    translation.y(), translation.z(), m.distance());
             }
         });
 

@@ -112,8 +112,8 @@ public:
             RoboUKF::VecZ z;
             const auto& meas = match_result.armors[i];
 
-            const auto ypd             = xyz2ypd(meas.position);
-            const double armor_yaw_raw = quaternion_to_yaw(meas.orientation);
+            const auto ypd             = xyz2ypd(meas.transform->translation());
+            const double armor_yaw_raw = meas.yaw();
 
             if (is_outpost) {
                 outpost_model_.armor_id = idx[i];
@@ -166,11 +166,11 @@ public:
         }
 
         const auto& target = measurements.measurements[min_idx];
-        const auto& pos    = target.position;
+        const auto& pos    = target.transform->translation();
 
         target_name_           = target.name;
         const bool is_outpost  = (target_name_ == ArmorName::Outpost);
-        const double armor_yaw = quaternion_to_yaw(target.orientation);
+        const double armor_yaw = target.yaw();
 
         // Reset existing filters
         robot_ukf_.reset();
