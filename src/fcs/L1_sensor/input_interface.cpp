@@ -25,7 +25,7 @@ std::expected<InputInterface, InputError> InputInterface::create_hik(
     if (!result) {
         return std::unexpected(result.error());
     }
-    return InputInterface(HikInput(std::move(*result), info));
+    return InputInterface(HikInput(std::move(*result), info, profile.exposure_time));
 }
 
 } // namespace fcs::L1

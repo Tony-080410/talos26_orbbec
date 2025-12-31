@@ -67,9 +67,14 @@ private:
 
 class HikInput {
 public:
-    explicit HikInput(std::unique_ptr<hikcamera::ImageCapturer> camera, CameraInfo info) noexcept
+    explicit HikInput(
+        std::unique_ptr<hikcamera::ImageCapturer> camera, CameraInfo info,
+        std::chrono::duration<float, std::micro> exposure_time) noexcept
         : camera_(std::move(camera))
-        , info_(std::move(info)) {}
+        , info_(std::move(info))
+        , exposure_time_ns_(
+              static_cast<uint64_t>(
+                  std::chrono::duration_cast<std::chrono::nanoseconds>(exposure_time).count())) {}
 
     [[nodiscard]] std::optional<Frame> try_recv() noexcept {
         using namespace std::chrono_literals;
@@ -101,13 +106,18 @@ public:
     [[nodiscard]] const CameraInfo& camera_info() const noexcept { return info_; }
 
 private:
-    [[nodiscard]] static uint64_t now_ns() noexcept {
-        return static_cast<uint64_t>(
+    /// Get timestamp compensated for exposure time (midpoint of exposure)
+    /// This aligns with at_vision's timestamp: now() - exposure_time / 2
+    [[nodiscard]] uint64_t now_ns() const noexcept {
+        const auto now = static_cast<uint64_t>(
             std::chrono::high_resolution_clock::now().time_since_epoch().count());
+        // Subtract half of exposure time to get exposure midpoint
+        return now - (exposure_time_ns_ / 2);
     }
 
     std::unique_ptr<hikcamera::ImageCapturer> camera_;
     CameraInfo info_;
+    uint64_t exposure_time_ns_; // Exposure time in nanoseconds
     uint64_t seq_{0};
 };
 

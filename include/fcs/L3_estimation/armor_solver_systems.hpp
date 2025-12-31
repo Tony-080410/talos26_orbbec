@@ -9,6 +9,7 @@
 #include "math/fast_tf/infantry.hpp"
 #include "scheduler/ecs/channel_types.hpp"
 
+#include <chrono>
 #include <memory>
 
 namespace fcs::L3 {
@@ -81,20 +82,27 @@ void register_armor_solver_systems(App& app) {
                 return;
             }
 
+            // Get current real-time for prediction (not measurement timestamp!)
+            // This matches at_vision's: solver_->solve(target_snapshot, now(), tf_buffer)
+            const uint64_t current_time_ns = static_cast<uint64_t>(
+                std::chrono::high_resolution_clock::now().time_since_epoch().count());
+
             // Lookup muzzle transform in odom frame
+            // Use current time (not measurement timestamp!) to get latest gimbal pose
+            // This matches at_vision's: lookupTransform(..., tf2::TimePointZero)
             auto tf_result =
                 fast_tf::lookup<fast_tf::odom_fuxk_frame, fast_tf::muzzle_link_fuxk_frame>(
                     **tf_system,
                     fast_tf::FuckTransform<fast_tf::muzzle_link_fuxk_frame>{
                         fast_tf::TransformMatrix4d{}},
-                    target->timestamp_ns);
+                    current_time_ns);
 
             if (!tf_result) {
                 return;
             }
 
-            // Solve gimbal command
-            auto cmd = (*solver)->solve(*target, target->timestamp_ns, **tf_result);
+            // Solve gimbal command with real-time current_time_ns
+            auto cmd = (*solver)->solve(*target, current_time_ns, **tf_result);
             if (cmd) {
                 cmd_out.write(*cmd);
             }
