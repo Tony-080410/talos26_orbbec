@@ -148,7 +148,7 @@ using ::fcs::TrackerOutputChannelTag;
 
 inline std::array<Eigen::Vector4d, 4> RobotTargetState::armor_poses() const noexcept {
     std::array<Eigen::Vector4d, 4> poses;
-    constexpr double angle_step = 2.0 * 3.14159265358979323846 / 4.0;
+    constexpr double angle_step = 2.0 * std::numbers::pi / 4.0;
 
     for (int i = 0; i < 4; ++i) {
         const double armor_yaw = yaw + static_cast<double>(i) * angle_step;
@@ -173,7 +173,7 @@ inline std::array<Eigen::Vector4d, 4> RobotTargetState::armor_poses() const noex
 
 inline std::array<Eigen::Vector4d, 3> OutpostTargetState::armor_poses() const noexcept {
     std::array<Eigen::Vector4d, 3> poses;
-    constexpr double angle_step = 2.0 * 3.14159265358979323846 / 3.0;
+    constexpr double angle_step = 2.0 * std::numbers::pi / 3.0;
 
     for (int i = 0; i < 3; ++i) {
         const double armor_yaw = yaw + static_cast<double>(i) * angle_step;
