@@ -6,6 +6,7 @@
 #include "at_legacy_pnp_solver.hpp"
 
 #include "math/fast_tf/infantry.hpp"
+#include "scheduler/scheduler.hpp"
 
 #include <chrono>
 #include <memory>
@@ -105,7 +106,17 @@ void register_at_legacy_detection_systems(App& app) {
                 return;
 
             // Solve PnP for all detections (in camera_optical frame)
-            auto measurements = solver->solve_batch(batch->detections, batch->timestamp_ns);
+            auto tf = fast_tf::lookup<fast_tf::odom_fuxk_frame>(
+                **tf_system, fast_tf::FuckTransform<fast_tf::camera_optical_fuxk_frame>(),
+                batch->timestamp_ns);
+            if (!tf) {
+                spdlog::error(
+                    "TF lookup failed for timestamp {}: {}", batch->timestamp_ns,
+                    fast_tf::to_string(tf.error()));
+                return;
+            }
+            auto measurements = solver->solve_batch_with_ba(
+                batch->detections, tf.value()->rotation().matrix(), batch->timestamp_ns);
             /*
                         // Wait for TF to be available (similar to ROS2 MessageFilter)
                         // This ensures gimbal pose for this timestamp has arrived

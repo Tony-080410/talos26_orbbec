@@ -7,15 +7,6 @@
 #include <set>
 #include <unordered_map>
 
-#ifdef __x86_64__
-# include <immintrin.h>
-# define SPIN_PAUSE() _mm_pause()
-#elif defined(__aarch64__)
-# define SPIN_PAUSE() __asm__ __volatile__("yield" ::: "memory")
-#else
-# define SPIN_PAUSE() ((void)0)
-#endif
-
 namespace talos {
 
 // ============================================================================
@@ -208,12 +199,7 @@ void Scheduler::run_exclusive_thread(ExclusiveContext ctx) {
         }
 
         // Busy wait until next tick
-        while (Clock::now() < next_tick) {
-            if (!ctx.running->load(std::memory_order_relaxed)) {
-                return;
-            }
-            SPIN_PAUSE();
-        }
+        std::this_thread::sleep_until(next_tick);
     }
 }
 
@@ -230,7 +216,7 @@ void Scheduler::run_compute_loop() {
             compute_cycles_.fetch_add(1, std::memory_order_relaxed);
         }
 
-        SPIN_PAUSE();
+        std::this_thread::yield();
     }
 }
 

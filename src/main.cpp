@@ -286,14 +286,10 @@ int main() {
     fcs::L5::register_weapon_system(scheduler);
 
     // L1 Output System: Send WeaponCommand to device
-    scheduler.add_system<talos::pool_compute>(
+    scheduler.add_system<talos::exclusive<250>>(
         "weapon_output",
         [&output_interface](
             talos::spmc<fcs::L5::WeaponCommand, fcs::WeaponCommandChannelTag> cmd_in) {
-            if (!cmd_in.has_new()) {
-                return;
-            }
-
             auto cmd = cmd_in.read();
             if (!cmd || !cmd->valid) {
                 return;

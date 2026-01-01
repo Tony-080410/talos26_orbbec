@@ -442,22 +442,42 @@ void register_foxglove_systems(App& app) {
                     auto armor_poses = state->armor_poses();
                     static_assert(armor_poses.size() == 4);
                     for (int i = 0; i < 4; i++) {
+                        foxglove::schemas::Vector3 position;
+                        position.x = armor_poses[i][0];
+                        position.y = armor_poses[i][1];
+                        position.z = armor_poses[i][2];
+                        Eigen::Quaterniond q =
+                            Eigen::AngleAxisd(armor_poses[i][3], Eigen::Vector3d::UnitZ())
+                            * Eigen::AngleAxisd(0.2618, Eigen::Vector3d::UnitY())
+                            * Eigen::AngleAxisd(0, Eigen::Vector3d::UnitX());
+                        foxglove::schemas::Quaternion orientation = {q.x(), q.y(), q.z(), q.w()};
+
+                        foxglove::schemas::Pose pose;
+                        pose.position    = position;
+                        pose.orientation = orientation;
                         foxglove::schemas::CubePrimitive cube;
-                        cube.pose = foxglove::schemas::Pose();
-                        cube.pose->position.emplace();
-                        cube.pose->orientation.emplace();
-                        double y = is_big_armor ? 0.23 : 0.135;
+                        cube.pose = pose;
+                        double y  = is_big_armor ? 0.23 : 0.135;
                         cube.size.emplace(0.03, y, 0.125);
                         cube.color.emplace(0.0, 1.0, 0.0, 0.3);
                         cube.pose->position->x = armor_poses[i][0];
                         cube.pose->position->y = armor_poses[i][1];
                         cube.pose->position->z = armor_poses[i][2];
-                        Eigen::Quaterniond q =
-                            Eigen::AngleAxisd(armor_poses[i][3], Eigen::Vector3d::UnitZ())
-                            * Eigen::AngleAxisd(0.2618, Eigen::Vector3d::UnitY())
-                            * Eigen::AngleAxisd(0, Eigen::Vector3d::UnitX());
-                        cube.pose->orientation = {q.x(), q.y(), q.z(), q.w()};
                         entity.cubes.emplace_back(cube);
+
+                        foxglove::schemas::TextPrimitive text;
+                        text.text = fmt::format("{}", i);
+                        text.pose = pose;
+                        text.pose->position->z += 0.1;
+                        text.font_size = 0.05;
+                        foxglove::schemas::Color text_color;
+                        text_color.r   = 1.0;                                               // 白色
+                        text_color.g   = 1.0;
+                        text_color.b   = 1.0;
+                        text_color.a   = 0.9;
+                        text.color     = text_color;
+                        text.billboard = true;
+                        entity.texts.push_back(text);
                     }
                 }
 

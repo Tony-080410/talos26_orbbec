@@ -21,13 +21,9 @@ namespace fcs::L5 {
 /// replicating the behavior of rm_gimbal's send_to_device() function.
 template <typename App>
 void register_weapon_system(App& app) {
-    app.template add_system<talos::pool_compute>(
+    app.template add_system<talos::exclusive<250>>(
         "gimbal_to_weapon", [](talos::spmc<L3::GimbalCommand, SolverOutputChannelTag> gimbal_in,
                                talos::spmc_mut<WeaponCommand, WeaponCommandChannelTag> weapon_out) {
-            if (!gimbal_in.has_new()) {
-                return;
-            }
-
             auto gimbal_cmd = gimbal_in.read();
             if (!gimbal_cmd) {
                 return;

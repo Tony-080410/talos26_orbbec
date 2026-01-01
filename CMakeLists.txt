@@ -115,6 +115,7 @@ target_link_libraries(fcs PUBLIC
         ipc
         hikcamera
         scheduler
+        Ceres::ceres
         ${OpenCV_LIBS}
         Eigen3::Eigen
         spdlog::spdlog
