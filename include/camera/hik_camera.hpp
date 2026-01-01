@@ -35,7 +35,7 @@ public:
             using namespace std::chrono_literals;
             trigger_mode  = false;
             invert_image  = false;
-            exposure_time = 3ms;
+            exposure_time = 10ms;
             gain          = 16.7;
         }
 

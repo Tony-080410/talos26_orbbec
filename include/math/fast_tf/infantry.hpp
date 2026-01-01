@@ -39,7 +39,7 @@ void tick_infantry_static(timestamp_ns_t ts, CoordinateSystem<N>& system) {
     update<muzzle_link_fuxk_frame>(
         system,
         FuckTransform<muzzle_link_fuxk_frame>{
-            TransformMatrix4d::from_rpy(0.0, 0.0, 0.0, 0.0874, 0.0, -0.0874)},
+            TransformMatrix4d::from_rpy(0.0, 0.0, 0.0, 0.0874, -0.009, -0.0874)},
         ts);
 }
 /**

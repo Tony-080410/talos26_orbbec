@@ -28,8 +28,8 @@ extrinsic_gimbal_imu = [
 ]
 
 [at_legacy_detector]
-backend_type = "nn_tup"  # one of "nn", "nn_tup", "traditional"
-detect_color = 0              # 0=BLUE, 1=RED
+backend_type = "nn"  # one of "nn", "nn_tup", "traditional"
+detect_color = 1              # 0=BLUE, 1=RED
 
 # Required if backend_type = "traditional"
 [at_legacy_traditional]
@@ -47,7 +47,7 @@ armor_max_angle = 35.0
 
 # Required if backend_type = "nn"
 [at_legacy_nn]
-model_path = "opt-1208-001.onnx"
+model_path = "at.onnx"
 device = "AUTO"
 device_priorities = "GPU,CPU"
 enable_profiling = false
@@ -56,8 +56,8 @@ input_width = 416
 input_height = 416
 num_classes = 8
 num_colors = 4
-confidence_threshold = 0.75
-nms_threshold = 0.30
+confidence_threshold = 0.1
+nms_threshold = 0.10
 top_k = 128
 
 [at_legacy_nn_tup]
@@ -119,6 +119,6 @@ compensator_type = "resistance"
 
 [trajectory]
 iteration_times = 20       # Number of iterations for ballistic compensation
-bullet_speed = 25.0        # Bullet velocity (m/s)
+bullet_speed = 23.0        # Bullet velocity (m/s)
 gravity = 9.7997              # Gravity acceleration (m/s^2)
-resistance = 0.001         # Air resistance coefficient
+resistance = 0.00005         # Air resistance coefficient
