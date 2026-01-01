@@ -12,6 +12,7 @@
 #include "scheduler/scheduler.hpp"
 
 #include <Eigen/Geometry>
+#include <cmath>
 #include <nlohmann/json.hpp>
 #include <opencv2/imgcodecs.hpp>
 #include <opencv2/imgproc.hpp>
@@ -330,14 +331,116 @@ void register_foxglove_systems(App& app) {
                 sphere.color = foxglove::schemas::Color{0.0, 1.0, 0.0, 0.6};
                 entity.spheres.push_back(sphere);
 
+                // 绘制速度箭头
+                if (output->is_robot()) {
+                    const auto& state = *output->robot_state();
+
+                    // 角速度箭头 (沿z轴, 长度为 v_yaw / π)
+                    double angular_vel_length = std::abs(state.v_yaw) / M_PI;
+                    if (angular_vel_length > 0.01) { // 最小阈值避免过小箭头
+                        foxglove::schemas::ArrowPrimitive angular_arrow;
+                        angular_arrow.pose = foxglove::schemas::Pose();
+                        angular_arrow.pose->position.emplace();
+                        angular_arrow.pose->position->x = position.x;
+                        angular_arrow.pose->position->y = position.y;
+                        angular_arrow.pose->position->z = position.z;
+                        // 箭头沿z轴向上 (或向下如果角速度为负)
+                        if (state.v_yaw >= 0) {
+                            angular_arrow.pose->orientation = {
+                                0, -0.7071, 0, 0.7071}; // 绕Y轴旋转-90度，指向+Z
+                        } else {
+                            angular_arrow.pose->orientation = {
+                                0, 0.7071, 0, 0.7071};  // 绕Y轴旋转90度，指向-Z
+                        }
+                        angular_arrow.shaft_length   = angular_vel_length * 0.8;
+                        angular_arrow.shaft_diameter = 0.02;
+                        angular_arrow.head_length    = angular_vel_length * 0.2;
+                        angular_arrow.head_diameter  = 0.04;
+                        angular_arrow.color = foxglove::schemas::Color{1.0, 1.0, 0.0, 0.8}; // 黄色
+                        entity.arrows.push_back(angular_arrow);
+                    }
+
+                    // 线速度箭头 (方向为速度方向, 长度为速度模)
+                    double linear_vel_length = state.velocity.norm();
+                    if (linear_vel_length > 0.0001) { // 最小阈值
+                        foxglove::schemas::ArrowPrimitive linear_arrow;
+                        linear_arrow.pose = foxglove::schemas::Pose();
+                        linear_arrow.pose->position.emplace();
+                        linear_arrow.pose->position->x = position.x;
+                        linear_arrow.pose->position->y = position.y;
+                        linear_arrow.pose->position->z = position.z;
+                        // 计算速度方向的四元数
+                        Eigen::Vector3d vel_dir = state.velocity.normalized();
+                        Eigen::Vector3d default_dir(1, 0, 0); // 箭头默认指向 +X
+                        Eigen::Quaterniond q;
+                        if ((vel_dir + default_dir).norm() < 1e-6) {
+                            // 速度方向与默认方向相反
+                            q = Eigen::Quaterniond(
+                                Eigen::AngleAxisd(M_PI, Eigen::Vector3d::UnitZ()));
+                        } else {
+                            q = Eigen::Quaterniond::FromTwoVectors(default_dir, vel_dir);
+                        }
+                        linear_arrow.pose->orientation = {q.x(), q.y(), q.z(), q.w()};
+                        linear_arrow.shaft_length      = linear_vel_length * 0.8;
+                        linear_arrow.shaft_diameter    = 0.02;
+                        linear_arrow.head_length       = linear_vel_length * 0.2;
+                        linear_arrow.head_diameter     = 0.04;
+                        linear_arrow.color = foxglove::schemas::Color{0.0, 1.0, 1.0, 0.8}; // 青色
+                        entity.arrows.push_back(linear_arrow);
+                    }
+                } else if (output->is_outpost()) {
+                    const auto& state = *output->outpost_state();
+
+                    // 前哨站角速度箭头 (沿z轴)
+                    double angular_vel_length = std::abs(state.v_yaw) / M_PI;
+                    if (angular_vel_length > 0.0001) {
+                        foxglove::schemas::ArrowPrimitive angular_arrow;
+                        angular_arrow.pose = foxglove::schemas::Pose();
+                        angular_arrow.pose->position.emplace();
+                        angular_arrow.pose->position->x = position.x;
+                        angular_arrow.pose->position->y = position.y;
+                        angular_arrow.pose->position->z = position.z;
+                        if (state.v_yaw >= 0) {
+                            angular_arrow.pose->orientation = {0, -0.7071, 0, 0.7071}; // 指向+Z
+                        } else {
+                            angular_arrow.pose->orientation = {0, 0.7071, 0, 0.7071};  // 指向-Z
+                        }
+                        angular_arrow.shaft_length   = angular_vel_length * 0.8;
+                        angular_arrow.shaft_diameter = 0.02;
+                        angular_arrow.head_length    = angular_vel_length * 0.2;
+                        angular_arrow.head_diameter  = 0.04;
+                        angular_arrow.color = foxglove::schemas::Color{1.0, 1.0, 0.0, 0.8}; // 黄色
+                        entity.arrows.push_back(angular_arrow);
+                    }
+                }
+
                 if (output->is_outpost()) {
                     const auto& state = output->outpost_state();
-                    for (int i = 0; i < 3; i++) {}
+                    auto armor_poses  = state->armor_poses();
+                    static_assert(armor_poses.size() == 3);
+                    for (int i = 0; i < 3; i++) {
+                        foxglove::schemas::CubePrimitive cube;
+                        cube.pose = foxglove::schemas::Pose();
+                        cube.pose->position.emplace();
+                        cube.pose->orientation.emplace();
+                        cube.size.emplace(0.03, 0.135, 0.125);
+                        cube.color.emplace(0.0, 1.0, 0.0, 0.3);
+                        cube.pose->position->x = armor_poses[i][0];
+                        cube.pose->position->y = armor_poses[i][1];
+                        cube.pose->position->z = armor_poses[i][2];
+                        Eigen::Quaterniond q =
+                            Eigen::AngleAxisd(armor_poses[i][3], Eigen::Vector3d::UnitZ())
+                            * Eigen::AngleAxisd(-0.2618, Eigen::Vector3d::UnitY())
+                            * Eigen::AngleAxisd(0, Eigen::Vector3d::UnitX());
+                        cube.pose->orientation = {q.x(), q.y(), q.z(), q.w()};
+                        entity.cubes.emplace_back(cube);
+                    }
                 } else if (output->is_robot()) {
                     const auto& state = output->robot_state();
                     bool is_big_armor = output->target_name == ArmorName::One
                                      || output->target_name == ArmorName::Base;
                     auto armor_poses = state->armor_poses();
+                    static_assert(armor_poses.size() == 4);
                     for (int i = 0; i < 4; i++) {
                         foxglove::schemas::CubePrimitive cube;
                         cube.pose = foxglove::schemas::Pose();
