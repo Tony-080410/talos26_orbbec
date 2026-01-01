@@ -59,9 +59,8 @@ public:
         Eigen::Vector3d muzzle_pos = muzzle_transform.translation();
 
         // Extract current gimbal angles (roll, pitch, yaw)
-        auto [roll, pitch, yaw] = muzzle_transform.euler_rot().rpy();
-        double cur_pitch        = -pitch; // Negate pitch convention
-        double cur_yaw          = yaw;
+        auto [roll_, pitch_, yaw_] = muzzle_transform.euler_rot().rpy();
+        pitch_                     = -pitch_; // Negate pitch convention
 
         // Calculate target center and parameters based on target type
         Eigen::Vector3d target_position;
@@ -169,14 +168,14 @@ public:
         }
 
         // Step 7: Calculate yaw and pitch with ballistic compensation
-
+        double yaw, pitch;
         calc_yaw_pitch(armor_position, yaw, pitch);
 
         // Step 8: Initialize gimbal command
         GimbalCommand cmd;
         cmd.timestamp_ns = current_time_ns;
         cmd.distance     = distance;
-        cmd.fire_advice  = is_on_target(cur_yaw, cur_pitch, yaw, pitch, distance);
+        cmd.fire_advice  = is_on_target(yaw_, pitch_, yaw, pitch, distance);
 
         // State machine for tracking mode
         switch (state_) {
@@ -209,8 +208,8 @@ public:
 
         cmd.yaw        = yaw;
         cmd.pitch      = pitch;
-        cmd.yaw_diff   = normalize_rad(yaw - cur_yaw);
-        cmd.pitch_diff = pitch - cur_pitch;
+        cmd.yaw_diff   = normalize_rad(yaw - yaw_);
+        cmd.pitch_diff = pitch - pitch_;
         cmd.predicted_position =
             Eigen::Vector3d(chosen_armor_world.x(), chosen_armor_world.y(), chosen_armor_world.z());
 
@@ -292,8 +291,9 @@ private:
         double cur_yaw, double cur_pitch, double target_yaw, double target_pitch,
         double distance) const noexcept {
 
-        double shooting_range_yaw   = std::abs(std::atan2(config_.shooting_range_w / 2, distance));
-        double shooting_range_pitch = std::abs(std::atan2(config_.shooting_range_h / 2, distance));
+        double shooting_range_yaw = std::abs(std::atan2(config_.shooting_range_w / 2.0, distance));
+        double shooting_range_pitch =
+            std::abs(std::atan2(config_.shooting_range_h / 2.0, distance));
 
         // Minimum 1 degree range
         constexpr double min_range = std::numbers::pi / 180.0;

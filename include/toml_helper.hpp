@@ -30,6 +30,8 @@ std::expected<void, std::string>
     return std::unexpected(key + " not found");
 }
 
+#define READ_SUB_OPT(val, tbl) (val).read_from(tbl);
+
 #define READ_SUB(val, tbl)                         \
     if (auto read = (val).read_from(tbl); !read) { \
         return read;                               \

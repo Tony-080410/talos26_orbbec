@@ -56,6 +56,19 @@ struct RobotModel {
         Scalar sigma_h     = 0.5;   // Height H drift noise
         Scalar meas_dist_k = 0.43;  // Distance noise coefficient
         Scalar yaw_log_k   = 0.005; // Yaw noise coefficient
+        std::expected<void, std::string> read_from(const toml::table& table) noexcept {
+            if (const auto _r = table["robot_model"].as_table()) {
+                auto r = *_r;
+                READ_KEY(r, sigma_a_xy);
+                READ_KEY(r, sigma_a_z);
+                READ_KEY(r, sigma_a_yaw);
+                READ_KEY(r, sigma_r0);
+                READ_KEY(r, sigma_h);
+                READ_KEY(r, meas_dist_k);
+                READ_KEY(r, yaw_log_k);
+            }
+            return {};
+        }
     };
 
     int armor_id                    = 0;
@@ -204,6 +217,17 @@ struct OutpostModel {
         Scalar sigma_a_yaw = 1.0;                    // Yaw acceleration noise
         Scalar meas_dist_k = 0.43;
         Scalar yaw_log_k   = 0.005;
+        std::expected<void, std::string> read_from(const toml::table& t) noexcept {
+            if (const auto _o = t["outpost_model"].as_table()) {
+                auto o = *_o;
+                READ_KEY(o, sigma_q_xy);
+                READ_KEY(o, sigma_q_z);
+                READ_KEY(o, sigma_a_yaw);
+                READ_KEY(o, meas_dist_k);
+                READ_KEY(o, yaw_log_k);
+            }
+            return {};
+        }
     };
 
     int armor_id                           = 0;

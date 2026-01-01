@@ -47,11 +47,6 @@ inline std::expected<TalosConfig, read_config_error> read_config() {
     return config;
 }
 
-static uint64_t now_ns() {
-    const auto now = std::chrono::high_resolution_clock::now();
-    return std::chrono::duration_cast<std::chrono::nanoseconds>(now.time_since_epoch()).count();
-}
-
 int main() {
     init_logger();
     spdlog::info("talos is initializing...");

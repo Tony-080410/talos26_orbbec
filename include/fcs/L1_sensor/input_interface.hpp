@@ -2,6 +2,7 @@
 
 #include "auto_aim/config.hpp"
 #include "camera/hik_camera.hpp"
+#include "core/time.hpp"
 #include "fcs/L1_sensor/parcel.hpp"
 #include "ipc/shm_client.hpp"
 #include <chrono>
@@ -109,8 +110,7 @@ private:
     /// Get timestamp compensated for exposure time (midpoint of exposure)
     /// This aligns with at_vision's timestamp: now() - exposure_time / 2
     [[nodiscard]] uint64_t now_ns() const noexcept {
-        const auto now = static_cast<uint64_t>(
-            std::chrono::high_resolution_clock::now().time_since_epoch().count());
+        const auto now = clock::now_ns();
         // Subtract half of exposure time to get exposure midpoint
         return now - (exposure_time_ns_ / 2);
     }

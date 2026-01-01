@@ -162,7 +162,7 @@ void register_foxglove_systems(App& app) {
                 // 创建 3D 实体
                 foxglove::schemas::SceneEntity entity;
                 entity.id        = "armor_" + std::to_string(i);
-                entity.frame_id  = "camera_optical_frame";
+                entity.frame_id  = "odom";
                 entity.lifetime  = foxglove::schemas::Duration{.nsec = 100000000};
                 entity.timestamp = timestamp_from_ns(batch->timestamp_ns);
 
@@ -364,41 +364,39 @@ void register_foxglove_systems(App& app) {
                 (*server)->enqueue_message(std::move(scene_msg));
             }
         });
-    /*
-        // 云台指令发布系统
-        app.template add_system<talos::pool_compute>(
-            "foxglove_gimbal_cmd_pub",
-            [](talos::spmc<L3::GimbalCommand, SolverOutputChannelTag> cmd_in,
-               talos::res<std::shared_ptr<FoxgloveServer>> server) {
-                if (!(*server)->is_initialized() || !cmd_in.has_new()) {
-                    return;
-                }
 
-                auto cmd = cmd_in.read();
-                if (!cmd) {
-                    return;
-                }
+    // 云台指令发布系统
+    app.template add_system<talos::pool_compute>(
+        "foxglove_gimbal_cmd_pub", [](talos::spmc<L3::GimbalCommand, SolverOutputChannelTag> cmd_in,
+                                      talos::res<std::shared_ptr<FoxgloveServer>> server) {
+            if (!(*server)->is_initialized() || !cmd_in.has_new()) {
+                return;
+            }
 
-                nlohmann::json cmd_json;
-                cmd_json["timestamp_ns"] = cmd->timestamp_ns;
-                cmd_json["yaw"]          = cmd->yaw;
-                cmd_json["pitch"]        = cmd->pitch;
-                cmd_json["yaw_diff"]     = cmd->yaw_diff;
-                cmd_json["pitch_diff"]   = cmd->pitch_diff;
-                cmd_json["distance"]     = cmd->distance;
-                cmd_json["fire_advice"]  = cmd->fire_advice;
+            auto cmd = cmd_in.read();
+            if (!cmd) {
+                return;
+            }
 
-                if (cmd->predicted_position) {
-                    cmd_json["predicted_position"] = {
-                        cmd->predicted_position->x(),
-                        cmd->predicted_position->y(),
-                        cmd->predicted_position->z()};
-                }
+            nlohmann::json cmd_json;
+            cmd_json["timestamp_ns"] = cmd->timestamp_ns;
+            cmd_json["yaw"]          = cmd->yaw;
+            cmd_json["pitch"]        = cmd->pitch;
+            cmd_json["yaw_diff"]     = cmd->yaw_diff;
+            cmd_json["pitch_diff"]   = cmd->pitch_diff;
+            cmd_json["distance"]     = cmd->distance;
+            cmd_json["fire_advice"]  = cmd->fire_advice;
 
-                GimbalCmdMessage msg;
-                msg.data = json_to_bytes(cmd_json.dump());
-                (*server)->enqueue_message(std::move(msg));
-            });*/
+            if (cmd->predicted_position) {
+                cmd_json["predicted_position"] = {
+                    cmd->predicted_position->x(), cmd->predicted_position->y(),
+                    cmd->predicted_position->z()};
+            }
+
+            GimbalCmdMessage msg;
+            msg.data = json_to_bytes(cmd_json.dump());
+            (*server)->enqueue_message(std::move(msg));
+        });
 }
 
 } // namespace fcs

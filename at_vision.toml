@@ -28,7 +28,7 @@ extrinsic_gimbal_imu = [
 ]
 
 [at_legacy_detector]
-backend_type = "nn_tup"  # or "nn"
+backend_type = "nn_tup"  # one of "nn", "nn_tup", "traditional"
 detect_color = 0              # 0=BLUE, 1=RED
 
 # Required if backend_type = "traditional"
@@ -38,12 +38,12 @@ light_min_ratio = 0.0001
 light_max_ratio = 1.0
 light_max_angle = 35.0
 light_color_diff_thresh = 30
-armor_min_light_ratio = 0.8
+armor_min_light_ratio = 0.7
 armor_min_small_center_distance = 0.8
-armor_max_small_center_distance = 3.5
-armor_min_large_center_distance = 3.5
-armor_max_large_center_distance = 8.0
-armor_max_angle = 40.0
+armor_max_small_center_distance = 3.2
+armor_min_large_center_distance = 3.2
+armor_max_large_center_distance = 5.5
+armor_max_angle = 35.0
 
 # Required if backend_type = "nn"
 [at_legacy_nn]
@@ -84,7 +84,7 @@ tracking_thres = 5
 matcher_gate = 10.0
 outpost_matcher_gate = 10.0
 
-[robot_model]
+[tracker.robot_model]
 sigma_a_xy = 10.0
 sigma_a_z = 2.0
 sigma_a_yaw = 20.0
@@ -94,7 +94,7 @@ meas_dist_k = 1.0
 yaw_log_k = 0.005
 
 
-[outpost_model]
+[tracker.outpost_model]
 sigma_q_xy = 10.0
 sigma_q_z = 1.7
 sigma_a_yaw = 0.5
@@ -108,18 +108,17 @@ yaw_log_k = 0.005
 shooting_range_w = 0.135  # Horizontal shooting window (meters)
 shooting_range_h = 0.135  # Vertical shooting window (meters)
 
-# Tracking mode parameters
-max_tracking_v_yaw = 6.0       # Max angular velocity for armor tracking (rad/s)
-prediction_delay = 0.0         # Additional prediction delay compensation (seconds)
-side_angle = 15.0              # Side angle threshold for armor selection (degrees)
+max_tracking_v_yaw = 60.0 # Max angular velocity for armor tracking (rad/s)
+prediction_delay = 0.0 # Additional prediction delay compensation (seconds)
+side_angle = 10.0              # Side angle threshold for armor selection (degrees)
 min_switching_v_yaw = 1.0      # Min angular velocity for armor switching (rad/s)
 transfer_thresh = 5            # State transfer counter threshold (frames)
 
 # Trajectory compensator type: "ideal" or "resistance"
 compensator_type = "resistance"
 
-[armor_solver.trajectory]
+[trajectory]
 iteration_times = 20       # Number of iterations for ballistic compensation
-bullet_speed = 25.0        # Bullet velocity (m/s)
-gravity = 9.8              # Gravity acceleration (m/s^2)
+bullet_speed = 22.0        # Bullet velocity (m/s)
+gravity = 9.7997              # Gravity acceleration (m/s^2)
 resistance = 0.001         # Air resistance coefficient

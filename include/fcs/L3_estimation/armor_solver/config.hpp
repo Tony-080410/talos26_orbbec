@@ -73,26 +73,10 @@ struct TrackerConfig {
             READ_KEY(t, outpost_matcher_gate);
 
             // Robot model noise parameters
-            if (const auto _r = t["robot_model"].as_table()) {
-                auto r = *_r;
-                READ_KEY(r, robot_params.sigma_a_xy);
-                READ_KEY(r, robot_params.sigma_a_z);
-                READ_KEY(r, robot_params.sigma_a_yaw);
-                READ_KEY(r, robot_params.sigma_r0);
-                READ_KEY(r, robot_params.sigma_h);
-                READ_KEY(r, robot_params.meas_dist_k);
-                READ_KEY(r, robot_params.yaw_log_k);
-            }
+            READ_SUB_OPT(robot_params, t);
 
             // Outpost model noise parameters
-            if (const auto _o = t["outpost_model"].as_table()) {
-                auto o = *_o;
-                READ_KEY(o, outpost_params.sigma_q_xy);
-                READ_KEY(o, outpost_params.sigma_q_z);
-                READ_KEY(o, outpost_params.sigma_a_yaw);
-                READ_KEY(o, outpost_params.meas_dist_k);
-                READ_KEY(o, outpost_params.yaw_log_k);
-            }
+            READ_SUB_OPT(outpost_params, t);
 
             return {};
         }

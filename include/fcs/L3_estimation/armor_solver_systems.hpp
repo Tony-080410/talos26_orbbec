@@ -3,6 +3,7 @@
 #include "armor_solver/solver.hpp"
 #include "armor_solver/tracker.hpp"
 #include "armor_solver/types.hpp"
+#include "core/time.hpp"
 
 #include "ecs/execution_policy.hpp"
 #include "fcs/core/types.hpp"
@@ -84,8 +85,7 @@ void register_armor_solver_systems(App& app) {
 
             // Get current real-time for prediction (not measurement timestamp!)
             // This matches at_vision's: solver_->solve(target_snapshot, now(), tf_buffer)
-            const uint64_t current_time_ns = static_cast<uint64_t>(
-                std::chrono::high_resolution_clock::now().time_since_epoch().count());
+            const uint64_t current_time_ns = clock::now_ns();
 
             // Lookup muzzle transform in odom frame
             // Use current time (not measurement timestamp!) to get latest gimbal pose
