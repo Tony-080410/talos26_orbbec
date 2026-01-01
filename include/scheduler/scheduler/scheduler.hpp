@@ -4,6 +4,7 @@
 #include "../ecs/system.hpp"
 #include "../ecs/system_meta.hpp"
 #include "../ecs/world.hpp"
+#include "performance_probe.hpp"
 
 #include <tbb/task_arena.h>
 #include <tbb/task_group.h>
@@ -204,7 +205,7 @@ public:
     // Notification (called by exclusive threads)
     // ========================================================================
 
-    void notify() noexcept;
+    void notify(std::size_t system_index) noexcept;
 
     // ========================================================================
     // Diagnostics
@@ -220,6 +221,12 @@ public:
     /// Print registered systems info
     void print_systems() const;
 
+    /// Print performance statistics
+    void print_stats() const;
+
+    /// Get performance statistics as JSON string
+    [[nodiscard]] std::string get_stats_json() const;
+
 private:
     // ========================================================================
     // Internal Types
@@ -231,6 +238,35 @@ private:
         std::atomic<bool>* running;
         Scheduler* scheduler;
         World* world;
+        std::size_t system_index;
+    };
+
+    /// Performance statistics for exclusive systems
+    struct ExclusiveStats {
+        std::atomic<std::uint64_t> notify_count{0};
+        LatencyHistogram latency_hist;
+
+        ExclusiveStats() = default;
+
+        // Move constructor: atomics are not movable, so we load and store
+        ExclusiveStats(ExclusiveStats&& other) noexcept
+            : notify_count(other.notify_count.load(std::memory_order_relaxed))
+            , latency_hist(std::move(other.latency_hist)) {}
+
+        ExclusiveStats(const ExclusiveStats&)            = delete;
+        ExclusiveStats& operator=(const ExclusiveStats&) = delete;
+        ExclusiveStats& operator=(ExclusiveStats&&)      = delete;
+    };
+
+    /// Performance statistics for compute systems
+    struct ComputeStats {
+        LatencyHistogram latency_hist;
+
+        ComputeStats()                               = default;
+        ComputeStats(ComputeStats&&)                 = default;
+        ComputeStats(const ComputeStats&)            = delete;
+        ComputeStats& operator=(const ComputeStats&) = delete;
+        ComputeStats& operator=(ComputeStats&&)      = delete;
     };
 
     // ========================================================================
@@ -273,6 +309,11 @@ private:
 
     // Stats
     std::atomic<std::uint64_t> compute_cycles_{0};
+    std::atomic<std::uint64_t> compute_total_time_ns_{0};
+    std::atomic<std::uint64_t> compute_last_time_ns_{0};
+    std::vector<ExclusiveStats> exclusive_stats_;
+    std::vector<ComputeStats> compute_stats_;
+    TimePoint stats_start_time_;
 };
 
 // ============================================================================

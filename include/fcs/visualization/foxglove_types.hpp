@@ -86,11 +86,16 @@ struct GimbalSceneMessage {
     foxglove::schemas::SceneUpdate scene;
 };
 
+/// 性能统计消息 (JSON)
+struct PerfStatsMessage {
+    std::vector<uint8_t> data;
+};
+
 /// Foxglove 消息联合类型
 using FoxgloveMessage = std::variant<
     ImageMessage, SceneMessage, TrackSceneMessage, TfMessage, ArmorDataMessage, BinaryImageMessage,
     PatternImageMessage, DebugLightsMessage, DebugArmorsMessage, MeasurementMessage, TargetMessage,
-    GimbalCmdMessage, GimbalSceneMessage>;
+    GimbalCmdMessage, GimbalSceneMessage, PerfStatsMessage>;
 
 // ============================================================================
 // Utility Functions

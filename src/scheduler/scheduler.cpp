@@ -1,10 +1,14 @@
 #include "scheduler/scheduler/scheduler.hpp"
+#include "performance_probe.hpp"
 #include "scheduler/primitives/thread_affinity.hpp"
 
 #include <algorithm>
+#include <cinttypes>
 #include <cstdio>
 #include <functional>
+#include <nlohmann/json.hpp>
 #include <set>
+#include <sstream>
 #include <unordered_map>
 
 namespace talos {
@@ -15,7 +19,8 @@ namespace talos {
 
 Scheduler::Scheduler(World& world, const SchedulerConfig config)
     : world_(world)
-    , config_(config) {}
+    , config_(config)
+    , stats_start_time_(Clock::now()) {}
 
 Scheduler::~Scheduler() {
     stop();
@@ -50,6 +55,18 @@ auto Scheduler::build() -> BuildResult {
         compute_arena_ = std::make_unique<tbb::task_arena>();
     }
 
+    // Initialize stats for exclusive systems
+    exclusive_stats_.reserve(exclusive_systems_.size());
+    for (std::size_t i = 0; i < exclusive_systems_.size(); ++i) {
+        exclusive_stats_.emplace_back();
+    }
+
+    // Initialize stats for compute systems
+    compute_stats_.reserve(compute_systems_.size());
+    for (std::size_t i = 0; i < compute_systems_.size(); ++i) {
+        compute_stats_.emplace_back();
+    }
+
     return {};
 }
 
@@ -63,13 +80,15 @@ auto Scheduler::run() -> std::expected<void, SchedulerError> {
     }
 
     // Start exclusive threads
-    for (auto& entry : exclusive_systems_) {
+    for (std::size_t i = 0; i < exclusive_systems_.size(); ++i) {
+        auto& entry = exclusive_systems_[i];
         ExclusiveContext ctx{
-            .system    = entry.system.get(),
-            .policy    = entry.policy,
-            .running   = &running_,
-            .scheduler = this,
-            .world     = &world_,
+            .system       = entry.system.get(),
+            .policy       = entry.policy,
+            .running      = &running_,
+            .scheduler    = this,
+            .world        = &world_,
+            .system_index = i,
         };
 
         exclusive_threads_.emplace_back([ctx]() mutable { run_exclusive_thread(ctx); });
@@ -99,7 +118,12 @@ auto Scheduler::is_running() const noexcept -> bool {
 // Notification
 // ============================================================================
 
-void Scheduler::notify() noexcept { work_version_.fetch_add(1, std::memory_order_release); }
+void Scheduler::notify(const std::size_t system_index) noexcept {
+    work_version_.fetch_add(1, std::memory_order_release);
+    if (system_index < exclusive_stats_.size()) {
+        exclusive_stats_[system_index].notify_count.fetch_add(1, std::memory_order_relaxed);
+    }
+}
 
 // ============================================================================
 // Stats
@@ -140,6 +164,154 @@ void Scheduler::print_systems() const {
     }
 }
 
+void Scheduler::print_stats() const {
+    const auto now            = Clock::now();
+    const auto elapsed_sec    = std::chrono::duration<double>(now - stats_start_time_).count();
+    const auto compute_cycles = compute_cycles_.load(std::memory_order_relaxed);
+    const auto compute_total  = compute_total_time_ns_.load(std::memory_order_relaxed);
+    const auto compute_last   = compute_last_time_ns_.load(std::memory_order_relaxed);
+    const auto notify_total   = work_version_.load(std::memory_order_relaxed);
+
+    printf("\n");
+    printf("========== Scheduler Performance Stats ==========\n");
+    printf("Runtime: %.1fs\n", elapsed_sec);
+    printf("\n");
+
+    // Compute loop stats
+    printf("Compute Loop:\n");
+    printf("  Cycles:     %" PRIu64 " (%.1f Hz)\n", compute_cycles, compute_cycles / elapsed_sec);
+    if (compute_cycles > 0) {
+        printf("  Avg time:   %.2f ms\n", compute_total / 1e6 / compute_cycles);
+        printf("  Last time:  %.2f ms\n", compute_last / 1e6);
+    }
+    printf("  Total notifies: %" PRIu64 " (%.1f Hz)\n", notify_total, notify_total / elapsed_sec);
+    printf("\n");
+
+    // Exclusive systems stats
+    printf("Exclusive Systems:\n");
+    for (std::size_t i = 0; i < exclusive_systems_.size(); ++i) {
+        const auto& entry     = exclusive_systems_[i];
+        const auto& sys_stats = exclusive_stats_[i];
+        const auto notify_cnt = sys_stats.notify_count.load(std::memory_order_relaxed);
+        const auto latency    = sys_stats.latency_hist.compute();
+
+        printf(
+            "  [%s] (target: %uHz)\n", entry.system->meta().name.c_str(),
+            entry.policy.frequency_hz);
+        printf("    Runs:     %zu (%.1f Hz)\n", latency.count, latency.count / elapsed_sec);
+        printf("    Notifies: %" PRIu64 "\n", notify_cnt);
+        if (latency.count > 0) {
+            printf("    Min:      %.3f ms\n", latency.min_ns / 1e6);
+            printf("    P50:      %.3f ms\n", latency.p50_ns / 1e6);
+            printf("    P95:      %.3f ms\n", latency.p95_ns / 1e6);
+            printf("    P99:      %.3f ms\n", latency.p99_ns / 1e6);
+            printf("    P99.9:    %.3f ms\n", latency.p999_ns / 1e6);
+            printf("    Mean:     %.3f ms\n", latency.mean_ns / 1e6);
+            printf("    Max:      %.3f ms\n", latency.max_ns / 1e6);
+            printf("    StdDev:   %.3f ms\n", latency.stddev_ns / 1e6);
+        }
+    }
+
+    // Compute systems stats
+    printf("\nCompute Systems:\n");
+    for (std::size_t i = 0; i < compute_systems_.size(); ++i) {
+        const auto& entry     = compute_systems_[i];
+        const auto& sys_stats = compute_stats_[i];
+        const auto latency    = sys_stats.latency_hist.compute();
+
+        printf("  [%s]\n", entry.system->meta().name.c_str());
+        printf("    Runs:   %zu (%.1f Hz)\n", latency.count, latency.count / elapsed_sec);
+        if (latency.count > 0) {
+            printf("    Min:    %.3f ms\n", latency.min_ns / 1e6);
+            printf("    P50:    %.3f ms\n", latency.p50_ns / 1e6);
+            printf("    P95:    %.3f ms\n", latency.p95_ns / 1e6);
+            printf("    P99:    %.3f ms\n", latency.p99_ns / 1e6);
+            printf("    P99.9:  %.3f ms\n", latency.p999_ns / 1e6);
+            printf("    Mean:   %.3f ms\n", latency.mean_ns / 1e6);
+            printf("    Max:    %.3f ms\n", latency.max_ns / 1e6);
+            printf("    StdDev: %.3f ms\n", latency.stddev_ns / 1e6);
+        }
+    }
+    printf("==================================================\n");
+    printf("\n");
+}
+
+auto Scheduler::get_stats_json() const -> std::string {
+    using json = nlohmann::json;
+
+    const auto elapsed =
+        std::chrono::duration_cast<std::chrono::duration<double>>(Clock::now() - stats_start_time_);
+    const double elapsed_sec = elapsed.count();
+
+    // Compute loop stats
+    const auto cycles       = compute_cycles_.load(std::memory_order_relaxed);
+    const auto total_time   = compute_total_time_ns_.load(std::memory_order_relaxed);
+    const auto last_time    = compute_last_time_ns_.load(std::memory_order_relaxed);
+    const auto notify_total = work_version_.load(std::memory_order_relaxed);
+
+    json root;
+    root["runtime_seconds"] = elapsed_sec;
+
+    // Compute loop
+    json& compute_json             = root["compute_loop"];
+    compute_json["cycles"]         = cycles;
+    compute_json["frequency_hz"]   = cycles / elapsed_sec;
+    compute_json["avg_time_ms"]    = cycles > 0 ? (total_time / 1e6 / cycles) : 0.0;
+    compute_json["last_time_ms"]   = last_time / 1e6;
+    compute_json["total_notifies"] = notify_total;
+
+    // Exclusive systems
+    json& exclusive_arr = root["exclusive_systems"] = json::array();
+    for (std::size_t i = 0; i < exclusive_systems_.size(); ++i) {
+        const auto& entry     = exclusive_systems_[i];
+        const auto& sys_stats = exclusive_stats_[i];
+        const auto notify_cnt = sys_stats.notify_count.load(std::memory_order_relaxed);
+        const auto latency    = sys_stats.latency_hist.compute();
+
+        json sys;
+        sys["name"]      = entry.system->meta().name;
+        sys["target_hz"] = entry.policy.frequency_hz;
+        sys["runs"]      = latency.count;
+        sys["actual_hz"] = latency.count / elapsed_sec;
+        sys["notifies"]  = notify_cnt;
+        sys["min_ms"]    = latency.min_ns / 1e6;
+        sys["p50_ms"]    = latency.p50_ns / 1e6;
+        sys["p95_ms"]    = latency.p95_ns / 1e6;
+        sys["p99_ms"]    = latency.p99_ns / 1e6;
+        sys["p999_ms"]   = latency.p999_ns / 1e6;
+        sys["mean_ms"]   = latency.mean_ns / 1e6;
+        sys["max_ms"]    = latency.max_ns / 1e6;
+        sys["stddev_ms"] = latency.stddev_ns / 1e6;
+
+        exclusive_arr.push_back(sys);
+    }
+
+    // Compute systems
+    json& compute_arr = root["compute_systems"] = json::array();
+    for (std::size_t i = 0; i < compute_systems_.size(); ++i) {
+        const auto& entry     = compute_systems_[i];
+        const auto& sys_stats = compute_stats_[i];
+        const auto latency    = sys_stats.latency_hist.compute();
+
+        json sys;
+        sys["name"]      = entry.system->meta().name;
+        sys["runs"]      = latency.count;
+        sys["actual_hz"] = latency.count / elapsed_sec;
+        sys["min_ms"]    = latency.min_ns / 1e6;
+        sys["p50_ms"]    = latency.p50_ns / 1e6;
+        sys["p95_ms"]    = latency.p95_ns / 1e6;
+        sys["p99_ms"]    = latency.p99_ns / 1e6;
+        sys["p999_ms"]   = latency.p999_ns / 1e6;
+        sys["mean_ms"]   = latency.mean_ns / 1e6;
+        sys["max_ms"]    = latency.max_ns / 1e6;
+        sys["stddev_ms"] = latency.stddev_ns / 1e6;
+
+        compute_arr.push_back(sys);
+    }
+
+    return root.dump();
+}
+
 // ============================================================================
 // Exclusive Thread
 // ============================================================================
@@ -170,13 +342,19 @@ void Scheduler::run_exclusive_thread(ExclusiveContext ctx) {
 
     const auto frequency     = ctx.policy.frequency_hz;
     const bool should_notify = ctx.policy.notifies;
+    auto& stats              = ctx.scheduler->exclusive_stats_[ctx.system_index];
 
     if (frequency == 0) {
         // Unlimited frequency mode: run as fast as possible
         while (ctx.running->load(std::memory_order_acquire)) {
+            LatencyProbe probe;
             ctx.system->run(*ctx.world);
+            const auto elapsed = probe.elapsed_ns();
+
+            stats.latency_hist.record(elapsed);
+
             if (should_notify) {
-                ctx.scheduler->notify();
+                ctx.scheduler->notify(ctx.system_index);
             }
         }
         return;
@@ -191,11 +369,15 @@ void Scheduler::run_exclusive_thread(ExclusiveContext ctx) {
         next_tick += period;
 
         // Execute system
+        LatencyProbe probe;
         ctx.system->run(*ctx.world);
+        const auto elapsed = probe.elapsed_ns();
+
+        stats.latency_hist.record(elapsed);
 
         // Notify scheduler if configured
         if (should_notify) {
-            ctx.scheduler->notify();
+            ctx.scheduler->notify(ctx.system_index);
         }
 
         // Busy wait until next tick
@@ -208,12 +390,28 @@ void Scheduler::run_exclusive_thread(ExclusiveContext ctx) {
 // ============================================================================
 
 void Scheduler::run_compute_loop() {
+    const auto print_interval = std::chrono::seconds(5);
+    auto last_print           = Clock::now();
+
     while (running_.load(std::memory_order_acquire)) {
         if (const auto current_version = work_version_.load(std::memory_order_acquire);
             current_version != last_seen_version_) {
             last_seen_version_ = current_version;
+
+            LatencyProbe probe;
             run_compute_once();
+            const auto elapsed = probe.elapsed_ns();
+
             compute_cycles_.fetch_add(1, std::memory_order_relaxed);
+            compute_total_time_ns_.fetch_add(elapsed, std::memory_order_relaxed);
+            compute_last_time_ns_.store(elapsed, std::memory_order_relaxed);
+        }
+
+        // Print stats every 5 seconds
+        const auto now = Clock::now();
+        if (now - last_print >= print_interval) {
+            print_stats();
+            last_print = now;
         }
 
         std::this_thread::yield();
@@ -233,12 +431,23 @@ void Scheduler::run_compute_once() {
 
             if (level.size() == 1) {
                 // Single system: execute directly, avoid task_group overhead
-                compute_systems_[level[0]].system->run(world_);
+                const auto idx = level[0];
+                LatencyProbe probe;
+                compute_systems_[idx].system->run(world_);
+                const auto elapsed = probe.elapsed_ns();
+
+                compute_stats_[idx].latency_hist.record(elapsed);
             } else {
                 // Multiple systems: execute in parallel
                 tbb::task_group tg;
                 for (const auto idx : level) {
-                    tg.run([this, idx] { compute_systems_[idx].system->run(world_); });
+                    tg.run([this, idx] {
+                        LatencyProbe probe;
+                        compute_systems_[idx].system->run(world_);
+                        const auto elapsed = probe.elapsed_ns();
+
+                        compute_stats_[idx].latency_hist.record(elapsed);
+                    });
                 }
                 tg.wait();
             }

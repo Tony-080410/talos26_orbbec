@@ -248,6 +248,14 @@ private:
             spdlog::error("camera_calib channel create failed: {}", foxglove::strerror(r.error()));
             init_success_ = false;
         }
+
+        // Performance statistics channel
+        if (auto r = foxglove::RawChannel::create("/perf_stats", "json"); r.has_value()) {
+            perf_stats_ch_.emplace(std::move(r.value()));
+        } else {
+            spdlog::error("perf_stats channel create failed: {}", foxglove::strerror(r.error()));
+            init_success_ = false;
+        }
     }
 
     void message_sender_thread() {
@@ -306,6 +314,10 @@ private:
                     } else if constexpr (std::is_same_v<T, GimbalSceneMessage>) {
                         if (gimbal_scene_ch_)
                             gimbal_scene_ch_->log(m.scene);
+                    } else if constexpr (std::is_same_v<T, PerfStatsMessage>) {
+                        if (perf_stats_ch_)
+                            perf_stats_ch_->log(
+                                reinterpret_cast<const std::byte*>(m.data.data()), m.data.size());
                     }
                 },
                 msg);
@@ -334,6 +346,7 @@ private:
     std::optional<foxglove::RawChannel> cmd_gimbal_ch_;
     std::optional<foxglove::schemas::SceneUpdateChannel> gimbal_scene_ch_;
     std::optional<foxglove::schemas::CameraCalibrationChannel> camera_calib_ch_;
+    std::optional<foxglove::RawChannel> perf_stats_ch_;
 
     // TF exporter (使用外部共享的 CoordinateSystem)
     std::optional<fast_tf::FoxgloveExporter> tf_exporter_;

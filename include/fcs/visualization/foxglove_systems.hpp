@@ -27,7 +27,7 @@ namespace fcs {
 
 /// 注册所有 Foxglove 发布系统
 template <typename App>
-void register_foxglove_systems(App& app) {
+void register_foxglove_systems(App& app, talos::Scheduler* scheduler_ptr = nullptr) {
     // 图像发布系统 (同时发布 camera_calibration 和 TF)
     app.template add_system<talos::pool_compute>(
         "foxglove_image_pub",
@@ -618,6 +618,31 @@ void register_foxglove_systems(App& app) {
                 (*server)->enqueue_message(std::move(scene_msg));
             }
         });
+
+    // 性能统计发布系统 (1 Hz, exclusive_silent)
+    if (scheduler_ptr) {
+        app.template add_system<talos::exclusive_silent<1>>(
+            "foxglove_perf_stats_pub",
+            [scheduler_ptr, server_ptr = std::shared_ptr<FoxgloveServer>{}](
+                talos::res<std::shared_ptr<FoxgloveServer>> server) mutable {
+                // 第一次调用时保存 server 指针
+                if (!server_ptr) {
+                    server_ptr = *server;
+                }
+
+                if (!server_ptr->is_initialized()) {
+                    return;
+                }
+
+                // 获取 scheduler 的性能统计 JSON
+                std::string json_str = scheduler_ptr->get_stats_json();
+
+                // 发送到 foxglove
+                PerfStatsMessage msg;
+                msg.data = json_to_bytes(json_str);
+                server_ptr->enqueue_message(std::move(msg));
+            });
+    }
 }
 
 } // namespace fcs

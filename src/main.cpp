@@ -211,7 +211,7 @@ int main() {
             std::make_shared<fcs::FoxgloveServer>(config.foxglove.port, config.foxglove.host);
         if (foxglove_server->is_initialized()) {
             world.insert_resource(foxglove_server);
-            fcs::register_foxglove_systems(scheduler);
+            fcs::register_foxglove_systems(scheduler, &scheduler);
             spdlog::info(
                 "Foxglove server enabled on ws://{}:{}", config.foxglove.host,
                 config.foxglove.port);
