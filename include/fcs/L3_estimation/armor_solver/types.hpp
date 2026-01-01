@@ -128,6 +128,9 @@ struct GimbalCommand {
 
     // Predicted armor position (for visualization)
     std::optional<Eigen::Vector3d> predicted_position;
+
+    // Trajectory points (x, z) in muzzle_link frame (for visualization)
+    std::vector<std::pair<double, double>> trajectory;
 };
 
 // ============================================================================

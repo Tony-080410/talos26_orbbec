@@ -81,11 +81,16 @@ struct GimbalCmdMessage {
     std::vector<uint8_t> data;
 };
 
+/// 云台场景消息 (弹道/预测位置可视化)
+struct GimbalSceneMessage {
+    foxglove::schemas::SceneUpdate scene;
+};
+
 /// Foxglove 消息联合类型
 using FoxgloveMessage = std::variant<
     ImageMessage, SceneMessage, TrackSceneMessage, TfMessage, ArmorDataMessage, BinaryImageMessage,
     PatternImageMessage, DebugLightsMessage, DebugArmorsMessage, MeasurementMessage, TargetMessage,
-    GimbalCmdMessage>;
+    GimbalCmdMessage, GimbalSceneMessage>;
 
 // ============================================================================
 // Utility Functions

@@ -212,7 +212,14 @@ public:
         cmd.pitch_diff = pitch - pitch_;
         cmd.predicted_position =
             Eigen::Vector3d(chosen_armor_world.x(), chosen_armor_world.y(), chosen_armor_world.z());
-
+        cmd.trajectory = compensator_->get_trajectory(15, pitch);
+        // Rotate
+        for (auto& p : cmd.trajectory) {
+            double x = p.first;
+            double y = p.second;
+            p.first  = x * cos(pitch) + y * sin(pitch);
+            p.second = -x * sin(pitch) + y * cos(pitch);
+        }
         return cmd;
     }
 

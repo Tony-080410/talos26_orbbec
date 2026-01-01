@@ -231,6 +231,15 @@ private:
             init_success_ = false;
         }
 
+        // Gimbal scene channel (弹道/预测位置可视化)
+        if (auto r = foxglove::schemas::SceneUpdateChannel::create("/solver/scene");
+            r.has_value()) {
+            gimbal_scene_ch_.emplace(std::move(r.value()));
+        } else {
+            spdlog::error("gimbal_scene channel create failed: {}", foxglove::strerror(r.error()));
+            init_success_ = false;
+        }
+
         // Camera calibration channel
         if (auto r = foxglove::schemas::CameraCalibrationChannel::create("/camera_info");
             r.has_value()) {
@@ -294,6 +303,9 @@ private:
                         if (cmd_gimbal_ch_)
                             cmd_gimbal_ch_->log(
                                 reinterpret_cast<const std::byte*>(m.data.data()), m.data.size());
+                    } else if constexpr (std::is_same_v<T, GimbalSceneMessage>) {
+                        if (gimbal_scene_ch_)
+                            gimbal_scene_ch_->log(m.scene);
                     }
                 },
                 msg);
@@ -320,6 +332,7 @@ private:
     std::optional<foxglove::RawChannel> measurement_ch_;
     std::optional<foxglove::RawChannel> target_ch_;
     std::optional<foxglove::RawChannel> cmd_gimbal_ch_;
+    std::optional<foxglove::schemas::SceneUpdateChannel> gimbal_scene_ch_;
     std::optional<foxglove::schemas::CameraCalibrationChannel> camera_calib_ch_;
 
     // TF exporter (使用外部共享的 CoordinateSystem)

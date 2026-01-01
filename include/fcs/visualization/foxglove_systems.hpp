@@ -520,6 +520,104 @@ void register_foxglove_systems(App& app) {
             msg.data = json_to_bytes(cmd_json.dump());
             (*server)->enqueue_message(std::move(msg));
         });
+
+    // 云台场景发布系统 (弹道/预测位置/选择点可视化)
+    app.template add_system<talos::pool_compute>(
+        "foxglove_gimbal_scene_pub",
+        [](talos::spmc<L3::GimbalCommand, SolverOutputChannelTag> cmd_in,
+           talos::res<std::shared_ptr<FoxgloveServer>> server) {
+            if (!(*server)->is_initialized() || !cmd_in.has_new()) {
+                return;
+            }
+
+            auto cmd = cmd_in.read();
+            if (!cmd || cmd->distance <= 0) {
+                return;
+            }
+
+            std::vector<foxglove::schemas::SceneEntity> entities;
+
+            // Selection marker - 瞄准点 (黄绿色球体)
+            {
+                foxglove::schemas::SceneEntity entity;
+                entity.id        = "selection";
+                entity.frame_id  = "gimbal_link";
+                entity.lifetime  = foxglove::schemas::Duration{.nsec = 100000000};
+                entity.timestamp = timestamp_from_ns(cmd->timestamp_ns);
+
+                // 根据 yaw, pitch, distance 计算瞄准点位置
+                double x = cmd->distance * std::cos(cmd->pitch) * std::cos(cmd->yaw);
+                double y = cmd->distance * std::cos(cmd->pitch) * std::sin(cmd->yaw);
+                double z = cmd->distance * std::sin(cmd->pitch);
+
+                foxglove::schemas::SpherePrimitive sphere;
+                sphere.pose = foxglove::schemas::Pose();
+                sphere.pose->position.emplace();
+                sphere.pose->position->x = x;
+                sphere.pose->position->y = y;
+                sphere.pose->position->z = z;
+                sphere.pose->orientation = {0, 0, 0, 1};
+                sphere.size              = {0.1, 0.1, 0.1};
+                sphere.color             = foxglove::schemas::Color{1.0, 1.0, 0.0, 0.3}; // 黄绿色
+                entity.spheres.push_back(sphere);
+                entities.push_back(entity);
+            }
+
+            // Predicted position marker - 预测位置 (橙色球体)
+            if (cmd->predicted_position) {
+                foxglove::schemas::SceneEntity entity;
+                entity.id        = "predicted";
+                entity.frame_id  = "odom";
+                entity.lifetime  = foxglove::schemas::Duration{.nsec = 100000000};
+                entity.timestamp = timestamp_from_ns(cmd->timestamp_ns);
+
+                foxglove::schemas::SpherePrimitive sphere;
+                sphere.pose = foxglove::schemas::Pose();
+                sphere.pose->position.emplace();
+                sphere.pose->position->x = cmd->predicted_position->x();
+                sphere.pose->position->y = cmd->predicted_position->y();
+                sphere.pose->position->z = cmd->predicted_position->z();
+                sphere.pose->orientation = {0, 0, 0, 1};
+                sphere.size              = {0.08, 0.08, 0.08};
+                sphere.color             = foxglove::schemas::Color{1.0, 0.5, 0.2, 0.6}; // 橙色
+                entity.spheres.push_back(sphere);
+                entities.push_back(entity);
+            }
+
+            // Trajectory marker - 弹道轨迹 (点列)
+            if (!cmd->trajectory.empty()) {
+                foxglove::schemas::SceneEntity entity;
+                entity.id        = "trajectory";
+                entity.frame_id  = "muzzle_link";
+                entity.lifetime  = foxglove::schemas::Duration{.nsec = 100000000};
+                entity.timestamp = timestamp_from_ns(cmd->timestamp_ns);
+
+                // 根据 fire_advice 改变颜色
+                foxglove::schemas::Color traj_color = cmd->fire_advice
+                                                        ? foxglove::schemas::Color{0, 1, 0, 0.6}
+                                                        : foxglove::schemas::Color{1, 1, 1, 0.3};
+
+                for (const auto& [x, z] : cmd->trajectory) {
+                    foxglove::schemas::SpherePrimitive point;
+                    point.pose = foxglove::schemas::Pose();
+                    point.pose->position.emplace();
+                    point.pose->position->x = x;
+                    point.pose->position->y = 0;
+                    point.pose->position->z = z;
+                    point.pose->orientation = {0, 0, 0, 1};
+                    point.size              = {0.01, 0.01, 0.01};
+                    point.color             = traj_color;
+                    entity.spheres.push_back(point);
+                }
+                entities.push_back(entity);
+            }
+
+            if (!entities.empty()) {
+                GimbalSceneMessage scene_msg;
+                scene_msg.scene.entities = std::move(entities);
+                (*server)->enqueue_message(std::move(scene_msg));
+            }
+        });
 }
 
 } // namespace fcs
