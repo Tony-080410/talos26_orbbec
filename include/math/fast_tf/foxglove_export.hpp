@@ -49,7 +49,7 @@ private:
         const CoordinateSystem<N>& system, foxglove::schemas::FrameTransforms& msg,
         uint64_t ts) noexcept {
         if constexpr (!root_frame<Descendant>) {
-            if (auto result = system[Descendant::index].at_interpolated_clamped(ts); result) {
+            if (auto result = system[Descendant::index].at_interpolated(ts); result) {
                 append_transform<Descendant>(msg, FuckTransform<Descendant>(result->transform), ts);
                 append_ancestors<typename Descendant::ancestor, N>(system, msg, ts);
             }

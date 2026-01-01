@@ -7,6 +7,7 @@
 
 #include "math/fast_tf/infantry.hpp"
 
+#include <chrono>
 #include <memory>
 #include <scheduler/bevy_ecs.hpp>
 
@@ -85,7 +86,7 @@ void register_at_legacy_detection_systems(App& app) {
            talos::spmc_mut<AtLegacyArmorMeasurementBatch, AtLegacyMeasurementChannelTag>
                measurement_out,
            talos::res<std::shared_ptr<AtLegacyPnPSolver>> solver_ptr,
-           talos::res<std::shared_ptr<fast_tf::CoordinateSystem<64>>> tf_system) {
+           talos::res<std::shared_ptr<fast_tf::CoordinateSystem<1024>>> tf_system) {
             // Check for new detection
             if (!detection_in.has_new())
                 return;
@@ -105,7 +106,26 @@ void register_at_legacy_detection_systems(App& app) {
 
             // Solve PnP for all detections (in camera_optical frame)
             auto measurements = solver->solve_batch(batch->detections, batch->timestamp_ns);
-
+            /*
+                        // Wait for TF to be available (similar to ROS2 MessageFilter)
+                        // This ensures gimbal pose for this timestamp has arrived
+                        constexpr int kMaxWaitMs = 10;
+                        bool tf_ready            = false;
+                        for (int i = 0; i < kMaxWaitMs; ++i) {
+                            auto range =
+                                (**tf_system)[fast_tf::gimbal_link_fuxk_frame::index].time_range();
+                            if (range && range->second >= batch->timestamp_ns) {
+                                tf_ready = true;
+                                break;
+                            }
+                            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                        }
+                        if (!tf_ready) {
+                            spdlog::warn(
+                                "TF not available for timestamp {}, dropping frame",
+               batch->timestamp_ns); return;
+                        }
+            */
             // Transform each measurement from camera_optical to odom frame
             for (auto& meas : measurements) {
                 auto tf_result =
@@ -117,6 +137,10 @@ void register_at_legacy_detection_systems(App& app) {
                 if (tf_result) {
                     // Replace with odom frame transform (type-erased)
                     meas.transform = *tf_result;
+                } else {
+                    spdlog::error(
+                        "TF lookup failed for timestamp {}: {}", batch->timestamp_ns,
+                        fast_tf::to_string(tf_result.error()));
                 }
             }
 

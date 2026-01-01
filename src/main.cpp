@@ -192,7 +192,7 @@ int main() {
         "Solver initialized (bullet_speed={:.1f}m/s)", config.solver().trajectory.bullet_speed);
 
     // Create coordinate system for fast_tf lookups
-    world.insert_resource(fast_tf::infantry_new<64>());
+    world.insert_resource(fast_tf::infantry_new<1024>());
 
     // Insert config as shared resource (for foxglove and other systems)
     world.insert_resource(std::make_shared<fcs::TalosConfig>(config));
@@ -228,9 +228,10 @@ int main() {
     world.insert_resource(ImuSnapshot{});
     // IMU: 100Hz, silent update (no notify)
     scheduler.add_system<talos::exclusive_silent<1000>>(
-        "imu_reader", [daedalus, &ipc_device, &usb_device, &imu_data](
-                          talos::res_mut<std::shared_ptr<fast_tf::CoordinateSystem<64>>> tf_buffer,
-                          talos::res_mut<ImuSnapshot> imu_out) {
+        "imu_reader",
+        [daedalus, &ipc_device, &usb_device, &imu_data](
+            talos::res_mut<std::shared_ptr<fast_tf::CoordinateSystem<1024>>> tf_buffer,
+            talos::res_mut<ImuSnapshot> imu_out) {
             if (daedalus) {
                 if (const auto pose = ipc_device->recv_pose(ipc::POSE_GIMBAL)) {
                     const Eigen::Quaterniond q(pose->qw, pose->qx, pose->qy, pose->qz);

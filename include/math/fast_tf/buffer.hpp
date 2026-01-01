@@ -165,6 +165,10 @@ public:
             if (entry.timestamp_ns == ts) {
                 return entry;
             }
+            // static transform
+            if (entry.timestamp_ns == 0) {
+                return TransformEntry{ts, entry.transform};
+            }
             return std::unexpected(TransformError::ExtrapolationRequired);
         }
 

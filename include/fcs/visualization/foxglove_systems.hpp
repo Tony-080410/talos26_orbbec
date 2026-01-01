@@ -34,7 +34,7 @@ void register_foxglove_systems(App& app) {
         [](talos::spmc<AtLegacyImageFrame, AtLegacyImageChannelTag> img_in,
            talos::res<std::shared_ptr<FoxgloveServer>> server,
            talos::res<std::shared_ptr<TalosConfig>> config,
-           talos::res<std::shared_ptr<fast_tf::CoordinateSystem<64>>> tf_buffer) {
+           talos::res<std::shared_ptr<fast_tf::CoordinateSystem<1024>>> tf_buffer) {
             if (!(*server)->is_initialized() || !img_in.has_new()) {
                 return;
             }

@@ -126,8 +126,8 @@ public:
     }
 
     /// 发布 TF 树 (使用外部共享的 CoordinateSystem)
-    void
-        publish_tf(const fast_tf::CoordinateSystem<64>& tf_buffer, uint64_t timestamp_ns) noexcept {
+    void publish_tf(
+        const fast_tf::CoordinateSystem<1024>& tf_buffer, uint64_t timestamp_ns) noexcept {
         if (tf_exporter_) {
             tf_exporter_->publish_entire<fast_tf::camera_optical_fuxk_frame>(
                 tf_buffer, timestamp_ns);

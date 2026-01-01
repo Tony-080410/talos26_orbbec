@@ -85,9 +85,9 @@ matcher_gate = 10.0
 outpost_matcher_gate = 10.0
 
 [tracker.robot_model]
-sigma_a_xy = 10.0
-sigma_a_z = 2.0
-sigma_a_yaw = 20.0
+sigma_a_xy = 5.0
+sigma_a_z = 1.0
+sigma_a_yaw = 10.0
 sigma_r0 = 1.0
 sigma_h = 0.8
 meas_dist_k = 1.0

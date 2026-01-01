@@ -34,7 +34,7 @@ struct camera_optical_fuxk_frame {
     using ancestor                             = camera_link_fuxk_frame;
 };
 ;
-DECL(muzzle_link, camera_link);
+DECL(muzzle_link, gimbal_link);
 
 // 防止外部使用
 #undef DECL_ROOT
@@ -121,7 +121,7 @@ constexpr auto
         return std::unexpected(TransformError::FrameNotFound);
     } else {
         const auto& buffer = system[From::index];
-        auto result        = buffer.at_interpolated_clamped(ns);
+        auto result        = buffer.at_interpolated(ns);
         if (!result) {
             return std::unexpected(result.error());
         }

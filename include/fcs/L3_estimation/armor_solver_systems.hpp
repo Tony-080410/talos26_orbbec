@@ -73,7 +73,7 @@ void register_armor_solver_systems(App& app) {
         "armor_solver", [](talos::spmc<TrackerOutput, TrackerOutputChannelTag> tracker_in,
                            talos::spmc_mut<GimbalCommand, SolverOutputChannelTag> cmd_out,
                            talos::res<std::shared_ptr<Solver>> solver,
-                           talos::res<std::shared_ptr<fast_tf::CoordinateSystem<64>>> tf_system) {
+                           talos::res<std::shared_ptr<fast_tf::CoordinateSystem<1024>>> tf_system) {
             if (!tracker_in.has_new()) {
                 return;
             }
@@ -95,7 +95,7 @@ void register_armor_solver_systems(App& app) {
                     **tf_system,
                     fast_tf::FuckTransform<fast_tf::muzzle_link_fuxk_frame>{
                         fast_tf::TransformMatrix4d{}},
-                    current_time_ns);
+                    target->timestamp_ns);
 
             if (!tf_result) {
                 return;
