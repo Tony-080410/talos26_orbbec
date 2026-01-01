@@ -273,11 +273,6 @@ int main() {
             last_seq = frame->seq;
 
             auto img = frame->image;
-            if (daedalus) {
-                img = cv::Mat();
-                frame->image.copyTo(img);
-                cv::cvtColor(img, img, cv::COLOR_RGB2BGR);
-            }
             cam_out.write(fcs::AtLegacyImageFrame{std::move(img), frame->timestamp_ns, seq});
         });
 
@@ -307,83 +302,6 @@ int main() {
             // Send to device (USB or IPC)
             output_interface->send(*cmd);
         });
-
-    // Tracker output consumer (for debugging/logging)
-    scheduler.add_system<talos::pool_compute>(
-        "tracker_logger",
-        [](talos::spmc<fcs::L3::TrackerOutput, fcs::TrackerOutputChannelTag> tracker_in) {
-            if (!tracker_in.has_new())
-                return;
-            auto output = tracker_in.read();
-            if (!output)
-                return;
-
-            const auto status_str = fcs::L3::to_string(output->status);
-            if (output->is_tracking()) {
-                if (output->is_robot()) {
-                    const auto& state = *output->robot_state();
-                    spdlog::info(
-                        "tracker [{}]: {} @ ({:.2f}, {:.2f}, {:.2f}) yaw={:.1f}deg "
-                        "v_yaw={:.1f}rad/s",
-                        status_str, fcs::to_string(output->target_name), state.position.x(),
-                        state.position.y(), state.position.z(), state.yaw * 180.0 / 3.14159,
-                        state.v_yaw);
-                } else if (output->is_outpost()) {
-                    const auto& state = *output->outpost_state();
-                    spdlog::info(
-                        "tracker [{}]: outpost @ ({:.2f}, {:.2f}) yaw={:.1f}deg v_yaw={:.1f}rad/s",
-                        status_str, state.position.x(), state.position.y(),
-                        state.yaw * 180.0 / 3.14159, state.v_yaw);
-                }
-            }
-        });
-
-    // Measurement consumer (for debugging/logging)
-    scheduler.add_system<talos::pool_compute>(
-        "debug_logger",
-        [](talos::spmc<fcs::AtLegacyImageFrame, fcs::AtLegacyImageChannelTag> cam_in,
-           talos::spmc<fcs::AtLegacyArmorDetectionBatch, fcs::AtLegacyDetectionChannelTag>
-               meas_in) {
-            if (!meas_in.has_new())
-                return;
-            auto batch = meas_in.read();
-            if (!batch || batch->empty())
-                return;
-            auto img_ = cam_in.read();
-            if (img_) {
-                auto img = img_->image;
-                for (const auto& m : batch->detections) {
-                    cv::line(
-                        img, m.corners[0], m.corners[1], cv::Scalar(0, 255, 0), 5, cv::LINE_AA);
-                    cv::line(
-                        img, m.corners[0], m.corners[3], cv::Scalar(0, 255, 0), 5, cv::LINE_AA);
-                    cv::line(
-                        img, m.corners[2], m.corners[1], cv::Scalar(0, 255, 0), 5, cv::LINE_AA);
-                    cv::line(
-                        img, m.corners[2], m.corners[3], cv::Scalar(0, 255, 0), 5, cv::LINE_AA);
-                    cv::circle(img, m.center(), 5, cv::Scalar(0, 255, 0), 5);
-                }
-                spdlog::info("ef");
-            }
-        });
-    scheduler.add_system<talos::pool_compute>(
-        "measurement_logger",
-        [](talos::spmc<fcs::AtLegacyArmorMeasurementBatch, fcs::AtLegacyMeasurementChannelTag>
-               meas_in) {
-            if (!meas_in.has_new())
-                return;
-            auto batch = meas_in.read();
-            if (!batch || batch->empty())
-                return;
-            for (const auto& m : batch->measurements) {
-                const auto translation = m.transform->translation();
-                spdlog::info(
-                    "armor detected: {} {} @ ({:.3f}, {:.3f}, {:.3f}) dist={:.3f}m",
-                    fcs::to_string(m.name), fcs::to_string(m.color), translation.x(),
-                    translation.y(), translation.z(), m.distance());
-            }
-        });
-
     scheduler.print_systems();
 
     // Build

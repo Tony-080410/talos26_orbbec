@@ -25,7 +25,7 @@ void IpcOutput::send(const L5::WeaponCommand& cmd) const noexcept {
 
     // 转换: rad → deg
     const auto yaw_deg    = static_cast<float>(cmd.yaw * RAD_TO_DEG);
-    const auto pitch_deg  = static_cast<float>(cmd.pitch * RAD_TO_DEG);
+    const auto pitch_deg  = -static_cast<float>(cmd.pitch * RAD_TO_DEG);
     const auto distance_m = cmd.valid ? static_cast<float>(cmd.distance) : -1.0f;
 
     client_->send_gimbal_cmd(yaw_deg, pitch_deg, distance_m, cmd.fire);
@@ -59,7 +59,7 @@ void UsbOutput::send(const L5::WeaponCommand& cmd) const noexcept {
             {
                      .fire_advice  = cmd.fire,
                      .target_yaw   = static_cast<float>(cmd.yaw),
-                     .target_pitch = static_cast<float>(cmd.pitch),
+                     .target_pitch = -static_cast<float>(cmd.pitch),
                      .ref_yaw_v    = static_cast<float>(cmd.yaw_rate),
                      .ref_pitch_v  = static_cast<float>(cmd.pitch_rate),
                      .ref_yaw_a    = 0.0f,

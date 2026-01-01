@@ -69,15 +69,11 @@ void register_armor_solver_systems(App& app) {
         });
 
     // SolverSystem: TrackerOutput -> GimbalCommand
-    app.template add_system<talos::pool_compute>(
+    app.template add_system<talos::exclusive<250>>(
         "armor_solver", [](talos::spmc<TrackerOutput, TrackerOutputChannelTag> tracker_in,
                            talos::spmc_mut<GimbalCommand, SolverOutputChannelTag> cmd_out,
                            talos::res<std::shared_ptr<Solver>> solver,
                            talos::res<std::shared_ptr<fast_tf::CoordinateSystem<1024>>> tf_system) {
-            if (!tracker_in.has_new()) {
-                return;
-            }
-
             auto target = tracker_in.read();
             if (!target || !target->is_tracking()) {
                 return;
@@ -106,45 +102,6 @@ void register_armor_solver_systems(App& app) {
             if (cmd) {
                 cmd_out.write(*cmd);
             }
-        });
-}
-
-/// Register tracker system only (without solver)
-template <typename App>
-void register_tracker_system(App& app) {
-    app.template add_system<talos::pool_compute>(
-        "armor_tracker",
-        [last_timestamp_ns = uint64_t{0}](
-            talos::spmc<AtLegacyArmorMeasurementBatch, AtLegacyMeasurementChannelTag> meas_in,
-            talos::spmc_mut<TrackerOutput, TrackerOutputChannelTag> tracker_out,
-            talos::res_mut<std::shared_ptr<Tracker>> tracker) mutable {
-            if (!meas_in.has_new()) {
-                return;
-            }
-
-            auto batch = meas_in.read();
-            if (!batch) {
-                return;
-            }
-
-            double dt = 0.0;
-            if (last_timestamp_ns > 0 && batch->timestamp_ns > last_timestamp_ns) {
-                dt = static_cast<double>(batch->timestamp_ns - last_timestamp_ns) / 1e9;
-            }
-            last_timestamp_ns = batch->timestamp_ns;
-
-            if ((*tracker)->status() == TrackerStatus::Idle) {
-                auto result = (*tracker)->first_meet(*batch);
-                if (!result) {
-                    return;
-                }
-            } else {
-                (*tracker)->step(dt, *batch);
-            }
-
-            auto output         = (*tracker)->get_output();
-            output.timestamp_ns = batch->timestamp_ns;
-            tracker_out.write(output);
         });
 }
 

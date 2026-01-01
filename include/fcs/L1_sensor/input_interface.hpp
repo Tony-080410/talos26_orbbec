@@ -41,7 +41,7 @@ public:
         return Frame{
             .seq          = result->seq,
             .timestamp_ns = result->timestamp_ns,
-            .image        = std::move(result->image),
+            .image        = std::move(copied),
         };
     }
 
