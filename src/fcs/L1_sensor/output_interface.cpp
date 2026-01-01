@@ -58,13 +58,13 @@ void UsbOutput::send(const L5::WeaponCommand& cmd) const noexcept {
         .data =
             {
                      .fire_advice  = cmd.fire,
-                     .target_yaw   = static_cast<float>(cmd.yaw),
-                     .target_pitch = -static_cast<float>(cmd.pitch),
-                     .ref_yaw_v    = static_cast<float>(cmd.yaw_rate),
-                     .ref_pitch_v  = static_cast<float>(cmd.pitch_rate),
+                     .target_yaw   = static_cast<float>(cmd.yaw * RAD_TO_DEG),
+                     .target_pitch = -static_cast<float>(cmd.pitch * RAD_TO_DEG),
+                     .ref_yaw_v    = 0.0,
+                     .ref_pitch_v  = 0.0,
                      .ref_yaw_a    = 0.0f,
                      .ref_pitch_a  = 0.0f,
-                     .distance     = static_cast<float>(cmd.distance),
+                     .distance     = cmd.valid ? static_cast<float>(cmd.distance) : -1.0f,
                      },
         .eof = talos_gimbal::HeaderFrame::EoF(),
     };

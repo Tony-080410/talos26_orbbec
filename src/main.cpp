@@ -1,4 +1,5 @@
 #include "auto_aim/config.hpp"
+#include "core/time.hpp"
 #include "ecs/app.hpp"
 #include "fcs/L1_sensor/input_interface.hpp"
 #include "fcs/L1_sensor/output_interface.hpp"
@@ -243,7 +244,7 @@ int main() {
                 }
             } else {
                 usb_device->handle_events();
-                imu_out->timestamp = imu_data.time_stamp;
+                imu_out->timestamp = fcs::clock::now_ns();
                 imu_out->roll_deg  = imu_data.data.roll;
                 imu_out->pitch_deg = imu_data.data.pitch;
                 imu_out->yaw_deg   = imu_data.data.yaw;
