@@ -11,6 +11,16 @@
 #include <sstream>
 #include <unordered_map>
 
+// Low-latency spin hint (avoid context switch, reduce power)
+#if defined(__x86_64__) || defined(_M_X64) || defined(__i386__) || defined(_M_IX86)
+# include <immintrin.h>
+# define SPIN_HINT() _mm_pause()
+#elif defined(__aarch64__) || defined(__arm__)
+# define SPIN_HINT() __asm__ volatile("yield" ::: "memory")
+#else
+# define SPIN_HINT() ((void)0)
+#endif
+
 namespace talos {
 
 // ============================================================================
@@ -394,8 +404,9 @@ void Scheduler::run_compute_loop() {
     auto last_print           = Clock::now();
 
     while (running_.load(std::memory_order_acquire)) {
-        if (const auto current_version = work_version_.load(std::memory_order_acquire);
-            current_version != last_seen_version_) {
+        const auto current_version = work_version_.load(std::memory_order_acquire);
+
+        if (current_version != last_seen_version_) {
             last_seen_version_ = current_version;
 
             LatencyProbe probe;
@@ -405,16 +416,20 @@ void Scheduler::run_compute_loop() {
             compute_cycles_.fetch_add(1, std::memory_order_relaxed);
             compute_total_time_ns_.fetch_add(elapsed, std::memory_order_relaxed);
             compute_last_time_ns_.store(elapsed, std::memory_order_relaxed);
-        }
 
-        // Print stats every 5 seconds
-        const auto now = Clock::now();
-        if (now - last_print >= print_interval) {
-            print_stats();
-            last_print = now;
+            // Check stats after compute (amortize cost)
+            const auto now = Clock::now();
+            if (now - last_print >= print_interval) {
+                print_stats();
+                last_print = now;
+            }
+        } else {
+            // Low-latency spin: use CPU hint instead of yield()
+            // - _mm_pause (x86): ~10 cycles, no context switch
+            // - yield (ARM): hint to switch to another hyperthread
+            // Much faster than std::this_thread::yield() which causes ~100μs delay
+            SPIN_HINT();
         }
-
-        std::this_thread::yield();
     }
 }
 
