@@ -1,5 +1,5 @@
 [runtime]
-daedalus = false
+daedalus = true
 
 [solver]
 # 相机内参 (3x3 row-major)
