@@ -37,13 +37,13 @@ add_library(talos_std INTERFACE
 )
 
 target_include_directories(talos_std INTERFACE include)
+target_include_directories(talos_std INTERFACE 3dparty/magic_enum.hpp)
 
 target_link_libraries(talos_std INTERFACE
         toml_impl
         Eigen3::Eigen
         spdlog::spdlog
         fmt::fmt
-        magic_enum::magic_enum
 )
 
 # scheduler library

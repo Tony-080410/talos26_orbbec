@@ -17,7 +17,6 @@ find_package(TBB REQUIRED)
 find_package(GTest REQUIRED)
 find_package(nlohmann_json REQUIRED)
 find_package(Ceres REQUIRED)
-find_package(magic_enum CONFIG REQUIRED)
 
 # OpenVINO configuration with better error handling
 find_package(OpenVINO QUIET COMPONENTS Runtime)
