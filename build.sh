@@ -46,6 +46,6 @@ clean_dir() {
     fi
 }
 
-cmake -G Ninja -B build -S .
+cmake -DENABLE_CALIBRATION=ON -G Ninja -B build -S .
 cmake --build build
 status "[+]" "$BLUE" "All done."

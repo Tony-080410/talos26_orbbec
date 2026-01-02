@@ -39,6 +39,12 @@ struct AtLegacyTraditionalConfig {
     double armor_max_large_center_distance;
     double armor_max_angle;
 
+    // Classifier parameters (optional)
+    bool classifier_enabled = false;
+    std::string classifier_model_path;
+    double classifier_confidence_threshold = 0.5;
+    bool classifier_enable_type_filtering  = true;
+
     std::expected<void, std::string> read_from(const toml::table& tbl) noexcept {
         READ(tbl, binary_threshold);
         READ(tbl, light_min_ratio);
@@ -51,6 +57,13 @@ struct AtLegacyTraditionalConfig {
         READ(tbl, armor_min_large_center_distance);
         READ(tbl, armor_max_large_center_distance);
         READ(tbl, armor_max_angle);
+
+        // Optional classifier configuration
+        READ_OPT(tbl, classifier_enabled);
+        READ_OPT(tbl, classifier_model_path);
+        READ_OPT(tbl, classifier_confidence_threshold);
+        READ_OPT(tbl, classifier_enable_type_filtering);
+
         return {};
     }
 };

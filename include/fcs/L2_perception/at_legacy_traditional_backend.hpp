@@ -1,6 +1,8 @@
 #pragma once
 
 #include "at_legacy_detector_backend.hpp"
+#include "at_legacy_light_corner_corrector.hpp"
+#include "at_legacy_traditional_classifier.hpp"
 #include "at_legacy_traditional_types.hpp"
 
 #include <memory>
@@ -44,6 +46,8 @@ public:
 private:
     ConfigPtr config_;
     ArmorColor detect_color_ = ArmorColor::Neutral;
+    std::unique_ptr<AtLegacyTraditionalClassifier> classifier_;
+    std::unique_ptr<AtLegacyLightCornerCorrector> corner_corrector_;
 
     /// Preprocess image to binary
     [[nodiscard]] cv::Mat
@@ -70,6 +74,11 @@ private:
     [[nodiscard]] ArmorType is_armor(
         const AtLegacyLight& light_1, const AtLegacyLight& light_2,
         const AtLegacyTraditionalConfig& cfg) const noexcept;
+
+    /// Extract number ROI: perspective transform + OTSU binarization
+    [[nodiscard]] cv::Mat extract_number(
+        const cv::Mat& src, const AtLegacyLight& left_light, const AtLegacyLight& right_light,
+        ArmorType armor_type) const noexcept;
 };
 
 } // namespace fcs

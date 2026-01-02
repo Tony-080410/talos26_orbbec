@@ -14,6 +14,7 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 
 include(cmake/dependencies.cmake)
 include(cmake/test.cmake)
+include(cmake/calibration.cmake)
 
 # Create tomlplusplus implementation library
 add_library(toml_impl STATIC
@@ -110,6 +111,8 @@ add_library(fcs SHARED
         src/fcs/L2_perception/at_legacy_nn_backend.cpp
         src/fcs/L2_perception/at_legacy_nn_tup_backend.cpp
         src/fcs/L2_perception/at_legacy_traditional_backend.cpp
+        src/fcs/L2_perception/at_legacy_traditional_classifier.cpp
+        src/fcs/L2_perception/at_legacy_light_corner_corrector.cpp
 )
 
 target_include_directories(fcs PUBLIC

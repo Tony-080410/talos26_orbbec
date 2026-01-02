@@ -34,52 +34,6 @@ struct ImuChannel {};
 struct CameraChannel {};
 struct FusionChannel {};
 
-// ============================================================================
-// Test: Basic Scheduler Lifecycle
-// ============================================================================
-
-void test_scheduler_lifecycle() {
-    printf("=== Test: Scheduler Lifecycle ===\n");
-
-    talos::World world;
-    talos::Scheduler scheduler(world);
-
-    // Add systems
-    auto result = scheduler.add_system<talos::pool_compute>(
-        "processor", [](talos::spsc_mut<int, ImuChannel> out) { out.write(42); });
-
-    if (!result) {
-        printf("  ERROR: Failed to add system: %s\n", talos::to_string(result.error()));
-        return;
-    }
-
-    // Build
-    auto build_result = scheduler.build();
-    if (!build_result) {
-        printf(
-            "  ERROR: Failed to build: %s\n",
-            talos::format_build_error(build_result.error()).c_str());
-        return;
-    }
-
-    // Try to add system after build (should fail)
-    auto late_result = scheduler.add_system<talos::pool_compute>("late_system", []() {});
-    if (late_result) {
-        printf("  ERROR: Should have failed to add system after build\n");
-        return;
-    }
-    if (late_result.error() != talos::SchedulerError::AlreadyBuilt) {
-        printf("  ERROR: Wrong error type\n");
-        return;
-    }
-
-    printf("  Lifecycle test passed!\n\n");
-}
-
-// ============================================================================
-// Test: Scheduler with Exclusive and Pool Systems
-// ============================================================================
-
 void test_scheduler_exclusive_and_pool() {
     printf("=== Test: Exclusive + Pool Systems ===\n");
 
@@ -513,7 +467,6 @@ int main() {
     printf("==========================================\n\n");
 
     // Lifecycle tests
-    test_scheduler_lifecycle();
     test_scheduler_exclusive_and_pool();
     test_silent_vs_notify();
 

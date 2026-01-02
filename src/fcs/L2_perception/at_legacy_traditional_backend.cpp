@@ -7,6 +7,7 @@
 #include <numbers>
 
 #include <opencv2/imgproc.hpp>
+#include <spdlog/spdlog.h>
 
 namespace fcs {
 
@@ -15,7 +16,28 @@ namespace fcs {
 // ============================================================================
 
 AtLegacyTraditionalBackend::AtLegacyTraditionalBackend(ConfigPtr config)
-    : config_(std::move(config)) {}
+    : config_(std::move(config)) {
+    // Initialize classifier if enabled in config
+    if (config_ && config_->classifier_enabled && !config_->classifier_model_path.empty()) {
+        classifier_ =
+            std::make_unique<AtLegacyTraditionalClassifier>(config_->classifier_model_path);
+        // Initialize classifier - log error if initialization fails
+        auto init_result = classifier_->init();
+        if (!init_result) {
+            // Log error but continue - detection will work without classification
+            spdlog::error(
+                "Failed to initialize ONNX classifier: {}", config_->classifier_model_path);
+
+            std::abort();
+        }
+    } else {
+        spdlog::critical("Classifier is enabled but model path is empty or config is null.");
+        std::abort();
+    }
+
+    // Always create corner corrector for optional sub-pixel accuracy improvement
+    corner_corrector_ = std::make_unique<AtLegacyLightCornerCorrector>();
+}
 
 // ============================================================================
 // Detection Entry Point
@@ -40,6 +62,151 @@ AtLegacyTraditionalBackend::DetectionResult
 
     // 3. Match lights to armors
     auto detections = match_lights(lights, *cfg);
+
+    // Save gray image for corner correction (precompute for efficiency)
+    cv::Mat gray_img;
+    cv::cvtColor(input, gray_img, cv::COLOR_BGR2GRAY);
+
+    // 4. Refine corners using PCA-based method (sub-pixel accuracy)
+    // Apply corner correction to improve detection accuracy
+    if (corner_corrector_) {
+        for (auto& detection : detections) {
+            // Find the corresponding lights for this detection
+            size_t left_idx = 0, right_idx = 0;
+            bool found = false;
+
+            for (size_t i = 0; i < lights.size() - 1; ++i) {
+                for (size_t j = i + 1; j < lights.size(); ++j) {
+                    // Check if these lights form the current detection
+                    if ((detection.corners[0] == lights[i].top
+                         && detection.corners[1] == lights[j].top)
+                        || (detection.corners[0] == lights[j].top
+                            && detection.corners[1] == lights[i].top)) {
+                        if (lights[i].center.x < lights[j].center.x) {
+                            left_idx  = i;
+                            right_idx = j;
+                        } else {
+                            left_idx  = j;
+                            right_idx = i;
+                        }
+                        found = true;
+                        break;
+                    }
+                }
+                if (found)
+                    break;
+            }
+
+            if (found) {
+                // Apply PCA-based corner refinement
+                corner_corrector_->correct_corners(lights[left_idx], lights[right_idx], gray_img);
+
+                // Update detection with refined corners
+                detection.corners[0] = lights[left_idx].top;
+                detection.corners[1] = lights[right_idx].top;
+                detection.corners[2] = lights[right_idx].bottom;
+                detection.corners[3] = lights[left_idx].bottom;
+
+                // Recalculate bounding rect and area with refined corners
+                std::vector<cv::Point2f> pts = {
+                    detection.corners[0], detection.corners[1], detection.corners[2],
+                    detection.corners[3]};
+                detection.rect = cv::boundingRect(pts);
+                detection.area = static_cast<int>(cv::contourArea(pts));
+            }
+        }
+    }
+
+    // 5. Classify armors if classifier is available
+    if (classifier_ && classifier_->is_initialized()) {
+        for (size_t d = 0; d < detections.size(); ++d) {
+            auto& detection = detections[d];
+
+            // Find the corresponding left and right lights for this detection
+            size_t left_idx = 0, right_idx = 0;
+            bool found = false;
+
+            for (size_t i = 0; i < lights.size() - 1; ++i) {
+                for (size_t j = i + 1; j < lights.size(); ++j) {
+                    // Check if these lights form the current detection
+                    if ((detection.corners[0] == lights[i].top
+                         && detection.corners[1] == lights[j].top)
+                        || (detection.corners[0] == lights[j].top
+                            && detection.corners[1] == lights[i].top)) {
+                        if (lights[i].center.x < lights[j].center.x) {
+                            left_idx  = i;
+                            right_idx = j;
+                        } else {
+                            left_idx  = j;
+                            right_idx = i;
+                        }
+                        found = true;
+                        break;
+                    }
+                }
+                if (found)
+                    break;
+            }
+
+            if (found) {
+                // Extract number image: perspective transform + OTSU binarization
+                cv::Mat number_img =
+                    extract_number(input, lights[left_idx], lights[right_idx], detection.type);
+
+                if (!number_img.empty()) {
+                    float confidence = 0.0f;
+                    auto result      = classifier_->classify(number_img, confidence);
+
+                    if (result) {
+                        detection.name       = *result;
+                        detection.confidence = confidence;
+                    } else {
+                        // Classification failed, mark as invalid
+                        detection.name       = ArmorName::Invalid;
+                        detection.confidence = 0.0f;
+                    }
+                }
+            }
+        }
+
+        // 5. Filter out invalid detections (matching ROS2 logic)
+        detections.erase(
+            std::remove_if(
+                detections.begin(), detections.end(),
+                [cfg](const AtLegacyArmorDetection& detection) {
+                    // Filter by confidence threshold
+                    if (detection.confidence < cfg->classifier_confidence_threshold) {
+                        return true;
+                    }
+
+                    // Filter by name validity
+                    if (detection.name == ArmorName::Invalid) {
+                        return true;
+                    }
+
+                    // Filter by type-class matching (when type filtering enabled)
+                    if (cfg->classifier_enable_type_filtering) {
+                        if (detection.type == ArmorType::Large) {
+                            // Large armor cannot be: outpost, 2, sentry
+                            if (detection.name == ArmorName::Outpost
+                                || detection.name == ArmorName::Two
+                                || detection.name == ArmorName::Sentry) {
+                                return true;
+                            }
+                        } else if (detection.type == ArmorType::Small) {
+                            // Small armor cannot be: 1, base
+                            if (detection.name == ArmorName::One
+                                || detection.name == ArmorName::Base
+                                || detection.name == ArmorName::BaseLarge) {
+                                return true;
+                            }
+                        }
+                    }
+
+                    return false; // Keep this detection
+                }),
+            detections.end());
+    }
 
     return detections;
 }
@@ -229,6 +396,53 @@ ArmorType AtLegacyTraditionalBackend::is_armor(
 
     return center_distance > cfg.armor_max_large_center_distance ? ArmorType::Large
                                                                  : ArmorType::Small;
+}
+
+// ============================================================================
+// Number Extraction (Perspective Transform + OTSU Binarization)
+// ============================================================================
+
+cv::Mat AtLegacyTraditionalBackend::extract_number(
+    const cv::Mat& src, const AtLegacyLight& left_light, const AtLegacyLight& right_light,
+    ArmorType armor_type) const noexcept {
+    // Constants from ROS2 implementation
+    constexpr int light_length      = 12;
+    constexpr int warp_height       = 28;
+    constexpr int small_armor_width = 32;
+    constexpr int large_armor_width = 54;
+    const cv::Size roi_size(20, 28);
+
+    // Get warp width based on armor type
+    int warp_width = (armor_type == ArmorType::Small ? small_armor_width : large_armor_width);
+
+    // Define source points (light corners)
+    cv::Point2f lights_vertices[4] = {
+        left_light.bottom, left_light.top, right_light.top, right_light.bottom};
+
+    // Define target points in warped space
+    int top_light_y    = (warp_height - light_length) / 2 - 1;
+    int bottom_light_y = top_light_y + light_length;
+
+    cv::Point2f target_vertices[4] = {
+        cv::Point2f(0, bottom_light_y), cv::Point2f(0, top_light_y),
+        cv::Point2f(warp_width - 1, top_light_y), cv::Point2f(warp_width - 1, bottom_light_y)};
+
+    // Perspective transform
+    cv::Mat M = cv::getPerspectiveTransform(lights_vertices, target_vertices);
+    cv::Mat number_image;
+    cv::warpPerspective(src, number_image, M, cv::Size(warp_width, warp_height));
+
+    // Extract ROI (center 20x28)
+    int roi_x    = (warp_width - roi_size.width) / 2;
+    number_image = number_image(cv::Rect(cv::Point(roi_x, 0), roi_size));
+
+    // Convert to grayscale
+    cv::cvtColor(number_image, number_image, cv::COLOR_BGR2GRAY);
+
+    // OTSU binarization
+    cv::threshold(number_image, number_image, 0, 255, cv::THRESH_BINARY | cv::THRESH_OTSU);
+
+    return number_image;
 }
 
 } // namespace fcs

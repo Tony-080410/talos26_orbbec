@@ -13,7 +13,7 @@ width = 1440
 height = 1080
 
 [at_legacy.detector]
-backend_type = "NeuralNetwork"
+backend_type = "traditional"
 detect_color = "Blue"
 
 # Required if backend_type = "traditional"
@@ -21,14 +21,20 @@ detect_color = "Blue"
 binary_threshold = 50
 light_min_ratio = 0.0001
 light_max_ratio = 1.0
-light_max_angle = 35.0
+light_max_angle = 40.0
 light_color_diff_thresh = 30
-armor_min_light_ratio = 0.7
+armor_min_light_ratio = 0.8
 armor_min_small_center_distance = 0.8
-armor_max_small_center_distance = 3.2
-armor_min_large_center_distance = 3.2
-armor_max_large_center_distance = 5.5
-armor_max_angle = 35.0
+armor_max_small_center_distance = 3.5
+armor_min_large_center_distance = 3.5
+armor_max_large_center_distance = 8.0
+armor_max_angle = 40.0
+
+# Classifier configuration (ONNX-based number classification)
+classifier_enabled = true
+classifier_model_path = "mlp.onnx"
+classifier_confidence_threshold = 0.2
+classifier_enable_type_filtering = true
 
 # Required if backend_type = "nn"
 [at_legacy.nn]
@@ -39,7 +45,7 @@ enable_profiling = false
 enable_multi_thread = false
 input_width = 416
 input_height = 416
-num_classes = 8
+num_classes = 13
 num_colors = 4
 confidence_threshold = 0.1
 nms_threshold = 0.10
