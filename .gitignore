@@ -29,3 +29,6 @@ thirdparty
 build-asan/
 build-tsan/
 build-test/
+camera_intrinsic.toml
+.claude
+CRIT.md
