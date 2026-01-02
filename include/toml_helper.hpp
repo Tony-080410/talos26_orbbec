@@ -89,13 +89,19 @@ std::expected<Mat, std::string> read(const toml::table& table, std::string_view 
 }
 } // namespace toml_helper
 
-#define READ_OPT(tbl, val) \
-    toml_helper::read<decltype(val)>(tbl, #val).transform([&](auto v) { (val) = v; })
+#define READ_OPT(tbl, val)                                      \
+    do {                                                        \
+        auto res = toml_helper::read<decltype(val)>(tbl, #val); \
+        if (res) {                                              \
+            (val) = std::move(*res);                            \
+        }                                                       \
+    } while (0)
+
 #define READ(tbl, val)                                          \
     do {                                                        \
         auto res = toml_helper::read<decltype(val)>(tbl, #val); \
         if (!res) {                                             \
             return std::unexpected(res.error());                \
         }                                                       \
-        (val) = *res;                                           \
+        (val) = std::move(*res);                                \
     } while (0)
