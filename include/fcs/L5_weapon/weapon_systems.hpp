@@ -1,12 +1,11 @@
 #pragma once
 
+#include "ecs/execution_policy.hpp"
 #include "fire_control.hpp"
 
 #include "fcs/L3_estimation/armor_solver/types.hpp"
 #include "fcs/core/channel_tags.hpp"
 #include "scheduler/ecs/channel_types.hpp"
-
-#include <memory>
 
 namespace fcs::L5 {
 

@@ -1,8 +1,8 @@
 #pragma once
 
 #include "motion_model.hpp"
-
 #include "toml_helper.hpp"
+#include "trajectory_compensator.hpp"
 #include <expected>
 #include <memory>
 #include <string>
@@ -28,15 +28,10 @@ struct TrajectoryConfig {
     double resistance{0.001};
 
     std::expected<void, std::string> read_from(const toml::table& tbl) noexcept {
-        if (const auto _t = tbl["trajectory"].as_table()) {
-            auto t = *_t;
-            READ_KEY(t, iteration_times);
-            READ_KEY(t, bullet_speed);
-            READ_KEY(t, gravity);
-            READ_KEY(t, resistance);
-            return {};
-        }
-        // Optional section - use defaults
+        READ(tbl, iteration_times);
+        READ(tbl, bullet_speed);
+        READ(tbl, gravity);
+        READ(tbl, resistance);
         return {};
     }
 };
@@ -65,22 +60,14 @@ struct TrackerConfig {
     OutpostModel::Params outpost_params;
 
     std::expected<void, std::string> read_from(const toml::table& tbl) noexcept {
-        if (const auto _t = tbl["tracker"].as_table()) {
-            auto t = *_t;
-            READ_KEY(t, lost_thres);
-            READ_KEY(t, tracking_thres);
-            READ_KEY(t, matcher_gate);
-            READ_KEY(t, outpost_matcher_gate);
-
-            // Robot model noise parameters
-            READ_SUB_OPT(robot_params, t);
-
-            // Outpost model noise parameters
-            READ_SUB_OPT(outpost_params, t);
-
-            return {};
-        }
-        // Optional section - use defaults
+        READ(tbl, lost_thres);
+        READ(tbl, tracking_thres);
+        READ(tbl, matcher_gate);
+        READ(tbl, outpost_matcher_gate);
+        // Robot model noise parameters
+        READ(tbl, robot_params);
+        // Outpost model noise parameters
+        READ(tbl, outpost_params);
         return {};
     }
 };
@@ -115,22 +102,17 @@ struct SolverConfig {
     TrajectoryConfig trajectory;
 
     /// Compensator type: "ideal" or "resistance"
-    std::string compensator_type{"resistance"};
+    TrajectoryCompensatorType compensator_type = TrajectoryCompensatorType::Resistance;
 
     std::expected<void, std::string> read_from(const toml::table& tbl) noexcept {
-        if (const auto _t = tbl["armor_solver"].as_table()) {
-            auto t = *_t;
-            READ_KEY(t, shooting_range_w);
-            READ_KEY(t, shooting_range_h);
-            READ_KEY(t, max_tracking_v_yaw);
-            READ_KEY(t, prediction_delay);
-            READ_KEY(t, side_angle);
-            READ_KEY(t, min_switching_v_yaw);
-            READ_KEY(t, transfer_thresh);
-            READ_KEY(t, compensator_type);
-            return {};
-        }
-        // Optional section - use defaults
+        READ(tbl, shooting_range_w);
+        READ(tbl, shooting_range_h);
+        READ(tbl, max_tracking_v_yaw);
+        READ(tbl, prediction_delay);
+        READ(tbl, side_angle);
+        READ(tbl, min_switching_v_yaw);
+        READ(tbl, transfer_thresh);
+        READ(tbl, compensator_type);
         return {};
     }
 };
@@ -154,29 +136,9 @@ struct L3Config {
     }
 
     std::expected<void, std::string> read_from(const toml::table& tbl) noexcept {
-        // All sections are optional - use defaults if not present
-        if (auto result = tracker.read_from(tbl); !result) {
-            // Tracker config is optional, only fail on parse error
-            if (result.error() != "tracker section not found") {
-                return result;
-            }
-        }
-
-        if (auto result = solver.read_from(tbl); !result) {
-            if (result.error() != "armor_solver section not found") {
-                return result;
-            }
-        }
-
-        if (auto result = trajectory.read_from(tbl); !result) {
-            if (result.error() != "trajectory section not found") {
-                return result;
-            }
-        }
-
-        // Copy trajectory config to solver if solver didn't have its own
-        solver.trajectory = trajectory;
-
+        READ(tbl, tracker);
+        READ(tbl, solver);
+        READ(tbl, trajectory);
         return {};
     }
 };

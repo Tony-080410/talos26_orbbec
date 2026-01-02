@@ -143,42 +143,4 @@ struct AtLegacyLight : public cv::RotatedRect {
     return det;
 }
 
-// ============================================================================
-// Traditional Detector Parameters
-// ============================================================================
-
-/// Parameters for light detection
-struct AtLegacyLightDetectorParams {
-    // Binary threshold
-    int binary_threshold = 160;
-
-    // Light size constraints
-    double min_light_ratio = 0.1;  // min width/height ratio
-    double max_light_ratio = 0.4;  // max width/height ratio
-    double min_light_area  = 10.0; // min contour area
-    double max_light_area  = 5000.0;
-
-    // Tilt angle constraint (degrees)
-    double max_tilt_angle = 45.0;
-};
-
-/// Parameters for armor matching
-struct AtLegacyArmorMatcherParams {
-    // Light pair constraints
-    double min_light_length_ratio = 0.6;  // min ratio of two light lengths
-    double max_light_length_ratio = 1.67; // max ratio (1/0.6)
-
-    // Armor size constraints
-    double min_small_armor_ratio = 0.8; // min width/height for small armor
-    double max_small_armor_ratio = 2.5;
-    double min_large_armor_ratio = 2.5; // min width/height for large armor
-    double max_large_armor_ratio = 4.5;
-
-    // Light angle difference (degrees)
-    double max_light_angle_diff = 10.0;
-
-    // Center Y difference ratio
-    double max_center_y_diff_ratio = 0.5;
-};
-
 } // namespace fcs

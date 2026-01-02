@@ -15,6 +15,20 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 include(cmake/dependencies.cmake)
 include(cmake/test.cmake)
 
+# Create tomlplusplus implementation library
+add_library(toml_impl STATIC
+    ${tomlplusplus_SOURCE_DIR}/src/toml.cpp
+)
+
+target_include_directories(toml_impl PUBLIC
+    ${tomlplusplus_SOURCE_DIR}/include
+)
+
+target_compile_definitions(toml_impl PUBLIC
+    TOML_HEADER_ONLY=0
+    TOML_EXCEPTIONS=0
+)
+
 # talos std library (header-only)
 add_library(talos_std INTERFACE
         include/performance_probe.hpp
@@ -25,12 +39,12 @@ add_library(talos_std INTERFACE
 target_include_directories(talos_std INTERFACE include)
 
 target_link_libraries(talos_std INTERFACE
-        tomlplusplus::tomlplusplus
+        toml_impl
         Eigen3::Eigen
         spdlog::spdlog
         fmt::fmt
+        magic_enum::magic_enum
 )
-
 
 # scheduler library
 add_library(scheduler SHARED
@@ -109,6 +123,8 @@ target_include_directories(fcs SYSTEM PUBLIC
         ${foxglove_SOURCE_DIR}/include/foxglove
 )
 
+message(STATUS "OpenCV libs: ${OpenCV_LIBS}")
+
 target_link_libraries(fcs PUBLIC
         talos_std
         talos_gimbal
@@ -177,7 +193,25 @@ add_executable(${PROJECT_NAME}
 target_include_directories(${PROJECT_NAME} PRIVATE include)
 target_include_directories(${PROJECT_NAME} SYSTEM PRIVATE ${foxglove_SOURCE_DIR}/include)
 target_include_directories(${PROJECT_NAME} SYSTEM PRIVATE ${foxglove_SOURCE_DIR}/include/foxglove)
+target_precompile_headers(${PROJECT_NAME} PRIVATE
+    # 标准库
+    <string>
+    <vector>
+    <memory>
+    <atomic>
+    <chrono>
+    <optional>
+    <functional>
 
+    # 重型第三方库
+    <Eigen/Core>
+    <Eigen/Geometry>
+    <tbb/parallel_pipeline.h>
+    <spdlog/spdlog.h>
+    <opencv2/core.hpp>
+    <nlohmann/json.hpp>
+    <toml++/toml.hpp>
+)
 target_link_libraries(${PROJECT_NAME} PRIVATE
         talos_gimbal
         scheduler
@@ -190,13 +224,14 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
         fmt::fmt
         Eigen3::Eigen
         TBB::tbb
-        tomlplusplus::tomlplusplus
+
         nlohmann_json::nlohmann_json
         ${LIBUSB_LINK_LIBRARIES}
         ${foxglove_SOURCE_DIR}/lib/libfoxglove.a
         "$<$<PLATFORM_ID:Darwin>:-framework Security>"
         "$<$<PLATFORM_ID:Darwin>:-framework CoreFoundation>"
         "$<$<PLATFORM_ID:Darwin>:-framework SystemConfiguration>"
+        "$<$<PLATFORM_ID:Darwin>:-mmacosx-version-min=15.5>"
 )
 
 # sp_vision executable (removed during refactoring)

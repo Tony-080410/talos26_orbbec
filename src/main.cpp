@@ -1,21 +1,23 @@
+#include "L2_perception/at_legacy_systems.hpp"
+#include "L3_estimation/armor_solver/solver.hpp"
+#include "L3_estimation/armor_solver/tracker.hpp"
+#include "L3_estimation/armor_solver_systems.hpp"
 #include "auto_aim/config.hpp"
 #include "core/time.hpp"
-#include "ecs/app.hpp"
 #include "fcs/L1_sensor/input_interface.hpp"
 #include "fcs/L1_sensor/output_interface.hpp"
-#include "fcs/L2_perception/at_legacy.hpp"
-#include "fcs/L3_estimation/armor_solver.hpp"
 #include "fcs/L5_weapon/weapon_systems.hpp"
 #include "fcs/visualization/foxglove_systems.hpp"
 #include "math/fast_tf/infantry.hpp"
 #include "scheduler/scheduler.hpp"
 #include "spdlog_hook.hpp"
 #include "talos_gimbal/stm32.hpp"
-
+#include "toml_helper.hpp"
 #include <Eigen/Geometry>
 #include <atomic>
 #include <chrono>
 #include <tbb/parallel_pipeline.h>
+#include <toml++/impl/parse_error.hpp>
 
 // ============================================================================
 // Config (使用 fcs::TalosConfig)
@@ -36,13 +38,11 @@ using namespace std::chrono_literals;
 
 inline std::expected<TalosConfig, read_config_error> read_config() {
     TalosConfig config;
-    toml::table tbl;
-    try {
-        tbl = toml::parse_file("at_vision.toml");
-    } catch (const toml::parse_error& err) {
-        return std::unexpected(err);
+    auto tbl = toml::parse_file("at_vision.toml");
+    if (tbl.failed()) {
+        return std::unexpected(tbl.error());
     }
-    if (auto result = config.read_from(tbl); !result) {
+    if (auto result = config.read_from(tbl.table()); !result) {
         return std::unexpected(result.error());
     }
     return config;
@@ -95,7 +95,7 @@ int main() {
             return 2;
         }
     } else {
-        input_result = fcs::L1::InputInterface::create_hik({}, config.camera.camera_info);
+        input_result = fcs::L1::InputInterface::create_hik({}, config.camera);
         if (auto result = usb_device->connect(0x0483, 0x5740); result) {
             output_interface =
                 std::make_unique<fcs::L1::OutputInterface>(fcs::L1::UsbOutput{usb_device});
@@ -127,7 +127,7 @@ int main() {
         const auto& info                  = input.camera_info();
         config.camera.camera_matrix       = info.camera_matrix;
         config.camera.distort_coefficient = info.distort_coefficient;
-        config.camera.camera_info         = info;
+        config.camera                     = info;
     }
 
     spdlog::info(
@@ -161,7 +161,7 @@ int main() {
     auto detector_backend = std::move(*backend_result);
     spdlog::info(
         "detector backend: {} (color={})", detector_backend.name(),
-        config.at_legacy.detector.detect_color == 0 ? "BLUE" : "RED");
+        fcs::to_string(config.at_legacy.detector.detect_color));
 
     auto pnp_solver = fcs::create_pnp_solver(config.camera);
     spdlog::info("PnP solver initialized");

@@ -2,11 +2,9 @@
 
 #include "../core/types.hpp"
 
-#include <array>
 #include <cmath>
 #include <expected>
 #include <numbers>
-#include <optional>
 #include <vector>
 
 #include <Eigen/Core>
@@ -15,6 +13,8 @@
 #include <opencv2/calib3d.hpp>
 #include <opencv2/core.hpp>
 #include <opencv2/core/eigen.hpp>
+
+#include "auto_aim/config.hpp"
 
 namespace fcs {
 

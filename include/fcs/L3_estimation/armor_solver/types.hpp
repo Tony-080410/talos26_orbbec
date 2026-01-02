@@ -9,6 +9,7 @@
 
 #include "fcs/core/channel_tags.hpp"
 #include "fcs/core/types.hpp"
+#include <numbers>
 
 namespace fcs::L3 {
 

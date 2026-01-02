@@ -76,8 +76,7 @@ void AtLegacyDetectorBackend::set_backend(std::unique_ptr<AtLegacyNNTupBackend> 
     case AtLegacyBackendTypeConfig::Traditional: {
         auto cfg_ptr = config.traditional_ptr();
         auto backend = std::make_unique<AtLegacyTraditionalBackend>(std::move(cfg_ptr));
-        backend->set_detect_color(
-            config.detector.detect_color == 0 ? ArmorColor::Blue : ArmorColor::Red);
+        backend->set_detect_color(config.detector.detect_color);
         return AtLegacyDetectorBackend(std::move(backend));
     }
     case AtLegacyBackendTypeConfig::NeuralNetwork: {

@@ -1,136 +1,66 @@
 #pragma once
 
-#include <Eigen/Eigen>
-#include <array>
+#include <Eigen/Core>
 #include <atomic>
 #include <cstdint>
 #include <expected>
 #include <memory>
-#include <optional>
 #include <string>
 
 #include "fcs/L2_perception/at_legacy_config.hpp"
 #include "fcs/L3_estimation/armor_solver/config.hpp"
-#include "spdlog_hook.hpp"
 #include "toml_helper.hpp"
-
-#include <toml++/toml.hpp>
 
 namespace fcs {
 
-/**
- * @brief 相机内参 (统一格式)
- */
-struct CameraInfo {
+struct CameraConfig {
     Eigen::Matrix<double, 3, 3, Eigen::RowMajor> camera_matrix;
     Eigen::Matrix<double, 1, 5> distort_coefficient;
     uint32_t width{1440};
     uint32_t height{1080};
-};
-
-/**
- * @brief 相机配置 (内参 + 外参)
- */
-struct CameraConfig {
-    // 相机内参
-    Eigen::Matrix<double, 3, 3, Eigen::RowMajor> camera_matrix; // 3x3 row-major
-    Eigen::Matrix<double, 1, 5> distort_coefficient;            // 1x5
-    uint32_t width{1440};
-    uint32_t height{1080};
-
-    // 外参：相机到云台、云台到IMU
-    Eigen::Matrix<double, 3, 3, Eigen::RowMajor> extrinsic_camera_gimbal; // 3x3 row-major
-    Eigen::Matrix<double, 3, 1> extrinsic_camera_gimbal_tf;               // 3x1
-    Eigen::Matrix<double, 3, 3, Eigen::RowMajor> extrinsic_gimbal_imu;    // 3x3 row-major
-
-    // 统一格式的相机内参 (从上述矩阵填充)
-    fcs::CameraInfo camera_info{};
 
     std::expected<void, std::string> read_from(const toml::table& tbl) noexcept {
-        if (const auto _t = tbl["camera"].as_table()) {
-            auto t = *_t;
-            READ_MATRIX(c, t, camera_matrix);
-            READ_MATRIX(d, t, distort_coefficient);
-            READ_MATRIX(r, t, extrinsic_camera_gimbal);
-            READ_MATRIX(tt, t, extrinsic_camera_gimbal_tf);
-            READ_MATRIX(rr, t, extrinsic_gimbal_imu);
-            READ_KEY_OPT(t, width);
-            READ_KEY_OPT(t, height);
-
-            // 填充 camera_info
-            camera_info.camera_matrix       = camera_matrix;
-            camera_info.distort_coefficient = distort_coefficient;
-            camera_info.width               = width;
-            camera_info.height              = height;
-
-            return {};
-        }
-        // Fallback to old "solver" section for compatibility
-        if (const auto _t = tbl["solver"].as_table()) {
-            auto t = *_t;
-            READ_MATRIX(c, t, camera_matrix);
-            READ_MATRIX(d, t, distort_coefficient);
-            READ_MATRIX(r, t, extrinsic_camera_gimbal);
-            READ_MATRIX(tt, t, extrinsic_camera_gimbal_tf);
-            READ_MATRIX(rr, t, extrinsic_gimbal_imu);
-
-            camera_info.camera_matrix       = camera_matrix;
-            camera_info.distort_coefficient = distort_coefficient;
-
-            return {};
-        }
-        return std::unexpected("camera section not found");
-    }
-};
-
-// 兼容别名
-using AtVisionSolverConfig = CameraConfig;
-
-// ============================================================================
-// Foxglove Configuration
-// ============================================================================
-
-/**
- * @brief Foxglove 可视化服务器配置
- */
-struct FoxgloveConfig {
-    bool enabled{true};          // 默认开启
-    std::string host{"0.0.0.0"}; // 默认监听所有接口
-    uint16_t port{8765};         // 默认端口
-
-    std::expected<void, std::string> read_from(const toml::table& tbl) noexcept {
-        if (const auto _t = tbl["foxglove"].as_table()) {
-            auto t = *_t;
-            READ_KEY_OPT(t, enabled);
-            READ_KEY_OPT(t, host);
-            READ_KEY_OPT(t, port);
-        }
-        // foxglove section is optional, use defaults if not found
+        READ(tbl, camera_matrix);
+        READ(tbl, distort_coefficient);
+        READ(tbl, width);
+        READ(tbl, height);
         return {};
     }
 };
 
-// ============================================================================
-// Unified Talos Configuration
-// ============================================================================
+struct FoxgloveConfig {
+    bool enabled{true};
+    std::string host{"0.0.0.0"};
+    uint16_t port{8765};
 
-/**
- * @brief 统一配置结构 (所有模块配置的聚合)
- */
+    std::expected<void, std::string> read_from(const toml::table& tbl) noexcept {
+        READ(tbl, enabled);
+        READ(tbl, host);
+        READ(tbl, port);
+        return {};
+    }
+};
+
 struct TalosConfig {
     bool daedalus{false};
     CameraConfig camera{};
     AtLegacyConfig at_legacy{};
-    L3::L3Config l3{};         // L3 estimation config (tracker + solver + trajectory)
-    FoxgloveConfig foxglove{}; // Foxglove visualization config
+    L3::L3Config l3{};
+    FoxgloveConfig foxglove{};
 
-    // 便捷访问器
     [[nodiscard]] const L3::TrackerConfig& tracker() const noexcept { return l3.tracker; }
     [[nodiscard]] const L3::SolverConfig& solver() const noexcept { return l3.solver; }
     [[nodiscard]] L3::TrackerConfig& tracker() noexcept { return l3.tracker; }
     [[nodiscard]] L3::SolverConfig& solver() noexcept { return l3.solver; }
 
-    std::expected<void, std::string> read_from(const toml::table& tbl) noexcept;
+    std::expected<void, std::string> read_from(const toml::table& tbl) noexcept {
+        READ(tbl, daedalus);
+        READ(tbl, camera);
+        READ(tbl, at_legacy);
+        READ(tbl, l3);
+        READ(tbl, foxglove);
+        return {};
+    }
 };
 
 /**
@@ -176,25 +106,5 @@ private:
 
 // 类型别名
 using AtomicTalosConfig = AtomicConfig<TalosConfig>;
-
-// ============================================================================
-// Implementation
-// ============================================================================
-
-inline std::expected<void, std::string> TalosConfig::read_from(const toml::table& tbl) noexcept {
-    if (const auto _t = tbl["runtime"].as_table()) {
-        auto t = *_t;
-        READ_KEY(t, daedalus);
-    } else {
-        return std::unexpected("runtime section not found");
-    }
-
-    READ_SUB(camera, tbl);
-    READ_SUB(at_legacy, tbl);
-    READ_SUB(l3, tbl);       // L3 config (tracker + solver + trajectory)
-    READ_SUB(foxglove, tbl); // Foxglove visualization config (optional)
-
-    return {};
-}
 
 } // namespace fcs

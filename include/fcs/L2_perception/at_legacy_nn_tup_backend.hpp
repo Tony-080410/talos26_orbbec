@@ -1,6 +1,7 @@
 #pragma once
 
 #include "at_legacy_detector_backend.hpp"
+#include "core/types.hpp"
 
 #include <array>
 #include <memory>
@@ -67,8 +68,8 @@ public:
     [[nodiscard]] std::string_view name_impl() const noexcept { return "nn_tup"; }
 
     /// Set detection color (0=BLUE, 1=RED)
-    void set_detect_color(int color) noexcept { detect_color_ = color; }
-    [[nodiscard]] int detect_color() const noexcept { return detect_color_; }
+    void set_detect_color(ArmorColor color) noexcept { detect_color_ = color; }
+    [[nodiscard]] ArmorColor detect_color() const noexcept { return detect_color_; }
 
     /// Get execution devices
     [[nodiscard]] std::vector<std::string> execution_devices() const;
@@ -114,8 +115,8 @@ private:
 
 private:
     ConfigPtr config_;
-    int detect_color_ = 1; // 0=BLUE, 1=RED
-    bool initialized_ = false;
+    ArmorColor detect_color_ = ArmorColor::Blue;
+    bool initialized_        = false;
 
     // OpenVINO resources (PIMPL to avoid header pollution)
     struct Impl;

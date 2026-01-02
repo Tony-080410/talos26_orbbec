@@ -7,10 +7,8 @@
 
 #include "ecs/execution_policy.hpp"
 #include "fcs/core/types.hpp"
-#include "math/fast_tf/infantry.hpp"
 #include "scheduler/ecs/channel_types.hpp"
 
-#include <chrono>
 #include <memory>
 
 namespace fcs::L3 {

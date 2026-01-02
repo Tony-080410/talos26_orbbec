@@ -5,16 +5,22 @@ if (TALOS_OFFLINE)
 endif ()
 
 find_package(Eigen3 REQUIRED)
-find_package(OpenCV REQUIRED)
+find_package(OpenCV REQUIRED COMPONENTS
+    core
+    imgproc
+    imgcodecs
+    calib3d
+)
 find_package(spdlog REQUIRED)
 find_package(fmt REQUIRED)
 find_package(TBB REQUIRED)
 find_package(GTest REQUIRED)
 find_package(nlohmann_json REQUIRED)
 find_package(Ceres REQUIRED)
+find_package(magic_enum CONFIG REQUIRED)
 
 # OpenVINO configuration with better error handling
-find_package(OpenVINO QUIET)
+find_package(OpenVINO QUIET COMPONENTS Runtime)
 if (OpenVINO_FOUND)
     message(STATUS "OpenVINO found at: ${OpenVINO_DIR}")
 else ()
@@ -83,4 +89,3 @@ file(GLOB FOXGLOVE_SOURCES CONFIGURE_DEPENDS
     "${foxglove_SOURCE_DIR}/src/*.cpp"
     "${foxglove_SOURCE_DIR}/src/server/*.cpp"
 )
-

@@ -78,8 +78,7 @@ void register_foxglove_systems(App& app, talos::Scheduler* scheduler_ptr = nullp
                 cam.distort_coefficient.data() + cam.distort_coefficient.size());
 
             (*server)->publish_camera_calibration(
-                cam.camera_info.width, cam.camera_info.height, camera_matrix_arr, dist_coeffs,
-                frame->timestamp_ns);
+                cam.width, cam.height, camera_matrix_arr, dist_coeffs, frame->timestamp_ns);
 
             // 发布 TF
             (*server)->publish_tf(**tf_buffer, frame->timestamp_ns);

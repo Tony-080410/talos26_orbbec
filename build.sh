@@ -47,5 +47,5 @@ clean_dir() {
 }
 
 cmake -G Ninja -B build -S .
-cmake --build build -- -j32
+cmake --build build
 status "[+]" "$BLUE" "All done."

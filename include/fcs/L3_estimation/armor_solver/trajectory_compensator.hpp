@@ -8,6 +8,11 @@
 
 namespace fcs::L3 {
 
+enum class TrajectoryCompensatorType {
+    Ideal,
+    Resistance,
+};
+
 /// Abstract trajectory compensator for ballistic compensation
 class TrajectoryCompensator {
 public:
@@ -151,11 +156,10 @@ protected:
 
 /// Factory function to create compensator
 [[nodiscard]] inline std::unique_ptr<TrajectoryCompensator>
-    create_compensator(std::string_view type) noexcept {
-    if (type == "ideal") {
+    create_compensator(TrajectoryCompensatorType type) noexcept {
+    if (type == TrajectoryCompensatorType::Ideal) {
         return std::make_unique<IdealCompensator>();
     }
-    // Default to resistance model
     return std::make_unique<ResistanceCompensator>();
 }
 

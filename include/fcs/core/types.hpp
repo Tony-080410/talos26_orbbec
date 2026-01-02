@@ -4,7 +4,6 @@
 
 #include <array>
 #include <cstdint>
-#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -33,21 +32,32 @@ constexpr std::string_view to_string(const ArmorType c) noexcept {
 }
 
 enum class ArmorColor : uint8_t {
-    Red     = 0,
-    Blue    = 1,
+    Blue    = 0,
+    Red     = 1,
     Neutral = 2,
     Purple  = 3,
 };
 
-const std::array<std::string, 4> COLORS = {"red", "blue", "neutral", "purple"};
+const std::array<std::string, 4> COLORS = {"blue", "red", "neutral", "purple"};
 constexpr std::string_view to_string(const ArmorColor c) noexcept {
     return COLORS[static_cast<std::underlying_type_t<decltype(c)>>(c)];
 }
 
-enum class ArmorName : uint8_t { One = 0, Two, Three, Four, Five, Sentry, Outpost, Base, Invalid };
+enum class ArmorName : uint8_t {
+    Sentry = 0,
+    One,
+    Two,
+    Three,
+    Four,
+    Five,
+    Outpost,
+    Base,
+    BaseLarge,
+    Invalid
+};
 
-const std::array<std::string, 9> ARMOR_NAMES = {"one",    "two",     "three", "four",   "five",
-                                                "sentry", "outpost", "base",  "invalid"};
+const std::array<std::string, 10> ARMOR_NAMES = {
+    "sentry", "one", "two", "three", "four", "five", "outpost", "base", "base_large", "invalid"};
 constexpr std::string_view to_string(const ArmorName c) noexcept {
     return ARMOR_NAMES[static_cast<std::underlying_type_t<decltype(c)>>(c)];
 }
@@ -78,39 +88,11 @@ inline constexpr double AT_LEGACY_LARGE_ARMOR_HEIGHT = 55.0 / 1000.0;
 // AT Legacy cls/color Mapping (from NN output)
 // ============================================================================
 
-/// Map AT legacy NN cls output to ArmorName
-/// cls: 0=sentry, 1-5=numbers, 6=outpost, 7=base_small, 8=base_large
-[[nodiscard]] constexpr ArmorName at_legacy_cls_to_armor_name(int cls) noexcept {
-    switch (cls) {
-    case 0: return ArmorName::Sentry;
-    case 1: return ArmorName::One;
-    case 2: return ArmorName::Two;
-    case 3: return ArmorName::Three;
-    case 4: return ArmorName::Four;
-    case 5: return ArmorName::Five;
-    case 6: return ArmorName::Outpost;
-    case 7:
-    case 8: return ArmorName::Base;
-    default: return ArmorName::Invalid;
-    }
-}
-
-/// Map AT legacy NN color output to ArmorColor
-/// color: 0=blue, 1=red, 2=gray, 3=purple
-[[nodiscard]] constexpr ArmorColor at_legacy_color_to_armor_color(int color) noexcept {
-    switch (color) {
-    case 0: return ArmorColor::Blue;
-    case 1: return ArmorColor::Red;
-    case 2: return ArmorColor::Neutral;
-    case 3: return ArmorColor::Purple;
-    default: return ArmorColor::Neutral;
-    }
-}
-
 /// Determine ArmorType from AT legacy cls
 /// cls=1 (Hero) and cls=8 (base_large) are Large armor
-[[nodiscard]] constexpr ArmorType at_legacy_cls_to_armor_type(int cls) noexcept {
-    return (cls == 1 || cls == 8) ? ArmorType::Large : ArmorType::Small;
+[[nodiscard]] constexpr ArmorType at_legacy_cls_to_armor_type(ArmorName cls) noexcept {
+    return (cls == ArmorName::One || cls == ArmorName::BaseLarge) ? ArmorType::Large
+                                                                  : ArmorType::Small;
 }
 
 // ============================================================================
@@ -143,10 +125,11 @@ struct AtLegacyArmorDetection {
     AtLegacyArmorDetection() = default;
 
     /// Construct from NN output (cls, color as int)
-    AtLegacyArmorDetection(std::array<cv::Point2f, 4> pts, int cls, int clr, float conf)
+    AtLegacyArmorDetection(
+        std::array<cv::Point2f, 4> pts, ArmorName cls, ArmorColor clr, float conf)
         : corners(pts)
-        , name(at_legacy_cls_to_armor_name(cls))
-        , color(at_legacy_color_to_armor_color(clr))
+        , name(cls)
+        , color(clr)
         , type(at_legacy_cls_to_armor_type(cls))
         , confidence(conf) {
         // Calculate bounding rect

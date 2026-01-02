@@ -5,12 +5,10 @@
 #include "at_legacy_detector_backend.hpp"
 #include "at_legacy_pnp_solver.hpp"
 
-#include "math/fast_tf/infantry.hpp"
-#include "scheduler/scheduler.hpp"
-
-#include <chrono>
+#include "auto_aim/config.hpp"
 #include <memory>
 #include <scheduler/bevy_ecs.hpp>
+#include <spdlog/spdlog.h>
 
 namespace fcs {
 

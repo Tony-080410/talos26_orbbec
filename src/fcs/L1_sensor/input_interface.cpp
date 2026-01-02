@@ -8,7 +8,7 @@ std::expected<InputInterface, InputError>
     InputInterface::create_ipc(std::shared_ptr<ipc::ShmClient> client) noexcept {
     // 从 IPC 获取相机内参
     const auto& ipc_info = client->camera_info();
-    CameraInfo info;
+    CameraConfig info;
     info.camera_matrix << ipc_info.fx, 0.0, ipc_info.cx, 0.0, ipc_info.fy, ipc_info.cy, 0.0, 0.0,
         1.0;
     info.distort_coefficient << ipc_info.distortion[0], ipc_info.distortion[1],
@@ -20,7 +20,7 @@ std::expected<InputInterface, InputError>
 }
 
 std::expected<InputInterface, InputError> InputInterface::create_hik(
-    const hikcamera::ImageCapturer::CameraProfile& profile, const CameraInfo& info) noexcept {
+    const hikcamera::ImageCapturer::CameraProfile& profile, const CameraConfig& info) noexcept {
     auto result = hikcamera::ImageCapturer::create(profile);
     if (!result) {
         return std::unexpected(result.error());

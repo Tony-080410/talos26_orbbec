@@ -1,5 +1,6 @@
 #include "fcs/L2_perception/at_legacy_nn_tup_backend.hpp"
 
+#include "core/types.hpp"
 #include "fcs/L2_perception/at_legacy_config.hpp"
 
 #include <algorithm>
@@ -9,6 +10,7 @@
 #include <opencv2/imgproc.hpp>
 #include <openvino/openvino.hpp>
 #include <spdlog/spdlog.h>
+#include <type_traits>
 
 namespace fcs {
 
@@ -355,16 +357,15 @@ std::vector<AtLegacyArmorDetection> AtLegacyNNTupBackend::postprocess(
         cv::Point num_id;
         cv::minMaxLoc(num_scores, nullptr, nullptr, nullptr, &num_id);
 
-        const int color = color_id.x;
-        const int cls   = num_id.x;
+        const auto color = static_cast<ArmorColor>(color_id.x);
+        const auto cls   = static_cast<ArmorName>(num_id.x);
 
         // Filter by detect color (optional)
         // 0=BLUE, 1=RED, 2=GRAY, 3=PURPLE
-        if (detect_color_ >= 0 && detect_color_ <= 1) {
-            if (color != detect_color_ && color != 2 && color != 3) {
-                // Not matching color and not gray/purple
-                continue;
-            }
+
+        if (color != detect_color_) {
+            // Not matching color and not gray/purple
+            continue;
         }
 
         // Create detection

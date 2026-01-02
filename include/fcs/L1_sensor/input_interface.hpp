@@ -7,7 +7,7 @@
 #include "ipc/shm_client.hpp"
 #include <chrono>
 #include <expected>
-#include <opencv2/opencv.hpp>
+#include <opencv2/core/mat.hpp>
 #include <optional>
 #include <utility>
 #include <variant>
@@ -23,7 +23,7 @@ using InputError = std::variant<
 
 class IpcInput {
 public:
-    explicit IpcInput(std::shared_ptr<ipc::ShmClient> client, CameraInfo info) noexcept
+    explicit IpcInput(std::shared_ptr<ipc::ShmClient> client, CameraConfig info) noexcept
         : client_(std::move(client))
         , info_(std::move(info)) {}
 
@@ -59,17 +59,17 @@ public:
         return std::unexpected(Timeout{});
     }
 
-    [[nodiscard]] const CameraInfo& camera_info() const noexcept { return info_; }
+    [[nodiscard]] const CameraConfig& camera_info() const noexcept { return info_; }
 
 private:
     std::shared_ptr<ipc::ShmClient> client_;
-    CameraInfo info_;
+    CameraConfig info_;
 };
 
 class HikInput {
 public:
     explicit HikInput(
-        std::unique_ptr<hikcamera::ImageCapturer> camera, CameraInfo info,
+        std::unique_ptr<hikcamera::ImageCapturer> camera, CameraConfig info,
         std::chrono::duration<float, std::micro> exposure_time) noexcept
         : camera_(std::move(camera))
         , info_(std::move(info))
@@ -104,7 +104,7 @@ public:
         };
     }
 
-    [[nodiscard]] const CameraInfo& camera_info() const noexcept { return info_; }
+    [[nodiscard]] const CameraConfig& camera_info() const noexcept { return info_; }
 
 private:
     /// Get timestamp compensated for exposure time (midpoint of exposure)
@@ -116,7 +116,7 @@ private:
     }
 
     std::unique_ptr<hikcamera::ImageCapturer> camera_;
-    CameraInfo info_;
+    CameraConfig info_;
     uint64_t exposure_time_ns_; // Exposure time in nanoseconds
     uint64_t seq_{0};
 };
@@ -154,11 +154,11 @@ public:
             mode_);
     }
 
-    [[nodiscard]] const CameraInfo& camera_info() const noexcept {
+    [[nodiscard]] const CameraConfig& camera_info() const noexcept {
         return std::visit(
-            [](const auto& input) -> const CameraInfo& {
+            [](const auto& input) -> const CameraConfig& {
                 if constexpr (std::is_same_v<std::decay_t<decltype(input)>, std::monostate>) {
-                    static CameraInfo empty{};
+                    static CameraConfig empty{};
                     return empty;
                 } else {
                     return input.camera_info();
@@ -171,7 +171,7 @@ public:
         create_ipc(std::shared_ptr<ipc::ShmClient> client) noexcept;
 
     [[nodiscard]] static std::expected<InputInterface, InputError> create_hik(
-        const hikcamera::ImageCapturer::CameraProfile& profile, const CameraInfo& info) noexcept;
+        const hikcamera::ImageCapturer::CameraProfile& profile, const CameraConfig& info) noexcept;
 
 private:
     InputMode mode_;

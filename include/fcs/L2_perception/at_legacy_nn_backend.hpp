@@ -1,6 +1,7 @@
 #pragma once
 
 #include "at_legacy_detector_backend.hpp"
+#include "core/types.hpp"
 
 #include <atomic>
 #include <memory>
@@ -50,9 +51,8 @@ public:
     [[nodiscard]] bool is_initialized_impl() const noexcept { return initialized_; }
     [[nodiscard]] std::string_view name_impl() const noexcept { return "nn"; }
 
-    /// Set detection color (0=BLUE, 1=RED)
-    void set_detect_color(int color) noexcept { detect_color_ = color; }
-    [[nodiscard]] int detect_color() const noexcept { return detect_color_; }
+    void set_detect_color(ArmorColor color) noexcept { detect_color_ = color; }
+    [[nodiscard]] ArmorColor detect_color() const noexcept { return detect_color_; }
 
     /// Get execution devices
     [[nodiscard]] std::vector<std::string> execution_devices() const;
@@ -94,9 +94,9 @@ private:
         nms(std::vector<AtLegacyArmorDetection>& detections, const AtLegacyNNConfig& cfg) const;
 
 private:
-    ConfigPtr config_;     // Atomic shared_ptr for thread-safe config access
-    int detect_color_ = 1; // 0=BLUE, 1=RED
-    bool initialized_ = false;
+    ConfigPtr config_; // Atomic shared_ptr for thread-safe config access
+    ArmorColor detect_color_ = ArmorColor::Blue;
+    bool initialized_        = false;
 
     // OpenVINO resources (PIMPL to avoid header pollution)
     struct Impl;
