@@ -1,5 +1,6 @@
 #pragma once
 
+#include "L5_weapon/fire_control.hpp"
 #include "foxglove_server.hpp"
 #include "foxglove_types.hpp"
 
@@ -489,8 +490,9 @@ void register_foxglove_systems(App& app, talos::Scheduler* scheduler_ptr = nullp
 
     // 云台指令发布系统
     app.template add_system<talos::pool_compute>(
-        "foxglove_gimbal_cmd_pub", [](talos::spmc<L3::GimbalCommand, SolverOutputChannelTag> cmd_in,
-                                      talos::res<std::shared_ptr<FoxgloveServer>> server) {
+        "foxglove_gimbal_cmd_pub",
+        [](talos::spmc<L5::WeaponCommand, WeaponCommandChannelTag> cmd_in,
+           talos::res<std::shared_ptr<FoxgloveServer>> server) {
             if (!(*server)->is_initialized() || !cmd_in.has_new()) {
                 return;
             }
@@ -504,16 +506,8 @@ void register_foxglove_systems(App& app, talos::Scheduler* scheduler_ptr = nullp
             cmd_json["timestamp_ns"] = cmd->timestamp_ns;
             cmd_json["yaw"]          = cmd->yaw;
             cmd_json["pitch"]        = cmd->pitch;
-            cmd_json["yaw_diff"]     = cmd->yaw_diff;
-            cmd_json["pitch_diff"]   = cmd->pitch_diff;
             cmd_json["distance"]     = cmd->distance;
-            cmd_json["fire_advice"]  = cmd->fire_advice;
-
-            if (cmd->predicted_position) {
-                cmd_json["predicted_position"] = {
-                    cmd->predicted_position->x(), cmd->predicted_position->y(),
-                    cmd->predicted_position->z()};
-            }
+            cmd_json["fire_advice"]  = cmd->fire;
 
             GimbalCmdMessage msg;
             msg.data = json_to_bytes(cmd_json.dump());

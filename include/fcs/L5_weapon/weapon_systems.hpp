@@ -31,11 +31,12 @@ void register_weapon_system(App& app) {
             // Convert L3::GimbalCommand -> L5::WeaponCommand
             // Replicates rm_gimbal's GimbalNode::send_to_device() logic
             WeaponCommand weapon_cmd;
-            weapon_cmd.yaw      = gimbal_cmd->yaw;         // Target yaw (radians)
-            weapon_cmd.pitch    = gimbal_cmd->pitch;       // Target pitch (radians)
-            weapon_cmd.fire     = gimbal_cmd->fire_advice; // Shoot decision from solver
-            weapon_cmd.distance = gimbal_cmd->distance;    // Target distance (meters)
-            weapon_cmd.valid    = true;
+            weapon_cmd.timestamp_ns = gimbal_cmd->timestamp_ns; // Timestamp (nanoseconds)
+            weapon_cmd.yaw          = gimbal_cmd->yaw;          // Target yaw (radians)
+            weapon_cmd.pitch        = gimbal_cmd->pitch;        // Target pitch (radians)
+            weapon_cmd.fire         = gimbal_cmd->fire_advice;  // Shoot decision from solver
+            weapon_cmd.distance     = gimbal_cmd->distance;     // Target distance (meters)
+            weapon_cmd.valid        = true;
 
             // Note: yaw_rate, pitch_rate, tof are not used in rm_gimbal
             // (ref_yaw_v, ref_pitch_v, ref_yaw_a, ref_pitch_a are all set to 0)

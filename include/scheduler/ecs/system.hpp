@@ -16,7 +16,7 @@ namespace talos {
 class SystemBase {
 public:
     virtual ~SystemBase()                  = default;
-    virtual void run(World& world)         = 0;
+    virtual bool run(World& world)         = 0; // Returns true if any channel was written
     virtual const SystemMeta& meta() const = 0;
 };
 
@@ -64,21 +64,38 @@ class System : public SystemBase {
     F func_;
     SystemMeta meta_;
     std::optional<args_tuple> cached_args_;
+    bool written_ = false;
+
+    // Recursively set written_flag_ for all writer arguments
+    template <std::size_t I = 0>
+    void bind_written_flags() {
+        if constexpr (I < std::tuple_size_v<args_tuple>) {
+            using ArgType = std::tuple_element_t<I, args_tuple>;
+            if constexpr (
+                detail::is_spsc_writer<ArgType>::value || detail::is_spmc_writer<ArgType>::value) {
+                std::get<I>(*cached_args_).written_flag_ = &written_;
+            }
+            bind_written_flags<I + 1>();
+        }
+    }
 
 public:
     System(std::string name, F func)
         : func_(std::move(func))
         , meta_(extract_system_meta<F, Policy>(std::move(name))) {}
 
-    void run(World& world) override {
+    bool run(World& world) override {
         // Cache arguments on first run (readers/writers created once, reused)
         if (!cached_args_) {
             cached_args_ = [&]<std::size_t... Is>(std::index_sequence<Is...>) {
                 return args_tuple{detail::make_arg<std::tuple_element_t<Is, args_tuple>>(world)...};
             }(std::make_index_sequence<traits::arity>{});
+            bind_written_flags();
         }
 
+        written_ = false;
         std::apply(func_, *cached_args_);
+        return written_;
     }
 
     const SystemMeta& meta() const override { return meta_; }

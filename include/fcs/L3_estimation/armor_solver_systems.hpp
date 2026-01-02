@@ -7,6 +7,7 @@
 
 #include "ecs/execution_policy.hpp"
 #include "fcs/core/types.hpp"
+#include "math/fast_tf/error.hpp"
 #include "scheduler/ecs/channel_types.hpp"
 
 #include <memory>
@@ -67,12 +68,12 @@ void register_armor_solver_systems(App& app) {
         });
 
     // SolverSystem: TrackerOutput -> GimbalCommand
-    app.template add_system<talos::exclusive<250>>(
+    app.template add_system<talos::exclusive<250, 2>>(
         "armor_solver", [](talos::spmc<TrackerOutput, TrackerOutputChannelTag> tracker_in,
                            talos::spmc_mut<GimbalCommand, SolverOutputChannelTag> cmd_out,
                            talos::res<std::shared_ptr<Solver>> solver,
                            talos::res<std::shared_ptr<fast_tf::CoordinateSystem<1024>>> tf_system) {
-            auto target = tracker_in.read();
+            auto target = tracker_in.read_current();
             if (!target || !target->is_tracking()) {
                 return;
             }
@@ -92,6 +93,9 @@ void register_armor_solver_systems(App& app) {
                     target->timestamp_ns);
 
             if (!tf_result) {
+                spdlog::error(
+                    "Solver TF lookup failed at {} ns: {}", target->timestamp_ns,
+                    fast_tf::to_string(tf_result.error()));
                 return;
             }
 

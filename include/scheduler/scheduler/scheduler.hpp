@@ -85,11 +85,17 @@ struct DependencyCycleError {
     std::vector<std::string> cycle;
 };
 
+/// Too many compute systems (max 32 for efficient bitmask scheduling)
+struct TooManyComputeSystemsError {
+    std::size_t count;
+    static constexpr std::size_t max_count = 32;
+};
+
 /// All possible build errors
 using BuildError = std::variant<
     SchedulerError, // Runtime/lifecycle errors (AlreadyBuilt, etc.)
     ChannelKindConflict, MultipleWritersError, MultipleReadersError, OrphanedReaderError,
-    DependencyCycleError>;
+    DependencyCycleError, TooManyComputeSystemsError>;
 
 /// Build result type
 using BuildResult = std::expected<void, BuildError>;
@@ -136,6 +142,9 @@ using BuildResult = std::expected<void, BuildError>;
                     s += "'" + e.cycle[i] + "'";
                 }
                 return s;
+            } else if constexpr (std::is_same_v<T, TooManyComputeSystemsError>) {
+                return "TooManyComputeSystems: " + std::to_string(e.count) + " (max "
+                     + std::to_string(e.max_count) + ")";
             }
             return "Unknown error";
         },
@@ -275,7 +284,8 @@ private:
 
     static void run_exclusive_thread(ExclusiveContext ctx);
     void run_compute_loop();
-    void run_compute_once();
+    [[nodiscard]] std::uint32_t
+        run_compute_selective(std::uint32_t ready_mask); // Returns mask of systems that wrote
 
     [[nodiscard]] auto compute_levels() -> BuildResult;
 
@@ -303,9 +313,11 @@ private:
     std::atomic<bool> built_{false};
     std::atomic<bool> running_{false};
 
-    // Synchronization
-    std::atomic<std::uint64_t> work_version_{0};
-    std::uint64_t last_seen_version_{0}; // Only accessed by compute loop
+    // Selective notification: wake chains for all systems
+    std::vector<std::uint32_t> exclusive_affects_; // [exclusive_idx] → bitmask of compute systems
+    std::vector<std::uint32_t>
+        compute_affects_; // [compute_idx] → bitmask of dependent compute systems
+    std::atomic<std::uint32_t> ready_systems_{0}; // Bitmask of compute systems pending execution
 
     // Stats
     std::atomic<std::uint64_t> compute_cycles_{0};

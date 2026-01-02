@@ -124,9 +124,10 @@ public:
         const auto p999_idx = std::min(count * 999 / 1000, count - 1);
 
         // Standard deviation
-        double sum_sq = 0.0;
+        double sum_sq       = 0.0;
+        const double mean_d = static_cast<double>(mean_val);
         for (size_t i = 0; i < count; i++) {
-            const auto diff = static_cast<double>(sorted[i] - mean_val);
+            const double diff = static_cast<double>(sorted[i]) - mean_d;
             sum_sq += diff * diff;
         }
         const double stddev = std::sqrt(sum_sq / static_cast<double>(count));

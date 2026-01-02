@@ -1,6 +1,7 @@
 #pragma once
 
 #include <Eigen/Core>
+#include <cstdint>
 
 namespace fcs::L5 {
 
@@ -9,6 +10,7 @@ namespace fcs::L5 {
 // ============================================================================
 
 struct WeaponCommand {
+    uint64_t timestamp_ns{0}; // 时间戳 (纳秒)
     // 云台角度
     double yaw{0.0};   // 目标 yaw (弧度)
     double pitch{0.0}; // 目标 pitch (弧度)

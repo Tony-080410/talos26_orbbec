@@ -34,6 +34,9 @@ struct ImuChannel {};
 struct CameraChannel {};
 struct FusionChannel {};
 
+// ============================================================================
+// Test: Scheduler with Exclusive and Pool Systems
+// ============================================================================
 void test_scheduler_exclusive_and_pool() {
     printf("=== Test: Exclusive + Pool Systems ===\n");
 

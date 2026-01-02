@@ -299,7 +299,6 @@ int main() {
             // Send to device (USB or IPC)
             output_interface->send(*cmd);
         });
-    scheduler.print_systems();
 
     // Build
     if (auto build_result = scheduler.build(); !build_result) {
@@ -307,6 +306,9 @@ int main() {
             "build scheduler: {}", talos::format_build_error(build_result.error()).c_str());
         return 1;
     }
+
+    scheduler.print_systems();
+
     if (const auto result = scheduler.run(); !result) {
         spdlog::critical("run scheduler: {}", to_string(result.error()));
     }

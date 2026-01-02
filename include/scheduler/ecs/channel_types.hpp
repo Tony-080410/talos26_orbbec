@@ -33,6 +33,9 @@ struct spsc {
     ReaderType* ptr_ = nullptr;
 
     [[nodiscard]] std::optional<T> read() { return ptr_ ? ptr_->read() : std::nullopt; }
+    [[nodiscard]] std::optional<T> read_current() {
+        return ptr_ ? ptr_->read_current() : std::nullopt;
+    }
     [[nodiscard]] bool has_new() const { return ptr_ && ptr_->has_new(); }
     [[nodiscard]] const T& current() const { return ptr_->current(); }
     [[nodiscard]] bool valid() const { return ptr_ != nullptr; }
@@ -51,11 +54,15 @@ struct spsc_mut {
     static constexpr bool is_res_mut = false;
     static constexpr bool is_atomic  = false;
 
-    WriterType* ptr_ = nullptr;
+    WriterType* ptr_    = nullptr;
+    bool* written_flag_ = nullptr; // Set by scheduler before system runs
 
     void write(T value) {
-        if (ptr_)
+        if (ptr_) {
             ptr_->write(std::move(value));
+            if (written_flag_)
+                *written_flag_ = true;
+        }
     }
     [[nodiscard]] bool valid() const { return ptr_ != nullptr; }
 };
@@ -76,6 +83,9 @@ struct spmc {
     ReaderType* ptr_ = nullptr;
 
     [[nodiscard]] std::optional<T> read() { return ptr_ ? ptr_->read() : std::nullopt; }
+    [[nodiscard]] std::optional<T> read_current() {
+        return ptr_ ? ptr_->read_current() : std::nullopt;
+    }
     [[nodiscard]] bool has_new() const { return ptr_ && ptr_->has_new(); }
     [[nodiscard]] bool valid() const { return ptr_ != nullptr; }
 };
@@ -93,11 +103,15 @@ struct spmc_mut {
     static constexpr bool is_res_mut = false;
     static constexpr bool is_atomic  = false;
 
-    ChannelType* ptr_ = nullptr;
+    ChannelType* ptr_   = nullptr;
+    bool* written_flag_ = nullptr; // Set by scheduler before system runs
 
     void write(T value) {
-        if (ptr_)
+        if (ptr_) {
             ptr_->write(std::move(value));
+            if (written_flag_)
+                *written_flag_ = true;
+        }
     }
     [[nodiscard]] bool valid() const { return ptr_ != nullptr; }
 };

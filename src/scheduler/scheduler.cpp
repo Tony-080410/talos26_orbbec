@@ -8,6 +8,7 @@
 #include <functional>
 #include <nlohmann/json.hpp>
 #include <set>
+#include <spdlog/spdlog.h>
 #include <sstream>
 #include <unordered_map>
 
@@ -129,7 +130,10 @@ auto Scheduler::is_running() const noexcept -> bool {
 // ============================================================================
 
 void Scheduler::notify(const std::size_t system_index) noexcept {
-    work_version_.fetch_add(1, std::memory_order_release);
+    // Selective wake: only mark affected compute systems as ready
+    if (system_index < exclusive_affects_.size()) {
+        ready_systems_.fetch_or(exclusive_affects_[system_index], std::memory_order_release);
+    }
     if (system_index < exclusive_stats_.size()) {
         exclusive_stats_[system_index].notify_count.fetch_add(1, std::memory_order_relaxed);
     }
@@ -140,8 +144,13 @@ void Scheduler::notify(const std::size_t system_index) noexcept {
 // ============================================================================
 
 auto Scheduler::stats() const noexcept -> Stats {
+    // Sum notify counts from all exclusive systems
+    std::uint64_t total_notifies = 0;
+    for (const auto& s : exclusive_stats_) {
+        total_notifies += s.notify_count.load(std::memory_order_relaxed);
+    }
     return Stats{
-        .notify_count        = work_version_.load(std::memory_order_relaxed),
+        .notify_count        = total_notifies,
         .compute_cycle_count = compute_cycles_.load(std::memory_order_relaxed),
     };
 }
@@ -151,9 +160,10 @@ void Scheduler::print_systems() const {
     for (const auto& entry : exclusive_systems_) {
         const auto& m = entry.system->meta();
         printf(
-            "  [%s] freq:%uHz affinity:%d priority:%d notify:%s\n", m.name.c_str(),
-            entry.policy.frequency_hz, entry.policy.cpu_affinity, entry.policy.thread_priority,
-            entry.policy.notifies ? "yes" : "no");
+            "  [%s] freq:%uHz affinity:%d priority:%d notify:%s spsc:%zu spmc:%zu\n",
+            m.name.c_str(), entry.policy.frequency_hz, entry.policy.cpu_affinity,
+            entry.policy.thread_priority, entry.policy.notifies ? "yes" : "no",
+            m.spsc_channels.size(), m.spmc_channels.size());
     }
 
     printf("Compute systems (%zu):\n", compute_systems_.size());
@@ -172,6 +182,51 @@ void Scheduler::print_systems() const {
         }
         printf("\n");
     }
+
+    // Print wake chains (which systems trigger which compute systems)
+    printf("Wake chains (exclusive -> compute):\n");
+    for (std::size_t i = 0; i < exclusive_systems_.size(); ++i) {
+        const auto& excl_name = exclusive_systems_[i].system->meta().name;
+        const auto affects    = i < exclusive_affects_.size() ? exclusive_affects_[i] : 0U;
+
+        printf("  [%s] -> ", excl_name.c_str());
+        if (affects == 0) {
+            printf("(none)");
+        } else {
+            bool first = true;
+            for (std::size_t j = 0; j < compute_systems_.size(); ++j) {
+                if (affects & (1U << j)) {
+                    if (!first)
+                        printf(", ");
+                    printf("[%s]", compute_systems_[j].system->meta().name.c_str());
+                    first = false;
+                }
+            }
+        }
+        printf("\n");
+    }
+
+    printf("Wake chains (compute -> compute):\n");
+    for (std::size_t i = 0; i < compute_systems_.size(); ++i) {
+        const auto& comp_name = compute_systems_[i].system->meta().name;
+        const auto affects    = i < compute_affects_.size() ? compute_affects_[i] : 0U;
+
+        printf("  [%s] -> ", comp_name.c_str());
+        if (affects == 0) {
+            printf("(none)");
+        } else {
+            bool first = true;
+            for (std::size_t j = 0; j < compute_systems_.size(); ++j) {
+                if (affects & (1U << j)) {
+                    if (!first)
+                        printf(", ");
+                    printf("[%s]", compute_systems_[j].system->meta().name.c_str());
+                    first = false;
+                }
+            }
+        }
+        printf("\n");
+    }
 }
 
 void Scheduler::print_stats() const {
@@ -180,69 +235,66 @@ void Scheduler::print_stats() const {
     const auto compute_cycles = compute_cycles_.load(std::memory_order_relaxed);
     const auto compute_total  = compute_total_time_ns_.load(std::memory_order_relaxed);
     const auto compute_last   = compute_last_time_ns_.load(std::memory_order_relaxed);
-    const auto notify_total   = work_version_.load(std::memory_order_relaxed);
 
-    printf("\n");
-    printf("========== Scheduler Performance Stats ==========\n");
-    printf("Runtime: %.1fs\n", elapsed_sec);
-    printf("\n");
-
-    // Compute loop stats
-    printf("Compute Loop:\n");
-    printf("  Cycles:     %" PRIu64 " (%.1f Hz)\n", compute_cycles, compute_cycles / elapsed_sec);
-    if (compute_cycles > 0) {
-        printf("  Avg time:   %.2f ms\n", compute_total / 1e6 / compute_cycles);
-        printf("  Last time:  %.2f ms\n", compute_last / 1e6);
+    std::uint64_t notify_total = 0;
+    for (const auto& s : exclusive_stats_) {
+        notify_total += s.notify_count.load(std::memory_order_relaxed);
     }
-    printf("  Total notifies: %" PRIu64 " (%.1f Hz)\n", notify_total, notify_total / elapsed_sec);
-    printf("\n");
 
-    // Exclusive systems stats
-    printf("Exclusive Systems:\n");
+    printf("\n");
+    printf("=== Scheduler Performance (%.1fs) ===\n", elapsed_sec);
+
+    // Compute loop stats - more compact
+    printf("Loop: %-4" PRIu64 " cycles (%.1f Hz)", compute_cycles, compute_cycles / elapsed_sec);
+    if (compute_cycles > 0) {
+        printf(
+            " | avg: %.2f ms | last: %.2f ms", compute_total / 1e6 / compute_cycles,
+            compute_last / 1e6);
+    }
+    printf(" | notifies: %-4" PRIu64 " (%.1f Hz)\n", notify_total, notify_total / elapsed_sec);
+    // Exclusive systems - system name on one line, stats on the next
     for (std::size_t i = 0; i < exclusive_systems_.size(); ++i) {
         const auto& entry     = exclusive_systems_[i];
         const auto& sys_stats = exclusive_stats_[i];
         const auto notify_cnt = sys_stats.notify_count.load(std::memory_order_relaxed);
         const auto latency    = sys_stats.latency_hist.compute();
+        const auto actual_hz  = latency.count / elapsed_sec;
 
         printf(
-            "  [%s] (target: %uHz)\n", entry.system->meta().name.c_str(),
-            entry.policy.frequency_hz);
-        printf("    Runs:     %zu (%.1f Hz)\n", latency.count, latency.count / elapsed_sec);
-        printf("    Notifies: %" PRIu64 "\n", notify_cnt);
+            "  %-30s@%.1fHz(%uHz) runs:%zu", entry.system->meta().name.c_str(), actual_hz,
+            entry.policy.frequency_hz, latency.count);
+        if (notify_cnt > 0) {
+            printf(" notif:%" PRIu64, notify_cnt);
+        }
+        printf("\n");
+
         if (latency.count > 0) {
-            printf("    Min:      %.3f ms\n", latency.min_ns / 1e6);
-            printf("    P50:      %.3f ms\n", latency.p50_ns / 1e6);
-            printf("    P95:      %.3f ms\n", latency.p95_ns / 1e6);
-            printf("    P99:      %.3f ms\n", latency.p99_ns / 1e6);
-            printf("    P99.9:    %.3f ms\n", latency.p999_ns / 1e6);
-            printf("    Mean:     %.3f ms\n", latency.mean_ns / 1e6);
-            printf("    Max:      %.3f ms\n", latency.max_ns / 1e6);
-            printf("    StdDev:   %.3f ms\n", latency.stddev_ns / 1e6);
+            printf(
+                "   min:%.2f p50:%.2f p95:%.2f max:%.2f ms", latency.min_ns / 1e6,
+                latency.p50_ns / 1e6, latency.p95_ns / 1e6, latency.max_ns / 1e6);
+            printf("\n");
         }
     }
 
-    // Compute systems stats
-    printf("\nCompute Systems:\n");
+    // Compute systems - system name on one line, stats on the next
     for (std::size_t i = 0; i < compute_systems_.size(); ++i) {
         const auto& entry     = compute_systems_[i];
         const auto& sys_stats = compute_stats_[i];
         const auto latency    = sys_stats.latency_hist.compute();
+        const auto actual_hz  = latency.count / elapsed_sec;
 
-        printf("  [%s]\n", entry.system->meta().name.c_str());
-        printf("    Runs:   %zu (%.1f Hz)\n", latency.count, latency.count / elapsed_sec);
+        printf(
+            "  %-30s@%.1fHz runs:%zu", entry.system->meta().name.c_str(), actual_hz, latency.count);
+        printf("\n");
+
         if (latency.count > 0) {
-            printf("    Min:    %.3f ms\n", latency.min_ns / 1e6);
-            printf("    P50:    %.3f ms\n", latency.p50_ns / 1e6);
-            printf("    P95:    %.3f ms\n", latency.p95_ns / 1e6);
-            printf("    P99:    %.3f ms\n", latency.p99_ns / 1e6);
-            printf("    P99.9:  %.3f ms\n", latency.p999_ns / 1e6);
-            printf("    Mean:   %.3f ms\n", latency.mean_ns / 1e6);
-            printf("    Max:    %.3f ms\n", latency.max_ns / 1e6);
-            printf("    StdDev: %.3f ms\n", latency.stddev_ns / 1e6);
+            printf(
+                "   min:%.2f p50:%.2f p95:%.2f max:%.2f ms", latency.min_ns / 1e6,
+                latency.p50_ns / 1e6, latency.p95_ns / 1e6, latency.max_ns / 1e6);
+            printf("\n");
         }
     }
-    printf("==================================================\n");
+    printf("======================================\n");
     printf("\n");
 }
 
@@ -254,10 +306,15 @@ auto Scheduler::get_stats_json() const -> std::string {
     const double elapsed_sec = elapsed.count();
 
     // Compute loop stats
-    const auto cycles       = compute_cycles_.load(std::memory_order_relaxed);
-    const auto total_time   = compute_total_time_ns_.load(std::memory_order_relaxed);
-    const auto last_time    = compute_last_time_ns_.load(std::memory_order_relaxed);
-    const auto notify_total = work_version_.load(std::memory_order_relaxed);
+    const auto cycles     = compute_cycles_.load(std::memory_order_relaxed);
+    const auto total_time = compute_total_time_ns_.load(std::memory_order_relaxed);
+    const auto last_time  = compute_last_time_ns_.load(std::memory_order_relaxed);
+
+    // Sum notify counts from all exclusive systems
+    std::uint64_t notify_total = 0;
+    for (const auto& s : exclusive_stats_) {
+        notify_total += s.notify_count.load(std::memory_order_relaxed);
+    }
 
     json root;
     root["runtime_seconds"] = elapsed_sec;
@@ -333,9 +390,9 @@ void Scheduler::run_exclusive_thread(ExclusiveContext ctx) {
             static_cast<std::uint32_t>(ctx.policy.cpu_affinity));
         if (!result) {
             // Log warning but continue
-            printf(
-                "[WARN] Failed to set CPU affinity for %s: %s\n", ctx.system->meta().name.c_str(),
-                primitive::error_message(result.error()).data());
+            spdlog::warn(
+                "set CPU affinity for {}: {}", ctx.system->meta().name,
+                primitive::error_message(result.error()));
         }
     }
 
@@ -344,27 +401,28 @@ void Scheduler::run_exclusive_thread(ExclusiveContext ctx) {
         primitive::ThreadAffinity::RealtimeConfig rt_config{};
         rt_config.priority = static_cast<std::uint8_t>(ctx.policy.thread_priority);
         if (auto result = primitive::ThreadAffinity::set_realtime_priority(rt_config); !result) {
-            printf(
-                "[WARN] Failed to set thread priority for %s: %s\n",
-                ctx.system->meta().name.c_str(), primitive::error_message(result.error()).data());
+            spdlog::warn(
+                "set thread priority for {}: {}", ctx.system->meta().name,
+                primitive::error_message(result.error()));
         }
     }
 
-    const auto frequency     = ctx.policy.frequency_hz;
-    const bool should_notify = ctx.policy.notifies;
-    auto& stats              = ctx.scheduler->exclusive_stats_[ctx.system_index];
+    const auto frequency = ctx.policy.frequency_hz;
+    auto& stats          = ctx.scheduler->exclusive_stats_[ctx.system_index];
 
     if (frequency == 0) {
         // Unlimited frequency mode: run as fast as possible
+        const auto writer = ctx.system->meta().writes.size() > 0;
         while (ctx.running->load(std::memory_order_acquire)) {
             LatencyProbe probe;
-            ctx.system->run(*ctx.world);
+            const bool written = ctx.system->run(*ctx.world);
             const auto elapsed = probe.elapsed_ns();
 
-            stats.latency_hist.record(elapsed);
-
-            if (should_notify) {
-                ctx.scheduler->notify(ctx.system_index);
+            if (!writer || (writer && written)) [[likely]] {
+                stats.latency_hist.record(elapsed);
+                if (written) [[likely]] {
+                    ctx.scheduler->notify(ctx.system_index);
+                }
             }
         }
         return;
@@ -375,19 +433,20 @@ void Scheduler::run_exclusive_thread(ExclusiveContext ctx) {
         std::chrono::nanoseconds(1'000'000'000ULL / static_cast<std::uint64_t>(frequency));
     auto next_tick = Clock::now();
 
-    while (ctx.running->load(std::memory_order_acquire)) {
+    const auto writer = ctx.system->meta().writes.size() > 0;
+    while (ctx.running->load(std::memory_order_acquire)) [[likely]] {
         next_tick += period;
 
         // Execute system
         LatencyProbe probe;
-        ctx.system->run(*ctx.world);
+        const bool written = ctx.system->run(*ctx.world);
         const auto elapsed = probe.elapsed_ns();
 
-        stats.latency_hist.record(elapsed);
-
-        // Notify scheduler if configured
-        if (should_notify) {
-            ctx.scheduler->notify(ctx.system_index);
+        if (!writer || (writer && written)) [[likely]] {
+            stats.latency_hist.record(elapsed);
+            if (written) [[likely]] {
+                ctx.scheduler->notify(ctx.system_index);
+            }
         }
 
         // Busy wait until next tick
@@ -403,23 +462,33 @@ void Scheduler::run_compute_loop() {
     const auto print_interval = std::chrono::seconds(5);
     auto last_print           = Clock::now();
 
-    while (running_.load(std::memory_order_acquire)) {
-        const auto current_version = work_version_.load(std::memory_order_acquire);
+    while (running_.load(std::memory_order_acquire)) [[likely]] {
+        // Atomically exchange ready_systems with 0, getting the set of systems to run
+        const auto ready = ready_systems_.exchange(0, std::memory_order_acq_rel);
 
-        if (current_version != last_seen_version_) {
-            last_seen_version_ = current_version;
-
+        if (ready != 0) [[likely]] {
             LatencyProbe probe;
-            run_compute_once();
+            const auto written = run_compute_selective(ready);
             const auto elapsed = probe.elapsed_ns();
 
             compute_cycles_.fetch_add(1, std::memory_order_relaxed);
             compute_total_time_ns_.fetch_add(elapsed, std::memory_order_relaxed);
             compute_last_time_ns_.store(elapsed, std::memory_order_relaxed);
 
+            // Cascade wake: mark dependents of systems that actually wrote
+            std::uint32_t cascade = 0;
+            for (std::size_t i = 0; i < compute_affects_.size(); ++i) {
+                if (written & (1U << i)) {
+                    cascade |= compute_affects_[i];
+                }
+            }
+            if (cascade != 0) {
+                ready_systems_.fetch_or(cascade, std::memory_order_release);
+            }
+
             // Check stats after compute (amortize cost)
             const auto now = Clock::now();
-            if (now - last_print >= print_interval) {
+            if (now - last_print >= print_interval) [[unlikely]] {
                 print_stats();
                 last_print = now;
             }
@@ -433,41 +502,66 @@ void Scheduler::run_compute_loop() {
     }
 }
 
-void Scheduler::run_compute_once() {
-    if (compute_systems_.empty()) {
-        return;
+auto Scheduler::run_compute_selective(const std::uint32_t ready_mask) -> std::uint32_t {
+    if (compute_systems_.empty()) [[unlikely]] {
+        return 0;
     }
 
-    compute_arena_->execute([this] {
+    std::atomic<std::uint32_t> written_mask{0};
+
+    compute_arena_->execute([this, ready_mask, &written_mask] {
         for (const auto& level : levels_) {
-            if (level.empty()) {
+            // Filter systems in this level that are ready
+            std::vector<std::size_t> to_run;
+            to_run.reserve(level.size());
+            for (const auto idx : level) {
+                if (ready_mask & (1U << idx)) {
+                    to_run.push_back(idx);
+                }
+            }
+
+            if (to_run.empty()) [[unlikely]] {
                 continue;
             }
 
-            if (level.size() == 1) {
+            if (to_run.size() == 1) {
                 // Single system: execute directly, avoid task_group overhead
-                const auto idx = level[0];
+                const auto idx = to_run[0];
                 LatencyProbe probe;
-                compute_systems_[idx].system->run(world_);
+                const bool written = compute_systems_[idx].system->run(world_);
                 const auto elapsed = probe.elapsed_ns();
+                const auto writer  = compute_systems_[idx].system->meta().writes.size() > 0;
 
-                compute_stats_[idx].latency_hist.record(elapsed);
+                if (!writer || (writer && written)) [[likely]] {
+                    compute_stats_[idx].latency_hist.record(elapsed);
+                    if (written) [[likely]] {
+                        written_mask.fetch_or(1U << idx, std::memory_order_relaxed);
+                    }
+                }
             } else {
                 // Multiple systems: execute in parallel
                 tbb::task_group tg;
-                for (const auto idx : level) {
-                    tg.run([this, idx] {
+                for (const auto idx : to_run) {
+                    tg.run([this, idx, &written_mask] {
                         LatencyProbe probe;
-                        compute_systems_[idx].system->run(world_);
+                        const bool written = compute_systems_[idx].system->run(world_);
                         const auto elapsed = probe.elapsed_ns();
+                        const auto writer  = compute_systems_[idx].system->meta().writes.size() > 0;
 
-                        compute_stats_[idx].latency_hist.record(elapsed);
+                        if (!writer || (writer && written)) [[likely]] {
+                            compute_stats_[idx].latency_hist.record(elapsed);
+                            if (written) [[likely]] {
+                                written_mask.fetch_or(1U << idx, std::memory_order_relaxed);
+                            }
+                        }
                     });
                 }
                 tg.wait();
             }
         }
     });
+
+    return written_mask.load(std::memory_order_relaxed);
 }
 
 // ============================================================================
@@ -480,6 +574,11 @@ auto Scheduler::compute_levels() -> BuildResult {
     }
 
     const auto n = compute_systems_.size();
+
+    // Enforce max 32 compute systems for bitmask scheduling
+    if (n > TooManyComputeSystemsError::max_count) {
+        return std::unexpected(TooManyComputeSystemsError{.count = n});
+    }
 
     // ========================================================================
     // Phase 1: Collect channel usage information
@@ -634,7 +733,7 @@ auto Scheduler::compute_levels() -> BuildResult {
         // Orphaned compute writer is a warning (printed but not an error)
         // Note: exclusive writers with no readers are fine (they notify the scheduler)
         if (!usage.writers.empty() && usage.readers.empty() && !usage.has_exclusive_writer) {
-            printf(
+            spdlog::warn(
                 "[WARN] Channel has writer '%s' but no readers\n",
                 compute_systems_[usage.writers[0]].system->meta().name.c_str());
         }
@@ -747,6 +846,72 @@ auto Scheduler::compute_levels() -> BuildResult {
         }
 
         return std::unexpected(DependencyCycleError{.cycle = std::move(cycle)});
+    }
+
+    // ========================================================================
+    // Phase 6: Compute notify groups (which exclusive systems wake which compute systems)
+    // ========================================================================
+    // Build transitive closure of compute system dependencies
+    // dependents[i] = bitmask of all systems that depend on system i (directly or transitively)
+    std::vector<std::uint32_t> dependents(n, 0);
+
+    // Initialize with direct dependencies from adj
+    for (std::size_t i = 0; i < n; ++i) {
+        for (std::size_t neighbor : adj[i]) {
+            dependents[i] |= (1U << neighbor);
+        }
+    }
+
+    // Compute transitive closure (Floyd-Warshall style)
+    for (std::size_t k = 0; k < n; ++k) {
+        for (std::size_t i = 0; i < n; ++i) {
+            if (dependents[i] & (1U << k)) {
+                dependents[i] |= dependents[k];
+            }
+        }
+    }
+
+    // For each exclusive system, compute which compute systems it affects
+    exclusive_affects_.resize(exclusive_systems_.size(), 0);
+
+    for (std::size_t i = 0; i < exclusive_systems_.size(); ++i) {
+        std::uint32_t affects = 0;
+        const auto& meta      = exclusive_systems_[i].system->meta();
+        // Find compute systems that directly read from this exclusive's channels
+        for (const auto& ch : meta.spsc_channels) {
+            if (!ch.is_reader) {
+                ChannelKey key{ch.type, ch.tag};
+                if (auto it = channels.find(key); it != channels.end()) {
+                    for (auto reader : it->second.readers) {
+                        affects |= (1U << reader);     // Direct reader
+                        affects |= dependents[reader]; // Transitive dependents
+                    }
+                }
+            }
+        }
+
+        for (const auto& ch : meta.spmc_channels) {
+            if (!ch.is_reader) {
+                ChannelKey key{ch.type, ch.tag};
+                if (auto it = channels.find(key); it != channels.end()) {
+                    for (auto reader : it->second.readers) {
+                        affects |= (1U << reader);
+                        affects |= dependents[reader];
+                    }
+                }
+            }
+        }
+
+        exclusive_affects_[i] = affects;
+    }
+
+    // For each compute system, compute which other compute systems it affects
+    // This enables cascade wake: when compute A finishes, wake compute B if B depends on A
+    compute_affects_.resize(n, 0);
+
+    for (std::size_t i = 0; i < n; ++i) {
+        // dependents[i] already contains all systems that depend on system i (transitively)
+        compute_affects_[i] = dependents[i];
     }
 
     return {};
