@@ -37,7 +37,7 @@ add_library(talos_std INTERFACE
 )
 
 target_include_directories(talos_std INTERFACE include)
-target_include_directories(talos_std INTERFACE 3dparty/magic_enum.hpp)
+target_include_directories(talos_std INTERFACE 3dparty/magic_enum)
 
 target_link_libraries(talos_std INTERFACE
         toml_impl

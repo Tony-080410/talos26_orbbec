@@ -8,7 +8,7 @@
 #include <type_traits>
 #define MAGIC_ENUM_RANGE_MIN 0
 #define MAGIC_ENUM_RANGE_MAX 16
-#include <magic_enum/magic_enum.hpp>
+#include <magic_enum.hpp>
 #include <optional>
 #define TOML_HEADER_ONLY 0
 #define TOML_EXCEPTIONS  0
