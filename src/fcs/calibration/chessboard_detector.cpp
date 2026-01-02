@@ -36,8 +36,7 @@ std::expected<CornerDetection, std::string>
     }
 
     // Find chessboard corners
-    int flags =
-        cv::CALIB_CB_ADAPTIVE_THRESH | cv::CALIB_CB_NORMALIZE_IMAGE | cv::CALIB_CB_ACCURACY;
+    int flags = cv::CALIB_CB_ADAPTIVE_THRESH | cv::CALIB_CB_NORMALIZE_IMAGE | cv::CALIB_CB_ACCURACY;
 
     result.success = cv::findChessboardCorners(gray, board_size_, result.image_points, flags);
 

@@ -4,9 +4,9 @@
 
 #ifdef HAVE_OPENCV_ARUCO
 // Include OpenCV core headers first to ensure types are defined
+# include <opencv2/aruco.hpp>
+# include <opencv2/aruco/charuco.hpp>
 # include <opencv2/core.hpp>
-# include <opencv2/objdetect/aruco_detector.hpp>
-# include <opencv2/objdetect/charuco_detector.hpp>
 #endif
 
 namespace fcs::calibration {
@@ -40,9 +40,9 @@ private:
     cv::Size board_size_;
     double square_size_;
     double marker_size_;
-    cv::aruco::Dictionary dictionary_;
-    cv::aruco::CharucoBoard charuco_board_;
-    cv::aruco::DetectorParameters detector_params_;
+    cv::Ptr<cv::aruco::Dictionary> dictionary_;
+    cv::Ptr<cv::aruco::CharucoBoard> charuco_board_;
+    cv::Ptr<cv::aruco::DetectorParameters> detector_params_;
     std::vector<cv::Point3f> object_points_;
 };
 

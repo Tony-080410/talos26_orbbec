@@ -100,9 +100,8 @@ std::expected<void, std::string> HandEyeCalibrator::add_sample(
 
 std::expected<HandEyeResult, std::string> HandEyeCalibrator::calibrate() noexcept {
     if (samples_.size() < capture_config_.min_samples) {
-        return std::unexpected(
-            fmt::format(
-                "Not enough samples: {} < {}", samples_.size(), capture_config_.min_samples));
+        return std::unexpected(fmt::format(
+            "Not enough samples: {} < {}", samples_.size(), capture_config_.min_samples));
     }
 
     // Prepare data for cv::calibrateHandEye

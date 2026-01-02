@@ -5,12 +5,7 @@ if (TALOS_OFFLINE)
 endif ()
 
 find_package(Eigen3 REQUIRED)
-find_package(OpenCV REQUIRED COMPONENTS
-    core
-    imgproc
-    imgcodecs
-    calib3d
-)
+find_package(OpenCV REQUIRED)
 find_package(spdlog REQUIRED)
 find_package(fmt REQUIRED)
 find_package(TBB REQUIRED)

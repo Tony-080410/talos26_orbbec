@@ -2,9 +2,9 @@
 #include "fcs/calibration/chessboard_detector.hpp"
 
 #ifdef HAVE_OPENCV_ARUCO
+# include <opencv2/aruco.hpp>
+# include <opencv2/aruco/charuco.hpp>
 # include <opencv2/imgproc.hpp>
-# include <opencv2/objdetect/aruco_detector.hpp>
-# include <opencv2/objdetect/charuco_detector.hpp>
 #endif
 
 namespace fcs::calibration {
@@ -18,23 +18,13 @@ CharucoDetector::CharucoDetector(
     , square_size_(square_size)
     , marker_size_(marker_size)
     , dictionary_(cv::aruco::getPredefinedDictionary(to_opencv_dict(dictionary)))
-    , charuco_board_(
-          cv::Size(static_cast<int>(width), static_cast<int>(height)),
-          static_cast<float>(square_size), static_cast<float>(marker_size), dictionary_)
-    , detector_params_()
+    , charuco_board_(cv::aruco::CharucoBoard::create(
+          static_cast<int>(width), static_cast<int>(height), static_cast<float>(square_size),
+          static_cast<float>(marker_size), dictionary_))
+    , detector_params_(cv::aruco::DetectorParameters::create())
     , object_points_() {
-    // Get charuco corner object points
-    // ChArUco corners are at the intersections of squares
-    const int corners_width  = static_cast<int>(width) - 1;
-    const int corners_height = static_cast<int>(height) - 1;
-
-    object_points_.reserve(static_cast<size_t>(corners_width) * corners_height);
-    for (int i = 0; i < corners_height; ++i) {
-        for (int j = 0; j < corners_width; ++j) {
-            object_points_.emplace_back(
-                static_cast<float>((j + 1) * square_size),
-                static_cast<float>((i + 1) * square_size), 0.0f);
-        }
+    if (charuco_board_) {
+        object_points_ = charuco_board_->chessboardCorners;
     }
 }
 
@@ -52,35 +42,48 @@ std::expected<CornerDetection, std::string>
         gray = image;
     }
 
-    // Create detector
-    cv::aruco::CharucoDetector detector(
-        charuco_board_, cv::aruco::CharucoParameters(), cv::aruco::DetectorParameters());
+    if (!dictionary_ || !charuco_board_ || !detector_params_) {
+        result.success = false;
+        return std::unexpected("ChArUco detector not initialized");
+    }
 
-    // Detect ChArUco corners
-    std::vector<cv::Point2f> charuco_corners;
-    std::vector<int> charuco_ids;
-    std::vector<std::vector<cv::Point2f>> marker_corners;
     std::vector<int> marker_ids;
+    std::vector<std::vector<cv::Point2f>> marker_corners;
+    std::vector<std::vector<cv::Point2f>> rejected;
 
-    detector.detectBoard(gray, charuco_corners, charuco_ids, marker_corners, marker_ids);
+    cv::aruco::detectMarkers(
+        gray, dictionary_, marker_corners, marker_ids, detector_params_, rejected);
 
-    if (charuco_corners.empty() || charuco_corners.size() < 6) {
+    if (marker_ids.empty()) {
+        result.success = false;
+        return std::unexpected("No ArUco markers detected");
+    }
+
+    cv::Mat charuco_corners_mat;
+    cv::Mat charuco_ids_mat;
+    cv::aruco::interpolateCornersCharuco(
+        marker_corners, marker_ids, gray, charuco_board_, charuco_corners_mat, charuco_ids_mat);
+
+    const int num_charuco = static_cast<int>(charuco_ids_mat.total());
+    if (num_charuco < 6) {
         result.success = false;
         return std::unexpected("Not enough ChArUco corners detected");
     }
 
-    // Map detected corners to object points
-    result.image_points = std::move(charuco_corners);
     result.object_points.clear();
-    result.object_points.reserve(charuco_ids.size());
+    result.image_points.clear();
+    result.object_points.reserve(static_cast<size_t>(num_charuco));
+    result.image_points.reserve(static_cast<size_t>(num_charuco));
 
-    const int corners_width = board_size_.width - 1;
-    for (int id : charuco_ids) {
-        int row = id / corners_width;
-        int col = id % corners_width;
+    for (int i = 0; i < num_charuco; ++i) {
+        const int id = charuco_ids_mat.at<int>(i, 0);
+        result.image_points.emplace_back(charuco_corners_mat.at<cv::Point2f>(i, 0));
+        if (id < 0 || id >= static_cast<int>(charuco_board_->chessboardCorners.size())) {
+            result.success = false;
+            return std::unexpected("Invalid ChArUco corner id returned by OpenCV");
+        }
         result.object_points.emplace_back(
-            static_cast<float>((col + 1) * square_size_),
-            static_cast<float>((row + 1) * square_size_), 0.0f);
+            charuco_board_->chessboardCorners[static_cast<size_t>(id)]);
     }
 
     result.success = true;
