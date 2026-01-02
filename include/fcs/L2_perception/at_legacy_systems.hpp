@@ -72,9 +72,8 @@ void register_at_legacy_detection_systems(App& app) {
             }
 
             // Output detection batch
-            detection_out.write(
-                AtLegacyArmorDetectionBatch{
-                    std::move(*result), frame->timestamp_ns, frame->frame_id});
+            detection_out.write(AtLegacyArmorDetectionBatch{
+                std::move(*result), frame->timestamp_ns, frame->frame_id});
         });
 
     // PnPSolverSystem: Detection → Measurement (in odom frame)
@@ -154,9 +153,8 @@ void register_at_legacy_detection_systems(App& app) {
             }
 
             // Output measurement batch
-            measurement_out.write(
-                AtLegacyArmorMeasurementBatch{
-                    std::move(measurements), batch->timestamp_ns, batch->frame_id});
+            measurement_out.write(AtLegacyArmorMeasurementBatch{
+                std::move(measurements), batch->timestamp_ns, batch->frame_id});
         });
 }
 

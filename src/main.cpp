@@ -228,7 +228,7 @@ int main() {
 
     world.insert_resource(ImuSnapshot{});
     // IMU: 100Hz, silent update (no notify)
-    scheduler.add_system<talos::exclusive_silent<1000>>(
+    scheduler.add_system<talos::exclusive_silent<1000, 1>>(
         "imu_reader",
         [daedalus, &ipc_device, &usb_device, &imu_data](
             talos::res_mut<std::shared_ptr<fast_tf::CoordinateSystem<1024>>> tf_buffer,
@@ -259,7 +259,7 @@ int main() {
         });
 
     // Camera: 160Hz, notify (triggers compute)
-    scheduler.add_system<talos::exclusive<160>>(
+    scheduler.add_system<talos::exclusive<250, 1>>(
         "camera_reader",
         [daedalus, &ipc_device, &input, &last_seq](
             talos::spmc_mut<fcs::AtLegacyImageFrame, fcs::AtLegacyImageChannelTag> cam_out) {
@@ -287,7 +287,7 @@ int main() {
     fcs::L5::register_weapon_system(scheduler);
 
     // L1 Output System: Send WeaponCommand to device
-    scheduler.add_system<talos::exclusive<250>>(
+    scheduler.add_system<talos::exclusive<250, 1>>(
         "weapon_output",
         [&output_interface](
             talos::spmc<fcs::L5::WeaponCommand, fcs::WeaponCommandChannelTag> cmd_in) {

@@ -42,10 +42,7 @@ public:
         return {};
     }
 
-    ~Impl() {
-        uninit_camera();
-        delete[] converted_data_buffer_;
-    }
+    ~Impl() { uninit_camera(); }
 
     std::tuple<int, int> get_image_size() const {
         return {convert_parameter_.nWidth, convert_parameter_.nHeight};
@@ -56,30 +53,28 @@ public:
         MV_FRAME_OUT stImageInfo;
 
         unsigned int ret =
-            MV_CC_GetImageBuffer(camera_handle_, &stImageInfo, timeout.count() * 10000000);
+            MV_CC_GetImageBuffer(camera_handle_, &stImageInfo, timeout.count() * 1000000);
         if (ret != MV_OK) {
             logger_->error("Image getting timeout. nRet [{}]", ret);
             return std::unexpected(CameraError{"Image getting timeout", ret});
         }
+        cv::Mat img{stImageInfo.stFrameInfo.nHeight, stImageInfo.stFrameInfo.nWidth, CV_8UC3};
         // Only consider the situation where the size and format of each frame of image passed in by
         // the camera remain unchanged.
-        if (converted_data_buffer_ == nullptr) {
-            if (!is_rgb_pixel_type(stImageInfo.stFrameInfo.enPixelType))
-                return std::unexpected(CameraError{"RGB camera needed", 0});
 
-            converted_data_size_ =
-                stImageInfo.stFrameInfo.nWidth * stImageInfo.stFrameInfo.nHeight * 3;
-            converted_data_buffer_ = new unsigned char[converted_data_size_];
+        if (!is_rgb_pixel_type(stImageInfo.stFrameInfo.enPixelType))
+            return std::unexpected(CameraError{"RGB camera needed", 0});
 
-            convert_parameter_.nWidth      = stImageInfo.stFrameInfo.nWidth;    // image width
-            convert_parameter_.nHeight     = stImageInfo.stFrameInfo.nHeight;   // image height
-            convert_parameter_.nSrcDataLen = stImageInfo.stFrameInfo.nFrameLen; // input data size
-            convert_parameter_.enSrcPixelType =
-                stImageInfo.stFrameInfo.enPixelType;                        // input pixel format
-            convert_parameter_.enDstPixelType = PixelType_Gvsp_BGR8_Packed; // output pixel format
-            convert_parameter_.pDstBuffer     = converted_data_buffer_;     // output data buffer
-            convert_parameter_.nDstBufferSize = converted_data_size_;       // output buffer size
-        }
+        convert_parameter_.nWidth      = stImageInfo.stFrameInfo.nWidth;    // image width
+        convert_parameter_.nHeight     = stImageInfo.stFrameInfo.nHeight;   // image height
+        convert_parameter_.nSrcDataLen = stImageInfo.stFrameInfo.nFrameLen; // input data size
+        convert_parameter_.enSrcPixelType =
+            stImageInfo.stFrameInfo.enPixelType;                            // input pixel format
+        convert_parameter_.enDstPixelType = PixelType_Gvsp_BGR8_Packed;     // output pixel format
+        convert_parameter_.pDstBuffer     = img.data;                       // output data buffer
+        convert_parameter_.nDstBufferSize = stImageInfo.stFrameInfo.nWidth
+                                          * stImageInfo.stFrameInfo.nHeight
+                                          * 3;                              // output buffer size
 
         convert_parameter_.pSrcData = stImageInfo.pBufAddr;                 // input data buffer
 
@@ -89,12 +84,6 @@ public:
             MV_CC_FreeImageBuffer(camera_handle_, &stImageInfo);
             return std::unexpected(CameraError{"Failed to convert pixel type", ret});
         }
-
-        // Using this constructor, cv::Mat will not automatically release the buffer, which needs to
-        // be released manually.
-        cv::Mat img{
-            stImageInfo.stFrameInfo.nHeight, stImageInfo.stFrameInfo.nWidth, CV_8UC3,
-            convert_parameter_.pDstBuffer};
 
         // Double buffer swapness
         MV_CC_FreeImageBuffer(camera_handle_, &stImageInfo);
@@ -116,9 +105,8 @@ public:
         auto ret = MV_CC_SetBoolValue(camera_handle_, "AcquisitionFrameRateEnable", true);
         if (MV_OK != ret) {
             logger_->error("Failed To set frame rate control enable nRet [{}]", ret);
-            return std::unexpected(
-                CameraError{
-                    "Failed to set frame rate control enable", static_cast<unsigned int>(ret)});
+            return std::unexpected(CameraError{
+                "Failed to set frame rate control enable", static_cast<unsigned int>(ret)});
         }
         ret = MV_CC_SetFloatValue(camera_handle_, "AcquisitionFrameRate", frame_rate);
         if (MV_OK != ret) {
@@ -357,9 +345,6 @@ private:
     };
 
     void* camera_handle_ = nullptr;
-
-    unsigned int converted_data_size_     = 0;
-    unsigned char* converted_data_buffer_ = nullptr;
     MV_CC_PIXEL_CONVERT_PARAM convert_parameter_;
 
     std::shared_ptr<spdlog::logger> logger_ = []() {
