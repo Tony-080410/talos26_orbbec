@@ -13,11 +13,11 @@ mode = "Intrinsic"
 type = "Chessboard"
 
 # 内角点数量 (棋盘格) 或方格数量 (ChArUco)
-width = 11
-height = 8
+width = 10
+height = 7
 
 # 方格边长 (米)
-square_size = 0.02
+square_size = 0.015
 
 # =============================================================================
 # ChArUco 专用配置 (仅当 type = "ChArUco" 时生效)
@@ -50,7 +50,7 @@ min_angle_diff = 15.0
 min_translation_diff = 0.05
 
 # 自动采集模式 (false = 手动触发)
-auto_capture = false
+auto_capture = true
 
 # 自动采集间隔 (毫秒)
 capture_interval_ms = 500
@@ -106,11 +106,11 @@ extrinsic_path = "camera_extrinsic.toml"
 enabled = true
 host = "0.0.0.0"
 # 使用与主程序不同的端口
-port = 8766
+port = 8765
 
 # =============================================================================
 # 输入源配置
 # =============================================================================
 [calibration.input]
 # 使用 daedalus 模拟器 (false = 使用真实硬件)
-daedalus = false
+daedalus = true

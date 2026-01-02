@@ -15,6 +15,7 @@
 #include "fcs/calibration/chessboard_detector.hpp"
 #include "fcs/calibration/handeye_calibrator.hpp"
 #include "fcs/calibration/intrinsic_calibrator.hpp"
+#include "spdlog_hook.hpp"
 
 #include "auto_aim/config.hpp"
 #include "fcs/L1_sensor/input_interface.hpp"
@@ -76,6 +77,7 @@ Press 'Space' to capture sample, 'c' to run calibration, 'q' to quit.
 }
 
 int main(int argc, char* argv[]) {
+    init_logger();
     // Parse command line arguments
     std::string config_path = "calibration.toml";
     std::string intrinsic_path;
@@ -413,9 +415,10 @@ int main(int argc, char* argv[]) {
                     status->state = CalibrationState::Failed;
                 }
             }
-
-            // Stop after completing calibration
-            g_running = false;
+            if (status->state == CalibrationState::Completed) {
+                // Stop after completing calibration
+                g_running = false;
+            }
         }
     }
 

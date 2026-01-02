@@ -13,8 +13,8 @@ width = 1440
 height = 1080
 
 [at_legacy.detector]
-backend_type = "traditional"
-detect_color = "Blue"
+backend_type = "NeuralNetwork"
+detect_color = "Red"
 
 # Required if backend_type = "traditional"
 [at_legacy.traditional]
