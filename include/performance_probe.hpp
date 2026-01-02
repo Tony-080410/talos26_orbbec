@@ -101,36 +101,39 @@ public:
     };
 
     [[nodiscard]] Stats compute() const {
-        if (count_ == 0) {
+        // Cache count_ to avoid race condition with concurrent record() calls
+        const size_t count = count_;
+        if (count == 0) {
             return {0, 0, 0, 0, 0, 0, 0, 0.0, 0};
         }
 
         // Sort for percentile computation
-        std::vector sorted(samples_.begin(), samples_.begin() + count_);
+        std::vector sorted(samples_.begin(), samples_.begin() + count);
         std::ranges::sort(sorted);
 
         // Compute statistics
         const auto min_val  = sorted.front();
         const auto max_val  = sorted.back();
         const auto sum      = std::accumulate(sorted.begin(), sorted.end(), 0UL);
-        const auto mean_val = sum / count_;
+        const auto mean_val = sum / count;
 
-        // Percentiles
-        const auto p50_idx  = count_ * 50 / 100;
-        const auto p95_idx  = count_ * 95 / 100;
-        const auto p99_idx  = count_ * 99 / 100;
-        const auto p999_idx = count_ * 999 / 1000;
+        // Percentiles (clamp to valid range to handle edge cases)
+        const auto p50_idx  = std::min(count * 50 / 100, count - 1);
+        const auto p95_idx  = std::min(count * 95 / 100, count - 1);
+        const auto p99_idx  = std::min(count * 99 / 100, count - 1);
+        const auto p999_idx = std::min(count * 999 / 1000, count - 1);
 
         // Standard deviation
         double sum_sq = 0.0;
-        for (size_t i = 0; i < count_; i++) {
+        for (size_t i = 0; i < count; i++) {
             const auto diff = static_cast<double>(sorted[i] - mean_val);
             sum_sq += diff * diff;
         }
-        const double stddev = std::sqrt(sum_sq / static_cast<double>(count_));
+        const double stddev = std::sqrt(sum_sq / static_cast<double>(count));
 
-        return {min_val,         max_val,          mean_val, sorted[p50_idx], sorted[p95_idx],
-                sorted[p99_idx], sorted[p999_idx], stddev,   count_};
+        return {min_val,          max_val,         mean_val,
+                sorted[p50_idx],  sorted[p95_idx], sorted[p99_idx],
+                sorted[p999_idx], stddev,          count};
     }
 
     /**

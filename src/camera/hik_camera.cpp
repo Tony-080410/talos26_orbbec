@@ -116,8 +116,9 @@ public:
         auto ret = MV_CC_SetBoolValue(camera_handle_, "AcquisitionFrameRateEnable", true);
         if (MV_OK != ret) {
             logger_->error("Failed To set frame rate control enable nRet [{}]", ret);
-            return std::unexpected(CameraError{
-                "Failed to set frame rate control enable", static_cast<unsigned int>(ret)});
+            return std::unexpected(
+                CameraError{
+                    "Failed to set frame rate control enable", static_cast<unsigned int>(ret)});
         }
         ret = MV_CC_SetFloatValue(camera_handle_, "AcquisitionFrameRate", frame_rate);
         if (MV_OK != ret) {
@@ -242,6 +243,10 @@ private:
             ret = MV_CC_SetIntValue(camera_handle_, "GevSCPSPacketSize", nPacketSize);
             SDK_RET_ASSERT(ret, "Failed to set packet Size.", ret);
         }
+
+        // Set pixel format to 8-bit BayerRG for ADC depth
+        ret = MV_CC_SetEnumValue(camera_handle_, "PixelFormat", PixelType_Gvsp_BayerRG8);
+        SDK_RET_ASSERT(ret, "Failed to set pixel format to BayerRG8.", ret);
 
         ret = MV_CC_SetEnumValue(
             camera_handle_, "TriggerMode",

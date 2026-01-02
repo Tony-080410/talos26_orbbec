@@ -19,10 +19,12 @@ enum class ExposureAutoMode {
     ONCE       = MV_EXPOSURE_AUTO_MODE_ONCE,
     CONTINUOUS = MV_EXPOSURE_AUTO_MODE_CONTINUOUS,
 };
+
 enum class TriggerMode {
     ON  = MV_TRIGGER_MODE_ON,
     OFF = MV_TRIGGER_MODE_OFF,
 };
+
 enum class TriggerSource {
     LINE0 = MV_TRIGGER_SOURCE_LINE0,
     LINE1 = MV_TRIGGER_SOURCE_LINE1,

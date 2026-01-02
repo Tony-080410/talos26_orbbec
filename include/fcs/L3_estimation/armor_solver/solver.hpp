@@ -142,7 +142,7 @@ public:
 
         // Step 6: Refine flying time
         double refined_flying_time = compensator_->get_flying_time(armor_position);
-        if (std::abs(refined_flying_time - flying_time) > 0.001) {
+        if (std::abs(refined_flying_time - flying_time) > 0.01) {
             double dt_diff = refined_flying_time - flying_time;
             target_position.x() += dt_diff * target_velocity.x();
             target_position.y() += dt_diff * target_velocity.y();
