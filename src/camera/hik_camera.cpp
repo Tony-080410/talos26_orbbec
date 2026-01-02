@@ -270,7 +270,7 @@ private:
         ret = MV_CC_SetBoolValue(camera_handle_, "AcquisitionFrameRateEnable", false);
         SDK_RET_ASSERT(ret, "Failed to set acquisition frame rate enable.", ret);
 
-        ret = MV_CC_SetBayerCvtQuality(camera_handle_, 2);
+        ret = MV_CC_SetBayerCvtQuality(camera_handle_, 1);
         SDK_RET_ASSERT(ret, "Failed to set bayer cvt quality.", ret);
 
         ret = MV_CC_StartGrabbing(camera_handle_);

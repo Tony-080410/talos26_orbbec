@@ -50,21 +50,17 @@ struct RobotModel {
 
     /// Process noise parameters
     struct Params {
-        Scalar sigma_a_xy  = 10.0;  // XY acceleration noise
-        Scalar sigma_a_z   = 1.0;   // Z acceleration noise
-        Scalar sigma_a_yaw = 1.0;   // Yaw acceleration noise
-        Scalar sigma_r0    = 1.0;   // Radius R0 drift noise
-        Scalar sigma_h     = 0.5;   // Height H drift noise
-        Scalar meas_dist_k = 0.43;  // Distance noise coefficient
-        Scalar yaw_log_k   = 0.005; // Yaw noise coefficient
+        Scalar sigma_a_xy  = 5.0; // XY acceleration noise
+        Scalar sigma_a_z   = 1.0; // Z acceleration noise
+        Scalar sigma_a_yaw = 1.0; // Yaw acceleration noise
+        Scalar sigma_r0    = 1.0; // Radius R0 drift noise
+        Scalar sigma_h     = 0.5; // Height H drift noise
         std::expected<void, std::string> read_from(const toml::table& tbl) noexcept {
             READ(tbl, sigma_a_xy);
             READ(tbl, sigma_a_z);
             READ(tbl, sigma_a_yaw);
             READ(tbl, sigma_r0);
             READ(tbl, sigma_h);
-            READ(tbl, meas_dist_k);
-            READ(tbl, yaw_log_k);
             return {};
         }
     };
@@ -213,14 +209,10 @@ struct OutpostModel {
         Scalar sigma_q_xy  = 10.0;                   // XY position noise
         Scalar sigma_q_z   = 1.0;                    // Z position noise
         Scalar sigma_a_yaw = 1.0;                    // Yaw acceleration noise
-        Scalar meas_dist_k = 0.43;
-        Scalar yaw_log_k   = 0.005;
         std::expected<void, std::string> read_from(const toml::table& tbl) noexcept {
             READ(tbl, sigma_q_xy);
             READ(tbl, sigma_q_z);
             READ(tbl, sigma_a_yaw);
-            READ(tbl, meas_dist_k);
-            READ(tbl, yaw_log_k);
             return {};
         }
     };

@@ -183,7 +183,7 @@ public:
     // ========================================================================
 
     template <typename Policy = default_policy, typename F>
-    auto add_system(std::string name, F&& func) -> std::expected<void, SchedulerError>;
+    auto add_system(std::string name, F&& func) -> void;
 
     // ========================================================================
     // Lifecycle
@@ -251,7 +251,7 @@ private:
         // Move constructor: atomics are not movable, so we load and store
         ExclusiveStats(ExclusiveStats&& other) noexcept
             : notify_count(other.notify_count.load(std::memory_order_relaxed))
-            , latency_hist(std::move(other.latency_hist)) {}
+            , latency_hist(other.latency_hist) {}
 
         ExclusiveStats(const ExclusiveStats&)            = delete;
         ExclusiveStats& operator=(const ExclusiveStats&) = delete;
@@ -321,11 +321,7 @@ private:
 // ============================================================================
 
 template <typename Policy, typename F>
-auto Scheduler::add_system(std::string name, F&& func) -> std::expected<void, SchedulerError> {
-    if (built_.load(std::memory_order_acquire)) {
-        return std::unexpected(SchedulerError::AlreadyBuilt);
-    }
-
+auto Scheduler::add_system(std::string name, F&& func) -> void {
     auto system = make_system<F, Policy>(std::move(name), std::forward<F>(func));
     auto policy = make_policy_info<Policy>();
 
@@ -339,8 +335,6 @@ auto Scheduler::add_system(std::string name, F&& func) -> std::expected<void, Sc
     } else {
         compute_systems_.push_back(std::move(entry));
     }
-
-    return {};
 }
 
 } // namespace talos

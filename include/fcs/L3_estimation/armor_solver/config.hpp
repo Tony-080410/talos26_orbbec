@@ -42,16 +42,16 @@ struct TrajectoryConfig {
 
 struct TrackerConfig {
     /// Timeout before returning to IDLE from TEMP_LOST (seconds)
-    double lost_thres{1.0};
+    double lost_thres{0.5};
 
     /// Number of consecutive frames required to transition DETECTING -> TRACKING
     int tracking_thres{3};
 
     /// Mahalanobis distance gate for robot target matching
-    double matcher_gate{25.0};
+    double matcher_gate{10.0};
 
     /// Mahalanobis distance gate for outpost target matching
-    double outpost_matcher_gate{50.0};
+    double outpost_matcher_gate{10.0};
 
     /// Robot motion model parameters
     RobotModel::Params robot_params;
@@ -90,7 +90,7 @@ struct SolverConfig {
     double prediction_delay{0.0};
 
     /// Side angle threshold for armor switching (degrees)
-    double side_angle{15.0};
+    double side_angle{10.0};
 
     /// Minimum angular velocity for armor switching (rad/s)
     double min_switching_v_yaw{1.0};
