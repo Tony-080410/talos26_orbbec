@@ -5,8 +5,8 @@
 #include <algorithm>
 #include <cmath>
 #include <numbers>
-
 #include <opencv2/imgproc.hpp>
+#include <ranges>
 #include <spdlog/spdlog.h>
 
 namespace fcs {
@@ -18,16 +18,14 @@ namespace fcs {
 AtLegacyTraditionalBackend::AtLegacyTraditionalBackend(ConfigPtr config)
     : config_(std::move(config)) {
     // Initialize classifier if enabled in config
-    if (config_ && config_->classifier_enabled && !config_->classifier_model_path.empty()) {
+    if (config_ && !config_->classifier_model_path.empty()) {
         classifier_ =
             std::make_unique<AtLegacyTraditionalClassifier>(config_->classifier_model_path);
         // Initialize classifier - log error if initialization fails
-        auto init_result = classifier_->init();
-        if (!init_result) {
+        if (const auto init_result = classifier_->init(); !init_result) {
             // Log error but continue - detection will work without classification
-            spdlog::error(
+            spdlog::critical(
                 "Failed to initialize ONNX classifier: {}", config_->classifier_model_path);
-
             std::abort();
         }
     } else {
@@ -219,11 +217,8 @@ cv::Mat AtLegacyTraditionalBackend::preprocess_image(
     const cv::Mat& rgb_img, const AtLegacyTraditionalConfig& cfg) const {
     cv::Mat gray;
     cv::cvtColor(rgb_img, gray, cv::COLOR_BGR2GRAY);
-
-    cv::Mat binary;
-    cv::threshold(gray, binary, cfg.binary_threshold, 255, cv::THRESH_BINARY);
-
-    return binary;
+    cv::threshold(gray, gray, cfg.binary_threshold, 255, cv::THRESH_BINARY);
+    return gray;
 }
 
 // ============================================================================
@@ -255,19 +250,16 @@ std::vector<AtLegacyLight> AtLegacyTraditionalBackend::find_lights(
 
             const int avg_diff = std::abs(sum_r - sum_b) / static_cast<int>(contour.size());
             if (avg_diff > cfg.light_color_diff_thresh) {
-                light.color = (sum_r > sum_b) ? ArmorColor::Red : ArmorColor::Blue;
-            } else {
-                continue;
+                light.color = sum_r > sum_b ? ArmorColor::Red : ArmorColor::Blue;
             }
-
             lights.emplace_back(light);
         }
     }
 
     // Sort by x coordinate
-    std::sort(lights.begin(), lights.end(), [](const AtLegacyLight& l1, const AtLegacyLight& l2) {
-        return l1.center.x < l2.center.x;
-    });
+    std::ranges::sort(
+        lights.begin(), lights.end(),
+        [](const AtLegacyLight& l1, const AtLegacyLight& l2) { return l1.center.x < l2.center.x; });
 
     return lights;
 }
@@ -320,13 +312,14 @@ std::vector<AtLegacyArmorDetection> AtLegacyTraditionalBackend::match_lights(
 
             // Check if this pair forms a valid armor
             const auto type = is_armor(*it1, *it2, cfg);
-            if (type == ArmorType::Invalid)
+            if (type == ArmorType::Invalid) {
                 continue;
+            }
 
             // Create detection from lights
             auto detection = make_detection_from_lights(*it1, *it2);
             detection.type = type;
-            detections.emplace_back(std::move(detection));
+            detections.emplace_back(detection);
         }
     }
 
@@ -381,7 +374,10 @@ ArmorType AtLegacyTraditionalBackend::is_armor(
     const float avg_light_length = static_cast<float>((light_1.length + light_2.length) / 2.0);
     const float center_distance =
         static_cast<float>(cv::norm(light_1.center - light_2.center) / avg_light_length);
-    const auto center_distance_ok = cfg.armor_min_small_center_distance <= center_distance;
+    const auto center_distance_ok = (cfg.armor_min_small_center_distance <= center_distance
+                                     && cfg.armor_max_small_center_distance > center_distance)
+                                 || (cfg.armor_min_large_center_distance <= center_distance
+                                     && cfg.armor_max_large_center_distance > center_distance);
     if (!center_distance_ok) {
         return ArmorType::Invalid;
     }

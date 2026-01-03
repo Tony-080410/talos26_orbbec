@@ -72,8 +72,9 @@ void register_at_legacy_detection_systems(App& app) {
             }
 
             // Output detection batch
-            detection_out.write(AtLegacyArmorDetectionBatch{
-                std::move(*result), frame->timestamp_ns, frame->frame_id});
+            detection_out.write(
+                AtLegacyArmorDetectionBatch{
+                    std::move(*result), frame->timestamp_ns, frame->frame_id});
         });
 
     // PnPSolverSystem: Detection → Measurement (in odom frame)
@@ -114,26 +115,6 @@ void register_at_legacy_detection_systems(App& app) {
             }
             auto measurements = solver->solve_batch_with_ba(
                 batch->detections, tf.value()->rotation().matrix(), batch->timestamp_ns);
-            /*
-                        // Wait for TF to be available (similar to ROS2 MessageFilter)
-                        // This ensures gimbal pose for this timestamp has arrived
-                        constexpr int kMaxWaitMs = 10;
-                        bool tf_ready            = false;
-                        for (int i = 0; i < kMaxWaitMs; ++i) {
-                            auto range =
-                                (**tf_system)[fast_tf::gimbal_link_fuxk_frame::index].time_range();
-                            if (range && range->second >= batch->timestamp_ns) {
-                                tf_ready = true;
-                                break;
-                            }
-                            std::this_thread::sleep_for(std::chrono::milliseconds(1));
-                        }
-                        if (!tf_ready) {
-                            spdlog::warn(
-                                "TF not available for timestamp {}, dropping frame",
-               batch->timestamp_ns); return;
-                        }
-            */
             // Transform each measurement from camera_optical to odom frame
             for (auto& meas : measurements) {
                 auto tf_result =
@@ -153,8 +134,9 @@ void register_at_legacy_detection_systems(App& app) {
             }
 
             // Output measurement batch
-            measurement_out.write(AtLegacyArmorMeasurementBatch{
-                std::move(measurements), batch->timestamp_ns, batch->frame_id});
+            measurement_out.write(
+                AtLegacyArmorMeasurementBatch{
+                    std::move(measurements), batch->timestamp_ns, batch->frame_id});
         });
 }
 

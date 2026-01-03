@@ -84,7 +84,7 @@ class SpmcTripleBuffer {
     };
 
     struct State {
-        alignas(std::hardware_destructive_interference_size) RWSpinLock lock;
+        alignas(std::hardware_destructive_interference_size) RWSpinLock lock{};
         std::shared_ptr<const T> current{nullptr};
         alignas(std::hardware_destructive_interference_size) std::atomic<std::uint64_t> generation{
             0};

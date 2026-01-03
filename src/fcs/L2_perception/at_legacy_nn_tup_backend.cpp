@@ -174,19 +174,16 @@ AtLegacyNNTupBackend::PreprocContext
     AtLegacyNNTupBackend::preprocess(const cv::Mat& image, const AtLegacyNNTupConfig& cfg) const {
     PreprocContext ctx;
 
-    const int input_w = cfg.input_width;
-    const int input_h = cfg.input_height;
-
     // Letterbox resize with symmetric padding
     const float r = std::min(
-        static_cast<float>(input_w) / static_cast<float>(image.cols),
-        static_cast<float>(input_h) / static_cast<float>(image.rows));
+        static_cast<float>(INPUT_W) / static_cast<float>(image.cols),
+        static_cast<float>(INPUT_H) / static_cast<float>(image.rows));
 
     const int unpad_w = static_cast<int>(r * static_cast<float>(image.cols));
     const int unpad_h = static_cast<int>(r * static_cast<float>(image.rows));
 
-    int dw = input_w - unpad_w;
-    int dh = input_h - unpad_h;
+    int dw = INPUT_W - unpad_w;
+    int dh = INPUT_H - unpad_h;
     dw /= 2;
     dh /= 2;
 
@@ -205,10 +202,10 @@ AtLegacyNNTupBackend::PreprocContext
     padded.convertTo(ctx.preprocessed, CV_32F);
 
     // Generate grids
-    generate_grids_and_strides(input_w, input_h, cfg.strides, ctx.grids);
+    generate_grids_and_strides(INPUT_W, INPUT_H, {8, 16, 32}, ctx.grids);
     ctx.rows        = static_cast<int>(ctx.grids.size());
-    ctx.cols        = 9 + NUM_COLORS + cfg.num_classes;
-    ctx.num_classes = cfg.num_classes;
+    ctx.cols        = 9 + NUM_COLORS + NUM_CLASSES;
+    ctx.num_classes = NUM_CLASSES;
 
     return ctx;
 }

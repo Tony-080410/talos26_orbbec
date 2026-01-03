@@ -31,9 +31,8 @@ armor_max_large_center_distance = 8.0
 armor_max_angle = 40.0
 
 # Classifier configuration (ONNX-based number classification)
-classifier_enabled = true
 classifier_model_path = "mlp.onnx"
-classifier_confidence_threshold = 0.2
+classifier_confidence_threshold = 0.5
 classifier_enable_type_filtering = true
 
 # Required if backend_type = "nn"
@@ -43,28 +42,19 @@ device = "AUTO"
 device_priorities = "GPU,CPU"
 enable_profiling = false
 enable_multi_thread = false
-input_width = 416
-input_height = 416
-num_classes = 13
-num_colors = 4
-confidence_threshold = 0.1
-nms_threshold = 0.10
+confidence_threshold = 0.75
+nms_threshold = 0.30
 top_k = 128
 
 [at_legacy.nn_tup]
 model_path = "opt-1208-001.onnx"
 device = "AUTO"
 device_priorities = "GPU,CPU"
-input_width = 416
-input_height = 416
 enable_profiling = false
 enable_multi_thread = false
-num_classes = 8
-num_colors = 4
-confidence_threshold = 0.5
-nms_threshold = 0.45
-top_k = 100
-strides = [8, 16, 32]
+confidence_threshold = 0.75
+nms_threshold = 0.30
+top_k = 128
 
 # ============================================================================
 # L3 Estimation: Armor Solver (Ballistic Compensation)
@@ -108,6 +98,6 @@ compensator_type = "Resistance"
 
 [l3.trajectory]
 iteration_times = 20       # Number of iterations for ballistic compensation
-bullet_speed = 23.0        # Bullet velocity (m/s)
+bullet_speed = 25.0        # Bullet velocity (m/s)
 gravity = 9.7997              # Gravity acceleration (m/s^2)
 resistance = 0.00005         # Air resistance coefficient

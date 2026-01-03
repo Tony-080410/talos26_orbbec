@@ -39,8 +39,7 @@ struct AtLegacyTraditionalConfig {
     double armor_max_large_center_distance;
     double armor_max_angle;
 
-    // Classifier parameters (optional)
-    bool classifier_enabled = false;
+    // Classifier parameters
     std::string classifier_model_path;
     double classifier_confidence_threshold = 0.5;
     bool classifier_enable_type_filtering  = true;
@@ -58,8 +57,7 @@ struct AtLegacyTraditionalConfig {
         READ(tbl, armor_max_large_center_distance);
         READ(tbl, armor_max_angle);
 
-        // Optional classifier configuration
-        READ_OPT(tbl, classifier_enabled);
+        // classifier configuration
         READ_OPT(tbl, classifier_model_path);
         READ_OPT(tbl, classifier_confidence_threshold);
         READ_OPT(tbl, classifier_enable_type_filtering);
@@ -79,11 +77,6 @@ struct AtLegacyNNConfig {
     bool enable_profiling;
     bool enable_multi_thread;
 
-    int input_width;
-    int input_height;
-    int num_classes;
-    int num_colors;
-
     double confidence_threshold;
     double nms_threshold;
     int top_k;
@@ -94,10 +87,6 @@ struct AtLegacyNNConfig {
         READ(tbl, device_priorities);
         READ(tbl, enable_profiling);
         READ(tbl, enable_multi_thread);
-        READ(tbl, input_width);
-        READ(tbl, input_height);
-        READ(tbl, num_classes);
-        READ(tbl, num_colors);
         READ(tbl, confidence_threshold);
         READ(tbl, nms_threshold);
         READ(tbl, top_k);
@@ -116,47 +105,19 @@ struct AtLegacyNNTupConfig {
     bool enable_profiling;
     bool enable_multi_thread;
 
-    int input_width;
-    int input_height;
-    int num_classes;
-    int num_colors;
-
     double confidence_threshold;
     double nms_threshold;
     int top_k;
 
-    // TUP-specific: multi-scale strides
-    std::array<int, 3> strides;
-
     std::expected<void, std::string> read_from(const toml::table& tbl) noexcept {
-
         READ(tbl, model_path);
         READ(tbl, device);
         READ(tbl, device_priorities);
         READ(tbl, enable_profiling);
         READ(tbl, enable_multi_thread);
-        READ(tbl, input_width);
-        READ(tbl, input_height);
-        READ(tbl, num_classes);
-        READ(tbl, num_colors);
         READ(tbl, confidence_threshold);
         READ(tbl, nms_threshold);
         READ(tbl, top_k);
-
-        // Read strides array
-        if (auto arr = tbl["strides"].as_array()) {
-            if (arr->size() >= 3) {
-                for (size_t i = 0; i < 3; ++i) {
-                    if (auto v = (*arr)[i].value<int64_t>()) {
-                        strides[i] = static_cast<int>(*v);
-                    }
-                }
-            }
-        } else {
-            // Default strides
-            strides = {8, 16, 32};
-        }
-
         return {};
     }
 };

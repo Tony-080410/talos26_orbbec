@@ -36,10 +36,10 @@ void register_weapon_system(App& app) {
             weapon_cmd.pitch        = gimbal_cmd->pitch;        // Target pitch (radians)
             weapon_cmd.fire         = gimbal_cmd->fire_advice;  // Shoot decision from solver
             weapon_cmd.distance     = gimbal_cmd->distance;     // Target distance (meters)
-            weapon_cmd.valid        = true;
 
             // Note: yaw_rate, pitch_rate, tof are not used in rm_gimbal
             // (ref_yaw_v, ref_pitch_v, ref_yaw_a, ref_pitch_a are all set to 0)
+            // TODO
             weapon_cmd.yaw_rate   = 0.0;
             weapon_cmd.pitch_rate = 0.0;
             weapon_cmd.tof        = 0.0;

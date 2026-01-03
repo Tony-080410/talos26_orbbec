@@ -291,7 +291,7 @@ int main() {
         [&output_interface](
             talos::spmc<fcs::L5::WeaponCommand, fcs::WeaponCommandChannelTag> cmd_in) {
             auto cmd = cmd_in.read();
-            if (!cmd || !cmd->valid) {
+            if (!cmd) {
                 return;
             }
 

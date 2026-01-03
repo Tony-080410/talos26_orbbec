@@ -156,24 +156,27 @@ AtLegacyNNBackend::PreprocContext
     auto ip         = impl_->compiled.input();
     const auto& shp = ip.get_shape(); // [1, 3, H, W]
 
-    if (shp.size() != 4 || shp[1] != 3) {
-        spdlog::error("[AtLegacyNNBackend] Invalid input shape");
+    if (shp.size() != 4) {
+        spdlog::error("[AtLegacyNNBackend] Input shape {} not supported", shp.size());
+        return ctx;
+    }
+    if (shp[0] != 1 || shp[1] != 3) {
+        spdlog::error(
+            "[AtLegacyNNBackend] Input shape mismatch, get [{},{},{},{}], expect [{},{},{},{}]",
+            shp[0], shp[1], shp[2], shp[3], 1, 3, INPUT_H, INPUT_W);
         return ctx;
     }
 
-    const int input_h = static_cast<int>(shp[2]);
-    const int input_w = static_cast<int>(shp[3]);
-
     // Letterbox resize with symmetric padding
     const float r = std::min(
-        static_cast<float>(input_w) / static_cast<float>(image.cols),
-        static_cast<float>(input_h) / static_cast<float>(image.rows));
+        static_cast<float>(INPUT_W) / static_cast<float>(image.cols),
+        static_cast<float>(INPUT_H) / static_cast<float>(image.rows));
 
     const int unpad_w = static_cast<int>(r * static_cast<float>(image.cols));
     const int unpad_h = static_cast<int>(r * static_cast<float>(image.rows));
 
-    int dw = input_w - unpad_w;
-    int dh = input_h - unpad_h;
+    int dw = INPUT_W - unpad_w;
+    int dh = INPUT_H - unpad_h;
     dw /= 2;
     dh /= 2;
 
@@ -186,14 +189,13 @@ AtLegacyNNBackend::PreprocContext
     // Resize and pad
     cv::Mat resized;
     cv::resize(image, resized, cv::Size(unpad_w, unpad_h));
-    cv::Mat pr;
-    cv::copyMakeBorder(resized, pr, dh, dh, dw, dw, cv::BORDER_CONSTANT);
+    cv::copyMakeBorder(resized, resized, dh, dh, dw, dw, cv::BORDER_CONSTANT);
 
     // BGR -> RGB, normalize to [0, 1]
     // cv::Mat rgb;
     // cv::cvtColor(ctx.preprocessed, rgb, cv::COLOR_BGR2RGB);
-    pr.convertTo(pr, CV_32F, 1.0f / 255.0f);
-    ctx.preprocessed = pr;
+    resized.convertTo(resized, CV_32F, 1.0f / 255.0f);
+    ctx.preprocessed = resized;
 
     return ctx;
 }
@@ -208,10 +210,8 @@ bool AtLegacyNNBackend::infer(const PreprocContext& ctx) {
     }
 
     try {
-        auto ip           = impl_->compiled.input();
-        const auto& shp   = ip.get_shape();
-        const int input_h = static_cast<int>(shp[2]);
-        const int input_w = static_cast<int>(shp[3]);
+        auto ip         = impl_->compiled.input();
+        const auto& shp = ip.get_shape();
 
         // Split channels (HWC -> CHW)
         cv::Mat ch[3];
@@ -220,7 +220,7 @@ bool AtLegacyNNBackend::infer(const PreprocContext& ctx) {
         // Create input tensor
         ov::Tensor in(ip.get_element_type(), shp);
         float* dst         = in.data<float>();
-        const size_t plane = static_cast<size_t>(input_w) * static_cast<size_t>(input_h);
+        const size_t plane = static_cast<size_t>(INPUT_W) * static_cast<size_t>(INPUT_H);
 
         std::memcpy(dst + plane * 0, ch[2].data, plane * sizeof(float));
         std::memcpy(dst + plane * 1, ch[1].data, plane * sizeof(float));
@@ -261,7 +261,7 @@ std::vector<AtLegacyArmorDetection>
     const int dims    = std::min(dim1, dim2); // per-anchor dimension
     const int anchors = std::max(dim1, dim2); // number of anchors
 
-    constexpr int nkpt    = 4;                // 4 keypoints
+    constexpr int nkpt    = NUM_KPTS;                // 4 keypoints
     constexpr int kpt_dim = 2;                // x, y per keypoint
     constexpr int nk      = nkpt * kpt_dim;
 
@@ -271,15 +271,20 @@ std::vector<AtLegacyArmorDetection>
         spdlog::error("[AtLegacyNNBackend] Invalid output dimensions");
         return detections;
     }
-
+    if (constexpr int total_cfg_cls = NUM_COLORS * NUM_CLASSES; total_cfg_cls != num_cls) {
+        spdlog::error(
+            "[AtLegacyNNBackend] Model nc ({}) != NUM_COLORS*NUM_CLASSES ({}), check config and "
+            "constants.",
+            num_cls, total_cfg_cls);
+        return detections;
+    }
     const bool channel_first = (dim1 < dim2);
 
     auto get = [&](int anchor, int d) -> float {
         if (channel_first) {
             return p[static_cast<size_t>(d) * anchors + anchor];
-        } else {
-            return p[static_cast<size_t>(anchor) * dims + d];
         }
+        return p[static_cast<size_t>(anchor) * dims + d];
     };
 
     // Transform from model coordinates to original image coordinates
@@ -321,15 +326,8 @@ std::vector<AtLegacyArmorDetection>
 
         // Map combined class to color + cls
         // Format: color * NUM_CLASSES + cls
-        constexpr int NUM_CLASSES = 13; // AT model classes
         const auto color          = static_cast<ArmorColor>(best_idx / NUM_CLASSES);
         const auto cls            = static_cast<ArmorName>(best_idx % NUM_CLASSES);
-
-        // Filter by detect color
-        if (color != detect_color_) {
-            // Not matching color and not gray/purple
-            continue;
-        }
 
         // 3) Get keypoints (4 corners)
         // Model outputs corners in counter-clockwise order: TL, BL, BR, TR

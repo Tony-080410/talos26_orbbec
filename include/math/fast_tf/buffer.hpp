@@ -169,12 +169,15 @@ public:
             if (entry.timestamp_ns == 0) {
                 return TransformEntry{ts, entry.transform};
             }
-            return std::unexpected(TransformError::ExtrapolationRequired);
+            return std::unexpected(TransformError::FutureExtrapolationRequired);
         }
 
         // Check bounds (no extrapolation)
-        if (ts < oldest_ts_ || ts > newest_ts_) {
-            return std::unexpected(TransformError::ExtrapolationRequired);
+        if (ts < oldest_ts_) {
+            return std::unexpected(TransformError::PastExtrapolationRequired);
+        }
+        if (ts > newest_ts_) {
+            return std::unexpected(TransformError::FutureExtrapolationRequired);
         }
 
         // Binary search
@@ -194,7 +197,7 @@ public:
 
         if (lo == 0) {
             // ts < all entries (shouldn't happen due to bounds check)
-            return std::unexpected(TransformError::ExtrapolationRequired);
+            return std::unexpected(TransformError::FutureExtrapolationRequired);
         }
 
         const auto& prev = at_logical(lo - 1);
@@ -206,7 +209,7 @@ public:
 
         if (lo >= size_) {
             // ts > all entries
-            return std::unexpected(TransformError::ExtrapolationRequired);
+            return std::unexpected(TransformError::FutureExtrapolationRequired);
         }
 
         const auto& next = at_logical(lo);

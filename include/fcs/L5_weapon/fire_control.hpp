@@ -25,8 +25,5 @@ struct WeaponCommand {
     // 弹道信息
     double tof{0.0};      // 飞行时间 (秒)
     double distance{0.0}; // 目标距离 (米)
-
-    // 有效性
-    bool valid{false};
 };
 } // namespace fcs::L5

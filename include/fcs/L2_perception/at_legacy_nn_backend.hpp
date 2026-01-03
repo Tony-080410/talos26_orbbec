@@ -30,6 +30,11 @@ struct AtLegacyNNConfig;
 /// Uses atomic shared_ptr for config hot-reload
 class AtLegacyNNBackend : public AtLegacyDetectorBackendBase<AtLegacyNNBackend> {
 public:
+    static constexpr int INPUT_W     = 640;
+    static constexpr int INPUT_H     = 640;
+    static constexpr int NUM_COLORS  = 4;
+    static constexpr int NUM_CLASSES = 13;
+    static constexpr int NUM_KPTS    = 4; // yolo11pose: 4 corner keypoints (x,y,score)
     using DetectionResult = std::expected<std::vector<AtLegacyArmorDetection>, DetectorError>;
     using ConfigPtr       = std::shared_ptr<const AtLegacyNNConfig>;
 

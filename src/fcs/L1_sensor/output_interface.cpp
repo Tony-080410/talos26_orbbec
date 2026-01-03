@@ -26,7 +26,7 @@ void IpcOutput::send(const L5::WeaponCommand& cmd) const noexcept {
     // 转换: rad → deg
     const auto yaw_deg    = static_cast<float>(cmd.yaw * RAD_TO_DEG);
     const auto pitch_deg  = -static_cast<float>(cmd.pitch * RAD_TO_DEG);
-    const auto distance_m = cmd.valid ? static_cast<float>(cmd.distance) : -1.0f;
+    const auto distance_m = static_cast<float>(cmd.distance);
 
     client_->send_gimbal_cmd(yaw_deg, pitch_deg, distance_m, cmd.fire);
 }
@@ -64,7 +64,7 @@ void UsbOutput::send(const L5::WeaponCommand& cmd) const noexcept {
                      .ref_pitch_v  = 0.0,
                      .ref_yaw_a    = 0.0f,
                      .ref_pitch_a  = 0.0f,
-                     .distance     = cmd.valid ? static_cast<float>(cmd.distance) : -1.0f,
+                     .distance     = static_cast<float>(cmd.distance),
                      },
         .eof = talos_gimbal::HeaderFrame::EoF(),
     };

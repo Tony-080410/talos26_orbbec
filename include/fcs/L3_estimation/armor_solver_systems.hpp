@@ -12,6 +12,15 @@
 
 #include <memory>
 
+#if defined(__x86_64__) || defined(_M_X64) || defined(__i386__) || defined(_M_IX86)
+# include <immintrin.h>
+# define SPIN_HINT() _mm_pause()
+#elif defined(__aarch64__) || defined(__arm__)
+# define SPIN_HINT() __asm__ volatile("yield" ::: "memory")
+#else
+# define SPIN_HINT() ((void)0)
+#endif
+
 namespace fcs::L3 {
 
 /// Register armor solver pipeline systems
@@ -82,27 +91,34 @@ void register_armor_solver_systems(App& app) {
             // This matches at_vision's: solver_->solve(target_snapshot, now(), tf_buffer)
             const uint64_t current_time_ns = clock::now_ns();
 
-            // Lookup muzzle transform in odom frame
-            // Use current time (not measurement timestamp!) to get latest gimbal pose
-            // This matches at_vision's: lookupTransform(..., tf2::TimePointZero)
-            auto tf_result =
-                fast_tf::lookup<fast_tf::odom_fuxk_frame, fast_tf::muzzle_link_fuxk_frame>(
-                    **tf_system,
-                    fast_tf::FuckTransform<fast_tf::muzzle_link_fuxk_frame>{
-                        fast_tf::TransformMatrix4d{}},
-                    target->timestamp_ns);
+            while (true) {
+                // Lookup muzzle transform in odom frame
+                // Use current time (not measurement timestamp!) to get latest gimbal pose
+                // This matches at_vision's: lookupTransform(..., tf2::TimePointZero)
+                auto tf_result =
+                    fast_tf::lookup<fast_tf::odom_fuxk_frame, fast_tf::muzzle_link_fuxk_frame>(
+                        **tf_system,
+                        fast_tf::FuckTransform<fast_tf::muzzle_link_fuxk_frame>{
+                            fast_tf::TransformMatrix4d{}},
+                        current_time_ns);
 
-            if (!tf_result) {
-                spdlog::error(
-                    "Solver TF lookup failed at {} ns: {}", target->timestamp_ns,
-                    fast_tf::to_string(tf_result.error()));
+                if (!tf_result) {
+                    if (tf_result.error() != fast_tf::TransformError::FutureExtrapolationRequired) {
+                        spdlog::error(
+                            "Solver TF lookup failed at {} ns: {}", target->timestamp_ns,
+                            fast_tf::to_string(tf_result.error()));
+                        return;
+                    }
+                    SPIN_HINT();
+                    continue;
+                }
+
+                // Solve gimbal command with real-time current_time_ns
+                auto cmd = (*solver)->solve(*target, current_time_ns, **tf_result);
+                if (cmd) {
+                    cmd_out.write(*cmd);
+                }
                 return;
-            }
-
-            // Solve gimbal command with real-time current_time_ns
-            auto cmd = (*solver)->solve(*target, current_time_ns, **tf_result);
-            if (cmd) {
-                cmd_out.write(*cmd);
             }
         });
 }
