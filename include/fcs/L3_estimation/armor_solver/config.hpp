@@ -40,34 +40,34 @@ struct TrajectoryConfig {
 // Tracker Configuration
 // ============================================================================
 
-struct TrackerConfig {
+template <typename T>
+struct TargetConfig {
     /// Timeout before returning to IDLE from TEMP_LOST (seconds)
-    double lost_thres{0.5};
-
+    double lost_threshold;
     /// Number of consecutive frames required to transition DETECTING -> TRACKING
-    int tracking_thres{3};
-
-    /// Mahalanobis distance gate for robot target matching
+    uint32_t tracking_threshold;
+    /// Mahalanobis distance gate for target matching
     double matcher_gate{10.0};
-
-    /// Mahalanobis distance gate for outpost target matching
-    double outpost_matcher_gate{10.0};
-
-    /// Robot motion model parameters
-    RobotModel::Params robot_params;
-
-    /// Outpost motion model parameters
-    OutpostModel::Params outpost_params;
+    /// motion model parameters
+    T model;
 
     std::expected<void, std::string> read_from(const toml::table& tbl) noexcept {
-        READ(tbl, lost_thres);
-        READ(tbl, tracking_thres);
+        READ(tbl, lost_threshold);
+        READ(tbl, tracking_threshold);
         READ(tbl, matcher_gate);
-        READ(tbl, outpost_matcher_gate);
-        // Robot model noise parameters
-        READ(tbl, robot_params);
-        // Outpost model noise parameters
-        READ(tbl, outpost_params);
+        READ(tbl, model);
+        return {};
+    }
+};
+
+struct TrackerConfig {
+    /// Robot target parameters
+    TargetConfig<RobotModel::Params> robot;
+    /// Outpost target parameters
+    TargetConfig<OutpostModel::Params> outpost;
+    std::expected<void, std::string> read_from(const toml::table& tbl) noexcept {
+        READ(tbl, robot);
+        READ(tbl, outpost);
         return {};
     }
 };

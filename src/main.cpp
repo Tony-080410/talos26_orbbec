@@ -184,8 +184,7 @@ int main() {
     // Create Tracker using config from toml
     world.insert_resource(std::make_shared<fcs::L3::Tracker>(config.tracker()));
     spdlog::info(
-        "Tracker initialized (lost_thres={:.1f}s, tracking_thres={})", config.tracker().lost_thres,
-        config.tracker().tracking_thres);
+        "Tracker initialized");
 
     // Create Solver using config from toml
     world.insert_resource(std::make_shared<fcs::L3::Solver>(config.solver()));

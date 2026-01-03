@@ -22,15 +22,8 @@ public:
 
     explicit Tracker(const TrackerConfig& config) noexcept
         : config_(config) {
-        robot_model_.params   = config_.robot_params;
-        outpost_model_.params = config_.outpost_params;
-    }
-
-    /// Update configuration
-    void set_config(const TrackerConfig& config) noexcept {
-        config_               = config;
-        robot_model_.params   = config_.robot_params;
-        outpost_model_.params = config_.outpost_params;
+        robot_model_.params   = config_.robot.model;
+        outpost_model_.params = config_.outpost.model;
     }
 
     /// Combined predict + update step
@@ -44,7 +37,7 @@ public:
         last_dt_ = std::max(0.0, dt);
 
         // Check if we've lost the target for too long
-        if (status_ == TrackerStatus::TempLost && (lost_time_ + last_dt_) >= config_.lost_thres) {
+        if (status_ == TrackerStatus::TempLost && (lost_time_ + last_dt_) >= lost_threshold) {
             reset();
             return;
         }
@@ -85,7 +78,7 @@ public:
         if (is_outpost) {
             auto result = outpost_associator_.match(
                 measurements, outpost_ukf_->x(), outpost_ukf_->Sx(), outpost_model_, target_name_,
-                config_.outpost_matcher_gate, armors_num);
+                matcher_gate, armors_num);
 
             for (size_t i = 0; i < result.armors.size(); ++i) {
                 match_result.armors.push_back(result.armors[i]);
@@ -94,7 +87,7 @@ public:
         } else {
             auto result = robot_associator_.match(
                 measurements, robot_ukf_->x(), robot_ukf_->Sx(), robot_model_, target_name_,
-                config_.matcher_gate, armors_num);
+                matcher_gate, armors_num);
 
             match_result.armors = result.armors;
             idx                 = result.armor_ids;
@@ -186,6 +179,9 @@ public:
             OutpostUKF::VecX xp0{x0, y0, armor_yaw, v0, z0, z0, z0};
             OutpostUKF::MatXX P0 = OutpostUKF::MatXX::Identity();
             outpost_ukf_.emplace(outpost_model_, xp0, P0);
+            lost_threshold     = config_.outpost.lost_threshold;
+            tracking_threshold = config_.outpost.tracking_threshold;
+            matcher_gate       = config_.outpost.matcher_gate;
         } else {
             constexpr double kDefaultRadius = 0.23;
             const double x0                 = pos.x() + kDefaultRadius * std::cos(armor_yaw);
@@ -196,6 +192,9 @@ public:
                               0.0};
             RoboUKF::MatXX P0 = RoboUKF::MatXX::Identity();
             robot_ukf_.emplace(robot_model_, xp0, P0);
+            lost_threshold     = config_.robot.lost_threshold;
+            tracking_threshold = config_.robot.tracking_threshold;
+            matcher_gate       = config_.robot.matcher_gate;
         }
 
         state_machine(true);
@@ -239,10 +238,13 @@ public:
         outpost_ukf_.reset();
         target_name_ = ArmorName::Invalid;
         measurement_.fill(0.0);
-        detecting_count_ = 0;
-        last_dt_         = 0.0;
-        lost_time_       = 0.0;
-        status_          = TrackerStatus::Idle;
+        detecting_count_   = 0;
+        last_dt_           = 0.0;
+        lost_time_         = 0.0;
+        lost_threshold     = 0.0;
+        tracking_threshold = 0.0;
+        matcher_gate       = 0.0;
+        status_            = TrackerStatus::Idle;
     }
 
     /// Get current status
@@ -269,11 +271,20 @@ private:
     RobotModel robot_model_;
     OutpostModel outpost_model_;
 
-    // Data associators
+    /// Timeout before returning to IDLE from TEMP_LOST (seconds), copied from TrackerConfig in
+    /// first_meet
+    double lost_threshold{0};
+    /// Number of consecutive frames required to transition DETECTING -> TRACKING, copied from
+    /// TrackerConfig in first_meet
+    uint32_t tracking_threshold{0};
+    /// Mahalanobis distance gate for target matching, copied from TrackerConfig in first_meet
+    double matcher_gate{0};
+
+    /// Data associators
     DataAssociator<RobotModel> robot_associator_;
     DataAssociator<OutpostModel> outpost_associator_;
 
-    // State machine variables
+    /// State machine variables
     int detecting_count_{0};
     double last_dt_{0.0};
     double lost_time_{0.0};
@@ -297,7 +308,7 @@ private:
         case TrackerStatus::Detecting:
             if (found) {
                 detecting_count_++;
-                if (detecting_count_ > config_.tracking_thres) {
+                if (detecting_count_ > tracking_threshold) {
                     status_          = TrackerStatus::Tracking;
                     detecting_count_ = 0;
                 }
@@ -319,7 +330,7 @@ private:
                 status_    = TrackerStatus::Tracking;
             } else {
                 lost_time_ += last_dt_;
-                if (lost_time_ >= config_.lost_thres) {
+                if (lost_time_ >= lost_threshold) {
                     reset();
                 }
             }

@@ -69,13 +69,12 @@ strides = [8, 16, 32]
 # ============================================================================
 # L3 Estimation: Armor Solver (Ballistic Compensation)
 # ============================================================================
-[l3.tracker]
-lost_thres = 1.0
-tracking_thres = 5
-matcher_gate = 5.0
-outpost_matcher_gate = 2.0
 
-[l3.tracker.robot_params]
+[l3.tracker.robot]
+matcher_gate = 5.0
+lost_threshold = 1.0
+tracking_threshold = 5
+[l3.tracker.robot.model]
 sigma_a_xy = 7.5
 sigma_a_z = 1.0
 sigma_a_yaw = 15.0
@@ -83,7 +82,11 @@ sigma_r0 = 1.0
 sigma_h = 0.8
 
 
-[l3.tracker.outpost_params]
+[l3.tracker.outpost]
+matcher_gate = 2.0
+lost_threshold = 1.0
+tracking_threshold = 5
+[l3.tracker.outpost.model]
 sigma_q_xy = 1.0
 sigma_q_z = 0.8
 sigma_a_yaw = 2.0
