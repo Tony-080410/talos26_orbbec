@@ -368,7 +368,7 @@ int main(int argc, char* argv[]) {
     });
 
     // Main loop - handle keyboard input and check progress
-    while (g_running && scheduler.is_running()) {
+    while (g_running) {
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
 
         // Check if we have enough samples
