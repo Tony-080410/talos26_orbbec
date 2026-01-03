@@ -180,6 +180,15 @@ void IntrinsicCalibrator::clear() noexcept {
     sample_tvecs_.clear();
 }
 
+static auto current_datetime_string() noexcept -> std::string {
+    auto now      = std::chrono::system_clock::now();
+    std::time_t t = std::chrono::system_clock::to_time_t(now);
+    std::tm tm    = *std::localtime(&t);
+    char buffer[100];
+    std::strftime(buffer, sizeof(buffer), "%Y-%m-%d %H:%M:%S", &tm);
+    return buffer;
+}
+
 std::expected<void, std::string>
     save_intrinsic_result(const IntrinsicResult& result, const std::string& path) noexcept {
     std::ofstream file(path);
@@ -191,6 +200,7 @@ std::expected<void, std::string>
     file << "# Camera Intrinsic Calibration Result\n";
     file << "# RMS Error: " << result.rms_error << " pixels\n";
     file << "# Samples: " << result.num_samples << "\n\n";
+    file << "# Date: " << current_datetime_string() << "\n";
 
     file << "[camera]\n";
 

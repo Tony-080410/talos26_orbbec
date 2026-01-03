@@ -185,7 +185,7 @@ void register_calibration_systems(
         });
 
     // 4. Foxglove visualization system (pool_compute)
-    app.template add_system<talos::pool_compute>(
+    app.template add_system<talos::exclusive<30>>(
         "calibration_visualization",
         [board, config](
             talos::spmc<CornerDetection, CalibrationCornerChannelTag> corner_in,

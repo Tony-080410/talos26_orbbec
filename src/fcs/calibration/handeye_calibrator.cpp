@@ -187,6 +187,15 @@ std::expected<HandEyeResult, std::string> HandEyeCalibrator::calibrate() noexcep
 
 void HandEyeCalibrator::clear() noexcept { samples_.clear(); }
 
+static auto current_datetime_string() noexcept -> std::string {
+    auto now      = std::chrono::system_clock::now();
+    std::time_t t = std::chrono::system_clock::to_time_t(now);
+    std::tm tm    = *std::localtime(&t);
+    char buffer[100];
+    std::strftime(buffer, sizeof(buffer), "%Y-%m-%d %H:%M:%S", &tm);
+    return buffer;
+}
+
 std::expected<void, std::string> save_handeye_result(
     const HandEyeResult& result, const std::string& path, HandEyeMethod method) noexcept {
     std::ofstream file(path);
@@ -197,12 +206,13 @@ std::expected<void, std::string> save_handeye_result(
     file << std::fixed << std::setprecision(6);
 
     file << "# Camera Extrinsic Calibration Result (Hand-Eye)\n";
-    file << "# RMS Error: " << result.rms_error << " meters\n";
+    file << "# RMS Error: " << result.rms_error << " mm\n";
     file << "# Samples: " << result.num_samples << "\n\n";
+    file << "# Date: " << current_datetime_string() << "\n";
 
     file << "[transform]\n";
     file << "# camera_link → gimbal_link\n";
-    file << "# Translation: [x, y, z] in meters\n";
+    file << "# Translation: [x, y, z] in mm\n";
     file << "# Rotation: [roll, pitch, yaw] in radians\n";
     file << "translation = [" << result.translation.x() << ", " << result.translation.y() << ", "
          << result.translation.z() << "]\n";
