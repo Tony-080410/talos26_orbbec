@@ -1,4 +1,4 @@
-daedalus = false
+daedalus = true
 [foxglove]
 enabled = true
 host = "0.0.0.0"
@@ -13,7 +13,7 @@ width = 1440
 height = 1080
 
 [at_legacy.detector]
-backend_type = "NeuralNetworkTup"
+backend_type = "Traditional"
 detect_color = "Red"
 
 # Required if backend_type = "traditional"

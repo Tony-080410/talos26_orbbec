@@ -14,7 +14,7 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 
 include(cmake/dependencies.cmake)
 include(cmake/test.cmake)
-include(cmake/calibration.cmake)
+# include(cmake/calibration.cmake)
 
 # Create tomlplusplus implementation library
 add_library(toml_impl STATIC
