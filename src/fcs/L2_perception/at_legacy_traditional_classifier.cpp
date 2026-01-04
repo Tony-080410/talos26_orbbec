@@ -60,7 +60,7 @@ AtLegacyTraditionalClassifier::ClassifyResult AtLegacyTraditionalClassifier::cla
         // Normalize image to 0-1 range (matching atvision_ws behavior)
         cv::Mat normalized_img = number_img / 255.0;
 
-        // Create blob from preprocessed image (no resize needed, input is already 20x28)
+        // Create blob from preprocessed image (input is already 28x28 from extract_number)
         cv::Mat blob;
         cv::dnn::blobFromImage(normalized_img, blob);
 

@@ -189,9 +189,11 @@ std::vector<AtLegacyLight> AtLegacyTraditionalBackend::find_lights(
             }
 
             const int avg_diff = std::abs(sum_r - sum_b) / static_cast<int>(contour.size());
-            // if (avg_diff > cfg.light_color_diff_thresh) {
-            light.color = sum_r > sum_b ? ArmorColor::Red : ArmorColor::Blue;
-            //}
+            // Only set color if difference exceeds threshold (matching armor_detector_ov)
+            if (avg_diff > cfg.light_color_diff_thresh) {
+                light.color = sum_r > sum_b ? ArmorColor::Red : ArmorColor::Blue;
+            }
+            // If threshold not met, light.color remains Neutral (WHITE)
             lights.emplace_back(light);
         }
     }
@@ -230,15 +232,15 @@ std::vector<AtLegacyArmorDetection> AtLegacyTraditionalBackend::match_lights(
 
     // Loop all pairs of lights
     for (auto it1 = lights.begin(); it1 != lights.end(); ++it1) {
-        // Filter by color
-        if (it1->color != target_color)
+        // Filter by color (allow Neutral/WHITE to pass through, matching armor_detector_ov)
+        if (it1->color != target_color && it1->color != ArmorColor::Neutral)
             continue;
 
         const double max_iter_width = it1->length * cfg.armor_max_large_center_distance;
 
         for (auto it2 = it1 + 1; it2 != lights.end(); ++it2) {
-            // Filter by color
-            if (it2->color != target_color)
+            // Filter by color (allow Neutral/WHITE to pass through)
+            if (it2->color != target_color && it2->color != ArmorColor::Neutral)
                 continue;
 
             // Check if there's a light between them
@@ -257,12 +259,10 @@ std::vector<AtLegacyArmorDetection> AtLegacyTraditionalBackend::match_lights(
                 continue;
             }
 
-            // Correct light corners for sub-pixel accuracy (matching atvision_ws)
-            if (corner_corrector_) {
-                corner_corrector_->correct_corners(*it1, *it2, gray_img);
-            }
+            // NOTE: armor_detector_ov does NOT use corner_corrector
+            // corner_corrector_ is available but disabled to match behavior
 
-            // Create detection from lights (uses corrected corners)
+            // Create detection from lights
             auto detection = make_detection_from_lights(*it1, *it2);
             detection.type = type;
             detections.emplace_back(detection);
@@ -353,8 +353,10 @@ cv::Mat AtLegacyTraditionalBackend::extract_number(
     static const int warp_height       = 28;
     static const int small_armor_width = 32;
     static const int large_armor_width = 54;
-    // Number ROI size (matching atvision_ws: 20x28)
+    // Number ROI size
     static const cv::Size roi_size(20, 28);
+    // Classifier input size (matching armor_detector_ov)
+    static const cv::Size input_size(28, 28);
 
     const int top_light_y    = (warp_height - light_length) / 2 - 1;
     const int bottom_light_y = top_light_y + light_length;
@@ -376,7 +378,7 @@ cv::Mat AtLegacyTraditionalBackend::extract_number(
     number_image =
         number_image(cv::Rect(cv::Point((warp_width - roi_size.width) / 2, 0), roi_size));
 
-    // Convert to grayscale and binarize (matching atvision_ws)
+    // Convert to grayscale and binarize (matching armor_detector_ov)
     cv::cvtColor(number_image, number_image, cv::COLOR_BGR2GRAY);
     cv::threshold(number_image, number_image, 0, 255, cv::THRESH_BINARY | cv::THRESH_OTSU);
 

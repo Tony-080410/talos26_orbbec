@@ -357,13 +357,8 @@ std::vector<AtLegacyArmorDetection> AtLegacyNNTupBackend::postprocess(
         const auto color = static_cast<ArmorColor>(color_id.x);
         const auto cls   = static_cast<ArmorName>(num_id.x);
 
-        // Filter by detect color (optional)
-        // 0=BLUE, 1=RED, 2=GRAY, 3=PURPLE
-
-        if (color != detect_color_) {
-            // Not matching color and not gray/purple
-            continue;
-        }
+        // NOTE: No color filtering here (matching armor_detector_ov behavior)
+        // Color filtering should be done at a higher level if needed
 
         // Create detection
         AtLegacyArmorDetection det(corners, cls, color, conf);
