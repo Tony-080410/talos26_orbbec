@@ -22,8 +22,9 @@ class AtLegacyTraditionalClassifier {
 public:
     using ClassifyResult = std::expected<ArmorName, DetectorError>;
 
-    /// Constructor: takes path to ONNX model file
-    explicit AtLegacyTraditionalClassifier(std::string_view model_path) noexcept;
+    /// Constructor: takes path to ONNX model file and softmax flag
+    explicit AtLegacyTraditionalClassifier(
+        std::string_view model_path, bool use_softmax = true) noexcept;
 
     /// Load and initialize the ONNX model
     [[nodiscard]] std::expected<void, DetectorError> init() noexcept;
@@ -40,6 +41,7 @@ private:
     std::string model_path_;
     mutable cv::dnn::Net net_; // mutable because OpenCV DNN operations are non-const
     bool initialized_ = false;
+    bool use_softmax_ = true;  // Whether to apply softmax to network output (for legacy networks)
 
     // Helper methods
     [[nodiscard]] ArmorName

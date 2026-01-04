@@ -14,8 +14,10 @@ namespace fcs {
 // Constructor and Initialization
 // ============================================================================
 
-AtLegacyTraditionalClassifier::AtLegacyTraditionalClassifier(std::string_view model_path) noexcept
-    : model_path_(model_path) {}
+AtLegacyTraditionalClassifier::AtLegacyTraditionalClassifier(
+    std::string_view model_path, bool use_softmax) noexcept
+    : model_path_(model_path)
+    , use_softmax_(use_softmax) {}
 
 std::expected<void, DetectorError> AtLegacyTraditionalClassifier::init() noexcept {
     try {
@@ -55,8 +57,12 @@ AtLegacyTraditionalClassifier::ClassifyResult AtLegacyTraditionalClassifier::cla
     }
 
     try {
-        // Create blob from preprocessed image
-        cv::Mat blob = cv::dnn::blobFromImage(number_img, 1.0, cv::Size(20, 28));
+        // Normalize image to 0-1 range (matching atvision_ws behavior)
+        cv::Mat normalized_img = number_img / 255.0;
+
+        // Create blob from preprocessed image (no resize needed, input is already 20x28)
+        cv::Mat blob;
+        cv::dnn::blobFromImage(normalized_img, blob);
 
         // Set input to network
         net_.setInput(blob);
@@ -77,31 +83,37 @@ AtLegacyTraditionalClassifier::ClassifyResult AtLegacyTraditionalClassifier::cla
 
 ArmorName AtLegacyTraditionalClassifier::post_process_output(
     const cv::Mat& output, float& confidence_out) const noexcept {
-    // Output should be 1D array with class probabilities
-    cv::Mat flat_output = output.reshape(0, 1);
+    // Output should be 1D array with class logits or probabilities
+    cv::Mat flat_output = output.reshape(1, 1);
 
-    // Find class with maximum probability
-    double max_confidence = 0.0;
-    int max_idx           = -1;
+    double confidence = 0.0;
+    int label_id      = -1;
 
-    for (int i = 0; i < flat_output.cols; ++i) {
-        float prob = flat_output.at<float>(0, i);
-        if (prob > max_confidence) {
-            max_confidence = prob;
-            max_idx        = i;
-        }
+    if (use_softmax_) {
+        // Legacy networks output logits, need to apply softmax (matching atvision_ws)
+        float max_val = *std::max_element(flat_output.begin<float>(), flat_output.end<float>());
+        cv::Mat exp_scores;
+        cv::exp(flat_output - max_val, exp_scores);
+        float sum = static_cast<float>(cv::sum(exp_scores)[0]);
+        exp_scores /= sum;
+
+        cv::Point class_id_point;
+        cv::minMaxLoc(exp_scores, nullptr, &confidence, nullptr, &class_id_point);
+        label_id = class_id_point.x;
+    } else {
+        // New networks already output probabilities, directly take max
+        cv::Point class_id_point;
+        cv::minMaxLoc(flat_output, nullptr, &confidence, nullptr, &class_id_point);
+        label_id = class_id_point.x;
     }
 
-    confidence_out = static_cast<float>(max_confidence);
+    confidence_out = static_cast<float>(confidence);
 
-    if (max_idx < 0) {
+    if (label_id < 0) {
         return ArmorName::Invalid;
     }
 
-    // Convert index to armor name
-    ArmorName predicted_name = index_to_armor_name(max_idx);
-
-    return predicted_name;
+    return index_to_armor_name(label_id);
 }
 
 // ============================================================================

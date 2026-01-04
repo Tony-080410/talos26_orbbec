@@ -23,6 +23,7 @@ enum class AtLegacyBackendTypeConfig : int {
 // ============================================================================
 
 struct AtLegacyTraditionalConfig {
+    bool advanced_binary = false;
     int binary_threshold;
 
     // Light detection parameters
@@ -43,6 +44,7 @@ struct AtLegacyTraditionalConfig {
     std::string classifier_model_path;
     double classifier_confidence_threshold = 0.5;
     bool classifier_enable_type_filtering  = true;
+    bool classifier_use_softmax            = true; // Legacy networks output logits, need softmax
 
     std::expected<void, std::string> read_from(const toml::table& tbl) noexcept {
         READ(tbl, binary_threshold);
@@ -58,9 +60,11 @@ struct AtLegacyTraditionalConfig {
         READ(tbl, armor_max_angle);
 
         // classifier configuration
+        READ_OPT(tbl, advanced_binary);
         READ_OPT(tbl, classifier_model_path);
         READ_OPT(tbl, classifier_confidence_threshold);
         READ_OPT(tbl, classifier_enable_type_filtering);
+        READ_OPT(tbl, classifier_use_softmax);
 
         return {};
     }

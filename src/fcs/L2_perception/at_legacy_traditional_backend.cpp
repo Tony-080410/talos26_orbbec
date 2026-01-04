@@ -20,8 +20,8 @@ AtLegacyTraditionalBackend::AtLegacyTraditionalBackend(ConfigPtr config)
     : config_(std::move(config)) {
     // Initialize classifier if enabled in config
     if (config_ && !config_->classifier_model_path.empty()) {
-        classifier_ =
-            std::make_unique<AtLegacyTraditionalClassifier>(config_->classifier_model_path);
+        classifier_ = std::make_unique<AtLegacyTraditionalClassifier>(
+            config_->classifier_model_path, config_->classifier_use_softmax);
         // Initialize classifier - log error if initialization fails
         if (const auto init_result = classifier_->init(); !init_result) {
             // Log error but continue - detection will work without classification
@@ -136,11 +136,29 @@ AtLegacyTraditionalBackend::DetectionResult
 // ============================================================================
 
 cv::Mat AtLegacyTraditionalBackend::preprocess_image(
-    const cv::Mat& rgb_img, const AtLegacyTraditionalConfig& cfg) const {
-    cv::Mat gray;
-    cv::cvtColor(rgb_img, gray, cv::COLOR_BGR2GRAY);
-    cv::threshold(gray, gray, cfg.binary_threshold, 255, cv::THRESH_BINARY);
-    return gray;
+    const cv::Mat& bgr_img, const AtLegacyTraditionalConfig& cfg) const {
+    if (!cfg.advanced_binary) {
+        cv::Mat gray;
+        cv::cvtColor(bgr_img, gray, cv::COLOR_BGR2GRAY);
+        cv::threshold(gray, gray, cfg.binary_threshold, 255, cv::THRESH_BINARY);
+        return gray;
+    }
+    std::vector<cv::Mat> ch;
+    cv::split(bgr_img, ch);
+
+    cv::Mat max01, min01, maxc, minc, chroma;
+    cv::max(ch[0], ch[1], max01);
+    cv::max(max01, ch[2], maxc);
+
+    cv::min(ch[0], ch[1], min01);
+    cv::min(min01, ch[2], minc);
+
+    cv::subtract(maxc, minc, chroma);
+
+    cv::Mat mask;
+    cv::threshold(chroma, mask, cfg.binary_threshold, 255, cv::THRESH_BINARY);
+
+    return mask;
 }
 
 // ============================================================================
@@ -222,7 +240,6 @@ std::vector<AtLegacyArmorDetection> AtLegacyTraditionalBackend::match_lights(
             // Filter by color
             if (it2->color != target_color)
                 continue;
-            // corner_corrector_->correct_corners(*it1, *it2, gray_img);
 
             // Check if there's a light between them
             const auto i = static_cast<size_t>(std::distance(lights.begin(), it1));
@@ -240,7 +257,12 @@ std::vector<AtLegacyArmorDetection> AtLegacyTraditionalBackend::match_lights(
                 continue;
             }
 
-            // Create detection from lights
+            // Correct light corners for sub-pixel accuracy (matching atvision_ws)
+            if (corner_corrector_) {
+                corner_corrector_->correct_corners(*it1, *it2, gray_img);
+            }
+
+            // Create detection from lights (uses corrected corners)
             auto detection = make_detection_from_lights(*it1, *it2);
             detection.type = type;
             detections.emplace_back(detection);
@@ -331,9 +353,8 @@ cv::Mat AtLegacyTraditionalBackend::extract_number(
     static const int warp_height       = 28;
     static const int small_armor_width = 32;
     static const int large_armor_width = 54;
-    // Number ROI size
+    // Number ROI size (matching atvision_ws: 20x28)
     static const cv::Size roi_size(20, 28);
-    static const cv::Size input_size(28, 28);
 
     const int top_light_y    = (warp_height - light_length) / 2 - 1;
     const int bottom_light_y = top_light_y + light_length;
@@ -355,11 +376,11 @@ cv::Mat AtLegacyTraditionalBackend::extract_number(
     number_image =
         number_image(cv::Rect(cv::Point((warp_width - roi_size.width) / 2, 0), roi_size));
 
-    // Binarize
-
-    cv::cvtColor(number_image, number_image, cv::COLOR_RGB2GRAY);
+    // Convert to grayscale and binarize (matching atvision_ws)
+    cv::cvtColor(number_image, number_image, cv::COLOR_BGR2GRAY);
     cv::threshold(number_image, number_image, 0, 255, cv::THRESH_BINARY | cv::THRESH_OTSU);
-    cv::resize(number_image, number_image, input_size);
+
+    // Output is already 20x28, no resize needed (matching atvision_ws)
     return number_image;
 }
 

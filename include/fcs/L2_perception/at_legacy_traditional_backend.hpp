@@ -51,7 +51,7 @@ private:
 
     /// Preprocess image to binary
     [[nodiscard]] cv::Mat
-        preprocess_image(const cv::Mat& rgb_img, const AtLegacyTraditionalConfig& cfg) const;
+        preprocess_image(const cv::Mat& bgr_img, const AtLegacyTraditionalConfig& cfg) const;
 
     /// Find light bars in image
     [[nodiscard]] std::vector<AtLegacyLight> find_lights(
