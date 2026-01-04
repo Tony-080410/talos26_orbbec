@@ -84,10 +84,10 @@ enum Measure : uint8_t {
 // Angle Utilities
 // ============================================================================
 
-/// Normalize angle to (-PI, PI]
+/// Normalize angle to [-PI, PI)
 [[nodiscard]] inline double normalize_rad(double a) noexcept {
     a = std::fmod(a + std::numbers::pi, 2.0 * std::numbers::pi);
-    if (a <= 0.0) {
+    if (a < 0.0) {
         a += 2.0 * std::numbers::pi;
     }
     return a - std::numbers::pi;

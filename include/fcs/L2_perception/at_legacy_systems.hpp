@@ -4,8 +4,8 @@
 #include "../core/types.hpp"
 #include "at_legacy_detector_backend.hpp"
 #include "at_legacy_pnp_solver.hpp"
-
 #include "auto_aim/config.hpp"
+#include "scheduler/spin.hpp"
 #include <memory>
 #include <scheduler/bevy_ecs.hpp>
 #include <spdlog/spdlog.h>
@@ -104,33 +104,35 @@ void register_at_legacy_detection_systems(App& app) {
                 return;
 
             // Solve PnP for all detections (in camera_optical frame)
-            auto tf = fast_tf::lookup<fast_tf::odom_fuxk_frame>(
+            auto tf_odom_camera = fast_tf::lookup<fast_tf::odom_fuxk_frame>(
                 **tf_system, fast_tf::FuckTransform<fast_tf::camera_optical_fuxk_frame>(),
                 batch->timestamp_ns);
-            if (!tf) {
+            while (
+                !tf_odom_camera
+                && (tf_odom_camera.error() == fast_tf::TransformError::FutureExtrapolationRequired
+                    || tf_odom_camera.error() == fast_tf::TransformError::NoDataAvailable)) {
+                SPIN_HINT();
+                tf_odom_camera = fast_tf::lookup<fast_tf::odom_fuxk_frame>(
+                    **tf_system, fast_tf::FuckTransform<fast_tf::camera_optical_fuxk_frame>(),
+                    batch->timestamp_ns);
+            }
+            if (!tf_odom_camera) {
                 spdlog::error(
                     "TF lookup failed for timestamp {}: {}", batch->timestamp_ns,
-                    fast_tf::to_string(tf.error()));
+                    fast_tf::to_string(tf_odom_camera.error()));
                 return;
             }
             auto measurements = solver->solve_batch_with_ba(
-                batch->detections, tf.value()->rotation().matrix(), batch->timestamp_ns);
-            // Transform each measurement from camera_optical to odom frame
-            for (auto& meas : measurements) {
-                auto tf_result =
-                    fast_tf::lookup<fast_tf::odom_fuxk_frame, fast_tf::camera_optical_fuxk_frame>(
-                        **tf_system,
-                        fast_tf::FuckTransform<fast_tf::camera_optical_fuxk_frame>(*meas.transform),
-                        batch->timestamp_ns);
+                batch->detections, tf_odom_camera.value()->rotation().matrix(),
+                batch->timestamp_ns);
 
-                if (tf_result) {
-                    // Replace with odom frame transform (type-erased)
-                    meas.transform = *tf_result;
-                } else {
-                    spdlog::error(
-                        "TF lookup failed for timestamp {}: {}", batch->timestamp_ns,
-                        fast_tf::to_string(tf_result.error()));
-                }
+            // Transform each measurement from camera_optical to odom frame.
+            // Match atvision behavior: if TF is not available, drop the whole batch (never feed a
+            // wrong-frame measurement into the tracker).
+            const auto& T_odom_camera = *tf_odom_camera.value();
+            for (auto& meas : measurements) {
+                meas.transform = fast_tf::FuckTransform<fast_tf::odom_fuxk_frame>{
+                    T_odom_camera * (*meas.transform)};
             }
 
             // Output measurement batch
