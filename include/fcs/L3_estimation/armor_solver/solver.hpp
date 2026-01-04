@@ -104,7 +104,7 @@ public:
         }
 
         // Step 1: Initial flying time estimate
-        double flying_time = compensator_->get_flying_time(target_position - muzzle_pos);
+        double flying_time = compensator_->get_flying_time(target_position);
 
         // Calculate dt including prediction delay
         double dt = static_cast<double>(current_time_ns - target.timestamp_ns) / 1e9 + flying_time
@@ -120,8 +120,7 @@ public:
         std::vector<Eigen::Vector4d> armor_poses;
         if (armors_num == 4) {
             armor_poses = get_robo_armor_poses(
-                target_position, target_yaw, radius0, radius1, target.robot_state()->position.z(),
-                z1, armors_num);
+                target_position, target_yaw, radius0, radius1, target_position.z(), z1, armors_num);
         } else {
             armor_poses = get_outpost_armor_poses(
                 {target_position.x(), target_position.y()}, target_yaw, radius0,
@@ -134,15 +133,21 @@ public:
             select_best_armor(armor_poses, target_position, target_yaw, target_v_yaw, armors_num);
 
         // Step 5: Get chosen armor position relative to muzzle
-        auto chosen_armor_world = armor_poses[idx];
+        auto chosen_armor_world           = armor_poses[idx];
+        Eigen::Vector4d chosen_armor_pose = chosen_armor_world;
+        chosen_armor_pose.x() -= muzzle_pos.x();
+        chosen_armor_pose.y() -= muzzle_pos.y();
+        chosen_armor_pose.z() -= muzzle_pos.z();
+
         Eigen::Vector3d armor_position{
-            chosen_armor_world.x() - muzzle_pos.x(), chosen_armor_world.y() - muzzle_pos.y(),
-            chosen_armor_world.z() - muzzle_pos.z()};
-        double distance = armor_position.norm();
+            chosen_armor_pose.x(), chosen_armor_pose.y(), chosen_armor_pose.z()};
+        Eigen::Vector3d predicted_position{
+            chosen_armor_world.x(), chosen_armor_world.y(), chosen_armor_world.z()};
+        double distance = chosen_armor_pose.norm();
 
         // Step 6: Refine flying time
         double refined_flying_time = compensator_->get_flying_time(armor_position);
-        if (std::abs(refined_flying_time - flying_time) > 0.01) {
+        if (std::abs(refined_flying_time - flying_time) > 0.001) {
             double dt_diff = refined_flying_time - flying_time;
             target_position.x() += dt_diff * target_velocity.x();
             target_position.y() += dt_diff * target_velocity.y();
@@ -152,8 +157,8 @@ public:
             // Recalculate armor position
             if (armors_num == 4) {
                 armor_poses = get_robo_armor_poses(
-                    target_position, target_yaw, radius0, radius1,
-                    target.robot_state()->position.z(), z1, armors_num);
+                    target_position, target_yaw, radius0, radius1, target_position.z(), z1,
+                    armors_num);
             } else {
                 armor_poses = get_outpost_armor_poses(
                     {target_position.x(), target_position.y()}, target_yaw, radius0,
@@ -161,10 +166,15 @@ public:
                     target.outpost_state()->z[2]);
             }
             chosen_armor_world = armor_poses[idx];
-            armor_position     = {
-                chosen_armor_world.x() - muzzle_pos.x(), chosen_armor_world.y() - muzzle_pos.y(),
-                chosen_armor_world.z() - muzzle_pos.z()};
-            distance = armor_position.norm();
+            chosen_armor_pose  = chosen_armor_world;
+            chosen_armor_pose.x() -= muzzle_pos.x();
+            chosen_armor_pose.y() -= muzzle_pos.y();
+            chosen_armor_pose.z() -= muzzle_pos.z();
+
+            armor_position = {chosen_armor_pose.x(), chosen_armor_pose.y(), chosen_armor_pose.z()};
+            predicted_position = {
+                chosen_armor_world.x(), chosen_armor_world.y(), chosen_armor_world.z()};
+            distance = chosen_armor_pose.norm();
         }
 
         // Step 7: Calculate yaw and pitch with ballistic compensation
@@ -200,25 +210,25 @@ public:
                 transition_to(State::TrackingArmor);
             }
             // Track center instead of armor
-            cmd.fire_advice            = true;
-            Eigen::Vector3d center_rel = target_position - muzzle_pos;
-            calc_yaw_pitch(center_rel, yaw, pitch);
+            cmd.fire_advice = true;
+            calc_yaw_pitch(target_position, yaw, pitch);
+            predicted_position = target_position;
             break;
         }
 
-        cmd.yaw        = yaw;
-        cmd.pitch      = pitch;
-        cmd.yaw_diff   = normalize_rad(yaw - yaw_);
-        cmd.pitch_diff = pitch - pitch_;
-        cmd.predicted_position =
-            Eigen::Vector3d(chosen_armor_world.x(), chosen_armor_world.y(), chosen_armor_world.z());
-        cmd.trajectory = compensator_->get_trajectory(15, pitch);
+        const double cmd_yaw   = normalize_rad(yaw);
+        cmd.yaw                = cmd_yaw;
+        cmd.pitch              = pitch;
+        cmd.yaw_diff           = cmd_yaw - yaw_;
+        cmd.pitch_diff         = pitch - pitch_;
+        cmd.predicted_position = predicted_position;
+        cmd.trajectory         = compensator_->get_trajectory(15, pitch_);
         // Rotate
         for (auto& p : cmd.trajectory) {
             double x = p.first;
             double y = p.second;
-            p.first  = x * cos(pitch) + y * sin(pitch);
-            p.second = -x * sin(pitch) + y * cos(pitch);
+            p.first  = x * cos(pitch_) + y * sin(pitch_);
+            p.second = -x * sin(pitch_) + y * cos(pitch_);
         }
         return cmd;
     }
@@ -307,7 +317,7 @@ private:
         shooting_range_yaw         = std::max(shooting_range_yaw, min_range);
         shooting_range_pitch       = std::max(shooting_range_pitch, min_range);
 
-        return std::abs(normalize_rad(cur_yaw - target_yaw)) < shooting_range_yaw
+        return std::abs(cur_yaw - target_yaw) < shooting_range_yaw
             && std::abs(cur_pitch - target_pitch) < shooting_range_pitch;
     }
 };

@@ -139,6 +139,9 @@ struct L3Config {
         READ(tbl, tracker);
         READ(tbl, solver);
         READ(tbl, trajectory);
+        // Keep backward compatibility with existing configs:
+        // [l3.trajectory] drives the solver's ballistic parameters (matches atvision_ws layout).
+        solver.trajectory = trajectory;
         return {};
     }
 };

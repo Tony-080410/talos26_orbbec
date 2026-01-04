@@ -1,6 +1,7 @@
 #pragma once
 
 #include <Eigen/Dense>
+#include <array>
 #include <cmath>
 #include <numbers>
 #include <vector>
@@ -150,7 +151,7 @@ enum Measure : uint8_t {
     const double angle_step = 2.0 * std::numbers::pi / static_cast<double>(armors_num);
 
     for (size_t i = 0; i < armors_num; ++i) {
-        const double armor_yaw = target_yaw + static_cast<double>(i) * angle_step;
+        const double armor_yaw = normalize_rad(target_yaw + static_cast<double>(i) * angle_step);
         double radius;
         double armor_z;
 
@@ -184,7 +185,7 @@ enum Measure : uint8_t {
     const std::array<double, 3> zs = {z0, z1, z2};
 
     for (size_t i = 0; i < ARMORS_NUM; ++i) {
-        const double armor_yaw = yaw + static_cast<double>(i) * angle_step;
+        const double armor_yaw = normalize_rad(yaw + static_cast<double>(i) * angle_step);
         const double armor_x   = target_pos.x() - radius * std::cos(armor_yaw);
         const double armor_y   = target_pos.y() - radius * std::sin(armor_yaw);
 

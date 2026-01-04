@@ -130,4 +130,29 @@ constexpr auto
     }
 }
 
+/// Lookup transform using clamped interpolation.
+///
+/// This never returns `FutureExtrapolationRequired`/`PastExtrapolationRequired` as long as the
+/// buffer has data; it clamps the query time to the buffer's time range (equivalent to TF2
+/// `TimePointZero` semantics for "latest available" when `ns` is newer than the newest sample).
+template <frame To, frame From, std::size_t N>
+constexpr auto lookup_clamped(
+    const CoordinateSystem<N>& system, FuckTransform<From> tf_source, timestamp_ns_t ns)
+    -> std::expected<FuckTransform<To>, TransformError> {
+    static_assert(is_descendant_of<From, To>(), "From must be a descendant of To");
+    if constexpr (std::is_same_v<From, To>) {
+        return tf_source;
+    } else if constexpr (root_frame<From>) {
+        return std::unexpected(TransformError::FrameNotFound);
+    } else {
+        const auto& buffer = system[From::index];
+        auto result        = buffer.at_interpolated_clamped(ns);
+        if (!result) {
+            return std::unexpected(result.error());
+        }
+        FuckTransform<typename From::ancestor> parent_tf{tf_source->reparent_to(result->transform)};
+        return lookup_clamped<To, typename From::ancestor, N>(system, parent_tf, ns);
+    }
+}
+
 } // namespace fast_tf

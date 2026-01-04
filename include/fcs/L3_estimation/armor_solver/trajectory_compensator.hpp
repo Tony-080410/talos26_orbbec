@@ -3,6 +3,7 @@
 #include <Eigen/Core>
 #include <cmath>
 #include <memory>
+#include <numbers>
 #include <string_view>
 #include <vector>
 
@@ -18,38 +19,39 @@ class TrajectoryCompensator {
 public:
     virtual ~TrajectoryCompensator() = default;
 
-    /// Compensate pitch for gravity drop
-    /// @param target_position Target position (muzzle-relative)
-    /// @param pitch [in/out] Input: initial pitch, Output: compensated pitch
-    /// @return true if compensation successful
+    /// Compensate the trajectory of the bullet, output compensated pitch (rad).
+    /// This implementation matches rm_utils/math/trajectory_compensator.cpp (atvision_ws).
     [[nodiscard]] bool
         compensate(const Eigen::Vector3d& target_position, double& pitch) const noexcept {
         const double target_height = target_position.z();
-        const double distance_xy   = std::sqrt(
+        double iterative_height    = target_height;
+        double impact_height       = 0.0;
+        const double distance      = std::sqrt(
             target_position.x() * target_position.x() + target_position.y() * target_position.y());
-
-        if (distance_xy < 0.01) {
-            return false; // Too close
-        }
-
-        double compensated_pitch = pitch;
+        double angle                  = std::atan2(target_height, distance);
+        double dh                     = 0.0;
+        constexpr double kDhThreshold = 0.01;
+        constexpr double kMaxAngle    = std::numbers::pi / 2.5;
 
         for (int i = 0; i < iteration_times; ++i) {
-            const double z     = calculate_trajectory(distance_xy, compensated_pitch);
-            const double error = target_height - z;
-
-            if (std::abs(error) < 0.001) {
-                break;    // Converged
+            angle = std::atan2(iterative_height, distance);
+            if (std::abs(angle) > kMaxAngle) {
+                break;
             }
 
-            // Adjust pitch
-            compensated_pitch += std::atan2(error, distance_xy);
-
-            // Clamp to reasonable range
-            compensated_pitch = std::clamp(compensated_pitch, -1.0, 1.0);
+            impact_height = calculate_trajectory(distance, angle);
+            dh            = target_height - impact_height;
+            if (std::abs(dh) < kDhThreshold) {
+                break;
+            }
+            iterative_height += dh;
         }
 
-        pitch = compensated_pitch;
+        if (std::abs(dh) > kDhThreshold || std::abs(angle) > kMaxAngle) {
+            return false;
+        }
+
+        pitch = angle;
         return true;
     }
 
@@ -61,11 +63,13 @@ public:
     [[nodiscard]] std::vector<std::pair<double, double>>
         get_trajectory(double max_distance, double pitch) const noexcept {
         std::vector<std::pair<double, double>> trajectory;
-        const double step = max_distance / 50.0;
 
-        for (double x = 0; x <= max_distance; x += step) {
-            const double z = calculate_trajectory(x, pitch);
-            trajectory.emplace_back(x, z);
+        if (max_distance < 0) {
+            return trajectory;
+        }
+
+        for (double x = 0; x < max_distance; x += 0.03) {
+            trajectory.emplace_back(x, calculate_trajectory(x, pitch));
         }
 
         return trajectory;
@@ -89,16 +93,16 @@ public:
         get_flying_time(const Eigen::Vector3d& target_position) const noexcept override {
         const double distance = std::sqrt(
             target_position.x() * target_position.x() + target_position.y() * target_position.y());
-        return distance / velocity;
+        const double angle = std::atan2(target_position.z(), distance);
+        const double t     = distance / (velocity * std::cos(angle));
+        return t;
     }
 
 protected:
     [[nodiscard]] double calculate_trajectory(double x, double pitch) const noexcept override {
-        // Ideal projectile motion: z = x*tan(pitch) - g*x^2 / (2*v^2*cos^2(pitch))
-        const double cos_pitch = std::cos(pitch);
-        const double t         = x / (velocity * cos_pitch);
-        const double z         = x * std::tan(pitch) - 0.5 * gravity * t * t;
-        return z;
+        const double t = x / (velocity * std::cos(pitch));
+        const double y = velocity * std::sin(pitch) * t - 0.5 * gravity * t * t;
+        return y;
     }
 };
 
@@ -107,50 +111,20 @@ class ResistanceCompensator final : public TrajectoryCompensator {
 public:
     [[nodiscard]] double
         get_flying_time(const Eigen::Vector3d& target_position) const noexcept override {
+        const double r        = resistance < 1e-4 ? 1e-4 : resistance;
         const double distance = std::sqrt(
             target_position.x() * target_position.x() + target_position.y() * target_position.y());
-
-        // Approximate time with resistance
-        // Using simplified exponential decay model
-        const double k = resistance;
-        if (k < 1e-9) {
-            return distance / velocity;
-        }
-
-        // t = (1/k) * ln(1 + k*d/v)
-        return (1.0 / k) * std::log(1.0 + k * distance / velocity);
+        const double angle = std::atan2(target_position.z(), distance);
+        const double t     = (std::exp(r * distance) - 1.0) / (r * velocity * std::cos(angle));
+        return t;
     }
 
 protected:
     [[nodiscard]] double calculate_trajectory(double x, double pitch) const noexcept override {
-        // Numerical integration with air resistance
-        // v' = -k*v, z' = vz, x' = vx
-
-        const double dt    = 0.0001;   // Time step
-        const double k     = resistance;
-        const double cos_p = std::cos(pitch);
-        const double sin_p = std::sin(pitch);
-
-        double vx = velocity * cos_p;
-        double vz = velocity * sin_p;
-        double px = 0.0;
-        double pz = 0.0;
-
-        while (px < x && px < 100.0) { // Max 100m range
-            // Apply resistance and gravity
-            const double v_mag = std::sqrt(vx * vx + vz * vz);
-            if (v_mag < 0.1)
-                break;
-
-            const double drag = k * v_mag;
-            vx -= drag * vx / v_mag * dt;
-            vz -= (gravity + drag * vz / v_mag) * dt;
-
-            px += vx * dt;
-            pz += vz * dt;
-        }
-
-        return pz;
+        const double r = resistance < 1e-4 ? 1e-4 : resistance;
+        const double t = (std::exp(r * x) - 1.0) / (r * velocity * std::cos(pitch));
+        const double y = velocity * std::sin(pitch) * t - 0.5 * gravity * t * t;
+        return y;
     }
 };
 
