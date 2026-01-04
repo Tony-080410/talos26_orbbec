@@ -73,8 +73,9 @@ public:
         std::chrono::duration<float, std::micro> exposure_time) noexcept
         : camera_(std::move(camera))
         , info_(std::move(info))
-        , exposure_time_ns_(static_cast<uint64_t>(
-              std::chrono::duration_cast<std::chrono::nanoseconds>(exposure_time).count())) {}
+        , exposure_time_ns_(
+              static_cast<uint64_t>(
+                  std::chrono::duration_cast<std::chrono::nanoseconds>(exposure_time).count())) {}
 
     [[nodiscard]] std::optional<Frame> try_recv() noexcept {
         using namespace std::chrono_literals;
@@ -171,6 +172,9 @@ public:
 
     [[nodiscard]] static std::expected<InputInterface, InputError> create_hik(
         const hikcamera::ImageCapturer::CameraProfile& profile, const CameraConfig& info) noexcept;
+
+    [[nodiscard]] static std::expected<InputInterface, InputError>
+        create_hik(const CameraConfig& config) noexcept;
 
 private:
     InputMode mode_;

@@ -28,4 +28,20 @@ std::expected<InputInterface, InputError> InputInterface::create_hik(
     return InputInterface(HikInput(std::move(*result), info, profile.exposure_time));
 }
 
+std::expected<InputInterface, InputError>
+    InputInterface::create_hik(const CameraConfig& config) noexcept {
+    hikcamera::ImageCapturer::CameraProfile profile;
+    profile.trigger_mode = config.profile.trigger_mode;
+    profile.invert_image = config.profile.invert_image;
+    profile.exposure_time =
+        std::chrono::duration<float, std::micro>(config.profile.exposure_time_us);
+    profile.gain = config.profile.gain;
+
+    auto result = hikcamera::ImageCapturer::create(profile);
+    if (!result) {
+        return std::unexpected(result.error());
+    }
+    return InputInterface(HikInput(std::move(*result), config, profile.exposure_time));
+}
+
 } // namespace fcs::L1

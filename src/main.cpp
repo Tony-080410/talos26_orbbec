@@ -48,6 +48,37 @@ inline std::expected<TalosConfig, read_config_error> read_config() {
     if (auto result = config.read_from(tbl.table()); !result) {
         return std::unexpected(result.error());
     }
+
+    // Read robot-specific configuration
+    auto robots_tbl = toml::parse_file("robots.toml");
+    if (robots_tbl.failed()) {
+        spdlog::critical("parse robots.toml: {}", robots_tbl.error().description());
+        return config; // Return config with defaults
+    }
+
+    // Get robot-specific camera configuration based on robot type
+    std::string robot_section;
+    switch (config.robot) {
+    case fcs::RobotType::Infantry: robot_section = "robot_infantry"; break;
+    case fcs::RobotType::Hero: robot_section = "robot_hero"; break;
+    case fcs::RobotType::Sentry: robot_section = "robot_sentry"; break;
+    }
+
+    if (auto robot_tbl = robots_tbl.table()[robot_section]; robot_tbl) {
+        if (auto camera_tbl = robot_tbl.as_table()->operator[]("camera").as_table()) {
+            fcs::CameraConfig robot_camera_config;
+            if (auto camera_result = robot_camera_config.read_from(*camera_tbl); camera_result) {
+                config.camera = robot_camera_config;
+                spdlog::info("Loaded robot-specific camera configuration for {}", robot_section);
+            } else {
+                spdlog::error(
+                    "read camera config for {}: {}", robot_section, camera_result.error());
+            }
+        }
+    } else {
+        spdlog::error("Robot section {} not found in robots.toml", robot_section);
+    }
+
     return config;
 }
 
@@ -98,7 +129,7 @@ int main() {
             return 2;
         }
     } else {
-        input_result = fcs::L1::InputInterface::create_hik({}, config.camera);
+        input_result = fcs::L1::InputInterface::create_hik(config.camera);
         if (auto result = usb_device->connect(0x0483, 0x5740); result) {
             output_interface =
                 std::make_unique<fcs::L1::OutputInterface>(fcs::L1::UsbOutput{usb_device});
@@ -246,6 +277,15 @@ int main() {
                     imu_out->roll_deg             = roll;
                     imu_out->pitch_deg            = pitch;
                     imu_out->yaw_deg              = yaw;
+                }
+                if (const auto pose = ipc_device->recv_pose(ipc::POSE_ODOM)) {
+                    // strategy.set_bullet_speed(imu_data.data.bullet_speed);
+                    fast_tf::update(
+                        *tf_buffer->get(),
+                        fast_tf::FuckTransform<fast_tf::odom_fuxk_frame>(
+                            fast_tf::TransformMatrix4d::from_translation(
+                                pose->x, pose->y, pose->z)),
+                        pose->timestamp_ns);
                 }
             } else {
                 usb_device->handle_events();
