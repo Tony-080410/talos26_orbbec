@@ -8,11 +8,14 @@
 #include "fcs/L1_sensor/output_interface.hpp"
 #include "fcs/L5_weapon/weapon_systems.hpp"
 #include "fcs/visualization/foxglove_systems.hpp"
+#include "math/fast_tf/hero.hpp"
 #include "math/fast_tf/infantry.hpp"
+#include "math/fast_tf/sentry.hpp"
 #include "scheduler/scheduler.hpp"
 #include "spdlog_hook.hpp"
 #include "talos_gimbal/stm32.hpp"
 #include "toml_helper.hpp"
+
 #include <Eigen/Geometry>
 #include <atomic>
 #include <chrono>
@@ -191,7 +194,11 @@ int main() {
         "Solver initialized (bullet_speed={:.1f}m/s)", config.solver().trajectory.bullet_speed);
 
     // Create coordinate system for fast_tf lookups
-    world.insert_resource(fast_tf::infantry_new<1024>());
+    switch (config.robot) {
+    case fcs::RobotType::Infantry: world.insert_resource(fast_tf::infantry_new<1024>()); break;
+    case fcs::RobotType::Hero: world.insert_resource(fast_tf::hero_new<1024>()); break;
+    case fcs::RobotType::Sentry: world.insert_resource(fast_tf::sentry_new<1024>()); break;
+    }
 
     // Insert config as shared resource (for foxglove and other systems)
     world.insert_resource(std::make_shared<fcs::TalosConfig>(config));

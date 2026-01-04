@@ -24,9 +24,8 @@ template <typename T>
 constexpr std::expected<T, std::string> read(const toml::table& table, std::string_view key) {
     if (auto val = table[key].value<T>(); val) {
         return *val;
-    } else {
-        return std::unexpected(fmt::format("'{}' does not exists, or have a invalid value", key));
     }
+    return std::unexpected(fmt::format("'{}' does not exists, or have a invalid value", key));
 }
 
 template <ReadFrom T>
@@ -43,16 +42,7 @@ constexpr std::expected<T, std::string> read(const toml::table& table, std::stri
 }
 
 template <typename T>
-requires(std::is_enum_v<T>)
-constexpr std::expected<T, std::string> read(const toml::table& table, std::string_view key) {
-    auto val = read<std::string>(table, key); // Read as string
-    if (!val) {
-        return std::unexpected(val.error());
-    }
-    auto enum_val = magic_enum::enum_cast<T>(*val, magic_enum::case_insensitive);
-    if (enum_val) {
-        return *enum_val;
-    }
+requires(std::is_enum_v<T>) constexpr std::string enum_options() {
     auto all = magic_enum::enum_names<T>();
     std::string options;
     for (const auto& name : all) {
@@ -61,8 +51,24 @@ constexpr std::expected<T, std::string> read(const toml::table& table, std::stri
         }
         options += fmt::format("'{}'", name);
     }
+    return options;
+}
+
+template <typename T>
+requires(std::is_enum_v<T>)
+constexpr std::expected<T, std::string> read(const toml::table& table, std::string_view key) {
+    auto val = read<std::string>(table, key); // Read as string
+    if (!val) {
+        return std::unexpected(
+            fmt::format("'{}' has invalid enum value, must be one of {}", key, enum_options<T>()));
+    }
+    auto enum_val = magic_enum::enum_cast<T>(*val, magic_enum::case_insensitive);
+    if (enum_val) {
+        return *enum_val;
+    }
     return std::unexpected(
-        fmt::format("'{}' has invalid enum value '{}', must be one of {}", key, *val, options));
+        fmt::format(
+            "'{}' has invalid enum value '{}', must be one of {}", key, *val, enum_options<T>()));
 }
 
 template <typename Mat>

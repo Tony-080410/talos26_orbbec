@@ -41,12 +41,15 @@ struct FoxgloveConfig {
     }
 };
 
+enum class RobotType { Infantry, Hero, Sentry };
+
 struct TalosConfig {
     bool daedalus{false};
     CameraConfig camera{};
     AtLegacyConfig at_legacy{};
     L3::L3Config l3{};
     FoxgloveConfig foxglove{};
+    RobotType robot{RobotType::Infantry};
 
     [[nodiscard]] const L3::TrackerConfig& tracker() const noexcept { return l3.tracker; }
     [[nodiscard]] const L3::SolverConfig& solver() const noexcept { return l3.solver; }
@@ -59,6 +62,7 @@ struct TalosConfig {
         READ(tbl, at_legacy);
         READ(tbl, l3);
         READ(tbl, foxglove);
+        READ(tbl, robot);
         return {};
     }
 };
