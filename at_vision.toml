@@ -14,7 +14,7 @@ height = 1080
 
 [at_legacy.detector]
 backend_type = "Traditional"
-detect_color = "Red"
+detect_color = "Blue"
 
 # Required if backend_type = "traditional"
 [at_legacy.traditional]
@@ -62,7 +62,7 @@ top_k = 128
 
 [l3.tracker.robot]
 matcher_gate = 5.0
-lost_threshold = 1.0
+lost_threshold = 2.0
 tracking_threshold = 5
 [l3.tracker.robot.model]
 sigma_a_xy = 7.5

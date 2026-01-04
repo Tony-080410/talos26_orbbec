@@ -5,10 +5,10 @@
 #include <algorithm>
 #include <numbers>
 #include <numeric>
-#include <vector>
-
 #include <opencv2/core.hpp>
 #include <opencv2/imgproc.hpp>
+#include <ranges>
+#include <vector>
 
 namespace fcs {
 
@@ -37,7 +37,8 @@ struct AtLegacyLight : public cv::RotatedRect {
         // Get corner points and sort by y
         cv::Point2f p[4];
         this->points(p);
-        std::sort(p, p + 4, [](const cv::Point2f& a, const cv::Point2f& b) { return a.y < b.y; });
+        std::ranges::sort(
+            p, p + 4, [](const cv::Point2f& a, const cv::Point2f& b) { return a.y < b.y; });
 
         // Top is average of two topmost points, bottom is average of two bottommost
         top    = (p[0] + p[1]) / 2;

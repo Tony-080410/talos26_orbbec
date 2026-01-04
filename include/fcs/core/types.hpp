@@ -114,7 +114,8 @@ struct AtLegacyImageFrame {
 
 /// Single armor detection result (2D, before PnP)
 struct AtLegacyArmorDetection {
-    std::array<cv::Point2f, 4> corners{}; // 4 corners: TL, TR, BR, BL
+    /// 4 corners: TL, TR, BR, BL
+    std::array<cv::Point2f, 4> corners{};
     cv::Rect2f rect{};
     ArmorName name   = ArmorName::Invalid;
     ArmorColor color = ArmorColor::Neutral;
@@ -182,21 +183,24 @@ struct AtLegacyArmorDetectionBatch {
 /// Single armor measurement (3D pose in camera_optical frame)
 struct AtLegacyArmorMeasurement {
     fast_tf::FuckTransform<fast_tf::odom_fuxk_frame> transform;
-    ArmorName name        = ArmorName::Invalid;
-    ArmorColor color      = ArmorColor::Neutral;
-    ArmorType type        = ArmorType::Small;
-    float confidence      = 0.0f;
-    uint64_t timestamp_ns = 0;
+    ArmorName name                 = ArmorName::Invalid;
+    ArmorColor color               = ArmorColor::Neutral;
+    ArmorType type                 = ArmorType::Small;
+    float confidence               = 0.0f;
+    float distance_to_image_center = 0.0f; // Pixel distance from armor center to image center
+    uint64_t timestamp_ns          = 0;
 
     AtLegacyArmorMeasurement() = default;
 
     /// Construct from Detection + PnP result
     AtLegacyArmorMeasurement(
-        const AtLegacyArmorDetection& det, const cv::Mat& rvec, const cv::Mat& tvec, uint64_t ts)
+        const AtLegacyArmorDetection& det, const cv::Mat& rvec, const cv::Mat& tvec, uint64_t ts,
+        float dist_to_center = 0.0f)
         : name(det.name)
         , color(det.color)
         , type(det.type)
         , confidence(det.confidence)
+        , distance_to_image_center(dist_to_center)
         , timestamp_ns(ts) {
         // really? no, camera_optical!
         transform = fast_tf::FuckTransform<fast_tf::odom_fuxk_frame>(

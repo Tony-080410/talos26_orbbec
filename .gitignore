@@ -33,3 +33,4 @@ camera_intrinsic.toml
 .claude
 CRIT.md
 camera_extrinsic.toml
+.zed

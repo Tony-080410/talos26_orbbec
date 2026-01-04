@@ -78,6 +78,14 @@ auto Scheduler::build() -> BuildResult {
         compute_stats_.emplace_back();
     }
 
+    // Bind all systems (pre-create channel readers/writers, single-threaded)
+    for (auto& entry : exclusive_systems_) {
+        entry.system->bind(world_);
+    }
+    for (auto& entry : compute_systems_) {
+        entry.system->bind(world_);
+    }
+
     return {};
 }
 
@@ -631,11 +639,12 @@ auto Scheduler::compute_levels() -> BuildResult {
             // Check for kind conflict (same key used as both SPSC and SPMC)
             if (!usage.writers.empty() || !usage.readers.empty()) {
                 if (!usage.is_spsc) {
-                    return std::unexpected(ChannelKindConflict{
-                        .key           = ChannelKeyInfo(ch.type, ch.tag, true),
-                        .first_system  = usage.first_system,
-                        .second_system = meta.name,
-                    });
+                    return std::unexpected(
+                        ChannelKindConflict{
+                            .key           = ChannelKeyInfo(ch.type, ch.tag, true),
+                            .first_system  = usage.first_system,
+                            .second_system = meta.name,
+                        });
                 }
             } else {
                 usage.is_spsc      = true;
@@ -657,11 +666,12 @@ auto Scheduler::compute_levels() -> BuildResult {
             // Check for kind conflict
             if (!usage.writers.empty() || !usage.readers.empty()) {
                 if (usage.is_spsc) {
-                    return std::unexpected(ChannelKindConflict{
-                        .key           = ChannelKeyInfo(ch.type, ch.tag, false),
-                        .first_system  = usage.first_system,
-                        .second_system = meta.name,
-                    });
+                    return std::unexpected(
+                        ChannelKindConflict{
+                            .key           = ChannelKeyInfo(ch.type, ch.tag, false),
+                            .first_system  = usage.first_system,
+                            .second_system = meta.name,
+                        });
                 }
             } else {
                 usage.is_spsc      = false;
@@ -693,10 +703,11 @@ auto Scheduler::compute_levels() -> BuildResult {
             for (auto idx : usage.writers) {
                 writer_names.push_back(compute_systems_[idx].system->meta().name);
             }
-            return std::unexpected(MultipleWritersError{
-                .key     = ChannelKeyInfo(key.type, key.tag, usage.is_spsc),
-                .writers = std::move(writer_names),
-            });
+            return std::unexpected(
+                MultipleWritersError{
+                    .key     = ChannelKeyInfo(key.type, key.tag, usage.is_spsc),
+                    .writers = std::move(writer_names),
+                });
         }
 
         // SPSC with multiple readers is an error
@@ -706,10 +717,11 @@ auto Scheduler::compute_levels() -> BuildResult {
             for (auto idx : usage.readers) {
                 reader_names.push_back(compute_systems_[idx].system->meta().name);
             }
-            return std::unexpected(MultipleReadersError{
-                .key     = ChannelKeyInfo(key.type, key.tag, true),
-                .readers = std::move(reader_names),
-            });
+            return std::unexpected(
+                MultipleReadersError{
+                    .key     = ChannelKeyInfo(key.type, key.tag, true),
+                    .readers = std::move(reader_names),
+                });
         }
 
         // Reader without writer is an error (neither exclusive nor compute writer)
@@ -719,10 +731,11 @@ auto Scheduler::compute_levels() -> BuildResult {
             for (auto idx : usage.readers) {
                 reader_names.push_back(compute_systems_[idx].system->meta().name);
             }
-            return std::unexpected(OrphanedReaderError{
-                .key     = ChannelKeyInfo(key.type, key.tag, usage.is_spsc),
-                .readers = std::move(reader_names),
-            });
+            return std::unexpected(
+                OrphanedReaderError{
+                    .key     = ChannelKeyInfo(key.type, key.tag, usage.is_spsc),
+                    .readers = std::move(reader_names),
+                });
         }
 
         // Orphaned compute writer is a warning (printed but not an error)

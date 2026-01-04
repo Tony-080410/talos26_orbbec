@@ -46,6 +46,8 @@ clean_dir() {
     fi
 }
 
-cmake -DENABLE_CALIBRATION=ON -G Ninja -B build -S .
-cmake --build build
+cmake -DENABLE_CALIBRATION=ON -G Ninja -B build -S . \
+ -DCMAKE_CXX_FLAGS="-fsanitize=address -fno-omit-frame-pointer -g" \
+ -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address"
+cmake --build build -- talos -j64
 status "[+]" "$BLUE" "All done."

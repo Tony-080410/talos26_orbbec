@@ -16,6 +16,7 @@ namespace talos {
 class SystemBase {
 public:
     virtual ~SystemBase()                  = default;
+    virtual void bind(World& world)        = 0; // Pre-create channels/resources (single-threaded)
     virtual bool run(World& world)         = 0; // Returns true if any channel was written
     virtual const SystemMeta& meta() const = 0;
 };
@@ -84,15 +85,18 @@ public:
         : func_(std::move(func))
         , meta_(extract_system_meta<F, Policy>(std::move(name))) {}
 
-    bool run(World& world) override {
-        // Cache arguments on first run (readers/writers created once, reused)
-        if (!cached_args_) {
-            cached_args_ = [&]<std::size_t... Is>(std::index_sequence<Is...>) {
-                return args_tuple{detail::make_arg<std::tuple_element_t<Is, args_tuple>>(world)...};
-            }(std::make_index_sequence<traits::arity>{});
-            bind_written_flags();
+    /// Pre-create all channel readers/writers (must be called single-threaded before run)
+    void bind(World& world) override {
+        if (cached_args_) {
+            return; // Already bound
         }
+        cached_args_ = [&]<std::size_t... Is>(std::index_sequence<Is...>) {
+            return args_tuple{detail::make_arg<std::tuple_element_t<Is, args_tuple>>(world)...};
+        }(std::make_index_sequence<traits::arity>{});
+        bind_written_flags();
+    }
 
+    bool run([[maybe_unused]] World& world) override {
         written_ = false;
         std::apply(func_, *cached_args_);
         return written_;

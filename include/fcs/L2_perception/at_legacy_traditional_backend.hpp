@@ -64,7 +64,8 @@ private:
 
     /// Match light pairs to form armors
     [[nodiscard]] std::vector<AtLegacyArmorDetection> match_lights(
-        const std::vector<AtLegacyLight>& lights, const AtLegacyTraditionalConfig& cfg) const;
+        std::vector<AtLegacyLight>& lights, const AtLegacyTraditionalConfig& cfg,
+        cv::Mat gray_img) const;
 
     /// Check if there's a light between two lights
     [[nodiscard]] static bool
@@ -77,7 +78,7 @@ private:
 
     /// Extract number ROI: perspective transform + OTSU binarization
     [[nodiscard]] cv::Mat extract_number(
-        const cv::Mat& src, const AtLegacyLight& left_light, const AtLegacyLight& right_light,
+        const cv::Mat& src, const std::array<cv::Point2f, 4>& lights_vertices,
         ArmorType armor_type) const noexcept;
 };
 

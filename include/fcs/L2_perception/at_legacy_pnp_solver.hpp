@@ -177,7 +177,11 @@ public:
             return std::unexpected(PnPError::SolveFailed);
         }
 
-        return AtLegacyArmorMeasurement(detection, rvec, tvec, timestamp_ns);
+        // Calculate distance from armor center to image center
+        const cv::Point2f armor_center = detection.center();
+        const float dist_to_center     = cv::norm(armor_center - image_center_);
+
+        return AtLegacyArmorMeasurement(detection, rvec, tvec, timestamp_ns, dist_to_center);
     }
 
     /// Solve PnP for multiple detections
@@ -330,7 +334,11 @@ public:
         }
         // If optimization failed, use original PnP result
 
-        return AtLegacyArmorMeasurement(detection, rvec, tvec, timestamp_ns);
+        // Calculate distance from armor center to image center
+        const cv::Point2f armor_center = detection.center();
+        const float dist_to_center     = cv::norm(armor_center - image_center_);
+
+        return AtLegacyArmorMeasurement(detection, rvec, tvec, timestamp_ns, dist_to_center);
     }
 
     /// Solve PnP with BA for multiple detections

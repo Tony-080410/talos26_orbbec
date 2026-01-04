@@ -19,6 +19,13 @@ else ()
 endif ()
 
 # add_compile_options(
+#         -fsanitize=address -fno-omit-frame-pointer
+# )
+
+# add_link_options(
+#         -fsanitize=address
+# )
+# add_compile_options(
 #         -O3
 #         -march=native
 #         -mtune=native

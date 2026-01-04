@@ -21,11 +21,10 @@ void AtLegacyLightCornerCorrector::correct_corners(
         left_light.axis        = left_axis.direction;
 
         cv::Point2f t = find_corner(gray_img, left_light, left_axis, true);
+        cv::Point2f b = find_corner(gray_img, left_light, left_axis, false);
         if (t.x > 0) {
             left_light.top = t;
         }
-
-        cv::Point2f b = find_corner(gray_img, left_light, left_axis, false);
         if (b.x > 0) {
             left_light.bottom = b;
         }
@@ -38,11 +37,10 @@ void AtLegacyLightCornerCorrector::correct_corners(
         right_light.axis        = right_axis.direction;
 
         cv::Point2f t = find_corner(gray_img, right_light, right_axis, true);
+        cv::Point2f b = find_corner(gray_img, right_light, right_axis, false);
         if (t.x > 0) {
             right_light.top = t;
         }
-
-        cv::Point2f b = find_corner(gray_img, right_light, right_axis, false);
         if (b.x > 0) {
             right_light.bottom = b;
         }

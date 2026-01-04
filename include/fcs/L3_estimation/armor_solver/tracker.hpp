@@ -142,11 +142,11 @@ public:
             return std::nullopt;
         }
 
-        // Find measurement closest to image center (by distance)
-        double min_distance = 1e8;
-        int min_idx         = -1;
+        // Find measurement closest to image center (by pixel distance)
+        float min_distance = 1e8f;
+        int min_idx        = -1;
         for (int i = 0; i < static_cast<int>(measurements.measurements.size()); ++i) {
-            const double dist = measurements.measurements[i].distance();
+            const float dist = measurements.measurements[i].distance_to_image_center;
             if (dist < min_distance) {
                 min_distance = dist;
                 min_idx      = i;

@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cmath>
 #include <numbers>
+#include <opencv2/core/mat.hpp>
 #include <opencv2/imgproc.hpp>
 #include <ranges>
 #include <spdlog/spdlog.h>
@@ -58,111 +59,32 @@ AtLegacyTraditionalBackend::DetectionResult
     // 2. Find lights
     auto lights = find_lights(input, binary, *cfg);
 
-    // 3. Match lights to armors
-    auto detections = match_lights(lights, *cfg);
-
     // Save gray image for corner correction (precompute for efficiency)
     cv::Mat gray_img;
     cv::cvtColor(input, gray_img, cv::COLOR_BGR2GRAY);
 
-    // 4. Refine corners using PCA-based method (sub-pixel accuracy)
-    // Apply corner correction to improve detection accuracy
-    if (corner_corrector_) {
-        for (auto& detection : detections) {
-            // Find the corresponding lights for this detection
-            size_t left_idx = 0, right_idx = 0;
-            bool found = false;
-
-            for (size_t i = 0; i < lights.size() - 1; ++i) {
-                for (size_t j = i + 1; j < lights.size(); ++j) {
-                    // Check if these lights form the current detection
-                    if ((detection.corners[0] == lights[i].top
-                         && detection.corners[1] == lights[j].top)
-                        || (detection.corners[0] == lights[j].top
-                            && detection.corners[1] == lights[i].top)) {
-                        if (lights[i].center.x < lights[j].center.x) {
-                            left_idx  = i;
-                            right_idx = j;
-                        } else {
-                            left_idx  = j;
-                            right_idx = i;
-                        }
-                        found = true;
-                        break;
-                    }
-                }
-                if (found)
-                    break;
-            }
-
-            if (found) {
-                // Apply PCA-based corner refinement
-                corner_corrector_->correct_corners(lights[left_idx], lights[right_idx], gray_img);
-
-                // Update detection with refined corners
-                detection.corners[0] = lights[left_idx].top;
-                detection.corners[1] = lights[right_idx].top;
-                detection.corners[2] = lights[right_idx].bottom;
-                detection.corners[3] = lights[left_idx].bottom;
-
-                // Recalculate bounding rect and area with refined corners
-                std::vector<cv::Point2f> pts = {
-                    detection.corners[0], detection.corners[1], detection.corners[2],
-                    detection.corners[3]};
-                detection.rect = cv::boundingRect(pts);
-                detection.area = static_cast<int>(cv::contourArea(pts));
-            }
-        }
-    }
+    // 3. Match lights to armors
+    auto detections = match_lights(lights, *cfg, gray_img);
 
     // 5. Classify armors if classifier is available
     if (classifier_ && classifier_->is_initialized()) {
         for (size_t d = 0; d < detections.size(); ++d) {
             auto& detection = detections[d];
 
-            // Find the corresponding left and right lights for this detection
-            size_t left_idx = 0, right_idx = 0;
-            bool found = false;
+            // Extract number image: perspective transform + OTSU binarization
+            cv::Mat number_img = extract_number(input, detection.corners, detection.type);
 
-            for (size_t i = 0; i < lights.size() - 1; ++i) {
-                for (size_t j = i + 1; j < lights.size(); ++j) {
-                    // Check if these lights form the current detection
-                    if ((detection.corners[0] == lights[i].top
-                         && detection.corners[1] == lights[j].top)
-                        || (detection.corners[0] == lights[j].top
-                            && detection.corners[1] == lights[i].top)) {
-                        if (lights[i].center.x < lights[j].center.x) {
-                            left_idx  = i;
-                            right_idx = j;
-                        } else {
-                            left_idx  = j;
-                            right_idx = i;
-                        }
-                        found = true;
-                        break;
-                    }
-                }
-                if (found)
-                    break;
-            }
+            if (!number_img.empty()) {
+                float confidence = 0.0f;
+                auto result      = classifier_->classify(number_img, confidence);
 
-            if (found) {
-                // Extract number image: perspective transform + OTSU binarization
-                cv::Mat number_img =
-                    extract_number(input, lights[left_idx], lights[right_idx], detection.type);
-
-                if (!number_img.empty()) {
-                    float confidence = 0.0f;
-                    auto result      = classifier_->classify(number_img, confidence);
-
-                    if (result) {
-                        detection.name       = *result;
-                        detection.confidence = confidence;
-                    } else {
-                        // Classification failed, mark as invalid
-                        detection.name       = ArmorName::Invalid;
-                        detection.confidence = 0.0f;
-                    }
+                if (result) {
+                    detection.name       = *result;
+                    detection.confidence = confidence;
+                } else {
+                    // Classification failed, mark as invalid
+                    detection.name       = ArmorName::Invalid;
+                    detection.confidence = 0.0f;
                 }
             }
         }
@@ -249,9 +171,9 @@ std::vector<AtLegacyLight> AtLegacyTraditionalBackend::find_lights(
             }
 
             const int avg_diff = std::abs(sum_r - sum_b) / static_cast<int>(contour.size());
-            if (avg_diff > cfg.light_color_diff_thresh) {
-                light.color = sum_r > sum_b ? ArmorColor::Red : ArmorColor::Blue;
-            }
+            // if (avg_diff > cfg.light_color_diff_thresh) {
+            light.color = sum_r > sum_b ? ArmorColor::Red : ArmorColor::Blue;
+            //}
             lights.emplace_back(light);
         }
     }
@@ -281,7 +203,8 @@ bool AtLegacyTraditionalBackend::is_light(
 // ============================================================================
 
 std::vector<AtLegacyArmorDetection> AtLegacyTraditionalBackend::match_lights(
-    const std::vector<AtLegacyLight>& lights, const AtLegacyTraditionalConfig& cfg) const {
+    std::vector<AtLegacyLight>& lights, const AtLegacyTraditionalConfig& cfg,
+    const cv::Mat gray_img) const {
     std::vector<AtLegacyArmorDetection> detections;
 
     // Target color based on detect_color_
@@ -290,15 +213,16 @@ std::vector<AtLegacyArmorDetection> AtLegacyTraditionalBackend::match_lights(
     // Loop all pairs of lights
     for (auto it1 = lights.begin(); it1 != lights.end(); ++it1) {
         // Filter by color
-        if (it1->color != target_color && it1->color != ArmorColor::Neutral)
+        if (it1->color != target_color)
             continue;
 
         const double max_iter_width = it1->length * cfg.armor_max_large_center_distance;
 
         for (auto it2 = it1 + 1; it2 != lights.end(); ++it2) {
             // Filter by color
-            if (it2->color != target_color && it2->color != ArmorColor::Neutral)
+            if (it2->color != target_color)
                 continue;
+            // corner_corrector_->correct_corners(*it1, *it2, gray_img);
 
             // Check if there's a light between them
             const auto i = static_cast<size_t>(std::distance(lights.begin(), it1));
@@ -390,7 +314,7 @@ ArmorType AtLegacyTraditionalBackend::is_armor(
         return ArmorType::Invalid;
     }
 
-    return center_distance > cfg.armor_max_large_center_distance ? ArmorType::Large
+    return center_distance > cfg.armor_min_large_center_distance ? ArmorType::Large
                                                                  : ArmorType::Small;
 }
 
@@ -399,45 +323,43 @@ ArmorType AtLegacyTraditionalBackend::is_armor(
 // ============================================================================
 
 cv::Mat AtLegacyTraditionalBackend::extract_number(
-    const cv::Mat& src, const AtLegacyLight& left_light, const AtLegacyLight& right_light,
+    const cv::Mat& src, const std::array<cv::Point2f, 4>& lights_vertices,
     ArmorType armor_type) const noexcept {
-    // Constants from ROS2 implementation
-    constexpr int light_length      = 12;
-    constexpr int warp_height       = 28;
-    constexpr int small_armor_width = 32;
-    constexpr int large_armor_width = 54;
-    const cv::Size roi_size(20, 28);
+    // Light length in image
+    static const int light_length = 12;
+    // Image size after warp
+    static const int warp_height       = 28;
+    static const int small_armor_width = 32;
+    static const int large_armor_width = 54;
+    // Number ROI size
+    static const cv::Size roi_size(20, 28);
+    static const cv::Size input_size(28, 28);
 
-    // Get warp width based on armor type
-    int warp_width = (armor_type == ArmorType::Small ? small_armor_width : large_armor_width);
-
-    // Define source points (light corners)
-    cv::Point2f lights_vertices[4] = {
-        left_light.bottom, left_light.top, right_light.top, right_light.bottom};
-
-    // Define target points in warped space
-    int top_light_y    = (warp_height - light_length) / 2 - 1;
-    int bottom_light_y = top_light_y + light_length;
-
+    const int top_light_y    = (warp_height - light_length) / 2 - 1;
+    const int bottom_light_y = top_light_y + light_length;
+    const int warp_width = armor_type == ArmorType::Small ? small_armor_width : large_armor_width;
     cv::Point2f target_vertices[4] = {
-        cv::Point2f(0, bottom_light_y), cv::Point2f(0, top_light_y),
-        cv::Point2f(warp_width - 1, top_light_y), cv::Point2f(warp_width - 1, bottom_light_y)};
-
-    // Perspective transform
-    cv::Mat M = cv::getPerspectiveTransform(lights_vertices, target_vertices);
+        cv::Point(0, bottom_light_y),
+        cv::Point(0, top_light_y),
+        cv::Point(warp_width - 1, top_light_y),
+        cv::Point(warp_width - 1, bottom_light_y),
+    };
     cv::Mat number_image;
-    cv::warpPerspective(src, number_image, M, cv::Size(warp_width, warp_height));
+    cv::Point2f lights_vertices2[4] = {
+        lights_vertices[3], lights_vertices[0], lights_vertices[1], lights_vertices[2]};
 
-    // Extract ROI (center 20x28)
-    int roi_x    = (warp_width - roi_size.width) / 2;
-    number_image = number_image(cv::Rect(cv::Point(roi_x, 0), roi_size));
+    auto rotation_matrix = cv::getPerspectiveTransform(lights_vertices2, target_vertices);
+    cv::warpPerspective(src, number_image, rotation_matrix, cv::Size(warp_width, warp_height));
 
-    // Convert to grayscale
-    cv::cvtColor(number_image, number_image, cv::COLOR_BGR2GRAY);
+    // Get ROI
+    number_image =
+        number_image(cv::Rect(cv::Point((warp_width - roi_size.width) / 2, 0), roi_size));
 
-    // OTSU binarization
+    // Binarize
+
+    cv::cvtColor(number_image, number_image, cv::COLOR_RGB2GRAY);
     cv::threshold(number_image, number_image, 0, 255, cv::THRESH_BINARY | cv::THRESH_OTSU);
-
+    cv::resize(number_image, number_image, input_size);
     return number_image;
 }
 
