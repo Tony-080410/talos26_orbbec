@@ -351,12 +351,6 @@ private:
             measurement_[3] = z[3];
         }
     }
-
-    [[nodiscard]] static double quaternion_to_yaw(const Eigen::Quaterniond& q) noexcept {
-        const double siny_cosp = 2.0 * (q.w() * q.z() + q.x() * q.y());
-        const double cosy_cosp = 1.0 - 2.0 * (q.y() * q.y() + q.z() * q.z());
-        return std::atan2(siny_cosp, cosy_cosp);
-    }
 };
 
 } // namespace fcs::L3

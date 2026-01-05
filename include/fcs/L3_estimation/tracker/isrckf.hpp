@@ -36,6 +36,9 @@ public:
     using DevX  = Eigen::Matrix<Scalar, NX, Eigen::Dynamic>;
     using DevZ  = Eigen::Matrix<Scalar, NZ, Eigen::Dynamic>;
 
+    static_assert(NX > 0, "ISRCKF: NX must be positive");
+    static_assert(NZ > 0, "ISRCKF: NZ must be positive");
+
     /// Construct ISRCKF
     /// @param model Reference to motion/observation model
     /// @param x0 Initial state estimate
@@ -44,22 +47,26 @@ public:
     ISRCKF(
         Model& model, const VecX& x0, const MatXX& P0,
         SigmaPointConfig<Scalar> /*cfg_compat*/ = {}) noexcept
-        : model_(model) {
-        x_      = x0;
-        Sx_     = detail::chol_from_ldlt<NX, Scalar>(P0);
-        gamma_  = std::sqrt(static_cast<Scalar>(NX));   // CKF uses fixed scaling
-        w_      = Scalar(1) / (Scalar(2) * Scalar(NX)); // 2N points, equal weights
-        w_sqrt_ = std::sqrt(w_);
+        : model_(model)
+        , gamma_(std::sqrt(static_cast<Scalar>(NX)))            // CKF uses fixed scaling
+        , w_(Scalar(1) / (Scalar(2) * static_cast<Scalar>(NX))) // 2N points, equal weights
+        , w_sqrt_(std::sqrt(w_)) {
+        x_  = x0;
+        Sx_ = detail::chol_from_ldlt<NX, Scalar>(P0);
 
-        Xsig_.resize(2 * NX, NX);
-        Zsig_.resize(2 * NX, NZ);
+        Xsig_.resize(kNumCubaturePoints, NX);
+        Zsig_.resize(kNumCubaturePoints, NZ);
     }
 
     /// Set maximum iterations for measurement update
-    void set_max_iters(int iters) noexcept { max_iters_ = (iters < 1 ? 1 : iters); }
+    void set_max_iters(int iters) noexcept {
+        max_iters_ = (iters < kMinMaxIters ? kMinMaxIters : iters);
+    }
 
     /// Set iteration convergence tolerance
-    void set_iter_tol(Scalar tol) noexcept { iter_tol_ = (tol <= Scalar(0) ? Scalar(1e-6) : tol); }
+    void set_iter_tol(Scalar tol) noexcept {
+        iter_tol_ = (tol <= Scalar(0) ? kDefaultIterTol : tol);
+    }
 
     /// Prediction step
     void predict(Scalar dt) noexcept {
@@ -99,9 +106,8 @@ public:
         VecX x_it = x_prior;
 
         // Cache last iteration statistics for final covariance update
-        MatXZ Pxz_last  = MatXZ::Zero();
-        MatZZ Sz_last   = MatZZ::Zero();
-        VecZ zpred_last = VecZ::Zero();
+        MatXZ Pxz_last = MatXZ::Zero();
+        MatZZ Sz_last  = MatZZ::Zero();
 
         for (int it = 0; it < max_iters_; ++it) {
             compute_cubature_points_(x_it, S_prior, Xsig_);
@@ -148,9 +154,8 @@ public:
             const VecX x_new = x_prior + K * innov;
 
             // Save statistics for final update
-            Pxz_last   = Pxz;
-            Sz_last    = Sz;
-            zpred_last = z_pred;
+            Pxz_last = Pxz;
+            Sz_last  = Sz;
 
             const Scalar step_norm = (x_new - x_it).template lpNorm<Eigen::Infinity>();
             x_it                   = x_new;
@@ -189,12 +194,17 @@ private:
     VecX x_{};
     MatXX Sx_{};
 
-    Scalar gamma_{};
-    Scalar w_{};
-    Scalar w_sqrt_{};
+    static constexpr int kNumCubaturePoints = 2 * NX;
+    static constexpr int kMinMaxIters       = 1;
+    static constexpr int kDefaultMaxIters   = 3;
+    static constexpr Scalar kDefaultIterTol = Scalar(1e-6);
 
-    int max_iters_{3};
-    Scalar iter_tol_{Scalar(1e-6)};
+    const Scalar gamma_;
+    const Scalar w_;
+    const Scalar w_sqrt_;
+
+    int max_iters_{kDefaultMaxIters};
+    Scalar iter_tol_{kDefaultIterTol};
 
     Eigen::Matrix<Scalar, Eigen::Dynamic, Eigen::Dynamic> Xsig_; // (2N x NX)
     Eigen::Matrix<Scalar, Eigen::Dynamic, Eigen::Dynamic> Zsig_; // (2N x NZ)

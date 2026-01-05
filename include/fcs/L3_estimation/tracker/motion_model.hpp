@@ -48,6 +48,18 @@ struct RobotModel {
     using VecX = Eigen::Matrix<Scalar, NX, 1>;
     using VecZ = Eigen::Matrix<Scalar, NZ, 1>;
 
+    // Measurement vector layout: [yaw, pitch, distance, armor_yaw]
+    // The underlying indices are defined in `util.hpp` (enum `Measure`), but the names there
+    // are historically confusing; use explicit aliases here for readability.
+    static constexpr int kMeasYaw      = ARMOR_YAW;
+    static constexpr int kMeasPitch    = ARMOR_PITCH;
+    static constexpr int kMeasDistance = ARMOR_DISTANCE;
+    static constexpr int kMeasArmorYaw = ARMOR_YAW_ARMOR;
+
+    // For a 4-armor robot, armors 1 and 3 are mounted at z0 + h, while 0 and 2 are at z0.
+    static constexpr int kHighArmorIdA = 1;
+    static constexpr int kHighArmorIdB = 3;
+
     /// Process noise parameters
     struct Params {
         Scalar sigma_a_xy  = 5.0; // XY acceleration noise
@@ -107,7 +119,7 @@ struct RobotModel {
 
         Scalar radius;
         Scalar armor_z;
-        if (id == 1 || id == 3) {
+        if (id == kHighArmorIdA || id == kHighArmorIdB) {
             armor_z = x(Z0) + x(H);
             radius  = x(R_1);
         } else {
@@ -118,11 +130,11 @@ struct RobotModel {
         const Scalar armor_x = x(XC) - radius * std::cos(tmp_yaw);
         const Scalar armor_y = x(YC) - radius * std::sin(tmp_yaw);
 
-        const auto ypd = xyz2ypd({armor_x, armor_y, armor_z});
-        z[0]           = ypd[0];  // yaw
-        z[1]           = ypd[1];  // pitch
-        z[2]           = ypd[2];  // distance
-        z[3]           = tmp_yaw; // armor yaw
+        const auto ypd   = xyz2ypd({armor_x, armor_y, armor_z});
+        z[kMeasYaw]      = ypd.x();
+        z[kMeasPitch]    = ypd.y();
+        z[kMeasDistance] = ypd.z();
+        z[kMeasArmorYaw] = tmp_yaw;
 
         return z;
     }
@@ -172,10 +184,10 @@ struct RobotModel {
 
     /// Measurement noise diagonal
     [[nodiscard]] Eigen::Matrix<Scalar, NZ, 1> R_diag(const VecZ& z) const noexcept {
-        const Scalar delta_angle = shortest_rad(z[0], z[3]);
+        const Scalar delta_angle = shortest_rad(z[kMeasYaw], z[kMeasArmorYaw]);
         Eigen::Matrix<Scalar, NZ, 1> R_dig;
         R_dig << 4e-3, 4e-3, std::log(std::abs(delta_angle) + 1.0) + 1.0,
-            std::log(std::abs(z[2]) + 1.0) / 200.0 + 9e-2;
+            std::log(std::abs(z[kMeasDistance]) + 1.0) / 200.0 + 9e-2;
         return R_dig;
     }
 
@@ -203,6 +215,15 @@ struct OutpostModel {
 
     using VecX = Eigen::Matrix<Scalar, NX, 1>;
     using VecZ = Eigen::Matrix<Scalar, NZ, 1>;
+
+    // Measurement vector layout: [yaw, pitch, distance, armor_yaw]
+    static constexpr int kMeasYaw      = ARMOR_YAW;
+    static constexpr int kMeasPitch    = ARMOR_PITCH;
+    static constexpr int kMeasDistance = ARMOR_DISTANCE;
+    static constexpr int kMeasArmorYaw = ARMOR_YAW_ARMOR;
+
+    // State layout: Z states are stored contiguously starting at O_Z0 (z0, z1, z2).
+    static constexpr int kFirstArmorZState = O_Z0;
 
     /// Process noise parameters
     struct Params {
@@ -257,13 +278,13 @@ struct OutpostModel {
 
         const Scalar armor_x = x(O_XC) - OUTPOST_RADIUS * std::cos(tmp_yaw);
         const Scalar armor_y = x(O_YC) - OUTPOST_RADIUS * std::sin(tmp_yaw);
-        const Scalar armor_z = x(O_Z0 + id);
+        const Scalar armor_z = x(kFirstArmorZState + id);
 
-        const auto ypd = xyz2ypd({armor_x, armor_y, armor_z});
-        z[0]           = ypd[0];
-        z[1]           = ypd[1];
-        z[2]           = ypd[2];
-        z[3]           = tmp_yaw;
+        const auto ypd   = xyz2ypd({armor_x, armor_y, armor_z});
+        z[kMeasYaw]      = ypd.x();
+        z[kMeasPitch]    = ypd.y();
+        z[kMeasDistance] = ypd.z();
+        z[kMeasArmorYaw] = tmp_yaw;
 
         return z;
     }
@@ -306,10 +327,10 @@ struct OutpostModel {
 
     /// Measurement noise diagonal
     [[nodiscard]] Eigen::Matrix<Scalar, NZ, 1> R_diag(const VecZ& z) const noexcept {
-        const Scalar delta_angle = shortest_rad(z[0], z[3]);
+        const Scalar delta_angle = shortest_rad(z[kMeasYaw], z[kMeasArmorYaw]);
         Eigen::Matrix<Scalar, NZ, 1> R_dig;
         R_dig << 4e-3, 4e-3, std::log(std::abs(delta_angle) + 1.0) + 1.0,
-            std::log(std::abs(z[2]) + 1.0) / 200.0 + 9e-2;
+            std::log(std::abs(z[kMeasDistance]) + 1.0) / 200.0 + 9e-2;
         return R_dig;
     }
 

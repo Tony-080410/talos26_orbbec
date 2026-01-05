@@ -88,9 +88,9 @@ struct TalosConfig {
         READ(tbl, daedalus);
         READ(tbl, camera);
         READ(tbl, at_legacy);
-        READ(tbl, l3);
-        READ(tbl, l4);
-        READ(tbl, l5);
+        READ_FLATTEN(tbl, l3);
+        READ_FLATTEN(tbl, l4);
+        READ_FLATTEN(tbl, l5);
         READ(tbl, foxglove);
         READ(tbl, robot);
         return {};
