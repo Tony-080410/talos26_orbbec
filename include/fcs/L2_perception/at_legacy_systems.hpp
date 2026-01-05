@@ -47,10 +47,14 @@ void register_at_legacy_detection_systems(App& app) {
     // ArmorDetectorSystem: Image → Detection
     // Triggered by Image channel updates, runs in thread pool
     app.template add_system<talos::pool_compute>(
-        "at_legacy_armor_detector",
+        "at_legacy_armor_detector_pnp_solver",
         [](talos::spmc<AtLegacyImageFrame, AtLegacyImageChannelTag> image_in,
            talos::spmc_mut<AtLegacyArmorDetectionBatch, AtLegacyDetectionChannelTag> detection_out,
-           talos::res_mut<std::shared_ptr<AtLegacyDetectorBackend>> backend_ptr) {
+           talos::spmc_mut<AtLegacyArmorMeasurementBatch, AtLegacyMeasurementChannelTag>
+               measurement_out,
+           talos::res_mut<std::shared_ptr<AtLegacyDetectorBackend>> backend_ptr,
+           talos::res<std::shared_ptr<AtLegacyPnPSolver>> solver_ptr,
+           talos::res<std::shared_ptr<fast_tf::CoordinateSystem<1024>>> tf_system) {
             // Check for new image
             if (!image_in.has_new())
                 return;
@@ -61,6 +65,17 @@ void register_at_legacy_detection_systems(App& app) {
             auto& backend = *backend_ptr;
             if (!backend)
                 return;
+            // Solve PnP for all detections (in camera_optical frame)
+            auto tf_odom_camera = fast_tf::lookup<fast_tf::odom_fuxk_frame>(
+                **tf_system, fast_tf::FuckTransform<fast_tf::camera_optical_fuxk_frame>(),
+                frame->timestamp_ns);
+
+            if (!tf_odom_camera) {
+                spdlog::error(
+                    "TF lookup failed for timestamp {}: {}", frame->timestamp_ns,
+                    fast_tf::to_string(tf_odom_camera.error()));
+                return;
+            }
 
             // Run detection
             auto result = backend->detect(frame->image);
@@ -70,62 +85,15 @@ void register_at_legacy_detection_systems(App& app) {
                     AtLegacyArmorDetectionBatch{{}, frame->timestamp_ns, frame->frame_id});
                 return;
             }
+            auto detections = std::move(*result);
 
             // Output detection batch
             detection_out.write(
-                AtLegacyArmorDetectionBatch{
-                    std::move(*result), frame->timestamp_ns, frame->frame_id});
-        });
-
-    // PnPSolverSystem: Detection → Measurement (in odom frame)
-    // Triggered by Detection channel updates, runs in thread pool
-    app.template add_system<talos::pool_compute>(
-        "at_legacy_pnp_solver",
-        [](talos::spmc<AtLegacyArmorDetectionBatch, AtLegacyDetectionChannelTag> detection_in,
-           talos::spmc_mut<AtLegacyArmorMeasurementBatch, AtLegacyMeasurementChannelTag>
-               measurement_out,
-           talos::res<std::shared_ptr<AtLegacyPnPSolver>> solver_ptr,
-           talos::res<std::shared_ptr<fast_tf::CoordinateSystem<1024>>> tf_system) {
-            // Check for new detection
-            if (!detection_in.has_new())
-                return;
-            auto batch = detection_in.read();
-            if (!batch || batch->empty()) {
-                // No detections, output empty batch
-                if (batch) {
-                    measurement_out.write(
-                        AtLegacyArmorMeasurementBatch{{}, batch->timestamp_ns, batch->frame_id});
-                }
-                return;
-            }
-
-            auto& solver = *solver_ptr;
-            if (!solver)
-                return;
-
-            // Solve PnP for all detections (in camera_optical frame)
-            auto tf_odom_camera = fast_tf::lookup<fast_tf::odom_fuxk_frame>(
-                **tf_system, fast_tf::FuckTransform<fast_tf::camera_optical_fuxk_frame>(),
-                batch->timestamp_ns);
-            while (
-                !tf_odom_camera
-                && (tf_odom_camera.error() == fast_tf::TransformError::FutureExtrapolationRequired
-                    || tf_odom_camera.error() == fast_tf::TransformError::NoDataAvailable)) {
-                SPIN_HINT();
-                tf_odom_camera = fast_tf::lookup<fast_tf::odom_fuxk_frame>(
-                    **tf_system, fast_tf::FuckTransform<fast_tf::camera_optical_fuxk_frame>(),
-                    batch->timestamp_ns);
-            }
-            if (!tf_odom_camera) {
-                spdlog::error(
-                    "TF lookup failed for timestamp {}: {}", batch->timestamp_ns,
-                    fast_tf::to_string(tf_odom_camera.error()));
-                return;
-            }
-            auto measurements = solver->solve_batch_with_ba(
-                batch->detections, tf_odom_camera.value()->rotation().matrix(),
-                batch->timestamp_ns);
-
+                AtLegacyArmorDetectionBatch{detections, frame->timestamp_ns, frame->frame_id});
+            auto measurements = (*solver_ptr)
+                                    ->solve_batch_with_ba(
+                                        detections, tf_odom_camera.value()->rotation().matrix(),
+                                        frame->timestamp_ns);
             // Transform each measurement from camera_optical to odom frame.
             // Match atvision behavior: if TF is not available, drop the whole batch (never feed a
             // wrong-frame measurement into the tracker).
@@ -134,11 +102,10 @@ void register_at_legacy_detection_systems(App& app) {
                 meas.transform = fast_tf::FuckTransform<fast_tf::odom_fuxk_frame>{
                     T_odom_camera * (*meas.transform)};
             }
-
             // Output measurement batch
             measurement_out.write(
                 AtLegacyArmorMeasurementBatch{
-                    std::move(measurements), batch->timestamp_ns, batch->frame_id});
+                    std::move(measurements), frame->timestamp_ns, frame->frame_id});
         });
 }
 

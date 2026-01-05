@@ -278,6 +278,13 @@ int main() {
                     imu_out->roll_deg             = roll;
                     imu_out->pitch_deg            = pitch;
                     imu_out->yaw_deg              = yaw;
+                    // Update gimbal_link TF (critical for camera_link lookup)
+                    fast_tf::update(
+                        *tf_buffer->get(),
+                        fast_tf::FuckTransform<fast_tf::gimbal_link_fuxk_frame>(
+                            fast_tf::TransformMatrix4d::from_rpy(
+                                roll, pitch, yaw, pose->x, pose->y, pose->z)),
+                        pose->timestamp_ns);
                 }
                 if (const auto pose = ipc_device->recv_pose(ipc::POSE_ODOM)) {
                     // strategy.set_bullet_speed(imu_data.data.bullet_speed);
@@ -288,20 +295,42 @@ int main() {
                                 pose->x, pose->y, pose->z)),
                         pose->timestamp_ns);
                 }
+                if (const auto pose = ipc_device->recv_pose(ipc::POSE_CAMERA)) {
+                    const Eigen::Quaterniond q(pose->qw, pose->qx, pose->qy, pose->qz);
+                    const auto [roll, pitch, yaw] = math_fuxk::rpy(q).rpy();
+                    // strategy.set_bullet_speed(imu_data.data.bullet_speed);
+                    fast_tf::update(
+                        *tf_buffer->get(),
+                        fast_tf::FuckTransform<fast_tf::camera_link_fuxk_frame>(
+                            fast_tf::TransformMatrix4d::from_rpy(
+                                roll, pitch, yaw, pose->x, pose->y, pose->z)),
+                        pose->timestamp_ns);
+                }
+                if (const auto pose = ipc_device->recv_pose(ipc::POSE_MUZZLE)) {
+                    const Eigen::Quaterniond q(pose->qw, pose->qx, pose->qy, pose->qz);
+                    const auto [roll, pitch, yaw] = math_fuxk::rpy(q).rpy();
+                    // strategy.set_bullet_speed(imu_data.data.bullet_speed);
+                    fast_tf::update(
+                        *tf_buffer->get(),
+                        fast_tf::FuckTransform<fast_tf::muzzle_link_fuxk_frame>(
+                            fast_tf::TransformMatrix4d::from_rpy(
+                                roll, pitch, yaw, pose->x, pose->y, pose->z)),
+                        pose->timestamp_ns);
+                }
             } else {
                 usb_device->handle_events();
                 imu_out->timestamp = fcs::clock::now_ns();
                 imu_out->roll_deg  = imu_data.data.roll;
                 imu_out->pitch_deg = imu_data.data.pitch;
                 imu_out->yaw_deg   = imu_data.data.yaw;
+                // strategy.set_bullet_speed(imu_data.data.bullet_speed);
+                fast_tf::update(
+                    *tf_buffer->get(),
+                    fast_tf::FuckTransform<fast_tf::gimbal_link_fuxk_frame>(
+                        fast_tf::TransformMatrix4d::from_rpy(
+                            imu_out->roll_deg, imu_out->pitch_deg, imu_out->yaw_deg)),
+                    imu_out->timestamp);
             }
-            // strategy.set_bullet_speed(imu_data.data.bullet_speed);
-            fast_tf::update(
-                *tf_buffer->get(),
-                fast_tf::FuckTransform<fast_tf::gimbal_link_fuxk_frame>(
-                    fast_tf::TransformMatrix4d::from_rpy(
-                        imu_out->roll_deg, imu_out->pitch_deg, imu_out->yaw_deg)),
-                imu_out->timestamp);
         });
 
     // Camera: 160Hz, notify (triggers compute)
