@@ -30,10 +30,14 @@ struct AtLegacyMeasurementChannelTag {};
 /// Mode: SPMC (single producer, multiple consumers)
 struct TrackerOutputChannelTag {};
 
-/// @brief Solver output channel (Solver → Fire Control)
-/// Data type: fcs::L3::GimbalCommand
+// ============================================================================
+// L4 Planning Pipeline Channel Tags
+// ============================================================================
+
+/// @brief Gimbal plan channel (Planner → Weapon System)
+/// Data type: fcs::L4::GimbalPlan
 /// Mode: SPMC (single producer, multiple consumers)
-struct SolverOutputChannelTag {};
+struct GimbalPlanChannelTag {};
 
 // ============================================================================
 // L5 Weapon System Channel Tags

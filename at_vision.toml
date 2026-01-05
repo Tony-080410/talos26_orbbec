@@ -85,7 +85,7 @@ sigma_q_z = 0.8
 sigma_a_yaw = 2.0
 
 
-[l3.solver]
+[l4.planner]
 # Shooting range (determines fire_advice trigger zone)
 shooting_range_w = 0.135  # Horizontal shooting window (meters)
 shooting_range_h = 0.135  # Vertical shooting window (meters)
@@ -99,8 +99,13 @@ transfer_thresh = 5            # State transfer counter threshold (frames)
 # Trajectory compensator type: "ideal" or "resistance"
 compensator_type = "Resistance"
 
-[l3.trajectory]
+[l4.planner.trajectory]
 iteration_times = 20       # Number of iterations for ballistic compensation
 bullet_speed = 25.0        # Bullet velocity (m/s)
 gravity = 9.7997              # Gravity acceleration (m/s^2)
 resistance = 0.00005         # Air resistance coefficient
+
+[l5.weapon]
+fire_delay = 0.05 # Additional prediction delay compensation (seconds)
+min_fire_confidence = 0.7
+max_fire_angular_velocity = 10.0

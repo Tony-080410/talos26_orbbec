@@ -109,32 +109,6 @@ struct TrackerOutput {
 };
 
 // ============================================================================
-// Gimbal Command (Solver Output)
-// ============================================================================
-
-struct GimbalCommand {
-    uint64_t timestamp_ns{0};
-
-    // Target gimbal angles (radians, in odom frame)
-    double yaw{0};
-    double pitch{0};
-
-    // Angular differences from current pose
-    double yaw_diff{0};
-    double pitch_diff{0};
-
-    // Target info
-    double distance{0};
-    bool fire_advice{false};
-
-    // Predicted armor position (for visualization)
-    std::optional<Eigen::Vector3d> predicted_position;
-
-    // Trajectory points (x, z) in muzzle_link frame (for visualization)
-    std::vector<std::pair<double, double>> trajectory;
-};
-
-// ============================================================================
 // Channel Tags (for ECS)
 // ============================================================================
 
@@ -143,7 +117,6 @@ struct GimbalCommand {
 // - fcs::SolverOutputChannelTag
 
 // Re-export for convenience
-using ::fcs::SolverOutputChannelTag;
 using ::fcs::TrackerOutputChannelTag;
 
 // ============================================================================

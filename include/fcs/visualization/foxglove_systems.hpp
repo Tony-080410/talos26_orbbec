@@ -5,7 +5,7 @@
 #include "foxglove_types.hpp"
 
 #include "auto_aim/config.hpp"
-#include "fcs/L3_estimation/armor_solver/types.hpp"
+#include "fcs/L3_estimation/tracker/types.hpp"
 #include "fcs/core/channel_tags.hpp"
 #include "fcs/core/types.hpp"
 #include "math/fast_tf/infantry.hpp"
@@ -516,9 +516,8 @@ void register_foxglove_systems(App& app, talos::Scheduler* scheduler_ptr = nullp
 
     // 云台场景发布系统 (弹道/预测位置/选择点可视化)
     app.template add_system<talos::pool_compute>(
-        "foxglove_gimbal_scene_pub",
-        [](talos::spmc<L3::GimbalCommand, SolverOutputChannelTag> cmd_in,
-           talos::res<std::shared_ptr<FoxgloveServer>> server) {
+        "foxglove_gimbal_scene_pub", [](talos::spmc<L4::GimbalPlan, GimbalPlanChannelTag> cmd_in,
+                                        talos::res<std::shared_ptr<FoxgloveServer>> server) {
             if (!(*server)->is_initialized() || !cmd_in.has_new()) {
                 return;
             }

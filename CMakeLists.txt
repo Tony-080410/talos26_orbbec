@@ -113,6 +113,7 @@ add_library(fcs SHARED
         src/fcs/L2_perception/at_legacy_traditional_backend.cpp
         src/fcs/L2_perception/at_legacy_traditional_classifier.cpp
         src/fcs/L2_perception/at_legacy_light_corner_corrector.cpp
+        src/fcs/L5_weapon/enhanced/weapon_controller.cpp
 )
 
 target_include_directories(fcs PUBLIC

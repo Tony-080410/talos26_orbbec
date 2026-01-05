@@ -1,5 +1,6 @@
 #pragma once
 
+#include "config.hpp"
 #include <Eigen/Core>
 #include <cmath>
 #include <memory>
@@ -7,12 +8,7 @@
 #include <string_view>
 #include <vector>
 
-namespace fcs::L3 {
-
-enum class TrajectoryCompensatorType {
-    Ideal,
-    Resistance,
-};
+namespace fcs::L4 {
 
 /// Abstract trajectory compensator for ballistic compensation
 class TrajectoryCompensator {
@@ -137,4 +133,4 @@ protected:
     return std::make_unique<ResistanceCompensator>();
 }
 
-} // namespace fcs::L3
+} // namespace fcs::L4

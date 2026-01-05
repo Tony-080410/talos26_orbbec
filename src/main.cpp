@@ -1,12 +1,12 @@
 #include "L2_perception/at_legacy_systems.hpp"
-#include "L3_estimation/armor_solver/solver.hpp"
-#include "L3_estimation/armor_solver/tracker.hpp"
-#include "L3_estimation/armor_solver_systems.hpp"
 #include "auto_aim/config.hpp"
 #include "core/time.hpp"
 #include "fcs/L1_sensor/input_interface.hpp"
 #include "fcs/L1_sensor/output_interface.hpp"
-#include "fcs/L5_weapon/weapon_systems.hpp"
+#include "fcs/L3_estimation/L3_estimation.hpp"
+#include "fcs/L4_planning/gimbal_planner/trajectory_compensator.hpp"
+#include "fcs/L4_planning/planning_systems.hpp"
+#include "fcs/L5_weapon/enhanced/weapon_systems.hpp"
 #include "fcs/visualization/foxglove_systems.hpp"
 #include "math/fast_tf/hero.hpp"
 #include "math/fast_tf/infantry.hpp"
@@ -212,17 +212,18 @@ int main() {
     // ============================================================================
 
     // ============================================================================
-    // L3 Armor Solver Setup
+    // L3 Tracker and L4 Planner Setup
     // ============================================================================
 
     // Create Tracker using config from toml
     world.insert_resource(std::make_shared<fcs::L3::Tracker>(config.tracker()));
     spdlog::info("Tracker initialized");
 
-    // Create Solver using config from toml
-    world.insert_resource(std::make_shared<fcs::L3::Solver>(config.solver()));
+    // Create GimbalPlanner using config from toml (L4 Planning Layer)
+    world.insert_resource(std::make_shared<fcs::L4::GimbalPlanner>(config.planner()));
     spdlog::info(
-        "Solver initialized (bullet_speed={:.1f}m/s)", config.solver().trajectory.bullet_speed);
+        "GimbalPlanner initialized (bullet_speed={:.1f}m/s)",
+        config.planner().trajectory.bullet_speed);
 
     // Create coordinate system for fast_tf lookups
     switch (config.robot) {
@@ -235,7 +236,7 @@ int main() {
     world.insert_resource(std::make_shared<fcs::TalosConfig>(config));
 
     // ============================================================================
-    // End L3 Armor Solver Setup
+    // End L3 Tracker and L4 Planner Setup
     // ============================================================================
 
     // ============================================================================
@@ -325,11 +326,15 @@ int main() {
     // Register AT Legacy detection pipeline systems
     fcs::register_at_legacy_detection_systems(scheduler);
 
-    // Register L3 Armor Solver pipeline (Measurement -> TrackerOutput -> GimbalCommand)
-    fcs::L3::register_armor_solver_systems(scheduler);
+    // Register L3 Tracker pipeline (Measurement -> TrackerOutput)
+    fcs::L3::register_tracker_systems(scheduler);
 
-    // Register L5 Weapon System (GimbalCommand -> WeaponCommand)
-    fcs::L5::register_weapon_system(scheduler);
+    // Register L4 Planning pipeline (TrackerOutput -> GimbalPlan + FireCommand)
+    fcs::L4::register_planning_systems_with_config(scheduler, config.planner());
+
+    // Register L5 Enhanced Weapon System (GimbalPlan + FireCommand -> WeaponCommand)
+    fcs::L5::register_enhanced_weapon_system_with_config_and_compensator(
+        scheduler, config.weapon(), fcs::L4::create_compensator(config.planner().compensator_type));
 
     // L1 Output System: Send WeaponCommand to device
     scheduler.add_system<talos::exclusive<250, 1>>(

@@ -1,9 +1,9 @@
 #pragma once
 
 #include "config.hpp"
+#include "fcs/L3_estimation/tracker/util.hpp"
 #include "trajectory_compensator.hpp"
 #include "types.hpp"
-#include "util.hpp"
 
 #include "math/fast_tf/matrix.hpp"
 
@@ -15,40 +15,40 @@
 #include <numbers>
 #include <string>
 
-namespace fcs::L3 {
+namespace fcs::L4 {
 
-/// Solver class for computing gimbal commands from tracker output
-/// Handles ballistic compensation and armor selection
-class Solver {
+/// GimbalPlanner class for computing gimbal commands from tracker output
+/// Handles ballistic compensation and armor selection in the L4 planning layer
+class GimbalPlanner {
 public:
     enum class State {
         TrackingArmor  = 0, // Tracking individual armor
         TrackingCenter = 1, // Tracking target center (fast rotation)
     };
 
-    Solver() noexcept
+    GimbalPlanner() noexcept
         : compensator_(create_compensator(config_.compensator_type)) {}
 
-    explicit Solver(const SolverConfig& config) noexcept
+    explicit GimbalPlanner(const GimbalPlannerConfig& config) noexcept
         : config_(config)
         , compensator_(create_compensator(config.compensator_type)) {
         update_compensator_params();
     }
 
     /// Update configuration
-    void set_config(const SolverConfig& config) noexcept {
+    void set_config(const GimbalPlannerConfig& config) noexcept {
         config_      = config;
         compensator_ = create_compensator(config.compensator_type);
         update_compensator_params();
     }
 
-    /// Solve gimbal command from tracker output
-    /// @param target Tracker output
+    /// Plan gimbal command from tracker output
+    /// @param target Tracker output from L3
     /// @param current_time_ns Current timestamp
     /// @param muzzle_transform Transform from odom to muzzle_link
-    /// @return GimbalCommand or error message
-    [[nodiscard]] std::expected<GimbalCommand, std::string> solve(
-        const TrackerOutput& target, uint64_t current_time_ns,
+    /// @return GimbalPlan or error message
+    [[nodiscard]] std::expected<GimbalPlan, std::string> plan(
+        const fcs::L3::TrackerOutput& target, uint64_t current_time_ns,
         const fast_tf::TransformMatrix4d& muzzle_transform) const noexcept {
 
         if (!target.is_tracking()) {
@@ -94,8 +94,8 @@ public:
                 (state.z[0] + state.z[1] + state.z[2]) / 3.0};
             target_yaw   = state.yaw;
             target_v_yaw = state.v_yaw;
-            radius0      = OutpostTargetState::radius;
-            radius1      = OutpostTargetState::radius;
+            radius0      = fcs::L3::OutpostTargetState::radius;
+            radius1      = fcs::L3::OutpostTargetState::radius;
             z1           = state.z[1];
             z2           = state.z[2];
             armors_num   = 3;
@@ -119,10 +119,10 @@ public:
         // Step 3: Get armor positions
         std::vector<Eigen::Vector4d> armor_poses;
         if (armors_num == 4) {
-            armor_poses = get_robo_armor_poses(
+            armor_poses = fcs::L3::get_robo_armor_poses(
                 target_position, target_yaw, radius0, radius1, target_position.z(), z1, armors_num);
         } else {
-            armor_poses = get_outpost_armor_poses(
+            armor_poses = fcs::L3::get_outpost_armor_poses(
                 {target_position.x(), target_position.y()}, target_yaw, radius0,
                 target.outpost_state()->z[0], target.outpost_state()->z[1],
                 target.outpost_state()->z[2]);
@@ -156,11 +156,11 @@ public:
 
             // Recalculate armor position
             if (armors_num == 4) {
-                armor_poses = get_robo_armor_poses(
+                armor_poses = fcs::L3::get_robo_armor_poses(
                     target_position, target_yaw, radius0, radius1, target_position.z(), z1,
                     armors_num);
             } else {
-                armor_poses = get_outpost_armor_poses(
+                armor_poses = fcs::L3::get_outpost_armor_poses(
                     {target_position.x(), target_position.y()}, target_yaw, radius0,
                     target.outpost_state()->z[0], target.outpost_state()->z[1],
                     target.outpost_state()->z[2]);
@@ -181,11 +181,11 @@ public:
         double yaw, pitch;
         calc_yaw_pitch(armor_position, yaw, pitch);
 
-        // Step 8: Initialize gimbal command
-        GimbalCommand cmd;
-        cmd.timestamp_ns = current_time_ns;
-        cmd.distance     = distance;
-        cmd.fire_advice  = is_on_target(yaw_, pitch_, yaw, pitch, distance);
+        // Step 8: Initialize gimbal plan
+        GimbalPlan plan;
+        plan.timestamp_ns = current_time_ns;
+        plan.distance     = distance;
+        plan.fire_advice  = is_on_target(yaw_, pitch_, yaw, pitch, distance);
 
         // State machine for tracking mode
         switch (state_) {
@@ -210,34 +210,34 @@ public:
                 transition_to(State::TrackingArmor);
             }
             // Track center instead of armor
-            cmd.fire_advice = true;
+            plan.fire_advice = true;
             calc_yaw_pitch(target_position, yaw, pitch);
             predicted_position = target_position;
             break;
         }
 
-        const double cmd_yaw   = normalize_rad(yaw);
-        cmd.yaw                = cmd_yaw;
-        cmd.pitch              = pitch;
-        cmd.yaw_diff           = cmd_yaw - yaw_;
-        cmd.pitch_diff         = pitch - pitch_;
-        cmd.predicted_position = predicted_position;
-        cmd.trajectory         = compensator_->get_trajectory(15, pitch_);
+        const double cmd_yaw    = fcs::L3::normalize_rad(yaw);
+        plan.yaw                = cmd_yaw;
+        plan.pitch              = pitch;
+        plan.yaw_diff           = cmd_yaw - yaw_;
+        plan.pitch_diff         = pitch - pitch_;
+        plan.predicted_position = predicted_position;
+        plan.trajectory         = compensator_->get_trajectory(15, pitch_);
         // Rotate
-        for (auto& p : cmd.trajectory) {
+        for (auto& p : plan.trajectory) {
             double x = p.first;
             double y = p.second;
             p.first  = x * cos(pitch_) + y * sin(pitch_);
             p.second = -x * sin(pitch_) + y * cos(pitch_);
         }
-        return cmd;
+        return plan;
     }
 
     /// Get current tracking state
     [[nodiscard]] State state() const noexcept { return state_; }
 
 private:
-    SolverConfig config_;
+    GimbalPlannerConfig config_;
     mutable std::unique_ptr<TrajectoryCompensator> compensator_;
     mutable State state_{State::TrackingArmor};
     mutable int overflow_count_{0};
@@ -322,4 +322,4 @@ private:
     }
 };
 
-} // namespace fcs::L3
+} // namespace fcs::L4

@@ -1,18 +1,19 @@
 #pragma once
 
-#include "motion_model.hpp"
 #include "toml_helper.hpp"
-#include "trajectory_compensator.hpp"
 #include <expected>
-#include <memory>
-#include <string>
 #include <toml++/toml.hpp>
 
-namespace fcs::L3 {
+namespace fcs::L4 {
 
 // ============================================================================
-// Trajectory Compensator Configuration
+// Trajectory Configuration (L4 Layer - Master)
 // ============================================================================
+
+enum class TrajectoryCompensatorType {
+    Ideal,
+    Resistance,
+};
 
 struct TrajectoryConfig {
     /// Number of iterations for trajectory compensation
@@ -37,46 +38,11 @@ struct TrajectoryConfig {
 };
 
 // ============================================================================
-// Tracker Configuration
+// Gimbal Planner Configuration (L4 Layer)
 // ============================================================================
 
-template <typename T>
-struct TargetConfig {
-    /// Timeout before returning to IDLE from TEMP_LOST (seconds)
-    double lost_threshold;
-    /// Number of consecutive frames required to transition DETECTING -> TRACKING
-    uint32_t tracking_threshold;
-    /// Mahalanobis distance gate for target matching
-    double matcher_gate{10.0};
-    /// motion model parameters
-    T model;
-
-    std::expected<void, std::string> read_from(const toml::table& tbl) noexcept {
-        READ(tbl, lost_threshold);
-        READ(tbl, tracking_threshold);
-        READ(tbl, matcher_gate);
-        READ(tbl, model);
-        return {};
-    }
-};
-
-struct TrackerConfig {
-    /// Robot target parameters
-    TargetConfig<RobotModel::Params> robot;
-    /// Outpost target parameters
-    TargetConfig<OutpostModel::Params> outpost;
-    std::expected<void, std::string> read_from(const toml::table& tbl) noexcept {
-        READ(tbl, robot);
-        READ(tbl, outpost);
-        return {};
-    }
-};
-
-// ============================================================================
-// Solver Configuration
-// ============================================================================
-
-struct SolverConfig {
+/// Gimbala planning configuration
+struct GimbalPlannerConfig {
     /// Shooting range width (meters)
     double shooting_range_w{0.135};
 
@@ -87,6 +53,7 @@ struct SolverConfig {
     double max_tracking_v_yaw{6.0};
 
     /// Additional prediction delay (seconds)
+    /// TODO would this should be replaced by real system latency?
     double prediction_delay{0.0};
 
     /// Side angle threshold for armor switching (degrees)
@@ -118,32 +85,27 @@ struct SolverConfig {
 };
 
 // ============================================================================
-// L3 Estimation Full Config
+// L4 Planning Full Config
 // ============================================================================
 
-struct L3Config {
-    TrackerConfig tracker{};
-    SolverConfig solver{};
-    TrajectoryConfig trajectory{};
+struct L4Config {
+    GimbalPlannerConfig planner{};
 
     /// Get shared_ptr for atomic config distribution
-    [[nodiscard]] std::shared_ptr<const TrackerConfig> tracker_ptr() const {
-        return std::make_shared<const TrackerConfig>(tracker);
-    }
-
-    [[nodiscard]] std::shared_ptr<const SolverConfig> solver_ptr() const {
-        return std::make_shared<const SolverConfig>(solver);
+    [[nodiscard]] std::shared_ptr<const GimbalPlannerConfig> planner_ptr() const {
+        return std::make_shared<const GimbalPlannerConfig>(planner);
     }
 
     std::expected<void, std::string> read_from(const toml::table& tbl) noexcept {
-        READ(tbl, tracker);
-        READ(tbl, solver);
-        READ(tbl, trajectory);
-        // Keep backward compatibility with existing configs:
-        // [l3.trajectory] drives the solver's ballistic parameters (matches atvision_ws layout).
-        solver.trajectory = trajectory;
+        READ(tbl, planner);
+        if (auto trajectory_tbl = tbl["trajectory"].as_table()) {
+            auto result = planner.trajectory.read_from(*trajectory_tbl);
+            if (!result) {
+                return result;
+            }
+        }
         return {};
     }
 };
 
-} // namespace fcs::L3
+} // namespace fcs::L4

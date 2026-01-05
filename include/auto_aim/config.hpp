@@ -8,7 +8,9 @@
 #include <string>
 
 #include "fcs/L2_perception/at_legacy_config.hpp"
-#include "fcs/L3_estimation/armor_solver/config.hpp"
+#include "fcs/L3_estimation/tracker/config.hpp"
+#include "fcs/L4_planning/gimbal_planner/config.hpp"
+#include "fcs/L5_weapon/config.hpp"
 #include "toml_helper.hpp"
 
 namespace fcs {
@@ -70,19 +72,25 @@ struct TalosConfig {
     CameraConfig camera{};
     AtLegacyConfig at_legacy{};
     L3::L3Config l3{};
+    L4::L4Config l4{};
+    L5::L5Config l5{};
     FoxgloveConfig foxglove{};
     RobotType robot{RobotType::Infantry};
 
     [[nodiscard]] const L3::TrackerConfig& tracker() const noexcept { return l3.tracker; }
-    [[nodiscard]] const L3::SolverConfig& solver() const noexcept { return l3.solver; }
+    [[nodiscard]] const L4::GimbalPlannerConfig& planner() const noexcept { return l4.planner; }
+    [[nodiscard]] const L5::WeaponControllerConfig& weapon() const noexcept { return l5.weapon; }
     [[nodiscard]] L3::TrackerConfig& tracker() noexcept { return l3.tracker; }
-    [[nodiscard]] L3::SolverConfig& solver() noexcept { return l3.solver; }
+    [[nodiscard]] L4::GimbalPlannerConfig& planner() noexcept { return l4.planner; }
+    [[nodiscard]] L5::WeaponControllerConfig& weapon() noexcept { return l5.weapon; }
 
     std::expected<void, std::string> read_from(const toml::table& tbl) noexcept {
         READ(tbl, daedalus);
         READ(tbl, camera);
         READ(tbl, at_legacy);
         READ(tbl, l3);
+        READ(tbl, l4);
+        READ(tbl, l5);
         READ(tbl, foxglove);
         READ(tbl, robot);
         return {};

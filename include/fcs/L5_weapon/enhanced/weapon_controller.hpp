@@ -1,0 +1,79 @@
+#pragma once
+
+#include "../config.hpp"
+#include "../fire_control.hpp"
+#include "fcs/L4_planning/gimbal_planner/trajectory_compensator.hpp"
+#include "fcs/L4_planning/gimbal_planner/types.hpp"
+
+#include <Eigen/Core>
+#include <cstdint>
+#include <memory>
+
+namespace fcs::L5 {
+
+// ============================================================================
+// Enhanced Weapon Control with Bullet Compensation
+// ============================================================================
+
+/// @brief Enhanced weapon control with sophisticated firing logic
+class EnhancedWeaponController {
+public:
+    explicit EnhancedWeaponController(
+        const WeaponControllerConfig& config,
+        std::unique_ptr<fcs::L4::TrajectoryCompensator> compensator) noexcept
+        : config_(config)
+        , compensator_(std::move(compensator)) {
+        // Trajectory compensator parameters are now owned and managed by L4
+    }
+
+    /// @brief Generate enhanced weapon command from L4 planning output
+    /// @param plan Gimbal plan from L4 planner
+    /// @param target_distance Target distance for bullet timing
+    /// @return Enhanced weapon command with bullet compensation
+    [[nodiscard]] WeaponCommand
+        generate_command(const fcs::L4::GimbalPlan& plan, double target_distance) noexcept;
+
+    /// @brief Update trajectory compensator parameters
+    void
+        update_compensator_params(double bullet_speed, double gravity, double resistance) noexcept {
+        if (compensator_) {
+            compensator_->velocity   = bullet_speed;
+            compensator_->gravity    = gravity;
+            compensator_->resistance = resistance;
+        }
+    }
+
+    /// @brief Update trajectory compensator parameters from L4 plan
+    void update_compensator_from_plan(const fcs::L4::GimbalPlan& plan) noexcept {
+        // Note: L5 doesn't own trajectory parameters anymore
+        // This method can be used if we need to extract trajectory info from L4 plan
+        // Currently, we let L4 handle all trajectory calculations
+    }
+
+private:
+    WeaponControllerConfig config_;
+    std::unique_ptr<fcs::L4::TrajectoryCompensator> compensator_;
+
+    /// @brief Calculate bullet time of flight for target distance
+    [[nodiscard]] double calculate_time_of_flight(double distance) const noexcept {
+        if (!compensator_) {
+            return 0.0;
+        }
+
+        // Simple estimation assuming straight-line trajectory
+        // In reality, this would use the compensator's get_flying_time method
+        // with proper target position calculation
+        Eigen::Vector3d target_pos(distance, 0, 0);
+        return compensator_->get_flying_time(target_pos);
+    }
+
+    /// @brief Calculate angular rates for predictive control
+    [[nodiscard]] std::pair<double, double>
+        calculate_angular_rates(const fcs::L4::GimbalPlan& plan, double dt) const noexcept {
+        // TODO: Implement proper angular rate calculation based on target movement
+        // For now, return zeros
+        return {0.0, 0.0};
+    }
+};
+
+} // namespace fcs::L5
