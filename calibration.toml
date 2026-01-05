@@ -3,7 +3,7 @@
 
 [calibration]
 # 标定模式: Intrinsic (内参标定), Handeye (手眼标定), Full (完整标定)
-mode = "Intrinsic"
+mode = "Handeye"
 
 # =============================================================================
 # 标定板配置
@@ -37,17 +37,17 @@ dictionary = "DICT_5X5_50"
 # =============================================================================
 [calibration.capture]
 # 最小采集样本数 (推荐 30+)
-min_samples = 35
+min_samples = 20
 
 # 最大采集样本数
 max_samples = 100
 
 # 样本多样性约束
 # 相邻样本间的最小角度差异 (度)
-min_angle_diff = 20.0
+min_angle_diff = 2.5
 
 # 相邻样本间的最小平移差异 (米)
-min_translation_diff = 0.15
+min_translation_diff = 0.005
 
 # 自动采集模式 (false = 手动触发)
 auto_capture = true
@@ -74,7 +74,7 @@ zero_tangent_dist = false
 [calibration.handeye]
 # 标定方法
 # 可选: Tsai, Park, Horaud, Andreff, Daniilidis
-method = "Tsai"
+method = "Daniilidis"
 
 # =============================================================================
 # 可视化配置 (Foxglove)
