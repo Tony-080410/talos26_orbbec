@@ -42,17 +42,17 @@ public:
             return;
         }
 
-        if (robot_ukf_.has_value()) {
-            robot_ukf_->predict(dt);
-            auto& x = *robot_ukf_->x_raw_ptr();
+        if (robot_ckf_.has_value()) {
+            robot_ckf_->predict(dt);
+            auto& x = *robot_ckf_->x_raw_ptr();
             // Clamp radius and height to prevent divergence
             x[R_0] = std::clamp(x[R_0], 0.17, 0.27);
             x[R_1] = std::clamp(x[R_1], 0.17, 0.27);
             x[H]   = std::clamp(x[H], -0.2, 0.2);
         }
 
-        if (outpost_ukf_.has_value()) {
-            outpost_ukf_->predict(dt);
+        if (outpost_ckf_.has_value()) {
+            outpost_ckf_->predict(dt);
         }
     }
 
@@ -64,10 +64,10 @@ public:
         const bool is_outpost = (target_name_ == ArmorName::Outpost);
         const int armors_num  = is_outpost ? 3 : 4;
 
-        if (is_outpost && !outpost_ukf_) {
+        if (is_outpost && !outpost_ckf_) {
             return false;
         }
-        if (!is_outpost && !robot_ukf_) {
+        if (!is_outpost && !robot_ckf_) {
             return false;
         }
 
@@ -77,7 +77,7 @@ public:
 
         if (is_outpost) {
             auto result = outpost_associator_.match(
-                measurements, outpost_ukf_->x(), outpost_ukf_->Sx(), outpost_model_, target_name_,
+                measurements, outpost_ckf_->x(), outpost_ckf_->Sx(), outpost_model_, target_name_,
                 matcher_gate, armors_num);
 
             for (size_t i = 0; i < result.armors.size(); ++i) {
@@ -86,7 +86,7 @@ public:
             }
         } else {
             auto result = robot_associator_.match(
-                measurements, robot_ukf_->x(), robot_ukf_->Sx(), robot_model_, target_name_,
+                measurements, robot_ckf_->x(), robot_ckf_->Sx(), robot_model_, target_name_,
                 matcher_gate, armors_num);
 
             match_result.armors = result.armors;
@@ -102,7 +102,7 @@ public:
 
         // Process matched armors
         for (size_t i = 0; i < match_result.armors.size(); ++i) {
-            RoboUKF::VecZ z;
+            RoboCKF::VecZ z;
             const auto& meas = match_result.armors[i];
 
             const auto ypd             = xyz2ypd(meas.transform->translation());
@@ -110,23 +110,23 @@ public:
 
             if (is_outpost) {
                 outpost_model_.armor_id = idx[i];
-                const auto z_pred       = outpost_model_.h(outpost_ukf_->x(), idx[i]);
+                const auto z_pred       = outpost_model_.h(outpost_ckf_->x(), idx[i]);
                 z[0]                    = unwrap_rad(z_pred[0], ypd[0]);
                 z[1]                    = unwrap_rad(z_pred[1], ypd[1]);
                 z[2]                    = ypd[2];
                 z[3]                    = unwrap_rad(z_pred[3], armor_yaw_raw);
                 set_measurement(z, false);
-                outpost_ukf_->update(z);
+                outpost_ckf_->update(z);
             } else {
                 robot_model_.armor_id = idx[i];
-                const auto z_pred     = robot_model_.h(robot_ukf_->x(), idx[i]);
+                const auto z_pred     = robot_model_.h(robot_ckf_->x(), idx[i]);
                 z[0]                  = unwrap_rad(z_pred[0], ypd[0]);
                 z[1]                  = unwrap_rad(z_pred[1], ypd[1]);
                 z[2]                  = ypd[2];
                 z[3]                  = unwrap_rad(z_pred[3], armor_yaw_raw);
                 bool is_another_pair  = (idx[i] == 1 || idx[i] == 3);
                 set_measurement(z, is_another_pair);
-                robot_ukf_->update(z);
+                robot_ckf_->update(z);
             }
         }
 
@@ -166,8 +166,8 @@ public:
         const double armor_yaw = target.yaw();
 
         // Reset existing filters
-        robot_ukf_.reset();
-        outpost_ukf_.reset();
+        robot_ckf_.reset();
+        outpost_ckf_.reset();
 
         constexpr double v0 = 0.0;
 
@@ -176,9 +176,9 @@ public:
             const double y0 = pos.y() + OutpostModel::OUTPOST_RADIUS * std::sin(armor_yaw);
             const double z0 = pos.z();
 
-            OutpostUKF::VecX xp0{x0, y0, armor_yaw, v0, z0, z0, z0};
-            OutpostUKF::MatXX P0 = OutpostUKF::MatXX::Identity();
-            outpost_ukf_.emplace(outpost_model_, xp0, P0);
+            OutpostCKF::VecX xp0{x0, y0, armor_yaw, v0, z0, z0, z0};
+            OutpostCKF::MatXX P0 = OutpostCKF::MatXX::Identity();
+            outpost_ckf_.emplace(outpost_model_, xp0, P0);
             lost_threshold     = config_.outpost.lost_threshold;
             tracking_threshold = config_.outpost.tracking_threshold;
             matcher_gate       = config_.outpost.matcher_gate;
@@ -188,10 +188,10 @@ public:
             const double y0                 = pos.y() + kDefaultRadius * std::sin(armor_yaw);
             const double z0                 = pos.z();
 
-            RoboUKF::VecX xp0{x0, v0, y0, v0, z0, v0, armor_yaw, v0, kDefaultRadius, kDefaultRadius,
+            RoboCKF::VecX xp0{x0, v0, y0, v0, z0, v0, armor_yaw, v0, kDefaultRadius, kDefaultRadius,
                               0.0};
-            RoboUKF::MatXX P0 = RoboUKF::MatXX::Identity();
-            robot_ukf_.emplace(robot_model_, xp0, P0);
+            RoboCKF::MatXX P0 = RoboCKF::MatXX::Identity();
+            robot_ckf_.emplace(robot_model_, xp0, P0);
             lost_threshold     = config_.robot.lost_threshold;
             tracking_threshold = config_.robot.tracking_threshold;
             matcher_gate       = config_.robot.matcher_gate;
@@ -207,8 +207,8 @@ public:
         output.status      = status_;
         output.target_name = target_name_;
 
-        if (robot_ukf_) {
-            const auto& x = robot_ukf_->x();
+        if (robot_ckf_) {
+            const auto& x = robot_ckf_->x();
             RobotTargetState state;
             state.position   = {x[XC], x[YC], x[Z0]};
             state.velocity   = {x[VX], x[VY], x[VZ]};
@@ -219,8 +219,8 @@ public:
             state.z1         = x[Z0] + x[H];
             state.armors_num = 4;
             output.state     = state;
-        } else if (outpost_ukf_) {
-            const auto& x = outpost_ukf_->x();
+        } else if (outpost_ckf_) {
+            const auto& x = outpost_ckf_->x();
             OutpostTargetState state;
             state.position = {x[O_XC], x[O_YC]};
             state.yaw      = x[O_YAW];
@@ -234,8 +234,8 @@ public:
 
     /// Reset tracker to IDLE state
     void reset() noexcept {
-        robot_ukf_.reset();
-        outpost_ukf_.reset();
+        robot_ckf_.reset();
+        outpost_ckf_.reset();
         target_name_ = ArmorName::Invalid;
         measurement_.fill(0.0);
         detecting_count_   = 0;
@@ -264,8 +264,8 @@ private:
     ArmorName target_name_{ArmorName::Invalid};
 
     // Filters
-    std::optional<RoboUKF> robot_ukf_;
-    std::optional<OutpostUKF> outpost_ukf_;
+    std::optional<RoboCKF> robot_ckf_;
+    std::optional<OutpostCKF> outpost_ckf_;
 
     // Models
     RobotModel robot_model_;
@@ -338,7 +338,7 @@ private:
         }
     }
 
-    void set_measurement(const RoboUKF::VecZ& z, bool is_another_pair) noexcept {
+    void set_measurement(const RoboCKF::VecZ& z, bool is_another_pair) noexcept {
         if (is_another_pair) {
             measurement_[4] = z[0];
             measurement_[5] = z[1];

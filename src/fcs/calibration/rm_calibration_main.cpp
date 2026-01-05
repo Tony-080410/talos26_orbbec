@@ -387,9 +387,10 @@ int main(int argc, char* argv[]) {
             status->state = CalibrationState::Calibrating;
 
             if (config->mode == CalibrationMode::Intrinsic) {
-                auto result = intrinsic_calibrator->calibrate(cv::Size(
-                    intrinsic_result->width > 0 ? intrinsic_result->width : 1440,
-                    intrinsic_result->height > 0 ? intrinsic_result->height : 1080));
+                auto result = intrinsic_calibrator->calibrate(
+                    cv::Size(
+                        intrinsic_result->width > 0 ? intrinsic_result->width : 1440,
+                        intrinsic_result->height > 0 ? intrinsic_result->height : 1080));
                 if (result) {
                     *intrinsic_result = *result;
                     save_intrinsic_result(*result, config->output.intrinsic_path);

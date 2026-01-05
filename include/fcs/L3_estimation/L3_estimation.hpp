@@ -31,7 +31,6 @@
 
 // Kalman filter implementations
 #include "tracker/isrckf.hpp"
-#include "tracker/srukf.hpp"
 
 // Motion models
 #include "tracker/motion_model.hpp"

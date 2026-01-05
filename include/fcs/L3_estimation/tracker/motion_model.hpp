@@ -348,7 +348,7 @@ static_assert(MotionModel<OutpostModel>);
 // Type Aliases
 // ============================================================================
 
-using RoboUKF    = srukf::ISRCKF<RobotModel, RobotModel::NX, RobotModel::NZ>;
-using OutpostUKF = srukf::ISRCKF<OutpostModel, OutpostModel::NX, OutpostModel::NZ>;
+using RoboCKF    = ckf::ISRCKF<RobotModel, RobotModel::NX, RobotModel::NZ>;
+using OutpostCKF = ckf::ISRCKF<OutpostModel, OutpostModel::NX, OutpostModel::NZ>;
 
 } // namespace fcs::L3

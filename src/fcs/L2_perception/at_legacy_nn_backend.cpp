@@ -261,7 +261,7 @@ std::vector<AtLegacyArmorDetection>
     const int dims    = std::min(dim1, dim2); // per-anchor dimension
     const int anchors = std::max(dim1, dim2); // number of anchors
 
-    constexpr int nkpt    = NUM_KPTS;                // 4 keypoints
+    constexpr int nkpt    = NUM_KPTS;         // 4 keypoints
     constexpr int kpt_dim = 2;                // x, y per keypoint
     constexpr int nk      = nkpt * kpt_dim;
 
@@ -326,8 +326,8 @@ std::vector<AtLegacyArmorDetection>
 
         // Map combined class to color + cls
         // Format: color * NUM_CLASSES + cls
-        const auto color          = static_cast<ArmorColor>(best_idx / NUM_CLASSES);
-        const auto cls            = static_cast<ArmorName>(best_idx % NUM_CLASSES);
+        const auto color = static_cast<ArmorColor>(best_idx / NUM_CLASSES);
+        const auto cls   = static_cast<ArmorName>(best_idx % NUM_CLASSES);
 
         // 3) Get keypoints (4 corners)
         // Model outputs corners in counter-clockwise order: TL, BL, BR, TR

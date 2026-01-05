@@ -1,12 +1,153 @@
 #pragma once
 
-#include "srukf.hpp"
-
 #include <Eigen/Dense>
 #include <cassert>
 #include <cmath>
 
-namespace fcs::L3::srukf {
+namespace fcs::L3 {
+namespace ckf {
+namespace detail {
+
+/// Compute Cholesky factor from LDLT decomposition with jitter fallback
+/// Returns lower triangular S such that S * S^T = P (approximately)
+/// @param Pin Input symmetric positive semi-definite matrix
+/// @param base_jitter Initial jitter value for numerical stability
+/// @param max_try Maximum number of jitter increase attempts
+template <int N, typename Scalar>
+[[nodiscard]] inline Eigen::Matrix<Scalar, N, N> chol_from_ldlt(
+    const Eigen::Matrix<Scalar, N, N>& Pin, Scalar base_jitter = Scalar(1e-12),
+    int max_try = 6) noexcept {
+    using Mat = Eigen::Matrix<Scalar, N, N>;
+
+    // Symmetrize input
+    Mat P = (Pin + Pin.transpose()) * Scalar(0.5);
+
+    // 1) Try LDLT with pivoting
+    Eigen::LDLT<Mat> ldlt(P);
+    const bool ok     = (ldlt.info() == Eigen::Success);
+    const auto& trans = ldlt.transpositionsP();
+
+    bool no_perm = true;
+    for (int i = 0; i < N; ++i) {
+        if (trans.indices()(i) != i) {
+            no_perm = false;
+            break;
+        }
+    }
+
+    Eigen::Matrix<Scalar, N, 1> D;
+    if (ok) {
+        D = ldlt.vectorD();
+    }
+
+    // If no permutation and D > 0: directly construct S = L * sqrt(D)
+    if (ok && no_perm) {
+        bool all_pos = true;
+        for (int i = 0; i < N; ++i) {
+            if (!(D(i) > Scalar(0))) {
+                all_pos = false;
+                break;
+            }
+        }
+        if (all_pos) {
+            Mat L = ldlt.matrixL();
+            Mat S = L;
+            for (int i = 0; i < N; ++i) {
+                S.col(i) *= std::sqrt(D(i));
+            }
+            S.template triangularView<Eigen::StrictlyUpper>().setZero();
+            // Normalize diagonal signs
+            for (int i = 0; i < N; ++i) {
+                if (S(i, i) < Scalar(0)) {
+                    S.col(i) = -S.col(i);
+                }
+            }
+            return S;
+        }
+    }
+
+    // 2) Need permutation or D not positive: add jitter and use LLT
+    Scalar jitter = base_jitter;
+    Scalar min_d  = Scalar(0);
+    if (ok) {
+        min_d = D.minCoeff();
+        if (min_d <= Scalar(0)) {
+            jitter = std::max(jitter, Scalar(1e-12) + Scalar(1e-3) * std::abs(min_d));
+        }
+    }
+
+    // Retry with increasing jitter
+    for (int t = 0; t < max_try; ++t) {
+        Mat Pj = P;
+        Pj.diagonal().array() += jitter;
+        Eigen::LLT<Mat> llt(Pj);
+        if (llt.info() == Eigen::Success) {
+            Mat S = llt.matrixL();
+            for (int i = 0; i < N; ++i) {
+                if (S(i, i) < Scalar(0)) {
+                    S.col(i) = -S.col(i);
+                }
+            }
+            return S;
+        }
+        jitter *= Scalar(10);
+    }
+
+    // Fallback: assert failure
+    Eigen::LLT<Mat> llt(P);
+    assert(llt.info() == Eigen::Success && "P not SPD even after jitter");
+    Mat S = llt.matrixL();
+    for (int i = 0; i < N; ++i) {
+        if (S(i, i) < Scalar(0)) {
+            S.col(i) = -S.col(i);
+        }
+    }
+    return S;
+}
+
+/// Compose square root: S S^T = dev dev^T + noise_sqrt noise_sqrt^T
+/// Uses QR decomposition for numerical stability
+template <int D, typename Scalar>
+[[nodiscard]] inline Eigen::Matrix<Scalar, D, D> qr_compose(
+    const Eigen::Ref<const Eigen::Matrix<Scalar, D, Eigen::Dynamic>>& dev,
+    const Eigen::Ref<const Eigen::Matrix<Scalar, D, Eigen::Dynamic>>& noise_sqrt) noexcept {
+    const int k = static_cast<int>(dev.cols());
+    const int m = static_cast<int>(noise_sqrt.cols());
+
+    Eigen::Matrix<Scalar, Eigen::Dynamic, Eigen::Dynamic> MT(k + m, D);
+    if (k) {
+        MT.topRows(k) = dev.transpose();
+    }
+    if (m) {
+        MT.bottomRows(m) = noise_sqrt.transpose();
+    }
+
+    Eigen::HouseholderQR<Eigen::Matrix<Scalar, Eigen::Dynamic, Eigen::Dynamic>> qr(MT);
+    Eigen::Matrix<Scalar, D, D> R = qr.matrixQR().template topLeftCorner<D, D>();
+    R.template triangularView<Eigen::StrictlyLower>().setZero();
+
+    Eigen::Matrix<Scalar, D, D> S = R.transpose();
+    S.template triangularView<Eigen::StrictlyUpper>().setZero();
+
+    // Normalize diagonal signs
+    for (int i = 0; i < D; ++i) {
+        if (S(i, i) < Scalar(0)) {
+            S.col(i) = -S.col(i);
+        }
+    }
+    return S;
+}
+
+/// Solve (S S^T) X = B using triangular solves
+template <int D, int C, typename Scalar>
+[[nodiscard]] inline Eigen::Matrix<Scalar, D, C> solve_via_chol(
+    const Eigen::Matrix<Scalar, D, D>& S, const Eigen::Matrix<Scalar, D, C>& B) noexcept {
+    Eigen::Matrix<Scalar, D, C> Y = S.template triangularView<Eigen::Lower>().solve(B);
+    Eigen::Matrix<Scalar, D, C> X = S.transpose().template triangularView<Eigen::Upper>().solve(Y);
+    return X;
+}
+
+} // namespace detail
 
 /// Iterated Square-Root Cubature Kalman Filter (ISR-CKF)
 ///
@@ -43,10 +184,7 @@ public:
     /// @param model Reference to motion/observation model
     /// @param x0 Initial state estimate
     /// @param P0 Initial covariance matrix
-    /// @param cfg_compat Compatibility parameter (unused, for API compatibility with SRUKF)
-    ISRCKF(
-        Model& model, const VecX& x0, const MatXX& P0,
-        SigmaPointConfig<Scalar> /*cfg_compat*/ = {}) noexcept
+    ISRCKF(Model& model, const VecX& x0, const MatXX& P0) noexcept
         : model_(model)
         , gamma_(std::sqrt(static_cast<Scalar>(NX)))            // CKF uses fixed scaling
         , w_(Scalar(1) / (Scalar(2) * static_cast<Scalar>(NX))) // 2N points, equal weights
@@ -221,4 +359,5 @@ private:
     }
 };
 
-} // namespace fcs::L3::srukf
+} // namespace ckf
+} // namespace fcs::L3

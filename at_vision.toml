@@ -1,4 +1,4 @@
-daedalus = false
+daedalus = true
 robot = 'infantry'
 [foxglove]
 enabled = true

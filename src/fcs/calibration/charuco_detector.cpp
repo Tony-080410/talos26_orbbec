@@ -18,9 +18,10 @@ CharucoDetector::CharucoDetector(
     , square_size_(square_size)
     , marker_size_(marker_size)
     , dictionary_(cv::aruco::getPredefinedDictionary(to_opencv_dict(dictionary)))
-    , charuco_board_(cv::aruco::CharucoBoard::create(
-          static_cast<int>(width), static_cast<int>(height), static_cast<float>(square_size),
-          static_cast<float>(marker_size), dictionary_))
+    , charuco_board_(
+          cv::aruco::CharucoBoard::create(
+              static_cast<int>(width), static_cast<int>(height), static_cast<float>(square_size),
+              static_cast<float>(marker_size), dictionary_))
     , detector_params_(cv::aruco::DetectorParameters::create())
     , object_points_() {
     if (charuco_board_) {

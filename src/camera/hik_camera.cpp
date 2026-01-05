@@ -105,8 +105,9 @@ public:
         auto ret = MV_CC_SetBoolValue(camera_handle_, "AcquisitionFrameRateEnable", true);
         if (MV_OK != ret) {
             logger_->error("Failed To set frame rate control enable nRet [{}]", ret);
-            return std::unexpected(CameraError{
-                "Failed to set frame rate control enable", static_cast<unsigned int>(ret)});
+            return std::unexpected(
+                CameraError{
+                    "Failed to set frame rate control enable", static_cast<unsigned int>(ret)});
         }
         ret = MV_CC_SetFloatValue(camera_handle_, "AcquisitionFrameRate", frame_rate);
         if (MV_OK != ret) {

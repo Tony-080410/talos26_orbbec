@@ -102,8 +102,9 @@ std::expected<void, std::string>
 std::expected<IntrinsicResult, std::string>
     IntrinsicCalibrator::calibrate(cv::Size image_size) noexcept {
     if (samples_.size() < capture_config_.min_samples) {
-        return std::unexpected(fmt::format(
-            "Not enough samples: {} < {}", samples_.size(), capture_config_.min_samples));
+        return std::unexpected(
+            fmt::format(
+                "Not enough samples: {} < {}", samples_.size(), capture_config_.min_samples));
     }
 
     // Prepare calibration data
