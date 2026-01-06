@@ -1,7 +1,6 @@
 /**
  * @brief Hikcamera stub implementation (SDK not available)
  */
-
 #include "camera/hik_camera.hpp"
 
 namespace hikcamera {

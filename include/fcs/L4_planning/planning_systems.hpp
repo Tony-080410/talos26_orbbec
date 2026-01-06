@@ -11,7 +11,9 @@
 #include "math/fast_tf/error.hpp"
 #include "scheduler/ecs/channel_types.hpp"
 
+#include "scheduler/spin.hpp"
 #include <memory>
+#include <spdlog/spdlog.h>
 
 namespace fcs::L4 {
 

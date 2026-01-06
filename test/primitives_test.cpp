@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <gtest/gtest.h>
 
 #include <array>
@@ -7,13 +8,10 @@
 #include <iostream>
 #include <latch>
 #include <mutex>
-#include <ostream>
 #include <sstream>
 #include <thread>
 #include <unordered_set>
 #include <vector>
-
-#include <opencv2/core.hpp>
 
 #include "scheduler/primitives/buffer_pool.hpp"
 #include "scheduler/primitives/frame.hpp"
@@ -477,12 +475,7 @@ struct GenData {
     }
 
     [[nodiscard]] bool consistent() const noexcept {
-        for (const auto v : pad) {
-            if (v != gen) {
-                return false;
-            }
-        }
-        return true;
+        return std::ranges::all_of(pad, [gen = this->gen](const auto v) { return v == gen; });
     }
 };
 

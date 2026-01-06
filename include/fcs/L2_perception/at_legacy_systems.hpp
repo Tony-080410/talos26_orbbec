@@ -1,13 +1,11 @@
 #pragma once
 
-#include "../core/channel_tags.hpp"
-#include "../core/types.hpp"
-#include "at_legacy_detector_backend.hpp"
+#include "L2_perception/at_legacy_detector_backend.hpp"
 #include "at_legacy_pnp_solver.hpp"
 #include "auto_aim/config.hpp"
-#include "scheduler/spin.hpp"
-#include <memory>
-#include <scheduler/bevy_ecs.hpp>
+#include "core/channel_tags.hpp"
+#include "ecs/channel_types.hpp"
+#include "ecs/execution_policy.hpp"
 #include <spdlog/spdlog.h>
 
 namespace fcs {

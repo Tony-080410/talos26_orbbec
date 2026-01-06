@@ -2,9 +2,6 @@
 
 #include "at_legacy_traditional_types.hpp"
 
-#include <string>
-#include <vector>
-
 #include <opencv2/core.hpp>
 
 namespace fcs {

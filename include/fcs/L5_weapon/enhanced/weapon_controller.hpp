@@ -1,7 +1,7 @@
 #pragma once
 
-#include "../config.hpp"
-#include "../fire_control.hpp"
+#include "L5_weapon/config.hpp"
+#include "L5_weapon/fire_control.hpp"
 #include "fcs/L4_planning/gimbal_planner/trajectory_compensator.hpp"
 #include "fcs/L4_planning/gimbal_planner/types.hpp"
 

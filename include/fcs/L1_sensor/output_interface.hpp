@@ -1,10 +1,9 @@
 #pragma once
 
-#include "../../ipc/shm_client.hpp"
-#include "../L5_weapon/fire_control.hpp"
+#include "L5_weapon/fire_control.hpp"
+#include "ipc/shm_client.hpp"
 #include "stm32.hpp"
 
-#include <cmath>
 #include <expected>
 #include <memory>
 #include <string>

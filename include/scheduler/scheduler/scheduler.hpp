@@ -1,9 +1,8 @@
 #pragma once
 
-#include "../ecs/execution_policy.hpp"
-#include "../ecs/system.hpp"
-#include "../ecs/system_meta.hpp"
-#include "../ecs/world.hpp"
+#include "ecs/execution_policy.hpp"
+#include "ecs/system.hpp"
+#include "ecs/world.hpp"
 #include "performance_probe.hpp"
 
 #include <tbb/task_arena.h>

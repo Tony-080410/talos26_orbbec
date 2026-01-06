@@ -1,7 +1,5 @@
 #include "fcs/L1_sensor/input_interface.hpp"
 
-#include <spdlog/spdlog.h>
-
 namespace fcs::L1 {
 
 std::expected<InputInterface, InputError>

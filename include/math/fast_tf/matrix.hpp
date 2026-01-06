@@ -1,6 +1,6 @@
 #pragma once
 
-#include "../euler.hpp"
+#include "math/euler.hpp"
 #include "types.hpp"
 
 #include <Eigen/Dense>

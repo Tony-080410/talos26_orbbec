@@ -1,7 +1,5 @@
 #pragma once
 
-#include "../config.hpp"
-#include "../fire_control.hpp"
 #include "ecs/execution_policy.hpp"
 #include "weapon_controller.hpp"
 

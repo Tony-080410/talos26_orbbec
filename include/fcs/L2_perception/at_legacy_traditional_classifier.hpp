@@ -1,11 +1,10 @@
 #pragma once
 
-#include "../core/types.hpp"
 #include "at_legacy_detector_backend.hpp"
+#include "core/types.hpp"
 
 #include <expected>
 #include <string_view>
-#include <vector>
 
 #include <opencv2/core.hpp>
 #include <opencv2/dnn.hpp>
