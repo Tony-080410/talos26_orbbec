@@ -231,21 +231,21 @@ std::expected<void, std::string> save_handeye_result(
 void print_handeye_result(const HandEyeResult& result) noexcept {
     constexpr double rad_to_deg = 180.0 / std::numbers::pi;
 
-    spdlog::info("=== Camera Extrinsic Calibration Result ===");
-    spdlog::info("Transform: gimbal_link → camera_link");
-    spdlog::info("");
-    spdlog::info("Translation:");
-    spdlog::info("  X (forward): {:7.2f} mm", result.translation.x() * 1000.0);
-    spdlog::info("  Y (left):    {:7.2f} mm", result.translation.y() * 1000.0);
-    spdlog::info("  Z (up):      {:7.2f} mm", result.translation.z() * 1000.0);
-    spdlog::info("");
-    spdlog::info("Rotation:");
-    spdlog::info("  Roll:  {:7.2f}°", result.rpy.x() * rad_to_deg);
-    spdlog::info("  Pitch: {:7.2f}°", result.rpy.y() * rad_to_deg);
-    spdlog::info("  Yaw:   {:7.2f}°", result.rpy.z() * rad_to_deg);
-    spdlog::info("");
-    spdlog::info("RMS Error: {:.2f} mm", result.rms_error * 1000.0);
-    spdlog::info("Samples: {}", result.num_samples);
+    SPDLOG_INFO("=== Camera Extrinsic Calibration Result ===");
+    SPDLOG_INFO("Transform: gimbal_link → camera_link");
+    SPDLOG_INFO("");
+    SPDLOG_INFO("Translation:");
+    SPDLOG_INFO("  X (forward): {:7.2f} mm", result.translation.x() * 1000.0);
+    SPDLOG_INFO("  Y (left):    {:7.2f} mm", result.translation.y() * 1000.0);
+    SPDLOG_INFO("  Z (up):      {:7.2f} mm", result.translation.z() * 1000.0);
+    SPDLOG_INFO("");
+    SPDLOG_INFO("Rotation:");
+    SPDLOG_INFO("  Roll:  {:7.2f}°", result.rpy.x() * rad_to_deg);
+    SPDLOG_INFO("  Pitch: {:7.2f}°", result.rpy.y() * rad_to_deg);
+    SPDLOG_INFO("  Yaw:   {:7.2f}°", result.rpy.z() * rad_to_deg);
+    SPDLOG_INFO("");
+    SPDLOG_INFO("RMS Error: {:.2f} mm", result.rms_error * 1000.0);
+    SPDLOG_INFO("Samples: {}", result.num_samples);
 }
 
 } // namespace fcs::calibration

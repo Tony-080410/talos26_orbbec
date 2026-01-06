@@ -48,7 +48,7 @@ inline std::shared_ptr<spdlog::logger> init_logger() noexcept {
     const auto console_sink = std::make_shared<spdlog::sinks::stdout_color_sink_mt>();
     std::vector<spdlog::sink_ptr> sinks{console_sink, file_sink};
     const auto logger = std::make_shared<spdlog::logger>("talos", sinks.begin(), sinks.end());
-    logger->set_pattern("[%^%l%$] %v");
+    logger->set_pattern("[%@] [%^%l%$] %v");
     spdlog::set_default_logger(logger);
     return logger;
 }

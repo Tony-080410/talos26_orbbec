@@ -42,12 +42,11 @@ public:
 
         auto server_r = foxglove::WebSocketServer::create(std::move(ws));
         if (!server_r.has_value()) {
-            spdlog::error(
-                "WebSocketServer create failed: {}", foxglove::strerror(server_r.error()));
+            SPDLOG_ERROR("WebSocketServer create failed: {}", foxglove::strerror(server_r.error()));
             return;
         }
         server_.emplace(std::move(server_r.value()));
-        spdlog::info("Foxglove server listening on ws://{}:{}", ws.host, server_->port());
+        SPDLOG_INFO("Foxglove server listening on ws://{}:{}", ws.host, server_->port());
 
         // 创建 channels
         init_channels();
@@ -143,8 +142,7 @@ private:
         if (auto r = foxglove::schemas::FrameTransformsChannel::create("/tf"); r.has_value()) {
             tf_ch_.emplace(std::move(r.value()));
         } else {
-            spdlog::error(
-                "FrameTransformsChannel create failed: {}", foxglove::strerror(r.error()));
+            SPDLOG_ERROR("FrameTransformsChannel create failed: {}", foxglove::strerror(r.error()));
             init_success_ = false;
         }
 
@@ -152,14 +150,14 @@ private:
         if (auto r = foxglove::schemas::SceneUpdateChannel::create("/scene"); r.has_value()) {
             scene_ch_.emplace(std::move(r.value()));
         } else {
-            spdlog::error("SceneUpdateChannel create failed: {}", foxglove::strerror(r.error()));
+            SPDLOG_ERROR("SceneUpdateChannel create failed: {}", foxglove::strerror(r.error()));
             init_success_ = false;
         }
 
         if (auto r = foxglove::schemas::SceneUpdateChannel::create("/track/scene"); r.has_value()) {
             track_scene_ch_.emplace(std::move(r.value()));
         } else {
-            spdlog::error("track_scene_ch create failed: {}", foxglove::strerror(r.error()));
+            SPDLOG_ERROR("track_scene_ch create failed: {}", foxglove::strerror(r.error()));
             init_success_ = false;
         }
 
@@ -167,8 +165,7 @@ private:
         if (auto r = foxglove::schemas::CompressedImageChannel::create("/image"); r.has_value()) {
             img_ch_.emplace(std::move(r.value()));
         } else {
-            spdlog::error(
-                "CompressedImageChannel create failed: {}", foxglove::strerror(r.error()));
+            SPDLOG_ERROR("CompressedImageChannel create failed: {}", foxglove::strerror(r.error()));
             init_success_ = false;
         }
 
@@ -176,7 +173,7 @@ private:
             r.has_value()) {
             binary_img_ch_.emplace(std::move(r.value()));
         } else {
-            spdlog::error("binary_img channel create failed: {}", foxglove::strerror(r.error()));
+            SPDLOG_ERROR("binary_img channel create failed: {}", foxglove::strerror(r.error()));
             init_success_ = false;
         }
 
@@ -184,7 +181,7 @@ private:
             r.has_value()) {
             pattern_img_ch_.emplace(std::move(r.value()));
         } else {
-            spdlog::error("pattern_img channel create failed: {}", foxglove::strerror(r.error()));
+            SPDLOG_ERROR("pattern_img channel create failed: {}", foxglove::strerror(r.error()));
             init_success_ = false;
         }
 
@@ -192,42 +189,42 @@ private:
         if (auto r = foxglove::RawChannel::create("/armor_data", "json"); r.has_value()) {
             armor_ch_.emplace(std::move(r.value()));
         } else {
-            spdlog::error("armor_ch create failed: {}", foxglove::strerror(r.error()));
+            SPDLOG_ERROR("armor_ch create failed: {}", foxglove::strerror(r.error()));
             init_success_ = false;
         }
 
         if (auto r = foxglove::RawChannel::create("/debug/lights", "json"); r.has_value()) {
             debug_lights_ch_.emplace(std::move(r.value()));
         } else {
-            spdlog::error("debug_lights channel create failed: {}", foxglove::strerror(r.error()));
+            SPDLOG_ERROR("debug_lights channel create failed: {}", foxglove::strerror(r.error()));
             init_success_ = false;
         }
 
         if (auto r = foxglove::RawChannel::create("/debug/armors", "json"); r.has_value()) {
             debug_armors_ch_.emplace(std::move(r.value()));
         } else {
-            spdlog::error("debug_armors channel create failed: {}", foxglove::strerror(r.error()));
+            SPDLOG_ERROR("debug_armors channel create failed: {}", foxglove::strerror(r.error()));
             init_success_ = false;
         }
 
         if (auto r = foxglove::RawChannel::create("/solver/measurement", "json"); r.has_value()) {
             measurement_ch_.emplace(std::move(r.value()));
         } else {
-            spdlog::error("measurement channel create failed: {}", foxglove::strerror(r.error()));
+            SPDLOG_ERROR("measurement channel create failed: {}", foxglove::strerror(r.error()));
             init_success_ = false;
         }
 
         if (auto r = foxglove::RawChannel::create("/solver/target", "json"); r.has_value()) {
             target_ch_.emplace(std::move(r.value()));
         } else {
-            spdlog::error("target channel create failed: {}", foxglove::strerror(r.error()));
+            SPDLOG_ERROR("target channel create failed: {}", foxglove::strerror(r.error()));
             init_success_ = false;
         }
 
         if (auto r = foxglove::RawChannel::create("/solver/cmd_gimbal", "json"); r.has_value()) {
             cmd_gimbal_ch_.emplace(std::move(r.value()));
         } else {
-            spdlog::error("cmd_gimbal channel create failed: {}", foxglove::strerror(r.error()));
+            SPDLOG_ERROR("cmd_gimbal channel create failed: {}", foxglove::strerror(r.error()));
             init_success_ = false;
         }
 
@@ -236,7 +233,7 @@ private:
             r.has_value()) {
             gimbal_scene_ch_.emplace(std::move(r.value()));
         } else {
-            spdlog::error("gimbal_scene channel create failed: {}", foxglove::strerror(r.error()));
+            SPDLOG_ERROR("gimbal_scene channel create failed: {}", foxglove::strerror(r.error()));
             init_success_ = false;
         }
 
@@ -245,7 +242,7 @@ private:
             r.has_value()) {
             camera_calib_ch_.emplace(std::move(r.value()));
         } else {
-            spdlog::error("camera_calib channel create failed: {}", foxglove::strerror(r.error()));
+            SPDLOG_ERROR("camera_calib channel create failed: {}", foxglove::strerror(r.error()));
             init_success_ = false;
         }
 
@@ -253,7 +250,7 @@ private:
         if (auto r = foxglove::RawChannel::create("/perf_stats", "json"); r.has_value()) {
             perf_stats_ch_.emplace(std::move(r.value()));
         } else {
-            spdlog::error("perf_stats channel create failed: {}", foxglove::strerror(r.error()));
+            SPDLOG_ERROR("perf_stats channel create failed: {}", foxglove::strerror(r.error()));
             init_success_ = false;
         }
     }
@@ -322,7 +319,7 @@ private:
                 },
                 msg);
         }
-        spdlog::info("Foxglove message sender thread stopped");
+        SPDLOG_INFO("Foxglove message sender thread stopped");
     }
 
     bool server_initialized_{false};

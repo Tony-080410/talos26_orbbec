@@ -78,7 +78,7 @@ void UsbOutput::send(const L5::WeaponCommand& cmd) const noexcept {
 
 std::expected<OutputInterface, std::string>
     OutputInterface::create_ipc(std::shared_ptr<ipc::ShmClient> client) noexcept {
-    spdlog::info("[OutputInterface] IPC mode connected");
+    SPDLOG_INFO("[OutputInterface] IPC mode connected");
     return OutputInterface(IpcOutput(std::move(client)));
 }
 
@@ -92,7 +92,7 @@ std::expected<OutputInterface, std::string> OutputInterface::create_usb(
         return std::unexpected("failed to connect USB device");
     }
 
-    spdlog::info("[OutputInterface] USB mode connected");
+    SPDLOG_INFO("[OutputInterface] USB mode connected");
     return OutputInterface(UsbOutput(std::move(device)));
 }
 

@@ -77,7 +77,7 @@ std::expected<void, DetectorError> AtLegacyNNBackend::init() {
 
     auto cfg = get_config();
     if (!cfg) {
-        spdlog::error("[AtLegacyNNBackend] Config is null");
+        SPDLOG_ERROR("[AtLegacyNNBackend] Config is null");
         return std::unexpected(DetectorError::InitFailed);
     }
 
@@ -125,7 +125,7 @@ std::expected<void, DetectorError> AtLegacyNNBackend::init() {
         impl_->loaded   = true;
         initialized_    = true;
 
-        spdlog::info("[AtLegacyNNBackend] Model loaded: {}", cfg->model_path);
+        SPDLOG_INFO("[AtLegacyNNBackend] Model loaded: {}", cfg->model_path);
         const auto devices = execution_devices();
         if (!devices.empty()) {
             std::string dev_str;
@@ -134,12 +134,12 @@ std::expected<void, DetectorError> AtLegacyNNBackend::init() {
                     dev_str += ", ";
                 dev_str += d;
             }
-            spdlog::info("[AtLegacyNNBackend] Execution devices: {}", dev_str);
+            SPDLOG_INFO("[AtLegacyNNBackend] Execution devices: {}", dev_str);
         }
 
         return {};
     } catch (const std::exception& e) {
-        spdlog::error("[AtLegacyNNBackend] Init failed: {}", e.what());
+        SPDLOG_ERROR("[AtLegacyNNBackend] Init failed: {}", e.what());
         return std::unexpected(DetectorError::InitFailed);
     }
 }
@@ -157,11 +157,11 @@ AtLegacyNNBackend::PreprocContext
     const auto& shp = ip.get_shape(); // [1, 3, H, W]
 
     if (shp.size() != 4) {
-        spdlog::error("[AtLegacyNNBackend] Input shape {} not supported", shp.size());
+        SPDLOG_ERROR("[AtLegacyNNBackend] Input shape {} not supported", shp.size());
         return ctx;
     }
     if (shp[0] != 1 || shp[1] != 3) {
-        spdlog::error(
+        SPDLOG_ERROR(
             "[AtLegacyNNBackend] Input shape mismatch, get [{},{},{},{}], expect [{},{},{},{}]",
             shp[0], shp[1], shp[2], shp[3], 1, 3, INPUT_H, INPUT_W);
         return ctx;
@@ -230,7 +230,7 @@ bool AtLegacyNNBackend::infer(const PreprocContext& ctx) {
         impl_->request.infer();
         return true;
     } catch (const std::exception& e) {
-        spdlog::error("[AtLegacyNNBackend] Inference failed: {}", e.what());
+        SPDLOG_ERROR("[AtLegacyNNBackend] Inference failed: {}", e.what());
         return false;
     }
 }
@@ -252,7 +252,7 @@ std::vector<AtLegacyArmorDetection>
 
     // YOLO11-pose output: [1, C, anchors] or [1, anchors, C]
     if (shape.size() != 3 || shape[0] != 1) {
-        spdlog::warn("[AtLegacyNNBackend] Unexpected output shape");
+        SPDLOG_WARN("[AtLegacyNNBackend] Unexpected output shape");
         return detections;
     }
 
@@ -268,11 +268,11 @@ std::vector<AtLegacyArmorDetection>
     // dims = 4 (bbox) + num_cls + nk (keypoints)
     const int num_cls = dims - 4 - nk;
     if (num_cls <= 0) {
-        spdlog::error("[AtLegacyNNBackend] Invalid output dimensions");
+        SPDLOG_ERROR("[AtLegacyNNBackend] Invalid output dimensions");
         return detections;
     }
     if (constexpr int total_cfg_cls = NUM_COLORS * NUM_CLASSES; total_cfg_cls != num_cls) {
-        spdlog::error(
+        SPDLOG_ERROR(
             "[AtLegacyNNBackend] Model nc ({}) != NUM_COLORS*NUM_CLASSES ({}), check config and "
             "constants.",
             num_cls, total_cfg_cls);

@@ -97,7 +97,7 @@ int main(int argc, char* argv[]) {
             if (mode) {
                 mode_override = *mode;
             } else {
-                spdlog::error("Invalid mode: {}", mode_str);
+                SPDLOG_ERROR("Invalid mode: {}", mode_str);
                 return 1;
             }
         } else if (arg == "--intrinsic" && i + 1 < argc) {
@@ -111,13 +111,13 @@ int main(int argc, char* argv[]) {
     std::signal(SIGINT, signal_handler);
     std::signal(SIGTERM, signal_handler);
 
-    spdlog::info("RM Calibration Tool starting...");
-    spdlog::info("Config file: {}", config_path);
+    SPDLOG_INFO("RM Calibration Tool starting...");
+    SPDLOG_INFO("Config file: {}", config_path);
 
     // Load configuration
     auto config_result = CalibrationConfig::load_from_file(config_path);
     if (!config_result) {
-        spdlog::error("Failed to load config: {}", config_result.error());
+        SPDLOG_ERROR("Failed to load config: {}", config_result.error());
         return 1;
     }
     auto config = std::make_shared<CalibrationConfig>(std::move(*config_result));
@@ -134,17 +134,17 @@ int main(int argc, char* argv[]) {
 
     const bool use_daedalus = config->input.daedalus;
 
-    spdlog::info("Calibration mode: {}", magic_enum::enum_name(config->mode));
-    spdlog::info("Input source: {}", use_daedalus ? "daedalus simulator" : "real hardware");
-    spdlog::info("Board type: {}", magic_enum::enum_name(config->board.type));
-    spdlog::info(
+    SPDLOG_INFO("Calibration mode: {}", magic_enum::enum_name(config->mode));
+    SPDLOG_INFO("Input source: {}", use_daedalus ? "daedalus simulator" : "real hardware");
+    SPDLOG_INFO("Board type: {}", magic_enum::enum_name(config->board.type));
+    SPDLOG_INFO(
         "Board size: {}x{}, square: {}mm", config->board.width, config->board.height,
         config->board.square_size * 1000);
 
     // Create calibration board detector
     auto board_result = create_board(config->board, config->charuco);
     if (!board_result) {
-        spdlog::error("Failed to create board detector: {}", board_result.error());
+        SPDLOG_ERROR("Failed to create board detector: {}", board_result.error());
         return 1;
     }
     auto board = std::shared_ptr<CalibrationBoard>(std::move(*board_result));
@@ -159,7 +159,7 @@ int main(int argc, char* argv[]) {
     if (!intrinsic_path.empty()) {
         auto loaded = toml::parse_file(intrinsic_path);
         if (!loaded) {
-            spdlog::error("Failed to load intrinsic file: {}", intrinsic_path);
+            SPDLOG_ERROR("Failed to load intrinsic file: {}", intrinsic_path);
             return 1;
         }
 
@@ -170,14 +170,14 @@ int main(int argc, char* argv[]) {
                 intrinsic_result->distort_coefficient = cam_cfg.distort_coefficient;
                 intrinsic_result->width               = cam_cfg.width;
                 intrinsic_result->height              = cam_cfg.height;
-                spdlog::info("Loaded intrinsic calibration from {}", intrinsic_path);
+                SPDLOG_INFO("Loaded intrinsic calibration from {}", intrinsic_path);
             }
         }
     }
 
     // Validate requirements
     if (config->mode == CalibrationMode::Handeye && intrinsic_result->width == 0) {
-        spdlog::error("Handeye mode requires intrinsic calibration. Use --intrinsic <path>");
+        SPDLOG_ERROR("Handeye mode requires intrinsic calibration. Use --intrinsic <path>");
         return 1;
     }
 
@@ -193,10 +193,10 @@ int main(int argc, char* argv[]) {
 
     if (use_daedalus) {
         // Connect to daedalus simulator via shared memory
-        spdlog::info("Connecting to daedalus simulator...");
+        SPDLOG_INFO("Connecting to daedalus simulator...");
         auto ipc_result = ipc::ShmClient::connect();
         if (!ipc_result) {
-            spdlog::error("Failed to connect to daedalus: {}", ipc::to_string(ipc_result.error()));
+            SPDLOG_ERROR("Failed to connect to daedalus: {}", ipc::to_string(ipc_result.error()));
             return 1;
         }
         ipc_device = std::make_shared<ipc::ShmClient>(std::move(*ipc_result));
@@ -204,7 +204,7 @@ int main(int argc, char* argv[]) {
         // Create IPC input interface
         auto input_result = fcs::L1::InputInterface::create_ipc(ipc_device);
         if (!input_result) {
-            spdlog::error(
+            SPDLOG_ERROR(
                 "Failed to create IPC input (error variant index: {})",
                 input_result.error().index());
             return 1;
@@ -218,17 +218,17 @@ int main(int argc, char* argv[]) {
         intrinsic_result->width               = cam_info.width;
         intrinsic_result->height              = cam_info.height;
 
-        spdlog::info("Daedalus connected - camera: {}x{}", cam_info.width, cam_info.height);
+        SPDLOG_INFO("Daedalus connected - camera: {}x{}", cam_info.width, cam_info.height);
         imu_available = true; // Daedalus always provides pose data
     } else {
         // Initialize real hardware
-        spdlog::info("Initializing camera...");
+        SPDLOG_INFO("Initializing camera...");
         fcs::CameraConfig camera_config;
         camera_config.width  = 1440;
         camera_config.height = 1080;
         auto input_result    = fcs::L1::InputInterface::create_hik({}, camera_config);
         if (!input_result) {
-            spdlog::error(
+            SPDLOG_ERROR(
                 "Failed to create camera input (error variant index: {})",
                 input_result.error().index());
             return 1;
@@ -246,13 +246,13 @@ int main(int argc, char* argv[]) {
         talos_gimbal::Stm32Parser::latest_imu = &imu_data;
         stm32 = std::make_shared<talos_gimbal::Stm32Impl<talos_gimbal::Stm32Parser>>();
 
-        spdlog::info("Initializing STM32 for IMU...");
+        SPDLOG_INFO("Initializing STM32 for IMU...");
         if (auto result = stm32->connect(); result) {
             stm32_connected = true;
             imu_available   = true;
-            spdlog::info("STM32 connected successfully");
+            SPDLOG_INFO("STM32 connected successfully");
         } else {
-            spdlog::warn("STM32 not available - hand-eye calibration may not work");
+            SPDLOG_WARN("STM32 not available - hand-eye calibration may not work");
         }
     }
 
@@ -265,10 +265,10 @@ int main(int argc, char* argv[]) {
         foxglove_server =
             std::make_shared<fcs::FoxgloveServer>(config->foxglove.port, config->foxglove.host);
         if (foxglove_server->is_initialized()) {
-            spdlog::info(
+            SPDLOG_INFO(
                 "Foxglove server started on {}:{}", config->foxglove.host, config->foxglove.port);
         } else {
-            spdlog::warn("Foxglove server failed to initialize");
+            SPDLOG_WARN("Foxglove server failed to initialize");
             foxglove_server.reset();
         }
     }
@@ -345,13 +345,13 @@ int main(int argc, char* argv[]) {
 
     // Build scheduler
     if (auto build_result = scheduler.build(); !build_result) {
-        spdlog::critical(
+        SPDLOG_CRITICAL(
             "Failed to build scheduler: {}", talos::format_build_error(build_result.error()));
         return 1;
     }
 
-    spdlog::info("Calibration system built");
-    spdlog::info("Starting scheduler... (Ctrl+C to quit)");
+    SPDLOG_INFO("Calibration system built");
+    SPDLOG_INFO("Starting scheduler... (Ctrl+C to quit)");
 
     // Set initial state to capturing
     status->state = CalibrationState::Capturing;
@@ -363,7 +363,7 @@ int main(int argc, char* argv[]) {
     // Run scheduler in a background thread
     std::thread scheduler_thread([&scheduler]() {
         if (const auto result = scheduler.run(); !result) {
-            spdlog::error("Scheduler error: {}", talos::to_string(result.error()));
+            SPDLOG_ERROR("Scheduler error: {}", talos::to_string(result.error()));
         }
     });
 
@@ -383,7 +383,7 @@ int main(int argc, char* argv[]) {
         if (config->capture.auto_capture && current_samples >= config->capture.min_samples
             && status->state == CalibrationState::Capturing) {
 
-            spdlog::info("Target samples reached, running calibration...");
+            SPDLOG_INFO("Target samples reached, running calibration...");
             status->state = CalibrationState::Calibrating;
 
             if (config->mode == CalibrationMode::Intrinsic) {
@@ -394,12 +394,11 @@ int main(int argc, char* argv[]) {
                 if (result) {
                     *intrinsic_result = *result;
                     save_intrinsic_result(*result, config->output.intrinsic_path);
-                    spdlog::info(
-                        "Intrinsic calibration saved to {}", config->output.intrinsic_path);
-                    spdlog::info("RMS error: {:.4f} pixels", result->rms_error);
+                    SPDLOG_INFO("Intrinsic calibration saved to {}", config->output.intrinsic_path);
+                    SPDLOG_INFO("RMS error: {:.4f} pixels", result->rms_error);
                     status->state = CalibrationState::Completed;
                 } else {
-                    spdlog::error("Calibration failed: {}", result.error());
+                    SPDLOG_ERROR("Calibration failed: {}", result.error());
                     status->state = CalibrationState::Failed;
                 }
             } else if (config->mode == CalibrationMode::Handeye) {
@@ -408,10 +407,10 @@ int main(int argc, char* argv[]) {
                     save_handeye_result(
                         *result, config->output.extrinsic_path, config->handeye.method);
                     print_handeye_result(*result);
-                    spdlog::info("Hand-eye calibration saved to {}", config->output.extrinsic_path);
+                    SPDLOG_INFO("Hand-eye calibration saved to {}", config->output.extrinsic_path);
                     status->state = CalibrationState::Completed;
                 } else {
-                    spdlog::error("Calibration failed: {}", result.error());
+                    SPDLOG_ERROR("Calibration failed: {}", result.error());
                     status->state = CalibrationState::Failed;
                 }
             }
@@ -423,7 +422,7 @@ int main(int argc, char* argv[]) {
     }
 
     // Cleanup
-    spdlog::info("Shutting down...");
+    SPDLOG_INFO("Shutting down...");
     scheduler.stop();
     if (scheduler_thread.joinable()) {
         scheduler_thread.join();

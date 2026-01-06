@@ -47,12 +47,12 @@ public:
     Stm32Parser& operator=(const Stm32Parser&) = delete;
     static void parse(const std::span<const std::byte> data) noexcept {
         if (const auto size = data.size_bytes(); size < sizeof(HeaderFrame)) [[unlikely]] {
-            spdlog::warn("Frame size too small, expected {}, got {}", sizeof(HeaderFrame), size);
+            SPDLOG_WARN("Frame size too small, expected {}, got {}", sizeof(HeaderFrame), size);
             return;
         }
         const auto header_frame = reinterpret_cast<const HeaderFrame*>(data.data());
         if (header_frame->sof != HeaderFrame::SoF()) [[unlikely]] {
-            spdlog::warn(
+            SPDLOG_WARN(
                 "Frame header invalid, expected {:X}, got {:X}", HeaderFrame::SoF(),
                 header_frame->sof);
             return;

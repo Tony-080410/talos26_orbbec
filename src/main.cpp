@@ -50,7 +50,7 @@ inline std::expected<TalosConfig, read_config_error> read_config() {
     // Read robot-specific configuration
     auto robots_tbl = toml::parse_file("robots.toml");
     if (robots_tbl.failed()) {
-        spdlog::critical("parse robots.toml: {}", robots_tbl.error().description());
+        SPDLOG_CRITICAL("parse robots.toml: {}", robots_tbl.error().description());
         return config; // Return config with defaults
     }
 
@@ -67,14 +67,13 @@ inline std::expected<TalosConfig, read_config_error> read_config() {
             fcs::CameraConfig robot_camera_config;
             if (auto camera_result = robot_camera_config.read_from(*camera_tbl); camera_result) {
                 config.camera = robot_camera_config;
-                spdlog::info("Loaded robot-specific camera configuration for {}", robot_section);
+                SPDLOG_INFO("Loaded robot-specific camera configuration for {}", robot_section);
             } else {
-                spdlog::error(
-                    "read camera config for {}: {}", robot_section, camera_result.error());
+                SPDLOG_ERROR("read camera config for {}: {}", robot_section, camera_result.error());
             }
         }
     } else {
-        spdlog::error("Robot section {} not found in robots.toml", robot_section);
+        SPDLOG_ERROR("Robot section {} not found in robots.toml", robot_section);
     }
 
     return config;
@@ -82,7 +81,7 @@ inline std::expected<TalosConfig, read_config_error> read_config() {
 
 int main() {
     init_logger();
-    spdlog::info("talos is initializing...");
+    SPDLOG_INFO("talos is initializing...");
     const auto start = std::chrono::system_clock::now();
 
     auto config_result = read_config();
@@ -91,11 +90,11 @@ int main() {
             overloaded{
                 [](const toml::parse_error& e) {
                     const auto& src = e.source();
-                    spdlog::critical(
+                    SPDLOG_CRITICAL(
                         "parse toml: {} at {}:{}:{}", e.description(), src.path->data(),
                         src.begin.line, src.begin.column);
                 },
-                [](const std::string& s) { spdlog::critical("read toml: {}", s); }},
+                [](const std::string& s) { SPDLOG_CRITICAL("read toml: {}", s); }},
             config_result.error());
         return 1;
     }
@@ -114,16 +113,16 @@ int main() {
     if (daedalus) {
         auto ipc_ = ipc::ShmClient::connect();
         if (!ipc_) {
-            spdlog::critical("connect ipc: {}", ipc::to_string(ipc_.error()));
+            SPDLOG_CRITICAL("connect ipc: {}", ipc::to_string(ipc_.error()));
             return 1;
         }
         ipc_device   = std::make_shared<ipc::ShmClient>(std::move(*ipc_));
         input_result = fcs::L1::InputInterface::create_ipc(ipc_device);
         if (auto ipc_output = fcs::L1::OutputInterface::create_ipc(ipc_device)) {
             output_interface = std::make_unique<fcs::L1::OutputInterface>(std::move(*ipc_output));
-            spdlog::info("endpoint: daedalus");
+            SPDLOG_INFO("endpoint: daedalus");
         } else {
-            spdlog::critical("init daedalus endpoint: {}", ipc_output.error());
+            SPDLOG_CRITICAL("init daedalus endpoint: {}", ipc_output.error());
             return 2;
         }
     } else {
@@ -131,9 +130,9 @@ int main() {
         if (auto result = usb_device->connect(0x0483, 0x5740); result) {
             output_interface =
                 std::make_unique<fcs::L1::OutputInterface>(fcs::L1::UsbOutput{usb_device});
-            spdlog::info("endpoint: USB (STM32)");
+            SPDLOG_INFO("endpoint: USB (STM32)");
         } else {
-            spdlog::critical(
+            SPDLOG_CRITICAL(
                 "init USB (STM32) endpoint: {}", talos_gimbal::to_string(result.error()));
             return 2;
         }
@@ -141,13 +140,13 @@ int main() {
     if (!input_result) {
         std::visit(
             overloaded{
-                [](fcs::L1::Timeout) { spdlog::critical("input: timeout"); },
-                [](fcs::L1::Disconnected) { spdlog::critical("input: disconnected"); },
+                [](fcs::L1::Timeout) { SPDLOG_CRITICAL("input: timeout"); },
+                [](fcs::L1::Disconnected) { SPDLOG_CRITICAL("input: disconnected"); },
                 [](fcs::L1::ProducerNotAvailable) {
-                    spdlog::critical("input: producer not available");
+                    SPDLOG_CRITICAL("input: producer not available");
                 },
-                [](const hikcamera::CameraError& e) { spdlog::critical("input: {}", e.what()); },
-                [](ipc::ShmError e) { spdlog::critical("input: {}", ipc::to_string(e)); },
+                [](const hikcamera::CameraError& e) { SPDLOG_CRITICAL("input: {}", e.what()); },
+                [](ipc::ShmError e) { SPDLOG_CRITICAL("input: {}", ipc::to_string(e)); },
             },
             input_result.error());
         return 2;
@@ -162,7 +161,7 @@ int main() {
         config.camera                     = info;
     }
 
-    spdlog::info(
+    SPDLOG_INFO(
         "init done. ({}ms)", std::chrono::duration_cast<std::chrono::milliseconds>(
                                  std::chrono::system_clock::now() - start)
                                  .count());
@@ -186,17 +185,17 @@ int main() {
     // Create detector backend from config
     auto backend_result = fcs::create_detector_backend(config.at_legacy);
     if (!backend_result) {
-        spdlog::critical(
+        SPDLOG_CRITICAL(
             "create detector backend: {}", fcs::detector_error_str(backend_result.error()));
         return 3;
     }
     auto detector_backend = std::move(*backend_result);
-    spdlog::info(
+    SPDLOG_INFO(
         "detector backend: {} (color={})", detector_backend.name(),
         fcs::to_string(config.at_legacy.detector.detect_color));
 
     auto pnp_solver = fcs::create_pnp_solver(config.camera);
-    spdlog::info("PnP solver initialized");
+    SPDLOG_INFO("PnP solver initialized");
 
     // Insert resources (wrapped in shared_ptr for std::any compatibility)
     world.insert_resource(
@@ -215,11 +214,11 @@ int main() {
 
     // Create Tracker using config from toml
     world.insert_resource(std::make_shared<fcs::L3::Tracker>(config.tracker()));
-    spdlog::info("Tracker initialized");
+    SPDLOG_INFO("Tracker initialized");
 
     // Create GimbalPlanner using config from toml (L4 Planning Layer)
     world.insert_resource(std::make_shared<fcs::L4::GimbalPlanner>(config.planner()));
-    spdlog::info(
+    SPDLOG_INFO(
         "GimbalPlanner initialized (bullet_speed={:.1f}m/s)",
         config.planner().trajectory.bullet_speed);
 
@@ -247,14 +246,14 @@ int main() {
         if (foxglove_server->is_initialized()) {
             world.insert_resource(foxglove_server);
             fcs::register_foxglove_systems(scheduler, &scheduler);
-            spdlog::info(
+            SPDLOG_INFO(
                 "Foxglove server enabled on ws://{}:{}", config.foxglove.host,
                 config.foxglove.port);
         } else {
-            spdlog::warn("Foxglove server failed to initialize, visualization disabled");
+            SPDLOG_WARN("Foxglove server failed to initialize, visualization disabled");
         }
     } else {
-        spdlog::info("Foxglove visualization disabled by config");
+        SPDLOG_INFO("Foxglove visualization disabled by config");
     }
 
     // ============================================================================
@@ -342,7 +341,7 @@ int main() {
             }
             const auto seq = frame->seq;
             if (seq != last_seq + 1 && last_seq > 0) {
-                spdlog::info("skip {} frame", seq - last_seq - 1);
+                SPDLOG_INFO("skip {} frame", seq - last_seq - 1);
             }
             last_seq = frame->seq;
 
@@ -379,12 +378,12 @@ int main() {
 
     // Build
     if (auto build_result = scheduler.build(); !build_result) {
-        spdlog::critical(
+        SPDLOG_CRITICAL(
             "build scheduler: {}", talos::format_build_error(build_result.error()).c_str());
         return 1;
     }
 
     if (const auto result = scheduler.run(); !result) {
-        spdlog::critical("run scheduler: {}", to_string(result.error()));
+        SPDLOG_CRITICAL("run scheduler: {}", to_string(result.error()));
     }
 }

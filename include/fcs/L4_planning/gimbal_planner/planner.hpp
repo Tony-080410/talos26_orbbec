@@ -221,7 +221,7 @@ public:
         plan.pitch           = pitch;
         plan.yaw_diff        = cmd_yaw - yaw_;
         plan.pitch_diff      = pitch - pitch_;
-        // spdlog::info("pitch_diff: {}", plan.pitch_diff);
+        // SPDLOG_INFO("pitch_diff: {}", plan.pitch_diff);
         plan.predicted_position = predicted_position;
         plan.trajectory         = compensator_->get_trajectory(15, pitch_);
         // Rotate

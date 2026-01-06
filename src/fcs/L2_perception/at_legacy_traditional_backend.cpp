@@ -25,12 +25,12 @@ AtLegacyTraditionalBackend::AtLegacyTraditionalBackend(ConfigPtr config)
         // Initialize classifier - log error if initialization fails
         if (const auto init_result = classifier_->init(); !init_result) {
             // Log error but continue - detection will work without classification
-            spdlog::critical(
+            SPDLOG_CRITICAL(
                 "Failed to initialize ONNX classifier: {}", config_->classifier_model_path);
             std::abort();
         }
     } else {
-        spdlog::critical("Classifier is enabled but model path is empty or config is null.");
+        SPDLOG_CRITICAL("Classifier is enabled but model path is empty or config is null.");
         std::abort();
     }
 

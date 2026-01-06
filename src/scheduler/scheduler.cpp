@@ -388,7 +388,7 @@ void Scheduler::run_exclusive_thread(ExclusiveContext ctx) {
             static_cast<std::uint32_t>(ctx.policy.cpu_affinity));
         if (!result) {
             // Log warning but continue
-            spdlog::warn(
+            SPDLOG_WARN(
                 "set CPU affinity for {}: {}", ctx.system->meta().name,
                 primitive::error_message(result.error()));
         }
@@ -399,7 +399,7 @@ void Scheduler::run_exclusive_thread(ExclusiveContext ctx) {
         primitive::ThreadAffinity::RealtimeConfig rt_config{};
         rt_config.priority = static_cast<std::uint8_t>(ctx.policy.thread_priority);
         if (auto result = primitive::ThreadAffinity::set_realtime_priority(rt_config); !result) {
-            spdlog::warn(
+            SPDLOG_WARN(
                 "set thread priority for {}: {}", ctx.system->meta().name,
                 primitive::error_message(result.error()));
         }
@@ -733,7 +733,7 @@ auto Scheduler::compute_levels() -> BuildResult {
         // Orphaned compute writer is a warning (printed but not an error)
         // Note: exclusive writers with no readers are fine (they notify the scheduler)
         if (!usage.writers.empty() && usage.readers.empty() && !usage.has_exclusive_writer) {
-            spdlog::warn(
+            SPDLOG_WARN(
                 "[WARN] Channel has writer '%s' but no readers\n",
                 compute_systems_[usage.writers[0]].system->meta().name.c_str());
         }

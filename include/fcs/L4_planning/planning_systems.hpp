@@ -55,7 +55,7 @@ void register_planning_systems(App& app, std::shared_ptr<GimbalPlanner> planner)
 
                 if (!tf_result) {
                     if (tf_result.error() != fast_tf::TransformError::FutureExtrapolationRequired) {
-                        spdlog::error(
+                        SPDLOG_ERROR(
                             "Planner TF lookup failed at {} ns: {}", target->timestamp_ns,
                             fast_tf::to_string(tf_result.error()));
                         return;

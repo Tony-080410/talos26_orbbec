@@ -77,7 +77,7 @@ std::expected<void, DetectorError> AtLegacyNNTupBackend::init() {
 
     auto cfg = get_config();
     if (!cfg) {
-        spdlog::error("[AtLegacyNNTupBackend] Config is null");
+        SPDLOG_ERROR("[AtLegacyNNTupBackend] Config is null");
         return std::unexpected(DetectorError::InitFailed);
     }
 
@@ -125,7 +125,7 @@ std::expected<void, DetectorError> AtLegacyNNTupBackend::init() {
         impl_->loaded   = true;
         initialized_    = true;
 
-        spdlog::info("[AtLegacyNNTupBackend] Model loaded: {}", cfg->model_path);
+        SPDLOG_INFO("[AtLegacyNNTupBackend] Model loaded: {}", cfg->model_path);
         const auto devices = execution_devices();
         if (!devices.empty()) {
             std::string dev_str;
@@ -134,12 +134,12 @@ std::expected<void, DetectorError> AtLegacyNNTupBackend::init() {
                     dev_str += ", ";
                 dev_str += d;
             }
-            spdlog::info("[AtLegacyNNTupBackend] Execution devices: {}", dev_str);
+            SPDLOG_INFO("[AtLegacyNNTupBackend] Execution devices: {}", dev_str);
         }
 
         return {};
     } catch (const std::exception& e) {
-        spdlog::error("[AtLegacyNNTupBackend] Init failed: {}", e.what());
+        SPDLOG_ERROR("[AtLegacyNNTupBackend] Init failed: {}", e.what());
         return std::unexpected(DetectorError::InitFailed);
     }
 }
@@ -243,7 +243,7 @@ bool AtLegacyNNTupBackend::infer(const PreprocContext& ctx) {
         impl_->request.infer();
         return true;
     } catch (const std::exception& e) {
-        spdlog::error("[AtLegacyNNTupBackend] Inference failed: {}", e.what());
+        SPDLOG_ERROR("[AtLegacyNNTupBackend] Inference failed: {}", e.what());
         return false;
     }
 }
@@ -265,7 +265,7 @@ std::vector<AtLegacyArmorDetection> AtLegacyNNTupBackend::postprocess(
 
     // Verify output shape
     if (shape.size() != 3 || shape[0] != 1) {
-        spdlog::warn("[AtLegacyNNTupBackend] Unexpected output shape");
+        SPDLOG_WARN("[AtLegacyNNTupBackend] Unexpected output shape");
         return detections;
     }
 
@@ -282,7 +282,7 @@ std::vector<AtLegacyArmorDetection> AtLegacyNNTupBackend::postprocess(
     const int num_to     = color_to + ctx.num_classes;
 
     if (num_to > out_cols) {
-        spdlog::warn(
+        SPDLOG_WARN(
             "[AtLegacyNNTupBackend] Class columns ({}) exceed output width ({})", num_to, out_cols);
         return detections;
     }

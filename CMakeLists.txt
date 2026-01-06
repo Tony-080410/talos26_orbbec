@@ -14,20 +14,25 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 
 include(cmake/dependencies.cmake)
 include(cmake/test.cmake)
-# include(cmake/calibration.cmake)
+
+get_filename_component(PROJECT_SOURCE_DIR_ABS "${CMAKE_SOURCE_DIR}" REALPATH)
+
+if (CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    add_compile_options(-fmacro-prefix-map=${PROJECT_SOURCE_DIR_ABS}/=)
+endif ()
 
 # Create tomlplusplus implementation library
 add_library(toml_impl STATIC
-    ${tomlplusplus_SOURCE_DIR}/src/toml.cpp
+        ${tomlplusplus_SOURCE_DIR}/src/toml.cpp
 )
 
 target_include_directories(toml_impl PUBLIC
-    ${tomlplusplus_SOURCE_DIR}/include
+        ${tomlplusplus_SOURCE_DIR}/include
 )
 
 target_compile_definitions(toml_impl PUBLIC
-    TOML_HEADER_ONLY=0
-    TOML_EXCEPTIONS=0
+        TOML_HEADER_ONLY=0
+        TOML_EXCEPTIONS=0
 )
 
 # talos std library (header-only)

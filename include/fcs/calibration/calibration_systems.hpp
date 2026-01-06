@@ -61,7 +61,7 @@ void register_calibration_systems(
             auto detection = board->detect(frame->image, frame->timestamp_ns);
             if (detection) {
                 corner_out.write(std::move(*detection));
-                spdlog::debug("Corner detection successful");
+                SPDLOG_DEBUG("Corner detection successful");
             }
         });
 
@@ -92,18 +92,18 @@ void register_calibration_systems(
 
             // Check diversity
             if (!intrinsic_calibrator->is_diverse_enough(*detection)) {
-                spdlog::debug("Sample rejected: not diverse enough");
+                SPDLOG_DEBUG("Sample rejected: not diverse enough");
                 return;
             }
 
             // Add sample
             if (auto result = intrinsic_calibrator->add_sample(*detection); !result) {
-                spdlog::warn("Failed to add sample: {}", result.error());
+                SPDLOG_WARN("Failed to add sample: {}", result.error());
                 return;
             }
 
             (*status)->sample_count = intrinsic_calibrator->sample_count();
-            spdlog::info(
+            SPDLOG_INFO(
                 "Intrinsic sample collected: {}/{}", (*status)->sample_count,
                 (*status)->target_samples);
         });
@@ -139,7 +139,7 @@ void register_calibration_systems(
                 detection->timestamp_ns);
 
             if (!tf_result) {
-                spdlog::warn("TF lookup failed for handeye sample");
+                SPDLOG_WARN("TF lookup failed for handeye sample");
                 return;
             }
 
@@ -147,7 +147,7 @@ void register_calibration_systems(
 
             // Check diversity
             if (!handeye_calibrator->is_diverse_enough(gimbal_pose)) {
-                spdlog::debug("Handeye sample rejected: not diverse enough");
+                SPDLOG_DEBUG("Handeye sample rejected: not diverse enough");
                 return;
             }
 
@@ -166,7 +166,7 @@ void register_calibration_systems(
                 tvec);
 
             if (!pnp_success) {
-                spdlog::warn("PnP solve failed");
+                SPDLOG_WARN("PnP solve failed");
                 return;
             }
 
@@ -174,12 +174,12 @@ void register_calibration_systems(
             if (auto result = handeye_calibrator->add_sample(
                     gimbal_pose, rvec, tvec, detection->timestamp_ns);
                 !result) {
-                spdlog::warn("Failed to add handeye sample: {}", result.error());
+                SPDLOG_WARN("Failed to add handeye sample: {}", result.error());
                 return;
             }
 
             (*status)->sample_count = handeye_calibrator->sample_count();
-            spdlog::info(
+            SPDLOG_INFO(
                 "Handeye sample collected: {}/{}", (*status)->sample_count,
                 (*status)->target_samples);
         });

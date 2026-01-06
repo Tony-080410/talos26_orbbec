@@ -365,7 +365,7 @@ std::expected<std::unique_ptr<ImageCapturer>, CameraError> ImageCapturer::create
     if (!init_result) {
         return std::unexpected(init_result.error());
     }
-    spdlog::info("Hikvision camera initialized successfully.");
+    SPDLOG_INFO("Hikvision camera initialized successfully.");
     return capturer;
 }
 
