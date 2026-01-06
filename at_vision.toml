@@ -91,7 +91,7 @@ shooting_range_w = 0.135  # Horizontal shooting window (meters)
 shooting_range_h = 0.135  # Vertical shooting window (meters)
 
 max_tracking_v_yaw = 60.0 # Max angular velocity for armor tracking (rad/s)
-prediction_delay = 0.105 # Additional prediction delay compensation (seconds)
+plan_to_muzzle_delay = 0.105
 side_angle = 15.0              # Side angle threshold for armor selection (degrees)
 min_switching_v_yaw = 1.0      # Min angular velocity for armor switching (rad/s)
 transfer_thresh = 5            # State transfer counter threshold (frames)

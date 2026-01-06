@@ -53,7 +53,7 @@ struct GimbalPlannerConfig {
     double max_tracking_v_yaw{6.0};
 
     /// Delay from plan output to bullet leaving muzzle (seconds)
-    double prediction_delay{0.0};
+    double plan_to_muzzle_delay{0.0};
 
     /// Side angle threshold for armor switching (degrees)
     double side_angle{10.0};
@@ -74,7 +74,7 @@ struct GimbalPlannerConfig {
         READ(tbl, shooting_range_w);
         READ(tbl, shooting_range_h);
         READ(tbl, max_tracking_v_yaw);
-        READ(tbl, prediction_delay);
+        READ(tbl, plan_to_muzzle_delay);
         READ(tbl, side_angle);
         READ(tbl, min_switching_v_yaw);
         READ(tbl, transfer_thresh);

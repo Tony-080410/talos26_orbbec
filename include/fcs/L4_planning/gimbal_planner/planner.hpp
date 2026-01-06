@@ -108,7 +108,7 @@ public:
 
         // Calculate dt including prediction delay
         double dt = static_cast<double>(current_time_ns - target.timestamp_ns) / 1e9 + flying_time
-                  + config_.prediction_delay;
+                  + config_.plan_to_muzzle_delay;
 
         // Step 2: Predict target state
         target_position.x() += dt * target_velocity.x();
