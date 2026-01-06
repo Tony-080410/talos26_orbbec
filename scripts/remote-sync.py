@@ -1,5 +1,13 @@
 #!/usr/bin/env python3
-import os, select, subprocess, ctypes, time, signal, sys, errno, shutil
+import ctypes
+import errno
+import os
+import select
+import shutil
+import signal
+import subprocess
+import sys
+import time
 
 IN_MODIFY = 0x00000002
 IN_CREATE = 0x00000100
@@ -21,6 +29,7 @@ RSYNC = shutil.which("rsync") or "rsync"
 
 fd = libc.inotify_init()
 
+
 def add_watch_recursive(root):
     for d, dirs, _ in os.walk(root):
         # 关键：剪枝，不进入被忽略目录
@@ -32,11 +41,13 @@ def add_watch_recursive(root):
 
         libc.inotify_add_watch(fd, d.encode(), EVENT_MASK)
 
+
 add_watch_recursive(SRC)
 
 GREEN, YELLOW, RED, RESET = "\033[92m", "\033[93m", "\033[91m", "\033[0m"
 last_sync = 0
 running = True
+
 
 def remote_sync(reason):
     global last_sync
@@ -53,11 +64,13 @@ def remote_sync(reason):
     subprocess.run(cmd)
     print(f"{YELLOW}[DEBUG]{RESET} rsync done {time.strftime('%H:%M:%S')}")
 
+
 def handle_exit(signum, frame):
     global running
     print(f"\n{RED}[EXIT]{RESET} Caught signal {signum}, cleaning up...")
     os.close(fd)
     running = False
+
 
 signal.signal(signal.SIGINT, handle_exit)
 signal.signal(signal.SIGTERM, handle_exit)

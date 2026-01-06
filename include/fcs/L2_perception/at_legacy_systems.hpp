@@ -65,6 +65,15 @@ void register_at_legacy_detection_systems(App& app) {
             auto& backend = *backend_ptr;
             if (!backend)
                 return;
+
+            // Run detection
+            auto result = backend->detect(frame->image);
+            if (!result) {
+                // Detection failed, output empty batch
+                detection_out.write(
+                    AtLegacyArmorDetectionBatch{{}, frame->timestamp_ns, frame->frame_id});
+                return;
+            }
             // Solve PnP for all detections (in camera_optical frame)
             auto tf_odom_camera = fast_tf::lookup<fast_tf::odom_fuxk_frame>(
                 **tf_system, fast_tf::FuckTransform<fast_tf::camera_optical_fuxk_frame>(),
@@ -77,19 +86,12 @@ void register_at_legacy_detection_systems(App& app) {
                 return;
             }
 
-            // Run detection
-            auto result = backend->detect(frame->image);
-            if (!result) {
-                // Detection failed, output empty batch
-                detection_out.write(
-                    AtLegacyArmorDetectionBatch{{}, frame->timestamp_ns, frame->frame_id});
-                return;
-            }
             auto detections = std::move(*result);
 
             // Output detection batch
             detection_out.write(
                 AtLegacyArmorDetectionBatch{detections, frame->timestamp_ns, frame->frame_id});
+
             auto measurements = (*solver_ptr)
                                     ->solve_batch_with_ba(
                                         detections, tf_odom_camera.value()->rotation().matrix(),
