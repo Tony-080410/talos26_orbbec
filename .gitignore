@@ -33,4 +33,5 @@ camera_intrinsic.toml
 .claude
 CRIT.md
 camera_extrinsic.toml
-.zed
+3dparty/foxglove-*.zip
+3dparty/tomlplusplus

@@ -37,11 +37,22 @@ endif ()
 
 include(FetchContent)
 
-FetchContent_Declare(
-        tomlplusplus
-        GIT_REPOSITORY https://github.com/marzer/tomlplusplus.git
-        GIT_TAG v3.4.0
-)
+# Check for local tomlplusplus cache
+set(TOMLPLUSPLUS_LOCAL_DIR "${CMAKE_CURRENT_SOURCE_DIR}/3dparty/tomlplusplus")
+if (EXISTS "${TOMLPLUSPLUS_LOCAL_DIR}")
+    message(STATUS "Using local tomlplusplus at: ${TOMLPLUSPLUS_LOCAL_DIR}")
+    FetchContent_Declare(
+            tomlplusplus
+            SOURCE_DIR ${TOMLPLUSPLUS_LOCAL_DIR}
+    )
+else ()
+    message(STATUS "Fetching tomlplusplus from remote repository")
+    FetchContent_Declare(
+            tomlplusplus
+            GIT_REPOSITORY https://github.com/marzer/tomlplusplus.git
+            GIT_TAG v3.4.0
+    )
+endif ()
 
 FetchContent_MakeAvailable(tomlplusplus)
 
@@ -64,17 +75,27 @@ set(FOXGLOVE_SHA256_aarch64-apple-darwin "7bb818be22396dce6f2430df3451bb2deb4faf
 set(FOXGLOVE_SHA256_aarch64-unknown-linux-gnu "20dd412fa8be481e6ed84d88879f368e1a55a146e9a98f936a05931742e1dea5")
 set(FOXGLOVE_SHA256_x86_64-unknown-linux-gnu "d8afbb8f99b75d7ad0f1b2885d35cacead28e6f2e36bd4d1a30e17413ebab896")
 
-set(FOXGLOVE_URL "https://github.com/foxglove/foxglove-sdk/releases/download/sdk%2F${FOXGLOVE_VERSION}/foxglove-${FOXGLOVE_VERSION}-cpp-${FOXGLOVE_PLATFORM}.zip")
+# Check for local Foxglove cache
+set(FOXGLOVE_LOCAL_ZIP "${CMAKE_CURRENT_SOURCE_DIR}/3dparty/foxglove-${FOXGLOVE_VERSION}-cpp-${FOXGLOVE_PLATFORM}.zip")
 set(FOXGLOVE_SHA ${FOXGLOVE_SHA256_${FOXGLOVE_PLATFORM}})
 
-message(STATUS "Downloading Foxglove from: ${FOXGLOVE_URL}")
-
-FetchContent_Declare(
-        foxglove
-        URL ${FOXGLOVE_URL}
-        # URL_HASH SHA256=${FOXGLOVE_SHA}
-        # DOWNLOAD_EXTRACT_TIMESTAMP TRUE
-)
+if (EXISTS "${FOXGLOVE_LOCAL_ZIP}")
+    message(STATUS "Using local Foxglove at: ${FOXGLOVE_LOCAL_ZIP}")
+    FetchContent_Declare(
+            foxglove
+            URL ${FOXGLOVE_LOCAL_ZIP}
+            # URL_HASH SHA256=${FOXGLOVE_SHA}
+    )
+else ()
+    set(FOXGLOVE_URL "https://github.com/foxglove/foxglove-sdk/releases/download/sdk%2F${FOXGLOVE_VERSION}/foxglove-${FOXGLOVE_VERSION}-cpp-${FOXGLOVE_PLATFORM}.zip")
+    message(STATUS "Downloading Foxglove from: ${FOXGLOVE_URL}")
+    FetchContent_Declare(
+            foxglove
+            URL ${FOXGLOVE_URL}
+            # URL_HASH SHA256=${FOXGLOVE_SHA}
+            # DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+    )
+endif ()
 
 FetchContent_MakeAvailable(foxglove)
 
