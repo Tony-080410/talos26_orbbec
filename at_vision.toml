@@ -101,7 +101,7 @@ compensator_type = "Resistance"
 
 [planner.trajectory]
 iteration_times = 20       # Number of iterations for ballistic compensation
-bullet_speed = 25.0        # Bullet velocity (m/s)
+bullet_speed = 22.0        # Bullet velocity (m/s)
 gravity = 9.7997              # Gravity acceleration (m/s^2)
 resistance = 0.005         # Air resistance coefficient
 

@@ -33,6 +33,28 @@ namespace detail {
     return "unknown";
 }
 
+[[nodiscard]] inline std::string join_unread_keys(const toml::table& table) {
+    std::string out;
+    for (const auto& [k, v] : table) {
+        if (!out.empty()) {
+            out += ", ";
+        }
+        out += fmt::format("'{}'({})", std::string_view{k}, node_type_name(v.type()));
+    }
+    return out;
+}
+
+[[nodiscard]] inline std::expected<void, std::string>
+    error_if_unread(const toml::table& table, std::string_view context) noexcept {
+    if (table.empty()) {
+        return {};
+    }
+    if (context.empty()) {
+        return std::unexpected(fmt::format("Unread keys: {}", join_unread_keys(table)));
+    }
+    return std::unexpected(fmt::format("{}: unread keys: {}", context, join_unread_keys(table)));
+}
+
 template <typename T>
 [[nodiscard]] constexpr const char* expected_type_name() noexcept {
     if constexpr (std::is_same_v<T, bool>) {
@@ -126,6 +148,32 @@ template <ReadFrom T>
 }
 
 template <ReadFrom T>
+[[nodiscard]] std::expected<T, std::string> take(const toml::table& table, std::string_view key) {
+    const toml::node* node = table.get(key);
+    if (!node) {
+        return std::unexpected(fmt::format("Missing table '{}'", key));
+    }
+
+    const auto sub = node->as_table();
+    if (!sub) {
+        return std::unexpected(fmt::format("Invalid value for key '{}': expected table", key));
+    }
+
+    T out;
+    auto result = out.read_from(*sub);
+    if (!result) {
+        return std::unexpected(fmt::format("{}: {}", key, result.error()));
+    }
+
+    if (auto unread = detail::error_if_unread(*sub, key); !unread) {
+        return std::unexpected(unread.error());
+    }
+
+    (void)const_cast<toml::table&>(table).erase(key);
+    return out;
+}
+
+template <ReadFrom T>
 [[nodiscard]] std::expected<std::optional<T>, std::string>
     read_optional(const toml::table& table, std::string_view key) {
     const toml::node* node = table.get(key);
@@ -141,6 +189,32 @@ template <ReadFrom T>
         return std::optional<T>{std::move(out)};
     }
     return std::unexpected(fmt::format("Invalid value for key '{}': expected table", key));
+}
+
+template <ReadFrom T>
+[[nodiscard]] std::expected<std::optional<T>, std::string>
+    take_optional(const toml::table& table, std::string_view key) {
+    const toml::node* node = table.get(key);
+    if (!node) {
+        return std::optional<T>{};
+    }
+    const auto sub = node->as_table();
+    if (!sub) {
+        return std::unexpected(fmt::format("Invalid value for key '{}': expected table", key));
+    }
+
+    T out;
+    auto result = out.read_from(*sub);
+    if (!result) {
+        return std::unexpected(fmt::format("{}: {}", key, result.error()));
+    }
+
+    if (auto unread = detail::error_if_unread(*sub, key); !unread) {
+        return std::unexpected(unread.error());
+    }
+
+    (void)const_cast<toml::table&>(table).erase(key);
+    return std::optional<T>{std::move(out)};
 }
 
 template <typename T>
@@ -287,6 +361,34 @@ requires(Mat::RowsAtCompileTime != Eigen::Dynamic && Mat::ColsAtCompileTime != E
     }
 }
 
+[[nodiscard]] inline std::expected<void, std::string>
+    ensure_all_read(const toml::table& table, std::string_view context = {}) noexcept {
+    return detail::error_if_unread(table, context);
+}
+
+template <typename T>
+[[nodiscard]] std::expected<T, std::string> take(const toml::table& table, std::string_view key) {
+    auto v = read<T>(table, key);
+    if (!v) {
+        return std::unexpected(v.error());
+    }
+    (void)const_cast<toml::table&>(table).erase(key);
+    return std::move(*v);
+}
+
+template <typename T>
+[[nodiscard]] std::expected<std::optional<T>, std::string>
+    take_optional(const toml::table& table, std::string_view key) {
+    auto v = read_optional<T>(table, key);
+    if (!v) {
+        return std::unexpected(v.error());
+    }
+    if (*v) {
+        (void)const_cast<toml::table&>(table).erase(key);
+    }
+    return std::move(*v);
+}
+
 // Read a nested `ReadFrom` object from the *current* table instead of a subtable.
 // This allows config layouts like:
 //   width = 1920
@@ -308,7 +410,7 @@ template <ReadFrom T>
 
 #define READ_OPT(tbl, val)                                               \
     do {                                                                 \
-        auto res = toml_helper::read_optional<decltype(val)>(tbl, #val); \
+        auto res = toml_helper::take_optional<decltype(val)>(tbl, #val); \
         if (!res) {                                                      \
             return std::unexpected(res.error());                         \
         }                                                                \
@@ -319,7 +421,7 @@ template <ReadFrom T>
 
 #define READ(tbl, val)                                          \
     do {                                                        \
-        auto res = toml_helper::read<decltype(val)>(tbl, #val); \
+        auto res = toml_helper::take<decltype(val)>(tbl, #val); \
         if (!res) {                                             \
             return std::unexpected(res.error());                \
         }                                                       \

@@ -167,11 +167,9 @@ struct AtLegacyConfig {
     std::expected<void, std::string> read_from(const toml::table& tbl) noexcept {
         READ(tbl, detector);
         // Read backend-specific config based on type
-        switch (detector.backend_type) {
-        case AtLegacyBackendTypeConfig::Traditional: READ(tbl, traditional); break;
-        case AtLegacyBackendTypeConfig::NeuralNetwork: READ(tbl, nn); break;
-        case AtLegacyBackendTypeConfig::NeuralNetworkTup: READ(tbl, nn_tup); break;
-        }
+        READ(tbl, traditional);
+        READ(tbl, nn);
+        READ(tbl, nn_tup);
         return {};
     }
 };

@@ -384,8 +384,6 @@ int main() {
         return 1;
     }
 
-    scheduler.print_systems();
-
     if (const auto result = scheduler.run(); !result) {
         spdlog::critical("run scheduler: {}", to_string(result.error()));
     }

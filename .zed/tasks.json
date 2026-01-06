@@ -1,7 +1,7 @@
 [
   {
     "label": "talos",
-    "command": "cmake -DENABLE_CALIBRATION=OFF -G Ninja -B build -S . && cmake --build build --target talos -j64",
+    "command": "cmake -DENABLE_CALIBRATION=OFF -G Ninja -B build -S . && cmake --build build --target talos -j64 && ./build/bin/talos",
     "use_new_terminal": false,
     "allow_concurrent_runs": false,
     "reveal": "always",
@@ -13,7 +13,7 @@
   },
   {
     "label": "calibration",
-    "command": "cmake -DENABLE_CALIBRATION=ON -G Ninja -B build -S . && cmake --build build --target rm_calibration -j64",
+    "command": "cmake -DENABLE_CALIBRATION=ON -G Ninja -B build -S . && cmake --build build --target rm_calibration - && ./build/bin/rm_calibration",
     "use_new_terminal": false,
     "allow_concurrent_runs": false,
     "reveal": "always",

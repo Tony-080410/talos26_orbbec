@@ -17,12 +17,7 @@ std::expected<void, std::string> CameraConfig::read_from(const toml::table& tbl)
     READ(tbl, distort_coefficient);
     READ(tbl, width);
     READ(tbl, height);
-    if (auto profile_tbl = tbl["profile"].as_table()) {
-        auto result = profile.read_from(*profile_tbl);
-        if (!result) {
-            return result;
-        }
-    }
+    READ_OPT(tbl, profile);
     return {};
 }
 

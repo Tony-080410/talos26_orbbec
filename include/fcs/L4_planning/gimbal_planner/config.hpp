@@ -52,8 +52,7 @@ struct GimbalPlannerConfig {
     /// Maximum angular velocity for armor tracking mode
     double max_tracking_v_yaw{6.0};
 
-    /// Additional prediction delay (seconds)
-    /// TODO would this should be replaced by real system latency?
+    /// Delay from plan output to bullet leaving muzzle (seconds)
     double prediction_delay{0.0};
 
     /// Side angle threshold for armor switching (degrees)
@@ -79,6 +78,7 @@ struct GimbalPlannerConfig {
         READ(tbl, side_angle);
         READ(tbl, min_switching_v_yaw);
         READ(tbl, transfer_thresh);
+        READ(tbl, trajectory);
         READ(tbl, compensator_type);
         return {};
     }
@@ -98,12 +98,6 @@ struct L4Config {
 
     std::expected<void, std::string> read_from(const toml::table& tbl) noexcept {
         READ(tbl, planner);
-        if (auto trajectory_tbl = tbl["trajectory"].as_table()) {
-            auto result = planner.trajectory.read_from(*trajectory_tbl);
-            if (!result) {
-                return result;
-            }
-        }
         return {};
     }
 };

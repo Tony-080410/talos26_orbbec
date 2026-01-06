@@ -485,11 +485,13 @@ void Scheduler::run_compute_loop() {
             }
 
             // Check stats after compute (amortize cost)
+            /*
             const auto now = Clock::now();
             if (now - last_print >= print_interval) [[unlikely]] {
                 print_stats();
                 last_print = now;
-            }
+                }
+            */
         } else {
             // Low-latency spin: use CPU hint instead of yield()
             // - _mm_pause (x86): ~10 cycles, no context switch
