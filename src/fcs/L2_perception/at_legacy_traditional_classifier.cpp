@@ -1,9 +1,6 @@
 #include "fcs/L2_perception/at_legacy_traditional_classifier.hpp"
 
 #include <algorithm>
-#include <array>
-#include <cmath>
-#include <numeric>
 
 #include <opencv2/imgproc.hpp>
 #include <spdlog/spdlog.h>
@@ -130,7 +127,7 @@ ArmorName AtLegacyTraditionalClassifier::index_to_armor_name(int idx) noexcept {
     case 5: return ArmorName::Outpost;
     case 6: return ArmorName::Sentry;
     case 7: return ArmorName::Base;
-    case 8: return ArmorName::Invalid;
+    default: return ArmorName::Invalid;
     }
 }
 
