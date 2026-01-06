@@ -197,25 +197,7 @@ add_executable(${PROJECT_NAME}
 target_include_directories(${PROJECT_NAME} PRIVATE include)
 target_include_directories(${PROJECT_NAME} SYSTEM PRIVATE ${foxglove_SOURCE_DIR}/include)
 target_include_directories(${PROJECT_NAME} SYSTEM PRIVATE ${foxglove_SOURCE_DIR}/include/foxglove)
-target_precompile_headers(${PROJECT_NAME} PRIVATE
-    # 标准库
-    <string>
-    <vector>
-    <memory>
-    <atomic>
-    <chrono>
-    <optional>
-    <functional>
 
-    # 重型第三方库
-    <Eigen/Core>
-    <Eigen/Geometry>
-    <tbb/parallel_pipeline.h>
-    <spdlog/spdlog.h>
-    <opencv2/core.hpp>
-    <nlohmann/json.hpp>
-    <toml++/toml.hpp>
-)
 target_link_libraries(${PROJECT_NAME} PRIVATE
         talos_gimbal
         scheduler
@@ -223,6 +205,7 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
         hikcamera
         fcs
         ipc
+        fast_tf
         ${OpenCV_LIBS}
         spdlog::spdlog
         fmt::fmt
@@ -240,16 +223,22 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
 
 # sp_vision executable (removed during refactoring)
 
-# Fast TF library (header-only + compiled support)
-add_library(fast_tf INTERFACE)
+# Fast TF library (explicit template instantiations + robot factory)
+add_library(fast_tf STATIC
+        src/math/fast_tf/infantry.cpp
+        src/math/fast_tf/hero.cpp
+        src/math/fast_tf/sentry.cpp
+        src/math/fast_tf/robot_factory.cpp
+)
 
-target_include_directories(fast_tf INTERFACE
+target_include_directories(fast_tf PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
 
-target_link_libraries(fast_tf INTERFACE
+target_link_libraries(fast_tf PUBLIC
         Eigen3::Eigen
         TBB::tbb
+        ${OpenCV_LIBS}
 )
 
 # NOTE: detector_benchmark and detector_tuner removed - test files deleted during refactoring

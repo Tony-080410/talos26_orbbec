@@ -12,7 +12,7 @@
 #include "fcs/core/channel_tags.hpp"
 #include "fcs/visualization/foxglove_server.hpp"
 #include "fcs/visualization/foxglove_types.hpp"
-#include "math/fast_tf/infantry.hpp"
+#include "math/fast_tf/frame.hpp"
 #include "scheduler/ecs/channel_types.hpp"
 #include "scheduler/scheduler.hpp"
 

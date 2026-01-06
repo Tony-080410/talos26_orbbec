@@ -8,9 +8,7 @@
 #include "fcs/L4_planning/planning_systems.hpp"
 #include "fcs/L5_weapon/enhanced/weapon_systems.hpp"
 #include "fcs/visualization/foxglove_systems.hpp"
-#include "math/fast_tf/hero.hpp"
-#include "math/fast_tf/infantry.hpp"
-#include "math/fast_tf/sentry.hpp"
+#include "math/fast_tf/robot_factory.hpp"
 #include "scheduler/scheduler.hpp"
 #include "spdlog_hook.hpp"
 #include "talos_gimbal/stm32.hpp"
@@ -227,9 +225,9 @@ int main() {
 
     // Create coordinate system for fast_tf lookups
     switch (config.robot) {
-    case fcs::RobotType::Infantry: world.insert_resource(fast_tf::infantry_new<1024>()); break;
-    case fcs::RobotType::Hero: world.insert_resource(fast_tf::hero_new<1024>()); break;
-    case fcs::RobotType::Sentry: world.insert_resource(fast_tf::sentry_new<1024>()); break;
+    case fcs::RobotType::Infantry: world.insert_resource(fast_tf::create_infantry_system()); break;
+    case fcs::RobotType::Hero: world.insert_resource(fast_tf::create_hero_system()); break;
+    case fcs::RobotType::Sentry: world.insert_resource(fast_tf::create_sentry_system()); break;
     }
 
     // Insert config as shared resource (for foxglove and other systems)

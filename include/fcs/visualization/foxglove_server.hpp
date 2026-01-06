@@ -3,7 +3,7 @@
 #include "foxglove_types.hpp"
 
 #include "math/fast_tf/foxglove_export.hpp"
-#include "math/fast_tf/infantry.hpp"
+#include "math/fast_tf/frame.hpp"
 
 #include <atomic>
 #include <memory>
