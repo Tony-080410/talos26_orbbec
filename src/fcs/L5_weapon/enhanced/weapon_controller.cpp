@@ -1,5 +1,6 @@
 #include "fcs/L5_weapon/enhanced/weapon_controller.hpp"
 
+#include <Eigen/Core>
 #include <cmath>
 
 namespace fcs::L5 {
@@ -27,6 +28,25 @@ WeaponCommand EnhancedWeaponController::generate_command(
     // based on weapon characteristics and target movement prediction
 
     return cmd;
+}
+
+double EnhancedWeaponController::calculate_time_of_flight(double distance) const noexcept {
+    if (!compensator_) {
+        return 0.0;
+    }
+
+    // Simple estimation assuming straight-line trajectory
+    // In reality, this would use the compensator's get_flying_time method
+    // with proper target position calculation
+    Eigen::Vector3d target_pos(distance, 0, 0);
+    return compensator_->get_flying_time(target_pos);
+}
+
+std::pair<double, double> EnhancedWeaponController::calculate_angular_rates(
+    const fcs::L4::GimbalPlan& plan, double dt) const noexcept {
+    // TODO: Implement proper angular rate calculation based on target movement
+    // For now, return zeros
+    return {0.0, 0.0};
 }
 
 } // namespace fcs::L5

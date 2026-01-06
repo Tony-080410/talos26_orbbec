@@ -7,7 +7,10 @@
 #include <variant>
 #include <vector>
 
-#include <opencv2/core.hpp>
+// Forward declare OpenCV types to avoid heavy header pollution
+namespace cv {
+class Mat;
+}
 
 namespace fcs {
 

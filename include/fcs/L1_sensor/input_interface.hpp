@@ -1,13 +1,14 @@
 #pragma once
 
-#include "auto_aim/config.hpp"
 #include "camera/hik_camera.hpp"
 #include "core/time.hpp"
 #include "fcs/L1_sensor/parcel.hpp"
+#include "fcs/camera_config.hpp"
 #include "ipc/shm_client.hpp"
 #include <chrono>
 #include <expected>
 #include <opencv2/core/mat.hpp>
+#include <opencv2/imgproc.hpp>
 #include <optional>
 #include <utility>
 #include <variant>

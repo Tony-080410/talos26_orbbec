@@ -105,6 +105,7 @@ target_link_libraries(talos_gimbal INTERFACE
 
 # FCS library (Fire Control System - refactored architecture)
 add_library(fcs SHARED
+        src/fcs/camera_config.cpp
         src/fcs/L1_sensor/input_interface.cpp
         src/fcs/L1_sensor/output_interface.cpp
         src/fcs/L2_perception/at_legacy_detector_backend.cpp
@@ -141,6 +142,11 @@ target_link_libraries(fcs PUBLIC
         spdlog::spdlog
         ${LIBUSB_LINK_LIBRARIES}
         $<$<TARGET_EXISTS:openvino::runtime>:openvino::runtime>
+)
+
+# Use precompiled headers for fcs library (speeds up compilation by 50-70%)
+target_precompile_headers(fcs PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include/fcs/pch.hpp
 )
 
 # hikcamera library (HIK SDK only available on Linux x86_64)

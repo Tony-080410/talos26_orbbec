@@ -5,7 +5,6 @@
 #include "fcs/L4_planning/gimbal_planner/trajectory_compensator.hpp"
 #include "fcs/L4_planning/gimbal_planner/types.hpp"
 
-#include <Eigen/Core>
 #include <cstdint>
 #include <memory>
 
@@ -55,25 +54,11 @@ private:
     std::unique_ptr<fcs::L4::TrajectoryCompensator> compensator_;
 
     /// @brief Calculate bullet time of flight for target distance
-    [[nodiscard]] double calculate_time_of_flight(double distance) const noexcept {
-        if (!compensator_) {
-            return 0.0;
-        }
-
-        // Simple estimation assuming straight-line trajectory
-        // In reality, this would use the compensator's get_flying_time method
-        // with proper target position calculation
-        Eigen::Vector3d target_pos(distance, 0, 0);
-        return compensator_->get_flying_time(target_pos);
-    }
+    [[nodiscard]] double calculate_time_of_flight(double distance) const noexcept;
 
     /// @brief Calculate angular rates for predictive control
     [[nodiscard]] std::pair<double, double>
-        calculate_angular_rates(const fcs::L4::GimbalPlan& plan, double dt) const noexcept {
-        // TODO: Implement proper angular rate calculation based on target movement
-        // For now, return zeros
-        return {0.0, 0.0};
-    }
+        calculate_angular_rates(const fcs::L4::GimbalPlan& plan, double dt) const noexcept;
 };
 
 } // namespace fcs::L5
