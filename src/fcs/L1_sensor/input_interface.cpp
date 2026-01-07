@@ -33,7 +33,8 @@ std::expected<InputInterface, InputError>
     profile.invert_image = config.profile.invert_image;
     profile.exposure_time =
         std::chrono::duration<float, std::micro>(config.profile.exposure_time_us);
-    profile.gain = config.profile.gain;
+    profile.gain        = config.profile.gain;
+    profile.rotate_type = config.profile.rotate_angle;
 
     auto result = hikcamera::ImageCapturer::create(profile);
     if (!result) {

@@ -1,17 +1,10 @@
-daedalus = true
-robot = 'infantry'
+daedalus = false
+robot = 'hero'
+imu_vendor_id = 0x483
 [foxglove]
 enabled = true
 host = "0.0.0.0"
 port = 8765
-
-[camera]
-camera_matrix = [
-    1825.132, 0.000, 725.494, 0.000, 1816.228, 607.733, 0.000, 0.000, 1.000
-]
-distort_coefficient = [-0.101, 0.451, -0.005, -0.001, -0.920]
-width = 1440
-height = 1080
 
 [at_legacy.detector]
 backend_type = "Traditional"

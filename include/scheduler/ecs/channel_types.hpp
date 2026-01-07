@@ -1,7 +1,6 @@
 #pragma once
 
 #include "primitives/channel.hpp"
-
 #include <atomic>
 #include <optional>
 

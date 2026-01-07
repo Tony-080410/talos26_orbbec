@@ -14,11 +14,19 @@ class table;
 
 namespace fcs {
 
+enum class RotateType {
+    None,
+    Clockwise90,
+    Clockwise180,
+    Clockwise270,
+};
+
 struct CameraProfileConfig {
     bool trigger_mode{false};
     bool invert_image{false};
     uint32_t exposure_time_us{3000}; // 3ms in microseconds
     double gain{16.7};
+    RotateType rotate_angle{RotateType::None};
 
     std::expected<void, std::string> read_from(const toml::table& tbl) noexcept;
 };

@@ -17,6 +17,7 @@
 #include <Eigen/Geometry>
 #include <atomic>
 #include <chrono>
+#include <optional>
 #include <tbb/parallel_pipeline.h>
 #include <toml++/impl/parse_error.hpp>
 
@@ -98,8 +99,13 @@ int main() {
             config_result.error());
         return 1;
     }
-    auto& config        = config_result.value();
-    const bool daedalus = config.daedalus;
+    auto& config             = config_result.value();
+    const bool daedalus      = config.daedalus;
+    const auto imu_vendor_id = config.imu_vendor_id;
+    const std::optional<decltype(config.imu_product_id)> imu_product_id =
+        config.imu_product_id == 0
+            ? std::nullopt
+            : std::optional<decltype(config.imu_product_id)>{config.imu_product_id};
 
     std::expected<fcs::L1::InputInterface, fcs::L1::InputError> input_result;
     std::unique_ptr<fcs::L1::OutputInterface> output_interface;
@@ -126,8 +132,13 @@ int main() {
             return 2;
         }
     } else {
+        if (imu_product_id) {
+            SPDLOG_INFO("connecting to USB {:#x}:{:#x}", imu_vendor_id, *imu_product_id);
+        } else {
+            SPDLOG_INFO("connecting to USB {:#x} (product_id unspecified)", imu_vendor_id);
+        }
         input_result = fcs::L1::InputInterface::create_hik(config.camera);
-        if (auto result = usb_device->connect(0x0483, 0x5740); result) {
+        if (auto result = usb_device->connect(imu_vendor_id, imu_product_id); result) {
             output_interface =
                 std::make_unique<fcs::L1::OutputInterface>(fcs::L1::UsbOutput{usb_device});
             SPDLOG_INFO("endpoint: USB (STM32)");

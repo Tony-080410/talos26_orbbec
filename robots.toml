@@ -30,16 +30,16 @@ type = "Hero"
 # 相机内参配置
 camera_matrix = [631.691, 0, 676.572, 0, 615.369, 557.998, 0, 0, 1]
 distort_coefficient = [-0.120895, 0.0494584, -0.0136733, 0.00443922, -0.00887769]
-width = 1440
-height = 1080
+width = 3072
+height = 2048
 
 [robot_hero.camera.profile]
 # HikCamera配置
 trigger_mode = false
 invert_image = true
-exposure_time_us = 3000  # 3ms in microseconds
+exposure_time_us = 15000  # 3ms in microseconds
 gain = 16.7
-
+rotate_angle = "Clockwise270"
 [robot_sentry]
 name = "Sentry"
 type = "Sentry"

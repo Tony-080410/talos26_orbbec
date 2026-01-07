@@ -33,6 +33,8 @@ struct TalosConfig {
     bool daedalus{false};
     CameraConfig camera{};
     AtLegacyConfig at_legacy{};
+    uint16_t imu_vendor_id{0x0483};
+    uint16_t imu_product_id{0};
     L3::L3Config l3{};
     L4::L4Config l4{};
     L5::L5Config l5{};
@@ -48,8 +50,9 @@ struct TalosConfig {
 
     std::expected<void, std::string> read_from(const toml::table& tbl) noexcept {
         READ(tbl, daedalus);
-        READ(tbl, camera);
         READ(tbl, at_legacy);
+        READ_OPT(tbl, imu_vendor_id);
+        READ_OPT(tbl, imu_product_id);
         READ_FLATTEN(tbl, l3);
         READ_FLATTEN(tbl, l4);
         READ_FLATTEN(tbl, l5);

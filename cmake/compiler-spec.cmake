@@ -17,7 +17,7 @@ if (ENABLE_SCCACHE)
 else ()
     message(STATUS "sccache disabled")
 endif ()
-
+add_compile_options(-fPIC)
 # add_compile_options(
 #         -fsanitize=address -fno-omit-frame-pointer
 # )

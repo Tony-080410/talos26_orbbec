@@ -5,6 +5,7 @@
  */
 #pragma once
 
+#include "fcs/camera_config.hpp"
 #include <chrono>
 #include <expected>
 #include <memory>
@@ -37,6 +38,7 @@ public:
             invert_image  = false;
             exposure_time = 10ms;
             gain          = 16.7;
+            rotate_type   = fcs::RotateType::None;
         }
 
         bool trigger_mode;
@@ -44,6 +46,7 @@ public:
 
         std::chrono::duration<float, std::micro> exposure_time;
         float gain;
+        fcs::RotateType rotate_type;
     };
 
     // Factory method for creating ImageCapturer with std::expected

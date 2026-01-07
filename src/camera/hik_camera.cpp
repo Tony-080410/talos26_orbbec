@@ -1,5 +1,8 @@
 #include "camera/hik_camera.hpp"
+#include "CameraParams.h"
+#include "fcs/camera_config.hpp"
 
+#include <cstdlib>
 #include <cstring>
 
 #include <chrono>
@@ -11,6 +14,7 @@
 #include <spdlog/spdlog.h>
 
 #include <MvCameraControl.h>
+#include <opencv2/opencv.hpp>
 
 namespace hikcamera {
 
@@ -79,6 +83,28 @@ public:
         convert_parameter_.pSrcData = stImageInfo.pBufAddr;                 // input data buffer
 
         ret = MV_CC_ConvertPixelType(camera_handle_, &convert_parameter_);
+
+        if (rotate_type_ != fcs::RotateType::None) {
+            try {
+                switch (rotate_type_) {
+                case fcs::RotateType::Clockwise90:
+                    cv::rotate(img, img, cv::ROTATE_90_CLOCKWISE);
+                    break;
+                case fcs::RotateType::Clockwise180: cv::rotate(img, img, cv::ROTATE_180); break;
+                case fcs::RotateType::Clockwise270:
+                    cv::rotate(img, img, cv::ROTATE_90_COUNTERCLOCKWISE);
+                    break;
+                default:
+                    logger_->error("Unsupported rotate type for Hikvision camera.");
+                    MV_CC_FreeImageBuffer(camera_handle_, &stImageInfo);
+                    return std::unexpected(CameraError{"Unsupported rotate type", 0});
+                }
+            } catch (const cv::Exception& e) {
+                logger_->error("OpenCV rotation failed: {}", e.what());
+                MV_CC_FreeImageBuffer(camera_handle_, &stImageInfo);
+                return std::unexpected(CameraError{"OpenCV rotation failed"});
+            }
+        }
         if (ret != MV_OK) {
             logger_->error("Failed to convert pixel type. nRet [{}]", ret);
             MV_CC_FreeImageBuffer(camera_handle_, &stImageInfo);
@@ -119,6 +145,7 @@ public:
     }
 
 private:
+    fcs::RotateType rotate_type_ = fcs::RotateType::None;
 #define SDK_RET_ASSERT(ret, message, error_code)                                          \
     do {                                                                                  \
         if ((ret) != MV_OK) {                                                             \
@@ -211,6 +238,7 @@ private:
     std::expected<void, CameraError> init_camera(
         MV_CC_DEVICE_INFO& device_info, const CameraProfile& profile, const SyncMode& sync_mode) {
         auto pDeviceInfo = &device_info;
+        rotate_type_     = profile.rotate_type;
 
         unsigned int ret;
 

@@ -3,12 +3,12 @@
 #include <toml++/toml.h>
 
 namespace fcs {
-
 std::expected<void, std::string> CameraProfileConfig::read_from(const toml::table& tbl) noexcept {
     READ(tbl, trigger_mode);
     READ(tbl, invert_image);
     READ(tbl, exposure_time_us);
     READ(tbl, gain);
+    READ_OPT(tbl, rotate_angle);
     return {};
 }
 
