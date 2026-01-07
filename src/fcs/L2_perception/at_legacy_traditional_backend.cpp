@@ -156,7 +156,18 @@ cv::Mat AtLegacyTraditionalBackend::preprocess_image(
     cv::subtract(maxc, minc, chroma);
 
     cv::Mat mask;
-    cv::threshold(chroma, mask, cfg.binary_threshold, 255, cv::THRESH_BINARY);
+    // Option A: Dynamically adjust the baseline (recommended for use in competitions)
+    // Calculate the average brightness of the image, and the baseline fluctuates with the
+    // environmental brightness
+    double min_val, max_val;
+    cv::minMaxLoc(chroma, &min_val, &max_val);
+    int dynamic_thresh = static_cast<int>(
+        max_val
+        * cfg.dark_percentage); // Use half of the maximum brightness as the dynamic baseline
+    // Alternatively, use the threshold from the configuration as the lower bound to prevent
+    // misjudgment in completely dark environments
+    dynamic_thresh = std::max(dynamic_thresh, cfg.binary_threshold);
+    cv::threshold(chroma, mask, dynamic_thresh, 255, cv::THRESH_BINARY);
 
     return mask;
 }

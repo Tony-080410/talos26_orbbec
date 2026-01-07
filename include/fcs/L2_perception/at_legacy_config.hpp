@@ -24,6 +24,7 @@ enum class AtLegacyBackendTypeConfig : int {
 
 struct AtLegacyTraditionalConfig {
     bool advanced_binary = false;
+    float dark_percentage{0.5};
     int binary_threshold;
 
     // Light detection parameters
@@ -47,6 +48,7 @@ struct AtLegacyTraditionalConfig {
     bool classifier_use_softmax            = true; // Legacy networks output logits, need softmax
 
     std::expected<void, std::string> read_from(const toml::table& tbl) noexcept {
+        READ(tbl, dark_percentage);
         READ(tbl, binary_threshold);
         READ(tbl, light_min_ratio);
         READ(tbl, light_max_ratio);
