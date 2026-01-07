@@ -132,6 +132,7 @@ target_include_directories(fcs PUBLIC
 target_include_directories(fcs SYSTEM PUBLIC
         ${foxglove_SOURCE_DIR}/include
         ${foxglove_SOURCE_DIR}/include/foxglove
+        3dparty/lieplusplus
 )
 
 message(STATUS "OpenCV libs: ${OpenCV_LIBS}")

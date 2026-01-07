@@ -1,5 +1,6 @@
 #pragma once
 
+#include "inekf_config.hpp"
 #include "motion_model.hpp"
 #include "toml_helper.hpp"
 #include <expected>
@@ -38,9 +39,12 @@ struct TrackerConfig {
     TargetConfig<RobotModel::Params> robot;
     /// Outpost target parameters
     TargetConfig<OutpostModel::Params> outpost;
+    /// InEKF parameters
+    InEKFConfig ineff;
     std::expected<void, std::string> read_from(const toml::table& tbl) noexcept {
         READ(tbl, robot);
         READ(tbl, outpost);
+        READ(tbl, ineff);
         return {};
     }
 };

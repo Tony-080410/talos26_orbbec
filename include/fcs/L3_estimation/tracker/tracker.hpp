@@ -2,14 +2,17 @@
 
 #include "config.hpp"
 #include "data_associator.hpp"
-#include "motion_model.hpp"
-#include "types.hpp"
-
 #include "fcs/core/types.hpp"
+#include "inekf.hpp"
+#include "inekf_config.hpp"
+#include "motion_model.hpp"
+#include "spdlog_hook.hpp"
+#include "types.hpp"
 
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <numbers>
 #include <optional>
 
 namespace fcs::L3 {
@@ -53,6 +56,23 @@ public:
 
         if (outpost_ckf_.has_value()) {
             outpost_ckf_->predict(dt);
+        }
+
+        // InEKF predict (parallel)
+        if (ineff_.has_value() && config_.ineff.enable) {
+            ineff_config_.sigma_a_xy = config_.ineff.sigma_a_xy;
+            ineff_config_.sigma_a_z  = config_.ineff.sigma_a_z;
+            ineff_config_.sigma_w    = config_.ineff.sigma_w;
+            ineff_config_.sigma_yaw  = config_.ineff.sigma_yaw;
+            ineff_config_.sigma_r    = config_.ineff.sigma_r;
+            ineff_config_.sigma_h    = config_.ineff.sigma_h;
+            ineff_config_.sigma_m    = config_.ineff.sigma_m;
+            ineff_config_.radius0    = config_.ineff.radius0;
+            ineff_config_.radius1    = config_.ineff.radius1;
+            ineff_config_.height     = config_.ineff.height;
+            ineff_config_.enable     = config_.ineff.enable;
+            ineff_config_.debug      = config_.ineff.debug;
+            ineff_->predict(dt, ineff_config_);
         }
     }
 
@@ -107,6 +127,7 @@ public:
 
             const auto ypd             = xyz2ypd(meas.transform->translation());
             const double armor_yaw_raw = meas.yaw();
+            const auto& armor_pos_odom = meas.transform->translation();
 
             if (is_outpost) {
                 outpost_model_.armor_id = idx[i];
@@ -127,9 +148,25 @@ public:
                 bool is_another_pair  = (idx[i] == 1 || idx[i] == 3);
                 set_measurement(z, is_another_pair);
                 robot_ckf_->update(z);
+
+                if (ineff_.has_value() && config_.ineff.enable) {
+                    const int armor_id = idx[i];
+                    constexpr double kAngleStep =
+                        2.0 * std::numbers::pi / static_cast<double>(RobotModel::ARMORS_NUM);
+                    const double yaw_offset = static_cast<double>(armor_id) * kAngleStep;
+
+                    // Use direct armor yaw measurement to update target yaw.
+                    if (std::isfinite(armor_yaw_raw)) {
+                        const double armor_yaw_pred  = ineff_->get_yaw() + yaw_offset;
+                        const double armor_yaw_meas  = unwrap_rad(armor_yaw_pred, armor_yaw_raw);
+                        const double target_yaw_meas = armor_yaw_meas - yaw_offset;
+                        ineff_->update_yaw(target_yaw_meas, ineff_config_);
+                    }
+
+                    ineff_->update_armor(armor_pos_odom, armor_id, ineff_config_);
+                }
             }
         }
-
         return true;
     }
 
@@ -168,6 +205,7 @@ public:
         // Reset existing filters
         robot_ckf_.reset();
         outpost_ckf_.reset();
+        ineff_.reset();
 
         constexpr double v0 = 0.0;
 
@@ -195,6 +233,25 @@ public:
             lost_threshold     = config_.robot.lost_threshold;
             tracking_threshold = config_.robot.tracking_threshold;
             matcher_gate       = config_.robot.matcher_gate;
+
+            // Initialize InEKF (parallel filter)
+            if (config_.ineff.enable) {
+                ineff_.emplace();
+                ineff_config_.sigma_a_xy = config_.ineff.sigma_a_xy;
+                ineff_config_.sigma_a_z  = config_.ineff.sigma_a_z;
+                ineff_config_.sigma_w    = config_.ineff.sigma_w;
+                ineff_config_.sigma_yaw  = config_.ineff.sigma_yaw;
+                ineff_config_.sigma_r    = config_.ineff.sigma_r;
+                ineff_config_.sigma_h    = config_.ineff.sigma_h;
+                ineff_config_.sigma_m    = config_.ineff.sigma_m;
+                ineff_config_.radius0    = config_.ineff.radius0;
+                ineff_config_.radius1    = config_.ineff.radius1;
+                ineff_config_.height     = config_.ineff.height;
+                ineff_config_.enable     = config_.ineff.enable;
+                ineff_config_.debug      = config_.ineff.debug;
+
+                ineff_->init(Eigen::Vector3d{x0, y0, z0}, armor_yaw, ineff_config_);
+            }
         }
 
         state_machine(true);
@@ -208,6 +265,11 @@ public:
         output.target_name = target_name_;
 
         if (robot_ckf_) {
+            if (ineff_) {
+                auto state   = ineff_->get_robot_state();
+                output.state = state;
+                return output;
+            }
             const auto& x = robot_ckf_->x();
             RobotTargetState state;
             state.position   = {x[XC], x[YC], x[Z0]};
@@ -232,10 +294,42 @@ public:
         return output;
     }
 
+    /// Get comparison output between InEKF and ISRCKF
+    /// Useful for analysis and debugging
+    [[nodiscard]] TrackerComparison get_comparison_output() const noexcept {
+        TrackerComparison comparison;
+
+        // ISRCKF output
+        if (robot_ckf_) {
+            const auto& x              = robot_ckf_->x();
+            comparison.isrckf.active   = true;
+            comparison.isrckf.position = {x[XC], x[YC], x[Z0]};
+            comparison.isrckf.velocity = {x[VX], x[VY], x[VZ]};
+            comparison.isrckf.yaw      = x[YAW];
+            comparison.isrckf.v_yaw    = x[V_YAW];
+            // Covariance from robot_ckf_ would need to be added if available
+        } else if (outpost_ckf_) {
+            const auto& x              = outpost_ckf_->x();
+            comparison.isrckf.active   = true;
+            comparison.isrckf.position = {x[O_XC], x[O_YC], 0};
+            comparison.isrckf.velocity = {0, 0, 0};
+            comparison.isrckf.yaw      = x[O_YAW];
+            comparison.isrckf.v_yaw    = x[O_VYAW];
+        }
+
+        // InEKF output
+        if (ineff_.has_value() && ineff_->is_initialized()) {
+            comparison.inekf = ineff_->get_filter_output();
+        }
+
+        return comparison;
+    }
+
     /// Reset tracker to IDLE state
     void reset() noexcept {
         robot_ckf_.reset();
         outpost_ckf_.reset();
+        ineff_.reset();
         target_name_ = ArmorName::Invalid;
         measurement_.fill(0.0);
         detecting_count_   = 0;
@@ -266,6 +360,8 @@ private:
     // Filters
     std::optional<RoboCKF> robot_ckf_;
     std::optional<OutpostCKF> outpost_ckf_;
+    std::optional<InEKF> ineff_; // InEKF
+    InEKFConfig ineff_config_;   // InEKF configuration
 
     // Models
     RobotModel robot_model_;

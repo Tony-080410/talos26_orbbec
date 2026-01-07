@@ -74,6 +74,19 @@ sigma_a_yaw = 20.0
 sigma_r0 = 1.0
 sigma_h = 0.5
 
+[tracker.ineff]
+sigma_a_xy = 10.0
+sigma_a_z = 1.0
+sigma_w = 0.25
+sigma_m = 0.5
+enable = true
+sigma_yaw = 20.0
+radius0 = 0.23
+radius1 = 0.23
+height = 0.0
+debug = true
+sigma_r = 0.3
+sigma_h = 0.01
 
 [tracker.outpost]
 matcher_gate = 5.0

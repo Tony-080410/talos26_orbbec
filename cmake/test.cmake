@@ -119,6 +119,24 @@ target_link_libraries(scheduler_ecs_test PRIVATE
 
 add_test(NAME SchedulerEcsTest COMMAND scheduler_ecs_test)
 
+# InEKF tests
+add_executable(inekf_test
+    tests/unit/inekf_test.cpp
+)
+
+target_include_directories(inekf_test PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    3dparty/lieplusplus
+)
+
+target_link_libraries(inekf_test PRIVATE
+    GTest::gtest_main
+    fcs
+    Eigen3::Eigen
+)
+
+add_test(NAME InEKFTest COMMAND inekf_test)
+
 if (ENABLE_COVERAGE)
     message(STATUS "Coverage enabled for FCS tests")
 endif ()
