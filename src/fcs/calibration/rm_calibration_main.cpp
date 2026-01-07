@@ -15,6 +15,7 @@
 #include "fcs/calibration/chessboard_detector.hpp"
 #include "fcs/calibration/handeye_calibrator.hpp"
 #include "fcs/calibration/intrinsic_calibrator.hpp"
+#include "shm_region.hpp"
 #include "spdlog_hook.hpp"
 
 #include "auto_aim/config.hpp"
@@ -204,9 +205,7 @@ int main(int argc, char* argv[]) {
         // Create IPC input interface
         auto input_result = fcs::L1::InputInterface::create_ipc(ipc_device);
         if (!input_result) {
-            SPDLOG_ERROR(
-                "Failed to create IPC input (error variant index: {})",
-                input_result.error().index());
+            SPDLOG_ERROR("create IPC input: {}", fcs::L1::to_string(input_result.error()));
             return 1;
         }
         input = std::move(*input_result);
@@ -228,9 +227,7 @@ int main(int argc, char* argv[]) {
         camera_config.height = 1080;
         auto input_result    = fcs::L1::InputInterface::create_hik({}, camera_config);
         if (!input_result) {
-            SPDLOG_ERROR(
-                "Failed to create camera input (error variant index: {})",
-                input_result.error().index());
+            SPDLOG_ERROR("create camera input: {}", fcs::L1::to_string(input_result.error()));
             return 1;
         }
         input = std::move(*input_result);

@@ -43,6 +43,7 @@ target_link_libraries(rm_calibration PRIVATE
     spdlog::spdlog
     ${LIBUSB_LINK_LIBRARIES}
     ${foxglove_SOURCE_DIR}/lib/libfoxglove.a
+    fast_tf
     "$<$<PLATFORM_ID:Darwin>:-framework Security>"
     "$<$<PLATFORM_ID:Darwin>:-framework CoreFoundation>"
     "$<$<PLATFORM_ID:Darwin>:-framework SystemConfiguration>"
