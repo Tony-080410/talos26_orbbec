@@ -1,4 +1,3 @@
-#include "scheduler/bevy_ecs.hpp"
 #include "scheduler/scheduler/scheduler.hpp"
 
 #include <atomic>
