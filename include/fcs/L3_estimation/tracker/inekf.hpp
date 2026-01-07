@@ -10,7 +10,7 @@
 
 namespace fcs::L3 {
 
-/// InEKF (Invariant Extended Kalman Filter) on SE₂(₃) × ℝ⁴ product group
+/// InEKF (Invariant Extended Kalman Filter) on SE₂(₃) × ℝ⁴ for ground vehicle tracking
 ///
 /// **Mathematical Foundation:**
 ///
@@ -18,31 +18,40 @@ namespace fcs::L3 {
 ///   - SE₂(₃) = (R, v, p) where R∈SO(3), v∈ℝ³, p∈ℝ³
 ///   - ℝ⁴ = [v_yaw, r₀, r₁, h]ᵀ (augmented Euclidean states)
 ///
-/// **Right-Invariant Error Definition:**
-///   η_R = X · X̂⁻¹ ∈ SE₂(₃) × ℝ⁴
-/// where X is the true state and X̂ is the estimated state.
+/// **Error-State Definition (left-invariant, right-multiplicative):**
+///   X = X̂ ⊕ e = X̂ · Exp(e)
+/// where e = [e_θ, e_v, e_p, e_vyaw, e_r0, e_r1, e_h]ᵀ is the error state.
+///
+/// **Retraction (yaw-only in production):**
+///   R = R̂ · exp(e_θ)
+///   v = v̂ + R̂ · J_l(e_θ) · e_v
+///   p = p̂ + R̂ · J_l(e_θ) · e_p
+///
+/// where J_r(y) = I - (1-cos||y||)/||y||² · S(y) + (||y||-sin||y||)/||y||³ · S(y)²
 ///
 /// **Invariant Output Error (for measurement y = R·b + p):**
-///   E = X̂⁻¹ · y - b = R̂ᵀ(y - p̂) - b
+///   r = X̂⁻¹ · y - b = R̂ᵀ(y - p̂) - b
 ///
 /// **Key Properties:**
-///   - Error dynamics are LINEAR in η coordinates: ξ̇ = A·ξ (no higher-order terms)
+///   - Error dynamics are LINEAR in error coordinates: ξ̇ = A·ξ (no higher-order terms)
+///   - J_r correction in retraction preserves group structure
 ///   - Gain matrices converge to constants on permanent trajectories
 ///   - Better consistency and convergence than standard EKF
 ///
 /// **Filter Equations:**
 ///   Predict:  X̂_{k|k-1} = φ(X̂_{k-1|k-1})
-///   Update:   X̂_{k|k} = X̂_{k|k-1} · exp(K_k · E_k)  (right multiplication)
+///   Update:   X̂_{k|k} = X̂_{k|k-1} ⊕ (K_k · E_k)  (RIEKF retraction with J_r)
 ///
 /// **State Constraints:**
 ///   - Rotation is constrained to yaw-only (z-axis rotation)
+///   - Pitch and roll are enforced to zero after each update
 ///   - Geometry parameters: r₀, r₁ ∈ [0.17, 0.27], h ∈ [-0.2, 0.2]
 ///
 /// **References:**
+///   - Wu et al., "An Invariant-EKF VINS Algorithm for Improving Consistency",
+///     IROS 2017 (arXiv:1702.07920v2)
 ///   - Barrau & Bonnabel, "The invariant extended Kalman filter as a stable observer",
 ///     IEEE TAC, 2016
-///   - Bonnabel, "Left-invariant extended Kalman filter and attitude estimation",
-///     IEEE CDC, 2007
 class InEKF {
 public:
     using SE23d                    = group::SEn3<double, 2>;
@@ -143,32 +152,30 @@ public:
         X_   = SE23d(Rn, t);
 
         // ---------------------------------------------------------------------
-        // Covariance propagation in Lie algebra of the right-invariant error ξ
-        // ξ = [δθ, δv, δp], with η = X · X̂⁻¹
-        // Error dynamics: ξ̇ = +ad_ω · ξ + ..., where ad_ω·ξ = [ω]× · ξ
+        // Covariance propagation in Lie algebra of the left-invariant error ξ
+        // ξ = [δθ, δv, δp], with η = X̂⁻¹ · X
         // For z-axis only: ω = [0, 0, v_yaw]ᵀ
-        //   δ̇θ_x = -ω_z · δθ_y,  δ̇θ_y = +ω_z · δθ_x,  δ̇θ_z = δv_yaw
-        //   δ̇v_x = -ω_z · δv_y,   δ̇v_y = +ω_z · δv_x,   δ̇v_z = 0
-        //   δ̇p_x = -ω_z · δp_y + δv_x,  δ̇p_y = +ω_z · δp_x + δv_y,  δ̇p_z = δv_z
+        //   δ̇θ = -ω×δθ + [0,0,δv_yaw]ᵀ
+        //   δ̇v = -ω×δv
+        //   δ̇p = -ω×δp + δv
         // ---------------------------------------------------------------------
         MatX Phi                = MatX::Identity();
         const double vyaw       = std::isfinite(v_yaw_) ? v_yaw_ : 0.0;
         const double omega_z_dt = vyaw * dt;
 
-        // Adjoint operator ad_ω for z-axis rotation (proper Lie algebra coupling)
-        // δ̇θ_x = -ω_z * δθ_y  =>  Φ(0,1) = -ω_z*dt
-        // δ̇θ_y = +ω_z * δθ_x  =>  Φ(1,0) = +ω_z*dt
-        // δ̇θ_z = 0 (no coupling)
-        Phi(0, 1) = -omega_z_dt; // δθ̇_x -= ω_z * δθ_y
-        Phi(1, 0) = omega_z_dt;  // δθ̇_y += ω_z * δθ_x
+        // -ω× coupling for z-axis rotation
+        // δ̇θ_x = +ω_z * δθ_y  =>  Φ(0,1) = +ω_z*dt
+        // δ̇θ_y = -ω_z * δθ_x  =>  Φ(1,0) = -ω_z*dt
+        Phi(0, 1) = omega_z_dt;  // δθ̇_x += ω_z * δθ_y
+        Phi(1, 0) = -omega_z_dt; // δθ̇_y -= ω_z * δθ_x
 
         // Same for velocity
-        Phi(3, 4) = -omega_z_dt; // δv̇_x -= ω_z * δv_y
-        Phi(4, 3) = omega_z_dt;  // δv̇_y += ω_z * δv_x
+        Phi(3, 4) = omega_z_dt;  // δv̇_x += ω_z * δv_y
+        Phi(4, 3) = -omega_z_dt; // δv̇_y -= ω_z * δv_x
 
         // Same for position (plus velocity coupling below)
-        Phi(6, 7) = -omega_z_dt; // δṗ_x -= ω_z * δp_y
-        Phi(7, 6) = omega_z_dt;  // δṗ_y += ω_z * δp_x
+        Phi(6, 7) = omega_z_dt;  // δṗ_x += ω_z * δp_y
+        Phi(7, 6) = -omega_z_dt; // δṗ_y -= ω_z * δp_x
 
         // Position-velocity coupling (CV model)
         Phi.block<3, 3>(6, 3) = Mat3::Identity() * dt; // δṗ += δv
@@ -203,11 +210,10 @@ public:
         const Vec3 y_body = X_.R().transpose() * (y - X_.p());
         const Vec3 r      = y_body - b;
 
-        // Linearized measurement model for right-invariant error:
-        //   E = R̂ᵀ(y - p̂) - b ≈ +[R̂·b]× · δθ + δp (positive sign for right-invariant)
-        // For b aligned with target x-axis in rotated frame
+        // Linearized model for left-invariant error (η = X̂⁻¹X, X = X̂·Exp(e)):
+        //   r = R̂ᵀ(y - p̂) - b ≈ δθ×b + δp = -[b]×·δθ + δp
         Mat3xX C            = Mat3xX::Zero();
-        C.block<3, 3>(0, 0) = skew(b); // Rotation coupling (positive for right-invariant)
+        C.block<3, 3>(0, 0) = -skew(b); // Rotation coupling
         C.block<3, 3>(0, 6) = Mat3::Identity();
 
         const Mat3 Rm = Mat3::Identity() * (config.sigma_m * config.sigma_m);
@@ -224,8 +230,12 @@ public:
         delta(0)         = 0.0;
         delta(1)         = 0.0;
 
-        X_ = X_ * SE23d::exp(delta.template head<9>());
-        project_rotation_to_yaw_only();
+        // Retraction: X = X̂ · Exp(e), with yaw-only constraint (e_θx=e_θy=0).
+        Vec9 xi                   = Vec9::Zero();
+        xi(2)                     = delta(2);
+        xi.template segment<3>(3) = delta.template segment<3>(3);
+        xi.template segment<3>(6) = delta.template segment<3>(6);
+        X_                        = X_ * SE23d::exp(xi);
         v_yaw_ += delta(kIdxVYaw);
         r0_ += delta(kIdxR0);
         r1_ += delta(kIdxR1);
@@ -274,17 +284,18 @@ public:
         const Vec3 r      = y_body - b;
 
         Mat3xX C            = Mat3xX::Zero();
-        C.block<3, 3>(0, 0) = skew(b); // Rotation coupling (positive for right-invariant)
+        C.block<3, 3>(0, 0) = -skew(b); // Rotation coupling
         C.block<3, 3>(0, 6) = Mat3::Identity();
 
-        // Geometry derivatives: E = ... - b, so ∂E/∂r = -∂b/∂r, ∂E/∂h = -∂b/∂h
+        // Geometry derivatives (treat radius/height as Euclidean error-states):
+        // y = p + R·b(r,h)  =>  r = R̂ᵀ(y - p̂) - b̂ ≈ ... + (∂b/∂r)·δr + (∂b/∂h)·δh
         const Vec3 db_dr = (R_id * Vec3{-1.0, 0.0, 0.0}).eval();
         const Vec3 db_dh = (R_id * Vec3{0.0, 0.0, 1.0}).eval(); // base direction
         if (is_high) {
-            C.block<3, 1>(0, kIdxR1) = db_dr;                   // ∂E/∂r₁
-            C.block<3, 1>(0, kIdxH)  = db_dh;                   // ∂E/∂h
+            C.block<3, 1>(0, kIdxR1) = db_dr;                   // ∂r/∂r₁
+            C.block<3, 1>(0, kIdxH)  = db_dh;                   // ∂r/∂h
         } else {
-            C.block<3, 1>(0, kIdxR0) = db_dr;                   // ∂E/∂r₀
+            C.block<3, 1>(0, kIdxR0) = db_dr;                   // ∂r/∂r₀
         }
 
         const Mat3 Rm = Mat3::Identity() * (config.sigma_m * config.sigma_m);
@@ -301,8 +312,13 @@ public:
         delta(0)         = 0.0;
         delta(1)         = 0.0;
 
-        X_ = X_ * SE23d::exp(delta.template head<9>());
-        project_rotation_to_yaw_only();
+        // Retraction: X = X̂ · Exp(e), with yaw-only constraint (e_θx=e_θy=0).
+        Vec9 xi                   = Vec9::Zero();
+        xi(2)                     = delta(2);
+        xi.template segment<3>(3) = delta.template segment<3>(3);
+        xi.template segment<3>(6) = delta.template segment<3>(6);
+        X_                        = X_ * SE23d::exp(xi);
+
         v_yaw_ += delta(kIdxVYaw);
         r0_ += delta(kIdxR0);
         r1_ += delta(kIdxR1);
@@ -316,6 +332,9 @@ public:
         P_              = I_KC * P_ * I_KC.transpose() + K * Rm * K.transpose();
         symmetrize_in_place(P_);
         sanitize_covariance_in_place(P_);
+
+        // Synchronize covariance with enforced roll/pitch = 0 constraint
+        zero_out_roll_pitch_covariance_in_place();
     }
 
     /// Update yaw (about +Z) using direct yaw measurement
@@ -349,8 +368,13 @@ public:
         delta(0)     = 0.0;
         delta(1)     = 0.0;
 
-        X_ = X_ * SE23d::exp(delta.template head<9>());
-        project_rotation_to_yaw_only();
+        // Retraction: X = X̂ · Exp(e), with yaw-only constraint (e_θx=e_θy=0).
+        Vec9 xi                   = Vec9::Zero();
+        xi(2)                     = delta(2);
+        xi.template segment<3>(3) = delta.template segment<3>(3);
+        xi.template segment<3>(6) = delta.template segment<3>(6);
+        X_                        = X_ * SE23d::exp(xi);
+
         v_yaw_ += delta(kIdxVYaw);
         r0_ += delta(kIdxR0);
         r1_ += delta(kIdxR1);
@@ -446,6 +470,33 @@ private:
         Mat3 s;
         s << 0, -v(2), v(1), v(2), 0, -v(0), -v(1), v(0), 0;
         return s;
+    }
+
+    /// Right Jacobian of SO(3) exponential map
+    /// Jr(y) = I - (1-cos||y||)/||y||² · S(y) + (||y||-sin||y||)/||y||³ · S(y)²
+    /// Used in RIEKF retraction: v_new = exp(e_θ) · v̂ + Jr(-e_θ) · e_v
+    static Mat3 Jr(const Vec3& y) noexcept {
+        const double norm_y = y.norm();
+        if (norm_y < 1e-12) {
+            return Mat3::Identity();
+        }
+        const Mat3 S_y = skew(y);
+        const double a = (1.0 - std::cos(norm_y)) / (norm_y * norm_y);
+        const double b = (norm_y - std::sin(norm_y)) / (norm_y * norm_y * norm_y);
+        return Mat3::Identity() - a * S_y + b * S_y * S_y;
+    }
+
+    /// Left Jacobian of SO(3) exponential map
+    /// Jl(y) = I + (1-cos||y||)/||y||² · S(y) + (||y||-sin||y||)/||y||³ · S(y)²
+    static Mat3 Jl(const Vec3& y) noexcept {
+        const double norm_y = y.norm();
+        if (norm_y < 1e-12) {
+            return Mat3::Identity();
+        }
+        const Mat3 S_y = skew(y);
+        const double a = (1.0 - std::cos(norm_y)) / (norm_y * norm_y);
+        const double b = (norm_y - std::sin(norm_y)) / (norm_y * norm_y * norm_y);
+        return Mat3::Identity() + a * S_y + b * S_y * S_y;
     }
 
     [[nodiscard]] static bool all_finite(const Vec3& v) noexcept {
