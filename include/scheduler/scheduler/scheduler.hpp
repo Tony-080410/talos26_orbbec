@@ -1,5 +1,34 @@
 #pragma once
 
+/**
+ * @file
+ * @brief Scheduler for data-driven task execution
+ *
+ * This module provides a scheduler that manages exclusive (single-threaded)
+ * and compute (thread-pool) systems with dependency-aware execution.
+ *
+ * ## Architecture
+ *
+ * - **Exclusive systems**: Run on dedicated threads, can notify the scheduler
+ * - **Compute systems**: Run on TBB thread pool, triggered by notifications
+ * - **Dependency graph**: Built from channel connections, enables selective wakeup
+ *
+ * ## Execution model
+ *
+ * 1. Exclusive systems run on their own threads
+ * 2. When an exclusive system notifies, it triggers dependent compute systems
+ * 3. Compute systems run in topological order (levels)
+ * 4. TBB arena manages thread pool concurrency
+ *
+ * ## Build errors
+ *
+ * The scheduler validates the system graph during `build()`:
+ * - Single writer per channel (SPSC) / multiple writers allowed (SPMC)
+ * - No cycles in dependency graph
+ * - Orphaned readers detected
+ * - Max 32 compute systems for bitmask scheduling
+ */
+
 #include "ecs/execution_policy.hpp"
 #include "ecs/system.hpp"
 #include "ecs/world.hpp"
@@ -23,12 +52,22 @@ namespace talos {
 // Runtime Errors (simple enum for lifecycle operations)
 // ============================================================================
 
+/**
+ * @brief Scheduler lifecycle errors
+ */
 enum class SchedulerError {
-    AlreadyBuilt,
-    AlreadyRunning,
-    NotBuilt,
+    AlreadyBuilt,   ///< Scheduler was already built
+    AlreadyRunning, ///< Scheduler is already running
+    NotBuilt,       ///< Scheduler was not built before run
 };
 
+/**
+ * @brief Convert SchedulerError to human-readable string
+ *
+ * ## Returns
+ *
+ * C-string describing the error
+ */
 [[nodiscard]] constexpr auto to_string(const SchedulerError e) noexcept -> const char* {
     switch (e) {
     case SchedulerError::AlreadyBuilt: return "Scheduler already built";
@@ -42,64 +81,103 @@ enum class SchedulerError {
 // Build Errors (detailed variant for dependency analysis)
 // ============================================================================
 
-/// Channel identifier for error reporting
+/**
+ * @brief Channel identifier for error reporting
+ *
+ * Combines data type and tag to uniquely identify a channel.
+ */
 struct ChannelKeyInfo {
     std::type_index type;
     std::type_index tag;
     bool is_spsc;
 
+    /**
+     * @brief Construct a ChannelKeyInfo
+     *
+     * ## Parameters
+     *
+     * - `t`: data type index
+     * - `tg`: tag type index
+     * - `spsc`: true if SPSC channel, false if SPMC
+     */
     ChannelKeyInfo(const std::type_index t, const std::type_index tg, const bool spsc)
         : type(t)
         , tag(tg)
         , is_spsc(spsc) {}
 };
 
-/// Same channel key used for both SPSC and SPMC
+/**
+ * @brief Same channel key used for both SPSC and SPMC
+ */
 struct ChannelKindConflict {
     ChannelKeyInfo key;
     std::string first_system;
     std::string second_system;
 };
 
-/// SPSC or SPMC channel has multiple writers
+/**
+ * @brief SPSC or SPMC channel has multiple writers
+ */
 struct MultipleWritersError {
     ChannelKeyInfo key;
     std::vector<std::string> writers;
 };
 
-/// SPSC channel has multiple readers
+/**
+ * @brief SPSC channel has multiple readers
+ */
 struct MultipleReadersError {
     ChannelKeyInfo key;
     std::vector<std::string> readers;
 };
 
-/// Reader without a corresponding writer
+/**
+ * @brief Reader without a corresponding writer
+ */
 struct OrphanedReaderError {
     ChannelKeyInfo key;
     std::vector<std::string> readers;
 };
 
-/// Dependency cycle detected in the graph
+/**
+ * @brief Dependency cycle detected in the graph
+ */
 struct DependencyCycleError {
     std::vector<std::string> cycle;
 };
 
-/// Too many compute systems (max 32 for efficient bitmask scheduling)
+/**
+ * @brief Too many compute systems (max 32 for efficient bitmask scheduling)
+ */
 struct TooManyComputeSystemsError {
     std::size_t count;
     static constexpr std::size_t max_count = 32;
 };
 
-/// All possible build errors
+/**
+ * @brief All possible build errors
+ */
 using BuildError = std::variant<
     SchedulerError, // Runtime/lifecycle errors (AlreadyBuilt, etc.)
     ChannelKindConflict, MultipleWritersError, MultipleReadersError, OrphanedReaderError,
     DependencyCycleError, TooManyComputeSystemsError>;
 
-/// Build result type
+/**
+ * @brief Build result type
+ */
 using BuildResult = std::expected<void, BuildError>;
 
-/// Format BuildError to string for debugging
+/**
+ * @brief Format BuildError to string for debugging
+ *
+ * ## Parameters
+ *
+ * - `err`: the build error to format
+ *
+ * ## Returns
+ *
+ * Human-readable error description
+ */
 [[nodiscard]] inline auto format_build_error(const BuildError& err) -> std::string {
     return std::visit(
         [](const auto& e) -> std::string {
@@ -154,8 +232,19 @@ using BuildResult = std::expected<void, BuildError>;
 // Configuration
 // ============================================================================
 
+/**
+ * @brief Scheduler configuration
+ */
 struct SchedulerConfig {
-    /// TBB arena concurrency, 0 = hardware concurrency
+    /**
+     * @brief TBB arena concurrency
+     *
+     * Number of threads in the compute pool. 0 = hardware concurrency.
+     *
+     * ## Default
+     *
+     * 0 (use all available cores)
+     */
     std::size_t compute_concurrency = 0;
 };
 
@@ -163,6 +252,9 @@ struct SchedulerConfig {
 // System Entry
 // ============================================================================
 
+/**
+ * @brief Internal storage for a registered system
+ */
 struct SystemEntry {
     std::unique_ptr<SystemBase> system;
     PolicyInfo policy;
@@ -172,12 +264,51 @@ struct SystemEntry {
 // Scheduler
 // ============================================================================
 
+/**
+ * @brief Main scheduler for data-driven task execution
+ *
+ * The scheduler manages exclusive systems (single-threaded, dedicated threads)
+ * and compute systems (thread-pool based) with dependency-aware execution.
+ *
+ * ## Usage
+ *
+ * ```cpp
+ * World world;
+ * Scheduler scheduler(world);
+ *
+ * scheduler.add_system<exclusive<30>>("camera", [](talos::spmc_mut<fcs::AtLegacyImageFrame,
+ * fcs::AtLegacyImageChannelTag> cam_out) {
+ *     // Process camera input, write to channel
+ *     cam_out.write(...);
+ * });
+ *
+ * auto result = scheduler.build();
+ * if (!result) {
+ *     // Handle build error
+ * }
+ *
+ * scheduler.run();  // Blocks until stop() is called
+ * ```
+ *
+ * ## Thread safety
+ *
+ * The scheduler is not thread-safe after construction. Configure and build
+ * in a single-threaded context before calling `run()`.
+ */
 class Scheduler {
 public:
     using Clock     = std::chrono::steady_clock;
     using TimePoint = Clock::time_point;
     using Duration  = Clock::duration;
 
+    /**
+     * @brief Construct a scheduler
+     *
+     * ## Parameters
+     *
+     * - `world`: the ECS world containing resources and channels
+     * - `config`: optional scheduler configuration
+     */
     explicit Scheduler(World& world, SchedulerConfig config = {});
     ~Scheduler();
 
@@ -190,6 +321,22 @@ public:
     // System Registration
     // ========================================================================
 
+    /**
+     * @brief Add a system to the scheduler
+     *
+     * Systems are analyzed at build time to extract channel dependencies
+     * and determine the execution policy.
+     *
+     * ## Template parameters
+     *
+     * - `Policy`: execution policy (exclusive, exclusive_silent, pool_compute)
+     * - `F`: callable type for the system function
+     *
+     * ## Parameters
+     *
+     * - `name`: human-readable system name (for debugging)
+     * - `func`: the system function to execute
+     */
     template <typename Policy = default_policy, typename F>
     auto add_system(std::string name, F&& func) -> void;
 
@@ -197,42 +344,118 @@ public:
     // Lifecycle
     // ========================================================================
 
-    /// Build dependency graph and prepare for execution
+    /**
+     * @brief Build dependency graph and prepare for execution
+     *
+     * Validates the system graph:
+     * - No dependency cycles
+     * - Channel constraints (SPSC single writer, etc.)
+     * - Orphaned readers detected
+     *
+     * ## Returns
+     *
+     * `std::expected<void, BuildError>` - success or detailed error
+     *
+     * ## Thread safety
+     *
+     * Must be called from a single thread before `run()`.
+     */
     [[nodiscard]] auto build() -> BuildResult;
 
-    /// Start scheduler, blocks until stop() is called
+    /**
+     * @brief Start scheduler, blocks until stop() is called
+     *
+     * Launches exclusive system threads and enters the compute loop.
+     *
+     * ## Returns
+     *
+     * `std::expected<void, SchedulerError>` - success or lifecycle error
+     *
+     * ## Panics
+     *
+     * Panics if called without a prior successful `build()`.
+     */
     [[nodiscard]] auto run() -> std::expected<void, SchedulerError>;
 
-    /// Request graceful shutdown
+    /**
+     * @brief Request graceful shutdown
+     *
+     * Sets the running flag to false. Exclusive threads will exit
+     * after their current tick completes.
+     */
     void stop() noexcept;
 
-    /// Check if running
+    /**
+     * @brief Check if running
+     *
+     * ## Returns
+     *
+     * `true` if the scheduler is currently running
+     */
     [[nodiscard]] auto is_running() const noexcept -> bool;
 
     // ========================================================================
     // Notification (called by exclusive threads)
     // ========================================================================
 
+    /**
+     * @brief Notify scheduler that a system has produced data
+     *
+     * Called by exclusive systems to trigger dependent compute systems.
+     * The notification uses a bitmask for efficient selective wakeup.
+     *
+     * ## Parameters
+     *
+     * - `system_index`: index of the exclusive system in exclusive_systems_
+     *
+     * ## Thread safety
+     *
+     * Safe to call from any exclusive system thread.
+     */
     void notify(std::size_t system_index) noexcept;
 
     // ========================================================================
     // Diagnostics
     // ========================================================================
 
+    /**
+     * @brief Runtime statistics
+     */
     struct Stats {
-        std::uint64_t notify_count        = 0;
-        std::uint64_t compute_cycle_count = 0;
+        std::uint64_t notify_count        = 0; ///< Total notifications received
+        std::uint64_t compute_cycle_count = 0; ///< Total compute cycles executed
     };
 
+    /**
+     * @brief Get runtime statistics
+     *
+     * ## Returns
+     *
+     * Current scheduler statistics
+     */
     [[nodiscard]] auto stats() const noexcept -> Stats;
 
-    /// Print registered systems info
+    /**
+     * @brief Print registered systems info
+     *
+     * Outputs system names, policies, and channel counts to stdout.
+     */
     void print_systems() const;
 
-    /// Print performance statistics
+    /**
+     * @brief Print performance statistics
+     *
+     * Outputs latency histograms and throughput metrics to stdout.
+     */
     void print_stats() const;
 
-    /// Get performance statistics as JSON string
+    /**
+     * @brief Get performance statistics as JSON string
+     *
+     * ## Returns
+     *
+     * JSON-formatted statistics string
+     */
     [[nodiscard]] std::string get_stats_json() const;
 
 private:
@@ -249,7 +472,9 @@ private:
         std::size_t system_index;
     };
 
-    /// Performance statistics for exclusive systems
+    /**
+     * @brief Performance statistics for exclusive systems
+     */
     struct ExclusiveStats {
         std::atomic<std::uint64_t> notify_count{0};
         LatencyHistogram latency_hist;
@@ -266,7 +491,9 @@ private:
         ExclusiveStats& operator=(ExclusiveStats&&)      = delete;
     };
 
-    /// Performance statistics for compute systems
+    /**
+     * @brief Performance statistics for compute systems
+     */
     struct ComputeStats {
         LatencyHistogram latency_hist;
 
@@ -313,9 +540,9 @@ private:
     std::atomic<bool> running_{false};
 
     // Selective notification: wake chains for all systems
-    std::vector<std::uint32_t> exclusive_affects_; // [exclusive_idx] → bitmask of compute systems
+    std::vector<std::uint32_t> exclusive_affects_; // [exclusive_idx] -> bitmask of compute systems
     std::vector<std::uint32_t>
-        compute_affects_; // [compute_idx] → bitmask of dependent compute systems
+        compute_affects_; // [compute_idx] -> bitmask of dependent compute systems
     std::atomic<std::uint32_t> ready_systems_{0}; // Bitmask of compute systems pending execution
 
     // Stats

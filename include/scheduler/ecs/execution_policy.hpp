@@ -1,5 +1,28 @@
 #pragma once
 
+/**
+ * @file
+ * @brief Execution policies for systems
+ *
+ * This module defines policies that specify how systems are executed:
+ * - **Exclusive**: Runs on a dedicated thread (single-producer)
+ * - **Pool compute**: Runs on the TBB thread pool (multi-consumer)
+ *
+ * ## Usage
+ *
+ * ```cpp
+ * // Camera: exclusive, runs at 30Hz, pinned to core 0
+ * scheduler.add_system<exclusive<30, 0, 0>>("camera", [](auto input, auto output) {
+ *     // ...
+ * });
+ *
+ * // Tracker: pool compute (default)
+ * scheduler.add_system("tracker", [](auto input, auto output) {
+ *     // ...
+ * });
+ * ```
+ */
+
 #include <cstdint>
 #include <type_traits>
 
@@ -9,12 +32,26 @@ namespace talos {
 // Execution Policy Tags
 // ============================================================================
 
-/// Exclusive with notify: dedicated thread, notifies scheduler after each tick
-/// Use for: data sources that should trigger compute (e.g., Camera)
-///
-/// @tparam FreqHz      Execution frequency in Hz, 0 = run as fast as possible
-/// @tparam Affinity    CPU core affinity, -1 = no binding
-/// @tparam Priority    Thread priority, 0 = default
+/**
+ * @brief Exclusive with notify: dedicated thread, notifies scheduler after each tick
+ *
+ * Use for: data sources that should trigger compute (e.g., Camera)
+ *
+ * ## Template parameters
+ *
+ * - `FreqHz`: Execution frequency in Hz, 0 = run as fast as possible
+ * - `Affinity`: CPU core affinity, -1 = no binding
+ * - `Priority`: Thread priority, 0 = default
+ *
+ * ## Example
+ *
+ * ```cpp
+ * // 30Hz camera, pinned to core 0, normal priority
+ * add_system<exclusive<30, 0, 0>>("camera", [](auto in, auto out) {
+ *     // ...
+ * });
+ * ```
+ */
 template <std::uint32_t FreqHz = 0, std::int32_t Affinity = -1, std::int32_t Priority = 0>
 struct exclusive {
     static constexpr std::uint32_t frequency_hz   = FreqHz;
@@ -23,12 +60,26 @@ struct exclusive {
     static constexpr bool notifies                = true;
 };
 
-/// Exclusive silent: dedicated thread, does NOT notify scheduler
-/// Use for: high-frequency data sources (e.g., IMU) that update silently
-///
-/// @tparam FreqHz      Execution frequency in Hz, 0 = run as fast as possible
-/// @tparam Affinity    CPU core affinity, -1 = no binding
-/// @tparam Priority    Thread priority, 0 = default
+/**
+ * @brief Exclusive silent: dedicated thread, does NOT notify scheduler
+ *
+ * Use for: high-frequency data sources (e.g., IMU) that update silently
+ *
+ * ## Template parameters
+ *
+ * - `FreqHz`: Execution frequency in Hz, 0 = run as fast as possible
+ * - `Affinity`: CPU core affinity, -1 = no binding
+ * - `Priority`: Thread priority, 0 = default
+ *
+ * ## Example
+ *
+ * ```cpp
+ * // 500Hz IMU, pinned to core 1
+ * add_system<exclusive_silent<500, 1, 0>>("imu", [](auto in, auto out) {
+ *     // ...
+ * });
+ * ```
+ */
 template <std::uint32_t FreqHz = 0, std::int32_t Affinity = -1, std::int32_t Priority = 0>
 struct exclusive_silent {
     static constexpr std::uint32_t frequency_hz   = FreqHz;
@@ -37,7 +88,12 @@ struct exclusive_silent {
     static constexpr bool notifies                = false;
 };
 
-/// Pool compute: TBB thread pool, triggered by exclusive notify
+/**
+ * @brief Pool compute: TBB thread pool, triggered by exclusive notify
+ *
+ * Default policy. Systems run on the TBB thread pool and are
+ * selectively woken when exclusive systems produce data.
+ */
 struct pool_compute {};
 
 /// Default policy
@@ -75,15 +131,43 @@ struct is_silent_policy<exclusive_silent<F, A, P>> : std::true_type {};
 
 } // namespace detail
 
+/**
+ * @brief Check if a policy is exclusive
+ *
+ * ## Template parameters
+ *
+ * - `T`: policy type to check
+ */
 template <typename T>
 inline constexpr bool is_exclusive_policy_v = detail::is_exclusive_policy<T>::value;
 
+/**
+ * @brief Check if a policy is pool compute
+ *
+ * ## Template parameters
+ *
+ * - `T`: policy type to check
+ */
 template <typename T>
 inline constexpr bool is_pool_policy_v = detail::is_pool_policy<T>::value;
 
+/**
+ * @brief Check if a policy notifies after execution
+ *
+ * ## Template parameters
+ *
+ * - `T`: policy type to check
+ */
 template <typename T>
 inline constexpr bool is_notifying_policy_v = detail::is_notifying_policy<T>::value;
 
+/**
+ * @brief Check if a policy is silent (no notification)
+ *
+ * ## Template parameters
+ *
+ * - `T`: policy type to check
+ */
 template <typename T>
 inline constexpr bool is_silent_policy_v = detail::is_silent_policy<T>::value;
 
@@ -91,11 +175,17 @@ inline constexpr bool is_silent_policy_v = detail::is_silent_policy<T>::value;
 // Runtime Policy Info
 // ============================================================================
 
+/**
+ * @brief Runtime representation of a policy's kind
+ */
 enum class PolicyKind : std::uint8_t {
-    Exclusive,
-    PoolCompute,
+    Exclusive,   ///< Exclusive system (dedicated thread)
+    PoolCompute, ///< Pool compute system (TBB thread pool)
 };
 
+/**
+ * @brief Runtime policy information extracted from compile-time policy
+ */
 struct PolicyInfo {
     PolicyKind kind              = PolicyKind::PoolCompute;
     std::uint32_t frequency_hz   = 0;
@@ -103,14 +193,40 @@ struct PolicyInfo {
     std::int32_t thread_priority = 0;
     bool notifies                = false;
 
+    /**
+     * @brief Check if this is an exclusive policy
+     *
+     * ## Returns
+     *
+     * `true` if exclusive, `false` if pool compute
+     */
     [[nodiscard]] constexpr bool is_exclusive() const noexcept {
         return kind == PolicyKind::Exclusive;
     }
+
+    /**
+     * @brief Check if this is a pool compute policy
+     *
+     * ## Returns
+     *
+     * `true` if pool compute, `false` if exclusive
+     */
     [[nodiscard]] constexpr bool is_pool() const noexcept {
         return kind == PolicyKind::PoolCompute;
     }
 };
 
+/**
+ * @brief Convert compile-time policy to runtime PolicyInfo
+ *
+ * ## Template parameters
+ *
+ * - `Policy`: compile-time policy type
+ *
+ * ## Returns
+ *
+ * PolicyInfo with extracted configuration
+ */
 template <typename Policy>
 [[nodiscard]] constexpr auto make_policy_info() noexcept -> PolicyInfo {
     if constexpr (is_exclusive_policy_v<Policy>) {

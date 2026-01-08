@@ -1,5 +1,26 @@
 #pragma once
 
+/**
+ * @file
+ * @brief Flow graph tracking for data pipeline visualization
+ *
+ * This module provides infrastructure for tracking data flow through
+ * the pipeline. When enabled, it records producer-consumer relationships
+ * between channels, enabling visualization and analysis of the
+ * pipeline topology.
+ *
+ * ## Enabling flow graph
+ *
+ * Define `ENABLE_FLOW_GRAPH=1` before including this header, or compile
+ * with `-DENABLE_FLOW_GRAPH=1`.
+ *
+ * ## Output formats
+ *
+ * - **DOT**: Graphviz format for visualization
+ * - **JSON**: Machine-readable format for analysis
+ * - **Callback**: Custom handlers for real-time processing
+ */
+
 #include <algorithm>
 #include <cstddef>
 #include <functional>
@@ -24,6 +45,13 @@ inline constexpr bool kFlowGraphEnabled = false;
 // ============================================================================
 // Node identifier: file + line
 // ============================================================================
+
+/**
+ * @brief Identifies a source location in the code
+ *
+ * Combines file path and line number to uniquely identify
+ * where a channel was created or used.
+ */
 struct NodeId {
     std::string_view file;
     int line = 0;
@@ -52,8 +80,43 @@ struct NodeIdHash {
 // ============================================================================
 // Flow graph: directed graph with nodes and edges
 // ============================================================================
+
+/**
+ * @brief Directed graph representing data flow through the pipeline
+ *
+ * Records producer-consumer relationships between channels, enabling
+ * visualization and analysis of pipeline topology.
+ *
+ * ## Usage
+ *
+ * ```cpp
+ * FlowGraph graph;
+ * graph.add_node({"producer.cpp", 42}, "Frame");
+ * graph.add_node({"consumer.cpp", 84}, "Frame");
+ * graph.add_edge({...}, {...}, "Frame");
+ *
+ * // Export for visualization
+ * auto dot = graph.to_dot("Pipeline");
+ *
+ * // Topological analysis
+ * auto result = graph.topological_sort();
+ * if (result.has_cycle) {
+ *     // Handle cycle detection
+ * }
+ * ```
+ *
+ * ## Thread safety
+ *
+ * The graph is not thread-safe for concurrent modification.
+ * Initialize and modify in a single-threaded context.
+ */
 class FlowGraph {
 public:
+    /**
+     * @brief A node in the flow graph
+     *
+     * Represents a channel endpoint (producer or consumer).
+     */
     struct Node {
         NodeId id;
         std::string type_name;
@@ -61,6 +124,11 @@ public:
         std::vector<std::size_t> predecessors; // incoming edges (node indices)
     };
 
+    /**
+     * @brief An edge in the flow graph
+     *
+     * Represents a data flow from one node to another.
+     */
     struct Edge {
         std::size_t from;
         std::size_t to;
@@ -77,6 +145,20 @@ public:
     // Graph construction
     // ========================================================================
 
+    /**
+     * @brief Add a node to the graph
+     *
+     * If a node with the same ID already exists, returns its index.
+     *
+     * ## Parameters
+     *
+     * - `id`: source location identifying the node
+     * - `type_name`: name of the data type flowing through
+     *
+     * ## Returns
+     *
+     * Index of the node in the graph
+     */
     std::size_t add_node(const NodeId& id, const std::string_view type_name) {
         if (const auto it = node_map_.find(id); it != node_map_.end()) {
             return it->second;
@@ -87,6 +169,18 @@ public:
         return idx;
     }
 
+    /**
+     * @brief Add an edge representing data flow
+     *
+     * Creates a directed edge from producer to consumer. Automatically
+     * creates the nodes if they don't exist. Duplicate edges are ignored.
+     *
+     * ## Parameters
+     *
+     * - `producer`: source node (data producer)
+     * - `consumer`: destination node (data consumer)
+     * - `type_name`: data type flowing through this edge
+     */
     void
         add_edge(const NodeId& producer, const NodeId& consumer, const std::string_view type_name) {
         const auto from_idx = add_node(producer, type_name);
@@ -126,6 +220,16 @@ public:
     [[nodiscard]] const Node& node_at(const std::size_t idx) const { return nodes_.at(idx); }
 
     // Sources: nodes with no predecessors (entry points)
+    /**
+     * @brief Find entry points in the data flow
+     *
+     * Returns indices of nodes with no incoming edges. These are
+     * the data sources in the pipeline.
+     *
+     * ## Returns
+     *
+     * Vector of node indices that have no predecessors
+     */
     [[nodiscard]] std::vector<std::size_t> sources() const {
         std::vector<std::size_t> result;
         for (std::size_t i = 0; i < nodes_.size(); ++i) {
@@ -137,6 +241,16 @@ public:
     }
 
     // Sinks: nodes with no successors (exit points)
+    /**
+     * @brief Find exit points in the data flow
+     *
+     * Returns indices of nodes with no outgoing edges. These are
+     * the data sinks (final consumers) in the pipeline.
+     *
+     * ## Returns
+     *
+     * Vector of node indices that have no successors
+     */
     [[nodiscard]] std::vector<std::size_t> sinks() const {
         std::vector<std::size_t> result;
         for (std::size_t i = 0; i < nodes_.size(); ++i) {
@@ -151,11 +265,30 @@ public:
     // Scheduling: topological sort (Kahn's algorithm)
     // ========================================================================
 
+    /**
+     * @brief Result of topological sorting
+     */
     struct TopoResult {
         std::vector<std::size_t> order;
         bool has_cycle = false;
     };
 
+    /**
+     * @brief Perform topological sort using Kahn's algorithm
+     *
+     * Orders nodes such that all edges go from earlier to later nodes.
+     * Detects cycles in the graph.
+     *
+     * ## Returns
+     *
+     * TopoResult containing:
+     * - `order`: nodes in topological order
+     * - `has_cycle`: true if the graph contains a cycle
+     *
+     * ## Performance
+     *
+     * O(V + E) where V is nodes and E is edges.
+     */
     [[nodiscard]] TopoResult topological_sort() const {
         TopoResult result;
         if (nodes_.empty()) {
@@ -196,6 +329,20 @@ public:
     // Export: DOT format (Graphviz)
     // ========================================================================
 
+    /**
+     * @brief Export graph in DOT format for Graphviz
+     *
+     * Generates a DOT digraph that can be rendered with:
+     * `dot -Tpng graph.dot -o graph.png`
+     *
+     * ## Parameters
+     *
+     * - `graph_name`: name for the digraph (default: "FlowGraph")
+     *
+     * ## Returns
+     *
+     * DOT format string
+     */
     [[nodiscard]] std::string to_dot(std::string_view graph_name = "FlowGraph") const {
         std::string out;
         out.reserve(256 + nodes_.size() * 64 + edges_.size() * 48);
@@ -239,6 +386,15 @@ public:
     // Export: JSON format
     // ========================================================================
 
+    /**
+     * @brief Export graph in JSON format
+     *
+     * Machine-readable format for programmatic analysis.
+     *
+     * ## Returns
+     *
+     * JSON string with nodes and edges arrays
+     */
     [[nodiscard]] std::string to_json() const {
         std::string out;
         out.reserve(256 + nodes_.size() * 128 + edges_.size() * 64);

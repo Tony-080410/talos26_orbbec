@@ -1,5 +1,19 @@
 #pragma once
 
+/**
+ * @file
+ * @brief Channel abstractions for SPSC and SPMC triple buffers
+ *
+ * This module provides unified channel types that wrap triple buffer
+ * implementations with optional flow graph tracking.
+ *
+ * ## Channel types
+ *
+ * - `SpscChannel<T>`: Single-producer single-consumer channel
+ * - `SpmcChannel<T>`: Single-producer multiple-consumer channel
+ * - `Channel<T>`: Alias for `SpmcChannel<T>` (backward compatibility)
+ */
+
 #include "flow_graph.hpp"
 #include "spmc_triple_buffer.hpp"
 #include "spsc_triple_buffer.hpp"
@@ -17,14 +31,25 @@ namespace primitive {
 
 namespace detail {
 
+/**
+ * @brief Checks if a buffer's Read type supports cloning
+ *
+ * SPMC buffers can clone readers, SPSC buffers cannot.
+ */
 template <typename Buffer, typename T>
 concept HasClone = requires(typename Buffer::template Read<T>& r) {
     { r.clone() } -> std::same_as<typename Buffer::template Read<T>>;
 };
 
+/**
+ * @brief SPMC-like buffer supports reader cloning
+ */
 template <typename Buffer, typename T>
 concept SpmcLike = HasClone<Buffer, T>;
 
+/**
+ * @brief SPSC-like buffer does not support reader cloning
+ */
 template <typename Buffer, typename T>
 concept SpscLike = !HasClone<Buffer, T>;
 
@@ -34,6 +59,21 @@ concept SpscLike = !HasClone<Buffer, T>;
 // TrackedWriter: wraps any buffer's Write<T>
 // ============================================================================
 
+/**
+ * @brief Tracked write handle for a channel
+ *
+ * Wraps a triple buffer's Write handle with location tracking
+ * for flow graph construction.
+ *
+ * ## Thread safety
+ *
+ * Inherited from the wrapped buffer type.
+ *
+ * ## Template parameters
+ *
+ * - `T`: data type passed through the channel
+ * - `Buffer`: underlying buffer implementation (SpscTripleBuffer or SpmcTripleBuffer)
+ */
 template <typename T, typename Buffer>
 class TrackedWriter : detail::LocStorage {
     using Inner = Buffer::template Write<T>;
@@ -81,6 +121,26 @@ public:
 // TrackedReader: wraps any buffer's Read<T>
 // ============================================================================
 
+/**
+ * @brief Tracked read handle for a channel
+ *
+ * Wraps a triple buffer's Read handle with location tracking
+ * for flow graph construction.
+ *
+ * ## Copy semantics
+ *
+ * - SPMC: Copyable (each reader maintains its own generation counter)
+ * - SPSC: Move-only (only one consumer exists)
+ *
+ * ## Thread safety
+ *
+ * Inherited from the wrapped buffer type.
+ *
+ * ## Template parameters
+ *
+ * - `T`: data type passed through the channel
+ * - `Buffer`: underlying buffer implementation (SpscTripleBuffer or SpmcTripleBuffer)
+ */
 template <typename T, typename Buffer>
 class TrackedReader : detail::LocStorage {
     using Inner = Buffer::template Read<T>;
@@ -148,6 +208,39 @@ public:
 // TrackedChannel: unified wrapper for any triple buffer
 // ============================================================================
 
+/**
+ * @brief Unified channel wrapper for triple buffers
+ *
+ * Provides a unified interface for both SPSC and SPMC channels
+ * with automatic flow graph tracking.
+ *
+ * ## Usage
+ *
+ * ```cpp
+ * auto channel = primitive::make_spmc_channel<Frame>();
+ * auto [writer, reader] = channel.split();
+ *
+ * writer.write(frame);
+ * if (auto frame = reader.read()) {
+ *     // process frame
+ * }
+ * ```
+ *
+ * ## Split vs clone
+ *
+ * - `split()`: Separates the channel into writer and reader handles
+ * - `clone_reader()`: Creates a new reader for SPMC channels (SPMC only)
+ * - `take_reader()`: Takes ownership of the reader (consumes reader)
+ *
+ * ## Thread safety
+ *
+ * Inherited from the wrapped buffer type.
+ *
+ * ## Template parameters
+ *
+ * - `T`: data type passed through the channel
+ * - `Buffer`: underlying buffer implementation (SpscTripleBuffer or SpmcTripleBuffer)
+ */
 template <typename T, typename Buffer>
 class TrackedChannel : detail::LocStorage {
     using WriteInner = Buffer::template Write<T>;
