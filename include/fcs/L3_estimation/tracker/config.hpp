@@ -39,12 +39,18 @@ struct TrackerConfig {
     TargetConfig<RobotModel::Params> robot;
     /// Outpost target parameters
     TargetConfig<OutpostModel::Params> outpost;
+
     /// InEKF parameters
-    InEKFConfig ineff;
+    bool inekf_enabled{true};
+    RobotInEKFConfig robot_inekf;
+    OutpostInEKFConfig outpost_inekf;
+
     std::expected<void, std::string> read_from(const toml::table& tbl) noexcept {
         READ(tbl, robot);
         READ(tbl, outpost);
-        READ(tbl, ineff);
+        READ(tbl, inekf_enabled);
+        READ(tbl, robot_inekf);
+        READ(tbl, outpost_inekf);
         return {};
     }
 };

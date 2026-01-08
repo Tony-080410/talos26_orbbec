@@ -59,8 +59,11 @@ public:
         }
 
         // InEKF predict (parallel)
-        if (ineff_.has_value() && config_.ineff.enable) {
-            ineff_->predict(dt, config_.ineff);
+        if (robot_inekf_.has_value() && config_.inekf_enabled) {
+            robot_inekf_->predict(dt, config_.robot_inekf);
+        }
+        if (outpost_inekf_.has_value() && config_.inekf_enabled) {
+            outpost_inekf_->predict(dt, config_.outpost_inekf);
         }
     }
 
@@ -126,6 +129,22 @@ public:
                 z[3]                    = unwrap_rad(z_pred[3], armor_yaw_raw);
                 set_measurement(z, false);
                 outpost_ckf_->update(z);
+
+                if (outpost_inekf_.has_value() && config_.inekf_enabled) {
+                    const int armor_id = idx[i];
+                    constexpr double kAngleStep =
+                        2.0 * std::numbers::pi / static_cast<double>(OutpostModel::ARMORS_NUM);
+                    const double yaw_offset = static_cast<double>(armor_id) * kAngleStep;
+
+                    if (std::isfinite(armor_yaw_raw)) {
+                        const double armor_yaw_pred  = outpost_inekf_->get_yaw() + yaw_offset;
+                        const double armor_yaw_meas  = unwrap_rad(armor_yaw_pred, armor_yaw_raw);
+                        const double target_yaw_meas = armor_yaw_meas - yaw_offset;
+                        outpost_inekf_->update_yaw(target_yaw_meas, config_.outpost_inekf);
+                    }
+
+                    outpost_inekf_->update_armor(armor_pos_odom, armor_id, config_.outpost_inekf);
+                }
             } else {
                 robot_model_.armor_id = idx[i];
                 const auto z_pred     = robot_model_.h(robot_ckf_->x(), idx[i]);
@@ -137,7 +156,7 @@ public:
                 set_measurement(z, is_another_pair);
                 robot_ckf_->update(z);
 
-                if (ineff_.has_value() && config_.ineff.enable) {
+                if (robot_inekf_.has_value() && config_.inekf_enabled) {
                     const int armor_id = idx[i];
                     constexpr double kAngleStep =
                         2.0 * std::numbers::pi / static_cast<double>(RobotModel::ARMORS_NUM);
@@ -145,13 +164,13 @@ public:
 
                     // Use direct armor yaw measurement to update target yaw.
                     if (std::isfinite(armor_yaw_raw)) {
-                        const double armor_yaw_pred  = ineff_->get_yaw() + yaw_offset;
+                        const double armor_yaw_pred  = robot_inekf_->get_yaw() + yaw_offset;
                         const double armor_yaw_meas  = unwrap_rad(armor_yaw_pred, armor_yaw_raw);
                         const double target_yaw_meas = armor_yaw_meas - yaw_offset;
-                        ineff_->update_yaw(target_yaw_meas, config_.ineff);
+                        robot_inekf_->update_yaw(target_yaw_meas, config_.robot_inekf);
                     }
 
-                    ineff_->update_armor(armor_pos_odom, armor_id, config_.ineff);
+                    robot_inekf_->update_armor(armor_pos_odom, armor_id, config_.robot_inekf);
                 }
             }
         }
@@ -193,7 +212,8 @@ public:
         // Reset existing filters
         robot_ckf_.reset();
         outpost_ckf_.reset();
-        ineff_.reset();
+        robot_inekf_.reset();
+        outpost_inekf_.reset();
 
         constexpr double v0 = 0.0;
 
@@ -208,6 +228,12 @@ public:
             lost_threshold     = config_.outpost.lost_threshold;
             tracking_threshold = config_.outpost.tracking_threshold;
             matcher_gate       = config_.outpost.matcher_gate;
+
+            // Initialize InEKF (parallel filter)
+            if (config_.inekf_enabled) {
+                outpost_inekf_.emplace();
+                outpost_inekf_->init(Eigen::Vector3d{x0, y0, z0}, armor_yaw, config_.outpost_inekf);
+            }
         } else {
             constexpr double kDefaultRadius = 0.23;
             const double x0                 = pos.x() + kDefaultRadius * std::cos(armor_yaw);
@@ -223,9 +249,9 @@ public:
             matcher_gate       = config_.robot.matcher_gate;
 
             // Initialize InEKF (parallel filter)
-            if (config_.ineff.enable) {
-                ineff_.emplace();
-                ineff_->init(Eigen::Vector3d{x0, y0, z0}, armor_yaw, config_.ineff);
+            if (config_.inekf_enabled) {
+                robot_inekf_.emplace();
+                robot_inekf_->init(Eigen::Vector3d{x0, y0, z0}, armor_yaw, config_.robot_inekf);
             }
         }
 
@@ -240,8 +266,8 @@ public:
         output.target_name = target_name_;
 
         if (robot_ckf_) {
-            if (ineff_) {
-                auto state   = ineff_->get_robot_state();
+            if (robot_inekf_) {
+                auto state   = robot_inekf_->get_robot_state();
                 output.state = state;
                 return output;
             }
@@ -257,6 +283,11 @@ public:
             state.armors_num = 4;
             output.state     = state;
         } else if (outpost_ckf_) {
+            if (outpost_inekf_) {
+                auto state   = outpost_inekf_->get_outpost_state();
+                output.state = state;
+                return output;
+            }
             const auto& x = outpost_ckf_->x();
             OutpostTargetState state;
             state.position = {x[O_XC], x[O_YC]};
@@ -293,8 +324,10 @@ public:
         }
 
         // InEKF output
-        if (ineff_.has_value() && ineff_->is_initialized()) {
-            comparison.inekf = ineff_->get_filter_output();
+        if (robot_inekf_.has_value() && robot_inekf_->is_initialized()) {
+            comparison.inekf = robot_inekf_->get_filter_output();
+        } else if (outpost_inekf_.has_value() && outpost_inekf_->is_initialized()) {
+            comparison.inekf = outpost_inekf_->get_filter_output();
         }
 
         return comparison;
@@ -304,7 +337,8 @@ public:
     void reset() noexcept {
         robot_ckf_.reset();
         outpost_ckf_.reset();
-        ineff_.reset();
+        robot_inekf_.reset();
+        outpost_inekf_.reset();
         target_name_ = ArmorName::Invalid;
         measurement_.fill(0.0);
         detecting_count_   = 0;
@@ -335,7 +369,8 @@ private:
     // Filters
     std::optional<RoboCKF> robot_ckf_;
     std::optional<OutpostCKF> outpost_ckf_;
-    std::optional<InEKF> ineff_; // InEKF (uses config_.ineff directly)
+    std::optional<InEKF<RobotModel>> robot_inekf_;
+    std::optional<InEKF<OutpostModel>> outpost_inekf_;
 
     // Models
     RobotModel robot_model_;

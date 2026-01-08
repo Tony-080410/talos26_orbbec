@@ -1,15 +1,16 @@
 #pragma once
 
 #include "inekf_config.hpp"
+#include "inekf_model.hpp"
 #include "types.hpp"
 #include <Eigen/Cholesky>
-#include <algorithm>
 #include <cmath>
 #include <groups/SEn3.hpp>
 #include <numbers>
 
 namespace fcs::L3 {
 
+// ============================================================================
 /// InEKF (Invariant Extended Kalman Filter) on SE₂(₃) × ℝ⁴ for ground vehicle tracking
 ///
 /// **Mathematical Foundation:**
@@ -52,45 +53,51 @@ namespace fcs::L3 {
 ///     IROS 2017 (arXiv:1702.07920v2)
 ///   - Barrau & Bonnabel, "The invariant extended Kalman filter as a stable observer",
 ///     IEEE TAC, 2016
+template <InEKFModel Model>
 class InEKF {
 public:
-    using SE23d                    = group::SEn3<double, 2>;
-    using Vec3                     = Eigen::Matrix<double, 3, 1>;
-    using Vec9                     = Eigen::Matrix<double, 9, 1>;
-    using Mat3                     = Eigen::Matrix<double, 3, 3>;
-    using Mat9                     = Eigen::Matrix<double, 9, 9>;
-    static constexpr int kGroupDim = 9;
-    static constexpr int kExtraDim = 4; // [v_yaw, r0, r1, h]
+    using ModelType                  = Model;
+    using Traits                     = InEKFModelTraits<Model>;
+    using Config                     = typename Traits::Config;
+    using SE23d                      = group::SEn3<double, 2>;
+    using Vec3                       = Eigen::Matrix<double, 3, 1>;
+    using Vec9                       = Eigen::Matrix<double, 9, 1>;
+    using Mat3                       = Eigen::Matrix<double, 3, 3>;
+    using Mat9                       = Eigen::Matrix<double, 9, 9>;
+    static constexpr int kGroupDim   = 9;
+    static constexpr int kArmorsNum  = Traits::kArmorsNum;
+    static constexpr bool kIsRobot   = Traits::kIsRobot;
+    static constexpr bool kIsOutpost = Traits::kIsOutpost;
+
+    // Extra-state:
+    // - Robot (4-armors):  [v_yaw, r0, r1, h]
+    // - Outpost (3-armors): [v_yaw, dz1, dz2]  (z offsets relative to p.z for armor 1/2)
+    static constexpr int kExtraDim = Traits::kExtraDim;
     static constexpr int kStateDim = kGroupDim + kExtraDim;
 
-    // Error-state layout: [δθ(3), δv(3), δp(3), δv_yaw, δr0, δr1, δh]
-    static constexpr int kIdxVYaw = 9;
-    static constexpr int kIdxR0   = 10;
-    static constexpr int kIdxR1   = 11;
-    static constexpr int kIdxH    = 12;
+    // Error-state layout: [δθ(3), δv(3), δp(3), δ(extra...)]
+    static constexpr int kIdxVYaw = kGroupDim + 0;
 
     using VecX   = Eigen::Matrix<double, kStateDim, 1>;
     using MatX   = Eigen::Matrix<double, kStateDim, kStateDim>;
     using Mat3xX = Eigen::Matrix<double, 3, kStateDim>;
     using MatXx3 = Eigen::Matrix<double, kStateDim, 3>;
+    using VecE   = Eigen::Matrix<double, kExtraDim, 1>;
 
     InEKF() noexcept
         : X_{}
         , P_{MatX::Zero()}
+        , extra_{VecE::Zero()}
         , initialized_{false} {}
 
     /// Initialize filter state
     /// @param p0 Initial target center position in odom frame
     /// @param yaw0 Initial target yaw (about +Z)
-    void init(const Vec3& p0, double yaw0, const InEKFConfig& config) noexcept {
+    void init(const Vec3& p0, double yaw0, const Config& config) noexcept {
         if (!all_finite(p0) || !std::isfinite(yaw0)) {
-            X_     = SE23d{};
-            P_     = MatX::Zero();
-            v_yaw_ = 0.0;
-            r0_    = config.radius0;
-            r1_    = config.radius1;
-            h_     = config.height;
-            clamp_geometry_in_place();
+            X_ = SE23d{};
+            P_ = MatX::Zero();
+            Traits::init_extra(extra_, config);
             initialized_ = false;
             return;
         }
@@ -109,25 +116,19 @@ public:
 
         // Initialize covariance (error-state)
         P_.setZero();
-        P_.block<9, 9>(0, 0)   = Mat9::Identity() * 0.1;
-        P_(kIdxVYaw, kIdxVYaw) = 1.0;
-        P_(kIdxR0, kIdxR0)     = 0.01;
-        P_(kIdxR1, kIdxR1)     = 0.01;
-        P_(kIdxH, kIdxH)       = 0.01;
+        P_.template block<9, 9>(0, 0) = Mat9::Identity() * 0.1;
+        P_(kIdxVYaw, kIdxVYaw)        = 1.0;
+        Traits::init_geometry_covariance(P_, kGroupDim);
 
         // Initialize extra states from config
-        v_yaw_ = 0.0;
-        r0_    = config.radius0;
-        r1_    = config.radius1;
-        h_     = config.height;
-        clamp_geometry_in_place();
+        Traits::init_extra(extra_, config);
         initialized_ = true;
     }
 
     /// Predict step (CV motion model)
     /// @param dt Time step
     /// @param config Process noise configuration
-    void predict(double dt, const InEKFConfig& config) noexcept {
+    void predict(double dt, const Config& config) noexcept {
         if (!initialized_) {
             return;
         }
@@ -139,10 +140,10 @@ public:
         // Deterministic propagation (constant velocity, constant yaw rate)
         //   yaẇ = v_yaw, v̇ = 0, ṗ = v
         // ---------------------------------------------------------------------
-        if (!std::isfinite(v_yaw_)) {
-            v_yaw_ = 0.0;
+        if (!std::isfinite(extra_(0))) {
+            extra_(0) = 0.0;
         }
-        const double dyaw        = v_yaw_ * dt;
+        const double dyaw        = extra_(0) * dt;
         const double yaw0        = get_yaw();
         const double yaw1        = wrap_pi(yaw0 + (std::isfinite(dyaw) ? dyaw : 0.0));
         const Eigen::Matrix3d Rn = Eigen::AngleAxisd(yaw1, Vec3::UnitZ()).toRotationMatrix();
@@ -160,7 +161,7 @@ public:
         //   δ̇p = -ω×δp + δv
         // ---------------------------------------------------------------------
         MatX Phi                = MatX::Identity();
-        const double vyaw       = std::isfinite(v_yaw_) ? v_yaw_ : 0.0;
+        const double vyaw       = std::isfinite(extra_(0)) ? extra_(0) : 0.0;
         const double omega_z_dt = vyaw * dt;
 
         // -ω× coupling for z-axis rotation
@@ -178,7 +179,7 @@ public:
         Phi(7, 6) = -omega_z_dt; // δṗ_y -= ω_z * δp_x
 
         // Position-velocity coupling (CV model)
-        Phi.block<3, 3>(6, 3) = Mat3::Identity() * dt; // δṗ += δv
+        Phi.template block<3, 3>(6, 3) = Mat3::Identity() * dt; // δṗ += δv
 
         // Yaw-yaw rate coupling
         Phi(2, kIdxVYaw) = dt; // δθ̇_z = δv_yaw
@@ -190,11 +191,11 @@ public:
         clamp_geometry_in_place();
     }
 
-                               /// Update step with armor observation
+    /// Update step with armor observation
     /// @param y Armor position in odom frame
     /// @param b Armor offset in target frame (center -> armor, already rotated for armor_id)
     /// @param config Measurement noise configuration
-    void update(const Vec3& y, const Vec3& b, const InEKFConfig& config) noexcept {
+    void update(const Vec3& y, const Vec3& b, const Config& config) noexcept {
         if (!initialized_) {
             return;
         }
@@ -212,9 +213,9 @@ public:
 
         // Linearized model for left-invariant error (η = X̂⁻¹X, X = X̂·Exp(e)):
         //   r = R̂ᵀ(y - p̂) - b ≈ δθ×b + δp = -[b]×·δθ + δp
-        Mat3xX C            = Mat3xX::Zero();
-        C.block<3, 3>(0, 0) = -skew(b); // Rotation coupling
-        C.block<3, 3>(0, 6) = Mat3::Identity();
+        Mat3xX C                     = Mat3xX::Zero();
+        C.template block<3, 3>(0, 0) = -skew(b); // Rotation coupling
+        C.template block<3, 3>(0, 6) = Mat3::Identity();
 
         const Mat3 Rm = Mat3::Identity() * (config.sigma_m * config.sigma_m);
         const Mat3 S  = (C * P_ * C.transpose() + Rm).eval();
@@ -236,12 +237,9 @@ public:
         xi.template segment<3>(3) = delta.template segment<3>(3);
         xi.template segment<3>(6) = delta.template segment<3>(6);
         X_                        = X_ * SE23d::exp(xi);
-        v_yaw_ += delta(kIdxVYaw);
-        r0_ += delta(kIdxR0);
-        r1_ += delta(kIdxR1);
-        h_ += delta(kIdxH);
-        if (!std::isfinite(v_yaw_)) {
-            v_yaw_ = 0.0;
+        extra_ += delta.template segment<kExtraDim>(kGroupDim);
+        if (!std::isfinite(extra_(0))) {
+            extra_(0) = 0.0;
         }
         clamp_geometry_in_place();
 
@@ -256,9 +254,9 @@ public:
 
     /// Update step with armor observation (estimates geometry like ISRCKF)
     /// @param y Armor position in odom frame
-    /// @param armor_id Armor id in [0,3]
+    /// @param armor_id Armor id in [0, ARMORS_NUM)
     /// @param config Measurement noise configuration
-    void update_armor(const Vec3& y, int armor_id, const InEKFConfig& config) noexcept {
+    void update_armor(const Vec3& y, int armor_id, const Config& config) noexcept {
         if (!initialized_) {
             return;
         }
@@ -274,29 +272,15 @@ public:
         const Eigen::Matrix3d R_id =
             Eigen::AngleAxisd(yaw_offset, Vec3::UnitZ()).toRotationMatrix();
 
-        const bool is_high    = (armor_id == kHighArmorIdA || armor_id == kHighArmorIdB);
-        const double radius   = is_high ? r1_ : r0_;
-        const double z_offset = is_high ? h_ : 0.0;
-
-        const Vec3 b = (R_id * Vec3{-radius, 0.0, z_offset}).eval();
+        Vec3 b   = Vec3::Zero();
+        Mat3xX C = Mat3xX::Zero();
+        Traits::fill_armor_offset_and_geometry_jacobian(armor_id, R_id, extra_, b, C, kGroupDim);
 
         const Vec3 y_body = X_.R().transpose() * (y - X_.p());
         const Vec3 r      = y_body - b;
 
-        Mat3xX C            = Mat3xX::Zero();
-        C.block<3, 3>(0, 0) = -skew(b); // Rotation coupling
-        C.block<3, 3>(0, 6) = Mat3::Identity();
-
-        // Geometry derivatives (treat radius/height as Euclidean error-states):
-        // y = p + R·b(r,h)  =>  r = R̂ᵀ(y - p̂) - b̂ ≈ ... + (∂b/∂r)·δr + (∂b/∂h)·δh
-        const Vec3 db_dr = (R_id * Vec3{-1.0, 0.0, 0.0}).eval();
-        const Vec3 db_dh = (R_id * Vec3{0.0, 0.0, 1.0}).eval(); // base direction
-        if (is_high) {
-            C.block<3, 1>(0, kIdxR1) = db_dr;                   // ∂r/∂r₁
-            C.block<3, 1>(0, kIdxH)  = db_dh;                   // ∂r/∂h
-        } else {
-            C.block<3, 1>(0, kIdxR0) = db_dr;                   // ∂r/∂r₀
-        }
+        C.template block<3, 3>(0, 0) = -skew(b); // Rotation coupling
+        C.template block<3, 3>(0, 6) = Mat3::Identity();
 
         const Mat3 Rm = Mat3::Identity() * (config.sigma_m * config.sigma_m);
         const Mat3 S  = (C * P_ * C.transpose() + Rm).eval();
@@ -318,13 +302,9 @@ public:
         xi.template segment<3>(3) = delta.template segment<3>(3);
         xi.template segment<3>(6) = delta.template segment<3>(6);
         X_                        = X_ * SE23d::exp(xi);
-
-        v_yaw_ += delta(kIdxVYaw);
-        r0_ += delta(kIdxR0);
-        r1_ += delta(kIdxR1);
-        h_ += delta(kIdxH);
-        if (!std::isfinite(v_yaw_)) {
-            v_yaw_ = 0.0;
+        extra_ += delta.template segment<kExtraDim>(kGroupDim);
+        if (!std::isfinite(extra_(0))) {
+            extra_(0) = 0.0;
         }
         clamp_geometry_in_place();
 
@@ -339,7 +319,7 @@ public:
 
     /// Update yaw (about +Z) using direct yaw measurement
     /// @param yaw_meas Measured target yaw in odom frame
-    void update_yaw(double yaw_meas, const InEKFConfig& config) noexcept {
+    void update_yaw(double yaw_meas, const Config& config) noexcept {
         if (!initialized_) {
             return;
         }
@@ -374,13 +354,9 @@ public:
         xi.template segment<3>(3) = delta.template segment<3>(3);
         xi.template segment<3>(6) = delta.template segment<3>(6);
         X_                        = X_ * SE23d::exp(xi);
-
-        v_yaw_ += delta(kIdxVYaw);
-        r0_ += delta(kIdxR0);
-        r1_ += delta(kIdxR1);
-        h_ += delta(kIdxH);
-        if (!std::isfinite(v_yaw_)) {
-            v_yaw_ = 0.0;
+        extra_ += delta.template segment<kExtraDim>(kGroupDim);
+        if (!std::isfinite(extra_(0))) {
+            extra_(0) = 0.0;
         }
         clamp_geometry_in_place();
 
@@ -395,6 +371,7 @@ public:
 
     /// Get current state as RobotTargetState
     [[nodiscard]] RobotTargetState get_robot_state() const noexcept {
+        static_assert(kIsRobot, "get_robot_state() is only available for 4-armor robot models");
         RobotTargetState state;
 
         // Position
@@ -406,13 +383,25 @@ public:
         // Yaw from rotation matrix (z-axis rotation)
         state.yaw = std::atan2(X_.R()(1, 0), X_.R()(0, 0));
 
-        state.v_yaw = v_yaw_;
+        state.v_yaw = extra_(0);
 
-        state.radius0    = r0_;
-        state.radius1    = r1_;
-        state.z1         = state.position.z() + h_;
-        state.armors_num = 4;
+        state.radius0    = extra_(1);
+        state.radius1    = extra_(2);
+        state.z1         = state.position.z() + extra_(3);
+        state.armors_num = kArmorsNum;
 
+        return state;
+    }
+
+    /// Get current state as OutpostTargetState
+    [[nodiscard]] OutpostTargetState get_outpost_state() const noexcept {
+        static_assert(
+            kIsOutpost, "get_outpost_state() is only available for 3-armor outpost models");
+        OutpostTargetState state;
+        state.position = {X_.p().x(), X_.p().y()};
+        state.yaw      = std::atan2(X_.R()(1, 0), X_.R()(0, 0));
+        state.v_yaw    = extra_(0);
+        state.z        = {X_.p().z(), X_.p().z() + extra_(1), X_.p().z() + extra_(2)};
         return state;
     }
 
@@ -425,13 +414,24 @@ public:
     /// Get yaw angle
     [[nodiscard]] double get_yaw() const noexcept { return std::atan2(X_.R()(1, 0), X_.R()(0, 0)); }
 
-    [[nodiscard]] double get_v_yaw() const noexcept { return v_yaw_; }
-    [[nodiscard]] double get_radius0() const noexcept { return r0_; }
-    [[nodiscard]] double get_radius1() const noexcept { return r1_; }
-    [[nodiscard]] double get_height() const noexcept { return h_; }
+    [[nodiscard]] double get_v_yaw() const noexcept { return extra_(0); }
+    [[nodiscard]] double get_radius0() const noexcept {
+        static_assert(kIsRobot, "radius0 is only defined for robot models");
+        return extra_(1);
+    }
+    [[nodiscard]] double get_radius1() const noexcept {
+        static_assert(kIsRobot, "radius1 is only defined for robot models");
+        return extra_(2);
+    }
+    [[nodiscard]] double get_height() const noexcept {
+        static_assert(kIsRobot, "height is only defined for robot models");
+        return extra_(3);
+    }
 
     /// Get covariance matrix (position part)
-    [[nodiscard]] Mat3 get_position_covariance() const noexcept { return P_.block<3, 3>(6, 6); }
+    [[nodiscard]] Mat3 get_position_covariance() const noexcept {
+        return P_.template block<3, 3>(6, 6);
+    }
 
     /// Check if initialized
     [[nodiscard]] bool is_initialized() const noexcept { return initialized_; }
@@ -443,27 +443,16 @@ public:
         output.position            = X_.p();
         output.velocity            = X_.v();
         output.yaw                 = std::atan2(X_.R()(1, 0), X_.R()(0, 0));
-        output.v_yaw               = v_yaw_;
-        output.position_covariance = P_.block<3, 3>(6, 6);
+        output.v_yaw               = extra_(0);
+        output.position_covariance = P_.template block<3, 3>(6, 6);
         return output;
     }
 
 private:
     SE23d X_; // State estimate (R, v, p)
     MatX P_;  // Covariance in error coordinates
-    double v_yaw_{0.0};
-    double r0_{0.23};
-    double r1_{0.23};
-    double h_{0.0};
+    VecE extra_;
     bool initialized_{false};
-
-    static constexpr int kArmorsNum    = 4;
-    static constexpr int kHighArmorIdA = 1;
-    static constexpr int kHighArmorIdB = 3;
-    static constexpr double kMinRadius = 0.17;
-    static constexpr double kMaxRadius = 0.27;
-    static constexpr double kMinHeight = -0.2;
-    static constexpr double kMaxHeight = 0.2;
 
     /// Skew-symmetric matrix from vector
     static Mat3 skew(const Vec3& v) {
@@ -519,20 +508,7 @@ private:
         X_                      = SE23d(R, t);
     }
 
-    void clamp_geometry_in_place() noexcept {
-        if (!std::isfinite(r0_)) {
-            r0_ = 0.23;
-        }
-        if (!std::isfinite(r1_)) {
-            r1_ = 0.23;
-        }
-        if (!std::isfinite(h_)) {
-            h_ = 0.0;
-        }
-        r0_ = std::clamp(r0_, kMinRadius, kMaxRadius);
-        r1_ = std::clamp(r1_, kMinRadius, kMaxRadius);
-        h_  = std::clamp(h_, kMinHeight, kMaxHeight);
-    }
+    void clamp_geometry_in_place() noexcept { Traits::clamp_extra_in_place(extra_); }
 
     static void symmetrize_in_place(MatX& P) noexcept { P = 0.5 * (P + P.transpose()); }
 
@@ -559,8 +535,7 @@ private:
         P_(1, 1) = 1e-12;
     }
 
-    [[nodiscard]] static MatX
-        process_noise_covariance(double dt, const InEKFConfig& config) noexcept {
+    [[nodiscard]] static MatX process_noise_covariance(double dt, const Config& config) noexcept {
         MatX Q = MatX::Zero();
 
         if (!(dt > 0.0) || !std::isfinite(dt)) {
@@ -570,8 +545,6 @@ private:
         const double sigma_a_xy2  = config.sigma_a_xy * config.sigma_a_xy;
         const double sigma_a_z2   = config.sigma_a_z * config.sigma_a_z;
         const double sigma_a_yaw2 = config.sigma_yaw * config.sigma_yaw;
-        const double sigma_r2     = config.sigma_r * config.sigma_r;
-        const double sigma_h2     = config.sigma_h * config.sigma_h;
 
         const double dt2 = dt * dt;
         const double dt3 = dt2 * dt;
@@ -596,9 +569,7 @@ private:
         Q(kIdxVYaw, kIdxVYaw) += sigma_a_yaw2 * dt2;
 
         // Random walk for geometry (radius/height drift)
-        Q(kIdxR0, kIdxR0) += sigma_r2 * dt;
-        Q(kIdxR1, kIdxR1) += sigma_r2 * dt;
-        Q(kIdxH, kIdxH) += sigma_h2 * dt;
+        Traits::add_geometry_process_noise(Q, dt, config, kGroupDim);
 
         constexpr double kEps = 1e-12;
         Q.diagonal().array() += kEps;
