@@ -66,12 +66,14 @@ struct RobotModel {
         Scalar sigma_a_z   = 1.0; // Z acceleration noise
         Scalar sigma_a_yaw = 1.0; // Yaw acceleration noise
         Scalar sigma_r0    = 1.0; // Radius R0 drift noise
+        Scalar sigma_r1    = 1.0; // Radius R1 drift noise
         Scalar sigma_h     = 0.5; // Height H drift noise
         std::expected<void, std::string> read_from(const toml::table& tbl) noexcept {
             READ(tbl, sigma_a_xy);
             READ(tbl, sigma_a_z);
             READ(tbl, sigma_a_yaw);
             READ(tbl, sigma_r0);
+            READ(tbl, sigma_r1);
             READ(tbl, sigma_h);
             return {};
         }
@@ -171,7 +173,7 @@ struct RobotModel {
 
         // Random walk noise for R0, R1, H
         const Scalar sigma_r0_2 = params.sigma_r0 * params.sigma_r0;
-        const Scalar sigma_r1_2 = params.sigma_r0 * params.sigma_r0;
+        const Scalar sigma_r1_2 = params.sigma_r1 * params.sigma_r1;
         const Scalar sigma_h_2  = params.sigma_h * params.sigma_h;
 
         Q(R_0, R_0) += sigma_r0_2 * dt;

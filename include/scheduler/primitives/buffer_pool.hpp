@@ -30,7 +30,7 @@ public:
         Fail,     // return nullptr when exhausted
     };
 
-    BufferPool(
+    explicit BufferPool(
         const std::size_t capacity, const int rows, const int cols, const int type,
         const ExhaustPolicy policy = ExhaustPolicy::Allocate)
         : state_(std::make_shared<State>(capacity, rows, cols, type, policy)) {}

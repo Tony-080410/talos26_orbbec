@@ -160,35 +160,40 @@ public:
 private:
     // 桶边界 (纳秒)
     static constexpr std::array<uint64_t, kNumBuckets> kBucketBounds = {
-        100,           // 0: 0-100ns
-        200,           // 1: 100-200ns
-        500,           // 2: 200-500ns
-        1000,          // 3: 500ns-1us
-        2000,          // 4: 1-2us
-        5000,          // 5: 2-5us
-        10000,         // 6: 5-10us
-        20000,         // 7: 10-20us
-        50000,         // 8: 20-50us
-        100000,        // 9: 50-100us
-        200000,        // 10: 100-200us
-        500000,        // 11: 200-500us
-        1000000,       // 12: 500us-1ms
-        2000000,       // 13: 1-2ms
-        5000000,       // 14: 2-5ms
-        10000000,      // 15: 5-10ms
-        20000000,      // 16: 10-20ms
-        50000000,      // 17: 20-50ms
-        100000000,     // 18: 50-100ms
-        UINT64_MAX     // 19: >100ms
+        100,       // 0: 0-100ns
+        200,       // 1: 100-200ns
+        500,       // 2: 200-500ns
+        1000,      // 3: 500ns-1us
+        2000,      // 4: 1-2us
+        5000,      // 5: 2-5us
+        10000,     // 6: 5-10us
+        20000,     // 7: 10-20us
+        50000,     // 8: 20-50us
+        100000,    // 9: 50-100us
+        200000,    // 10: 100-200us
+        500000,    // 11: 200-500us
+        1000000,   // 12: 500us-1ms
+        2000000,   // 13: 1-2ms
+        5000000,   // 14: 2-5ms
+        10000000,  // 15: 5-10ms
+        20000000,  // 16: 10-20ms
+        50000000,  // 17: 20-50ms
+        100000000, // 18: 50-100ms
+        UINT64_MAX // 19: >100ms
     };
 
     static constexpr size_t latency_to_bucket(const uint64_t latency_ns) noexcept {
-        for (size_t i = 0; i < kNumBuckets; ++i) {
-            if (latency_ns < kBucketBounds[i]) {
-                return i;
+        // Binary search for O(log n) instead of O(n)
+        size_t lo = 0, hi = kNumBuckets - 1;
+        while (lo < hi) {
+            const size_t mid = lo + (hi - lo) / 2;
+            if (latency_ns < kBucketBounds[mid]) {
+                hi = mid;
+            } else {
+                lo = mid + 1;
             }
         }
-        return kNumBuckets - 1;
+        return lo;
     }
 
     static constexpr uint64_t bucket_to_latency(const size_t bucket) noexcept {

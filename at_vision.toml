@@ -66,6 +66,7 @@ sigma_a_xy = 10.0
 sigma_a_z = 1.0
 sigma_a_yaw = 20.0
 sigma_r0 = 1.0
+sigma_r1 = 1.0
 sigma_h = 0.5
 
 [tracker.ineff]
