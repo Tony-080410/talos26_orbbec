@@ -6,6 +6,9 @@
 #include <numbers>
 
 namespace fast_tf {
+
+constexpr auto to_rad(double x) { return (x / 180.0) * CV_PI; }
+
 /**
  * @brief 创建英雄机器人的坐标系统，初始化固定变换
  *

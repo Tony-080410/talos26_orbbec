@@ -28,10 +28,10 @@ type = "Hero"
 
 [robot_hero.camera]
 # 相机内参配置
-camera_matrix = [631.691, 0, 676.572, 0, 615.369, 557.998, 0, 0, 1]
-distort_coefficient = [-0.120895, 0.0494584, -0.0136733, 0.00443922, -0.00887769]
-width = 3072
-height = 2048
+camera_matrix = [2538.32, 0, 1020.61, 0, 2525.25, 1522.65, 0, 0, 1]
+distort_coefficient = [-0.0645578, 0.0874827, -0.00239167, 0.00308088, -0.0206579]
+width = 2048
+height = 3072
 
 [robot_hero.camera.profile]
 # HikCamera配置

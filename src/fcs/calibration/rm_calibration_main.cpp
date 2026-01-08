@@ -223,9 +223,10 @@ int main(int argc, char* argv[]) {
         // Initialize real hardware
         SPDLOG_INFO("Initializing camera...");
         fcs::CameraConfig camera_config;
-        camera_config.width  = 1440;
-        camera_config.height = 1080;
-        auto input_result    = fcs::L1::InputInterface::create_hik({}, camera_config);
+        camera_config.width   = config->width;
+        camera_config.height  = config->height;
+        camera_config.profile = config->profile;
+        auto input_result     = fcs::L1::InputInterface::create_hik(camera_config);
         if (!input_result) {
             SPDLOG_ERROR("create camera input: {}", fcs::L1::to_string(input_result.error()));
             return 1;
@@ -384,10 +385,8 @@ int main(int argc, char* argv[]) {
             status->state = CalibrationState::Calibrating;
 
             if (config->mode == CalibrationMode::Intrinsic) {
-                auto result = intrinsic_calibrator->calibrate(
-                    cv::Size(
-                        intrinsic_result->width > 0 ? intrinsic_result->width : 1440,
-                        intrinsic_result->height > 0 ? intrinsic_result->height : 1080));
+                auto result =
+                    intrinsic_calibrator->calibrate(cv::Size(config->width, config->height));
                 if (result) {
                     *intrinsic_result = *result;
                     save_intrinsic_result(*result, config->output.intrinsic_path);

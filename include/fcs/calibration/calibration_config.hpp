@@ -1,8 +1,10 @@
 #pragma once
 
 #include "calibration_types.hpp"
+#include "camera_config.hpp"
 #include "toml_helper.hpp"
 
+#include <cstdint>
 #include <expected>
 #include <string>
 
@@ -145,6 +147,9 @@ struct InputConfig {
 /// @brief Main calibration configuration
 struct CalibrationConfig {
     CalibrationMode mode{CalibrationMode::Intrinsic};
+    CameraProfileConfig profile;
+    uint32_t width;
+    uint32_t height;
     BoardConfig board{};
     CharucoConfig charuco{};
     CaptureConfig capture{};
@@ -157,6 +162,9 @@ struct CalibrationConfig {
 
     std::expected<void, std::string> read_from(const toml::table& tbl) noexcept {
         READ(tbl, mode);
+        READ(tbl, profile);
+        READ(tbl, width);
+        READ(tbl, height);
         READ(tbl, board);
         READ_OPT(tbl, charuco);
         READ_OPT(tbl, capture);

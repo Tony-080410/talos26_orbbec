@@ -2,8 +2,16 @@
 # 相机内参和手眼标定配置文件
 
 [calibration]
+width = 3072
+height = 2048
 # 标定模式: Intrinsic (内参标定), Handeye (手眼标定), Full (完整标定)
-mode = "Handeye"
+mode = "Intrinsic"
+[calibration.profile]
+trigger_mode = false
+invert_image = true
+exposure_time_us = 12500  # 3ms in microseconds
+gain = 16.7
+rotate_angle = "Clockwise270"
 
 # =============================================================================
 # 标定板配置
