@@ -61,7 +61,9 @@ public:
     void build() {
         if (built_)
             return;
-        // Pre-create channels based on system metadata could go here
+        for (const auto& sys : systems_) {
+            sys->bind(world_);
+        }
         built_ = true;
     }
 
