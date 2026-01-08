@@ -46,14 +46,14 @@ type = "Sentry"
 
 [robot_sentry.camera]
 # 相机内参配置
-camera_matrix = [631.691, 0, 676.572, 0, 615.369, 557.998, 0, 0, 1]
-distort_coefficient = [-0.120895, 0.0494584, -0.0136733, 0.00443922, -0.00887769]
+camera_matrix = [1803.16, 0, 763.495, 0, 1796.54, 513.558, 0, 0, 1]
+distort_coefficient = [-0.0778954, 0.157208, 0.00066922, 0.00371464, -0.109314]
 width = 1440
 height = 1080
 
 [robot_sentry.camera.profile]
 # HikCamera配置
 trigger_mode = false
-invert_image = false
-exposure_time_us = 3000  # 3ms in microseconds
+invert_image = true
+exposure_time_us = 1500  # 3ms in microseconds
 gain = 16.7

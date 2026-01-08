@@ -35,7 +35,7 @@ public:
         CameraProfile() noexcept {
             using namespace std::chrono_literals;
             trigger_mode  = false;
-            invert_image  = false;
+            invert_image  = true;
             exposure_time = 10ms;
             gain          = 16.7;
             rotate_type   = fcs::RotateType::None;

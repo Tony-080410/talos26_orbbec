@@ -1,6 +1,7 @@
-daedalus = true
-robot = 'hero'
+daedalus = false
+robot = 'sentry'
 imu_vendor_id = 0x483
+untrust_roll = true
 [foxglove]
 enabled = true
 host = "0.0.0.0"
@@ -99,7 +100,7 @@ shooting_range_w = 0.135  # Horizontal shooting window (meters)
 shooting_range_h = 0.135  # Vertical shooting window (meters)
 
 max_tracking_v_yaw = 60.0 # Max angular velocity for armor tracking (rad/s)
-plan_to_muzzle_delay = 0.105
+plan_to_muzzle_delay = 0.0985
 side_angle = 15.0              # Side angle threshold for armor selection (degrees)
 min_switching_v_yaw = 1.0      # Min angular velocity for armor switching (rad/s)
 transfer_thresh = 5            # State transfer counter threshold (frames)

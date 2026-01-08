@@ -70,7 +70,7 @@ endif ()
 
 message(STATUS "Foxglove platform: ${FOXGLOVE_PLATFORM}")
 
-set(FOXGLOVE_VERSION "v0.16.1")
+set(FOXGLOVE_VERSION "v0.16.2")
 set(FOXGLOVE_SHA256_aarch64-apple-darwin "7bb818be22396dce6f2430df3451bb2deb4faf9bcff4cd007d737172e0eec764")
 set(FOXGLOVE_SHA256_aarch64-unknown-linux-gnu "20dd412fa8be481e6ed84d88879f368e1a55a146e9a98f936a05931742e1dea5")
 set(FOXGLOVE_SHA256_x86_64-unknown-linux-gnu "d8afbb8f99b75d7ad0f1b2885d35cacead28e6f2e36bd4d1a30e17413ebab896")

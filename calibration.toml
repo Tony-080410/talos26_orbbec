@@ -52,7 +52,7 @@ max_samples = 100
 
 # 样本多样性约束
 # 相邻样本间的最小角度差异 (度)
-min_angle_diff = 2.5
+min_angle_diff = 1.5
 
 # 相邻样本间的最小平移差异 (米)
 min_translation_diff = 0.005

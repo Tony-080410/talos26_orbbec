@@ -106,6 +106,7 @@ int main() {
         config.imu_product_id == 0
             ? std::nullopt
             : std::optional<decltype(config.imu_product_id)>{config.imu_product_id};
+    const bool untrust_roll = config.untrust_roll;
 
     std::expected<fcs::L1::InputInterface, fcs::L1::InputError> input_result;
     std::unique_ptr<fcs::L1::OutputInterface> output_interface;
@@ -275,7 +276,7 @@ int main() {
     // IMU: 100Hz, silent update (no notify)
     scheduler.add_system<talos::exclusive_silent<1000, 1>>(
         "imu_reader",
-        [daedalus, &ipc_device, &usb_device, &imu_data](
+        [untrust_roll, daedalus, &ipc_device, &usb_device, &imu_data](
             talos::res_mut<std::shared_ptr<fast_tf::CoordinateSystem<1024>>> tf_buffer,
             talos::res_mut<ImuSnapshot> imu_out) {
             if (daedalus) {
@@ -305,7 +306,10 @@ int main() {
                 }
                 if (const auto pose = ipc_device->recv_pose(ipc::POSE_CAMERA)) {
                     const Eigen::Quaterniond q(pose->qw, pose->qx, pose->qy, pose->qz);
-                    const auto [roll, pitch, yaw] = math_fuxk::rpy(q).rpy();
+                    auto [roll, pitch, yaw] = math_fuxk::rpy(q).rpy();
+                    if (untrust_roll) {
+                        roll = 0.0;
+                    }
                     // strategy.set_bullet_speed(imu_data.data.bullet_speed);
                     fast_tf::update(
                         *tf_buffer->get(),

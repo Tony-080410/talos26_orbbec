@@ -41,6 +41,7 @@ target_link_libraries(rm_calibration PRIVATE
     ${OpenCV_LIBS}
     Eigen3::Eigen
     spdlog::spdlog
+    fast_tf
     ${LIBUSB_LINK_LIBRARIES}
     ${foxglove_SOURCE_DIR}/lib/libfoxglove.a
     fast_tf

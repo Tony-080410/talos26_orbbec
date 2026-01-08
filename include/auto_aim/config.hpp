@@ -31,6 +31,7 @@ enum class RobotType { Infantry, Hero, Sentry };
 
 struct TalosConfig {
     bool daedalus{false};
+    bool untrust_roll{true};
     CameraConfig camera{};
     AtLegacyConfig at_legacy{};
     uint16_t imu_vendor_id{0x0483};
@@ -50,6 +51,8 @@ struct TalosConfig {
 
     std::expected<void, std::string> read_from(const toml::table& tbl) noexcept {
         READ(tbl, daedalus);
+        READ(tbl, untrust_roll);
+        READ(tbl, camera);
         READ(tbl, at_legacy);
         READ_OPT(tbl, imu_vendor_id);
         READ_OPT(tbl, imu_product_id);
