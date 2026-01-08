@@ -56,11 +56,13 @@ public:
     /// Get trajectory points for visualization
     [[nodiscard]] std::vector<std::pair<double, double>>
         get_trajectory(double max_distance, double pitch) const noexcept {
-        std::vector<std::pair<double, double>> trajectory;
-
         if (max_distance < 0) {
-            return trajectory;
+            return {};
         }
+
+        const size_t num_points = static_cast<size_t>(max_distance / 0.03) + 1;
+        std::vector<std::pair<double, double>> trajectory;
+        trajectory.reserve(num_points);
 
         for (double x = 0; x < max_distance; x += 0.03) {
             trajectory.emplace_back(x, calculate_trajectory(x, pitch));
