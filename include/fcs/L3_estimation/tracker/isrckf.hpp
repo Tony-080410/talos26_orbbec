@@ -247,6 +247,9 @@ public:
         MatXZ Pxz_last = MatXZ::Zero();
         MatZZ Sz_last  = MatZZ::Zero();
 
+        // Pre-allocate deviation matrices once (avoid per-iteration allocation)
+        DevZ dev_z(NZ, kNumCubaturePoints);
+
         for (int it = 0; it < max_iters_; ++it) {
             compute_cubature_points_(x_it, S_prior, Xsig_);
 
@@ -261,8 +264,7 @@ public:
                 z_pred.noalias() += w_ * Zsig_.row(i).transpose();
             }
 
-            // Measurement deviation with R_sqrt
-            DevZ dev_z(NZ, Zsig_.rows());
+            // Measurement deviation with R_sqrt (reuse allocation)
             for (int i = 0; i < Zsig_.rows(); ++i) {
                 dev_z.col(i) = w_sqrt_ * (Zsig_.row(i).transpose() - z_pred);
             }
