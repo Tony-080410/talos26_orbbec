@@ -60,19 +60,7 @@ public:
 
         // InEKF predict (parallel)
         if (ineff_.has_value() && config_.ineff.enable) {
-            ineff_config_.sigma_a_xy = config_.ineff.sigma_a_xy;
-            ineff_config_.sigma_a_z  = config_.ineff.sigma_a_z;
-            ineff_config_.sigma_w    = config_.ineff.sigma_w;
-            ineff_config_.sigma_yaw  = config_.ineff.sigma_yaw;
-            ineff_config_.sigma_r    = config_.ineff.sigma_r;
-            ineff_config_.sigma_h    = config_.ineff.sigma_h;
-            ineff_config_.sigma_m    = config_.ineff.sigma_m;
-            ineff_config_.radius0    = config_.ineff.radius0;
-            ineff_config_.radius1    = config_.ineff.radius1;
-            ineff_config_.height     = config_.ineff.height;
-            ineff_config_.enable     = config_.ineff.enable;
-            ineff_config_.debug      = config_.ineff.debug;
-            ineff_->predict(dt, ineff_config_);
+            ineff_->predict(dt, config_.ineff);
         }
     }
 
@@ -160,10 +148,10 @@ public:
                         const double armor_yaw_pred  = ineff_->get_yaw() + yaw_offset;
                         const double armor_yaw_meas  = unwrap_rad(armor_yaw_pred, armor_yaw_raw);
                         const double target_yaw_meas = armor_yaw_meas - yaw_offset;
-                        ineff_->update_yaw(target_yaw_meas, ineff_config_);
+                        ineff_->update_yaw(target_yaw_meas, config_.ineff);
                     }
 
-                    ineff_->update_armor(armor_pos_odom, armor_id, ineff_config_);
+                    ineff_->update_armor(armor_pos_odom, armor_id, config_.ineff);
                 }
             }
         }
@@ -237,20 +225,7 @@ public:
             // Initialize InEKF (parallel filter)
             if (config_.ineff.enable) {
                 ineff_.emplace();
-                ineff_config_.sigma_a_xy = config_.ineff.sigma_a_xy;
-                ineff_config_.sigma_a_z  = config_.ineff.sigma_a_z;
-                ineff_config_.sigma_w    = config_.ineff.sigma_w;
-                ineff_config_.sigma_yaw  = config_.ineff.sigma_yaw;
-                ineff_config_.sigma_r    = config_.ineff.sigma_r;
-                ineff_config_.sigma_h    = config_.ineff.sigma_h;
-                ineff_config_.sigma_m    = config_.ineff.sigma_m;
-                ineff_config_.radius0    = config_.ineff.radius0;
-                ineff_config_.radius1    = config_.ineff.radius1;
-                ineff_config_.height     = config_.ineff.height;
-                ineff_config_.enable     = config_.ineff.enable;
-                ineff_config_.debug      = config_.ineff.debug;
-
-                ineff_->init(Eigen::Vector3d{x0, y0, z0}, armor_yaw, ineff_config_);
+                ineff_->init(Eigen::Vector3d{x0, y0, z0}, armor_yaw, config_.ineff);
             }
         }
 
@@ -360,8 +335,7 @@ private:
     // Filters
     std::optional<RoboCKF> robot_ckf_;
     std::optional<OutpostCKF> outpost_ckf_;
-    std::optional<InEKF> ineff_; // InEKF
-    InEKFConfig ineff_config_;   // InEKF configuration
+    std::optional<InEKF> ineff_; // InEKF (uses config_.ineff directly)
 
     // Models
     RobotModel robot_model_;
