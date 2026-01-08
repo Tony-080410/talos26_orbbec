@@ -59,9 +59,10 @@ enum Measure : uint8_t {
     const double y = xyz.y();
     const double z = xyz.z();
 
-    const double distance = xyz.norm();
-    const double yaw      = std::atan2(y, x);
-    const double pitch    = std::atan2(z, std::sqrt(x * x + y * y));
+    const double distance   = xyz.norm();
+    const double yaw        = std::atan2(y, x);
+    const double horizontal = std::hypot(x, y); // More accurate and faster than sqrt(x*x + y*y)
+    const double pitch      = std::atan2(z, horizontal);
 
     return {yaw, pitch, distance};
 }

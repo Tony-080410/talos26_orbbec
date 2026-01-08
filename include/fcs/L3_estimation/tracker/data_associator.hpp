@@ -8,6 +8,7 @@
 #include <Eigen/Dense>
 #include <array>
 #include <limits>
+#include <queue>
 #include <vector>
 
 namespace fcs::L3 {
@@ -157,38 +158,46 @@ public:
             }
         }
 
-        // Greedy one-to-one assignment
+        // Optimized greedy one-to-one assignment using priority queue
+        // Complexity: O(n² log n) instead of O(n³)
+        struct CostEntry {
+            double cost;
+            int obs_idx;
+            int armor_id;
+            bool operator<(const CostEntry& other) const {
+                // Reverse for min-heap (priority_queue is max-heap by default)
+                return cost > other.cost;
+            }
+        };
+
+        std::priority_queue<CostEntry> pq;
+        for (int j = 0; j < n_obs; ++j) {
+            if (observations.measurements[j].name != target_name) {
+                continue;
+            }
+            for (int id = 0; id < armors_num; ++id) {
+                if (std::isfinite(cost[j][id])) {
+                    pq.push({cost[j][id], j, id});
+                }
+            }
+        }
+
         std::vector<bool> used_obs(n_obs, false);
         std::vector<bool> used_id(armors_num, false);
 
-        while (true) {
-            double best = std::numeric_limits<double>::infinity();
-            int best_j  = -1;
-            int best_id = -1;
+        while (!pq.empty()) {
+            const auto entry = pq.top();
+            pq.pop();
 
-            for (int j = 0; j < n_obs; ++j) {
-                if (used_obs[j])
-                    continue;
-                for (int id = 0; id < armors_num; ++id) {
-                    if (used_id[id])
-                        continue;
-                    if (cost[j][id] < best) {
-                        best    = cost[j][id];
-                        best_j  = j;
-                        best_id = id;
-                    }
-                }
+            if (used_obs[entry.obs_idx] || used_id[entry.armor_id]) {
+                continue;
             }
 
-            if (best_j < 0 || best_id < 0) {
-                break;
-            }
+            used_obs[entry.obs_idx] = true;
+            used_id[entry.armor_id] = true;
 
-            used_obs[best_j] = true;
-            used_id[best_id] = true;
-
-            result.armors.push_back(observations.measurements[best_j]);
-            result.armor_ids.push_back(best_id);
+            result.armors.push_back(observations.measurements[entry.obs_idx]);
+            result.armor_ids.push_back(entry.armor_id);
         }
 
         return result;

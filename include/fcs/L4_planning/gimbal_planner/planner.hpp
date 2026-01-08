@@ -295,8 +295,9 @@ private:
     }
 
     void calc_yaw_pitch(const Eigen::Vector3d& p, double& yaw, double& pitch) const noexcept {
-        yaw   = std::atan2(p.y(), p.x());
-        pitch = std::atan2(p.z(), std::sqrt(p.x() * p.x() + p.y() * p.y()));
+        yaw                   = std::atan2(p.y(), p.x());
+        const auto horizontal = std::hypot(p.x(), p.y()); // More accurate and faster
+        pitch                 = std::atan2(p.z(), horizontal);
 
         // Apply ballistic compensation
         double compensated_pitch = pitch;
