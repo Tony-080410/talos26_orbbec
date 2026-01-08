@@ -7,7 +7,7 @@
 
 namespace fast_tf {
 
-constexpr auto to_rad(double x) { return x * std::numbers::pi / 180.0; }
+constexpr auto to_rad_2(double x) { return x * std::numbers::pi / 180.0; }
 /**
  * @brief 创建哨兵机器人的坐标系统，初始化固定变换
  *
@@ -32,7 +32,7 @@ std::shared_ptr<CoordinateSystem<N>> sentry_new(timestamp_ns_t ts = 0) {
     update<camera_link_fuxk_frame>(
         *system,
         FuckTransform<camera_link_fuxk_frame>{
-            TransformMatrix4d::from_rpy(0.0, 0.0, to_rad(-2.00), 0.0886, 0.03, 0.02)},
+            TransformMatrix4d::from_rpy(0.0, 0.0, to_rad_2(-2.00), 0.0886, 0.03, 0.02)},
         ts);
 
     // camera_optical -> camera_link

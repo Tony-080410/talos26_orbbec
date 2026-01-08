@@ -52,7 +52,6 @@ struct TalosConfig {
     std::expected<void, std::string> read_from(const toml::table& tbl) noexcept {
         READ(tbl, daedalus);
         READ(tbl, untrust_roll);
-        READ(tbl, camera);
         READ(tbl, at_legacy);
         READ_OPT(tbl, imu_vendor_id);
         READ_OPT(tbl, imu_product_id);
