@@ -510,23 +510,27 @@ auto Scheduler::run_compute_selective(const std::uint32_t ready_mask) -> std::ui
     std::atomic<std::uint32_t> written_mask{0};
 
     compute_arena_->execute([this, ready_mask, &written_mask] {
+        // Reusable buffer for system indices to avoid per-call allocation
+        // Max 32 systems, so 32 elements is sufficient
+        std::size_t to_run_buf[32];
+        std::size_t to_run_count = 0;
+
         for (const auto& level : levels_) {
-            // Filter systems in this level that are ready
-            std::vector<std::size_t> to_run;
-            to_run.reserve(level.size());
+            // Filter systems in this level that are ready (inline, no temporary vector)
+            to_run_count = 0;
             for (const auto idx : level) {
                 if (ready_mask & (1U << idx)) {
-                    to_run.push_back(idx);
+                    to_run_buf[to_run_count++] = idx;
                 }
             }
 
-            if (to_run.empty()) [[unlikely]] {
+            if (to_run_count == 0) [[unlikely]] {
                 continue;
             }
 
-            if (to_run.size() == 1) {
+            if (to_run_count == 1) {
                 // Single system: execute directly, avoid task_group overhead
-                const auto idx = to_run[0];
+                const auto idx = to_run_buf[0];
                 LatencyProbe probe;
                 const bool written = compute_systems_[idx].system->run(world_);
                 const auto elapsed = probe.elapsed_ns();
@@ -541,7 +545,8 @@ auto Scheduler::run_compute_selective(const std::uint32_t ready_mask) -> std::ui
             } else {
                 // Multiple systems: execute in parallel
                 tbb::task_group tg;
-                for (const auto idx : to_run) {
+                for (std::size_t i = 0; i < to_run_count; ++i) {
+                    const auto idx = to_run_buf[i];
                     tg.run([this, idx, &written_mask] {
                         LatencyProbe probe;
                         const bool written = compute_systems_[idx].system->run(world_);
@@ -743,7 +748,9 @@ auto Scheduler::compute_levels() -> BuildResult {
     // Phase 3: Build adjacency list and in-degree
     // ========================================================================
 
-    std::vector<std::set<std::size_t>> adj(n); // Use set to deduplicate edges
+    // Use bitmask for adjacency instead of std::set (O(1) vs O(log n))
+    // adj_mask[i] = bitmask of nodes that node i points to
+    std::vector<std::uint32_t> adj_mask(n, 0);
     std::vector<std::size_t> in_degree(n, 0);
 
     for (const auto& [key, usage] : channels) {
@@ -753,9 +760,13 @@ auto Scheduler::compute_levels() -> BuildResult {
 
         std::size_t writer = usage.writers[0];
         for (std::size_t reader : usage.readers) {
-            if (writer != reader && adj[writer].insert(reader).second) {
-                // Only increment in_degree if this is a new edge
-                ++in_degree[reader];
+            if (writer != reader) {
+                const std::uint32_t bit = 1U << reader;
+                if ((adj_mask[writer] & bit) == 0) {
+                    // New edge
+                    adj_mask[writer] |= bit;
+                    ++in_degree[reader];
+                }
             }
         }
     }
@@ -781,7 +792,10 @@ auto Scheduler::compute_levels() -> BuildResult {
 
         std::vector<std::size_t> next_level;
         for (std::size_t node : current_level) {
-            for (std::size_t neighbor : adj[node]) {
+            std::uint32_t neighbors = adj_mask[node];
+            while (neighbors) {
+                const std::size_t neighbor = __builtin_ctzll(neighbors);
+                neighbors &= neighbors - 1; // Clear lowest set bit
                 if (--in_degree[neighbor] == 0) {
                     next_level.push_back(neighbor);
                 }
@@ -817,7 +831,11 @@ auto Scheduler::compute_levels() -> BuildResult {
             in_stack[node] = true;
             path.push_back(node);
 
-            for (const std::size_t neighbor : adj[node]) {
+            std::uint32_t neighbors = adj_mask[node];
+            while (neighbors) {
+                const std::size_t neighbor = __builtin_ctzll(neighbors);
+                neighbors &= neighbors - 1; // Clear lowest set bit
+
                 if (!visited[neighbor]) {
                     if (find_cycle(neighbor)) {
                         return true;
@@ -853,14 +871,7 @@ auto Scheduler::compute_levels() -> BuildResult {
     // ========================================================================
     // Build transitive closure of compute system dependencies
     // dependents[i] = bitmask of all systems that depend on system i (directly or transitively)
-    std::vector<std::uint32_t> dependents(n, 0);
-
-    // Initialize with direct dependencies from adj
-    for (std::size_t i = 0; i < n; ++i) {
-        for (std::size_t neighbor : adj[i]) {
-            dependents[i] |= (1U << neighbor);
-        }
-    }
+    std::vector<std::uint32_t> dependents = adj_mask; // Direct dependencies are already in adj_mask
 
     // Compute transitive closure (Floyd-Warshall style)
     for (std::size_t k = 0; k < n; ++k) {

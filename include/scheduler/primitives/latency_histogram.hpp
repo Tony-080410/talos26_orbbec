@@ -147,6 +147,81 @@ public:
     [[nodiscard]] uint64_t p99() const noexcept { return percentile(0.99); }
 
     /**
+     * @brief 统计结果结构体
+     */
+    struct HistogramStats {
+        uint64_t count{0};
+        uint64_t min_ns{0};
+        uint64_t max_ns{0};
+        double mean_ns{0.0};
+        double stddev_ns{0.0};
+        uint64_t p50_ns{0};
+        uint64_t p90_ns{0};
+        uint64_t p95_ns{0};
+        uint64_t p99_ns{0};
+        uint64_t p999_ns{0};
+    };
+
+    /**
+     * @brief 计算并返回完整统计信息
+     *
+     * 注意：这是一个近似计算（基于直方图桶），
+     * 标准差使用加权方差公式近似。
+     */
+    [[nodiscard]] HistogramStats compute() const noexcept {
+        HistogramStats stats;
+        const auto c = count_.load(std::memory_order_relaxed);
+        stats.count  = c;
+
+        if (c == 0) {
+            return stats;
+        }
+
+        stats.min_ns  = min();
+        stats.max_ns  = max();
+        stats.mean_ns = mean();
+
+        const auto snapshot = this->snapshot();
+        double variance_sum = 0.0;
+        uint64_t cumulative = 0;
+
+        // 计算加权百分位数和方差
+        for (size_t i = 0; i < kNumBuckets; ++i) {
+            const uint64_t bucket_count    = snapshot[i];
+            const uint64_t bucket_latency  = bucket_to_latency(i);
+            const uint64_t prev_cumulative = cumulative;
+            cumulative += bucket_count;
+
+            // 更新百分位数
+            const double rank = static_cast<double>(cumulative) / static_cast<double>(c);
+            if (rank >= 0.50 && stats.p50_ns == 0) {
+                stats.p50_ns = bucket_latency;
+            }
+            if (rank >= 0.90 && stats.p90_ns == 0) {
+                stats.p90_ns = bucket_latency;
+            }
+            if (rank >= 0.95 && stats.p95_ns == 0) {
+                stats.p95_ns = bucket_latency;
+            }
+            if (rank >= 0.99 && stats.p99_ns == 0) {
+                stats.p99_ns = bucket_latency;
+            }
+            if (rank >= 0.999 && stats.p999_ns == 0) {
+                stats.p999_ns = bucket_latency;
+            }
+
+            // 加权方差: Σ count * (latency - mean)²
+            const double diff = static_cast<double>(bucket_latency) - stats.mean_ns;
+            variance_sum += static_cast<double>(bucket_count) * diff * diff;
+        }
+
+        // 标准差 = sqrt(方差 / count)
+        stats.stddev_ns = std::sqrt(variance_sum / static_cast<double>(c));
+
+        return stats;
+    }
+
+    /**
      * @brief 获取桶计数 (用于调试/可视化)
      */
     [[nodiscard]] std::array<uint64_t, kNumBuckets> snapshot() const noexcept {
