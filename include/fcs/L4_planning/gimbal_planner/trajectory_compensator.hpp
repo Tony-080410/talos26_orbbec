@@ -18,11 +18,10 @@ public:
     /// This implementation matches rm_utils/math/trajectory_compensator.cpp (atvision_ws).
     [[nodiscard]] bool
         compensate(const Eigen::Vector3d& target_position, double& pitch) const noexcept {
-        const double target_height = target_position.z();
-        double iterative_height    = target_height;
-        double impact_height       = 0.0;
-        const double distance      = std::sqrt(
-            target_position.x() * target_position.x() + target_position.y() * target_position.y());
+        const double target_height    = target_position.z();
+        double iterative_height       = target_height;
+        double impact_height          = 0.0;
+        const double distance         = std::hypot(target_position.x(), target_position.y());
         double angle                  = std::atan2(target_height, distance);
         double dh                     = 0.0;
         constexpr double kDhThreshold = 0.01;
@@ -86,10 +85,9 @@ class IdealCompensator final : public TrajectoryCompensator {
 public:
     [[nodiscard]] double
         get_flying_time(const Eigen::Vector3d& target_position) const noexcept override {
-        const double distance = std::sqrt(
-            target_position.x() * target_position.x() + target_position.y() * target_position.y());
-        const double angle = std::atan2(target_position.z(), distance);
-        const double t     = distance / (velocity * std::cos(angle));
+        const double distance = std::hypot(target_position.x(), target_position.y());
+        const double angle    = std::atan2(target_position.z(), distance);
+        const double t        = distance / (velocity * std::cos(angle));
         return t;
     }
 
@@ -107,10 +105,9 @@ public:
     [[nodiscard]] double
         get_flying_time(const Eigen::Vector3d& target_position) const noexcept override {
         const double r        = resistance < 1e-4 ? 1e-4 : resistance;
-        const double distance = std::sqrt(
-            target_position.x() * target_position.x() + target_position.y() * target_position.y());
-        const double angle = std::atan2(target_position.z(), distance);
-        const double t     = (std::exp(r * distance) - 1.0) / (r * velocity * std::cos(angle));
+        const double distance = std::hypot(target_position.x(), target_position.y());
+        const double angle    = std::atan2(target_position.z(), distance);
+        const double t        = (std::exp(r * distance) - 1.0) / (r * velocity * std::cos(angle));
         return t;
     }
 
