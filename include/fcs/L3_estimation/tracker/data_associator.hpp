@@ -51,13 +51,27 @@ public:
 
         const int n_obs = static_cast<int>(observations.measurements.size());
 
-        // Cost matrix: observation j vs armor_id k
-        std::vector<std::vector<double>> cost(
-            n_obs, std::vector<double>(armors_num, std::numeric_limits<double>::infinity()));
+        // Cost matrix: fixed-size for armors_num <= 16, dynamic for larger
+        // Using std::array to avoid heap allocation
+        constexpr int MAX_ARMORS = 16;
+        std::array<std::array<double, MAX_ARMORS>, MAX_ARMORS> cost{};
+        cost.fill(std::array<double, MAX_ARMORS>{});
+        for (auto& row : cost) {
+            row.fill(std::numeric_limits<double>::infinity());
+        }
 
-        // Pre-compute measurements for each observation
-        std::vector<VecZ> meas_list(n_obs);
+        // Filter matching armors upfront to avoid repeated checks
+        struct FilteredMeas {
+            int obs_idx;
+            VecZ z;
+        };
+        std::vector<FilteredMeas> filtered_obs;
+        filtered_obs.reserve(n_obs);
+
         for (int j = 0; j < n_obs; ++j) {
+            if (observations.measurements[j].name != target_name) {
+                continue;
+            }
             const auto& m  = observations.measurements[j];
             const auto ypd = xyz2ypd(m.transform->translation());
 
@@ -65,10 +79,13 @@ public:
             z[0] = ypd[0]; // yaw
             z[1] = ypd[1]; // pitch
             z[2] = ypd[2]; // distance
-            // Extract yaw from quaternion orientation
             z[3] = m.transform->euler_rot().yaw;
 
-            meas_list[j] = z;
+            filtered_obs.push_back({j, z});
+        }
+
+        if (filtered_obs.empty()) {
+            return result;
         }
 
         // Pre-compute predicted measurements and covariances for each armor_id
@@ -123,22 +140,20 @@ public:
             pred_cache[id] = {z_bar, Pzz};
         }
 
-        // Compute costs for each (observation, armor_id) pair
-        for (int j = 0; j < n_obs; ++j) {
-            if (observations.measurements[j].name != target_name) {
-                continue; // Only match armors with matching ID
-            }
+        // Compute costs using filtered observations only
+        for (const auto& obs : filtered_obs) {
+            const int j = obs.obs_idx;
 
             for (int id = 0; id < armors_num; ++id) {
                 const auto& z_pred = pred_cache[id].z_pred;
 
                 VecZ nu;
-                nu[0] = shortest_rad(z_pred[0], meas_list[j][0]);
-                nu[1] = meas_list[j][1] - z_pred[1];
-                nu[2] = meas_list[j][2] - z_pred[2];
-                nu[3] = shortest_rad(z_pred[3], meas_list[j][3]);
+                nu[0] = shortest_rad(z_pred[0], obs.z[0]);
+                nu[1] = obs.z[1] - z_pred[1];
+                nu[2] = obs.z[2] - z_pred[2];
+                nu[3] = shortest_rad(z_pred[3], obs.z[3]);
 
-                const Eigen::Matrix<double, NZ, 1> R_diag = model.R_diag(meas_list[j]);
+                const Eigen::Matrix<double, NZ, 1> R_diag = model.R_diag(obs.z);
                 MatZ S                                    = pred_cache[id].Pzz;
                 S.diagonal() += R_diag;
                 S = (S + S.transpose()) * 0.5;
@@ -159,25 +174,20 @@ public:
         }
 
         // Optimized greedy one-to-one assignment using priority queue
-        // Complexity: O(n² log n) instead of O(n³)
         struct CostEntry {
             double cost;
             int obs_idx;
             int armor_id;
             bool operator<(const CostEntry& other) const {
-                // Reverse for min-heap (priority_queue is max-heap by default)
-                return cost > other.cost;
+                return cost > other.cost; // Reverse for min-heap
             }
         };
 
         std::priority_queue<CostEntry> pq;
-        for (int j = 0; j < n_obs; ++j) {
-            if (observations.measurements[j].name != target_name) {
-                continue;
-            }
+        for (const auto& obs : filtered_obs) {
             for (int id = 0; id < armors_num; ++id) {
-                if (std::isfinite(cost[j][id])) {
-                    pq.push({cost[j][id], j, id});
+                if (std::isfinite(cost[obs.obs_idx][id])) {
+                    pq.push({cost[obs.obs_idx][id], obs.obs_idx, id});
                 }
             }
         }
