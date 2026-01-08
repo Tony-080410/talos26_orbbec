@@ -1,4 +1,4 @@
-daedalus = false
+daedalus = true
 robot = 'hero'
 imu_vendor_id = 0x483
 [foxglove]
@@ -104,14 +104,23 @@ side_angle = 15.0              # Side angle threshold for armor selection (degre
 min_switching_v_yaw = 1.0      # Min angular velocity for armor switching (rad/s)
 transfer_thresh = 5            # State transfer counter threshold (frames)
 
-# Trajectory compensator type: "ideal" or "resistance"
-compensator_type = "Resistance"
+# Trajectory compensator type: "Ideal", "Resistance", or "RK4"
+compensator_type = "RK4"
 
 [planner.trajectory]
 iteration_times = 20       # Number of iterations for ballistic compensation
 bullet_speed = 22.0        # Bullet velocity (m/s)
 gravity = 9.7997              # Gravity acceleration (m/s^2)
 resistance = 0.005         # Air resistance coefficient
+
+# RK4 quadratic-drag parameters (used when compensator_type = "RK4")
+cd = 0.47                 # Drag coefficient (dimensionless)
+rho = 1.225               # Air density (kg/m^3)
+diameter = 0.017          # Bullet diameter (m), area is computed internally
+mass = 0.0032             # Bullet mass (kg)
+rk4_dt = 0.025            # Desired integration dt (s)
+rk4_min_steps = 50        # Min integration steps
+rk4_max_steps = 500      # Max integration steps
 
 [weapon]
 fire_delay = 0.085 # Additional prediction delay compensation (seconds)

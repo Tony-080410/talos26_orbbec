@@ -13,6 +13,7 @@ namespace fcs::L4 {
 enum class TrajectoryCompensatorType {
     Ideal,
     Resistance,
+    RK4,
 };
 
 struct TrajectoryConfig {
@@ -28,11 +29,39 @@ struct TrajectoryConfig {
     /// Air resistance coefficient
     double resistance{0.001};
 
+    /// Drag coefficient Cd (dimensionless, needs calibration)
+    double cd{0.47};
+
+    /// Air density rho (kg/m^3)
+    double rho{1.225};
+
+    /// Bullet diameter (meters), used to compute cross-sectional area A
+    double diameter{0.017};
+
+    /// Bullet mass (kg)
+    double mass{0.0032};
+
+    /// Desired RK4 integration dt (seconds)
+    double rk4_dt{0.001};
+
+    /// Minimum RK4 steps per integration
+    int rk4_min_steps{50};
+
+    /// Maximum RK4 steps per integration
+    int rk4_max_steps{2000};
+
     std::expected<void, std::string> read_from(const toml::table& tbl) noexcept {
         READ(tbl, iteration_times);
         READ(tbl, bullet_speed);
         READ(tbl, gravity);
         READ(tbl, resistance);
+        READ_OPT(tbl, cd);
+        READ_OPT(tbl, rho);
+        READ_OPT(tbl, diameter);
+        READ_OPT(tbl, mass);
+        READ_OPT(tbl, rk4_dt);
+        READ_OPT(tbl, rk4_min_steps);
+        READ_OPT(tbl, rk4_max_steps);
         return {};
     }
 };

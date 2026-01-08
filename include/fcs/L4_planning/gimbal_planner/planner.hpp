@@ -103,8 +103,13 @@ public:
             return std::unexpected("Unknown target type");
         }
 
-        // Step 1: Initial flying time estimate
-        double flying_time = compensator_->get_flying_time(target_position);
+        // Step 1: Initial flying time estimate (cheap LOS estimate to avoid heavy simulation here)
+        // The refined flying time (after armor selection) still uses the configured compensator.
+        const Eigen::Vector3d rel_center = target_position - muzzle_pos;
+        const double rel_center_xy       = std::hypot(rel_center.x(), rel_center.y());
+        const double rel_center_pitch    = std::atan2(rel_center.z(), rel_center_xy);
+        const double v0                  = std::max(1e-3, config_.trajectory.bullet_speed);
+        const double flying_time         = rel_center_xy / (v0 * std::cos(rel_center_pitch));
 
         // Calculate dt including prediction delay
         double dt = static_cast<double>(current_time_ns - target.timestamp_ns) / 1e9 + flying_time
@@ -211,7 +216,7 @@ public:
             }
             // Track center instead of armor
             plan.fire_advice = true;
-            calc_yaw_pitch(target_position, yaw, pitch);
+            calc_yaw_pitch(target_position - muzzle_pos, yaw, pitch);
             predicted_position = target_position;
             break;
         }
@@ -249,6 +254,14 @@ private:
             compensator_->iteration_times = config_.trajectory.iteration_times;
             compensator_->gravity         = config_.trajectory.gravity;
             compensator_->resistance      = config_.trajectory.resistance;
+            compensator_->cd              = config_.trajectory.cd;
+            compensator_->rho             = config_.trajectory.rho;
+            compensator_->diameter        = config_.trajectory.diameter;
+            compensator_->mass            = config_.trajectory.mass;
+            compensator_->rk4_dt          = config_.trajectory.rk4_dt;
+            compensator_->rk4_min_steps   = config_.trajectory.rk4_min_steps;
+            compensator_->rk4_max_steps   = config_.trajectory.rk4_max_steps;
+            compensator_->on_params_updated();
         }
     }
 
@@ -300,8 +313,10 @@ private:
         pitch                 = std::atan2(p.z(), horizontal);
 
         // Apply ballistic compensation
+        double compensated_yaw   = yaw;
         double compensated_pitch = pitch;
-        if (compensator_->compensate(p, compensated_pitch)) {
+        if (compensator_->compensate(p, compensated_yaw, compensated_pitch)) {
+            yaw   = compensated_yaw;
             pitch = compensated_pitch;
         }
     }

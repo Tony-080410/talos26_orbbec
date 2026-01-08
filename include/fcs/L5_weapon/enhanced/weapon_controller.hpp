@@ -39,6 +39,7 @@ public:
             compensator_->velocity   = bullet_speed;
             compensator_->gravity    = gravity;
             compensator_->resistance = resistance;
+            compensator_->on_params_updated();
         }
     }
 
