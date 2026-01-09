@@ -445,30 +445,25 @@ template <ReadFrom T>
 /// @return Merged table with override values winning on conflicts
 [[nodiscard]] inline std::expected<toml::table, std::string>
     merge_configs(const toml::table& base, const toml::table& override_table) noexcept {
-    toml::table result;
+    toml::table result = base; // 先拷贝一份 base
 
-    // Copy all base values
-    for (const auto& [k, v] : base) {
-        if (auto node = v.as_table()) {
-            // Recursively merge tables
-            auto base_override = override_table.get(k);
-            if (base_override && base_override->as_table()) {
-                auto merged = merge_configs(*node, *base_override->as_table());
-                if (!merged) {
-                    return std::unexpected(merged.error());
-                }
-                result.insert(k, *std::move(merged));
-            } else {
-                result.insert(k, v);
-            }
-        } else {
-            result.insert(k, v);
-        }
-    }
-
-    // Override with values from override_table
     for (const auto& [k, v] : override_table) {
-        result.insert(k, v);
+        // 检查 base 中是否也存在这个键，且两者都是 table
+        auto* base_node = result.get(k);
+
+        if (base_node && base_node->as_table() && v.as_table()) {
+            // 递归合并子表
+            auto merged = merge_configs(*base_node->as_table(), *v.as_table());
+            if (!merged)
+                return std::unexpected(merged.error());
+
+            // 替换为合并后的子表
+            result.insert_or_assign(k, std::move(*merged));
+        } else {
+            // 如果不是 table，或者 base 中不存在，则直接覆盖/插入
+            // 使用 insert_or_assign 确保 override 胜出
+            result.insert_or_assign(k, v);
+        }
     }
 
     return result;

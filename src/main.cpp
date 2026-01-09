@@ -254,7 +254,9 @@ make_interface_result_type make_interface(hardware_config&& cfg) {
                         .device   = usb_device,
                         .imu_data = &imu_data,
                     }),
-                    std::make_unique<fcs::L1::CameraInterface>(std::move(*input_result)), nullptr);
+                    std::make_unique<fcs::L1::CameraInterface>(std::move(*input_result)),
+                    std::make_unique<fcs::L1::OutputInterface>(
+                        fcs::L1::UsbOutput(std::move(usb_device))));
             }
             return std::unexpected(fmt::format("unsupported hardware, this should never happen"));
         },
