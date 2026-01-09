@@ -186,7 +186,7 @@ enum Measure : uint8_t {
     const std::array<double, 3> zs = {z0, z1, z2};
 
     for (size_t i = 0; i < ARMORS_NUM; ++i) {
-        const double armor_yaw = normalize_rad(yaw + static_cast<double>(i) * angle_step);
+        const double armor_yaw = (yaw + static_cast<double>(i) * angle_step);
         const double armor_x   = target_pos.x() - radius * std::cos(armor_yaw);
         const double armor_y   = target_pos.y() - radius * std::sin(armor_yaw);
 

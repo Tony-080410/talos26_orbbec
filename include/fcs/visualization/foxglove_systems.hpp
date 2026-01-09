@@ -507,6 +507,7 @@ void register_foxglove_systems(App& app, talos::Scheduler* scheduler_ptr = nullp
             cmd_json["pitch"]        = cmd->pitch;
             cmd_json["distance"]     = cmd->distance;
             cmd_json["fire_advice"]  = cmd->fire;
+            cmd_json["track_center"] = cmd->track_center;
 
             GimbalCmdMessage msg;
             msg.data = json_to_bytes(cmd_json.dump());
@@ -560,7 +561,7 @@ void register_foxglove_systems(App& app, talos::Scheduler* scheduler_ptr = nullp
                 entity.id        = "predicted";
                 entity.frame_id  = "odom";
                 entity.lifetime  = foxglove::schemas::Duration{.nsec = 100000000};
-                entity.timestamp = timestamp_from_ns(cmd->timestamp_ns);
+                entity.timestamp = timestamp_from_ns(cmd->predicted_future);
 
                 foxglove::schemas::SpherePrimitive sphere;
                 sphere.pose = foxglove::schemas::Pose();
@@ -570,7 +571,7 @@ void register_foxglove_systems(App& app, talos::Scheduler* scheduler_ptr = nullp
                 sphere.pose->position->z = cmd->predicted_position->z();
                 sphere.pose->orientation = {0, 0, 0, 1};
                 sphere.size              = {0.08, 0.08, 0.08};
-                sphere.color             = foxglove::schemas::Color{1.0, 0.5, 0.2, 0.6}; // 橙色
+                sphere.color             = foxglove::schemas::Color{1.0, 0.0, 0.0, 0.6}; // 橙色
                 entity.spheres.push_back(sphere);
                 entities.push_back(entity);
             }

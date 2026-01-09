@@ -9,6 +9,6 @@ height = 3072
 [camera.profile]
 trigger_mode = false
 invert_image = true
-exposure_time_us = 15000  # 1.5ms in microseconds
+exposure_time_us = 7250  # 1.5ms in microseconds
 gain = 16.7
 rotate_angle = "Clockwise270"

@@ -20,6 +20,7 @@ struct WeaponCommand {
     double pitch_rate{0.0}; // pitch 角速度 (rad/s)
 
     // 发射控制
+    bool track_center{false};
     bool fire{false}; // 发射指令
 
     // 弹道信息

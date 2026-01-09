@@ -200,7 +200,7 @@ public:
             return {};
         }
 
-        constexpr double sample_step = 0.03;
+        constexpr double sample_step = 0.015;
         const size_t num_points      = static_cast<size_t>(max_distance / sample_step) + 1;
         std::vector<std::pair<double, double>> trajectory;
         trajectory.reserve(num_points);
@@ -495,10 +495,10 @@ private:
 
     void rebuild_table() noexcept {
         constexpr double kTableRangeMax  = 20.0;
-        constexpr double kTableRangeStep = 0.05;
-        constexpr double kPitchMin       = -0.4;
-        constexpr double kPitchMax       = 0.8;
-        constexpr double kPitchStep      = 0.01;
+        constexpr double kTableRangeStep = 0.01;
+        constexpr double kPitchMin       = -0.6;
+        constexpr double kPitchMax       = 0.9;
+        constexpr double kPitchStep      = 0.005;
 
         auto tbl         = std::make_shared<LookupTable>();
         tbl->range_max   = kTableRangeMax;

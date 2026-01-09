@@ -31,8 +31,10 @@ struct GimbalPlan {
     double distance{0};
     bool fire_advice{false};
     double confidence{0.0}; // Confidence level in the fire decision
+    bool track_center;
 
     // Predicted armor position (for visualization)
+    uint64_t predicted_future;
     std::optional<Eigen::Vector3d> predicted_position;
 
     // Trajectory points (x, z) in muzzle_link frame (for visualization)

@@ -1,6 +1,6 @@
 [detector]
 backend_type = "Traditional"
-detect_color = "Blue"
+detect_color = "Red"
 
 # Required if backend_type = "traditional"
 [traditional]
@@ -46,7 +46,7 @@ nms_threshold = 0.30
 top_k = 128
 
 [tracker]
-inekf_enabled = true
+inekf_enabled = false
 
 [tracker.robot]
 matcher_gate = 5.0
@@ -111,5 +111,5 @@ rho = 1.225
 diameter = 0.017
 mass = 0.0032
 rk4_dt = 0.025
-rk4_min_steps = 50
-rk4_max_steps = 500
+rk4_min_steps = 1000
+rk4_max_steps = 5000

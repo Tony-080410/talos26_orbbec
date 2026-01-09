@@ -147,6 +147,8 @@ public:
         //   dt = (current_time_ns - target.timestamp_ns)/1e9 + flying_time + plan_to_muzzle_delay.
         double dt = static_cast<double>(current_time_ns - target.timestamp_ns) / 1e9 + flying_time
                   + config_.plan_to_muzzle_delay;
+        uint64_t predicted_future =
+            current_time_ns + uint64_t(config_.plan_to_muzzle_delay * 1e9 + flying_time * 1e9);
 
         // Step 2: Predict target state
         target_position.x() += dt * target_velocity.x();
@@ -272,7 +274,9 @@ public:
         plan.yaw_diff        = cmd_yaw - yaw_;
         plan.pitch_diff      = pitch - pitch_;
         // SPDLOG_INFO("pitch_diff: {}", plan.pitch_diff);
-        plan.predicted_position = predicted_position;
+        plan.predicted_future   = predicted_future;
+        plan.predicted_position = {armor_position.x(), armor_position.y(), armor_position.z()};
+        plan.track_center       = state_ == State::TrackingCenter;
         plan.trajectory         = compensator_->get_trajectory(15, pitch_);
         // Rotate
         for (auto& p : plan.trajectory) {
@@ -388,7 +392,7 @@ private:
             std::abs(std::atan2(config_.shooting_range_h / 2.0, distance));
 
         // Minimum 1 degree range
-        constexpr double min_range = 1.55*(std::numbers::pi / 180.0);
+        constexpr double min_range = (std::numbers::pi / 180.0);
         shooting_range_yaw         = std::max(shooting_range_yaw, min_range);
         shooting_range_pitch       = std::max(shooting_range_pitch, min_range);
 

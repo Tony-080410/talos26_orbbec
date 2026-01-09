@@ -2,11 +2,12 @@
 # extend from vision_base.toml
 
 [planner]
-plan_to_muzzle_delay = 0.0
+plan_to_muzzle_delay = 0.1
 compensator_type = "RK4"
-
+max_tracking_v_yaw = 10000.0
+min_switching_v_yaw = 1.6
 [planner.trajectory]
 bullet_speed = 11.0
-cd = 0.24
-diameter = 0.043
+cd = 0.242987
+diameter = 0.041
 mass = 0.005
