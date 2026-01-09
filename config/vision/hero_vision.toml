@@ -2,7 +2,7 @@
 # extend from vision_base.toml
 
 [planner]
-plan_to_muzzle_delay = 0.1
+plan_to_muzzle_delay = 0.094
 compensator_type = "RK4"
 max_tracking_v_yaw = 10000.0
 min_switching_v_yaw = 1.6
