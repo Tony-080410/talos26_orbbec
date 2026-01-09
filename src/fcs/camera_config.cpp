@@ -17,7 +17,7 @@ std::expected<void, std::string> CameraConfig::read_from(const toml::table& tbl)
     READ(tbl, distort_coefficient);
     READ(tbl, width);
     READ(tbl, height);
-    READ_OPT(tbl, profile);
+    READ(tbl, profile);
     return {};
 }
 

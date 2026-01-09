@@ -1,9 +1,9 @@
-#include "fcs/L1_sensor/input_interface.hpp"
+#include "fcs/L1_sensor/camera_interface.hpp"
 
 namespace fcs::L1 {
 
-std::expected<InputInterface, InputError>
-    InputInterface::create_ipc(std::shared_ptr<ipc::ShmClient> client) noexcept {
+std::expected<CameraInterface, InputError>
+    CameraInterface::create_ipc(std::shared_ptr<ipc::ShmClient> client) noexcept {
     // 从 IPC 获取相机内参
     const auto& ipc_info = client->camera_info();
     CameraConfig info;
@@ -14,20 +14,11 @@ std::expected<InputInterface, InputError>
     info.width  = ipc_info.width;
     info.height = ipc_info.height;
 
-    return InputInterface(IpcInput(client, info));
+    return CameraInterface(IpcInput(client, info));
 }
 
-std::expected<InputInterface, InputError> InputInterface::create_hik(
-    const hikcamera::ImageCapturer::CameraProfile& profile, const CameraConfig& info) noexcept {
-    auto result = hikcamera::ImageCapturer::create(profile);
-    if (!result) {
-        return std::unexpected(result.error());
-    }
-    return InputInterface(HikInput(std::move(*result), info, profile.exposure_time));
-}
-
-std::expected<InputInterface, InputError>
-    InputInterface::create_hik(const CameraConfig& config) noexcept {
+std::expected<CameraInterface, InputError>
+    CameraInterface::create_hik(const CameraConfig& config) noexcept {
     hikcamera::ImageCapturer::CameraProfile profile;
     profile.trigger_mode = config.profile.trigger_mode;
     profile.invert_image = config.profile.invert_image;
@@ -40,7 +31,7 @@ std::expected<InputInterface, InputError>
     if (!result) {
         return std::unexpected(result.error());
     }
-    return InputInterface(HikInput(std::move(*result), config, profile.exposure_time));
+    return CameraInterface(HikInput(std::move(*result), config, profile.exposure_time));
 }
 
 } // namespace fcs::L1

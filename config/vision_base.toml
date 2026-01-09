@@ -1,0 +1,115 @@
+[detector]
+backend_type = "Traditional"
+detect_color = "Blue"
+
+# Required if backend_type = "traditional"
+[traditional]
+advanced_binary = true
+dark_percentage = 0.5
+binary_threshold = 85
+light_min_ratio = 0.0001
+light_max_ratio = 1.0
+light_max_angle = 40.0
+light_color_diff_thresh = 30
+armor_min_light_ratio = 0.8
+armor_min_small_center_distance = 0.8
+armor_max_small_center_distance = 3.5
+armor_min_large_center_distance = 3.5
+armor_max_large_center_distance = 8.0
+armor_max_angle = 40.0
+
+# Classifier configuration (ONNX-based number classification)
+classifier_model_path = "mlp.onnx"
+classifier_confidence_threshold = 0.5
+classifier_enable_type_filtering = true
+classifier_use_softmax = true
+
+# Required if backend_type = "nn"
+[nn]
+model_path = "at.onnx"
+device = "AUTO"
+device_priorities = "GPU,CPU"
+enable_profiling = false
+enable_multi_thread = false
+confidence_threshold = 0.75
+nms_threshold = 0.30
+top_k = 128
+
+[nn_tup]
+model_path = "opt-1208-001.onnx"
+device = "AUTO"
+device_priorities = "GPU,CPU"
+enable_profiling = false
+enable_multi_thread = false
+confidence_threshold = 0.75
+nms_threshold = 0.30
+top_k = 128
+
+[tracker]
+inekf_enabled = true
+
+[tracker.robot]
+matcher_gate = 5.0
+lost_threshold = 2.0
+tracking_threshold = 3
+
+[tracker.robot.model]
+sigma_a_xy = 10.0
+sigma_a_z = 1.0
+sigma_a_yaw = 20.0
+sigma_r0 = 1.0
+sigma_r1 = 1.0
+sigma_h = 0.5
+
+[tracker.robot_inekf]
+sigma_a_xy = 10.0
+sigma_a_z = 1.0
+sigma_w = 0.25
+sigma_m = 0.5
+sigma_yaw = 20.0
+radius0 = 0.23
+radius1 = 0.23
+height = 0.0
+sigma_r = 0.3
+sigma_h = 0.01
+
+[tracker.outpost]
+matcher_gate = 5.0
+lost_threshold = 1.0
+tracking_threshold = 5
+
+[tracker.outpost.model]
+sigma_q_xy = 1.0
+sigma_q_z = 1.0
+sigma_a_yaw = 5.0
+
+[tracker.outpost_inekf]
+sigma_a_xy = 10.0
+sigma_a_z = 1.0
+sigma_yaw = 5.0
+sigma_h = 5.0
+sigma_m = 5.0
+sigma_w = 5.0
+
+[planner]
+shooting_range_w = 0.135
+shooting_range_h = 0.135
+max_tracking_v_yaw = 60.0
+plan_to_muzzle_delay = 0.210
+side_angle = 15.0
+min_switching_v_yaw = 1.0
+transfer_thresh = 5
+compensator_type = "RK4"
+
+[planner.trajectory]
+iteration_times = 20
+bullet_speed = 22.0
+gravity = 9.7997
+resistance = 0.005
+cd = 0.47
+rho = 1.225
+diameter = 0.017
+mass = 0.0032
+rk4_dt = 0.025
+rk4_min_steps = 50
+rk4_max_steps = 500

@@ -114,7 +114,7 @@ target_link_libraries(talos_gimbal INTERFACE
 # FCS library (Fire Control System - refactored architecture)
 add_library(fcs SHARED
         src/fcs/camera_config.cpp
-        src/fcs/L1_sensor/input_interface.cpp
+        src/fcs/L1_sensor/camera_interface.cpp
         src/fcs/L1_sensor/output_interface.cpp
         src/fcs/L2_perception/at_legacy_detector_backend.cpp
         src/fcs/L2_perception/at_legacy_nn_backend.cpp

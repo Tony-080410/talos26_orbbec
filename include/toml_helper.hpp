@@ -406,7 +406,6 @@ template <ReadFrom T>
     }
     return std::unexpected(result.error());
 }
-} // namespace toml_helper
 
 #define READ_OPT(tbl, val)                                               \
     do {                                                                 \
@@ -435,3 +434,43 @@ template <ReadFrom T>
             return std::unexpected(res.error());                       \
         }                                                              \
     } while (0)
+
+// ============================================================================
+// Configuration Merge/Override Utilities
+// ============================================================================
+
+/// Recursively merge two TOML tables. Values in `override_table` take precedence.
+/// @param base The base configuration table (inherited)
+/// @param override_table The override configuration table (takes precedence)
+/// @return Merged table with override values winning on conflicts
+[[nodiscard]] inline std::expected<toml::table, std::string>
+    merge_configs(const toml::table& base, const toml::table& override_table) noexcept {
+    toml::table result;
+
+    // Copy all base values
+    for (const auto& [k, v] : base) {
+        if (auto node = v.as_table()) {
+            // Recursively merge tables
+            auto base_override = override_table.get(k);
+            if (base_override && base_override->as_table()) {
+                auto merged = merge_configs(*node, *base_override->as_table());
+                if (!merged) {
+                    return std::unexpected(merged.error());
+                }
+                result.insert(k, *std::move(merged));
+            } else {
+                result.insert(k, v);
+            }
+        } else {
+            result.insert(k, v);
+        }
+    }
+
+    // Override with values from override_table
+    for (const auto& [k, v] : override_table) {
+        result.insert(k, v);
+    }
+
+    return result;
+}
+} // namespace toml_helper

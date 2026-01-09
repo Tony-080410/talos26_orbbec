@@ -1,0 +1,13 @@
+untrust_roll = true
+
+[camera]
+camera_matrix = [1803.16, 0, 763.495, 0, 1796.54, 513.558, 0, 0, 1]
+distort_coefficient = [-0.0778954, 0.157208, 0.00066922, 0.00371464, -0.109314]
+width = 1440
+height = 1080
+
+[camera.profile]
+trigger_mode = false
+invert_image = true
+exposure_time_us = 1500  # 0.15ms in microseconds
+gain = 16.7

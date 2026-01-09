@@ -36,6 +36,8 @@
 # include <openvino/openvino.hpp>
 #endif
 
+#include "magic_enum.hpp"
+
 // Project-wide utilities
 #include "toml_helper.hpp"
 #include <toml++/toml.hpp>

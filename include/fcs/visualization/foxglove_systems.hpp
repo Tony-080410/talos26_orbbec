@@ -1,5 +1,6 @@
 #pragma once
 
+#include "L4_planning/gimbal_planner/types.hpp"
 #include "L5_weapon/fire_control.hpp"
 #include "foxglove_server.hpp"
 #include "foxglove_types.hpp"
@@ -33,8 +34,7 @@ void register_foxglove_systems(App& app, talos::Scheduler* scheduler_ptr = nullp
     app.template add_system<talos::pool_compute>(
         "foxglove_image_pub",
         [](talos::spmc<AtLegacyImageFrame, AtLegacyImageChannelTag> img_in,
-           talos::res<std::shared_ptr<FoxgloveServer>> server,
-           talos::res<std::shared_ptr<TalosConfig>> config,
+           talos::res<std::shared_ptr<FoxgloveServer>> server, talos::res<fcs::CameraConfig> cam,
            talos::res<std::shared_ptr<fast_tf::CoordinateSystem<1024>>> tf_buffer) {
             if (!(*server)->is_initialized() || !img_in.has_new()) {
                 return;
@@ -67,19 +67,18 @@ void register_foxglove_systems(App& app, talos::Scheduler* scheduler_ptr = nullp
             (*server)->enqueue_message(std::move(msg));
 
             // 发布相机标定信息
-            const auto& cam = (*config)->camera;
             std::array<double, 9> camera_matrix_arr;
             for (int i = 0; i < 3; ++i) {
                 for (int j = 0; j < 3; ++j) {
-                    camera_matrix_arr[i * 3 + j] = cam.camera_matrix(i, j);
+                    camera_matrix_arr[i * 3 + j] = cam->camera_matrix(i, j);
                 }
             }
             std::vector<double> dist_coeffs(
-                cam.distort_coefficient.data(),
-                cam.distort_coefficient.data() + cam.distort_coefficient.size());
+                cam->distort_coefficient.data(),
+                cam->distort_coefficient.data() + cam->distort_coefficient.size());
 
             (*server)->publish_camera_calibration(
-                cam.width, cam.height, camera_matrix_arr, dist_coeffs, frame->timestamp_ns);
+                cam->width, cam->height, camera_matrix_arr, dist_coeffs, frame->timestamp_ns);
 
             // 发布 TF
             (*server)->publish_tf(**tf_buffer, frame->timestamp_ns);

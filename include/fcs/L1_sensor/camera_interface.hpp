@@ -142,12 +142,12 @@ private:
     uint64_t seq_{0};
 };
 
-class InputInterface {
+class CameraInterface {
 public:
     using InputMode = std::variant<std::monostate, IpcInput, HikInput>;
 
-    InputInterface() = default;
-    explicit InputInterface(InputMode mode) noexcept
+    CameraInterface() = default;
+    explicit CameraInterface(InputMode mode) noexcept
         : mode_(std::move(mode)) {}
 
     [[nodiscard]] std::optional<Frame> try_recv() noexcept {
@@ -188,13 +188,10 @@ public:
             mode_);
     }
 
-    [[nodiscard]] static std::expected<InputInterface, InputError>
+    [[nodiscard]] static std::expected<CameraInterface, InputError>
         create_ipc(std::shared_ptr<ipc::ShmClient> client) noexcept;
 
-    [[nodiscard]] static std::expected<InputInterface, InputError> create_hik(
-        const hikcamera::ImageCapturer::CameraProfile& profile, const CameraConfig& info) noexcept;
-
-    [[nodiscard]] static std::expected<InputInterface, InputError>
+    [[nodiscard]] static std::expected<CameraInterface, InputError>
         create_hik(const CameraConfig& config) noexcept;
 
 private:

@@ -28,19 +28,33 @@ struct FoxgloveConfig {
 };
 
 enum class RobotType { Infantry, Hero, Sentry };
-
-struct TalosConfig {
-    bool daedalus{false};
-    bool untrust_roll{true};
+struct HardwareConfig {
     CameraConfig camera{};
-    AtLegacyConfig at_legacy{};
+    bool untrust_roll{true};
     uint16_t imu_vendor_id{0x0483};
     uint16_t imu_product_id{0};
+
+    [[nodiscard]] auto imu_product_id_opt() const noexcept {
+        if (imu_product_id == 0) {
+            return std::optional<uint16_t>{};
+        }
+        return std::optional<uint16_t>{imu_product_id};
+    }
+
+    std::expected<void, std::string> read_from(const toml::table& tbl) noexcept {
+        READ(tbl, camera);
+        READ(tbl, untrust_roll);
+        READ_OPT(tbl, imu_vendor_id);
+        READ_OPT(tbl, imu_product_id);
+        return {};
+    }
+};
+
+struct VisionConfig {
+    AtLegacyConfig at_legacy{};
     L3::L3Config l3{};
     L4::L4Config l4{};
     L5::L5Config l5{};
-    FoxgloveConfig foxglove{};
-    RobotType robot{RobotType::Infantry};
 
     [[nodiscard]] const L3::TrackerConfig& tracker() const noexcept { return l3.tracker; }
     [[nodiscard]] const L4::GimbalPlannerConfig& planner() const noexcept { return l4.planner; }
@@ -50,16 +64,10 @@ struct TalosConfig {
     [[nodiscard]] L5::WeaponControllerConfig& weapon() noexcept { return l5.weapon; }
 
     std::expected<void, std::string> read_from(const toml::table& tbl) noexcept {
-        READ(tbl, daedalus);
-        READ(tbl, untrust_roll);
-        READ(tbl, at_legacy);
-        READ_OPT(tbl, imu_vendor_id);
-        READ_OPT(tbl, imu_product_id);
+        READ_FLATTEN(tbl, at_legacy);
         READ_FLATTEN(tbl, l3);
         READ_FLATTEN(tbl, l4);
         READ_FLATTEN(tbl, l5);
-        READ(tbl, foxglove);
-        READ(tbl, robot);
         return {};
     }
 };
@@ -72,7 +80,7 @@ struct TalosConfig {
  * - update(): 原子替换整个配置
  *
  * 用法:
- *   AtomicConfig<TalosConfig> config(initial_config);
+ *   AtomicConfig<VisionConfig> config(initial_config);
  *   auto snapshot = config.read();        // 读取快照
  *   config.update(new_config);            // 更新配置
  */
@@ -106,6 +114,6 @@ private:
 };
 
 // 类型别名
-using AtomicTalosConfig = AtomicConfig<TalosConfig>;
+using AtomicVisionConfig = AtomicConfig<VisionConfig>;
 
 } // namespace fcs

@@ -1,0 +1,14 @@
+untrust_roll = true
+
+[camera]
+camera_matrix = [2538.32, 0, 1020.61, 0, 2525.25, 1522.65, 0, 0, 1]
+distort_coefficient = [-0.0645578, 0.0874827, -0.00239167, 0.00308088, -0.0206579]
+width = 2048
+height = 3072
+
+[camera.profile]
+trigger_mode = false
+invert_image = true
+exposure_time_us = 15000  # 1.5ms in microseconds
+gain = 16.7
+rotate_angle = "Clockwise270"

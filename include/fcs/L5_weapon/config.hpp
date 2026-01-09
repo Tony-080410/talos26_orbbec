@@ -12,21 +12,7 @@ namespace fcs::L5 {
 
 /// Weapon control configuration - tactical parameters only
 struct WeaponControllerConfig {
-    /// Fire delay compensation (seconds)
-    double fire_delay{0.05};
-
-    /// Minimum confidence threshold for firing
-    double min_fire_confidence{0.7};
-
-    /// Maximum angular velocity threshold for firing (rad/s)
-    double max_fire_angular_velocity{2.0};
-
-    std::expected<void, std::string> read_from(const toml::table& tbl) noexcept {
-        READ(tbl, fire_delay);
-        READ(tbl, min_fire_confidence);
-        READ(tbl, max_fire_angular_velocity);
-        return {};
-    }
+    std::expected<void, std::string> read_from(const toml::table& tbl) noexcept { return {}; }
 };
 
 // ============================================================================
@@ -42,7 +28,7 @@ struct L5Config {
     }
 
     std::expected<void, std::string> read_from(const toml::table& tbl) noexcept {
-        READ(tbl, weapon);
+        READ_OPT(tbl, weapon);
         return {};
     }
 };

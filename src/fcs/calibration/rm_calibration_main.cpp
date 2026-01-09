@@ -19,7 +19,7 @@
 #include "spdlog_hook.hpp"
 
 #include "auto_aim/config.hpp"
-#include "fcs/L1_sensor/input_interface.hpp"
+#include "fcs/L1_sensor/camera_interface.hpp"
 #include "fcs/L1_sensor/parcel.hpp"
 #include "fcs/core/channel_tags.hpp"
 #include "fcs/core/time.hpp"
