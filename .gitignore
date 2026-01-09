@@ -38,3 +38,4 @@ camera_extrinsic.toml
 target/
 rateui/target
 rateui/.rateui/
+$(ALLUSERSPROFILE)

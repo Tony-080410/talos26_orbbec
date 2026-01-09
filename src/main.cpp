@@ -18,7 +18,6 @@
 #include "usb.hpp"
 
 #include <Eigen/Geometry>
-#include <_abort.h>
 #include <atomic>
 #include <chrono>
 #include <expected>
