@@ -1,26 +1,38 @@
 [
-  {
-    "label": "talos",
-    "command": "cmake -DENABLE_CALIBRATION=OFF -G Ninja -B build -S . && cmake --build build --target talos -j64 && ./build/bin/talos",
-    "use_new_terminal": false,
-    "allow_concurrent_runs": false,
-    "reveal": "always",
-    "reveal_target": "dock",
-    "hide": "never",
-    "shell": "system",
-    "show_summary": true,
-    "show_command": true,
-  },
-  {
-    "label": "calibration",
-    "command": "cmake -DENABLE_CALIBRATION=ON -G Ninja -B build -S . && cmake --build build --target rm_calibration -j64 && ./build/bin/rm_calibration",
-    "use_new_terminal": false,
-    "allow_concurrent_runs": false,
-    "reveal": "always",
-    "reveal_target": "dock",
-    "hide": "never",
-    "shell": "system",
-    "show_summary": true,
-    "show_command": true,
-  },
+    {
+        "label": "talos",
+        "command": "cmake -DENABLE_CALIBRATION=OFF -G Ninja -B build -S . && cmake --build build --target talos -j64 && ./build/bin/talos",
+        "use_new_terminal": false,
+        "allow_concurrent_runs": false,
+        "reveal": "always",
+        "reveal_target": "dock",
+        "hide": "never",
+        "shell": "system",
+        "show_summary": true,
+        "show_command": true
+    },
+    {
+        "label": "calibration",
+        "command": "cmake -DENABLE_CALIBRATION=ON -G Ninja -B build -S . && cmake --build build --target rm_calibration -j64 && ./build/bin/rm_calibration",
+        "use_new_terminal": false,
+        "allow_concurrent_runs": false,
+        "reveal": "always",
+        "reveal_target": "dock",
+        "hide": "never",
+        "shell": "system",
+        "show_summary": true,
+        "show_command": true
+    },
+    {
+        "label": "optimizer",
+        "command": "cd rateui && cargo run",
+        "use_new_terminal": false,
+        "allow_concurrent_runs": false,
+        "reveal": "always",
+        "reveal_target": "dock",
+        "hide": "never",
+        "shell": "system",
+        "show_summary": true,
+        "show_command": true
+    }
 ]
