@@ -17,8 +17,33 @@
 
 namespace fcs::L3 {
 
-/// Armor tracker using Iterated SR-CKF
-/// Supports both 4-armor robots and 3-armor outposts
+/// Armor tracker = Data association + state machine + filter(s).
+///
+/// Problem:
+///   The detector produces a set of armor measurements every frame. The set can be messy: false
+///   positives, missed detections, and multiple plates of the same target. Downstream modules want
+///   one continuous target state that can be predicted forward.
+///
+/// Intuition:
+///   - Association decides which detections belong to the track and which `armor_id` they are.
+///   - The filter estimates kinematics/geometry and predicts the next frame.
+///   - The state machine debounces: confirm before locking, tolerate brief dropouts.
+///
+/// Analogy:
+///   Like following a person in a crowd: first decide who you are following, then keep following
+///   through brief occlusions using your motion prediction.
+///
+/// Precise (implementation facts that define tuning):
+///   - Association ALWAYS uses the ISRCKF prediction (x_pred, Sx_pred) via DataAssociator, even if
+///     InEKF output is enabled. Therefore `matcher_gate` and `robot/outpost.model.*` remain the
+///     primary knobs for match stability.
+///   - The ISRCKF measurement is 4D: z = [yaw, pitch, distance, armor_yaw], where
+///   yaw/pitch/distance
+///     come from `xyz2ypd(armor_position_odom)` and armor_yaw comes from the PnP yaw.
+///   - ISRCKF measurement noise R is a heuristic (`RobotModel::R_diag` / `OutpostModel::R_diag`),
+///     not a TOML parameter, and it affects both the filter update and association gating.
+///   - ISRCKF geometry states are hard-clamped after each predict step:
+///       r0,r1 ∈ [0.17,0.27], h ∈ [-0.2,0.2].
 class Tracker {
 public:
     Tracker() noexcept = default;
@@ -48,7 +73,13 @@ public:
         if (robot_ckf_.has_value()) {
             robot_ckf_->predict(dt);
             auto& x = *robot_ckf_->x_raw_ptr();
-            // Clamp radius and height to prevent divergence
+            // Clamp radius/height to keep geometry physically plausible and prevent divergence.
+            //
+            // Problem: wrong associations or spikes can drive geometry to absurd values and then
+            //          make association even worse (positive feedback).
+            // Intuition: hard bounds keep the filter "sane" even if process noise is large.
+            // Analogy: saturating a control signal / enforcing physical joint limits.
+            // Precise: these clamps are applied after every ISRCKF predict(), regardless of Q.
             x[R_0] = std::clamp(x[R_0], 0.17, 0.27);
             x[R_1] = std::clamp(x[R_1], 0.17, 0.27);
             x[H]   = std::clamp(x[H], -0.2, 0.2);
@@ -222,6 +253,19 @@ public:
             const double y0 = pos.y() + OutpostModel::OUTPOST_RADIUS * std::sin(armor_yaw);
             const double z0 = pos.z();
 
+            // Outpost initialization notes.
+            //
+            // Problem:
+            //   OutpostModel includes separate height states (z0/z1/z2), but at the first detection
+            //   we do not know their relative offsets.
+            // Intuition:
+            //   Start with all z_i equal to the observed z0 and let measurement updates separate
+            //   them over time.
+            // Analogy:
+            //   A flat initial guess that the data will sculpt into the correct shape.
+            // Precise:
+            //   We initialize [z0,z1,z2] = z0. The constant `OutpostModel::OUTPOST_DZ` is currently
+            //   unused by this initialization path.
             OutpostCKF::VecX xp0{x0, y0, armor_yaw, v0, z0, z0, z0};
             OutpostCKF::MatXX P0 = OutpostCKF::MatXX::Identity();
             outpost_ckf_.emplace(outpost_model_, xp0, P0);
@@ -235,6 +279,25 @@ public:
                 outpost_inekf_->init(Eigen::Vector3d{x0, y0, z0}, armor_yaw, config_.outpost_inekf);
             }
         } else {
+            // Robot initialization notes (easy to misread from TOML).
+            //
+            // Problem:
+            //   Users often tune `tracker.robot_inekf.radius0/radius1/height` expecting the
+            //   *tracker* geometry to change. In this implementation those values affect ONLY the
+            //   InEKF.
+            //
+            // Intuition:
+            //   The ISRCKF used for association starts with a fixed geometry. If that initial guess
+            //   is far from reality, the early match/update can be biased and harder to stabilize.
+            //
+            // Analogy:
+            //   Changing the dashboard does not change the engine: InEKF config does not change
+            //   ISRCKF initialization.
+            //
+            // Precise:
+            //   ISRCKF (robot) is initialized with r0=r1=0.23m and h=0.0m via `kDefaultRadius` and
+            //   the last state element in xp0. To make ISRCKF geometry configurable, modify these
+            //   initial values.
             constexpr double kDefaultRadius = 0.23;
             const double x0                 = pos.x() + kDefaultRadius * std::cos(armor_yaw);
             const double y0                 = pos.y() + kDefaultRadius * std::sin(armor_yaw);
@@ -379,8 +442,13 @@ private:
     /// Timeout before returning to IDLE from TEMP_LOST (seconds), copied from TrackerConfig in
     /// first_meet
     double lost_threshold{0};
-    /// Number of consecutive frames required to transition DETECTING -> TRACKING, copied from
-    /// TrackerConfig in first_meet
+    /// Number of consecutive "found" frames required to transition DETECTING -> TRACKING (copied
+    /// from TrackerConfig in first_meet).
+    ///
+    /// Problem: debounce false positives before committing to TRACKING.
+    /// Intuition: larger → fewer false locks but slower lock; smaller → faster lock but more
+    /// flicker. Analogy: button debounce counter. Precise: implemented as `detecting_count_ >
+    /// tracking_threshold` (strict '>'), so it requires `tracking_threshold + 1` consecutive hits.
     uint32_t tracking_threshold{0};
     /// Mahalanobis distance gate for target matching, copied from TrackerConfig in first_meet
     double matcher_gate{0};

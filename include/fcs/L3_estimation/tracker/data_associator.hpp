@@ -31,13 +31,52 @@ public:
         std::vector<int> armor_ids;
     };
 
-    /// Match observations to predicted armor positions
+    /// Match observations to predicted armor hypotheses.
+    ///
+    /// Problem:
+    ///   A single frame can contain multiple armor detections: different plates of the same target
+    ///   plus clutter/false positives. We must decide:
+    ///     1) which detections belong to the current track, and
+    ///     2) which `armor_id` each detection corresponds to (0..ARMORS_NUM-1).
+    ///
+    /// Intuition:
+    ///   Score each (observation, armor_id) by how plausible it is under the predicted uncertainty
+    ///   (in "sigma units"). Reject implausible pairs, then pick the best one-to-one matches.
+    ///
+    /// Analogy:
+    ///   Like matching keys to locks: only keys that fit the tolerance are considered; then choose
+    ///   the best-fitting set without reusing a key or a lock.
+    ///
+    /// Precise (what the code does):
+    ///   - Filter observations by `target_name`.
+    ///   - For each armor_id, project sigma points of (x_pred, Sx_pred) through `model.h(...)` to
+    ///     obtain z_pred and Pzz.
+    ///   - For each observation, compute innovation nu with angle wrapping.
+    ///   - Form S = Pzz + R where R is `model.R_diag(obs_z)` (heuristic, NOT from TOML).
+    ///   - Compute d2 = nu^T S^{-1} nu and keep candidates with finite d2 and d2 < gate_threshold.
+    ///   - Solve one-to-one assignment greedily via a min-cost priority queue (fast, not globally
+    ///     optimal like Hungarian; usually fine for 3/4 armors).
     /// @param observations Batch of armor measurements
     /// @param x_pred Predicted state
     /// @param Sx_pred Predicted covariance square root
     /// @param model Motion model for measurement prediction
     /// @param target_name Target armor name to match
-    /// @param gate_threshold Mahalanobis distance gating threshold
+    /// @param gate_threshold Mahalanobis distance-squared gate (d^2).
+    ///
+    ///   Problem:
+    ///     Without a gate, clutter and wrong armor_ids can hijack the track.
+    ///
+    ///   Intuition:
+    ///     Larger → fewer missed matches but more wrong matches; smaller → fewer wrong matches but
+    ///     more missed matches (leading to TEMP_LOST / reset in the tracker state machine).
+    ///
+    ///   Analogy:
+    ///     A chi-square gate width in normalized units (not pixels, not Euclidean meters).
+    ///
+    ///   Precise:
+    ///     The gate is applied to d2 computed with S = Pzz + R. Therefore, changing process noise
+    ///     (which affects Pzz via Sx_pred) or changing the heuristic R model changes the effective
+    ///     strictness even if gate_threshold stays the same.
     /// @param armors_num Number of armors on target
     [[nodiscard]] MatchResult match(
         const AtLegacyArmorMeasurementBatch& observations, const VecX& x_pred, const MatXX& Sx_pred,

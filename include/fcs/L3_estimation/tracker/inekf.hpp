@@ -217,6 +217,18 @@ public:
         C.template block<3, 3>(0, 0) = -skew(b); // Rotation coupling
         C.template block<3, 3>(0, 6) = Mat3::Identity();
 
+        // Measurement covariance for 3D armor position residual.
+        //
+        // Problem:
+        //   The 3D armor position (PnP + TF) can be noisy or spiky; blindly trusting it makes the
+        //   estimate jitter and can destabilize geometry learning.
+        // Intuition:
+        //   Smaller sigma_m → follow measurements tightly (responsive but jittery); larger sigma_m
+        //   → trust prediction more (stable but slower response).
+        // Analogy:
+        //   A "sensor confidence" slider.
+        // Precise:
+        //   Rm = I * sigma_m^2 and is used in S = C*P*C^T + Rm.
         const Mat3 Rm = Mat3::Identity() * (config.sigma_m * config.sigma_m);
         const Mat3 S  = (C * P_ * C.transpose() + Rm).eval();
 
@@ -282,6 +294,7 @@ public:
         C.template block<3, 3>(0, 0) = -skew(b); // Rotation coupling
         C.template block<3, 3>(0, 6) = Mat3::Identity();
 
+        // Measurement covariance for 3D armor position residual (same as update()).
         const Mat3 Rm = Mat3::Identity() * (config.sigma_m * config.sigma_m);
         const Mat3 S  = (C * P_ * C.transpose() + Rm).eval();
 
@@ -337,6 +350,18 @@ public:
         Eigen::Matrix<double, 1, kStateDim> H = Eigen::Matrix<double, 1, kStateDim>::Zero();
         H(2)                                  = 1.0; // yaw ~ δθ_z
 
+        // Measurement variance for yaw residual.
+        //
+        // Problem:
+        //   Yaw measurements can jump (PnP jitter, or wrong armor_id association for a frame).
+        // Intuition:
+        //   Larger sigma_w → yaw is more stable; smaller sigma_w → yaw follows measurements more
+        //   tightly but is more jumpy.
+        // Analogy:
+        //   How much you trust a compass needle that sometimes twitches.
+        // Precise:
+        //   Despite the name, `sigma_w` is yaw measurement-noise std-dev (rad). We use R =
+        //   sigma_w^2.
         const double R = config.sigma_w * config.sigma_w;
         const double S = (H * P_ * H.transpose())(0, 0) + R;
         if (!(S > 0.0) || !std::isfinite(S)) {

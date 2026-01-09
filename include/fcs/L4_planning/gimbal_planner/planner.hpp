@@ -17,8 +17,31 @@
 
 namespace fcs::L4 {
 
-/// GimbalPlanner class for computing gimbal commands from tracker output
-/// Handles ballistic compensation and armor selection in the L4 planning layer
+/// GimbalPlanner: L3 TrackerOutput -> yaw/pitch/fire_advice
+///
+/// Problem:
+///   Convert an estimated target state (L3) into a gimbal aim command (L4) that accounts for
+///   delays and bullet flight, and provide a conservative "fire now?" suggestion.
+///
+/// Intuition:
+///   1) Time-align / predict: extrapolate the target to the bullet-arrival time.
+///   2) Choose which armor to aim at (rotation-aware).
+///   3) Apply ballistic compensation to obtain yaw/pitch, then compute fire_advice.
+///
+/// Analogy:
+///   Like throwing a ball at a moving target: lead by (time since you saw it) + (your reaction /
+///   actuation delay) + (ball travel time).
+///
+/// Precise (implementation details that matter for tuning):
+///   - dt = (now - measurement_ts) + flying_time + plan_to_muzzle_delay
+///   - `now` is the passed `current_time_ns` (real-time), consistent with using the latest TF for
+///     the muzzle pose.
+///   - `flying_time` is first estimated cheaply using LOS-to-center and `bullet_speed`, then
+///     refined using the configured trajectory compensator.
+///   - Naming pitfalls:
+///       * `max_tracking_v_yaw` is a mode-switch threshold (armor-tracking <-> center-tracking),
+///         not a "max allowed yaw rate".
+///       * `shooting_range_w/h` define the physical fire window size, not a distance/range.
 class GimbalPlanner {
 public:
     enum class State {
@@ -111,7 +134,17 @@ public:
         const double v0                  = std::max(1e-3, config_.trajectory.bullet_speed);
         const double flying_time         = rel_center_xy / (v0 * std::cos(rel_center_pitch));
 
-        // Calculate dt including prediction delay
+        // Calculate dt including observation delay + actuation delay + flight time.
+        //
+        // Problem:
+        //   The target state is estimated at `target.timestamp_ns`. We must predict forward to the
+        //   time the bullet reaches the target.
+        // Intuition:
+        //   dt = (time since measurement) + (time until bullet leaves muzzle) + (time in flight).
+        // Analogy:
+        //   "What you saw" + "your reaction time" + "ball travel time".
+        // Precise:
+        //   dt = (current_time_ns - target.timestamp_ns)/1e9 + flying_time + plan_to_muzzle_delay.
         double dt = static_cast<double>(current_time_ns - target.timestamp_ns) / 1e9 + flying_time
                   + config_.plan_to_muzzle_delay;
 
@@ -192,7 +225,19 @@ public:
         plan.distance     = distance;
         plan.fire_advice  = is_on_target(yaw_, pitch_, yaw, pitch, distance);
 
-        // State machine for tracking mode
+        // State machine for tracking mode.
+        //
+        // Problem:
+        //   At high yaw-rate, individual armors swap/occlude quickly and "tracking an armor" can
+        //   jitter. A center-tracking mode is more stable.
+        // Intuition:
+        //   Switch to TrackingCenter if |v_yaw| stays above the threshold; switch back if it stays
+        //   below the threshold.
+        // Analogy:
+        //   Track the spinning wheel hub instead of a wheel spoke.
+        // Precise:
+        //   The condition is debounced with a counter using `overflow_count_ > transfer_thresh`
+        //   (strict '>'), so it requires `transfer_thresh + 1` consecutive frames.
         switch (state_) {
         case State::TrackingArmor:
             if (std::abs(target_v_yaw) > config_.max_tracking_v_yaw) {
@@ -290,7 +335,19 @@ private:
         Eigen::Matrix2d R_center2armor = R_odom2center.transpose() * R_odom2armor;
         double decision_angle          = std::atan2(R_center2armor(1, 0), R_center2armor(0, 0));
 
-        // Angle threshold for armor switching
+        // Angle bias for armor selection.
+        //
+        // Problem:
+        //   On a rotating target, the "best" armor right now may not be the best armor at
+        //   bullet-arrival time.
+        // Intuition:
+        //   Bias the decision boundary in the direction of rotation so we pick the armor that is
+        //   more likely to remain visible/centered when the bullet arrives.
+        // Analogy:
+        //   Step ahead in the direction a carousel is turning.
+        // Precise:
+        //   theta = sign(v_yaw) * side_angle (deg→rad), and it is disabled when
+        //   |v_yaw| < min_switching_v_yaw to avoid jitter near boundaries.
         double theta = (target_v_yaw > 0 ? config_.side_angle : -config_.side_angle)
                      * std::numbers::pi / 180.0;
 
@@ -325,6 +382,7 @@ private:
         double cur_yaw, double cur_pitch, double target_yaw, double target_pitch,
         double distance) const noexcept {
 
+        // Convert physical window (meters) to angular tolerance (radians).
         double shooting_range_yaw = std::abs(std::atan2(config_.shooting_range_w / 2.0, distance));
         double shooting_range_pitch =
             std::abs(std::atan2(config_.shooting_range_h / 2.0, distance));
@@ -334,6 +392,8 @@ private:
         shooting_range_yaw         = std::max(shooting_range_yaw, min_range);
         shooting_range_pitch       = std::max(shooting_range_pitch, min_range);
 
+        // NOTE: This uses a raw subtraction; near +/-pi wrap-around, the apparent difference can be
+        // large even if angles are close. If this becomes an issue, consider angle-normalized diff.
         return std::abs(cur_yaw - target_yaw) < shooting_range_yaw
             && std::abs(cur_pitch - target_pitch) < shooting_range_pitch;
     }

@@ -57,17 +57,70 @@ struct RobotModel {
     static constexpr int kMeasArmorYaw = ARMOR_YAW_ARMOR;
 
     // For a 4-armor robot, armors 1 and 3 are mounted at z0 + h, while 0 and 2 are at z0.
+    // NOTE: h is allowed to be negative in this implementation (clamped to [-0.2, 0.2]); a negative
+    // h effectively swaps which armor pair is "higher" in the model.
     static constexpr int kHighArmorIdA = 1;
     static constexpr int kHighArmorIdB = 3;
 
-    /// Process noise parameters
+    /// Process-noise tuning parameters for the ISRCKF.
+    ///
+    /// Problem:
+    ///   The motion/geometry model is intentionally simple (CV + constant yaw-rate + random-walk
+    ///   geometry). Real targets accelerate, spin, and their geometry is not perfectly known.
+    ///
+    /// Intuition:
+    ///   Larger noise ⇒ prediction covariance grows faster ⇒ (1) the update becomes more
+    ///   responsive, and (2) association gating becomes effectively looser. Smaller noise does the
+    ///   opposite (stable but laggy and easier to drop on sharp maneuvers).
+    ///
+    /// Analogy:
+    ///   Like a spring stiffness knob: stiff (small noise) is stable; soft (large noise) is agile
+    ///   but wobbly.
+    ///
+    /// Precise:
+    ///   Each `sigma_*` is a standard deviation. `Q_sqrt(dt)` squares it and discretizes it with
+    ///   dt-scaling (dt^2..dt^4 for CV blocks, dt for 1D random walks).
     struct Params {
-        Scalar sigma_a_xy  = 5.0; // XY acceleration noise
-        Scalar sigma_a_z   = 1.0; // Z acceleration noise
-        Scalar sigma_a_yaw = 1.0; // Yaw acceleration noise
-        Scalar sigma_r0    = 1.0; // Radius R0 drift noise
-        Scalar sigma_r1    = 1.0; // Radius R1 drift noise
-        Scalar sigma_h     = 0.5; // Height H drift noise
+        /// XY acceleration process-noise std-dev (≈ m/s^2).
+        ///
+        /// Problem: the state assumes constant velocity in x/y; real targets accelerate.
+        /// Intuition: larger → follow fast maneuvers (but noisier); smaller → smoother but laggier.
+        /// Analogy: "agility" in the horizontal plane.
+        /// Precise: used as q = sigma_a_xy^2 in the CV blocks (xc,vx) and (yc,vy) in `Q_sqrt(dt)`.
+        Scalar sigma_a_xy = 5.0;
+        /// Z acceleration process-noise std-dev (≈ m/s^2).
+        ///
+        /// Problem/Intuition/Analogy: same as sigma_a_xy, but only for z (z0,vz).
+        /// Precise: used as q = sigma_a_z^2 in the CV block (z0,vz) in `Q_sqrt(dt)`.
+        Scalar sigma_a_z = 1.0;
+        /// Yaw acceleration noise std-dev (≈ rad/s^2) for the [yaw, v_yaw] CV model.
+        ///
+        /// Problem: constant yaw-rate cannot explain sudden spin-up / spin-down.
+        /// Intuition: larger → track fast turns (but yaw becomes noisier); smaller → smoother yaw
+        ///           but more lag under quick turns.
+        /// Analogy: "turn-rate agility" knob.
+        /// Precise: used as q = sigma_a_yaw^2 in the CV block (yaw,v_yaw) in `Q_sqrt(dt)`.
+        Scalar sigma_a_yaw = 1.0;
+        /// Radius r0 drift noise std-dev (≈ m/√s) for random walk.
+        ///
+        /// Problem: geometry parameters (center→armor radius) are not perfectly known and may
+        ///          drift due to calibration bias / model mismatch.
+        /// Intuition: larger → adapt geometry faster (but may drift); smaller → keep geometry
+        /// stable. Analogy: allowing the "shape" knob to wander slowly. Precise: enters the
+        /// random-walk term Q(R_0,R_0) += sigma_r0^2 * dt in `Q_sqrt(dt)`.
+        Scalar sigma_r0 = 1.0;
+        /// Radius r1 drift noise std-dev (≈ m/√s) for random walk.
+        ///
+        /// Problem/Intuition/Analogy: same as sigma_r0, but for the other armor pair radius r1.
+        /// Precise: enters Q(R_1,R_1) += sigma_r1^2 * dt in `Q_sqrt(dt)`.
+        Scalar sigma_r1 = 1.0;
+        /// Height h drift noise std-dev (≈ m/√s) for random walk.
+        ///
+        /// Problem: the vertical offset between armor pairs can be biased and slowly varying.
+        /// Intuition: larger → h adapts faster (but can wander); smaller → more stable height.
+        /// Analogy: letting a slow "elevation bias" parameter move.
+        /// Precise: enters Q(H,H) += sigma_h^2 * dt in `Q_sqrt(dt)`.
+        Scalar sigma_h = 0.5;
         std::expected<void, std::string> read_from(const toml::table& tbl) noexcept {
             READ(tbl, sigma_a_xy);
             READ(tbl, sigma_a_z);
@@ -184,7 +237,31 @@ struct RobotModel {
         return llt.matrixL();
     }
 
-    /// Measurement noise diagonal
+    /// Measurement noise diagonal (variance, not std-dev).
+    ///
+    /// Problem:
+    ///   The ISRCKF (and the associator gate) need a measurement-noise model to weight residuals.
+    ///   Instead of a calibrated camera/PnP covariance, this project uses a hand-tuned heuristic.
+    ///
+    /// Intuition:
+    ///   - Treat yaw/pitch as "roughly equally noisy" all the time.
+    ///   - Trust distance less when the armor is more side-facing (bearing yaw differs from armor
+    ///   yaw).
+    ///   - Trust armor_yaw less when the target is far (PnP yaw becomes unstable).
+    ///
+    /// Analogy:
+    ///   Dynamic confidence: the sensor "gets worse" when viewing geometry is poor.
+    ///
+    /// Precise:
+    ///   - yaw, pitch: fixed variance 4e-3.
+    ///   - distance: variance = log(|delta_angle| + 1) + 1,
+    ///               delta_angle = shortest_rad(z[yaw], z[armor_yaw]).
+    ///   - armor_yaw: variance = log(|distance| + 1) / 200 + 9e-2.
+    ///
+    /// Note:
+    ///   This is NOT configurable from TOML. It affects both:
+    ///   - ISRCKF update (via `R_sqrt`)
+    ///   - Data association gating: d^2 = nu^T (Pzz + R)^{-1} nu
     [[nodiscard]] Eigen::Matrix<Scalar, NZ, 1> R_diag(const VecZ& z) const noexcept {
         const Scalar delta_angle = shortest_rad(z[kMeasYaw], z[kMeasArmorYaw]);
         Eigen::Matrix<Scalar, NZ, 1> R_dig;
@@ -227,11 +304,50 @@ struct OutpostModel {
     // State layout: Z states are stored contiguously starting at O_Z0 (z0, z1, z2).
     static constexpr int kFirstArmorZState = O_Z0;
 
-    /// Process noise parameters
+    /// Process-noise tuning parameters for the Outpost ISRCKF.
+    ///
+    /// Problem:
+    ///   The outpost model does not include vx/vy states (x/y are constant in `f`). Without
+    ///   process noise, the filter cannot adapt to slow motion, TF bias, or measurement drift.
+    ///
+    /// Intuition:
+    ///   Larger noise → allow the center position / heights to move more freely (responsive but
+    ///   noisier and with looser association); smaller noise → "sticky" estimates (stable but can
+    ///   lag and drop matches when the world shifts).
+    ///
+    /// Analogy:
+    ///   Like adding a random "wind" that can push the outpost center a bit each frame.
+    ///
+    /// Precise:
+    ///   Naming can be misleading here: `sigma_q_xy` and `sigma_q_z` behave like drift-velocity
+    ///   scales because Q ∝ dt^2 (see `Q_sqrt`).
     struct Params {
-        Scalar sigma_q_xy  = 10.0;                   // XY position noise
-        Scalar sigma_q_z   = 1.0;                    // Z position noise
-        Scalar sigma_a_yaw = 1.0;                    // Yaw acceleration noise
+        /// XY drift-velocity process-noise std-dev (≈ m/s).
+        ///
+        /// Problem:
+        ///   With no vx/vy states, x/y would otherwise be "frozen" unless measurements pull it.
+        ///
+        /// Intuition:
+        ///   Larger → position follows measurements faster (but jitters and matches more loosely);
+        ///   smaller → position is stable (but can lag or fail under frame/TF shifts).
+        ///
+        /// Analogy:
+        ///   Allowing a random horizontal "drift speed" that accumulates over dt.
+        ///
+        /// Precise (why the field name can be misleading):
+        ///   In `Q_sqrt(dt)`, Q(O_XC,O_XC) = sigma_q_xy^2 * dt^2 and same for Y, which corresponds
+        ///   to x_{k+1} = x_k + v_drift * dt with v_drift ~ N(0, sigma_q_xy^2).
+        Scalar sigma_q_xy = 10.0;
+        /// Z drift-velocity process-noise std-dev (≈ m/s), applied to z0/z1/z2.
+        ///
+        /// Problem/Intuition/Analogy: same as sigma_q_xy, but for the per-armor height states.
+        /// Precise: in `Q_sqrt(dt)`, Q(z_i,z_i) = sigma_q_z^2 * dt^2 for i ∈ {0,1,2}.
+        Scalar sigma_q_z = 1.0;
+        /// Yaw acceleration noise std-dev (≈ rad/s^2) for the [yaw, v_yaw] CV model.
+        ///
+        /// Problem/Intuition/Analogy: same as RobotModel::Params::sigma_a_yaw.
+        /// Precise: used as q = sigma_a_yaw^2 in the CV block (yaw,v_yaw) in `Q_sqrt(dt)`.
+        Scalar sigma_a_yaw = 1.0;
         std::expected<void, std::string> read_from(const toml::table& tbl) noexcept {
             READ(tbl, sigma_q_xy);
             READ(tbl, sigma_q_z);
@@ -242,8 +358,10 @@ struct OutpostModel {
 
     int armor_id                           = 0;
     static constexpr Scalar OUTPOST_RADIUS = 0.2765; // From mechanical drawing
-    static constexpr Scalar OUTPOST_DZ     = 0.1;    // Height difference between armors
-    static constexpr int ARMORS_NUM        = 3;
+    // NOTE: kept for reference; the filter currently estimates z0/z1/z2 from measurements
+    // and does not use a fixed OUTPOST_DZ in the model.
+    static constexpr Scalar OUTPOST_DZ = 0.1; // Height difference between armors
+    static constexpr int ARMORS_NUM    = 3;
 
     Params params;
 
@@ -308,7 +426,7 @@ struct OutpostModel {
         const Scalar dt3 = dt2 * dt;
         const Scalar dt4 = dt2 * dt2;
 
-        // X, Y: random walk
+        // X, Y: drift-like random walk (Q ∝ dt^2, see Params::sigma_q_xy note)
         Q(O_XC, O_XC) = sigma_xy2 * dt2;
         Q(O_YC, O_YC) = sigma_xy2 * dt2;
 
@@ -318,7 +436,7 @@ struct OutpostModel {
         Q(O_VYAW, O_YAW)  = Q(O_YAW, O_VYAW);
         Q(O_VYAW, O_VYAW) = sigma_yaw2 * dt2;
 
-        // Z0, Z1, Z2: random walk
+        // Z0, Z1, Z2: drift-like random walk (Q ∝ dt^2, see Params::sigma_q_z note)
         Q(O_Z0, O_Z0) = sigma_z2 * dt2;
         Q(O_Z1, O_Z1) = sigma_z2 * dt2;
         Q(O_Z2, O_Z2) = sigma_z2 * dt2;
@@ -327,7 +445,13 @@ struct OutpostModel {
         return llt.matrixL();
     }
 
-    /// Measurement noise diagonal
+    /// Measurement noise diagonal (variance, not std-dev).
+    ///
+    /// Problem/Intuition/Analogy:
+    ///   Same heuristic as `RobotModel::R_diag`; see that function for rationale and tuning impact.
+    ///
+    /// Precise:
+    ///   Used by ISRCKF update (via `R_sqrt`) and by DataAssociator gating (via S = Pzz + R).
     [[nodiscard]] Eigen::Matrix<Scalar, NZ, 1> R_diag(const VecZ& z) const noexcept {
         const Scalar delta_angle = shortest_rad(z[kMeasYaw], z[kMeasArmorYaw]);
         Eigen::Matrix<Scalar, NZ, 1> R_dig;

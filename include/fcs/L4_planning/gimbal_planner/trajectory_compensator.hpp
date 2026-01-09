@@ -13,6 +13,29 @@
 namespace fcs::L4 {
 
 /// Abstract trajectory compensator for ballistic compensation
+///
+/// Problem:
+///   Compute ballistic compensation (aim angles) and flight time from a target position in the
+///   muzzle frame. This is used by the planner both for pitch drop compensation and for lead-time
+///   prediction.
+///
+/// Intuition:
+///   Different compensators trade fidelity vs compute cost:
+///   - IdealCompensator: gravity only (fastest, least accurate at long range).
+///   - ResistanceCompensator: simplified exponential drag with a fitted `resistance` parameter.
+///   - RK4Compensator: quadratic drag point-mass model with RK4 integration; to stay real-time it
+///     builds a lookup table (range,pitch)->(z,tof) when parameters update.
+///
+/// Analogy:
+///   Like choosing between a straight-line estimate, a fitted curve, or a full physics simulation.
+///
+/// Precise:
+///   Parameters are populated from `config.hpp::TrajectoryConfig` by `planner.hpp`:
+///   - velocity        <= bullet_speed
+///   - iteration_times <= iteration_times (pitch-solve iterations; NOT RK4 integration steps)
+///   - gravity         <= gravity
+///   - resistance      <= resistance (ResistanceCompensator only)
+///   - cd/rho/diameter/mass/rk4_* <= RK4 quadratic-drag parameters
 class TrajectoryCompensator {
 public:
     virtual ~TrajectoryCompensator() = default;
@@ -91,18 +114,30 @@ public:
     }
 
     // Configuration
+    /// Muzzle velocity (m/s).
     double velocity{15.0};
+    /// Max iterations for pitch solve loop (not RK4 integration steps).
     int iteration_times{20};
+    /// Gravity acceleration (m/s^2).
     double gravity{9.8};
+    /// Linearized resistance coefficient (used by ResistanceCompensator only; effectively clamped
+    /// to >= 1e-4 in implementation).
     double resistance{0.01};
 
     // RK4 (quadratic drag) physical parameters
+    /// Drag coefficient Cd (dimensionless).
     double cd{0.47};
+    /// Air density rho (kg/m^3).
     double rho{1.225};
+    /// Projectile diameter (m).
     double diameter{0.017};
+    /// Projectile mass (kg).
     double mass{0.0032};
+    /// Desired RK4 integration dt (s). Actual dt is chosen by select_dt() and clamped.
     double rk4_dt{0.001};
+    /// Minimum RK4 steps per solve.
     int rk4_min_steps{50};
+    /// Maximum RK4 steps per solve.
     int rk4_max_steps{2000};
 
 protected:
