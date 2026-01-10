@@ -68,6 +68,8 @@ public:
     [[nodiscard]] std::expected<void, CameraError>
         set_frame_rate_inner_trigger_mode(float frame_rate);
 
+    friend std::unique_ptr<ImageCapturer> std::make_unique<ImageCapturer>();
+
 private:
     // Default constructor for internal use by create()
     ImageCapturer();
@@ -79,7 +81,7 @@ private:
         ImageCapturer::create(const CameraProfile&, const char*, const SyncMode&);
 
     class Impl;
-    Impl* impl_;
+    std::unique_ptr<Impl> impl_;
 };
 
 } // namespace hikcamera

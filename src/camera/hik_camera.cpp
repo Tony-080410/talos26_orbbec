@@ -6,6 +6,7 @@
 #include <cstring>
 
 #include <chrono>
+#include <memory>
 #include <ratio>
 #include <stdexcept>
 #include <tuple>
