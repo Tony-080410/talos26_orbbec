@@ -1,2 +1,3 @@
 # Sentry Vision Configuration
 # extend from vision_base.toml
+planner.trajectory.bullet_speed = 22.0

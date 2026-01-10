@@ -32,7 +32,7 @@ std::shared_ptr<CoordinateSystem<N>> sentry_new(timestamp_ns_t ts = 0) {
     update<camera_link_fuxk_frame>(
         *system,
         FuckTransform<camera_link_fuxk_frame>{
-            TransformMatrix4d::from_rpy(0.0, 0.0, to_rad_2(-2.00), 0.0886, 0.03, 0.02)},
+            TransformMatrix4d::from_rpy(0.0, to_rad_2(1.50), to_rad_2(0.00), 0.0886, 0.03, 0.02)},
         ts);
 
     // camera_optical -> camera_link

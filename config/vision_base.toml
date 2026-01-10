@@ -103,7 +103,7 @@ compensator_type = "RK4"
 
 [planner.trajectory]
 iteration_times = 20
-bullet_speed = 22.0
+bullet_speed = 25.0
 gravity = 9.7997
 resistance = 0.005
 cd = 0.47
