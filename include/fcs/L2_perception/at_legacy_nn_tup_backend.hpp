@@ -99,8 +99,8 @@ private:
         std::vector<GridAndStride>& grids);
 
     /// Preprocess image (letterbox without normalization)
-    [[nodiscard]] PreprocContext
-        preprocess(const cv::Mat& image, const AtLegacyNNTupConfig& cfg) const;
+    [[nodiscard]] static PreprocContext
+        preprocess(const cv::Mat& image, const AtLegacyNNTupConfig& cfg);
 
     /// Run inference
     [[nodiscard]] bool infer(const PreprocContext& ctx);
@@ -110,8 +110,8 @@ private:
         postprocess(const PreprocContext& ctx, const AtLegacyNNTupConfig& cfg) const;
 
     /// Non-maximum suppression
-    [[nodiscard]] std::vector<AtLegacyArmorDetection>
-        nms(std::vector<AtLegacyArmorDetection>& detections, const AtLegacyNNTupConfig& cfg) const;
+    [[nodiscard]] static std::vector<AtLegacyArmorDetection>
+        nms(std::vector<AtLegacyArmorDetection>& detections, const AtLegacyNNTupConfig& cfg);
 
 private:
     ConfigPtr config_;

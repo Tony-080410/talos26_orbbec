@@ -89,7 +89,7 @@ AtLegacyTraditionalBackend::DetectionResult
             }
         }
 
-        // 5. Filter out invalid detections (matching ROS2 logic)
+        // 5. Filter out invalid detections
         detections.erase(
             std::remove_if(
                 detections.begin(), detections.end(),
@@ -366,7 +366,7 @@ cv::Mat AtLegacyTraditionalBackend::extract_number(
     static const int large_armor_width = 54;
     // Number ROI size
     static const cv::Size roi_size(20, 28);
-    // Classifier input size (matching armor_detector_ov)
+    // Classifier input size
     static const cv::Size input_size(28, 28);
 
     const int top_light_y    = (warp_height - light_length) / 2 - 1;
@@ -389,11 +389,11 @@ cv::Mat AtLegacyTraditionalBackend::extract_number(
     number_image =
         number_image(cv::Rect(cv::Point((warp_width - roi_size.width) / 2, 0), roi_size));
 
-    // Convert to grayscale and binarize (matching armor_detector_ov)
+    // Convert to grayscale and binarize
     cv::cvtColor(number_image, number_image, cv::COLOR_BGR2GRAY);
     cv::threshold(number_image, number_image, 0, 255, cv::THRESH_BINARY | cv::THRESH_OTSU);
 
-    // Output is already 20x28, no resize needed (matching atvision_ws)
+    // Output is already 20x28, no resize needed
     return number_image;
 }
 

@@ -44,7 +44,7 @@ double EnhancedWeaponController::calculate_time_of_flight(double distance) const
 }
 
 std::pair<double, double> EnhancedWeaponController::calculate_angular_rates(
-    const fcs::L4::GimbalPlan& plan, double dt) const noexcept {
+    [[maybe_unused]] const fcs::L4::GimbalPlan& plan, [[maybe_unused]] double dt) const noexcept {
     // TODO: Implement proper angular rate calculation based on target movement
     // For now, return zeros
     return {0.0, 0.0};

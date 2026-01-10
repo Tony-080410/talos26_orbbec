@@ -236,8 +236,6 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
         "$<$<PLATFORM_ID:Darwin>:-mmacosx-version-min=15.5>"
 )
 
-# sp_vision executable (removed during refactoring)
-
 # Fast TF library (explicit template instantiations + robot factory)
 add_library(fast_tf STATIC
         src/math/fast_tf/infantry.cpp
@@ -255,9 +253,6 @@ target_link_libraries(fast_tf PUBLIC
         TBB::tbb
         ${OpenCV_LIBS}
 )
-
-# NOTE: detector_benchmark and detector_tuner removed - test files deleted during refactoring
-
 # CMake package configuration for hikcamera
 if (CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_SYSTEM_PROCESSOR STREQUAL "x86_64")
     include(CMakePackageConfigHelpers)

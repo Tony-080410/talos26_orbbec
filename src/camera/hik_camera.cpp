@@ -388,7 +388,7 @@ private:
 // Factory method implementation
 std::expected<std::unique_ptr<ImageCapturer>, CameraError> ImageCapturer::create(
     const CameraProfile& profile, const char* user_defined_name, const SyncMode& sync_mode) {
-    auto capturer    = std::unique_ptr<ImageCapturer>(new ImageCapturer());
+    auto capturer    = std::make_unique<ImageCapturer>();
     auto init_result = capturer->init(profile, user_defined_name, sync_mode);
     if (!init_result) {
         return std::unexpected(init_result.error());
@@ -398,9 +398,9 @@ std::expected<std::unique_ptr<ImageCapturer>, CameraError> ImageCapturer::create
 }
 
 ImageCapturer::ImageCapturer()
-    : impl_(new ImageCapturer::Impl{}) {}
+    : impl_(std::make_unique<ImageCapturer::Impl>()) {}
 
-ImageCapturer::~ImageCapturer() { delete impl_; }
+ImageCapturer::~ImageCapturer() = default;
 
 std::expected<void, CameraError> ImageCapturer::init(
     const CameraProfile& profile, const char* user_defined_name, const SyncMode& sync_mode) {

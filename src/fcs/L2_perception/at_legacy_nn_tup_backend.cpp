@@ -10,7 +10,6 @@
 #include <opencv2/imgproc.hpp>
 #include <openvino/openvino.hpp>
 #include <spdlog/spdlog.h>
-#include <type_traits>
 
 namespace fcs {
 
@@ -171,7 +170,7 @@ void AtLegacyNNTupBackend::generate_grids_and_strides(
 // ============================================================================
 
 AtLegacyNNTupBackend::PreprocContext
-    AtLegacyNNTupBackend::preprocess(const cv::Mat& image, const AtLegacyNNTupConfig& cfg) const {
+    AtLegacyNNTupBackend::preprocess(const cv::Mat& image, const AtLegacyNNTupConfig& cfg) {
     PreprocContext ctx;
 
     // Letterbox resize with symmetric padding
@@ -293,8 +292,6 @@ std::vector<AtLegacyArmorDetection> AtLegacyNNTupBackend::postprocess(
     detections.reserve(256);
     const float conf_thresh = static_cast<float>(cfg.confidence_threshold);
 
-    auto finite = [](float x) { return std::isfinite(x); };
-
     for (int i = 0; i < valid_rows; ++i) {
         // Read confidence
         float conf = obuf.at<float>(i, 8);
@@ -319,8 +316,9 @@ std::vector<AtLegacyArmorDetection> AtLegacyNNTupBackend::postprocess(
         float x4 = (obuf.at<float>(i, 6) + grid0_f) * stride_f;
         float y4 = (obuf.at<float>(i, 7) + grid1_f) * stride_f;
 
-        if (!(finite(x1) && finite(y1) && finite(x2) && finite(y2) && finite(x3) && finite(y3)
-              && finite(x4) && finite(y4))) {
+        if (!(std::isfinite(x1) && std::isfinite(y1) && std::isfinite(x2) && std::isfinite(y2)
+              && std::isfinite(x3) && std::isfinite(y3) && std::isfinite(x4)
+              && std::isfinite(y4))) {
             continue;
         }
 
@@ -363,7 +361,7 @@ std::vector<AtLegacyArmorDetection> AtLegacyNNTupBackend::postprocess(
         // Create detection
         AtLegacyArmorDetection det(corners, cls, color, conf);
         if (det.area > 0) {
-            detections.push_back(std::move(det));
+            detections.push_back(det);
         }
 
         // Early cap
@@ -379,7 +377,7 @@ std::vector<AtLegacyArmorDetection> AtLegacyNNTupBackend::postprocess(
 // ============================================================================
 
 std::vector<AtLegacyArmorDetection> AtLegacyNNTupBackend::nms(
-    std::vector<AtLegacyArmorDetection>& detections, const AtLegacyNNTupConfig& cfg) const {
+    std::vector<AtLegacyArmorDetection>& detections, const AtLegacyNNTupConfig& cfg) {
     if (detections.empty()) {
         return {};
     }

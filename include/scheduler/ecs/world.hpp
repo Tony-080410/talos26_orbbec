@@ -11,6 +11,22 @@
 namespace talos {
 
 // ============================================================================
+// Design Note: Type Erasure for Heterogeneous Storage
+// ============================================================================
+// World needs to store arbitrary types (resources, channels, atomics) in maps.
+// std::any is used here as a type-erasure pattern - all accesses go through
+// templates that know the exact type, providing compile-time type safety at
+// the call site while allowing heterogeneous storage internally.
+//
+// Alternative approaches considered:
+// - Template-based storage: Would require users to specify all types upfront
+// - std::variant: Not scalable for open-ended type sets
+// - std::shared_ptr<void>: Same type-safety issues as std::any
+//
+// This is an internal implementation detail; the public API is fully type-safe.
+// ============================================================================
+
+// ============================================================================
 // SPSC Storage: holds split writer and reader (wrapped in shared_ptr for any)
 // ============================================================================
 

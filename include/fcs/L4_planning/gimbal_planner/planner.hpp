@@ -393,8 +393,9 @@ private:
 
         // Minimum 1 degree range
         constexpr double min_range = (std::numbers::pi / 180.0);
-        shooting_range_yaw         = std::max(shooting_range_yaw, min_range);
-        shooting_range_pitch       = std::max(shooting_range_pitch, min_range);
+
+        shooting_range_yaw   = std::max(shooting_range_yaw, min_range);
+        shooting_range_pitch = std::max(shooting_range_pitch, min_range);
 
         // NOTE: This uses a raw subtraction; near +/-pi wrap-around, the apparent difference can be
         // large even if angles are close. If this becomes an issue, consider angle-normalized diff.

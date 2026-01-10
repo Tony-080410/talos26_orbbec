@@ -191,9 +191,6 @@ AtLegacyNNBackend::PreprocContext
     cv::resize(image, resized, cv::Size(unpad_w, unpad_h));
     cv::copyMakeBorder(resized, resized, dh, dh, dw, dw, cv::BORDER_CONSTANT);
 
-    // BGR -> RGB, normalize to [0, 1]
-    // cv::Mat rgb;
-    // cv::cvtColor(ctx.preprocessed, rgb, cv::COLOR_BGR2RGB);
     resized.convertTo(resized, CV_32F, 1.0f / 255.0f);
     ctx.preprocessed = resized;
 
@@ -367,7 +364,7 @@ std::vector<AtLegacyArmorDetection>
         // Create detection
         AtLegacyArmorDetection det(corners, cls, color, best_score);
         if (det.area > 0) {
-            detections.push_back(std::move(det));
+            detections.push_back(det);
         }
     }
 

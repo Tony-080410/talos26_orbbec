@@ -183,12 +183,8 @@ void register_foxglove_systems(App& app, talos::Scheduler* scheduler_ptr = nullp
                 pose.orientation = orientation;
 
                 foxglove::schemas::CubePrimitive cube;
-                cube.pose = pose;
-                if (m.type == ArmorType::Large) {
-                    cube.size = {0.03, 0.15, 0.125};   // 装甲板尺寸
-                } else {
-                    cube.size = {0.03, 0.15, 0.125};
-                }
+                cube.pose  = pose;
+                cube.size  = {0.03, 0.15, 0.125};      // 装甲板尺寸
                 cube.color = m.color == ArmorColor::Red
                                ? foxglove::schemas::Color{1.0, 0.0, 0.0, 0.5}
                                : foxglove::schemas::Color{0.0, 0.0, 1.0, 0.5};

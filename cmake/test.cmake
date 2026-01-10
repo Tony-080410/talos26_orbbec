@@ -17,9 +17,6 @@ endif ()
 
 enable_testing()
 
-# FCS Module Tests (commented out - source files not available)
-# TODO: Re-enable when test files are restored
-
 # Triple buffer tests
 add_executable(triple_buffer_test
     test/triple_buffer_test.cpp

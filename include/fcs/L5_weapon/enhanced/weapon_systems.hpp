@@ -37,7 +37,6 @@ void register_enhanced_weapon_system(
             }
 
             // Generate enhanced weapon command
-            // TODO: Get target distance from plan or calculate it
             double target_distance   = plan->distance;
             WeaponCommand weapon_cmd = controller->generate_command(*plan, target_distance);
 

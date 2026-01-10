@@ -5,7 +5,6 @@
 #include "fcs/L4_planning/gimbal_planner/trajectory_compensator.hpp"
 #include "fcs/L4_planning/gimbal_planner/types.hpp"
 
-#include <cstdint>
 #include <memory>
 
 namespace fcs::L5 {
@@ -44,7 +43,7 @@ public:
     }
 
     /// @brief Update trajectory compensator parameters from L4 plan
-    void update_compensator_from_plan(const fcs::L4::GimbalPlan& plan) noexcept {
+    void update_compensator_from_plan([[maybe_unused]] const fcs::L4::GimbalPlan& plan) noexcept {
         // Note: L5 doesn't own trajectory parameters anymore
         // This method can be used if we need to extract trajectory info from L4 plan
         // Currently, we let L4 handle all trajectory calculations

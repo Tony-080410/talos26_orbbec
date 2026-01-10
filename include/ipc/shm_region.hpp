@@ -1,7 +1,6 @@
 #pragma once
 
 #include <cstdint>
-#include <cstring>
 #include <expected>
 #include <fcntl.h>
 #include <filesystem>

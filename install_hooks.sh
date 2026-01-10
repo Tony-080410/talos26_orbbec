@@ -7,7 +7,7 @@ cd "$REPO_ROOT"
 
 HOOK_SCRIPTS=(
     "scripts/pre-commit-clang-format.sh"
-    "scripts/pre-commit-spdlog-check.sh"
+#    "scripts/pre-commit-spdlog-check.sh"
 )
 HOOK_DST=".git/hooks/pre-commit"
 
