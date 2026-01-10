@@ -72,7 +72,7 @@ public:
     /// @return GimbalPlan or error message
     [[nodiscard]] std::expected<GimbalPlan, std::string> plan(
         const fcs::L3::TrackerOutput& target, uint64_t current_time_ns,
-        const fast_tf::TransformMatrix4d& muzzle_transform) const noexcept {
+        const fast_tf::TransformMatrix4d& muzzle_transform) noexcept {
 
         if (!target.is_tracking()) {
             return std::unexpected("Not tracking");
@@ -293,9 +293,9 @@ public:
 
 private:
     GimbalPlannerConfig config_;
-    mutable std::unique_ptr<TrajectoryCompensator> compensator_;
-    mutable State state_{State::TrackingArmor};
-    mutable int overflow_count_{0};
+    std::unique_ptr<TrajectoryCompensator> compensator_;
+    State state_{State::TrackingArmor};
+    int overflow_count_{0};
 
     void update_compensator_params() noexcept {
         if (compensator_) {
@@ -314,7 +314,7 @@ private:
         }
     }
 
-    void transition_to(State new_state) const noexcept {
+    void transition_to(State new_state) noexcept {
         if (state_ != new_state) {
             overflow_count_ = 0;
             state_          = new_state;

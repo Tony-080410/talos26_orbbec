@@ -84,7 +84,7 @@ TEST(SpscTest, HasNew) {
     EXPECT_FALSE(r.has_new());
     w.write(1);
     EXPECT_TRUE(r.has_new());
-    r.read();
+    static_cast<void>(r.read());
     EXPECT_FALSE(r.has_new());
 }
 
@@ -245,7 +245,7 @@ TEST(SpmcTest, HasNew) {
     EXPECT_FALSE(r.has_new());
     w.write(1);
     EXPECT_TRUE(r.has_new());
-    r.read();
+    static_cast<void>(r.read());
     EXPECT_FALSE(r.has_new());
 }
 
