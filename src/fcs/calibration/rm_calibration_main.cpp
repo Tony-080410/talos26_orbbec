@@ -189,7 +189,7 @@ int main(int argc, char* argv[]) {
 
     // Initialize input source (camera + IMU)
     std::shared_ptr<ipc::ShmClient> ipc_device;
-    fcs::L1::InputInterface input;
+    fcs::L1::CameraInterface input;
     bool imu_available = false;
 
     if (use_daedalus) {
@@ -203,7 +203,7 @@ int main(int argc, char* argv[]) {
         ipc_device = std::make_shared<ipc::ShmClient>(std::move(*ipc_result));
 
         // Create IPC input interface
-        auto input_result = fcs::L1::InputInterface::create_ipc(ipc_device);
+        auto input_result = fcs::L1::CameraInterface::create_ipc(ipc_device);
         if (!input_result) {
             SPDLOG_ERROR("create IPC input: {}", fcs::L1::to_string(input_result.error()));
             return 1;
@@ -226,7 +226,7 @@ int main(int argc, char* argv[]) {
         camera_config.width   = config->width;
         camera_config.height  = config->height;
         camera_config.profile = config->profile;
-        auto input_result     = fcs::L1::InputInterface::create_hik(camera_config);
+        auto input_result     = fcs::L1::CameraInterface::create_hik(camera_config);
         if (!input_result) {
             SPDLOG_ERROR("create camera input: {}", fcs::L1::to_string(input_result.error()));
             return 1;

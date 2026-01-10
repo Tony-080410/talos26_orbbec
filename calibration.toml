@@ -2,16 +2,16 @@
 # 相机内参和手眼标定配置文件
 
 [calibration]
-width = 3072
-height = 2048
+width = 1440
+height = 1080
 # 标定模式: Intrinsic (内参标定), Handeye (手眼标定), Full (完整标定)
 mode = "Intrinsic"
 [calibration.profile]
 trigger_mode = false
 invert_image = true
-exposure_time_us = 12500  # 3ms in microseconds
-gain = 16.7
-rotate_angle = "Clockwise270"
+exposure_time_us = 52500  # 3ms in microseconds
+gain = 5.0
+rotate_angle = "None"
 
 # =============================================================================
 # 标定板配置
@@ -61,7 +61,7 @@ min_translation_diff = 0.005
 auto_capture = true
 
 # 自动采集间隔 (毫秒)
-capture_interval_ms = 1000
+capture_interval_ms = 2000
 
 # =============================================================================
 # 内参标定配置

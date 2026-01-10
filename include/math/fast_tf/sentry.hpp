@@ -31,8 +31,8 @@ std::shared_ptr<CoordinateSystem<N>> sentry_new(timestamp_ns_t ts = 0) {
     // camera_link -> gimbal_link
     update<camera_link_fuxk_frame>(
         *system,
-        FuckTransform<camera_link_fuxk_frame>{
-            TransformMatrix4d::from_rpy(0.0, to_rad_2(1.50), to_rad_2(0.00), 0.0886, 0.03, 0.02)},
+        FuckTransform<camera_link_fuxk_frame>{TransformMatrix4d::from_rpy(
+            0.0, to_rad_2(-1.288), to_rad_2(-0.65), 0.0879, 0.0026, 0.0079)},
         ts);
 
     // camera_optical -> camera_link
@@ -48,7 +48,7 @@ std::shared_ptr<CoordinateSystem<N>> sentry_new(timestamp_ns_t ts = 0) {
     update<muzzle_link_fuxk_frame>(
         *system,
         FuckTransform<muzzle_link_fuxk_frame>{
-            TransformMatrix4d::from_rpy(0.0, 0.0, 0.0, 0.055, -0.0, -0.0376)},
+            TransformMatrix4d::from_rpy(0.0, 0.0, 0.0, 0.0543, 0.0026, -0.0466)},
         ts);
     return system;
 }
