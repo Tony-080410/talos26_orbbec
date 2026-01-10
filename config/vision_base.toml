@@ -46,7 +46,7 @@ nms_threshold = 0.30
 top_k = 128
 
 [tracker]
-inekf_enabled = false
+inekf_enabled = true
 
 [tracker.robot]
 matcher_gate = 5.0
