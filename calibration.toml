@@ -45,7 +45,7 @@ dictionary = "DICT_5X5_50"
 # =============================================================================
 [calibration.capture]
 # 最小采集样本数 (推荐 30+)
-min_samples = 20
+min_samples = 30
 
 # 最大采集样本数
 max_samples = 100

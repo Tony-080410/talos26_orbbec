@@ -1,6 +1,6 @@
 [detector]
 backend_type = "Traditional"
-detect_color = "Red"
+detect_color = "Blue"
 
 # Required if backend_type = "traditional"
 [traditional]
@@ -62,7 +62,7 @@ sigma_r1 = 1.0
 sigma_h = 0.5
 
 [tracker.robot_inekf]
-sigma_a_xy = 10.0
+sigma_a_xy = 20.0
 sigma_a_z = 1.0
 sigma_w = 0.25
 sigma_m = 0.5

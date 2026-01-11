@@ -22,6 +22,7 @@
 #include <opencv2/imgcodecs.hpp>
 #include <opencv2/imgproc.hpp>
 #include <spdlog/spdlog.h>
+#include <thread>
 
 namespace fcs::calibration {
 
@@ -90,6 +91,8 @@ void register_calibration_systems(
                 return;
             }
 
+            using namespace std::chrono_literals;
+            std::this_thread::sleep_for(1000ms);
             // Check diversity
             if (!intrinsic_calibrator->is_diverse_enough(*detection)) {
                 SPDLOG_DEBUG("Sample rejected: not diverse enough");
