@@ -90,7 +90,7 @@ struct RobotModel {
         /// Intuition: larger → follow fast maneuvers (but noisier); smaller → smoother but laggier.
         /// Analogy: "agility" in the horizontal plane.
         /// Precise: used as q = sigma_a_xy^2 in the CV blocks (xc,vx) and (yc,vy) in `Q_sqrt(dt)`.
-        Scalar sigma_a_xy = 5.0;
+        Scalar sigma_a_xy = 10.0;
         /// Z acceleration process-noise std-dev (≈ m/s^2).
         ///
         /// Problem/Intuition/Analogy: same as sigma_a_xy, but only for z (z0,vz).

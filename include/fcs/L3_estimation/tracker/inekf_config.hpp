@@ -83,6 +83,44 @@ struct RobotInEKFConfig {
     /// correct armor_id is a prerequisite.
     double sigma_w{0.25};
 
+    /// Enable dynamic anisotropic measurement noise (from motion_model.hpp insights)
+    ///
+    /// Problem:
+    ///   Isotropic noise R = σ²I ignores that visual measurements have direction-dependent
+    ///   uncertainty. Depth is unreliable when viewing armor from the side; angular position
+    ///   is unreliable at long range due to PnP instability.
+    ///
+    /// Intuition:
+    ///   - Radial (depth) uncertainty ↑ when armor surface is nearly parallel to sight line
+    ///   - Tangential (angular) uncertainty ↑ when target is far away
+    ///
+    /// Analogy:
+    ///   Like a flashlight cone - the uncertainty is anisotropic along the viewing direction.
+    ///
+    /// Precise:
+    ///   When true, R becomes a 3×3 SPD matrix:
+    ///     R = U × diag(σ_r², σ_t², σ_t²) × U^T
+    ///   where U = [e_r, e_h, e_v] (radial/tangential basis in body frame)
+    ///   σ_r² = σ_m² × (1 + k_r × log(sin(view_angle) + 1))
+    ///   σ_t² = σ_m² × (1 + k_t × log(distance + 1))
+    bool use_dynamic_noise{true};
+
+    /// Radial (depth) noise sensitivity to viewing angle (k_r)
+    ///
+    /// Problem: How much should depth uncertainty increase when viewing armor from the side?
+    /// Intuition: Larger → more penalty for oblique views; smaller → more uniform depth noise.
+    /// Precise: σ_r² = σ_m² × (1 + k_r × log(sin(view_angle) + 1)), k_r ∈ [0, ∞)
+    /// Default 1.0 matches motion_model.hpp behavior.
+    double dynamic_noise_k_radial{1.0};
+
+    /// Tangential (angular) noise sensitivity to distance (k_t)
+    ///
+    /// Problem: How much should angular uncertainty increase with distance?
+    /// Intuition: Larger → more penalty for far targets; smaller → more uniform angular noise.
+    /// Precise: σ_t² = σ_m² × (1 + k_t × log(distance + 1)), k_t ∈ [0, ∞)
+    /// Default 0.1 matches motion_model.hpp behavior (was 1/10).
+    double dynamic_noise_k_tangent{0.1};
+
     /// Target geometry initial values (center -> armor offsets)
     /// Initial radius for armors 0/2 (m).
     /// Problem: we need a reasonable starting geometry to avoid early instability.
@@ -107,6 +145,9 @@ struct RobotInEKFConfig {
         READ(tbl, sigma_h);
         READ(tbl, sigma_m);
         READ(tbl, sigma_w);
+        READ(tbl, use_dynamic_noise);
+        READ(tbl, dynamic_noise_k_radial);
+        READ(tbl, dynamic_noise_k_tangent);
         READ(tbl, radius0);
         READ(tbl, radius1);
         READ(tbl, height);
@@ -140,6 +181,18 @@ struct OutpostInEKFConfig {
     /// Problem/Intuition/Analogy/Precise: same as RobotInEKFConfig::sigma_w.
     double sigma_w{0.25};
 
+    /// Enable dynamic anisotropic measurement noise.
+    /// Problem/Intuition/Analogy/Precise: same as RobotInEKFConfig::use_dynamic_noise.
+    bool use_dynamic_noise{false};
+
+    /// Radial noise sensitivity to viewing angle.
+    /// Precise: same as RobotInEKFConfig::dynamic_noise_k_radial.
+    double dynamic_noise_k_radial{1.0};
+
+    /// Tangential noise sensitivity to distance.
+    /// Precise: same as RobotInEKFConfig::dynamic_noise_k_tangent.
+    double dynamic_noise_k_tangent{0.1};
+
     std::expected<void, std::string> read_from(const toml::table& tbl) noexcept {
         READ(tbl, sigma_a_xy);
         READ(tbl, sigma_a_z);
@@ -147,6 +200,9 @@ struct OutpostInEKFConfig {
         READ(tbl, sigma_h);
         READ(tbl, sigma_m);
         READ(tbl, sigma_w);
+        READ(tbl, use_dynamic_noise);
+        READ(tbl, dynamic_noise_k_radial);
+        READ(tbl, dynamic_noise_k_tangent);
         return {};
     }
 };

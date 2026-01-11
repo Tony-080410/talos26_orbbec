@@ -37,6 +37,116 @@ namespace detail {
 // Constants for regularization and constraints
 inline constexpr double kCovarianceRegularization = 1e-12;
 
+// ============================================================================
+// Anisotropic Measurement Noise (ported from motion_model.hpp insights)
+// ============================================================================
+
+/// @brief Compute dynamic measurement noise covariance in body frame
+///
+/// === Problem ===
+/// Isotropic noise R = σ²I ignores the anisotropic nature of visual measurements:
+/// - Depth (radial) uncertainty dominates when viewing armor from the side
+/// - Angular (tangential) uncertainty grows with distance due to PnP instability
+///
+/// === Intuition ===
+/// Visual measurement uncertainty has a "cone" shape along the sight line:
+/// - Radial (depth): unreliable when armor surface is nearly parallel to sight line
+/// - Tangential (angular): unreliable when target is far (small pixels → large position error)
+///
+/// === Analogy ===
+/// Like estimating the distance to a wall by looking at it:
+/// - Looking straight at the wall: depth is clear from texture/stereo
+/// - Looking at grazing angle: depth becomes ambiguous
+///
+/// === Precise (from motion_model.hpp) ===
+/// Constructs anisotropic covariance R in body frame:
+///
+///   R = U × Λ × U^T
+///
+/// where U = [e_r, e_h, e_v] (radial/tangential basis in body frame)
+///       Λ = diag(σ_r², σ_t², σ_t²)
+///
+/// Radial variance (depth uncertainty):
+///   σ_r² = σ_base² × (1 + k_r × log(sin(view_angle) + 1))
+///   - view_angle: angle between sight line and armor normal
+///   - k_r: radial sensitivity coefficient
+///
+/// Tangential variance (angular uncertainty):
+///   σ_t² = σ_base² × (1 + k_t × log(distance + 1))
+///   - k_t: tangential sensitivity coefficient
+///
+/// @param y_body Observation in body frame: R^T(y - p)
+/// @param armor_normal_body Armor plate outward normal in body frame (unit vector)
+/// @param sigma_base Base measurement noise std-dev (m)
+/// @param k_radial Radial noise sensitivity to view angle (default 1.0)
+/// @param k_tangent Tangential noise sensitivity to distance (default 0.1)
+/// @return 3×3 SPD covariance matrix in body frame
+[[nodiscard]] inline Eigen::Matrix3d compute_anisotropic_R_body(
+    const Eigen::Vector3d& y_body, const Eigen::Vector3d& armor_normal_body, double sigma_base,
+    double k_radial = 1.0, double k_tangent = 0.1) noexcept {
+    const double sigma_base2 = sigma_base * sigma_base;
+    const double distance    = y_body.norm();
+
+    // Degenerate case: very close observation
+    if (distance < 1e-6) {
+        return Eigen::Matrix3d::Identity() * sigma_base2;
+    }
+
+    // === Step 1: Compute sight-line direction in body frame ===
+    const Eigen::Vector3d e_r = y_body / distance; // radial (sight line)
+
+    // === Step 2: Compute view angle (angle between sight line and armor normal) ===
+    // armor_normal points outward from robot center
+    // When viewing head-on: e_r ≈ -armor_normal → cos ≈ -1 → |cos| ≈ 1
+    // When viewing from side: e_r ⊥ armor_normal → cos ≈ 0
+    const double cos_view = std::abs(armor_normal_body.dot(e_r));
+    const double sin_view = std::sqrt(1.0 - cos_view * cos_view);
+
+    // === Step 3: Dynamic variance scaling (configurable) ===
+    // Radial: depth uncertainty increases when viewing from side
+    const double radial_scale = 1.0 + k_radial * std::log(sin_view + 1.0);
+    const double sigma_r2     = sigma_base2 * radial_scale;
+
+    // Tangential: angular uncertainty increases with distance
+    const double tangent_scale = 1.0 + k_tangent * std::log(distance + 1.0);
+    const double sigma_t2      = sigma_base2 * tangent_scale;
+
+    // === Step 4: Build orthonormal basis {e_r, e_h, e_v} in body frame ===
+    // e_h: horizontal tangent (perpendicular to e_r, in horizontal plane)
+    Eigen::Vector3d e_h = Eigen::Vector3d::UnitZ().cross(e_r);
+    double e_h_norm     = e_h.norm();
+    if (e_h_norm < 1e-6) {
+        // Looking straight up/down: use x-axis as fallback
+        e_h = Eigen::Vector3d::UnitX();
+    } else {
+        e_h /= e_h_norm;
+    }
+
+    // e_v: vertical tangent (perpendicular to both e_r and e_h)
+    const Eigen::Vector3d e_v = e_r.cross(e_h);
+
+    // === Step 5: Assemble anisotropic covariance ===
+    // R = U × diag(σ_r², σ_t², σ_t²) × U^T
+    Eigen::Matrix3d U;
+    U.col(0) = e_r;
+    U.col(1) = e_h;
+    U.col(2) = e_v;
+
+    const Eigen::Vector3d sigma_diag(sigma_r2, sigma_t2, sigma_t2);
+    return U * sigma_diag.asDiagonal() * U.transpose();
+}
+
+/// @brief Compute armor normal direction in body frame
+/// @param armor_id Armor index (0, 1, 2, 3 for robot; 0, 1, 2 for outpost)
+/// @param armors_num Total number of armors
+/// @return Unit normal vector pointing outward from robot center
+[[nodiscard]] inline Eigen::Vector3d armor_normal_body(int armor_id, int armors_num) noexcept {
+    const double angle_step  = 2.0 * std::numbers::pi / static_cast<double>(armors_num);
+    const double armor_angle = static_cast<double>(armor_id) * angle_step;
+    // Normal points outward: opposite to the direction from center to armor
+    return Eigen::Vector3d{-std::cos(armor_angle), -std::sin(armor_angle), 0.0};
+}
+
 [[nodiscard]] inline double wrap_pi(double a) noexcept {
     if (!std::isfinite(a)) {
         return a;
@@ -339,6 +449,18 @@ public:
 ///
 /// Computes body-frame invariant error: r = R^T (y - p) - b
 /// where b is the armor offset in body frame.
+///
+/// === Noise Modes ===
+/// - Static (default): R = σ²I - traditional InEKF
+/// - Dynamic: R = f(geometry) - anisotropic noise adapted from motion_model.hpp
+///
+/// === Dynamic Noise Rationale (from motion_model.hpp) ===
+/// Visual measurements have direction-dependent uncertainty:
+/// - Depth (radial): unreliable when viewing armor from the side
+/// - Angular (tangential): unreliable at long range due to PnP instability
+///
+/// The dynamic mode preserves InEKF's invariant error structure while
+/// incorporating geometry-aware noise modeling.
 class RobotArmorMeasurementModel {
 public:
     static constexpr int kExtraDim  = RobotProcessModel::kExtraDim;
@@ -371,13 +493,39 @@ public:
 private:
     int armor_id_;
     double sigma_m_;
+    bool use_dynamic_noise_;
+    double k_radial_;
+    double k_tangent_;
+    mutable Vec3 cached_y_body_; // Cached from invariant_error for noise computation
 
 public:
+    /// @brief Construct with static isotropic noise (default, backward compatible)
     RobotArmorMeasurementModel(int armor_id, double sigma_m) noexcept
         : armor_id_(armor_id)
-        , sigma_m_(sigma_m) {}
+        , sigma_m_(sigma_m)
+        , use_dynamic_noise_(false)
+        , k_radial_(1.0)
+        , k_tangent_(0.1)
+        , cached_y_body_(Vec3::Zero()) {}
+
+    /// @brief Construct with configurable dynamic anisotropic noise
+    /// @param armor_id Armor index (0-3)
+    /// @param sigma_m Base measurement noise std-dev (m)
+    /// @param use_dynamic Enable dynamic noise based on viewing geometry
+    /// @param k_radial Radial noise sensitivity (default 1.0)
+    /// @param k_tangent Tangential noise sensitivity (default 0.1)
+    RobotArmorMeasurementModel(
+        int armor_id, double sigma_m, bool use_dynamic, double k_radial = 1.0,
+        double k_tangent = 0.1) noexcept
+        : armor_id_(armor_id)
+        , sigma_m_(sigma_m)
+        , use_dynamic_noise_(use_dynamic)
+        , k_radial_(k_radial)
+        , k_tangent_(k_tangent)
+        , cached_y_body_(Vec3::Zero()) {}
 
     /// Compute body-frame invariant error: r = R^T (y - p) - b
+    /// Also caches y_body for dynamic noise computation
     [[nodiscard]] MeasFiber invariant_error(const Point& x, const MeasPoint& y) const noexcept {
         constexpr double kAngleStep = 2.0 * std::numbers::pi / static_cast<double>(kArmorsNum);
         const double yaw_offset     = static_cast<double>(armor_id_) * kAngleStep;
@@ -390,6 +538,9 @@ public:
 
         const Vec3 y_body = x.first.R().transpose() * (y.data - x.first.p());
         const Vec3 r      = y_body - b;
+
+        // Cache y_body for dynamic noise computation (called after invariant_error)
+        cached_y_body_ = y_body;
 
         return MeasFiber{r};
     }
@@ -423,8 +574,20 @@ public:
     }
 
     /// Measurement noise covariance
+    ///
+    /// Returns either:
+    /// - Static: R = σ²I (isotropic, traditional InEKF)
+    /// - Dynamic: R = f(y_body, armor_normal, k_r, k_t) (anisotropic, configurable)
     [[nodiscard]] Covariance measurement_noise() const noexcept {
-        return Covariance::ScaledIdentity(sigma_m_ * sigma_m_);
+        if (!use_dynamic_noise_) {
+            return Covariance::ScaledIdentity(sigma_m_ * sigma_m_);
+        }
+
+        // Dynamic mode: compute anisotropic noise based on viewing geometry
+        const Vec3 n_armor = detail::armor_normal_body(armor_id_, kArmorsNum);
+        const Mat3 R_mat   = detail::compute_anisotropic_R_body(
+            cached_y_body_, n_armor, sigma_m_, k_radial_, k_tangent_);
+        return Covariance(R_mat);
     }
 };
 
@@ -433,6 +596,8 @@ public:
 // ============================================================================
 
 /// @brief Invariant measurement model for outpost armor position observations
+///
+/// Same dynamic noise capability as RobotArmorMeasurementModel.
 class OutpostArmorMeasurementModel {
 public:
     static constexpr int kExtraDim         = OutpostProcessModel::kExtraDim;
@@ -461,11 +626,31 @@ public:
 private:
     int armor_id_;
     double sigma_m_;
+    bool use_dynamic_noise_;
+    double k_radial_;
+    double k_tangent_;
+    mutable Vec3 cached_y_body_;
 
 public:
+    /// @brief Construct with static isotropic noise (default)
     OutpostArmorMeasurementModel(int armor_id, double sigma_m) noexcept
         : armor_id_(armor_id)
-        , sigma_m_(sigma_m) {}
+        , sigma_m_(sigma_m)
+        , use_dynamic_noise_(false)
+        , k_radial_(1.0)
+        , k_tangent_(0.1)
+        , cached_y_body_(Vec3::Zero()) {}
+
+    /// @brief Construct with configurable dynamic anisotropic noise
+    OutpostArmorMeasurementModel(
+        int armor_id, double sigma_m, bool use_dynamic, double k_radial = 1.0,
+        double k_tangent = 0.1) noexcept
+        : armor_id_(armor_id)
+        , sigma_m_(sigma_m)
+        , use_dynamic_noise_(use_dynamic)
+        , k_radial_(k_radial)
+        , k_tangent_(k_tangent)
+        , cached_y_body_(Vec3::Zero()) {}
 
     /// Compute body-frame invariant error: r = R^T (y - p) - b
     [[nodiscard]] MeasFiber invariant_error(const Point& x, const MeasPoint& y) const noexcept {
@@ -483,6 +668,9 @@ public:
         const Vec3 b      = R_id * Vec3{-kOutpostRadius, 0.0, z_offset};
         const Vec3 y_body = x.first.R().transpose() * (y.data - x.first.p());
         const Vec3 r      = y_body - b;
+
+        // Cache y_body for dynamic noise computation
+        cached_y_body_ = y_body;
 
         return MeasFiber{r};
     }
@@ -516,9 +704,16 @@ public:
         return C;
     }
 
-    /// Measurement noise covariance
+    /// Measurement noise covariance (static or dynamic)
     [[nodiscard]] Covariance measurement_noise() const noexcept {
-        return Covariance::ScaledIdentity(sigma_m_ * sigma_m_);
+        if (!use_dynamic_noise_) {
+            return Covariance::ScaledIdentity(sigma_m_ * sigma_m_);
+        }
+
+        const Vec3 n_armor = detail::armor_normal_body(armor_id_, kArmorsNum);
+        const Mat3 R_mat   = detail::compute_anisotropic_R_body(
+            cached_y_body_, n_armor, sigma_m_, k_radial_, k_tangent_);
+        return Covariance(R_mat);
     }
 };
 
@@ -759,6 +954,9 @@ public:
     }
 
     /// Update with armor observation using InvariantMeasurementModel
+    /// @param y Observed armor position in world frame
+    /// @param armor_id Armor index (0-3)
+    /// @param config Filter configuration (including use_dynamic_noise flag)
     void update_armor(const Vec3& y, int armor_id, const RobotInEKFConfig& config) noexcept {
         if (!filter_.is_initialized() || !detail::all_finite(y)) {
             return;
@@ -767,7 +965,9 @@ public:
             return;
         }
 
-        const RobotArmorMeasurementModel meas_model(armor_id, config.sigma_m);
+        const RobotArmorMeasurementModel meas_model(
+            armor_id, config.sigma_m, config.use_dynamic_noise, config.dynamic_noise_k_radial,
+            config.dynamic_noise_k_tangent);
         update_invariant_yaw_only(RobotArmorMeasurementModel::MeasPoint{y}, meas_model);
     }
 
@@ -913,7 +1113,9 @@ public:
             return;
         }
 
-        const OutpostArmorMeasurementModel meas_model(armor_id, config.sigma_m);
+        const OutpostArmorMeasurementModel meas_model(
+            armor_id, config.sigma_m, config.use_dynamic_noise, config.dynamic_noise_k_radial,
+            config.dynamic_noise_k_tangent);
         update_invariant_yaw_only(OutpostArmorMeasurementModel::MeasPoint{y}, meas_model);
     }
 

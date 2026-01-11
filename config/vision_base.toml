@@ -72,6 +72,9 @@ radius1 = 0.23
 height = 0.0
 sigma_r = 0.3
 sigma_h = 0.01
+use_dynamic_noise = true
+dynamic_noise_k_radial = 20.5
+dynamic_noise_k_tangent = 0.04
 
 [tracker.outpost]
 matcher_gate = 5.0
@@ -87,9 +90,12 @@ sigma_a_yaw = 5.0
 sigma_a_xy = 10.0
 sigma_a_z = 1.0
 sigma_yaw = 5.0
-sigma_h = 5.0
-sigma_m = 5.0
-sigma_w = 5.0
+sigma_h = 2.5
+sigma_m = 2.5
+sigma_w = 2.5
+use_dynamic_noise = true
+dynamic_noise_k_radial = 0.8
+dynamic_noise_k_tangent = 0.00125
 
 [planner]
 shooting_range_w = 0.135
