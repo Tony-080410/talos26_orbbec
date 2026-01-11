@@ -59,7 +59,7 @@ using InEKF_SO3 = RInEKF_SO3;
 // Factory helpers
 // ============================================================================
 
-/// @brief Create InEKF_Robot initialized at given pose
+/// @brief Create InCKF_Robot initialized at given pose
 /// @param position Initial position [x, y, z]
 /// @param yaw Initial yaw angle (radians)
 /// @param pos_std Position uncertainty std dev
@@ -67,10 +67,10 @@ using InEKF_SO3 = RInEKF_SO3;
 /// @param yaw_std Yaw uncertainty std dev
 [[nodiscard]] inline auto make_robot_inekf(
     const Eigen::Vector3d& position, double yaw, double pos_std = 0.1, double vel_std = 0.1,
-    double yaw_std = 0.1) noexcept -> InEKF_Robot {
-    using Space = typename InEKF_Robot::Space;
+    double yaw_std = 0.1) noexcept -> InCKF_Robot {
+    using Space = typename InCKF_Robot::Space;
     using Point = typename Space::Point;
-    using Cov   = typename InEKF_Robot::Covariance;
+    using Cov   = typename InCKF_Robot::Covariance;
 
     // SE₂(3) part
     group::SEn3<double, 2> se23;
@@ -105,7 +105,7 @@ using InEKF_SO3 = RInEKF_SO3;
     P(11, 11) = 0.01; // r1
     P(12, 12) = 0.01; // h
 
-    return InEKF_Robot{state, P};
+    return InCKF_Robot{state, P};
 }
 
 } // namespace uni_kf
