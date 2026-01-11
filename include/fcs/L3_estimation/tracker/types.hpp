@@ -63,10 +63,11 @@ struct RobotTargetState {
 // ============================================================================
 
 struct OutpostTargetState {
-    Eigen::Vector2d position{0, 0};   // [xc, yc]
+    Eigen::Vector2d position{0, 0};    // [xc, yc]
+    Eigen::Vector3d velocity{0, 0, 0}; // [vx, vy, vz]
     double yaw{0};
     double v_yaw{0};
-    std::array<double, 3> z{0, 0, 0}; // z0, z1, z2
+    std::array<double, 3> z{0, 0, 0};  // z0, z1, z2
 
     static constexpr double radius  = 0.2765;
     static constexpr int armors_num = 3;

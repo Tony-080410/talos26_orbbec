@@ -112,6 +112,7 @@ public:
             armors_num      = 4;
         } else if (target.is_outpost()) {
             const auto& state = *target.outpost_state();
+            target_velocity   = state.velocity;
             target_position   = {
                 state.position.x(), state.position.y(),
                 (state.z[0] + state.z[1] + state.z[2]) / 3.0};

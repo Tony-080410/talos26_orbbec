@@ -61,6 +61,45 @@ private:
     // Numerical differentiation step size
     Scalar eps_ = Scalar{1e-7};
 
+    // ------------------------------------------------------------------------
+    // Helper: Compute Kalman gain and apply Joseph form update
+    // ------------------------------------------------------------------------
+
+    template <int MeasDim>
+    [[nodiscard]] auto compute_kalman_gain(
+        const Eigen::Matrix<Scalar, MeasDim, Dim>& H,
+        const SymmetricMatrix<MeasDim, Scalar>& R) const noexcept
+        -> std::expected<Eigen::Matrix<Scalar, Dim, MeasDim>, std::string> {
+        typename Covariance::MatrixType P             = belief_.covariance.matrix();
+        Eigen::Matrix<Scalar, MeasDim, MeasDim> S_mat = H * P * H.transpose() + R.matrix();
+
+        Eigen::LDLT<Eigen::Matrix<Scalar, MeasDim, MeasDim>> ldlt(S_mat);
+        if (ldlt.info() != Eigen::Success) {
+            return std::unexpected("Innovation covariance is singular");
+        }
+
+        Eigen::Matrix<Scalar, Dim, MeasDim> K =
+            P * H.transpose() * ldlt.solve(Eigen::Matrix<Scalar, MeasDim, MeasDim>::Identity());
+        return K;
+    }
+
+    template <int MeasDim>
+    void apply_joseph_update(
+        const Eigen::Matrix<Scalar, Dim, MeasDim>& K, const Eigen::Matrix<Scalar, MeasDim, Dim>& H,
+        const SymmetricMatrix<MeasDim, Scalar>& R,
+        const typename Fiber::EigenType& correction) noexcept {
+        // State update
+        belief_.mean = D::act(belief_.mean, Fiber(correction));
+
+        // Covariance update (Joseph form for numerical stability)
+        typename Covariance::MatrixType P    = belief_.covariance.matrix();
+        typename Covariance::MatrixType I_KH = Covariance::MatrixType::Identity() - K * H;
+        typename Covariance::MatrixType P_new =
+            I_KH * P * I_KH.transpose() + K * R.matrix() * K.transpose();
+
+        belief_.covariance = Covariance(P_new);
+    }
+
 public:
     // ------------------------------------------------------------------------
     // Constructors
@@ -133,24 +172,20 @@ public:
             return;
         }
 
-        // Create dynamics wrapper that captures dt
+        // Wrapper that captures dt for dynamics function
         auto f = [&dynamics, dt](const Point& x) { return dynamics(x, dt); };
 
         if constexpr (std::is_same_v<StrategyTag, FirstOrderTag>) {
-            // First-order (EKF) prediction
             auto [x_new, P_new] =
                 FirstOrder::predict<D>(belief_.mean, belief_.covariance, f, Q, eps_);
             belief_.mean       = x_new;
             belief_.covariance = P_new;
         } else if constexpr (std::is_same_v<StrategyTag, CubaturePointsTag>) {
-            // Cubature points (CKF) prediction
             auto [x_new, P_new] =
                 CubaturePoints::predict<D>(belief_.mean, belief_.covariance, f, Q);
             belief_.mean       = x_new;
             belief_.covariance = P_new;
         } else {
-            // Sigma points (UKF) prediction - would use SigmaPoints strategy
-            // TODO: Implement when SigmaPointsTag is used
             static_assert(
                 std::is_same_v<StrategyTag, FirstOrderTag>
                     || std::is_same_v<StrategyTag, CubaturePointsTag>,
@@ -171,9 +206,8 @@ public:
         auto Q = model.process_noise(dt);
 
         if constexpr (std::is_same_v<StrategyTag, FirstOrderTag>) {
-            // First-order (EKF) strategy
             if constexpr (ProcessModelWithJacobian<Model, D>) {
-                // Use analytical Jacobian if available
+                // Use analytical Jacobian
                 auto x_new = model.predict(belief_.mean, dt);
                 auto F     = model.jacobian(belief_.mean, dt);
                 auto P_new = FirstOrder::propagate_covariance<D>(belief_.covariance, F, Q);
@@ -181,7 +215,7 @@ public:
                 belief_.mean       = x_new;
                 belief_.covariance = P_new;
             } else {
-                // Numerical Jacobian
+                // Use numerical Jacobian
                 auto f = [&model, dt](const Point& x) { return model.predict(x, dt); };
                 auto [x_new, P_new] =
                     FirstOrder::predict<D>(belief_.mean, belief_.covariance, f, Q, eps_);
@@ -189,7 +223,6 @@ public:
                 belief_.covariance = P_new;
             }
         } else if constexpr (std::is_same_v<StrategyTag, CubaturePointsTag>) {
-            // Cubature points (CKF) strategy - always uses sampling
             auto f = [&model, dt](const Point& x) { return model.predict(x, dt); };
             auto [x_new, P_new] =
                 CubaturePoints::predict<D>(belief_.mean, belief_.covariance, f, Q);
@@ -227,45 +260,25 @@ public:
         constexpr int MeasDim = M::FiberDim;
 
         if constexpr (std::is_same_v<StrategyTag, FirstOrderTag>) {
-            // EKF update using Jacobian
-            // Predicted measurement
+            // Compute predicted measurement and Jacobian
             auto z_pred = h(belief_.mean);
-
-            // Measurement Jacobian (numerical)
-            auto H = FirstOrder::jacobian<D, M>(belief_.mean, std::forward<MeasFunc>(h), eps_);
-
-            // Innovation
+            auto H      = FirstOrder::jacobian<D, M>(belief_.mean, std::forward<MeasFunc>(h), eps_);
             auto innovation = M::diff(z_pred, z);
 
-            // Innovation covariance: S = H P H^T + R
-            typename Covariance::MatrixType P             = belief_.covariance.matrix();
-            Eigen::Matrix<Scalar, MeasDim, MeasDim> S_mat = H * P * H.transpose() + R.matrix();
-
-            // Solve for Kalman gain: K = P H^T S^{-1}
-            Eigen::LDLT<Eigen::Matrix<Scalar, MeasDim, MeasDim>> ldlt(S_mat);
-            if (ldlt.info() != Eigen::Success) {
-                return; // Skip update if innovation covariance is singular
+            // Compute Kalman gain and apply update
+            auto K_result = compute_kalman_gain<MeasDim>(H, R);
+            if (!K_result) {
+                return;
             }
 
-            Eigen::Matrix<Scalar, Dim, MeasDim> K =
-                P * H.transpose() * ldlt.solve(Eigen::Matrix<Scalar, MeasDim, MeasDim>::Identity());
+            typename Fiber::EigenType correction = (*K_result) * innovation.data;
+            apply_joseph_update<MeasDim>(*K_result, H, R, correction);
 
-            // State update in tangent space
-            typename Fiber::EigenType delta = K * innovation.data;
-            belief_.mean                    = D::act(belief_.mean, Fiber(delta));
-
-            // Covariance update (Joseph form for numerical stability)
-            typename Covariance::MatrixType I_KH = Covariance::MatrixType::Identity() - K * H;
-            typename Covariance::MatrixType P_new =
-                I_KH * P * I_KH.transpose() + K * R.matrix() * K.transpose();
-
-            belief_.covariance = Covariance(P_new);
         } else if constexpr (std::is_same_v<StrategyTag, CubaturePointsTag>) {
-            // CKF update using cubature points
             auto [H_dummy, Pxy, Pzz] = CubaturePoints::measurement_covariances<D, M>(
                 belief_.mean, belief_.covariance, std::forward<MeasFunc>(h), R);
 
-            // Solve for Kalman gain: K = Pxy Pzz^{-1}
+            // Solve for Kalman gain
             Eigen::LDLT<Eigen::Matrix<Scalar, MeasDim, MeasDim>> ldlt(Pzz);
             if (ldlt.info() != Eigen::Success) {
                 return;
@@ -274,19 +287,17 @@ public:
             Eigen::Matrix<Scalar, Dim, MeasDim> K =
                 Pxy * ldlt.solve(Eigen::Matrix<Scalar, MeasDim, MeasDim>::Identity());
 
-            // Predicted measurement for innovation
-            auto z_pred     = h(belief_.mean);
-            auto innovation = M::diff(z_pred, z);
+            // Compute innovation and apply update
+            auto z_pred                          = h(belief_.mean);
+            auto innovation                      = M::diff(z_pred, z);
+            typename Fiber::EigenType correction = K * innovation.data;
+            belief_.mean                         = D::act(belief_.mean, Fiber(correction));
 
-            // State update
-            typename Fiber::EigenType delta = K * innovation.data;
-            belief_.mean                    = D::act(belief_.mean, Fiber(delta));
-
-            // Covariance update (simplified form for CKF)
+            // Simplified covariance update for CKF
             typename Covariance::MatrixType P     = belief_.covariance.matrix();
             typename Covariance::MatrixType P_new = P - K * Pzz * K.transpose();
+            belief_.covariance                    = Covariance(P_new);
 
-            belief_.covariance = Covariance(P_new);
         } else {
             static_assert(
                 std::is_same_v<StrategyTag, FirstOrderTag>
@@ -309,15 +320,13 @@ public:
         using M               = typename Model::MeasurementSpace;
         constexpr int MeasDim = M::FiberDim;
 
-        // Measurement noise
         auto R = model.measurement_noise();
 
         if constexpr (std::is_same_v<StrategyTag, FirstOrderTag>) {
-            // EKF update using Jacobian
-            // Predicted measurement
+            // Compute predicted measurement
             auto z_pred = model.predict(belief_.mean);
 
-            // Measurement Jacobian
+            // Get Jacobian (analytical or numerical)
             Eigen::Matrix<Scalar, MeasDim, Dim> H;
             if constexpr (MeasurementModelWithJacobian<Model, D>) {
                 H = model.jacobian(belief_.mean);
@@ -326,39 +335,22 @@ public:
                 H      = FirstOrder::jacobian<D, M>(belief_.mean, h, eps_);
             }
 
-            // Innovation
+            // Compute innovation and apply update
             auto innovation = M::diff(z_pred, z);
-
-            // Innovation covariance: S = H P H^T + R
-            typename Covariance::MatrixType P             = belief_.covariance.matrix();
-            Eigen::Matrix<Scalar, MeasDim, MeasDim> S_mat = H * P * H.transpose() + R.matrix();
-
-            // Solve for Kalman gain
-            Eigen::LDLT<Eigen::Matrix<Scalar, MeasDim, MeasDim>> ldlt(S_mat);
-            if (ldlt.info() != Eigen::Success) {
+            auto K_result   = compute_kalman_gain<MeasDim>(H, R);
+            if (!K_result) {
                 return;
             }
 
-            Eigen::Matrix<Scalar, Dim, MeasDim> K =
-                P * H.transpose() * ldlt.solve(Eigen::Matrix<Scalar, MeasDim, MeasDim>::Identity());
+            typename Fiber::EigenType correction = (*K_result) * innovation.data;
+            apply_joseph_update<MeasDim>(*K_result, H, R, correction);
 
-            // State update
-            typename Fiber::EigenType delta = K * innovation.data;
-            belief_.mean                    = D::act(belief_.mean, Fiber(delta));
-
-            // Covariance update (Joseph form)
-            typename Covariance::MatrixType I_KH = Covariance::MatrixType::Identity() - K * H;
-            typename Covariance::MatrixType P_new =
-                I_KH * P * I_KH.transpose() + K * R.matrix() * K.transpose();
-
-            belief_.covariance = Covariance(P_new);
         } else if constexpr (std::is_same_v<StrategyTag, CubaturePointsTag>) {
-            // CKF update using cubature points
             auto h                   = [&model](const Point& x) { return model.predict(x); };
             auto [H_dummy, Pxy, Pzz] = CubaturePoints::measurement_covariances<D, M>(
                 belief_.mean, belief_.covariance, h, R);
 
-            // Solve for Kalman gain: K = Pxy Pzz^{-1}
+            // Solve for Kalman gain
             Eigen::LDLT<Eigen::Matrix<Scalar, MeasDim, MeasDim>> ldlt(Pzz);
             if (ldlt.info() != Eigen::Success) {
                 return;
@@ -367,19 +359,17 @@ public:
             Eigen::Matrix<Scalar, Dim, MeasDim> K =
                 Pxy * ldlt.solve(Eigen::Matrix<Scalar, MeasDim, MeasDim>::Identity());
 
-            // Predicted measurement for innovation
-            auto z_pred     = model.predict(belief_.mean);
-            auto innovation = M::diff(z_pred, z);
+            // Compute innovation and apply update
+            auto z_pred                          = model.predict(belief_.mean);
+            auto innovation                      = M::diff(z_pred, z);
+            typename Fiber::EigenType correction = K * innovation.data;
+            belief_.mean                         = D::act(belief_.mean, Fiber(correction));
 
-            // State update
-            typename Fiber::EigenType delta = K * innovation.data;
-            belief_.mean                    = D::act(belief_.mean, Fiber(delta));
-
-            // Covariance update
+            // Simplified covariance update for CKF
             typename Covariance::MatrixType P     = belief_.covariance.matrix();
             typename Covariance::MatrixType P_new = P - K * Pzz * K.transpose();
+            belief_.covariance                    = Covariance(P_new);
 
-            belief_.covariance = Covariance(P_new);
         } else {
             static_assert(
                 std::is_same_v<StrategyTag, FirstOrderTag>
@@ -391,10 +381,10 @@ public:
         belief_.regularize();
     }
 
-    /// @brief Direct measurement update (for Euclidean measurement spaces)
+    /// @brief Direct measurement update for Euclidean measurement spaces
     ///
-    /// When measurement space equals state space or a simple projection,
-    /// this provides a more efficient interface.
+    /// Provides efficient interface when measurement space equals state space
+    /// or uses a simple projection.
     template <int MeasDim>
     void update_direct(
         const Eigen::Matrix<Scalar, MeasDim, 1>& z, const Eigen::Matrix<Scalar, MeasDim, Dim>& H,
@@ -403,34 +393,17 @@ public:
             return;
         }
 
-        // Predicted measurement
-        Eigen::Matrix<Scalar, MeasDim, 1> z_pred = H * belief_.mean.data;
-
-        // Innovation
+        // Predicted measurement and innovation
+        Eigen::Matrix<Scalar, MeasDim, 1> z_pred     = H * belief_.mean.data;
         Eigen::Matrix<Scalar, MeasDim, 1> innovation = z - z_pred;
 
-        // Innovation covariance
-        typename Covariance::MatrixType P         = belief_.covariance.matrix();
-        Eigen::Matrix<Scalar, MeasDim, MeasDim> S = H * P * H.transpose() + R.matrix();
-
-        // Kalman gain
-        Eigen::LDLT<Eigen::Matrix<Scalar, MeasDim, MeasDim>> ldlt(S);
-        if (ldlt.info() != Eigen::Success) {
+        // Compute Kalman gain and apply update
+        auto K_result = compute_kalman_gain<MeasDim>(H, R);
+        if (!K_result) {
             return;
         }
 
-        Eigen::Matrix<Scalar, Dim, MeasDim> K =
-            P * H.transpose() * ldlt.solve(Eigen::Matrix<Scalar, MeasDim, MeasDim>::Identity());
-
-        // Update
-        typename Fiber::EigenType delta = K * innovation;
-        belief_.mean                    = D::act(belief_.mean, Fiber(delta));
-
-        typename Covariance::MatrixType I_KH = Covariance::MatrixType::Identity() - K * H;
-        typename Covariance::MatrixType P_new =
-            I_KH * P * I_KH.transpose() + K * R.matrix() * K.transpose();
-
-        belief_.covariance = Covariance(P_new);
+        apply_joseph_update<MeasDim>(*K_result, H, R, (*K_result) * innovation);
         belief_.symmetrize();
         belief_.regularize();
     }
@@ -439,16 +412,11 @@ public:
     // Invariant update step (for InEKF)
     // ------------------------------------------------------------------------
 
-    /// @brief Invariant measurement update (for InEKF on Lie groups)
+    /// @brief Invariant measurement update for InEKF on Lie groups
     ///
-    /// InEKF uses body-frame invariant error instead of standard innovation:
+    /// Uses body-frame invariant error instead of standard innovation:
     /// - Standard EKF: innovation = z - h(x)
     /// - InEKF: r = R^T (y - p) - b (body-frame error)
-    ///
-    /// The model provides:
-    /// - invariant_error(x, z): computes body-frame error r
-    /// - error_jacobian(x): Jacobian C of error w.r.t. error state
-    /// - measurement_noise(): R matrix
     ///
     /// @tparam Model InvariantMeasurementModel
     /// @param z Measurement (world-frame position)
@@ -463,38 +431,20 @@ public:
         using M               = typename Model::MeasurementSpace;
         constexpr int MeasDim = M::FiberDim;
 
-        // Compute invariant error (body-frame)
+        // Compute invariant error and Jacobian
         auto r = model.invariant_error(belief_.mean, z);
-
-        // Error Jacobian C
         auto C = model.error_jacobian(belief_.mean);
-
-        // Measurement noise
         auto R = model.measurement_noise();
 
-        // Innovation covariance: S = C P C^T + R
-        typename Covariance::MatrixType P             = belief_.covariance.matrix();
-        Eigen::Matrix<Scalar, MeasDim, MeasDim> S_mat = C * P * C.transpose() + R.matrix();
-
-        // Solve for Kalman gain: K = P C^T S^{-1}
-        Eigen::LDLT<Eigen::Matrix<Scalar, MeasDim, MeasDim>> ldlt(S_mat);
-        if (ldlt.info() != Eigen::Success) {
-            return; // Skip update if S is singular
+        // Compute Kalman gain and apply update
+        auto K_result = compute_kalman_gain<MeasDim>(C, R);
+        if (!K_result) {
+            return;
         }
 
-        Eigen::Matrix<Scalar, Dim, MeasDim> K =
-            P * C.transpose() * ldlt.solve(Eigen::Matrix<Scalar, MeasDim, MeasDim>::Identity());
+        typename Fiber::EigenType correction = (*K_result) * r.data;
+        apply_joseph_update<MeasDim>(*K_result, C, R, correction);
 
-        // State update: δ = K r, then retract
-        typename Fiber::EigenType delta = K * r.data;
-        belief_.mean                    = D::act(belief_.mean, Fiber(delta));
-
-        // Covariance update (Joseph form for numerical stability)
-        typename Covariance::MatrixType I_KC = Covariance::MatrixType::Identity() - K * C;
-        typename Covariance::MatrixType P_new =
-            I_KC * P * I_KC.transpose() + K * R.matrix() * K.transpose();
-
-        belief_.covariance = Covariance(P_new);
         belief_.symmetrize();
         belief_.regularize();
     }

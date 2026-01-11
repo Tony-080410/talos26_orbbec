@@ -217,38 +217,36 @@ template <DifferentialSpace D, typename Scalar>
     return Scalar{0.5} * (trace_term + quad_term - N + log_ratio);
 }
 
-/// @brief Fuse two independent beliefs (assuming same covariance structure)
+/// @brief Fuse two independent beliefs using information form
 template <DifferentialSpace D, typename Scalar>
 [[nodiscard]] auto fuse_beliefs(const Belief<D, Scalar>& b1, const Belief<D, Scalar>& b2) noexcept
     -> std::expected<Belief<D, Scalar>, std::string> {
-    // Information form fusion: Y = Y1 + Y2, η = η1 + η2
+    // Convert to information matrices: Y = P^{-1}
     auto Y1_result = b1.covariance.inverse();
     auto Y2_result = b2.covariance.inverse();
     if (!Y1_result || !Y2_result) {
         return std::unexpected("Failed to invert covariance for fusion");
     }
 
-    // Fused information matrix
-    auto Y_fused = *Y1_result + *Y2_result;
-
-    // Fused covariance
+    // Fuse information matrices: Y = Y1 + Y2
+    auto Y_fused        = *Y1_result + *Y2_result;
     auto P_fused_result = Y_fused.inverse();
     if (!P_fused_result) {
         return std::unexpected("Failed to invert fused information matrix");
     }
 
-    // Fused mean (in information form: η = Y * m)
+    // Information vectors: η = Y * m
     auto eta1      = Y1_result->multiply(D::diff(D::identity(), b1.mean).data);
     auto eta2      = Y2_result->multiply(D::diff(D::identity(), b2.mean).data);
     auto eta_fused = eta1 + eta2;
 
+    // Fused mean: m = P * η
     auto mean_delta_result = P_fused_result->solve(eta_fused);
     if (!mean_delta_result) {
         return std::unexpected("Failed to solve for fused mean");
     }
 
     auto mean_fused = D::act(D::identity(), typename D::Fiber(*mean_delta_result));
-
     return Belief<D, Scalar>{mean_fused, *P_fused_result};
 }
 

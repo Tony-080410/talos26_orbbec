@@ -284,9 +284,11 @@ void register_foxglove_systems(App& app, talos::Scheduler* scheduler_ptr_ = null
                 const auto& state       = *output->outpost_state();
                 target_json["type"]     = "outpost";
                 target_json["position"] = {state.position.x(), state.position.y()};
-                target_json["yaw"]      = state.yaw;
-                target_json["v_yaw"]    = state.v_yaw;
-                target_json["z"]        = {state.z[0], state.z[1], state.z[2]};
+                target_json["velocity"] = {
+                    state.velocity.x(), state.velocity.y(), state.velocity.z()};
+                target_json["yaw"]   = state.yaw;
+                target_json["v_yaw"] = state.v_yaw;
+                target_json["z"]     = {state.z[0], state.z[1], state.z[2]};
             }
 
             TargetMessage msg;
@@ -407,6 +409,35 @@ void register_foxglove_systems(App& app, talos::Scheduler* scheduler_ptr_ = null
                         angular_arrow.color = foxglove::schemas::Color{1.0, 1.0, 0.0, 0.8}; // 黄色
                         entity.arrows.push_back(angular_arrow);
                     }
+
+                    // 线速度箭头 (方向为速度方向, 长度为速度模)
+                    double linear_vel_length = state.velocity.norm();
+                    if (linear_vel_length > 0.0001) { // 最小阈值
+                        foxglove::schemas::ArrowPrimitive linear_arrow;
+                        linear_arrow.pose = foxglove::schemas::Pose();
+                        linear_arrow.pose->position.emplace();
+                        linear_arrow.pose->position->x = position.x;
+                        linear_arrow.pose->position->y = position.y;
+                        linear_arrow.pose->position->z = position.z;
+                        // 计算速度方向的四元数
+                        Eigen::Vector3d vel_dir = state.velocity.normalized();
+                        Eigen::Vector3d default_dir(1, 0, 0); // 箭头默认指向 +X
+                        Eigen::Quaterniond q;
+                        if ((vel_dir + default_dir).norm() < 1e-6) {
+                            // 速度方向与默认方向相反
+                            q = Eigen::Quaterniond(
+                                Eigen::AngleAxisd(M_PI, Eigen::Vector3d::UnitZ()));
+                        } else {
+                            q = Eigen::Quaterniond::FromTwoVectors(default_dir, vel_dir);
+                        }
+                        linear_arrow.pose->orientation = {q.x(), q.y(), q.z(), q.w()};
+                        linear_arrow.shaft_length      = linear_vel_length * 0.8;
+                        linear_arrow.shaft_diameter    = 0.02;
+                        linear_arrow.head_length       = linear_vel_length * 0.2;
+                        linear_arrow.head_diameter     = 0.04;
+                        linear_arrow.color = foxglove::schemas::Color{0.0, 1.0, 1.0, 0.8}; // 青色
+                        entity.arrows.push_back(linear_arrow);
+                    }
                 }
 
                 if (output->is_outpost()) {
@@ -466,7 +497,7 @@ void register_foxglove_systems(App& app, talos::Scheduler* scheduler_ptr_ = null
                         text.pose->position->z += 0.1;
                         text.font_size = 0.05;
                         foxglove::schemas::Color text_color;
-                        text_color.r   = 1.0;                                               // 白色
+                        text_color.r   = 1.0;                                              // 白色
                         text_color.g   = 1.0;
                         text_color.b   = 1.0;
                         text_color.a   = 0.9;
