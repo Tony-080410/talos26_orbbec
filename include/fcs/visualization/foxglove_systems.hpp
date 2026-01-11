@@ -609,7 +609,7 @@ void register_foxglove_systems(App& app, talos::Scheduler* scheduler_ptr_ = null
 
     // 性能统计发布系统 (1 Hz, exclusive_silent)
     if (scheduler_ptr_) {
-        app.template add_system<talos::exclusive_silent<1>>(
+        app.template add_system<talos::exclusive_silent<100>>(
             "foxglove_perf_stats_pub",
             [scheduler_ptr_, server_ptr = std::shared_ptr<FoxgloveServer>{}](
                 talos::res<std::shared_ptr<FoxgloveServer>> server) mutable {

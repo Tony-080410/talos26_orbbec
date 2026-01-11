@@ -3,11 +3,13 @@
 #include "config.hpp"
 #include "data_associator.hpp"
 #include "fcs/core/types.hpp"
-#include "inekf.hpp"
 #include "inekf_config.hpp"
 #include "motion_model.hpp"
 #include "spdlog_hook.hpp"
 #include "types.hpp"
+
+// Use uni_kf framework for InEKF
+#include <uni_kf/presets/tracker_inekf.hpp>
 
 #include <algorithm>
 #include <array>
@@ -432,8 +434,8 @@ private:
     // Filters
     std::optional<RoboCKF> robot_ckf_;
     std::optional<OutpostCKF> outpost_ckf_;
-    std::optional<InEKF<RobotModel>> robot_inekf_;
-    std::optional<InEKF<OutpostModel>> outpost_inekf_;
+    std::optional<uni_kf::TrackerInEKF_Robot> robot_inekf_;
+    std::optional<uni_kf::TrackerInEKF_Outpost> outpost_inekf_;
 
     // Models
     RobotModel robot_model_;

@@ -1,8 +1,11 @@
 #pragma once
 
-#include "isrckf.hpp"
 #include "toml_helper.hpp"
 #include "util.hpp"
+
+// Use uni_kf SRCKF instead of old ISRCKF
+#include <uni_kf/presets/tracker_srckf.hpp>
+
 #include <Eigen/Dense>
 #include <cassert>
 #include <cmath>
@@ -474,7 +477,7 @@ static_assert(MotionModel<OutpostModel>);
 // Type Aliases
 // ============================================================================
 
-using RoboCKF    = ckf::ISRCKF<RobotModel, RobotModel::NX, RobotModel::NZ>;
-using OutpostCKF = ckf::ISRCKF<OutpostModel, OutpostModel::NX, OutpostModel::NZ>;
+using RoboCKF    = uni_kf::SRCKF<RobotModel, RobotModel::NX, RobotModel::NZ>;
+using OutpostCKF = uni_kf::SRCKF<OutpostModel, OutpostModel::NX, OutpostModel::NZ>;
 
 } // namespace fcs::L3
