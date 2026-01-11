@@ -88,11 +88,11 @@ inline constexpr double AT_LEGACY_LARGE_ARMOR_HEIGHT = 55.0 / 1000.0;
 // AT Legacy cls/color Mapping (from NN output)
 // ============================================================================
 
-/// Determine ArmorType from AT legacy cls
-/// cls=1 (Hero) and cls=8 (base_large) are Large armor
-[[nodiscard]] constexpr ArmorType at_legacy_cls_to_armor_type(ArmorName cls) noexcept {
-    return (cls == ArmorName::One || cls == ArmorName::BaseLarge) ? ArmorType::Large
-                                                                  : ArmorType::Small;
+/// Determine ArmorType from armor name
+/// Hero (One) and BaseLarge are Large armor types
+[[nodiscard]] constexpr ArmorType at_legacy_cls_to_armor_type(ArmorName armor_name) noexcept {
+    return (armor_name == ArmorName::One || armor_name == ArmorName::BaseLarge) ? ArmorType::Large
+                                                                                : ArmorType::Small;
 }
 
 // ============================================================================
@@ -125,13 +125,13 @@ struct AtLegacyArmorDetection {
 
     AtLegacyArmorDetection() = default;
 
-    /// Construct from NN output (cls, color as int)
+    /// Construct from NN output (armor_name, color as int)
     AtLegacyArmorDetection(
-        std::array<cv::Point2f, 4> pts, ArmorName cls, ArmorColor clr, float conf)
+        std::array<cv::Point2f, 4> pts, ArmorName armor_name, ArmorColor color, float conf)
         : corners(pts)
-        , name(cls)
-        , color(clr)
-        , type(at_legacy_cls_to_armor_type(cls))
+        , name(armor_name)
+        , color(color)
+        , type(at_legacy_cls_to_armor_type(armor_name))
         , confidence(conf) {
         // Calculate bounding rect
         std::vector<cv::Point2f> pts_vec(corners.begin(), corners.end());

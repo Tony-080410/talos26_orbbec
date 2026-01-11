@@ -68,7 +68,7 @@ enum class SchedulerError {
  *
  * C-string describing the error
  */
-[[nodiscard]] constexpr auto to_string(const SchedulerError e) noexcept -> const char* {
+[[nodiscard]] constexpr std::string_view to_string(const SchedulerError e) noexcept {
     switch (e) {
     case SchedulerError::AlreadyBuilt: return "Scheduler already built";
     case SchedulerError::AlreadyRunning: return "Scheduler already running";
@@ -183,7 +183,7 @@ using BuildResult = std::expected<void, BuildError>;
         [](const auto& e) -> std::string {
             using T = std::decay_t<decltype(e)>;
             if constexpr (std::is_same_v<T, SchedulerError>) {
-                return to_string(e);
+                return std::string(to_string(e));
             } else if constexpr (std::is_same_v<T, ChannelKindConflict>) {
                 return "ChannelKindConflict: channel used as both SPSC and SPMC by '"
                      + e.first_system + "' and '" + e.second_system + "'";
