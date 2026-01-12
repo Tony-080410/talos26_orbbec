@@ -92,7 +92,7 @@ void register_calibration_systems(
             }
 
             using namespace std::chrono_literals;
-            std::this_thread::sleep_for(1000ms);
+            std::this_thread::sleep_for(3000ms);
             // Check diversity
             if (!intrinsic_calibrator->is_diverse_enough(*detection)) {
                 SPDLOG_DEBUG("Sample rejected: not diverse enough");

@@ -1,11 +1,12 @@
 # Infantry Vision Configuration
 # extend from vision_base.toml
 
-[planner]
-plan_to_muzzle_delay = 0.180
-shooting_range_w = 0.150
-shooting_range_h = 0.150
-compensator_type = "Resistance"
+planner.trajectory.cd = 0.22516
+planner.trajectory.diameter = 0.017
+planner.trajectory.mass = 0.00312
 
-[planner.trajectory]
-bullet_speed = 22.0
+planner.plan_to_muzzle_delay = 0.015
+planner.shooting_range_w = 0.150
+planner.shooting_range_h = 0.150
+
+planner.trajectory.bullet_speed = 22.0

@@ -1,6 +1,6 @@
 [detector]
 backend_type = "Traditional"
-detect_color = "Blue"
+detect_color = "Red"
 
 # Required if backend_type = "traditional"
 [traditional]
@@ -95,7 +95,7 @@ sigma_m = 2.5
 sigma_w = 2.5
 use_dynamic_noise = true
 dynamic_noise_k_radial = 0.8
-dynamic_noise_k_tangent = 0.00125
+dynamic_noise_k_tangent = 0.0000625
 
 [planner]
 shooting_range_w = 0.135

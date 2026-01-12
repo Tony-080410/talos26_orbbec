@@ -4,6 +4,7 @@
 #include "matrix.hpp"
 
 #include <numbers>
+#include <opencv2/core/cvdef.h>
 
 namespace fast_tf {
 /**
@@ -31,8 +32,8 @@ std::shared_ptr<CoordinateSystem<N>> infantry_new(timestamp_ns_t ts = 0) {
     // xyz="0.04444 0.0 -0.0363" rpy="0 0 0"
     update<camera_link_fuxk_frame>(
         *system,
-        FuckTransform<camera_link_fuxk_frame>{
-            TransformMatrix4d::from_rpy(0.0, 0.0, 0.0, 0.04444, 0.0, -0.0363)},
+        FuckTransform<camera_link_fuxk_frame>{TransformMatrix4d::from_rpy(
+            0.0, ((2.42 / 180.0) * CV_PI), ((1.35 / 180.0) * CV_PI), 0.04425, 0.01012, -0.05259)},
         ts);
 
     // camera_optical -> camera_link

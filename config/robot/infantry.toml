@@ -1,10 +1,14 @@
 untrust_roll = true
 
 [camera]
-camera_matrix = [1825.132, 0.000, 725.494, 0.000, 1816.228, 607.733, 0.000, 0.000, 1.000]
-distort_coefficient = [-0.101, 0.451, -0.005, -0.001, -0.920]
+camera_matrix = [1804.9, 0, 700.121, 0, 1800.17, 635.201, 0, 0, 1]
+distort_coefficient = [-0.0886063, 0.280987, 0.00128406, -0.00286645, -0.603744]
 width = 1440
 height = 1080
+
+# [calibration_info]
+# rms_error = 0.0883379
+# num_samples = 30
 
 [camera.profile]
 trigger_mode = false

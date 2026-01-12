@@ -13,6 +13,7 @@
 #include "scheduler/ecs/channel_types.hpp"
 #include "scheduler/scheduler.hpp"
 
+#include <Eigen/Core/Matrix.h>
 #include <Eigen/Geometry>
 #include <cmath>
 #include <nlohmann/json.hpp>
@@ -283,7 +284,13 @@ void register_foxglove_systems(App& app, talos::Scheduler* scheduler_ptr_ = null
             } else if (output->is_outpost()) {
                 const auto& state       = *output->outpost_state();
                 target_json["type"]     = "outpost";
-                target_json["position"] = {state.position.x(), state.position.y()};
+                target_json["position"] = {
+                    state.position.x(), state.position.y(),
+                    (state.z[0] + state.z[1] + state.z[2]) / 3.0};
+                auto x = Eigen::Vector3d{
+                    state.position.x(), state.position.y(),
+                    (state.z[0] + state.z[1] + state.z[2]) / 3.0};
+                target_json["dist"]     = x.norm();
                 target_json["velocity"] = {
                     state.velocity.x(), state.velocity.y(), state.velocity.z()};
                 target_json["yaw"]   = state.yaw;
