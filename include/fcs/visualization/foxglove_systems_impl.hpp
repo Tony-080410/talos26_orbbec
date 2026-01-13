@@ -19,6 +19,7 @@
 #include <Eigen/Geometry>
 #include <cmath>
 #include <nlohmann/json.hpp>
+#include <opencv2/core/types.hpp>
 #include <opencv2/imgcodecs.hpp>
 #include <opencv2/imgproc.hpp>
 
@@ -38,6 +39,7 @@ void register_foxglove_systems(App& app, talos::Scheduler* scheduler_ptr_ = null
         "foxglove_image_pub",
         [](talos::spmc<AtLegacyImageFrame, AtLegacyImageChannelTag> img_in,
            talos::res<std::shared_ptr<FoxgloveServer>> server, talos::res<fcs::CameraConfig> cam,
+           talos::spmc<AtLegacyArmorDetectionBatch, AtLegacyDetectionChannelTag> det_in,
            talos::res<std::shared_ptr<fast_tf::CoordinateSystem<1024>>> tf_buffer) {
             if (!(*server)->is_initialized() || !img_in.has_new()) {
                 return;
@@ -50,7 +52,21 @@ void register_foxglove_systems(App& app, talos::Scheduler* scheduler_ptr_ = null
 
             // 克隆图像避免数据竞争
             cv::Mat img_bgr = frame->image.clone();
-
+            auto batch      = det_in.read_current();
+            if (batch) {
+                for (size_t i = 0; i < batch->detections.size(); ++i) {
+                    const auto& det = batch->detections[i];
+                    nlohmann::json obj;
+                    obj["center"]["x"] = det.center().x;
+                    obj["center"]["y"] = det.center().y;
+                    cv::circle(img_bgr, det.center(), 5, cv::Scalar(0, 0, 255), 5);
+                    for (auto i = 0; i < det.corners.size(); i++) {
+                        auto pp1 = det.corners[i];
+                        auto pp2 = det.corners[(i + 1) % 4];
+                        cv::line(img_bgr, pp1, pp2, cv::Scalar(0, 255, 0), 4);
+                    }
+                }
+            }
             // 压缩为 JPEG
             std::vector<uint8_t> compressed;
             std::vector<int> params{cv::IMWRITE_JPEG_QUALITY, 85};
