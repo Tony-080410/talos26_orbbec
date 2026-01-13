@@ -67,6 +67,50 @@ enum Measure : uint8_t {
     return {yaw, pitch, distance};
 }
 
+/// Jacobian of xyz2ypd transformation: ∂(yaw, pitch, distance)/∂(x, y, z)
+///
+/// For spherical coordinate observation models, this Jacobian is used in the
+/// chain rule to compute H = ∂h/∂x where h maps state to spherical measurements.
+///
+/// @param xyz Cartesian coordinates [x, y, z]
+/// @return 3x3 Jacobian matrix
+[[nodiscard]] inline Eigen::Matrix3d xyz2ypd_jacobian(const Eigen::Vector3d& xyz) noexcept {
+    const double x = xyz.x();
+    const double y = xyz.y();
+    const double z = xyz.z();
+
+    const double r2_xy = x * x + y * y;
+    const double r2    = r2_xy + z * z;
+    const double r_xy  = std::sqrt(r2_xy);
+    const double r     = std::sqrt(r2);
+
+    // Handle singularities (at origin or on z-axis)
+    if (r_xy < 1e-10 || r < 1e-10) {
+        return Eigen::Matrix3d::Identity();
+    }
+
+    Eigen::Matrix3d J;
+
+    // ∂yaw/∂(x,y,z) where yaw = atan2(y, x)
+    J(0, 0) = -y / r2_xy;
+    J(0, 1) = x / r2_xy;
+    J(0, 2) = 0.0;
+
+    // ∂pitch/∂(x,y,z) where pitch = atan2(z, sqrt(x²+y²))
+    // Using chain rule: d/dx[atan2(z, r_xy)] = -x*z / (r² * r_xy)
+    const double denom = r2 * r_xy;
+    J(1, 0)            = -x * z / denom;
+    J(1, 1)            = -y * z / denom;
+    J(1, 2)            = r_xy / r2;
+
+    // ∂distance/∂(x,y,z) where distance = sqrt(x²+y²+z²)
+    J(2, 0) = x / r;
+    J(2, 1) = y / r;
+    J(2, 2) = z / r;
+
+    return J;
+}
+
 /// Convert spherical to Cartesian: [yaw, pitch, distance] -> xyz
 [[nodiscard]] inline Eigen::Vector3d ypd2xyz(const Eigen::Vector3d& ypd) noexcept {
     const double yaw      = ypd.x();

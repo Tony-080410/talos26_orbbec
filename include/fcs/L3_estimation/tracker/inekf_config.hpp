@@ -143,6 +143,49 @@ struct RobotInEKFConfig {
     /// effectively swaps which armor pair is "higher" in the model.
     double height{0.0};
 
+    // -------------------------------------------------------------------------
+    // Spherical observation mode (ported from sp_vision_25)
+    // -------------------------------------------------------------------------
+    //
+    // Problem:
+    //   Cartesian observations [x,y,z] with large sigma_m cause tracking lag for fast-moving
+    //   targets. The filter doesn't trust measurements enough to respond quickly to direction
+    //   changes.
+    //
+    // Solution:
+    //   Use spherical observations [yaw, pitch, distance, armor_yaw] with small angular noise.
+    //   This matches PnP output characteristics: angles are accurate, depth is noisy.
+    //
+    // Precise:
+    //   When use_spherical_observation=true, update_armor_spherical() is called instead of
+    //   update_armor(). The observation model uses:
+    //     z = [yaw, pitch, distance, armor_yaw]  (4D)
+    //     R = diag(σ_yaw², σ_pitch², R_dist_dynamic, σ_armor_yaw²)
+    //   where R_dist_dynamic = log(|delta_angle| + 1) + 1 (view-angle-dependent).
+
+    /// Enable spherical coordinate observation model.
+    /// Problem: Cartesian observations don't match PnP output characteristics.
+    /// Intuition: Set true for faster response to direction changes (esp. translation).
+    /// Default true: spherical is generally better for tracking moving targets.
+    bool use_spherical_observation{true};
+
+    /// Yaw observation noise std-dev (rad) for spherical model.
+    /// Problem: PnP yaw angle has sub-degree accuracy for frontal views.
+    /// Intuition: Smaller → faster response to horizontal movement.
+    /// Precise: R(0,0) = sigma_yaw_obs² in spherical measurement noise.
+    /// Default 0.063 rad ≈ 3.6° (conservative; sp_vision uses 0.063 which is sqrt(4e-3)).
+    double sigma_yaw_obs{0.063};
+
+    /// Pitch observation noise std-dev (rad) for spherical model.
+    /// Problem/Intuition/Precise: Same as sigma_yaw_obs but for vertical angle.
+    double sigma_pitch_obs{0.063};
+
+    /// Armor orientation (yaw) observation noise std-dev (rad) for spherical model.
+    /// Problem: Armor plate orientation is less accurate than position angle, especially at
+    /// distance. Intuition: Larger → less sensitive to armor orientation jumps. Precise: Base
+    /// noise; actual R(3,3) = (log(dist+1)/200 + sigma_armor_yaw)².
+    double sigma_armor_yaw{0.3};
+
     std::expected<void, std::string> read_from(const toml::table& tbl) noexcept;
 };
 
@@ -183,6 +226,26 @@ struct OutpostInEKFConfig {
     /// Tangential noise sensitivity to distance.
     /// Precise: same as RobotInEKFConfig::dynamic_noise_k_tangent.
     double dynamic_noise_k_tangent{0.1};
+
+    // -------------------------------------------------------------------------
+    // Spherical observation mode
+    // -------------------------------------------------------------------------
+
+    /// Enable spherical coordinate observation model.
+    /// Precise: same as RobotInEKFConfig::use_spherical_observation.
+    bool use_spherical_observation{true};
+
+    /// Yaw observation noise std-dev (rad) for spherical model.
+    /// Precise: same as RobotInEKFConfig::sigma_yaw_obs.
+    double sigma_yaw_obs{0.063};
+
+    /// Pitch observation noise std-dev (rad) for spherical model.
+    /// Precise: same as RobotInEKFConfig::sigma_pitch_obs.
+    double sigma_pitch_obs{0.063};
+
+    /// Armor orientation (yaw) observation noise std-dev (rad) for spherical model.
+    /// Precise: same as RobotInEKFConfig::sigma_armor_yaw.
+    double sigma_armor_yaw{0.3};
 
     std::expected<void, std::string> read_from(const toml::table& tbl) noexcept;
 };

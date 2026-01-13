@@ -13,6 +13,7 @@
 // Include fcs::L3 config and output types directly
 #include <fcs/L3_estimation/tracker/inekf_config.hpp>
 #include <fcs/L3_estimation/tracker/types.hpp>
+#include <fcs/L3_estimation/tracker/util.hpp>
 
 #include <Eigen/Core>
 #include <cmath>
@@ -718,6 +719,364 @@ public:
 };
 
 // ============================================================================
+// RobotSphericalMeasurementModel - Spherical coordinate observation model
+// ============================================================================
+
+/// @brief Spherical coordinate measurement model for robot armor tracking
+///
+/// Ported from sp_vision_25's approach: uses [yaw, pitch, distance, armor_yaw] observations
+/// instead of Cartesian [x, y, z]. This matches PnP output characteristics better:
+/// - Angles (yaw, pitch) have high accuracy → small noise
+/// - Distance has lower accuracy → larger noise (view-angle dependent)
+///
+/// === Why Spherical is Better for Translation Tracking ===
+/// - Target translation primarily changes yaw/pitch angles
+/// - Small angular noise (4e-3) means fast response to direction changes
+/// - Cartesian with large sigma_m (0.5) causes tracking lag
+///
+/// === Observation Model ===
+/// z = [yaw, pitch, distance, armor_yaw]
+/// where:
+///   yaw, pitch = spherical angles to armor plate center
+///   distance = range to armor plate center
+///   armor_yaw = armor plate orientation (facing direction)
+///
+/// === Noise Model (from sp_vision_25) ===
+/// R = diag(σ_yaw², σ_pitch², R_dist, R_armor_yaw)
+/// where:
+///   R_dist = log(|delta_angle| + 1) + 1  (view-angle dependent)
+///   R_armor_yaw = (log(distance + 1) / 200 + σ_armor_yaw)²
+class RobotSphericalMeasurementModel {
+public:
+    static constexpr int kMeasDim   = 4;
+    static constexpr int kExtraDim  = RobotProcessModel::kExtraDim;
+    static constexpr int kGroupDim  = RobotProcessModel::kGroupDim;
+    static constexpr int kStateDim  = RobotProcessModel::kStateDim;
+    static constexpr int kArmorsNum = 4;
+
+    static constexpr int kHighArmorIdA = 1;
+    static constexpr int kHighArmorIdB = 3;
+
+    static constexpr int kIdxVYaw = RobotProcessModel::kIdxVYaw;
+    static constexpr int kIdxR0   = RobotProcessModel::kIdxR0;
+    static constexpr int kIdxR1   = RobotProcessModel::kIdxR1;
+    static constexpr int kIdxH    = RobotProcessModel::kIdxH;
+
+    using Space      = SE23_Rn<kExtraDim>;
+    using Point      = typename Space::Point;
+    using Covariance = SymmetricMatrix<kMeasDim, double>;
+    using SE23d      = group::SEn3<double, 2>;
+    using Vec3       = Eigen::Vector3d;
+    using Vec4       = Eigen::Vector4d;
+    using Mat3       = Eigen::Matrix3d;
+    using Mat4xX     = Eigen::Matrix<double, kMeasDim, kStateDim>;
+
+private:
+    int armor_id_;
+    double sigma_yaw_;
+    double sigma_pitch_;
+    double sigma_armor_yaw_;
+    mutable double cached_distance_;
+    mutable double cached_delta_angle_;
+
+public:
+    RobotSphericalMeasurementModel(
+        int armor_id, double sigma_yaw, double sigma_pitch, double sigma_armor_yaw) noexcept
+        : armor_id_(armor_id)
+        , sigma_yaw_(sigma_yaw)
+        , sigma_pitch_(sigma_pitch)
+        , sigma_armor_yaw_(sigma_armor_yaw)
+        , cached_distance_(1.0)
+        , cached_delta_angle_(0.0) {}
+
+    /// Compute predicted observation h(x) -> [yaw, pitch, distance, armor_yaw]
+    [[nodiscard]] Vec4 predict(const Point& x) const noexcept {
+        // Compute armor position in world frame
+        const Vec3 armor_xyz = compute_armor_position(x);
+
+        // Convert to spherical coordinates
+        const Vec3 ypd = fcs::L3::xyz2ypd(armor_xyz);
+
+        // Armor orientation = target_yaw + armor_id * angle_step
+        constexpr double kAngleStep = 2.0 * std::numbers::pi / static_cast<double>(kArmorsNum);
+        const double target_yaw =
+            std::atan2(x.first.R()(1, 0), x.first.R()(0, 0)); // Extract yaw from rotation matrix
+        const double armor_yaw =
+            detail::wrap_pi(target_yaw + static_cast<double>(armor_id_) * kAngleStep);
+
+        // Cache for noise computation
+        cached_distance_ = ypd.z();
+        // delta_angle = armor_yaw - center_yaw (how much armor is facing away from us)
+        const double center_yaw = ypd.x();
+        cached_delta_angle_     = detail::wrap_pi(armor_yaw - center_yaw);
+
+        return Vec4{ypd.x(), ypd.y(), ypd.z(), armor_yaw};
+    }
+
+    /// Compute innovation (residual) with angle wrapping
+    [[nodiscard]] Vec4 innovation(const Point& x, const Vec4& z_meas) const noexcept {
+        const Vec4 z_pred = predict(x);
+        Vec4 nu           = z_meas - z_pred;
+
+        // Wrap angles to [-π, π]
+        nu(0) = detail::wrap_pi(nu(0)); // yaw
+        nu(1) = detail::wrap_pi(nu(1)); // pitch
+        nu(3) = detail::wrap_pi(nu(3)); // armor_yaw
+
+        return nu;
+    }
+
+    /// Compute observation Jacobian H = ∂h/∂δ (4x13)
+    ///
+    /// Uses chain rule: H = H_ypda_to_xyza * H_xyza_to_state
+    /// NOTE: Error state uses body frame (right-invariant), so position Jacobian is R, not I
+    [[nodiscard]] Mat4xX observation_jacobian(const Point& x) const noexcept {
+        constexpr double kAngleStep = 2.0 * std::numbers::pi / static_cast<double>(kArmorsNum);
+        const double yaw_offset     = static_cast<double>(armor_id_) * kAngleStep;
+
+        // Extract target yaw from rotation matrix
+        const double target_yaw  = std::atan2(x.first.R()(1, 0), x.first.R()(0, 0));
+        const double armor_angle = target_yaw + yaw_offset;
+
+        const bool is_high    = (armor_id_ == kHighArmorIdA || armor_id_ == kHighArmorIdB);
+        const double radius   = is_high ? x.second(kIdxR1) : x.second(kIdxR0);
+        const double z_offset = is_high ? x.second(kIdxH) : 0.0;
+
+        // Derivatives of armor position w.r.t. state
+        const double cos_a = std::cos(armor_angle);
+        const double sin_a = std::sin(armor_angle);
+
+        // d(armor_x)/d(yaw) = r * sin(armor_angle)
+        // d(armor_y)/d(yaw) = -r * cos(armor_angle)
+        const double dx_dyaw = radius * sin_a;
+        const double dy_dyaw = -radius * cos_a;
+
+        // d(armor_x)/d(r) = -cos(armor_angle)
+        // d(armor_y)/d(r) = -sin(armor_angle)
+        const double dx_dr = -cos_a;
+        const double dy_dr = -sin_a;
+
+        // H_xyza_to_state: (4 x 13) - derivatives of [armor_x, armor_y, armor_z, armor_yaw]
+        // w.r.t. error state [rot(3), vel(3), pos(3), extra(4)]
+        //
+        // IMPORTANT: Error state is body frame (right-invariant update: p_new = p + R * δp)
+        // So ∂armor_xyz/∂δp_body = R (rotation matrix)
+        Eigen::Matrix<double, 4, kStateDim> H_xyz_state =
+            Eigen::Matrix<double, 4, kStateDim>::Zero();
+
+        // Position derivatives: ∂armor_xyz/∂δp_body = R
+        const Mat3& R                          = x.first.R();
+        H_xyz_state.template block<3, 3>(0, 6) = R;
+
+        // Yaw derivatives (yaw error is still in world frame for our constraint)
+        H_xyz_state(0, 2) = dx_dyaw; // armor_x / yaw
+        H_xyz_state(1, 2) = dy_dyaw; // armor_y / yaw
+        H_xyz_state(3, 2) = 1.0;     // armor_yaw / yaw (direct)
+
+        // Geometry derivatives
+        if (is_high) {
+            H_xyz_state(0, kGroupDim + kIdxR1) = dx_dr;
+            H_xyz_state(1, kGroupDim + kIdxR1) = dy_dr;
+            H_xyz_state(2, kGroupDim + kIdxH)  = 1.0; // armor_z / h
+        } else {
+            H_xyz_state(0, kGroupDim + kIdxR0) = dx_dr;
+            H_xyz_state(1, kGroupDim + kIdxR0) = dy_dr;
+        }
+
+        // Compute armor position for Jacobian computation
+        const Vec3 armor_xyz = compute_armor_position(x);
+
+        // H_ypd_to_xyz: (3 x 3) - Jacobian of xyz2ypd
+        const Mat3 J_ypd_xyz = fcs::L3::xyz2ypd_jacobian(armor_xyz);
+
+        // H_ypda_to_xyza: (4 x 4) - expand to include armor_yaw
+        Eigen::Matrix4d H_ypda_xyza   = Eigen::Matrix4d::Zero();
+        H_ypda_xyza.block<3, 3>(0, 0) = J_ypd_xyz;
+        H_ypda_xyza(3, 3)             = 1.0; // armor_yaw passthrough
+
+        // Final Jacobian: H = H_ypda_to_xyza * H_xyza_to_state
+        return H_ypda_xyza * H_xyz_state;
+    }
+
+    /// Dynamic measurement noise (sp_vision_25 style)
+    [[nodiscard]] Covariance measurement_noise() const noexcept {
+        Vec4 R_diag;
+
+        // Yaw and pitch: fixed small noise (high confidence in angles)
+        R_diag(0) = sigma_yaw_ * sigma_yaw_;
+        R_diag(1) = sigma_pitch_ * sigma_pitch_;
+
+        // Distance: increases when viewing armor from the side
+        // (delta_angle is the angle between armor normal and sight line)
+        const double dist_noise = std::log(std::abs(cached_delta_angle_) + 1.0) + 1.0;
+        R_diag(2)               = dist_noise;
+
+        // Armor yaw: increases with distance (less reliable at range)
+        const double armor_yaw_noise = std::log(cached_distance_ + 1.0) / 200.0 + sigma_armor_yaw_;
+        R_diag(3)                    = armor_yaw_noise * armor_yaw_noise;
+
+        return Covariance(R_diag.asDiagonal());
+    }
+
+private:
+    [[nodiscard]] Vec3 compute_armor_position(const Point& x) const noexcept {
+        constexpr double kAngleStep = 2.0 * std::numbers::pi / static_cast<double>(kArmorsNum);
+        const double target_yaw     = std::atan2(x.first.R()(1, 0), x.first.R()(0, 0));
+        const double armor_angle    = target_yaw + static_cast<double>(armor_id_) * kAngleStep;
+
+        const bool is_high  = (armor_id_ == kHighArmorIdA || armor_id_ == kHighArmorIdB);
+        const double radius = is_high ? x.second(kIdxR1) : x.second(kIdxR0);
+
+        const double armor_x = x.first.p().x() - radius * std::cos(armor_angle);
+        const double armor_y = x.first.p().y() - radius * std::sin(armor_angle);
+        const double armor_z = x.first.p().z() + (is_high ? x.second(kIdxH) : 0.0);
+
+        return Vec3{armor_x, armor_y, armor_z};
+    }
+};
+
+// ============================================================================
+// OutpostSphericalMeasurementModel - Spherical coordinate observation model
+// ============================================================================
+
+/// @brief Spherical coordinate measurement model for outpost armor tracking
+///
+/// Same approach as RobotSphericalMeasurementModel but for 3-armor outpost targets.
+class OutpostSphericalMeasurementModel {
+public:
+    static constexpr int kMeasDim          = 4;
+    static constexpr int kExtraDim         = OutpostProcessModel::kExtraDim;
+    static constexpr int kGroupDim         = OutpostProcessModel::kGroupDim;
+    static constexpr int kStateDim         = OutpostProcessModel::kStateDim;
+    static constexpr int kArmorsNum        = 3;
+    static constexpr double kOutpostRadius = 0.2765;
+
+    static constexpr int kIdxVYaw = OutpostProcessModel::kIdxVYaw;
+    static constexpr int kIdxDz1  = OutpostProcessModel::kIdxDz1;
+    static constexpr int kIdxDz2  = OutpostProcessModel::kIdxDz2;
+
+    using Space      = SE23_Rn<kExtraDim>;
+    using Point      = typename Space::Point;
+    using Covariance = SymmetricMatrix<kMeasDim, double>;
+    using SE23d      = group::SEn3<double, 2>;
+    using Vec3       = Eigen::Vector3d;
+    using Vec4       = Eigen::Vector4d;
+    using Mat3       = Eigen::Matrix3d;
+    using Mat4xX     = Eigen::Matrix<double, kMeasDim, kStateDim>;
+
+private:
+    int armor_id_;
+    double sigma_yaw_;
+    double sigma_pitch_;
+    double sigma_armor_yaw_;
+    mutable double cached_distance_;
+    mutable double cached_delta_angle_;
+
+public:
+    OutpostSphericalMeasurementModel(
+        int armor_id, double sigma_yaw, double sigma_pitch, double sigma_armor_yaw) noexcept
+        : armor_id_(armor_id)
+        , sigma_yaw_(sigma_yaw)
+        , sigma_pitch_(sigma_pitch)
+        , sigma_armor_yaw_(sigma_armor_yaw)
+        , cached_distance_(1.0)
+        , cached_delta_angle_(0.0) {}
+
+    [[nodiscard]] Vec4 predict(const Point& x) const noexcept {
+        const Vec3 armor_xyz = compute_armor_position(x);
+        const Vec3 ypd       = fcs::L3::xyz2ypd(armor_xyz);
+
+        constexpr double kAngleStep = 2.0 * std::numbers::pi / static_cast<double>(kArmorsNum);
+        const double target_yaw     = std::atan2(x.first.R()(1, 0), x.first.R()(0, 0));
+        const double armor_yaw =
+            detail::wrap_pi(target_yaw + static_cast<double>(armor_id_) * kAngleStep);
+
+        cached_distance_        = ypd.z();
+        const double center_yaw = ypd.x();
+        cached_delta_angle_     = detail::wrap_pi(armor_yaw - center_yaw);
+
+        return Vec4{ypd.x(), ypd.y(), ypd.z(), armor_yaw};
+    }
+
+    [[nodiscard]] Vec4 innovation(const Point& x, const Vec4& z_meas) const noexcept {
+        const Vec4 z_pred = predict(x);
+        Vec4 nu           = z_meas - z_pred;
+        nu(0)             = detail::wrap_pi(nu(0));
+        nu(1)             = detail::wrap_pi(nu(1));
+        nu(3)             = detail::wrap_pi(nu(3));
+        return nu;
+    }
+
+    [[nodiscard]] Mat4xX observation_jacobian(const Point& x) const noexcept {
+        constexpr double kAngleStep = 2.0 * std::numbers::pi / static_cast<double>(kArmorsNum);
+        const double target_yaw     = std::atan2(x.first.R()(1, 0), x.first.R()(0, 0));
+        const double armor_angle    = target_yaw + static_cast<double>(armor_id_) * kAngleStep;
+
+        const double cos_a = std::cos(armor_angle);
+        const double sin_a = std::sin(armor_angle);
+
+        const double dx_dyaw = kOutpostRadius * sin_a;
+        const double dy_dyaw = -kOutpostRadius * cos_a;
+
+        Eigen::Matrix<double, 4, kStateDim> H_xyz_state =
+            Eigen::Matrix<double, 4, kStateDim>::Zero();
+
+        // Position derivatives: ∂armor_xyz/∂δp_body = R (body frame error state)
+        const Mat3& R                          = x.first.R();
+        H_xyz_state.template block<3, 3>(0, 6) = R;
+
+        H_xyz_state(0, 2) = dx_dyaw;
+        H_xyz_state(1, 2) = dy_dyaw;
+        H_xyz_state(3, 2) = 1.0;
+
+        // dz geometry derivatives
+        if (armor_id_ == 1) {
+            H_xyz_state(2, kGroupDim + kIdxDz1) = 1.0;
+        } else if (armor_id_ == 2) {
+            H_xyz_state(2, kGroupDim + kIdxDz2) = 1.0;
+        }
+
+        const Vec3 armor_xyz          = compute_armor_position(x);
+        const Mat3 J_ypd_xyz          = fcs::L3::xyz2ypd_jacobian(armor_xyz);
+        Eigen::Matrix4d H_ypda_xyza   = Eigen::Matrix4d::Zero();
+        H_ypda_xyza.block<3, 3>(0, 0) = J_ypd_xyz;
+        H_ypda_xyza(3, 3)             = 1.0;
+
+        return H_ypda_xyza * H_xyz_state;
+    }
+
+    [[nodiscard]] Covariance measurement_noise() const noexcept {
+        Vec4 R_diag;
+        R_diag(0)                    = sigma_yaw_ * sigma_yaw_;
+        R_diag(1)                    = sigma_pitch_ * sigma_pitch_;
+        R_diag(2)                    = std::log(std::abs(cached_delta_angle_) + 1.0) + 1.0;
+        const double armor_yaw_noise = std::log(cached_distance_ + 1.0) / 200.0 + sigma_armor_yaw_;
+        R_diag(3)                    = armor_yaw_noise * armor_yaw_noise;
+        return Covariance(R_diag.asDiagonal());
+    }
+
+private:
+    [[nodiscard]] Vec3 compute_armor_position(const Point& x) const noexcept {
+        constexpr double kAngleStep = 2.0 * std::numbers::pi / static_cast<double>(kArmorsNum);
+        const double target_yaw     = std::atan2(x.first.R()(1, 0), x.first.R()(0, 0));
+        const double armor_angle    = target_yaw + static_cast<double>(armor_id_) * kAngleStep;
+
+        double z_offset = 0.0;
+        if (armor_id_ == 1) {
+            z_offset = x.second(kIdxDz1);
+        } else if (armor_id_ == 2) {
+            z_offset = x.second(kIdxDz2);
+        }
+
+        const double armor_x = x.first.p().x() - kOutpostRadius * std::cos(armor_angle);
+        const double armor_y = x.first.p().y() - kOutpostRadius * std::sin(armor_angle);
+        const double armor_z = x.first.p().z() + z_offset;
+
+        return Vec3{armor_x, armor_y, armor_z};
+    }
+};
+
+// ============================================================================
 // TrackerInEKF_Base - CRTP base for shared implementation
 // ============================================================================
 
@@ -985,6 +1344,93 @@ public:
         update_invariant_yaw_only(MeasPoint{Eigen::Matrix<double, 1, 1>{yaw_meas}}, meas_model);
     }
 
+    /// Update with spherical coordinate observation
+    /// @param armor_ypd Armor position in spherical coords [yaw, pitch, distance]
+    /// @param armor_yaw_meas Measured armor plate orientation (yaw angle)
+    /// @param armor_id Armor index (0-3)
+    /// @param config Filter configuration
+    void update_armor_spherical(
+        const Vec3& armor_ypd, double armor_yaw_meas, int armor_id,
+        const RobotInEKFConfig& config) noexcept {
+        if (!filter_.is_initialized()) {
+            return;
+        }
+        if (armor_id < 0 || armor_id >= kArmorsNum) {
+            return;
+        }
+        if (!std::isfinite(armor_ypd.x()) || !std::isfinite(armor_ypd.y())
+            || !std::isfinite(armor_ypd.z()) || !std::isfinite(armor_yaw_meas)) {
+            return;
+        }
+
+        const RobotSphericalMeasurementModel model(
+            armor_id, config.sigma_yaw_obs, config.sigma_pitch_obs, config.sigma_armor_yaw);
+
+        // Build measurement vector [yaw, pitch, distance, armor_yaw]
+        // Note: armor_ypd and armor_yaw_meas are already unwrapped (continuous) from caller
+        const Eigen::Vector4d z_meas{armor_ypd.x(), armor_ypd.y(), armor_ypd.z(), armor_yaw_meas};
+
+        auto& belief = filter_.belief();
+        auto& state  = belief.mean;
+        auto& P      = belief.covariance;
+
+        // Get raw prediction (may be wrapped to [-π, π])
+        const Eigen::Vector4d z_pred_raw = model.predict(state);
+
+        // Unwrap prediction to be continuous with measurement
+        // This avoids large innovations when angles cross ±π boundary
+        Eigen::Vector4d z_pred;
+        z_pred(0) = fcs::L3::unwrap_rad(z_meas(0), z_pred_raw(0)); // yaw
+        z_pred(1) = fcs::L3::unwrap_rad(z_meas(1), z_pred_raw(1)); // pitch
+        z_pred(2) = z_pred_raw(2);                                 // distance (no wrap)
+        z_pred(3) = fcs::L3::unwrap_rad(z_meas(3), z_pred_raw(3)); // armor_yaw
+
+        // Compute innovation (now both are continuous, no wrap_pi needed)
+        const Eigen::Vector4d nu = z_meas - z_pred;
+
+        // Innovation gating: skip update if residual is too large
+        // This prevents filter divergence from outliers or armor_id mismatch
+        constexpr double kMaxAngleInnovation = 0.5; // ~30 degrees
+        constexpr double kMaxDistInnovation  = 2.0; // 2 meters
+        if (std::abs(nu(0)) > kMaxAngleInnovation || std::abs(nu(1)) > kMaxAngleInnovation
+            || std::abs(nu(2)) > kMaxDistInnovation || std::abs(nu(3)) > kMaxAngleInnovation) {
+            return;                                 // Skip this update
+        }
+
+        // Compute Jacobian and measurement noise
+        const auto H     = model.observation_jacobian(state);
+        const auto R     = model.measurement_noise();
+        const auto R_mat = R.matrix();
+
+        // Innovation covariance: S = H P H^T + R
+        const Eigen::Matrix4d S_mat = H * P.matrix() * H.transpose() + R_mat;
+
+        // Kalman gain: K = P H^T S^{-1}
+        Eigen::LDLT<Eigen::Matrix4d> ldlt(S_mat);
+        if (ldlt.info() != Eigen::Success) {
+            return;
+        }
+        const Eigen::Matrix<double, kStateDim, 4> K =
+            P.matrix() * H.transpose() * ldlt.solve(Eigen::Matrix4d::Identity());
+
+        // State update (error state)
+        VecX delta = K * nu;
+        delta(0)   = 0.0; // Roll = 0 (constraint)
+        delta(1)   = 0.0; // Pitch = 0 (constraint)
+
+        apply_update(delta);
+
+        // Covariance update (Joseph form for numerical stability)
+        const MatX I_KH  = MatX::Identity() - K * H;
+        const auto P_new = I_KH * P.matrix() * I_KH.transpose() + K * R_mat * K.transpose();
+        P                = Covariance(P_new);
+
+        belief.symmetrize();
+        belief.regularize();
+        clamp_extra_in_place(state.second.data);
+        zero_out_roll_pitch_covariance();
+    }
+
     // ------------------------------------------------------------------------
     // State accessors
     // ------------------------------------------------------------------------
@@ -1130,6 +1576,88 @@ public:
         const YawMeasurementModel<kExtraDim> meas_model(config.sigma_w);
         using MeasPoint = typename YawMeasurementModel<kExtraDim>::MeasPoint;
         update_invariant_yaw_only(MeasPoint{Eigen::Matrix<double, 1, 1>{yaw_meas}}, meas_model);
+    }
+
+    /// Update with spherical coordinate observation
+    /// @param armor_ypd Armor position in spherical coords [yaw, pitch, distance]
+    /// @param armor_yaw_meas Measured armor plate orientation (yaw angle)
+    /// @param armor_id Armor index (0-2)
+    /// @param config Filter configuration
+    void update_armor_spherical(
+        const Vec3& armor_ypd, double armor_yaw_meas, int armor_id,
+        const OutpostInEKFConfig& config) noexcept {
+        if (!filter_.is_initialized()) {
+            return;
+        }
+        if (armor_id < 0 || armor_id >= kArmorsNum) {
+            return;
+        }
+        if (!std::isfinite(armor_ypd.x()) || !std::isfinite(armor_ypd.y())
+            || !std::isfinite(armor_ypd.z()) || !std::isfinite(armor_yaw_meas)) {
+            return;
+        }
+
+        const OutpostSphericalMeasurementModel model(
+            armor_id, config.sigma_yaw_obs, config.sigma_pitch_obs, config.sigma_armor_yaw);
+
+        // Build measurement vector [yaw, pitch, distance, armor_yaw]
+        const Eigen::Vector4d z_meas{armor_ypd.x(), armor_ypd.y(), armor_ypd.z(), armor_yaw_meas};
+
+        auto& belief = filter_.belief();
+        auto& state  = belief.mean;
+        auto& P      = belief.covariance;
+
+        // Get raw prediction and unwrap to be continuous with measurement
+        const Eigen::Vector4d z_pred_raw = model.predict(state);
+        Eigen::Vector4d z_pred;
+        z_pred(0) = fcs::L3::unwrap_rad(z_meas(0), z_pred_raw(0));
+        z_pred(1) = fcs::L3::unwrap_rad(z_meas(1), z_pred_raw(1));
+        z_pred(2) = z_pred_raw(2);
+        z_pred(3) = fcs::L3::unwrap_rad(z_meas(3), z_pred_raw(3));
+
+        // Compute innovation
+        const Eigen::Vector4d nu = z_meas - z_pred;
+
+        // Innovation gating: skip update if residual is too large
+        constexpr double kMaxAngleInnovation = 0.5; // ~30 degrees
+        constexpr double kMaxDistInnovation  = 2.0; // 2 meters
+        if (std::abs(nu(0)) > kMaxAngleInnovation || std::abs(nu(1)) > kMaxAngleInnovation
+            || std::abs(nu(2)) > kMaxDistInnovation || std::abs(nu(3)) > kMaxAngleInnovation) {
+            return;                                 // Skip this update
+        }
+
+        // Compute Jacobian and measurement noise
+        const auto H     = model.observation_jacobian(state);
+        const auto R     = model.measurement_noise();
+        const auto R_mat = R.matrix();
+
+        // Innovation covariance: S = H P H^T + R
+        const Eigen::Matrix4d S_mat = H * P.matrix() * H.transpose() + R_mat;
+
+        // Kalman gain: K = P H^T S^{-1}
+        Eigen::LDLT<Eigen::Matrix4d> ldlt(S_mat);
+        if (ldlt.info() != Eigen::Success) {
+            return;
+        }
+        const Eigen::Matrix<double, kStateDim, 4> K =
+            P.matrix() * H.transpose() * ldlt.solve(Eigen::Matrix4d::Identity());
+
+        // State update (error state)
+        VecX delta = K * nu;
+        delta(0)   = 0.0; // Roll = 0 (constraint)
+        delta(1)   = 0.0; // Pitch = 0 (constraint)
+
+        apply_update(delta);
+
+        // Covariance update (Joseph form for numerical stability)
+        const MatX I_KH  = MatX::Identity() - K * H;
+        const auto P_new = I_KH * P.matrix() * I_KH.transpose() + K * R_mat * K.transpose();
+        P                = Covariance(P_new);
+
+        belief.symmetrize();
+        belief.regularize();
+        clamp_extra_in_place(state.second.data);
+        zero_out_roll_pitch_covariance();
     }
 
     [[nodiscard]] OutpostTargetState get_outpost_state() const noexcept {

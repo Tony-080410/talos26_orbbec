@@ -18,6 +18,11 @@ std::expected<void, std::string> RobotInEKFConfig::read_from(const toml::table& 
     READ(tbl, radius0);
     READ(tbl, radius1);
     READ(tbl, height);
+    // Spherical observation mode (optional for backward compatibility)
+    READ(tbl, use_spherical_observation);
+    READ(tbl, sigma_yaw_obs);
+    READ(tbl, sigma_pitch_obs);
+    READ(tbl, sigma_armor_yaw);
     return {};
 }
 
@@ -31,6 +36,11 @@ std::expected<void, std::string> OutpostInEKFConfig::read_from(const toml::table
     READ(tbl, use_dynamic_noise);
     READ(tbl, dynamic_noise_k_radial);
     READ(tbl, dynamic_noise_k_tangent);
+    // Spherical observation mode (optional for backward compatibility)
+    READ(tbl, use_spherical_observation);
+    READ(tbl, sigma_yaw_obs);
+    READ(tbl, sigma_pitch_obs);
+    READ(tbl, sigma_armor_yaw);
     return {};
 }
 

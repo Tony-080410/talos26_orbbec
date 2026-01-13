@@ -176,7 +176,15 @@ public:
                         outpost_inekf_->update_yaw(target_yaw_meas, config_.outpost_inekf);
                     }
 
-                    outpost_inekf_->update_armor(armor_pos_odom, armor_id, config_.outpost_inekf);
+                    // Use spherical or Cartesian observation mode based on config
+                    if (config_.outpost_inekf.use_spherical_observation) {
+                        const Eigen::Vector3d armor_ypd{z[0], z[1], z[2]};
+                        outpost_inekf_->update_armor_spherical(
+                            armor_ypd, z[3], armor_id, config_.outpost_inekf);
+                    } else {
+                        outpost_inekf_->update_armor(
+                            armor_pos_odom, armor_id, config_.outpost_inekf);
+                    }
                 }
             } else {
                 robot_model_.armor_id = idx[i];
@@ -203,7 +211,14 @@ public:
                         robot_inekf_->update_yaw(target_yaw_meas, config_.robot_inekf);
                     }
 
-                    robot_inekf_->update_armor(armor_pos_odom, armor_id, config_.robot_inekf);
+                    // Use spherical or Cartesian observation mode based on config
+                    if (config_.robot_inekf.use_spherical_observation) {
+                        const Eigen::Vector3d armor_ypd{z[0], z[1], z[2]};
+                        robot_inekf_->update_armor_spherical(
+                            armor_ypd, z[3], armor_id, config_.robot_inekf);
+                    } else {
+                        robot_inekf_->update_armor(armor_pos_odom, armor_id, config_.robot_inekf);
+                    }
                 }
             }
         }
