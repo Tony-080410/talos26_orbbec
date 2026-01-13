@@ -1,6 +1,5 @@
 #include "fcs/camera_config.hpp"
-#include "toml_helper.hpp"
-#include <toml++/toml.h>
+#include "toml_helper_eigen.hpp"
 
 namespace fcs {
 std::expected<void, std::string> CameraProfileConfig::read_from(const toml::table& tbl) noexcept {

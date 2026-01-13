@@ -1,14 +1,17 @@
 #pragma once
 
-#include "core/types.hpp"
+#include "core/armor_types.hpp"
 
 #include <array>
 #include <expected>
 #include <memory>
 #include <string>
-
-#include "toml_helper.hpp"
-#include <toml++/toml.hpp>
+// Forward declaration to avoid including toml++ in config headers.
+namespace toml {
+inline namespace v3 {
+class table;
+}
+} // namespace toml
 
 namespace fcs {
 
@@ -47,29 +50,7 @@ struct AtLegacyTraditionalConfig {
     bool classifier_enable_type_filtering  = true;
     bool classifier_use_softmax            = true; // Legacy networks output logits, need softmax
 
-    std::expected<void, std::string> read_from(const toml::table& tbl) noexcept {
-        READ(tbl, dark_percentage);
-        READ(tbl, binary_threshold);
-        READ(tbl, light_min_ratio);
-        READ(tbl, light_max_ratio);
-        READ(tbl, light_max_angle);
-        READ(tbl, light_color_diff_thresh);
-        READ(tbl, armor_min_light_ratio);
-        READ(tbl, armor_min_small_center_distance);
-        READ(tbl, armor_max_small_center_distance);
-        READ(tbl, armor_min_large_center_distance);
-        READ(tbl, armor_max_large_center_distance);
-        READ(tbl, armor_max_angle);
-
-        // classifier configuration
-        READ_OPT(tbl, advanced_binary);
-        READ_OPT(tbl, classifier_model_path);
-        READ_OPT(tbl, classifier_confidence_threshold);
-        READ_OPT(tbl, classifier_enable_type_filtering);
-        READ_OPT(tbl, classifier_use_softmax);
-
-        return {};
-    }
+    std::expected<void, std::string> read_from(const toml::table& tbl) noexcept;
 };
 
 // ============================================================================
@@ -87,17 +68,7 @@ struct AtLegacyNNConfig {
     double nms_threshold;
     int top_k;
 
-    std::expected<void, std::string> read_from(const toml::table& tbl) noexcept {
-        READ(tbl, model_path);
-        READ(tbl, device);
-        READ(tbl, device_priorities);
-        READ(tbl, enable_profiling);
-        READ(tbl, enable_multi_thread);
-        READ(tbl, confidence_threshold);
-        READ(tbl, nms_threshold);
-        READ(tbl, top_k);
-        return {};
-    }
+    std::expected<void, std::string> read_from(const toml::table& tbl) noexcept;
 };
 
 // ============================================================================
@@ -115,17 +86,7 @@ struct AtLegacyNNTupConfig {
     double nms_threshold;
     int top_k;
 
-    std::expected<void, std::string> read_from(const toml::table& tbl) noexcept {
-        READ(tbl, model_path);
-        READ(tbl, device);
-        READ(tbl, device_priorities);
-        READ(tbl, enable_profiling);
-        READ(tbl, enable_multi_thread);
-        READ(tbl, confidence_threshold);
-        READ(tbl, nms_threshold);
-        READ(tbl, top_k);
-        return {};
-    }
+    std::expected<void, std::string> read_from(const toml::table& tbl) noexcept;
 };
 
 // ============================================================================
@@ -136,11 +97,7 @@ struct AtLegacyDetectorConfig {
     AtLegacyBackendTypeConfig backend_type = AtLegacyBackendTypeConfig::Traditional;
     ArmorColor detect_color; // 0=BLUE, 1=RED
 
-    std::expected<void, std::string> read_from(const toml::table& tbl) noexcept {
-        READ(tbl, backend_type);
-        READ(tbl, detect_color);
-        return {};
-    }
+    std::expected<void, std::string> read_from(const toml::table& tbl) noexcept;
 };
 
 // ============================================================================
@@ -166,14 +123,7 @@ struct AtLegacyConfig {
         return std::make_shared<const AtLegacyNNTupConfig>(nn_tup);
     }
 
-    std::expected<void, std::string> read_from(const toml::table& tbl) noexcept {
-        READ(tbl, detector);
-        // Read backend-specific config based on type
-        READ(tbl, traditional);
-        READ(tbl, nn);
-        READ(tbl, nn_tup);
-        return {};
-    }
+    std::expected<void, std::string> read_from(const toml::table& tbl) noexcept;
 };
 
 } // namespace fcs

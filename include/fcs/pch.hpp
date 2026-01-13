@@ -26,18 +26,17 @@
 // Third-party libraries (heavy dependencies)
 #include <Eigen/Core>
 #include <Eigen/Geometry>
+#include <magic_enum.hpp>
 #include <opencv2/calib3d.hpp>
 #include <opencv2/core.hpp>
 #include <opencv2/imgproc.hpp>
 #include <spdlog/spdlog.h>
+#include <toml++/toml.hpp>
 
 // Conditionally include OpenVINO (only on platforms where it's available)
 #if __has_include(<openvino/openvino.hpp>)
 # include <openvino/openvino.hpp>
 #endif
-
-#include "magic_enum.hpp"
-
-// Project-wide utilities
-#include "toml_helper.hpp"
-#include <toml++/toml.hpp>
+// NOTE: Keep this PCH limited to stable/rarely-changing headers.
+// Project headers (and wrappers like toml/magic_enum helpers) are intentionally excluded to avoid
+// PCH invalidation cascades on normal development edits.

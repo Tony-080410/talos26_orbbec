@@ -48,6 +48,11 @@ add_library(talos_std INTERFACE
 target_include_directories(talos_std INTERFACE include)
 target_include_directories(talos_std INTERFACE 3dparty/magic_enum)
 
+target_compile_definitions(talos_std INTERFACE
+        MAGIC_ENUM_RANGE_MIN=0
+        MAGIC_ENUM_RANGE_MAX=16
+)
+
 target_link_libraries(talos_std INTERFACE
         toml_impl
         Eigen3::Eigen
@@ -71,16 +76,38 @@ target_link_libraries(scheduler PUBLIC
         TBB::tbb
 )
 
-# auto aim library (header-only during refactoring)
-add_library(auto_aim INTERFACE)
+# Foxglove C++ wrapper library (compiled sources + prebuilt core lib)
+add_library(foxglove_cpp SHARED
+        ${FOXGLOVE_SOURCES}
+)
 
-target_include_directories(auto_aim INTERFACE
+target_include_directories(foxglove_cpp SYSTEM PUBLIC
+        ${foxglove_SOURCE_DIR}/include
+        ${foxglove_SOURCE_DIR}/include/foxglove
+)
+
+target_link_libraries(foxglove_cpp PUBLIC
+        ${foxglove_SOURCE_DIR}/lib/libfoxglove.a
+        "$<$<PLATFORM_ID:Darwin>:-framework Security>"
+        "$<$<PLATFORM_ID:Darwin>:-framework CoreFoundation>"
+        "$<$<PLATFORM_ID:Darwin>:-framework SystemConfiguration>"
+        "$<$<PLATFORM_ID:Darwin>:-mmacosx-version-min=15.5>"
+)
+
+# auto aim library
+add_library(auto_aim STATIC
+        src/auto_aim/config.cpp
+)
+
+target_include_directories(auto_aim PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/include/fcs
         ${CMAKE_CURRENT_SOURCE_DIR}/include/auto_aim
         ${foxglove_SOURCE_DIR}/include
         ${foxglove_SOURCE_DIR}/include/foxglove
 )
 
-target_link_libraries(auto_aim INTERFACE
+target_link_libraries(auto_aim PUBLIC
         talos_std
         scheduler
         ${OpenCV_LIBS}
@@ -116,13 +143,26 @@ add_library(fcs SHARED
         src/fcs/camera_config.cpp
         src/fcs/L1_sensor/camera_interface.cpp
         src/fcs/L1_sensor/output_interface.cpp
+        src/fcs/runtime/l1_l2_setup.cpp
+        src/fcs/L2_perception/at_legacy_config.cpp
         src/fcs/L2_perception/at_legacy_detector_backend.cpp
         src/fcs/L2_perception/at_legacy_nn_backend.cpp
         src/fcs/L2_perception/at_legacy_nn_tup_backend.cpp
+        src/fcs/L2_perception/at_legacy_systems.cpp
         src/fcs/L2_perception/at_legacy_traditional_backend.cpp
         src/fcs/L2_perception/at_legacy_traditional_classifier.cpp
         src/fcs/L2_perception/at_legacy_light_corner_corrector.cpp
+        src/fcs/L3_estimation/tracker/inekf_config.cpp
+        src/fcs/L3_estimation/tracker/motion_model_config.cpp
+        src/fcs/L3_estimation/tracker/config.cpp
+        src/fcs/L3_estimation/tracker_systems.cpp
+        src/fcs/L4_planning/gimbal_planner/config.cpp
+        src/fcs/L4_planning/gimbal_planner/trajectory_compensator.cpp
+        src/fcs/L4_planning/planning_systems.cpp
+        src/fcs/L5_weapon/config.cpp
+        src/fcs/visualization/foxglove_systems.cpp
         src/fcs/L5_weapon/enhanced/weapon_controller.cpp
+        src/fcs/L5_weapon/enhanced/weapon_systems.cpp
 )
 
 target_include_directories(fcs PUBLIC
@@ -145,6 +185,7 @@ target_link_libraries(fcs PUBLIC
         ipc
         hikcamera
         scheduler
+        foxglove_cpp
         Ceres::ceres
         ${OpenCV_LIBS}
         Eigen3::Eigen
@@ -206,7 +247,6 @@ endif ()
 # Main executable
 add_executable(${PROJECT_NAME}
         src/main.cpp
-        ${FOXGLOVE_SOURCES}
 )
 
 target_include_directories(${PROJECT_NAME} PRIVATE include)
@@ -221,6 +261,7 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
         fcs
         ipc
         fast_tf
+        foxglove_cpp
         ${OpenCV_LIBS}
         spdlog::spdlog
         fmt::fmt
@@ -229,15 +270,11 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
 
         nlohmann_json::nlohmann_json
         ${LIBUSB_LINK_LIBRARIES}
-        ${foxglove_SOURCE_DIR}/lib/libfoxglove.a
-        "$<$<PLATFORM_ID:Darwin>:-framework Security>"
-        "$<$<PLATFORM_ID:Darwin>:-framework CoreFoundation>"
-        "$<$<PLATFORM_ID:Darwin>:-framework SystemConfiguration>"
         "$<$<PLATFORM_ID:Darwin>:-mmacosx-version-min=15.5>"
 )
 
 # Fast TF library (explicit template instantiations + robot factory)
-add_library(fast_tf STATIC
+add_library(fast_tf SHARED
         src/math/fast_tf/infantry.cpp
         src/math/fast_tf/hero.cpp
         src/math/fast_tf/sentry.cpp

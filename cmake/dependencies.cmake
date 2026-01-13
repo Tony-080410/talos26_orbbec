@@ -99,8 +99,23 @@ endif ()
 
 FetchContent_MakeAvailable(foxglove)
 
-# Find all Foxglove SDK source files
-file(GLOB FOXGLOVE_SOURCES CONFIGURE_DEPENDS
-    "${foxglove_SOURCE_DIR}/src/*.cpp"
-    "${foxglove_SOURCE_DIR}/src/server/*.cpp"
+# Foxglove SDK sources
+#
+# Avoid `file(GLOB ... CONFIGURE_DEPENDS ...)` here: on some setups it forces Ninja to run the
+# glob-check + CMake regeneration on *every* incremental build, which hurts edit/compile iteration.
+#
+# This list is stable for the pinned SDK version above; update it only when bumping Foxglove.
+set(FOXGLOVE_SOURCES
+    "${foxglove_SOURCE_DIR}/src/channel.cpp"
+    "${foxglove_SOURCE_DIR}/src/cloud_sink.cpp"
+    "${foxglove_SOURCE_DIR}/src/context.cpp"
+    "${foxglove_SOURCE_DIR}/src/error.cpp"
+    "${foxglove_SOURCE_DIR}/src/foxglove.cpp"
+    "${foxglove_SOURCE_DIR}/src/mcap.cpp"
+    "${foxglove_SOURCE_DIR}/src/schemas.cpp"
+    "${foxglove_SOURCE_DIR}/src/server.cpp"
+    "${foxglove_SOURCE_DIR}/src/server/connection_graph.cpp"
+    "${foxglove_SOURCE_DIR}/src/server/fetch_asset.cpp"
+    "${foxglove_SOURCE_DIR}/src/server/parameter.cpp"
+    "${foxglove_SOURCE_DIR}/src/server/service.cpp"
 )

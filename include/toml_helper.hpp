@@ -1,6 +1,5 @@
 #pragma once
 
-#include <Eigen/Dense>
 #include <expected>
 #include <fmt/format.h>
 #include <optional>
@@ -8,14 +7,23 @@
 #include <string_view>
 #include <type_traits>
 #include <vector>
-#define MAGIC_ENUM_RANGE_MIN 0
-#define MAGIC_ENUM_RANGE_MAX 16
+#ifndef MAGIC_ENUM_RANGE_MIN
+# define MAGIC_ENUM_RANGE_MIN 0
+#endif
+#ifndef MAGIC_ENUM_RANGE_MAX
+# define MAGIC_ENUM_RANGE_MAX 16
+#endif
 #include <magic_enum.hpp>
 #define TOML_HEADER_ONLY 0
 #define TOML_EXCEPTIONS  0
 #include <toml++/toml.hpp>
 
 namespace toml_helper {
+template <typename T>
+struct type_tag {
+    using type = T;
+};
+
 namespace detail {
 [[nodiscard]] inline const char* node_type_name(toml::node_type t) noexcept {
     switch (t) {
@@ -97,7 +105,13 @@ concept ReadFrom = requires(T& t, const toml::table& table) {
 };
 
 template <typename T>
-[[nodiscard]] std::expected<T, std::string> read(const toml::table& table, std::string_view key) {
+concept TomlScalarValue = std::is_arithmetic_v<T> || std::is_same_v<T, std::string>
+                       || std::is_same_v<T, std::string_view> || std::is_same_v<T, toml::date>
+                       || std::is_same_v<T, toml::time> || std::is_same_v<T, toml::date_time>;
+
+template <typename T>
+requires(TomlScalarValue<T>) [[nodiscard]] std::expected<T, std::string>
+    read_impl(type_tag<T>, const toml::table& table, std::string_view key) {
     const toml::node* node = table.get(key);
     if (!node) {
         return std::unexpected(fmt::format("Missing key '{}'", key));
@@ -114,8 +128,8 @@ template <typename T>
 }
 
 template <typename T>
-[[nodiscard]] std::expected<std::optional<T>, std::string>
-    read_optional(const toml::table& table, std::string_view key) {
+requires(TomlScalarValue<T>) [[nodiscard]] std::expected<std::optional<T>, std::string>
+    read_optional_impl(type_tag<T>, const toml::table& table, std::string_view key) {
     const toml::node* node = table.get(key);
     if (!node) {
         return std::optional<T>{};
@@ -132,7 +146,8 @@ template <typename T>
 }
 
 template <ReadFrom T>
-[[nodiscard]] std::expected<T, std::string> read(const toml::table& table, std::string_view key) {
+[[nodiscard]] std::expected<T, std::string>
+    read_impl(type_tag<T>, const toml::table& table, std::string_view key) {
     if (const auto _t = table[key].as_table()) {
         T t;
         auto result = t.read_from(*_t);
@@ -175,7 +190,7 @@ template <ReadFrom T>
 
 template <ReadFrom T>
 [[nodiscard]] std::expected<std::optional<T>, std::string>
-    read_optional(const toml::table& table, std::string_view key) {
+    read_optional_impl(type_tag<T>, const toml::table& table, std::string_view key) {
     const toml::node* node = table.get(key);
     if (!node) {
         return std::optional<T>{};
@@ -231,8 +246,8 @@ requires(std::is_enum_v<T>) [[nodiscard]] std::string enum_options() {
 }
 
 template <typename T>
-requires(std::is_enum_v<T>)
-[[nodiscard]] std::expected<T, std::string> read(const toml::table& table, std::string_view key) {
+requires(std::is_enum_v<T>) [[nodiscard]] std::expected<T, std::string>
+    read_impl(type_tag<T>, const toml::table& table, std::string_view key) {
     const toml::node* node = table.get(key);
     if (!node) {
         return std::unexpected(fmt::format("Missing key '{}'", key));
@@ -268,7 +283,7 @@ requires(std::is_enum_v<T>)
 
 template <typename T>
 requires(std::is_enum_v<T>) [[nodiscard]] std::expected<std::optional<T>, std::string>
-    read_optional(const toml::table& table, std::string_view key) {
+    read_optional_impl(type_tag<T>, const toml::table& table, std::string_view key) {
     const toml::node* node = table.get(key);
     if (!node) {
         return std::optional<T>{};
@@ -301,64 +316,15 @@ requires(std::is_enum_v<T>) [[nodiscard]] std::expected<std::optional<T>, std::s
             detail::node_type_name(node->type()), enum_options<T>()));
 }
 
-template <typename Mat>
-requires(Mat::RowsAtCompileTime != Eigen::Dynamic && Mat::ColsAtCompileTime != Eigen::Dynamic)
-std::expected<Mat, std::string> read(const toml::table& table, std::string_view key) {
-    constexpr int expected_size = Mat::RowsAtCompileTime * Mat::ColsAtCompileTime;
-    using Scalar                = typename Mat::Scalar;
-
-    std::vector<Scalar> scalar_array;
-    scalar_array.reserve(expected_size);
-
-    const toml::node* node = table.get(key);
-    if (!node) {
-        return std::unexpected(fmt::format("Missing key '{}'", key));
-    }
-
-    if (const auto arr = node->as_array()) {
-        for (const auto& v : *arr) {
-            if (const auto val = v.value<Scalar>()) {
-                scalar_array.push_back(*val);
-            } else if constexpr (std::is_floating_point_v<Scalar>) {
-                if (const auto i = v.value<int64_t>()) {
-                    scalar_array.push_back(static_cast<Scalar>(*i));
-                } else if (const auto u = v.value<uint64_t>()) {
-                    scalar_array.push_back(static_cast<Scalar>(*u));
-                } else {
-                    return std::unexpected(fmt::format("'{}' must be an array of numbers", key));
-                }
-            } else {
-                return std::unexpected(fmt::format("'{}' must be an array of numbers", key));
-            }
-        }
-        if (scalar_array.size() != expected_size) {
-            return std::unexpected(
-                fmt::format("'{}' must have exactly '{}' elements", key, expected_size));
-        }
-        // Eigen reads raw pointer in the matrix's native storage order; make it explicit.
-        return Eigen::Map<const Mat>(scalar_array.data());
-    }
-
-    return std::unexpected(
-        fmt::format(
-            "Invalid value for key '{}': expected array, got {}", key,
-            detail::node_type_name(node->type())));
+template <typename T>
+[[nodiscard]] std::expected<T, std::string> read(const toml::table& table, std::string_view key) {
+    return read_impl(type_tag<T>{}, table, key);
 }
 
-template <typename Mat>
-requires(Mat::RowsAtCompileTime != Eigen::Dynamic && Mat::ColsAtCompileTime != Eigen::Dynamic)
-[[nodiscard]] std::expected<std::optional<Mat>, std::string>
+template <typename T>
+[[nodiscard]] std::expected<std::optional<T>, std::string>
     read_optional(const toml::table& table, std::string_view key) {
-    const toml::node* node = table.get(key);
-    if (!node) {
-        return std::optional<Mat>{};
-    }
-
-    if (auto m = read<Mat>(table, key)) {
-        return std::optional<Mat>{std::move(*m)};
-    } else {
-        return std::unexpected(m.error());
-    }
+    return read_optional_impl(type_tag<T>{}, table, key);
 }
 
 [[nodiscard]] inline std::expected<void, std::string>

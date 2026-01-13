@@ -1,8 +1,14 @@
 #pragma once
 
-#include "toml_helper.hpp"
 #include <expected>
-#include <toml++/toml.hpp>
+#include <memory>
+
+// Forward declaration to avoid including toml++ in config headers.
+namespace toml {
+inline namespace v3 {
+class table;
+}
+} // namespace toml
 
 namespace fcs::L5 {
 
@@ -12,7 +18,7 @@ namespace fcs::L5 {
 
 /// Weapon control configuration - tactical parameters only
 struct WeaponControllerConfig {
-    std::expected<void, std::string> read_from(const toml::table& tbl) noexcept { return {}; }
+    std::expected<void, std::string> read_from(const toml::table& tbl) noexcept;
 };
 
 // ============================================================================
@@ -27,10 +33,7 @@ struct L5Config {
         return std::make_shared<const WeaponControllerConfig>(weapon);
     }
 
-    std::expected<void, std::string> read_from(const toml::table& tbl) noexcept {
-        READ_OPT(tbl, weapon);
-        return {};
-    }
+    std::expected<void, std::string> read_from(const toml::table& tbl) noexcept;
 };
 
 } // namespace fcs::L5

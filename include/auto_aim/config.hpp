@@ -1,8 +1,10 @@
 #pragma once
 
 #include <atomic>
+#include <cstdint>
 #include <expected>
 #include <memory>
+#include <optional>
 #include <string>
 
 #include "fcs/L2_perception/at_legacy_config.hpp"
@@ -10,7 +12,13 @@
 #include "fcs/L4_planning/gimbal_planner/config.hpp"
 #include "fcs/L5_weapon/config.hpp"
 #include "fcs/camera_config.hpp"
-#include "toml_helper.hpp"
+
+// Forward declaration to avoid including toml++/toml_helper in public headers.
+namespace toml {
+inline namespace v3 {
+class table;
+}
+} // namespace toml
 
 namespace fcs {
 
@@ -19,12 +27,7 @@ struct FoxgloveConfig {
     std::string host{"0.0.0.0"};
     uint16_t port{8765};
 
-    std::expected<void, std::string> read_from(const toml::table& tbl) noexcept {
-        READ(tbl, enabled);
-        READ(tbl, host);
-        READ(tbl, port);
-        return {};
-    }
+    std::expected<void, std::string> read_from(const toml::table& tbl) noexcept;
 };
 
 enum class RobotType { Infantry, Hero, Sentry };
@@ -41,13 +44,7 @@ struct HardwareConfig {
         return std::optional<uint16_t>{imu_product_id};
     }
 
-    std::expected<void, std::string> read_from(const toml::table& tbl) noexcept {
-        READ(tbl, camera);
-        READ(tbl, untrust_roll);
-        READ_OPT(tbl, imu_vendor_id);
-        READ_OPT(tbl, imu_product_id);
-        return {};
-    }
+    std::expected<void, std::string> read_from(const toml::table& tbl) noexcept;
 };
 
 struct VisionConfig {
@@ -63,13 +60,7 @@ struct VisionConfig {
     [[nodiscard]] L4::GimbalPlannerConfig& planner() noexcept { return l4.planner; }
     [[nodiscard]] L5::WeaponControllerConfig& weapon() noexcept { return l5.weapon; }
 
-    std::expected<void, std::string> read_from(const toml::table& tbl) noexcept {
-        READ_FLATTEN(tbl, at_legacy);
-        READ_FLATTEN(tbl, l3);
-        READ_FLATTEN(tbl, l4);
-        READ_FLATTEN(tbl, l5);
-        return {};
-    }
+    std::expected<void, std::string> read_from(const toml::table& tbl) noexcept;
 };
 
 /**

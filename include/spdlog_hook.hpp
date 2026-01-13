@@ -6,7 +6,9 @@
 #include <spdlog/sinks/stdout_color_sinks.h>
 #include <spdlog/spdlog.h>
 #include <streambuf>
+#include <string>
 #include <utility>
+#include <vector>
 
 class spdlog_streambuf : public std::streambuf {
 public:

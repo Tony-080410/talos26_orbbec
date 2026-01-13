@@ -1,8 +1,14 @@
 #pragma once
 
-#include "toml_helper.hpp"
 #include <expected>
 #include <string>
+
+// Forward declaration to avoid including toml++ in config headers.
+namespace toml {
+inline namespace v3 {
+class table;
+}
+} // namespace toml
 
 namespace fcs::L3 {
 
@@ -137,22 +143,7 @@ struct RobotInEKFConfig {
     /// effectively swaps which armor pair is "higher" in the model.
     double height{0.0};
 
-    std::expected<void, std::string> read_from(const toml::table& tbl) noexcept {
-        READ(tbl, sigma_a_xy);
-        READ(tbl, sigma_a_z);
-        READ(tbl, sigma_yaw);
-        READ(tbl, sigma_r);
-        READ(tbl, sigma_h);
-        READ(tbl, sigma_m);
-        READ(tbl, sigma_w);
-        READ(tbl, use_dynamic_noise);
-        READ(tbl, dynamic_noise_k_radial);
-        READ(tbl, dynamic_noise_k_tangent);
-        READ(tbl, radius0);
-        READ(tbl, radius1);
-        READ(tbl, height);
-        return {};
-    }
+    std::expected<void, std::string> read_from(const toml::table& tbl) noexcept;
 };
 
 /// InEKF configuration parameters for 3-armor outpost targets.
@@ -193,18 +184,7 @@ struct OutpostInEKFConfig {
     /// Precise: same as RobotInEKFConfig::dynamic_noise_k_tangent.
     double dynamic_noise_k_tangent{0.1};
 
-    std::expected<void, std::string> read_from(const toml::table& tbl) noexcept {
-        READ(tbl, sigma_a_xy);
-        READ(tbl, sigma_a_z);
-        READ(tbl, sigma_yaw);
-        READ(tbl, sigma_h);
-        READ(tbl, sigma_m);
-        READ(tbl, sigma_w);
-        READ(tbl, use_dynamic_noise);
-        READ(tbl, dynamic_noise_k_radial);
-        READ(tbl, dynamic_noise_k_tangent);
-        return {};
-    }
+    std::expected<void, std::string> read_from(const toml::table& tbl) noexcept;
 };
 
 } // namespace fcs::L3

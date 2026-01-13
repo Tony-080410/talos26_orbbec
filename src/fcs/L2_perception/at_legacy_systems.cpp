@@ -1,0 +1,96 @@
+#include "fcs/L2_perception/at_legacy_systems.hpp"
+
+#include "fcs/L2_perception/at_legacy_detector_backend.hpp"
+#include "fcs/L2_perception/at_legacy_pnp_solver.hpp"
+#include "fcs/core/channel_tags.hpp"
+#include "math/fast_tf/frame.hpp"
+#include "scheduler/ecs/channel_types.hpp"
+#include "scheduler/ecs/execution_policy.hpp"
+#include "scheduler/scheduler/scheduler.hpp"
+
+#include <spdlog/spdlog.h>
+
+namespace fcs {
+
+void register_at_legacy_detection_systems(talos::Scheduler& scheduler) {
+    scheduler.add_system<talos::pool_compute>(
+        "at_legacy_armor_detector_pnp_solver",
+        [](talos::spmc<AtLegacyImageFrame, AtLegacyImageChannelTag> image_in,
+           talos::spmc_mut<AtLegacyArmorDetectionBatch, AtLegacyDetectionChannelTag> detection_out,
+           talos::spmc_mut<AtLegacyArmorMeasurementBatch, AtLegacyMeasurementChannelTag>
+               measurement_out,
+           talos::res_mut<std::shared_ptr<AtLegacyDetectorBackend>> backend_ptr,
+           talos::res<std::shared_ptr<AtLegacyPnPSolver>> solver_ptr,
+           talos::res<std::shared_ptr<fast_tf::CoordinateSystem<1024>>> tf_system) {
+            if (!image_in.has_new()) {
+                return;
+            }
+            auto frame = image_in.read();
+            if (!frame) {
+                return;
+            }
+
+            auto& backend = *backend_ptr;
+            if (!backend) {
+                return;
+            }
+
+            auto result = backend->detect(frame->image);
+            if (!result) {
+                detection_out.write(
+                    AtLegacyArmorDetectionBatch{{}, frame->timestamp_ns, frame->frame_id});
+                return;
+            }
+
+            auto tf_odom_camera = fast_tf::lookup<fast_tf::odom_fuxk_frame>(
+                **tf_system, fast_tf::FuckTransform<fast_tf::camera_optical_fuxk_frame>(),
+                frame->timestamp_ns);
+
+            if (!tf_odom_camera) {
+                SPDLOG_ERROR(
+                    "TF lookup failed for timestamp {}: {}", frame->timestamp_ns,
+                    fast_tf::to_string(tf_odom_camera.error()));
+                return;
+            }
+
+            auto detections = std::move(*result);
+
+            detection_out.write(
+                AtLegacyArmorDetectionBatch{detections, frame->timestamp_ns, frame->frame_id});
+
+            auto measurements = (*solver_ptr)
+                                    ->solve_batch_with_ba(
+                                        detections, tf_odom_camera.value()->rotation().matrix(),
+                                        frame->timestamp_ns);
+
+            const auto& T_odom_camera = *tf_odom_camera.value();
+            for (auto& meas : measurements) {
+                meas.transform = fast_tf::FuckTransform<fast_tf::odom_fuxk_frame>{
+                    T_odom_camera * (*meas.transform)};
+            }
+
+            measurement_out.write(
+                AtLegacyArmorMeasurementBatch{
+                    std::move(measurements), frame->timestamp_ns, frame->frame_id});
+        });
+}
+
+std::expected<DetectorBackendHandle, std::string>
+    create_detector_backend_handle(const AtLegacyConfig& config) {
+    auto backend_result = create_detector_backend(config);
+    if (!backend_result) {
+        return std::unexpected(std::string(detector_error_str(backend_result.error())));
+    }
+
+    auto backend_ptr  = std::make_shared<AtLegacyDetectorBackend>(std::move(*backend_result));
+    auto backend_name = std::string(backend_ptr->name());
+    return DetectorBackendHandle{std::move(backend_ptr), std::move(backend_name)};
+}
+
+std::shared_ptr<AtLegacyPnPSolver> create_pnp_solver(const CameraConfig& config) {
+    auto solver = std::make_shared<AtLegacyPnPSolver>();
+    solver->init(config);
+    return solver;
+}
+
+} // namespace fcs

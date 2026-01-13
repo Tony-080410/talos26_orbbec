@@ -1,6 +1,5 @@
 #pragma once
 
-#include "toml_helper.hpp"
 #include "util.hpp"
 
 // Use uni_kf SRCKF instead of old ISRCKF
@@ -12,6 +11,13 @@
 #include <concepts>
 #include <expected>
 #include <numbers>
+
+// Forward declaration to avoid including toml++ in algorithm headers.
+namespace toml {
+inline namespace v3 {
+class table;
+}
+} // namespace toml
 
 namespace fcs::L3 {
 
@@ -124,15 +130,7 @@ struct RobotModel {
         /// Analogy: letting a slow "elevation bias" parameter move.
         /// Precise: enters Q(H,H) += sigma_h^2 * dt in `Q_sqrt(dt)`.
         Scalar sigma_h = 0.5;
-        std::expected<void, std::string> read_from(const toml::table& tbl) noexcept {
-            READ(tbl, sigma_a_xy);
-            READ(tbl, sigma_a_z);
-            READ(tbl, sigma_a_yaw);
-            READ(tbl, sigma_r0);
-            READ(tbl, sigma_r1);
-            READ(tbl, sigma_h);
-            return {};
-        }
+        std::expected<void, std::string> read_from(const toml::table& tbl) noexcept;
     };
 
     int armor_id                    = 0;
@@ -351,12 +349,7 @@ struct OutpostModel {
         /// Problem/Intuition/Analogy: same as RobotModel::Params::sigma_a_yaw.
         /// Precise: used as q = sigma_a_yaw^2 in the CV block (yaw,v_yaw) in `Q_sqrt(dt)`.
         Scalar sigma_a_yaw = 1.0;
-        std::expected<void, std::string> read_from(const toml::table& tbl) noexcept {
-            READ(tbl, sigma_q_xy);
-            READ(tbl, sigma_q_z);
-            READ(tbl, sigma_a_yaw);
-            return {};
-        }
+        std::expected<void, std::string> read_from(const toml::table& tbl) noexcept;
     };
 
     int armor_id                           = 0;

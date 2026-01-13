@@ -1,8 +1,14 @@
 #pragma once
 
-#include "toml_helper.hpp"
 #include <expected>
-#include <toml++/toml.hpp>
+#include <memory>
+
+// Forward declaration to avoid including toml++ in config headers.
+namespace toml {
+inline namespace v3 {
+class table;
+}
+} // namespace toml
 
 namespace fcs::L4 {
 
@@ -230,20 +236,7 @@ struct TrajectoryConfig {
     ///   Used in `RK4Compensator::select_dt()` as the upper bound on `steps` (and thus on runtime).
     int rk4_max_steps{2000};
 
-    std::expected<void, std::string> read_from(const toml::table& tbl) noexcept {
-        READ(tbl, iteration_times);
-        READ(tbl, bullet_speed);
-        READ(tbl, gravity);
-        READ(tbl, resistance);
-        READ_OPT(tbl, cd);
-        READ_OPT(tbl, rho);
-        READ_OPT(tbl, diameter);
-        READ_OPT(tbl, mass);
-        READ_OPT(tbl, rk4_dt);
-        READ_OPT(tbl, rk4_min_steps);
-        READ_OPT(tbl, rk4_max_steps);
-        return {};
-    }
+    std::expected<void, std::string> read_from(const toml::table& tbl) noexcept;
 };
 
 // ============================================================================
@@ -394,18 +387,7 @@ struct GimbalPlannerConfig {
     ///   Selects the concrete compensator implementation created by `create_compensator(...)`.
     TrajectoryCompensatorType compensator_type = TrajectoryCompensatorType::Resistance;
 
-    std::expected<void, std::string> read_from(const toml::table& tbl) noexcept {
-        READ(tbl, shooting_range_w);
-        READ(tbl, shooting_range_h);
-        READ(tbl, max_tracking_v_yaw);
-        READ(tbl, plan_to_muzzle_delay);
-        READ(tbl, side_angle);
-        READ(tbl, min_switching_v_yaw);
-        READ(tbl, transfer_thresh);
-        READ(tbl, trajectory);
-        READ(tbl, compensator_type);
-        return {};
-    }
+    std::expected<void, std::string> read_from(const toml::table& tbl) noexcept;
 };
 
 // ============================================================================
@@ -420,10 +402,7 @@ struct L4Config {
         return std::make_shared<const GimbalPlannerConfig>(planner);
     }
 
-    std::expected<void, std::string> read_from(const toml::table& tbl) noexcept {
-        READ(tbl, planner);
-        return {};
-    }
+    std::expected<void, std::string> read_from(const toml::table& tbl) noexcept;
 };
 
 } // namespace fcs::L4

@@ -2,11 +2,16 @@
 
 #include "inekf_config.hpp"
 #include "motion_model.hpp"
-#include "toml_helper.hpp"
 #include <expected>
 #include <memory>
 #include <string>
-#include <toml++/toml.hpp>
+
+// Forward declaration to avoid including toml++ in config headers.
+namespace toml {
+inline namespace v3 {
+class table;
+}
+} // namespace toml
 
 namespace fcs::L3 {
 
@@ -122,13 +127,7 @@ struct TargetConfig {
     ///   not configurable via TOML.
     T model;
 
-    std::expected<void, std::string> read_from(const toml::table& tbl) noexcept {
-        READ(tbl, lost_threshold);
-        READ(tbl, tracking_threshold);
-        READ(tbl, matcher_gate);
-        READ(tbl, model);
-        return {};
-    }
+    std::expected<void, std::string> read_from(const toml::table& tbl) noexcept;
 };
 
 struct TrackerConfig {
@@ -165,14 +164,7 @@ struct TrackerConfig {
     /// Precise: affects InEKF only; outpost radius is fixed in the model.
     OutpostInEKFConfig outpost_inekf;
 
-    std::expected<void, std::string> read_from(const toml::table& tbl) noexcept {
-        READ(tbl, robot);
-        READ(tbl, outpost);
-        READ(tbl, inekf_enabled);
-        READ(tbl, robot_inekf);
-        READ(tbl, outpost_inekf);
-        return {};
-    }
+    std::expected<void, std::string> read_from(const toml::table& tbl) noexcept;
 };
 
 // ============================================================================
@@ -187,10 +179,7 @@ struct L3Config {
         return std::make_shared<const TrackerConfig>(tracker);
     }
 
-    std::expected<void, std::string> read_from(const toml::table& tbl) noexcept {
-        READ(tbl, tracker);
-        return {};
-    }
+    std::expected<void, std::string> read_from(const toml::table& tbl) noexcept;
 };
 
 } // namespace fcs::L3
