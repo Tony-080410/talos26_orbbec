@@ -1,13 +1,63 @@
 # Hero Vision Configuration
 # extend from vision_base.toml
-
 [planner]
-plan_to_muzzle_delay = 0.07
-compensator_type = "RK4"
-max_tracking_v_yaw = 10000.0
-min_switching_v_yaw = 1.6
-[planner.trajectory]
+shooting_range_w = 0.075
+shooting_range_h = 0.075
+
+[tracker.robot_inekf]
+sigma_a_xy = 28.0
+sigma_a_z = 1.0
+sigma_w = 0.25
+sigma_m = 0.55
+sigma_yaw = 30.0
+radius0 = 0.23
+radius1 = 0.25
+height = 0.0
+sigma_r = 1.0
+sigma_h = 0.05
+use_dynamic_noise = true
+dynamic_noise_k_radial = 15.5
+dynamic_noise_k_tangent = 120.0
+# Spherical coordinate observation mode (faster tracking response)
+use_spherical_observation = false
+sigma_yaw_obs = 0.15
+sigma_pitch_obs = 0.15
+sigma_armor_yaw = 0.5
+# Innovation gating (outlier rejection)
+max_angle_innovation = 0.6  # rad (~86°), set larger to allow fast maneuvers
+max_dist_innovation = 3.0   # meters
+
+# MPC-based gimbal trajectory planner (TinyMPC ADMM solver)
+[mpc_planner]
+# MPC cost weights (yaw)
+q_yaw_position = 9.0e7
+q_yaw_velocity = 0.0
+r_yaw = 1.5
+max_yaw_acc = 15.0
+
+# MPC cost weights (pitch)
+q_pitch_position = 9.0e4
+q_pitch_velocity = 0.0
+r_pitch = 1.5
+max_pitch_acc = 15.0
+
+# Fire decision parameters
+fire_thresh = 0.005       # ~0.17 degrees tracking error threshold
+fire_lookahead = 5        # Steps ahead to check for fire decision
+
+plan_to_muzzle_delay = 0.136
+compensator_type = "Ideal"
+
+# Adaptive delay compensation (matching sp_vision_25)
+decision_speed = 5.0       # rad/s, threshold for high/low speed classification
+high_speed_delay = 0.1225   # seconds, delay for fast-spinning targets
+low_speed_delay = 0.1225    # seconds, delay for slow targets
+
+horizon = 50             # 1 second lookahead
+half_horizon = 40         # Current control at middle of horizon
+
+[mpc_planner.trajectory]
 bullet_speed = 11.0
-cd = 0.242987
+cd = 0.382987
 diameter = 0.041
-mass = 0.005
+mass = 0.052

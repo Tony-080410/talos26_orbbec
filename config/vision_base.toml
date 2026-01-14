@@ -139,9 +139,9 @@ rk4_max_steps = 5000
 # MPC-based gimbal trajectory planner (TinyMPC ADMM solver)
 [mpc_planner]
 # MPC cost weights (yaw)
-q_yaw_position = 9.0e6
+q_yaw_position = 9.0e7
 q_yaw_velocity = 0.0
-r_yaw = 1.0
+r_yaw = 0.5
 max_yaw_acc = 50.0
 
 # MPC cost weights (pitch)
@@ -158,13 +158,13 @@ fire_lookahead = 2        # Steps ahead to check for fire decision
 max_iterations = 10
 abs_tol = 1.0e-3
 rho = 1.0                 # ADMM penalty parameter
-dt = 0.01                 # 100Hz control rate (matching sp_vision_25)
+dt = 0.004                 # 250Hz control rate (matching sp_vision_25)
 horizon = 100             # 1 second lookahead
 half_horizon = 50         # Current control at middle of horizon
 
 # Trajectory compensation
 compensator_type = "RK4"
-plan_to_muzzle_delay = 0.210
+plan_to_muzzle_delay = 0.016
 
 # Adaptive delay compensation (matching sp_vision_25)
 decision_speed = 8.0       # rad/s, threshold for high/low speed classification
