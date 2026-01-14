@@ -12,6 +12,10 @@ WeaponCommand EnhancedWeaponController::generate_command(
     cmd.timestamp_ns = plan.timestamp_ns;
     cmd.yaw          = plan.yaw;
     cmd.pitch        = plan.pitch;
+    cmd.pitch_rate   = plan.opt_pitch_vel[plan.mpc_current_idx];
+    cmd.yaw_rate     = plan.opt_yaw_vel[plan.mpc_current_idx];
+    cmd.ref_yaw      = plan.opt_yaw[plan.mpc_current_idx];
+    cmd.ref_pitch    = plan.opt_pitch[plan.mpc_current_idx];
     cmd.track_center = plan.track_center;
     cmd.fire         = plan.fire_advice;
     cmd.distance     = plan.distance;

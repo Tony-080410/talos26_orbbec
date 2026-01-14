@@ -15,6 +15,10 @@ struct WeaponCommand {
     double yaw{0.0};   // 目标 yaw (弧度)
     double pitch{0.0}; // 目标 pitch (弧度)
 
+    // 云台角度
+    double ref_yaw{0.0};   // 目标 yaw (弧度)
+    double ref_pitch{0.0}; // 目标 pitch (弧度)
+
     // 前馈 (用于预测补偿)
     double yaw_rate{0.0};   // yaw 角速度 (rad/s)
     double pitch_rate{0.0}; // pitch 角速度 (rad/s)
