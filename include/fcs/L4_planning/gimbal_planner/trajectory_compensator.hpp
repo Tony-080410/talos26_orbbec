@@ -28,19 +28,29 @@ public:
     /// Default implementation compensates pitch only (yaw stays line-of-sight).
     [[nodiscard]] virtual bool compensate(
         const Eigen::Vector3d& target_position, double& yaw, double& pitch) const noexcept {
-        yaw                      = std::atan2(target_position.y(), target_position.x());
-        double compensated_pitch = pitch;
-        if (!compensate(target_position, compensated_pitch)) {
-            return false;
-        }
-        pitch = compensated_pitch;
-        return true;
+        yaw = std::atan2(target_position.y(), target_position.x());
+        return compensate_pitch(target_position, pitch, velocity);
+    }
+
+    /// Compensate with specified bullet velocity (const-safe, no mutation)
+    [[nodiscard]] virtual bool compensate(
+        const Eigen::Vector3d& target_position, double& yaw, double& pitch,
+        double bullet_velocity) const noexcept {
+        yaw = std::atan2(target_position.y(), target_position.x());
+        return compensate_pitch(target_position, pitch, bullet_velocity);
     }
 
     /// Compensate the trajectory of the bullet, output compensated pitch (rad).
     /// This implementation matches rm_utils/math/trajectory_compensator.cpp (atvision_ws).
     [[nodiscard]] bool
         compensate(const Eigen::Vector3d& target_position, double& pitch) const noexcept {
+        return compensate_pitch(target_position, pitch, velocity);
+    }
+
+    /// Compensate pitch with specified bullet velocity (const-safe, core implementation)
+    [[nodiscard]] virtual bool compensate_pitch(
+        const Eigen::Vector3d& target_position, double& pitch,
+        double bullet_velocity) const noexcept {
         const double target_height    = target_position.z();
         double iterative_height       = target_height;
         double impact_height          = 0.0;
@@ -56,7 +66,7 @@ public:
                 break;
             }
 
-            impact_height = calculate_trajectory(distance, angle);
+            impact_height = calculate_trajectory(distance, angle, bullet_velocity);
             dh            = target_height - impact_height;
             if (std::abs(dh) < kDhThreshold) {
                 break;
@@ -111,7 +121,13 @@ public:
 
 protected:
     /// Calculate trajectory z position at horizontal distance x
-    [[nodiscard]] virtual double calculate_trajectory(double x, double pitch) const noexcept = 0;
+    [[nodiscard]] virtual double calculate_trajectory(double x, double pitch) const noexcept {
+        return calculate_trajectory(x, pitch, velocity);
+    }
+
+    /// Calculate trajectory z position at horizontal distance x with specified velocity
+    [[nodiscard]] virtual double
+        calculate_trajectory(double x, double pitch, double bullet_velocity) const noexcept = 0;
 };
 
 /// Factory function to create compensator (implemented in `trajectory_compensator.cpp`).
@@ -119,4 +135,3 @@ protected:
     create_compensator(TrajectoryCompensatorType type) noexcept;
 
 } // namespace fcs::L4
-

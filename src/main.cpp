@@ -175,8 +175,8 @@ int main() {
     SPDLOG_INFO("Tracker initialized");
 
     SPDLOG_INFO(
-        "GimbalPlanner initialized (bullet_speed={:.1f}m/s)",
-        vision.planner().trajectory.bullet_speed);
+        "MPC GimbalPlanner initialized (bullet_speed={:.1f}m/s, horizon={})",
+        vision.mpc_planner().trajectory.bullet_speed, vision.mpc_planner().horizon);
 
     // Register AT Legacy detection pipeline systems
     fcs::register_at_legacy_detection_systems(scheduler);
@@ -185,7 +185,7 @@ int main() {
     fcs::L3::register_tracker_systems(scheduler);
 
     // Register L4 Planning pipeline (TrackerOutput -> GimbalPlan + FireCommand)
-    fcs::L4::register_planning_systems_with_config(scheduler, vision.planner());
+    fcs::L4::register_mpc_planning_systems_with_config(scheduler, vision.mpc_planner());
 
     // Register L5 Enhanced Weapon System (GimbalPlan + FireCommand -> WeaponCommand)
     fcs::L5::register_enhanced_weapon_system_with_config_and_compensator(

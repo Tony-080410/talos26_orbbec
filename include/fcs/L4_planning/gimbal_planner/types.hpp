@@ -27,10 +27,17 @@ struct GimbalPlan {
     double yaw_diff{0};
     double pitch_diff{0};
 
+    // Feedforward terms (from MPC planner)
+    double yaw_vel{0};   // Planned yaw angular velocity (rad/s)
+    double pitch_vel{0}; // Planned pitch angular velocity (rad/s)
+    double yaw_acc{0};   // Planned yaw angular acceleration (rad/s^2)
+    double pitch_acc{0}; // Planned pitch angular acceleration (rad/s^2)
+
     // Target info
     double distance{0};
     bool fire_advice{false};
-    double confidence{0.0}; // Confidence level in the fire decision
+    double confidence{0.0};     // Confidence level in the fire decision
+    double tracking_error{0.0}; // MPC tracking error (radians)
     bool track_center;
 
     // Predicted armor position (for visualization)

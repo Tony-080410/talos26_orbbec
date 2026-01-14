@@ -55,9 +55,13 @@ struct VisionConfig {
 
     [[nodiscard]] const L3::TrackerConfig& tracker() const noexcept { return l3.tracker; }
     [[nodiscard]] const L4::GimbalPlannerConfig& planner() const noexcept { return l4.planner; }
+    [[nodiscard]] const L4::MpcPlannerConfig& mpc_planner() const noexcept {
+        return l4.mpc_planner;
+    }
     [[nodiscard]] const L5::WeaponControllerConfig& weapon() const noexcept { return l5.weapon; }
     [[nodiscard]] L3::TrackerConfig& tracker() noexcept { return l3.tracker; }
     [[nodiscard]] L4::GimbalPlannerConfig& planner() noexcept { return l4.planner; }
+    [[nodiscard]] L4::MpcPlannerConfig& mpc_planner() noexcept { return l4.mpc_planner; }
     [[nodiscard]] L5::WeaponControllerConfig& weapon() noexcept { return l5.weapon; }
 
     std::expected<void, std::string> read_from(const toml::table& tbl) noexcept;

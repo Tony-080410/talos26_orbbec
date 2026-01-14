@@ -3,6 +3,9 @@
 #include <expected>
 #include <memory>
 
+#include "fcs/L4_planning/mpc_planner/config.hpp"
+#include "fcs/L4_planning/trajectory_config.hpp"
+
 // Forward declaration to avoid including toml++ in config headers.
 namespace toml {
 inline namespace v3 {
@@ -11,233 +14,6 @@ class table;
 } // namespace toml
 
 namespace fcs::L4 {
-
-// ============================================================================
-// Trajectory Configuration (L4 Layer - Master)
-// ============================================================================
-
-// ----------------------------------------------------------------------------
-// Planner tuning guide
-// ----------------------------------------------------------------------------
-//
-// Problem:
-//   The L4 gimbal planner converts the L3 tracker state into yaw/pitch commands and a fire
-//   decision. The core difficulty is time alignment + ballistics: you must aim where the target
-//   will be when the bullet arrives.
-//
-// Intuition:
-//   - Get timing right first (`plan_to_muzzle_delay`, `bullet_speed`), otherwise the lead is wrong
-//     and everything else looks like "magic".
-//   - Then tune armor selection and mode switching (`side_angle`, `min_switching_v_yaw`,
-//     `max_tracking_v_yaw`, `transfer_thresh`).
-//   - Finally tune the ballistics model details (`resistance` or RK4 parameters).
-//
-// Analogy:
-//   Like throwing a ball at a moving target: lead by (reaction time + flight time).
-//
-// Precise (implementation facts; see `planner.hpp::GimbalPlanner::plan`):
-//   - dt = (now - measurement_ts) + flying_time + plan_to_muzzle_delay
-//   - `now` comes from `clock::now_ns()` (real-time), not from the measurement timestamp.
-//   - `flying_time` is first estimated cheaply using LOS-to-center, then refined by the configured
-//     trajectory compensator (Ideal/Resistance/RK4).
-//   - TOML parsing is strict: `READ(...)` makes keys required; only fields read with
-//   `READ_OPT(...)`
-//     can be omitted and fall back to struct defaults.
-
-enum class TrajectoryCompensatorType {
-    Ideal,
-    Resistance,
-    RK4,
-};
-
-struct TrajectoryConfig {
-    /// Number of iterations for pitch solving / compensation loop.
-    ///
-    /// Problem:
-    ///   The compensator solves for pitch such that the simulated impact height matches the target
-    ///   height. This is an iterative root-finding loop.
-    ///
-    /// Intuition:
-    ///   Larger → more chances to converge (robust but slower); smaller → faster but may fail to
-    ///   converge, especially at long range / steep pitch.
-    ///
-    /// Analogy:
-    ///   Like "max iterations" in an optimizer.
-    ///
-    /// Precise:
-    ///   - Ideal/Resistance: used as the loop bound in `TrajectoryCompensator::compensate(pitch)`.
-    ///   - RK4: with a lookup table, runtime uses table inversion + up to 1~2 RK4 refinements;
-    ///          without a table, the fallback loop uses `min(iteration_times, 6)` to avoid
-    ///          expensive real-time RK4 iterations.
-    int iteration_times{20};
-
-    /// Bullet velocity at muzzle (m/s).
-    ///
-    /// Problem:
-    ///   Lead and drop both depend strongly on bullet speed. A wrong value makes the aim wrong at
-    ///   all distances.
-    ///
-    /// Intuition:
-    ///   Higher speed → less flight time → less lead and less drop; lower speed → more lead/drop.
-    ///
-    /// Analogy:
-    ///   Like how fast you can throw a ball: faster throws need less "leading".
-    ///
-    /// Precise:
-    ///   - Used by all compensators as `velocity`.
-    ///   - Also used in `GimbalPlanner::plan` for a cheap initial flying-time estimate:
-    ///       t ≈ range / (max(1e-3, bullet_speed) * cos(pitch_los_center)).
-    double bullet_speed{25.0};
-
-    /// Gravity acceleration (m/s^2)
-    ///
-    /// Problem:
-    ///   Gravity drives the vertical drop term; an incorrect value biases long-range pitch.
-    ///
-    /// Intuition:
-    ///   Larger gravity → more drop → need higher pitch; smaller gravity → less drop.
-    ///
-    /// Analogy:
-    ///   Like playing the same throw on Earth vs the Moon.
-    ///
-    /// Precise:
-    ///   Used in all compensators in the vertical acceleration term (ideal and with drag).
-    double gravity{9.8};
-
-    /// Linearized air resistance coefficient (used by ResistanceCompensator only).
-    ///
-    /// Problem:
-    ///   The simplified "Resistance" model uses an exponential term to approximate drag without
-    ///   running RK4. This parameter must be fitted to your projectile + environment.
-    ///
-    /// Intuition:
-    ///   Larger resistance → more deceleration → longer flight time and more drop (need more
-    ///   pitch).
-    ///
-    /// Analogy:
-    ///   Like a coarse "air thickness" knob for a simplified model.
-    ///
-    /// Precise:
-    ///   Used only by `ResistanceCompensator`. The implementation clamps it to >= 1e-4, so using
-    ///   0.0 does NOT disable drag in this model.
-    double resistance{0.001};
-
-    /// Drag coefficient Cd (dimensionless), used by RK4Compensator only.
-    ///
-    /// Problem:
-    ///   RK4 uses a quadratic drag model. Cd is part of the drag constant k.
-    ///
-    /// Intuition:
-    ///   Larger Cd → more drag → more drop and longer TOF.
-    ///
-    /// Analogy:
-    ///   Like how "blunt" the projectile is in the air.
-    ///
-    /// Precise:
-    ///   Used in `RK4Compensator::drag_k()`:
-    ///     k = 0.5 * cd * rho * A / m, with A = pi*(diameter/2)^2.
-    double cd{0.47};
-
-    /// Air density rho (kg/m^3), used by RK4Compensator only.
-    ///
-    /// Problem:
-    ///   Air density changes with altitude/temperature and affects drag in the RK4 model.
-    ///
-    /// Intuition:
-    ///   Higher rho → more drag; lower rho → less drag.
-    ///
-    /// Analogy:
-    ///   Like running in thick fog vs thin air.
-    ///
-    /// Precise:
-    ///   Used in `RK4Compensator::drag_k()` as part of k.
-    double rho{1.225};
-
-    /// Bullet diameter (meters), used by RK4Compensator only to compute cross-sectional area A.
-    ///
-    /// Problem:
-    ///   Drag scales with cross-sectional area A.
-    ///
-    /// Intuition:
-    ///   Larger diameter → larger A → more drag.
-    ///
-    /// Analogy:
-    ///   Like a parachute: more area catches more air.
-    ///
-    /// Precise:
-    ///   Used in `RK4Compensator::drag_k()` via A = pi*(diameter/2)^2 (with a small lower bound).
-    double diameter{0.017};
-
-    /// Bullet mass (kg), used by RK4Compensator only.
-    ///
-    /// Problem:
-    ///   Drag acceleration is inversely proportional to mass.
-    ///
-    /// Intuition:
-    ///   Smaller mass → slows down faster under the same drag; larger mass → keeps speed better.
-    ///
-    /// Analogy:
-    ///   Like pushing a ping-pong ball vs a stone through the air.
-    ///
-    /// Precise:
-    ///   Used in `RK4Compensator::drag_k()` in the denominator (with a small lower bound).
-    double mass{0.0032};
-
-    /// Desired RK4 integration dt (seconds), used by RK4Compensator only.
-    ///
-    /// Problem:
-    ///   RK4 integration accuracy depends on step size, but compute cost grows with the number of
-    ///   steps.
-    ///
-    /// Intuition:
-    ///   Smaller → more accurate but slower; larger → faster but less accurate (especially at long
-    ///   range / steep pitch / high drag).
-    ///
-    /// Analogy:
-    ///   Like choosing how fine the timestep is in a physics simulation.
-    ///
-    /// Precise:
-    ///   The implementation clamps `rk4_dt` into [1e-5, 0.02] and computes:
-    ///     steps = clamp(ceil(t_est / desired_dt), rk4_min_steps, rk4_max_steps)
-    ///     dt    = t_est / steps
-    ///   where t_est ≈ range / (max(1e-3, velocity) * max(0.05, |cos(pitch)|)).
-    double rk4_dt{0.001};
-
-    /// Minimum RK4 steps per integration, used by RK4Compensator only.
-    ///
-    /// Problem:
-    ///   For short flight times, a naive `t_est / rk4_dt` can produce too few steps, making RK4
-    ///   numerically unstable.
-    ///
-    /// Intuition:
-    ///   Larger → more stable/accurate at short range but higher compute cost.
-    ///
-    /// Analogy:
-    ///   A minimum "resolution" setting.
-    ///
-    /// Precise:
-    ///   Used in `RK4Compensator::select_dt()` as the lower bound on `steps`.
-    int rk4_min_steps{50};
-
-    /// Maximum RK4 steps per integration, used by RK4Compensator only.
-    ///
-    /// Problem:
-    ///   Very long flight times can require many RK4 steps, which may be too expensive for a
-    ///   real-time loop.
-    ///
-    /// Intuition:
-    ///   Smaller → cap compute cost but risk poor accuracy at long range; larger → better accuracy
-    ///   but potentially slower.
-    ///
-    /// Analogy:
-    ///   A hard "CPU budget" cap.
-    ///
-    /// Precise:
-    ///   Used in `RK4Compensator::select_dt()` as the upper bound on `steps` (and thus on runtime).
-    int rk4_max_steps{2000};
-
-    std::expected<void, std::string> read_from(const toml::table& tbl) noexcept;
-};
 
 // ============================================================================
 // Gimbal Planner Configuration (L4 Layer)
@@ -396,10 +172,15 @@ struct GimbalPlannerConfig {
 
 struct L4Config {
     GimbalPlannerConfig planner{};
+    MpcPlannerConfig mpc_planner{};
 
     /// Get shared_ptr for atomic config distribution
     [[nodiscard]] std::shared_ptr<const GimbalPlannerConfig> planner_ptr() const {
         return std::make_shared<const GimbalPlannerConfig>(planner);
+    }
+
+    [[nodiscard]] std::shared_ptr<const MpcPlannerConfig> mpc_planner_ptr() const {
+        return std::make_shared<const MpcPlannerConfig>(mpc_planner);
     }
 
     std::expected<void, std::string> read_from(const toml::table& tbl) noexcept;

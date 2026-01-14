@@ -22,9 +22,10 @@ public:
     }
 
 protected:
-    [[nodiscard]] double calculate_trajectory(double x, double pitch) const noexcept override {
-        const double t = x / (velocity * std::cos(pitch));
-        const double y = velocity * std::sin(pitch) * t - 0.5 * gravity * t * t;
+    [[nodiscard]] double calculate_trajectory(
+        double x, double pitch, double bullet_velocity) const noexcept override {
+        const double t = x / (bullet_velocity * std::cos(pitch));
+        const double y = bullet_velocity * std::sin(pitch) * t - 0.5 * gravity * t * t;
         return y;
     }
 };
@@ -42,10 +43,11 @@ public:
     }
 
 protected:
-    [[nodiscard]] double calculate_trajectory(double x, double pitch) const noexcept override {
+    [[nodiscard]] double calculate_trajectory(
+        double x, double pitch, double bullet_velocity) const noexcept override {
         const double r = resistance < 1e-4 ? 1e-4 : resistance;
-        const double t = (std::exp(r * x) - 1.0) / (r * velocity * std::cos(pitch));
-        const double y = velocity * std::sin(pitch) * t - 0.5 * gravity * t * t;
+        const double t = (std::exp(r * x) - 1.0) / (r * bullet_velocity * std::cos(pitch));
+        const double y = bullet_velocity * std::sin(pitch) * t - 0.5 * gravity * t * t;
         return y;
     }
 };
@@ -79,7 +81,7 @@ public:
         }
 
         for (double x = 0; x < max_distance; x += sample_step) {
-            trajectory.emplace_back(x, calculate_trajectory(x, pitch));
+            trajectory.emplace_back(x, calculate_trajectory(x, pitch, velocity));
         }
         return trajectory;
     }
@@ -212,7 +214,9 @@ public:
     }
 
 protected:
-    [[nodiscard]] double calculate_trajectory(double x, double pitch) const noexcept override {
+    [[nodiscard]] double calculate_trajectory(
+        double x, double pitch, double /*bullet_velocity*/) const noexcept override {
+        // Note: RK4 uses precomputed table with member velocity, bullet_velocity param ignored
         if (x < 0.0) {
             return 0.0;
         }

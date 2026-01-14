@@ -158,11 +158,17 @@ add_library(fcs SHARED
         src/fcs/L3_estimation/tracker_systems.cpp
         src/fcs/L4_planning/gimbal_planner/config.cpp
         src/fcs/L4_planning/gimbal_planner/trajectory_compensator.cpp
+        src/fcs/L4_planning/trajectory_config.cpp
+        src/fcs/L4_planning/mpc_planner/config.cpp
         src/fcs/L4_planning/planning_systems.cpp
         src/fcs/L5_weapon/config.cpp
         src/fcs/visualization/foxglove_systems.cpp
         src/fcs/L5_weapon/enhanced/weapon_controller.cpp
         src/fcs/L5_weapon/enhanced/weapon_systems.cpp
+        # TinyMPC solver
+        3dparty/tinympc/admm.cpp
+        3dparty/tinympc/tiny_api.cpp
+        3dparty/tinympc/rho_benchmark.cpp
 )
 
 target_include_directories(fcs PUBLIC
@@ -175,6 +181,7 @@ target_include_directories(fcs SYSTEM PUBLIC
         ${foxglove_SOURCE_DIR}/include
         ${foxglove_SOURCE_DIR}/include/foxglove
         3dparty/lieplusplus
+        3dparty/tinympc
 )
 
 message(STATUS "OpenCV libs: ${OpenCV_LIBS}")
