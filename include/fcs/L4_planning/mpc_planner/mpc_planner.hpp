@@ -276,8 +276,10 @@ inline std::expected<MpcPlannerOutput, std::string> MpcGimbalPlanner::plan(
         return std::unexpected("Target not tracking");
     }
 
-    // Warm start: shift previous solution forward
-    warm_start_shift();
+    // NOTE: warm_start disabled - causes tracking issues when target suddenly turns
+    // Each frame now solves independently from reference trajectory start point,
+    // matching sp_vision_25 behavior for better stability
+    // warm_start_shift();
 
     if (target.is_robot()) {
         return plan_robot(
@@ -297,16 +299,24 @@ inline std::expected<MpcPlannerOutput, std::string> MpcGimbalPlanner::plan_robot
     double bullet_speed, [[maybe_unused]] double current_yaw,
     [[maybe_unused]] double current_pitch) noexcept {
 
+    // Adaptive delay compensation based on target angular velocity
+    const double delay = std::abs(target.v_yaw) > config_.decision_speed ? config_.high_speed_delay
+                                                                         : config_.low_speed_delay;
+
     // Generate reference trajectory
     double yaw0 = 0.0;
     auto traj   = trajectory_gen_.generate_robot(
-        target, timestamp_ns, current_time_ns, config_.plan_to_muzzle_delay, *compensator_,
-        bullet_speed, yaw0);
+        target, timestamp_ns, current_time_ns, delay, *compensator_, bullet_speed, yaw0);
 
     // Set initial state for yaw solver (use reference trajectory start point)
     Eigen::Vector2d x0;
     x0 << traj(0, 0), traj(1, 0);
     tiny_set_x0(yaw_solver_, x0);
+
+    // Initialize solver state from reference trajectory (cold start each frame)
+    // This ensures we don't carry over stale solutions when target changes rapidly
+    yaw_solver_->work->x = traj.block(0, 0, 2, config_.horizon);
+    yaw_solver_->work->u.setZero();
 
     // Set reference trajectory for yaw (rows 0-1)
     yaw_solver_->work->Xref = traj.block(0, 0, 2, config_.horizon);
@@ -315,6 +325,10 @@ inline std::expected<MpcPlannerOutput, std::string> MpcGimbalPlanner::plan_robot
     // Set initial state for pitch solver (use reference trajectory start point)
     x0 << traj(2, 0), traj(3, 0);
     tiny_set_x0(pitch_solver_, x0);
+
+    // Initialize solver state from reference trajectory (cold start each frame)
+    pitch_solver_->work->x = traj.block(2, 0, 2, config_.horizon);
+    pitch_solver_->work->u.setZero();
 
     // Set reference trajectory for pitch (rows 2-3)
     pitch_solver_->work->Xref = traj.block(2, 0, 2, config_.horizon);
@@ -360,16 +374,22 @@ inline std::expected<MpcPlannerOutput, std::string> MpcGimbalPlanner::plan_robot
 
     // Predicted position (in odom frame) - use the flying time to predict
     const double flying_time = compensator_->get_flying_time(armor_poses[best_idx].head<3>());
-    const double predict_dt  = static_cast<double>(current_time_ns - timestamp_ns) * 1e-9
-                            + config_.plan_to_muzzle_delay + flying_time;
+    const double predict_dt =
+        static_cast<double>(current_time_ns - timestamp_ns) * 1e-9 + delay + flying_time;
 
-    // Predict target center position
+    // Predict target center position and the selected armor position
     Eigen::Vector3d pred_center = target.position + target.velocity * predict_dt;
     double pred_yaw             = target.yaw + target.v_yaw * predict_dt;
-    double r                    = target.radius0;
+
+    // Use correct radius and height for selected armor (0,2 use radius0/z0; 1,3 use radius1/z1)
+    const double r         = (best_idx % 2 == 0) ? target.radius0 : target.radius1;
+    const double h         = target.z1 - target.position.z();
+    const double armor_z   = pred_center.z() + ((best_idx % 2 == 0) ? 0.0 : h);
+    const double armor_yaw = pred_yaw + best_idx * (2.0 * std::numbers::pi / target.armors_num);
+
     Eigen::Vector3d pred_armor_pos{
-        pred_center.x() - r * std::cos(pred_yaw), pred_center.y() - r * std::sin(pred_yaw),
-        pred_center.z()};
+        pred_center.x() - r * std::cos(armor_yaw), pred_center.y() - r * std::sin(armor_yaw),
+        armor_z};
     output.predicted_position = pred_armor_pos;
     output.predicted_future   = current_time_ns + static_cast<uint64_t>(flying_time * 1e9);
 
@@ -383,6 +403,45 @@ inline std::expected<MpcPlannerOutput, std::string> MpcGimbalPlanner::plan_robot
         p.second = -x * std::sin(output.pitch) + z * std::cos(output.pitch);
     }
 
+    // Store MPC debug data for visualization
+    const int N            = config_.horizon;
+    output.mpc_dt          = config_.dt;
+    output.mpc_current_idx = idx;
+
+    // Reserve space
+    output.ref_yaw.resize(N);
+    output.ref_yaw_vel.resize(N);
+    output.ref_pitch.resize(N);
+    output.ref_pitch_vel.resize(N);
+    output.opt_yaw.resize(N);
+    output.opt_yaw_vel.resize(N);
+    output.opt_pitch.resize(N);
+    output.opt_pitch_vel.resize(N);
+    output.ctrl_yaw_acc.resize(N - 1);
+    output.ctrl_pitch_acc.resize(N - 1);
+
+    // Copy reference trajectory (add yaw0 offset back)
+    for (int k = 0; k < N; ++k) {
+        output.ref_yaw[k]       = normalize_rad(traj(0, k) + yaw0);
+        output.ref_yaw_vel[k]   = traj(1, k);
+        output.ref_pitch[k]     = traj(2, k);
+        output.ref_pitch_vel[k] = traj(3, k);
+    }
+
+    // Copy optimized trajectory (add yaw0 offset back)
+    for (int k = 0; k < N; ++k) {
+        output.opt_yaw[k]       = normalize_rad(yaw_solver_->work->x(0, k) + yaw0);
+        output.opt_yaw_vel[k]   = yaw_solver_->work->x(1, k);
+        output.opt_pitch[k]     = pitch_solver_->work->x(0, k);
+        output.opt_pitch_vel[k] = pitch_solver_->work->x(1, k);
+    }
+
+    // Copy control sequence (accelerations)
+    for (int k = 0; k < N - 1; ++k) {
+        output.ctrl_yaw_acc[k]   = yaw_solver_->work->u(0, k);
+        output.ctrl_pitch_acc[k] = pitch_solver_->work->u(0, k);
+    }
+
     return output;
 }
 
@@ -391,21 +450,34 @@ inline std::expected<MpcPlannerOutput, std::string> MpcGimbalPlanner::plan_outpo
     double bullet_speed, [[maybe_unused]] double current_yaw,
     [[maybe_unused]] double current_pitch) noexcept {
 
+    // Adaptive delay compensation based on target angular velocity
+    const double delay = std::abs(target.v_yaw) > config_.decision_speed ? config_.high_speed_delay
+                                                                         : config_.low_speed_delay;
+
     double yaw0 = 0.0;
     auto traj   = trajectory_gen_.generate_outpost(
-        target, timestamp_ns, current_time_ns, config_.plan_to_muzzle_delay, *compensator_,
-        bullet_speed, yaw0);
+        target, timestamp_ns, current_time_ns, delay, *compensator_, bullet_speed, yaw0);
 
     // Set initial state for yaw solver (use reference trajectory start point)
     Eigen::Vector2d x0;
     x0 << traj(0, 0), traj(1, 0);
     tiny_set_x0(yaw_solver_, x0);
+
+    // Initialize solver state from reference trajectory (cold start each frame)
+    yaw_solver_->work->x = traj.block(0, 0, 2, config_.horizon);
+    yaw_solver_->work->u.setZero();
+
     yaw_solver_->work->Xref = traj.block(0, 0, 2, config_.horizon);
     tiny_solve(yaw_solver_);
 
     // Set initial state for pitch solver (use reference trajectory start point)
     x0 << traj(2, 0), traj(3, 0);
     tiny_set_x0(pitch_solver_, x0);
+
+    // Initialize solver state from reference trajectory (cold start each frame)
+    pitch_solver_->work->x = traj.block(2, 0, 2, config_.horizon);
+    pitch_solver_->work->u.setZero();
+
     pitch_solver_->work->Xref = traj.block(2, 0, 2, config_.horizon);
     tiny_solve(pitch_solver_);
 
@@ -434,8 +506,8 @@ inline std::expected<MpcPlannerOutput, std::string> MpcGimbalPlanner::plan_outpo
     output.distance = armor_pos_3d.norm();
 
     const double flying_time = compensator_->get_flying_time(armor_pos_3d);
-    const double predict_dt  = static_cast<double>(current_time_ns - timestamp_ns) * 1e-9
-                            + config_.plan_to_muzzle_delay + flying_time;
+    const double predict_dt =
+        static_cast<double>(current_time_ns - timestamp_ns) * 1e-9 + delay + flying_time;
 
     double pred_yaw    = target.yaw + target.v_yaw * predict_dt;
     constexpr double r = L3::OutpostTargetState::radius;
@@ -453,6 +525,45 @@ inline std::expected<MpcPlannerOutput, std::string> MpcGimbalPlanner::plan_outpo
         double z = p.second;
         p.first  = x * std::cos(output.pitch) + z * std::sin(output.pitch);
         p.second = -x * std::sin(output.pitch) + z * std::cos(output.pitch);
+    }
+
+    // Store MPC debug data for visualization
+    const int N            = config_.horizon;
+    output.mpc_dt          = config_.dt;
+    output.mpc_current_idx = idx;
+
+    // Reserve space
+    output.ref_yaw.resize(N);
+    output.ref_yaw_vel.resize(N);
+    output.ref_pitch.resize(N);
+    output.ref_pitch_vel.resize(N);
+    output.opt_yaw.resize(N);
+    output.opt_yaw_vel.resize(N);
+    output.opt_pitch.resize(N);
+    output.opt_pitch_vel.resize(N);
+    output.ctrl_yaw_acc.resize(N - 1);
+    output.ctrl_pitch_acc.resize(N - 1);
+
+    // Copy reference trajectory (add yaw0 offset back)
+    for (int k = 0; k < N; ++k) {
+        output.ref_yaw[k]       = normalize_rad(traj(0, k) + yaw0);
+        output.ref_yaw_vel[k]   = traj(1, k);
+        output.ref_pitch[k]     = traj(2, k);
+        output.ref_pitch_vel[k] = traj(3, k);
+    }
+
+    // Copy optimized trajectory (add yaw0 offset back)
+    for (int k = 0; k < N; ++k) {
+        output.opt_yaw[k]       = normalize_rad(yaw_solver_->work->x(0, k) + yaw0);
+        output.opt_yaw_vel[k]   = yaw_solver_->work->x(1, k);
+        output.opt_pitch[k]     = pitch_solver_->work->x(0, k);
+        output.opt_pitch_vel[k] = pitch_solver_->work->x(1, k);
+    }
+
+    // Copy control sequence (accelerations)
+    for (int k = 0; k < N - 1; ++k) {
+        output.ctrl_yaw_acc[k]   = yaw_solver_->work->u(0, k);
+        output.ctrl_pitch_acc[k] = pitch_solver_->work->u(0, k);
     }
 
     return output;

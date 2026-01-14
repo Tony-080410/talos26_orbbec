@@ -186,6 +186,33 @@ struct RobotInEKFConfig {
     /// noise; actual R(3,3) = (log(dist+1)/200 + sigma_armor_yaw)².
     double sigma_armor_yaw{0.3};
 
+    // -------------------------------------------------------------------------
+    // Innovation gating (outlier rejection)
+    // -------------------------------------------------------------------------
+    //
+    // Problem:
+    //   Large innovations (measurement - prediction) can occur due to:
+    //   - Wrong armor_id association
+    //   - PnP outliers / detection glitches
+    //   - Rapid direction changes at turning points
+    //
+    // Trade-off:
+    //   - Smaller gate → more robust to outliers, but may skip valid updates during fast maneuvers
+    //   - Larger gate → better tracking during fast maneuvers, but more sensitive to outliers
+    //
+    // Precise:
+    //   If |innovation| > max_*_innovation, the entire spherical update is skipped.
+    //   Set to large values (e.g., 3.14) to effectively disable gating.
+
+    /// Maximum allowed angle innovation (rad) before rejecting the measurement.
+    /// Applies to yaw, pitch, and armor_yaw innovations in spherical mode.
+    /// Default 1.5 rad (~86°) allows fast maneuvers; use 0.5 (~30°) for more outlier rejection.
+    double max_angle_innovation{1.5};
+
+    /// Maximum allowed distance innovation (m) before rejecting the measurement.
+    /// Default 3.0m; set larger if target can have large depth jumps.
+    double max_dist_innovation{3.0};
+
     std::expected<void, std::string> read_from(const toml::table& tbl) noexcept;
 };
 
@@ -246,6 +273,18 @@ struct OutpostInEKFConfig {
     /// Armor orientation (yaw) observation noise std-dev (rad) for spherical model.
     /// Precise: same as RobotInEKFConfig::sigma_armor_yaw.
     double sigma_armor_yaw{0.3};
+
+    // -------------------------------------------------------------------------
+    // Innovation gating (outlier rejection)
+    // -------------------------------------------------------------------------
+
+    /// Maximum allowed angle innovation (rad) before rejecting the measurement.
+    /// Precise: same as RobotInEKFConfig::max_angle_innovation.
+    double max_angle_innovation{1.5};
+
+    /// Maximum allowed distance innovation (m) before rejecting the measurement.
+    /// Precise: same as RobotInEKFConfig::max_dist_innovation.
+    double max_dist_innovation{3.0};
 
     std::expected<void, std::string> read_from(const toml::table& tbl) noexcept;
 };

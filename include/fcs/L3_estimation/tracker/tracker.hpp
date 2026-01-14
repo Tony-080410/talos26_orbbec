@@ -169,19 +169,21 @@ public:
                         2.0 * std::numbers::pi / static_cast<double>(OutpostModel::ARMORS_NUM);
                     const double yaw_offset = static_cast<double>(armor_id) * kAngleStep;
 
-                    if (std::isfinite(armor_yaw_raw)) {
-                        const double armor_yaw_pred  = outpost_inekf_->get_yaw() + yaw_offset;
-                        const double armor_yaw_meas  = unwrap_rad(armor_yaw_pred, armor_yaw_raw);
-                        const double target_yaw_meas = armor_yaw_meas - yaw_offset;
-                        outpost_inekf_->update_yaw(target_yaw_meas, config_.outpost_inekf);
-                    }
-
                     // Use spherical or Cartesian observation mode based on config
                     if (config_.outpost_inekf.use_spherical_observation) {
+                        // Spherical mode: update_armor_spherical includes armor_yaw,
+                        // so we skip separate update_yaw to avoid double yaw update.
                         const Eigen::Vector3d armor_ypd{z[0], z[1], z[2]};
                         outpost_inekf_->update_armor_spherical(
                             armor_ypd, z[3], armor_id, config_.outpost_inekf);
                     } else {
+                        // Cartesian mode: update yaw separately, then position
+                        if (std::isfinite(armor_yaw_raw)) {
+                            const double armor_yaw_pred = outpost_inekf_->get_yaw() + yaw_offset;
+                            const double armor_yaw_meas = unwrap_rad(armor_yaw_pred, armor_yaw_raw);
+                            const double target_yaw_meas = armor_yaw_meas - yaw_offset;
+                            outpost_inekf_->update_yaw(target_yaw_meas, config_.outpost_inekf);
+                        }
                         outpost_inekf_->update_armor(
                             armor_pos_odom, armor_id, config_.outpost_inekf);
                     }
@@ -203,20 +205,21 @@ public:
                         2.0 * std::numbers::pi / static_cast<double>(RobotModel::ARMORS_NUM);
                     const double yaw_offset = static_cast<double>(armor_id) * kAngleStep;
 
-                    // Use direct armor yaw measurement to update target yaw.
-                    if (std::isfinite(armor_yaw_raw)) {
-                        const double armor_yaw_pred  = robot_inekf_->get_yaw() + yaw_offset;
-                        const double armor_yaw_meas  = unwrap_rad(armor_yaw_pred, armor_yaw_raw);
-                        const double target_yaw_meas = armor_yaw_meas - yaw_offset;
-                        robot_inekf_->update_yaw(target_yaw_meas, config_.robot_inekf);
-                    }
-
                     // Use spherical or Cartesian observation mode based on config
                     if (config_.robot_inekf.use_spherical_observation) {
+                        // Spherical mode: update_armor_spherical includes armor_yaw,
+                        // so we skip separate update_yaw to avoid double yaw update.
                         const Eigen::Vector3d armor_ypd{z[0], z[1], z[2]};
                         robot_inekf_->update_armor_spherical(
                             armor_ypd, z[3], armor_id, config_.robot_inekf);
                     } else {
+                        // Cartesian mode: update yaw separately, then position
+                        if (std::isfinite(armor_yaw_raw)) {
+                            const double armor_yaw_pred = robot_inekf_->get_yaw() + yaw_offset;
+                            const double armor_yaw_meas = unwrap_rad(armor_yaw_pred, armor_yaw_raw);
+                            const double target_yaw_meas = armor_yaw_meas - yaw_offset;
+                            robot_inekf_->update_yaw(target_yaw_meas, config_.robot_inekf);
+                        }
                         robot_inekf_->update_armor(armor_pos_odom, armor_id, config_.robot_inekf);
                     }
                 }

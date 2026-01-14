@@ -257,6 +257,46 @@ struct MpcPlannerConfig {
     ///   Same as GimbalPlannerConfig::plan_to_muzzle_delay.
     double plan_to_muzzle_delay{0.0};
 
+    // ========================================================================
+    // Adaptive Delay Compensation
+    // ========================================================================
+
+    /// Angular velocity threshold for high/low speed classification (rad/s).
+    ///
+    /// Problem:
+    ///   High-speed rotating targets have different system delay characteristics
+    ///   compared to slow-moving or stationary targets.
+    ///
+    /// Intuition:
+    ///   Targets spinning faster than this threshold use high_speed_delay;
+    ///   slower targets use low_speed_delay.
+    ///
+    /// Precise:
+    ///   delay = |v_yaw| > decision_speed ? high_speed_delay : low_speed_delay
+    double decision_speed{8.0};
+
+    /// System delay compensation for high-speed targets (seconds).
+    ///
+    /// Problem:
+    ///   High-speed rotating targets require different lead time compensation
+    ///   due to their rapid position changes during system latency.
+    ///
+    /// Intuition:
+    ///   Includes: camera exposure, image processing, communication, gimbal response.
+    ///   Typical range: 0.01 to 0.03 seconds.
+    double high_speed_delay{0.015};
+
+    /// System delay compensation for low-speed targets (seconds).
+    ///
+    /// Problem:
+    ///   Slow or stationary targets are less affected by system delay,
+    ///   but still need compensation for accurate tracking.
+    ///
+    /// Intuition:
+    ///   Can be tuned independently from high_speed_delay.
+    ///   Often set to the same value for simplicity.
+    double low_speed_delay{0.015};
+
     std::expected<void, std::string> read_from(const toml::table& tbl) noexcept;
 };
 

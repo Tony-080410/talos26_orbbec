@@ -253,6 +253,14 @@ private:
             SPDLOG_ERROR("perf_stats channel create failed: {}", foxglove::strerror(r.error()));
             init_success_ = false;
         }
+
+        // MPC trajectory channel
+        if (auto r = foxglove::RawChannel::create("/mpc/trajectory", "json"); r.has_value()) {
+            mpc_traj_ch_.emplace(std::move(r.value()));
+        } else {
+            SPDLOG_ERROR("mpc_traj channel create failed: {}", foxglove::strerror(r.error()));
+            init_success_ = false;
+        }
     }
 
     void message_sender_thread() {
@@ -315,6 +323,10 @@ private:
                         if (perf_stats_ch_)
                             perf_stats_ch_->log(
                                 reinterpret_cast<const std::byte*>(m.data.data()), m.data.size());
+                    } else if constexpr (std::is_same_v<T, MpcTrajectoryMessage>) {
+                        if (mpc_traj_ch_)
+                            mpc_traj_ch_->log(
+                                reinterpret_cast<const std::byte*>(m.data.data()), m.data.size());
                     }
                 },
                 msg);
@@ -344,6 +356,7 @@ private:
     std::optional<foxglove::schemas::SceneUpdateChannel> gimbal_scene_ch_;
     std::optional<foxglove::schemas::CameraCalibrationChannel> camera_calib_ch_;
     std::optional<foxglove::RawChannel> perf_stats_ch_;
+    std::optional<foxglove::RawChannel> mpc_traj_ch_;
 
     // TF exporter (使用外部共享的 CoordinateSystem)
     std::optional<fast_tf::FoxgloveExporter> tf_exporter_;

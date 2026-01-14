@@ -127,6 +127,21 @@ void register_mpc_planning_systems(
                     plan.predicted_future   = result->predicted_future;
                     plan.predicted_position = result->predicted_position;
                     plan.trajectory         = std::move(result->planned_trajectory);
+
+                    // Copy MPC debug data for Foxglove visualization
+                    plan.mpc_dt          = result->mpc_dt;
+                    plan.mpc_current_idx = result->mpc_current_idx;
+                    plan.ref_yaw         = std::move(result->ref_yaw);
+                    plan.ref_yaw_vel     = std::move(result->ref_yaw_vel);
+                    plan.ref_pitch       = std::move(result->ref_pitch);
+                    plan.ref_pitch_vel   = std::move(result->ref_pitch_vel);
+                    plan.opt_yaw         = std::move(result->opt_yaw);
+                    plan.opt_yaw_vel     = std::move(result->opt_yaw_vel);
+                    plan.opt_pitch       = std::move(result->opt_pitch);
+                    plan.opt_pitch_vel   = std::move(result->opt_pitch_vel);
+                    plan.ctrl_yaw_acc    = std::move(result->ctrl_yaw_acc);
+                    plan.ctrl_pitch_acc  = std::move(result->ctrl_pitch_acc);
+
                     plan_out.write(plan);
                 }
                 return;

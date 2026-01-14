@@ -46,6 +46,47 @@ struct GimbalPlan {
 
     // Trajectory points (x, z) in muzzle_link frame (for visualization)
     std::vector<std::pair<double, double>> trajectory;
+
+    // =========================================================================
+    // MPC Debug Data (for Foxglove visualization)
+    // =========================================================================
+    // Time axis: t[k] = (k - mpc_current_idx) * mpc_dt, relative to current time
+
+    /// MPC time step (seconds)
+    double mpc_dt{0.0};
+
+    /// Index of current time in horizon (half_horizon)
+    int mpc_current_idx{0};
+
+    /// Reference yaw trajectory (horizon points): target for MPC
+    std::vector<double> ref_yaw;
+
+    /// Reference yaw velocity trajectory
+    std::vector<double> ref_yaw_vel;
+
+    /// Reference pitch trajectory (horizon points): target for MPC
+    std::vector<double> ref_pitch;
+
+    /// Reference pitch velocity trajectory
+    std::vector<double> ref_pitch_vel;
+
+    /// Optimized yaw trajectory (MPC output)
+    std::vector<double> opt_yaw;
+
+    /// Optimized yaw velocity trajectory (MPC output)
+    std::vector<double> opt_yaw_vel;
+
+    /// Optimized pitch trajectory (MPC output)
+    std::vector<double> opt_pitch;
+
+    /// Optimized pitch velocity trajectory (MPC output)
+    std::vector<double> opt_pitch_vel;
+
+    /// Yaw acceleration control sequence (feedforward)
+    std::vector<double> ctrl_yaw_acc;
+
+    /// Pitch acceleration control sequence (feedforward)
+    std::vector<double> ctrl_pitch_acc;
 };
 
 // ============================================================================

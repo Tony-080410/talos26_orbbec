@@ -1390,11 +1390,11 @@ public:
 
         // Innovation gating: skip update if residual is too large
         // This prevents filter divergence from outliers or armor_id mismatch
-        constexpr double kMaxAngleInnovation = 0.5; // ~30 degrees
-        constexpr double kMaxDistInnovation  = 2.0; // 2 meters
-        if (std::abs(nu(0)) > kMaxAngleInnovation || std::abs(nu(1)) > kMaxAngleInnovation
-            || std::abs(nu(2)) > kMaxDistInnovation || std::abs(nu(3)) > kMaxAngleInnovation) {
-            return;                                 // Skip this update
+        const double max_angle = config.max_angle_innovation;
+        const double max_dist  = config.max_dist_innovation;
+        if (std::abs(nu(0)) > max_angle || std::abs(nu(1)) > max_angle || std::abs(nu(2)) > max_dist
+            || std::abs(nu(3)) > max_angle) {
+            return; // Skip this update
         }
 
         // Compute Jacobian and measurement noise
@@ -1619,11 +1619,11 @@ public:
         const Eigen::Vector4d nu = z_meas - z_pred;
 
         // Innovation gating: skip update if residual is too large
-        constexpr double kMaxAngleInnovation = 0.5; // ~30 degrees
-        constexpr double kMaxDistInnovation  = 2.0; // 2 meters
-        if (std::abs(nu(0)) > kMaxAngleInnovation || std::abs(nu(1)) > kMaxAngleInnovation
-            || std::abs(nu(2)) > kMaxDistInnovation || std::abs(nu(3)) > kMaxAngleInnovation) {
-            return;                                 // Skip this update
+        const double max_angle = config.max_angle_innovation;
+        const double max_dist  = config.max_dist_innovation;
+        if (std::abs(nu(0)) > max_angle || std::abs(nu(1)) > max_angle || std::abs(nu(2)) > max_dist
+            || std::abs(nu(3)) > max_angle) {
+            return; // Skip this update
         }
 
         // Compute Jacobian and measurement noise

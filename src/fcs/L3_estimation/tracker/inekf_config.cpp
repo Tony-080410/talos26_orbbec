@@ -23,6 +23,9 @@ std::expected<void, std::string> RobotInEKFConfig::read_from(const toml::table& 
     READ(tbl, sigma_yaw_obs);
     READ(tbl, sigma_pitch_obs);
     READ(tbl, sigma_armor_yaw);
+    // Innovation gating
+    READ(tbl, max_angle_innovation);
+    READ(tbl, max_dist_innovation);
     return {};
 }
 
@@ -41,6 +44,9 @@ std::expected<void, std::string> OutpostInEKFConfig::read_from(const toml::table
     READ(tbl, sigma_yaw_obs);
     READ(tbl, sigma_pitch_obs);
     READ(tbl, sigma_armor_yaw);
+    // Innovation gating
+    READ(tbl, max_angle_innovation);
+    READ(tbl, max_dist_innovation);
     return {};
 }
 

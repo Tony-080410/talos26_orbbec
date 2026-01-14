@@ -663,6 +663,48 @@ void register_foxglove_systems(App& app, talos::Scheduler* scheduler_ptr_ = null
             }
         });
 
+    // MPC 轨迹发布系统 (参考轨迹、优化轨迹、前馈加速度)
+    app.template add_system<talos::pool_compute>(
+        "foxglove_mpc_trajectory_pub", [](talos::spmc<L4::GimbalPlan, GimbalPlanChannelTag> plan_in,
+                                          talos::res<std::shared_ptr<FoxgloveServer>> server) {
+            if (!(*server)->is_initialized() || !plan_in.has_new()) {
+                return;
+            }
+
+            auto plan = plan_in.read();
+            if (!plan || plan->ref_yaw.empty()) {
+                return; // No MPC data available
+            }
+
+            const int idx = plan->mpc_current_idx;
+
+            // Build JSON with current values only
+            nlohmann::json mpc_json;
+            mpc_json["timestamp_ns"]   = plan->timestamp_ns;
+            mpc_json["tracking_error"] = plan->tracking_error;
+            mpc_json["fire_advice"]    = plan->fire_advice;
+
+            // Reference (input to MPC) at current time
+            mpc_json["ref_yaw"]       = plan->ref_yaw[idx];
+            mpc_json["ref_pitch"]     = plan->ref_pitch[idx];
+            mpc_json["ref_yaw_vel"]   = plan->ref_yaw_vel[idx];
+            mpc_json["ref_pitch_vel"] = plan->ref_pitch_vel[idx];
+
+            // Optimized (output from MPC) at current time
+            mpc_json["opt_yaw"]       = plan->yaw;
+            mpc_json["opt_pitch"]     = plan->pitch;
+            mpc_json["opt_yaw_vel"]   = plan->yaw_vel;
+            mpc_json["opt_pitch_vel"] = plan->pitch_vel;
+
+            // Feedforward accelerations at current time
+            mpc_json["yaw_acc"]   = plan->yaw_acc;
+            mpc_json["pitch_acc"] = plan->pitch_acc;
+
+            MpcTrajectoryMessage msg;
+            msg.data = json_to_bytes(mpc_json.dump());
+            (*server)->enqueue_message(std::move(msg));
+        });
+
     // 性能统计发布系统 (1 Hz, exclusive_silent)
     if (scheduler_ptr_) {
         app.template add_system<talos::exclusive_silent<100>>(

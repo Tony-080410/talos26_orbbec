@@ -91,11 +91,17 @@ struct PerfStatsMessage {
     std::vector<uint8_t> data;
 };
 
+/// MPC 轨迹消息 (JSON)
+/// 包含参考轨迹、优化轨迹和控制序列，用于 Foxglove Plot 面板可视化
+struct MpcTrajectoryMessage {
+    std::vector<uint8_t> data;
+};
+
 /// Foxglove 消息联合类型
 using FoxgloveMessage = std::variant<
     ImageMessage, SceneMessage, TrackSceneMessage, TfMessage, ArmorDataMessage, BinaryImageMessage,
     PatternImageMessage, DebugLightsMessage, DebugArmorsMessage, MeasurementMessage, TargetMessage,
-    GimbalCmdMessage, GimbalSceneMessage, PerfStatsMessage>;
+    GimbalCmdMessage, GimbalSceneMessage, PerfStatsMessage, MpcTrajectoryMessage>;
 
 // ============================================================================
 // Utility Functions

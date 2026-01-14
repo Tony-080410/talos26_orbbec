@@ -107,9 +107,15 @@ inline TrajectoryGenerator::Trajectory TrajectoryGenerator::generate_robot(
     // Time since measurement
     const double time_since_meas = static_cast<double>(current_time_ns - measurement_ts) * 1e-9;
 
-    // Estimate flying time using compensator (RK4 ballistic model)
-    const auto initial_pos             = predict_robot_position(target, time_since_meas);
-    const double estimated_flying_time = compensator.get_flying_time(initial_pos);
+    // Iteratively estimate flying time (target moves during bullet flight)
+    // 2-3 iterations typically converge for most target speeds
+    double flying_time       = 0.0;
+    Eigen::Vector3d pred_pos = predict_robot_position(target, time_since_meas);
+    for (int iter = 0; iter < 3; ++iter) {
+        flying_time = compensator.get_flying_time(pred_pos);
+        pred_pos    = predict_robot_position(target, time_since_meas + flying_time);
+    }
+    const double estimated_flying_time = flying_time;
 
     // Base time offset: time since measurement + flying time + muzzle delay
     const double base_dt = time_since_meas + estimated_flying_time + plan_to_muzzle_delay;
@@ -172,9 +178,15 @@ inline TrajectoryGenerator::Trajectory TrajectoryGenerator::generate_outpost(
     // Time since measurement
     const double time_since_meas = static_cast<double>(current_time_ns - measurement_ts) * 1e-9;
 
-    // Estimate flying time using compensator (RK4 ballistic model)
-    const auto initial_pos             = predict_outpost_position(target, time_since_meas);
-    const double estimated_flying_time = compensator.get_flying_time(initial_pos);
+    // Iteratively estimate flying time (target moves during bullet flight)
+    // 2-3 iterations typically converge for most target speeds
+    double flying_time       = 0.0;
+    Eigen::Vector3d pred_pos = predict_outpost_position(target, time_since_meas);
+    for (int iter = 0; iter < 3; ++iter) {
+        flying_time = compensator.get_flying_time(pred_pos);
+        pred_pos    = predict_outpost_position(target, time_since_meas + flying_time);
+    }
+    const double estimated_flying_time = flying_time;
 
     // Base time offset: time since measurement + flying time + muzzle delay
     const double base_dt  = time_since_meas + estimated_flying_time + plan_to_muzzle_delay;
@@ -229,6 +241,9 @@ inline Eigen::Vector3d TrajectoryGenerator::predict_robot_position(
     const double yaw               = target.yaw;
     const double v_yaw             = target.v_yaw;
 
+    // Height offset h = z1 - z0 (constant geometry parameter)
+    const double h = target.z1 - center.z();
+
     // Predicted center position
     const Eigen::Vector3d center_pred = center + velocity * dt;
 
@@ -250,8 +265,8 @@ inline Eigen::Vector3d TrajectoryGenerator::predict_robot_position(
         // Armor position in odom frame (front-facing convention: -r*cos, -r*sin)
         const double armor_x = center_pred.x() - r * std::cos(armor_yaw);
         const double armor_y = center_pred.y() - r * std::sin(armor_yaw);
-        // Height: armors 0,2 at z, armors 1,3 at z1
-        const double armor_z = (i % 2 == 0) ? center_pred.z() : target.z1;
+        // Height: armors 0,2 at predicted z0, armors 1,3 at predicted z0 + h
+        const double armor_z = center_pred.z() + ((i % 2 == 0) ? 0.0 : h);
 
         const Eigen::Vector3d armor_pos{armor_x, armor_y, armor_z};
 

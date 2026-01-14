@@ -80,6 +80,9 @@ use_spherical_observation = true
 sigma_yaw_obs = 0.15
 sigma_pitch_obs = 0.15
 sigma_armor_yaw = 0.5
+# Innovation gating (outlier rejection)
+max_angle_innovation = 0.5  # rad (~86°), set larger to allow fast maneuvers
+max_dist_innovation = 3.0   # meters
 
 [tracker.outpost]
 matcher_gate = 5.0
@@ -106,6 +109,9 @@ use_spherical_observation = true
 sigma_yaw_obs = 0.15
 sigma_pitch_obs = 0.15
 sigma_armor_yaw = 0.5
+# Innovation gating (outlier rejection)
+max_angle_innovation = 0.5  # rad (~86°), set larger to allow fast maneuvers
+max_dist_innovation = 3.0   # meters
 
 [planner]
 shooting_range_w = 0.135
@@ -118,6 +124,54 @@ transfer_thresh = 5
 compensator_type = "RK4"
 
 [planner.trajectory]
+iteration_times = 20
+bullet_speed = 25.0
+gravity = 9.7997
+resistance = 0.0005
+cd = 0.47
+rho = 1.225
+diameter = 0.017
+mass = 0.0032
+rk4_dt = 0.025
+rk4_min_steps = 1000
+rk4_max_steps = 5000
+
+# MPC-based gimbal trajectory planner (TinyMPC ADMM solver)
+[mpc_planner]
+# MPC cost weights (yaw)
+q_yaw_position = 9.0e6
+q_yaw_velocity = 0.0
+r_yaw = 1.0
+max_yaw_acc = 50.0
+
+# MPC cost weights (pitch)
+q_pitch_position = 9.0e6
+q_pitch_velocity = 0.0
+r_pitch = 1.0
+max_pitch_acc = 100.0
+
+# Fire decision parameters
+fire_thresh = 0.003       # ~0.17 degrees tracking error threshold
+fire_lookahead = 2        # Steps ahead to check for fire decision
+
+# Solver parameters
+max_iterations = 10
+abs_tol = 1.0e-3
+rho = 1.0                 # ADMM penalty parameter
+dt = 0.01                 # 100Hz control rate (matching sp_vision_25)
+horizon = 100             # 1 second lookahead
+half_horizon = 50         # Current control at middle of horizon
+
+# Trajectory compensation
+compensator_type = "RK4"
+plan_to_muzzle_delay = 0.210
+
+# Adaptive delay compensation (matching sp_vision_25)
+decision_speed = 8.0       # rad/s, threshold for high/low speed classification
+high_speed_delay = 0.015   # seconds, delay for fast-spinning targets
+low_speed_delay = 0.015    # seconds, delay for slow targets
+
+[mpc_planner.trajectory]
 iteration_times = 20
 bullet_speed = 25.0
 gravity = 9.7997
