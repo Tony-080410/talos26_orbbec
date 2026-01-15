@@ -1,21 +1,22 @@
-/// @file tracker_inekf.hpp
-/// @brief InEKF wrappers for armor tracker integration
+/// @file inekf_tracker.hpp
+/// @brief InEKF tracker implementation for armor tracking
 ///
-/// Provides drop-in replacements for fcs::L3::InEKF that use the uni_kf framework.
-/// Uses ProcessModel concept for prediction, custom invariant error for updates.
+/// FCS-specific InEKF tracker using uni_kf framework.
+/// Contains observation models, process models, and tracker classes for
+/// robot (4-armor) and outpost (3-armor) targets.
 
 #pragma once
 
-#include "../core/filter.hpp"
-#include "../core/models.hpp"
-#include "../spaces/product_space.hpp"
+#include <uni_kf/uni_kf.hpp>
 
-// Include fcs::L3 config and output types directly
-#include <fcs/L3_estimation/tracker/inekf_config.hpp>
-#include <fcs/L3_estimation/tracker/types.hpp>
-#include <fcs/L3_estimation/tracker/util.hpp>
+// Local fcs::L3 types
+#include "inekf_config.hpp"
+#include "types.hpp"
+#include "util.hpp"
 
 #include <Eigen/Core>
+#include <algorithm>
+#include <array>
 #include <cmath>
 #include <groups/SEn3.hpp>
 #include <numbers>
@@ -27,7 +28,6 @@ using RobotInEKFConfig   = fcs::L3::RobotInEKFConfig;
 using OutpostInEKFConfig = fcs::L3::OutpostInEKFConfig;
 using RobotTargetState   = fcs::L3::RobotTargetState;
 using OutpostTargetState = fcs::L3::OutpostTargetState;
-using FilterOutput       = fcs::L3::FilterOutput;
 
 // ============================================================================
 // Helper functions
@@ -1134,89 +1134,28 @@ public:
         return filter_.covariance().matrix().template block<3, 3>(6, 6);
     }
 
-    [[nodiscard]] FilterOutput get_filter_output() const noexcept {
-        FilterOutput output;
-        output.active = filter_.is_initialized();
-        if (output.active) {
-            const auto& state          = filter_.mean();
-            output.position            = state.first.p();
-            output.velocity            = state.first.v();
-            output.yaw                 = get_yaw();
-            output.v_yaw               = state.second(0);
-            output.position_covariance = get_position_covariance();
-        }
-        return output;
-    }
-
 protected:
     /// Update using InvariantMeasurementModel with roll/pitch constraint
     template <typename Model>
     requires InvariantMeasurementModel<Model, Space> void update_invariant_yaw_only(
         const typename Model::MeasurementSpace::Point& z, const Model& model) noexcept {
-        using M               = typename Model::MeasurementSpace;
-        constexpr int MeasDim = M::FiberDim;
+        auto yaw_only = [](typename Space::Fiber::EigenType& correction) noexcept {
+            correction(0) = 0.0; // roll
+            correction(1) = 0.0; // pitch
+        };
 
-        auto& belief = filter_.belief();
-        auto& state  = belief.mean;
-        auto& P      = belief.covariance;
+        filter_.update_invariant(z, model, yaw_only);
 
-        const auto r = model.invariant_error(state, z);
-        const auto C = model.error_jacobian(state);
-        const auto R = model.measurement_noise();
-
-        const Eigen::Matrix<double, MeasDim, MeasDim> S_mat =
-            C * P.matrix() * C.transpose() + R.matrix();
-
-        Eigen::LDLT<Eigen::Matrix<double, MeasDim, MeasDim>> ldlt(S_mat);
-        if (ldlt.info() != Eigen::Success) {
-            return;
-        }
-
-        const Eigen::Matrix<double, kStateDim, MeasDim> K =
-            P.matrix() * C.transpose()
-            * ldlt.solve(Eigen::Matrix<double, MeasDim, MeasDim>::Identity());
-
-        VecX delta = K * r.data;
-        delta(0)   = 0.0;
-        delta(1)   = 0.0;
-
-        apply_update(delta);
-
-        const MatX I_KC  = MatX::Identity() - K * C;
-        const auto P_new = I_KC * P.matrix() * I_KC.transpose() + K * R.matrix() * K.transpose();
-        P                = Covariance(P_new);
-
-        belief.symmetrize();
-        belief.regularize();
+        auto& state = filter_.belief().mean;
         derived().clamp_extra_in_place(state.second.data);
         zero_out_roll_pitch_covariance();
     }
 
-    void apply_update(const VecX& delta) noexcept {
-        auto& state = filter_.belief().mean;
-
-        Eigen::Matrix<double, 9, 1> xi = Eigen::Matrix<double, 9, 1>::Zero();
-        xi(2)                          = delta(2);
-        xi.template segment<3>(3)      = delta.template segment<3>(3);
-        xi.template segment<3>(6)      = delta.template segment<3>(6);
-        state.first                    = state.first * SE23d::exp(xi);
-
-        state.second.data += delta.template segment<ExtraDim>(kGroupDim);
-        state.second(0) = detail::sanitize_finite(state.second(0), 0.0);
-    }
-
     void zero_out_roll_pitch_covariance() noexcept {
-        auto& P    = filter_.belief().covariance;
-        auto P_mat = P.matrix();
-
-        P_mat.row(0).setZero();
-        P_mat.row(1).setZero();
-        P_mat.col(0).setZero();
-        P_mat.col(1).setZero();
-        P_mat(0, 0) = detail::kCovarianceRegularization;
-        P_mat(1, 1) = detail::kCovarianceRegularization;
-
-        P = Covariance(P_mat);
+        filter_.belief().enforce_constraints(
+            std::array<int, 2>{0, 1}, detail::kCovarianceRegularization);
+        filter_.belief().symmetrize();
+        filter_.belief().regularize(detail::kCovarianceRegularization);
     }
 
 private:
@@ -1370,9 +1309,7 @@ public:
         // Note: armor_ypd and armor_yaw_meas are already unwrapped (continuous) from caller
         const Eigen::Vector4d z_meas{armor_ypd.x(), armor_ypd.y(), armor_ypd.z(), armor_yaw_meas};
 
-        auto& belief = filter_.belief();
-        auto& state  = belief.mean;
-        auto& P      = belief.covariance;
+        const auto& state = filter_.mean();
 
         // Get raw prediction (may be wrapped to [-π, π])
         const Eigen::Vector4d z_pred_raw = model.predict(state);
@@ -1398,36 +1335,17 @@ public:
         }
 
         // Compute Jacobian and measurement noise
-        const auto H     = model.observation_jacobian(state);
-        const auto R     = model.measurement_noise();
-        const auto R_mat = R.matrix();
+        const auto H = model.observation_jacobian(state);
+        const auto R = model.measurement_noise();
 
-        // Innovation covariance: S = H P H^T + R
-        const Eigen::Matrix4d S_mat = H * P.matrix() * H.transpose() + R_mat;
+        auto yaw_only = [](auto& correction) noexcept {
+            correction(0) = 0.0; // roll
+            correction(1) = 0.0; // pitch
+        };
+        filter_.update_linear<4>(H, nu, R, yaw_only);
 
-        // Kalman gain: K = P H^T S^{-1}
-        Eigen::LDLT<Eigen::Matrix4d> ldlt(S_mat);
-        if (ldlt.info() != Eigen::Success) {
-            return;
-        }
-        const Eigen::Matrix<double, kStateDim, 4> K =
-            P.matrix() * H.transpose() * ldlt.solve(Eigen::Matrix4d::Identity());
-
-        // State update (error state)
-        VecX delta = K * nu;
-        delta(0)   = 0.0; // Roll = 0 (constraint)
-        delta(1)   = 0.0; // Pitch = 0 (constraint)
-
-        apply_update(delta);
-
-        // Covariance update (Joseph form for numerical stability)
-        const MatX I_KH  = MatX::Identity() - K * H;
-        const auto P_new = I_KH * P.matrix() * I_KH.transpose() + K * R_mat * K.transpose();
-        P                = Covariance(P_new);
-
-        belief.symmetrize();
-        belief.regularize();
-        clamp_extra_in_place(state.second.data);
+        auto& state_post = filter_.belief().mean;
+        clamp_extra_in_place(state_post.second.data);
         zero_out_roll_pitch_covariance();
     }
 
@@ -1603,9 +1521,7 @@ public:
         // Build measurement vector [yaw, pitch, distance, armor_yaw]
         const Eigen::Vector4d z_meas{armor_ypd.x(), armor_ypd.y(), armor_ypd.z(), armor_yaw_meas};
 
-        auto& belief = filter_.belief();
-        auto& state  = belief.mean;
-        auto& P      = belief.covariance;
+        const auto& state = filter_.mean();
 
         // Get raw prediction and unwrap to be continuous with measurement
         const Eigen::Vector4d z_pred_raw = model.predict(state);
@@ -1627,36 +1543,17 @@ public:
         }
 
         // Compute Jacobian and measurement noise
-        const auto H     = model.observation_jacobian(state);
-        const auto R     = model.measurement_noise();
-        const auto R_mat = R.matrix();
+        const auto H = model.observation_jacobian(state);
+        const auto R = model.measurement_noise();
 
-        // Innovation covariance: S = H P H^T + R
-        const Eigen::Matrix4d S_mat = H * P.matrix() * H.transpose() + R_mat;
+        auto yaw_only = [](auto& correction) noexcept {
+            correction(0) = 0.0; // roll
+            correction(1) = 0.0; // pitch
+        };
+        filter_.update_linear<4>(H, nu, R, yaw_only);
 
-        // Kalman gain: K = P H^T S^{-1}
-        Eigen::LDLT<Eigen::Matrix4d> ldlt(S_mat);
-        if (ldlt.info() != Eigen::Success) {
-            return;
-        }
-        const Eigen::Matrix<double, kStateDim, 4> K =
-            P.matrix() * H.transpose() * ldlt.solve(Eigen::Matrix4d::Identity());
-
-        // State update (error state)
-        VecX delta = K * nu;
-        delta(0)   = 0.0; // Roll = 0 (constraint)
-        delta(1)   = 0.0; // Pitch = 0 (constraint)
-
-        apply_update(delta);
-
-        // Covariance update (Joseph form for numerical stability)
-        const MatX I_KH  = MatX::Identity() - K * H;
-        const auto P_new = I_KH * P.matrix() * I_KH.transpose() + K * R_mat * K.transpose();
-        P                = Covariance(P_new);
-
-        belief.symmetrize();
-        belief.regularize();
-        clamp_extra_in_place(state.second.data);
+        auto& state_post = filter_.belief().mean;
+        clamp_extra_in_place(state_post.second.data);
         zero_out_roll_pitch_covariance();
     }
 

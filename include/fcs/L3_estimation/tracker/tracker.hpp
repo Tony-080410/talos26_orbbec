@@ -8,8 +8,8 @@
 #include "spdlog_hook.hpp"
 #include "types.hpp"
 
-// Use uni_kf framework for InEKF
-#include <uni_kf/presets/tracker_inekf.hpp>
+// InEKF tracker using uni_kf framework
+#include "inekf_tracker.hpp"
 
 #include <algorithm>
 #include <array>
@@ -103,8 +103,6 @@ public:
     /// Update step (measurement update)
     /// @return true if matched successfully
     [[nodiscard]] bool update(const AtLegacyArmorMeasurementBatch& measurements) noexcept {
-        measurement_.fill(0.0);
-
         const bool is_outpost = (target_name_ == ArmorName::Outpost);
         const int armors_num  = is_outpost ? 3 : 4;
 
@@ -160,7 +158,6 @@ public:
                 z[1]                    = unwrap_rad(z_pred[1], ypd[1]);
                 z[2]                    = ypd[2];
                 z[3]                    = unwrap_rad(z_pred[3], armor_yaw_raw);
-                set_measurement(z, false);
                 outpost_ckf_->update(z);
 
                 if (outpost_inekf_.has_value() && config_.inekf_enabled) {
@@ -196,7 +193,6 @@ public:
                 z[2]                  = ypd[2];
                 z[3]                  = unwrap_rad(z_pred[3], armor_yaw_raw);
                 bool is_another_pair  = (idx[i] == 1 || idx[i] == 3);
-                set_measurement(z, is_another_pair);
                 robot_ckf_->update(z);
 
                 if (robot_inekf_.has_value() && config_.inekf_enabled) {
@@ -284,8 +280,7 @@ public:
             // Analogy:
             //   A flat initial guess that the data will sculpt into the correct shape.
             // Precise:
-            //   We initialize [z0,z1,z2] = z0. The constant `OutpostModel::OUTPOST_DZ` is currently
-            //   unused by this initialization path.
+            //   We initialize [z0,z1,z2] = z0.
             OutpostCKF::VecX xp0{x0, y0, armor_yaw, v0, z0, z0, z0};
             OutpostCKF::MatXX P0 = OutpostCKF::MatXX::Identity();
             outpost_ckf_.emplace(outpost_model_, xp0, P0);
@@ -383,47 +378,13 @@ public:
         return output;
     }
 
-    /// Get comparison output between InEKF and ISRCKF
-    /// Useful for analysis and debugging
-    [[nodiscard]] TrackerComparison get_comparison_output() const noexcept {
-        TrackerComparison comparison;
-
-        // ISRCKF output
-        if (robot_ckf_) {
-            const auto& x              = robot_ckf_->x();
-            comparison.isrckf.active   = true;
-            comparison.isrckf.position = {x[XC], x[YC], x[Z0]};
-            comparison.isrckf.velocity = {x[VX], x[VY], x[VZ]};
-            comparison.isrckf.yaw      = x[YAW];
-            comparison.isrckf.v_yaw    = x[V_YAW];
-            // Covariance from robot_ckf_ would need to be added if available
-        } else if (outpost_ckf_) {
-            const auto& x              = outpost_ckf_->x();
-            comparison.isrckf.active   = true;
-            comparison.isrckf.position = {x[O_XC], x[O_YC], 0};
-            comparison.isrckf.velocity = {0, 0, 0};
-            comparison.isrckf.yaw      = x[O_YAW];
-            comparison.isrckf.v_yaw    = x[O_VYAW];
-        }
-
-        // InEKF output
-        if (robot_inekf_.has_value() && robot_inekf_->is_initialized()) {
-            comparison.inekf = robot_inekf_->get_filter_output();
-        } else if (outpost_inekf_.has_value() && outpost_inekf_->is_initialized()) {
-            comparison.inekf = outpost_inekf_->get_filter_output();
-        }
-
-        return comparison;
-    }
-
     /// Reset tracker to IDLE state
     void reset() noexcept {
         robot_ckf_.reset();
         outpost_ckf_.reset();
         robot_inekf_.reset();
         outpost_inekf_.reset();
-        target_name_ = ArmorName::Invalid;
-        measurement_.fill(0.0);
+        target_name_       = ArmorName::Invalid;
         detecting_count_   = 0;
         last_dt_           = 0.0;
         lost_time_         = 0.0;
@@ -438,11 +399,6 @@ public:
 
     /// Get target name
     [[nodiscard]] ArmorName target_name() const noexcept { return target_name_; }
-
-    /// Get raw measurement array (for debugging)
-    [[nodiscard]] const std::array<double, RobotModel::NZ * 2>& measurement() const noexcept {
-        return measurement_;
-    }
 
 private:
     TrackerConfig config_;
@@ -481,9 +437,6 @@ private:
     int detecting_count_{0};
     double last_dt_{0.0};
     double lost_time_{0.0};
-
-    // Debug measurement storage
-    std::array<double, RobotModel::NZ * 2> measurement_{};
 
     void state_machine(bool found) noexcept {
         switch (status_) {
@@ -528,20 +481,6 @@ private:
                 }
             }
             break;
-        }
-    }
-
-    void set_measurement(const RoboCKF::VecZ& z, bool is_another_pair) noexcept {
-        if (is_another_pair) {
-            measurement_[4] = z[0];
-            measurement_[5] = z[1];
-            measurement_[6] = z[2];
-            measurement_[7] = z[3];
-        } else {
-            measurement_[0] = z[0];
-            measurement_[1] = z[1];
-            measurement_[2] = z[2];
-            measurement_[3] = z[3];
         }
     }
 };

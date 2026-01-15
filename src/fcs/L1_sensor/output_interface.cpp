@@ -7,10 +7,6 @@
 
 namespace fcs::L1 {
 
-namespace {
-constexpr double RAD_TO_DEG = 180.0 / M_PI;
-} // namespace
-
 // ============================================================================
 // IpcOutput 实现
 // ============================================================================
@@ -24,8 +20,8 @@ void IpcOutput::send(const L5::WeaponCommand& cmd) const noexcept {
     }
 
     // 转换: rad → deg
-    const auto yaw_deg    = static_cast<float>(cmd.yaw * RAD_TO_DEG);
-    const auto pitch_deg  = -static_cast<float>(cmd.pitch * RAD_TO_DEG);
+    const auto yaw_deg    = static_cast<float>(cmd.yaw * detail::RAD_TO_DEG);
+    const auto pitch_deg  = -static_cast<float>(cmd.pitch * detail::RAD_TO_DEG);
     const auto distance_m = static_cast<float>(cmd.distance);
 
     client_->send_gimbal_cmd(yaw_deg, pitch_deg, distance_m, cmd.fire);
@@ -58,13 +54,13 @@ void UsbOutput::send(const L5::WeaponCommand& cmd) const noexcept {
         .data =
             {
                      .fire_advice  = cmd.fire,
-                     .target_yaw   = static_cast<float>(cmd.yaw * RAD_TO_DEG),
-                     .target_pitch = -static_cast<float>(cmd.pitch * RAD_TO_DEG),
-                     .ref_yaw_v    = static_cast<float>(cmd.yaw_rate * RAD_TO_DEG),
-                     .ref_pitch_v  = static_cast<float>(cmd.pitch_rate * RAD_TO_DEG),
-                     //.ref_yaw_a   = static_cast<float>(cmd.ref_yaw),
-                //     .ref_pitch_a = static_cast<float>(cmd.ref_pitch),
-                .distance = static_cast<float>(cmd.distance),
+                     .target_yaw   = static_cast<float>(cmd.yaw * detail::RAD_TO_DEG),
+                     .target_pitch = -static_cast<float>(cmd.pitch * detail::RAD_TO_DEG),
+                     .ref_yaw_v    = static_cast<float>(cmd.yaw_vel * detail::RAD_TO_DEG),
+                     .ref_pitch_v  = -static_cast<float>(cmd.pitch_vel * detail::RAD_TO_DEG),
+                     .ref_yaw_a    = static_cast<float>(cmd.yaw_accel * detail::RAD_TO_DEG),
+                     .ref_pitch_a  = -static_cast<float>(cmd.pitch_accel * detail::RAD_TO_DEG),
+                     .distance     = static_cast<float>(cmd.distance),
                      },
         .eof = talos_gimbal::HeaderFrame::EoF(),
     };

@@ -1,60 +1,10 @@
 # Infantry Vision Configuration
 # extend from vision_base.toml
 
-planner.trajectory.cd = 0.22516
-planner.trajectory.diameter = 0.017
-planner.trajectory.mass = 0.00312
+mpc_planner.trajectory.cd = 0.22516
+mpc_planner.trajectory.diameter = 0.017
+mpc_planner.trajectory.mass = 0.00312
+mpc_planner.trajectory.bullet_speed = 22.0
 
-planner.plan_to_muzzle_delay = 0.015
-planner.shooting_range_w = 0.150
-planner.shooting_range_h = 0.150
-
-planner.trajectory.bullet_speed = 22.0
-
-# MPC-based gimbal trajectory planner (TinyMPC ADMM solver)
-[mpc_planner]
-# MPC cost weights (yaw)
-q_yaw_position = 9.0e5
-q_yaw_velocity = 0.0
-r_yaw = 1.0
-max_yaw_acc = 5.0
-
-# MPC cost weights (pitch)
-q_pitch_position = 9.0e6
-q_pitch_velocity = 0.0
-r_pitch = 1.0
-max_pitch_acc = 10.0
-
-# Fire decision parameters
-fire_thresh = 0.0035       # ~0.17 degrees tracking error threshold
-fire_lookahead = 2        # Steps ahead to check for fire decision
-
-# Solver parameters
-max_iterations = 10
-abs_tol = 1.0e-3
-rho = 1.0                 # ADMM penalty parameter
-dt = 0.004                 # 100Hz control rate (matching sp_vision_25)
-horizon = 100             # 1 second lookahead
-half_horizon = 70         # Current control at middle of horizon
-
-# Trajectory compensation
-compensator_type = "RK4"
-plan_to_muzzle_delay = 0.015
-
-# Adaptive delay compensation (matching sp_vision_25)
-decision_speed = 5.0       # rad/s, threshold for high/low speed classification
-high_speed_delay = 0.015   # seconds, delay for fast-spinning targets
-low_speed_delay = 0.015    # seconds, delay for slow targets
-
-[mpc_planner.trajectory]
-iteration_times = 20
-bullet_speed = 22.0
-gravity = 9.7997
-resistance = 0.0005
-cd = 0.22516
-rho = 1.225
-diameter = 0.017
-mass = 0.0032
-rk4_dt = 0.025
-rk4_min_steps = 1000
-rk4_max_steps = 5000
+mpc_planner.low_speed_delay = 0.015
+mpc_planner.high_speed_delay = 0.015

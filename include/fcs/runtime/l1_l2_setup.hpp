@@ -24,7 +24,7 @@ struct L1L2SetupResult {
 // - Camera reader system (publishes AtLegacyImageFrame)
 // - Weapon output system (consumes L5::WeaponCommand)
 // - L2 detector backend + PnP solver resources
-// - CameraConfig + ImuSnapshot resources
+// - CameraConfig resource
 //
 // `hardware` must be non-null when `daedalus == false`.
 [[nodiscard]] std::expected<L1L2SetupResult, std::string> setup_l1_l2(
@@ -32,4 +32,3 @@ struct L1L2SetupResult {
     const HardwareConfig* hardware);
 
 } // namespace fcs::runtime
-

@@ -31,34 +31,12 @@ public:
     [[nodiscard]] WeaponCommand
         generate_command(const fcs::L4::GimbalPlan& plan, double target_distance) noexcept;
 
-    /// @brief Update trajectory compensator parameters
-    void
-        update_compensator_params(double bullet_speed, double gravity, double resistance) noexcept {
-        if (compensator_) {
-            compensator_->velocity   = bullet_speed;
-            compensator_->gravity    = gravity;
-            compensator_->resistance = resistance;
-            compensator_->on_params_updated();
-        }
-    }
-
-    /// @brief Update trajectory compensator parameters from L4 plan
-    void update_compensator_from_plan([[maybe_unused]] const fcs::L4::GimbalPlan& plan) noexcept {
-        // Note: L5 doesn't own trajectory parameters anymore
-        // This method can be used if we need to extract trajectory info from L4 plan
-        // Currently, we let L4 handle all trajectory calculations
-    }
-
 private:
     WeaponControllerConfig config_;
     std::unique_ptr<fcs::L4::TrajectoryCompensator> compensator_;
 
     /// @brief Calculate bullet time of flight for target distance
     [[nodiscard]] double calculate_time_of_flight(double distance) const noexcept;
-
-    /// @brief Calculate angular rates for predictive control
-    [[nodiscard]] std::pair<double, double>
-        calculate_angular_rates(const fcs::L4::GimbalPlan& plan, double dt) const noexcept;
 };
 
 } // namespace fcs::L5

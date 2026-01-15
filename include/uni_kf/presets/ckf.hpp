@@ -48,8 +48,8 @@ namespace uni_kf {
 /// auto measurement_fn = [](const auto& x) { /* ... */ };
 /// filter.update<uni_kf::Euclidean<3>>(z, measurement_fn, R);
 /// ```
-template <int N, typename Scalar = double>
-using CKF = UnifiedKalmanFilter<Euclidean<N, Scalar>, CubaturePointsTag, Scalar>;
+template <int N, typename ReprTag = CovarianceTag, typename Scalar = double>
+using CKF = UnifiedKalmanFilter<Euclidean<N, Scalar>, CubaturePointsTag, ReprTag, Scalar>;
 
 // Convenient aliases for common dimensions
 using CKF_1D = CKF<1>; ///< 1D Cubature Kalman Filter
@@ -85,8 +85,10 @@ using CKF_6D = CKF<6>; ///< 6D Cubature Kalman Filter (common for position + vel
 /// // Update with gravity measurement
 /// filter.update<uni_kf::Euclidean<3>>(g_meas, measurement_fn, R);
 /// ```
-template <typename G, LieSide Side = LieSide::Right, typename Scalar = double>
-using LieCKF = UnifiedKalmanFilter<LieManifold<G, Side>, CubaturePointsTag, Scalar>;
+template <
+    typename G, LieSide Side = LieSide::Right, typename ReprTag = CovarianceTag,
+    typename Scalar = double>
+using LieCKF = UnifiedKalmanFilter<LieManifold<G, Side>, CubaturePointsTag, ReprTag, Scalar>;
 
 // ============================================================================
 // Special case: CKF on SE(3) and SO(3)
@@ -99,8 +101,8 @@ using LieCKF = UnifiedKalmanFilter<LieManifold<G, Side>, CubaturePointsTag, Scal
 /// Cubature points: 6 points (±√3 * e_i for i=1,2,3)
 ///
 /// Use for: Attitude estimation, IMU orientation tracking
-template <typename Scalar = double>
-using CKF_SO3 = LieCKF<group::SO3<Scalar>, LieSide::Right, Scalar>;
+template <typename ReprTag = CovarianceTag, typename Scalar = double>
+using CKF_SO3 = LieCKF<group::SO3<Scalar>, LieSide::Right, ReprTag, Scalar>;
 
 /// @brief Cubature Kalman Filter on SE₂(3) (extended pose)
 ///
@@ -109,8 +111,27 @@ using CKF_SO3 = LieCKF<group::SO3<Scalar>, LieSide::Right, Scalar>;
 /// Cubature points: 18 points
 ///
 /// Use for: Navigation with velocity states (SLAM, VIO)
-template <typename Scalar = double>
-using CKF_SE23 = LieCKF<group::SEn3<Scalar, 2>, LieSide::Right, Scalar>;
+template <typename ReprTag = CovarianceTag, typename Scalar = double>
+using CKF_SE23 = LieCKF<group::SEn3<Scalar, 2>, LieSide::Right, ReprTag, Scalar>;
+
+// ============================================================================
+// Square Root CKF (SRCKF)
+// ============================================================================
+
+/// @brief Square Root Cubature Kalman Filter
+/// More numerically stable than standard CKF
+template <int N, typename Scalar = double>
+using SRCKF = UnifiedKalmanFilter<Euclidean<N, Scalar>, CubaturePointsTag, SquareRootTag, Scalar>;
+
+template <typename G, LieSide Side = LieSide::Right, typename Scalar = double>
+using LieSRCKF =
+    UnifiedKalmanFilter<LieManifold<G, Side>, CubaturePointsTag, SquareRootTag, Scalar>;
+
+// Common dimensions
+using SRCKF_1D = SRCKF<1>;
+using SRCKF_2D = SRCKF<2>;
+using SRCKF_3D = SRCKF<3>;
+using SRCKF_6D = SRCKF<6>;
 
 // ============================================================================
 // Factory functions

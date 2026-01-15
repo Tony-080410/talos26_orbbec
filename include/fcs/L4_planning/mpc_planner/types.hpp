@@ -40,16 +40,13 @@ struct MpcPlannerOutput {
     /// Distance to target (meters)
     double distance{0.0};
 
-    /// Whether tracking center (vs individual armor)
-    bool track_center{false};
-
     /// Predicted time when bullet arrives (nanoseconds, absolute)
     uint64_t predicted_future{0};
 
     /// Predicted armor/center position at bullet arrival time
     std::optional<Eigen::Vector3d> predicted_position;
 
-    /// Planned trajectory points for visualization (yaw, pitch pairs)
+    /// Planned ballistic trajectory points for visualization (x, z in muzzle frame, meters)
     std::vector<std::pair<double, double>> planned_trajectory;
 
     // =========================================================================

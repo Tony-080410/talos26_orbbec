@@ -354,10 +354,7 @@ struct OutpostModel {
 
     int armor_id                           = 0;
     static constexpr Scalar OUTPOST_RADIUS = 0.2765; // From mechanical drawing
-    // NOTE: kept for reference; the filter currently estimates z0/z1/z2 from measurements
-    // and does not use a fixed OUTPOST_DZ in the model.
-    static constexpr Scalar OUTPOST_DZ = 0.1; // Height difference between armors
-    static constexpr int ARMORS_NUM    = 3;
+    static constexpr int ARMORS_NUM        = 3;
 
     Params params;
 
@@ -470,7 +467,7 @@ static_assert(MotionModel<OutpostModel>);
 // Type Aliases
 // ============================================================================
 
-using RoboCKF    = uni_kf::SRCKF<RobotModel, RobotModel::NX, RobotModel::NZ>;
-using OutpostCKF = uni_kf::SRCKF<OutpostModel, OutpostModel::NX, OutpostModel::NZ>;
+using RoboCKF    = uni_kf::TrackerSRCKF<RobotModel, RobotModel::NX, RobotModel::NZ>;
+using OutpostCKF = uni_kf::TrackerSRCKF<OutpostModel, OutpostModel::NX, OutpostModel::NZ>;
 
 } // namespace fcs::L3

@@ -66,20 +66,6 @@ struct AtLegacyArmorDetection {
         return (corners[0] + corners[1] + corners[2] + corners[3]) * 0.25f;
     }
 
-    /// Get 3D object points for PnP (armor coordinate: X forward, Y left, Z up)
-    [[nodiscard]] std::vector<cv::Point3f> object_points() const {
-        const double w =
-            (type == ArmorType::Large) ? AT_LEGACY_LARGE_ARMOR_WIDTH : AT_LEGACY_SMALL_ARMOR_WIDTH;
-        const double h = (type == ArmorType::Large) ? AT_LEGACY_LARGE_ARMOR_HEIGHT
-                                                    : AT_LEGACY_SMALL_ARMOR_HEIGHT;
-        const auto hw  = static_cast<float>(w / 2.0);
-        const auto hh  = static_cast<float>(h / 2.0);
-        // Order: TL, TR, BR, BL
-        return {
-            cv::Point3f(0, hw, hh), cv::Point3f(0, -hw, hh), cv::Point3f(0, -hw, -hh),
-            cv::Point3f(0, hw, -hh)};
-    }
-
     /// Get image points (4 corners)
     [[nodiscard]] std::vector<cv::Point2f> image_points() const {
         return {corners[0], corners[1], corners[2], corners[3]};

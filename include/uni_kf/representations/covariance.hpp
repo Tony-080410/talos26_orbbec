@@ -145,6 +145,9 @@ public:
     // Conversion to other representations
     // ------------------------------------------------------------------------
 
+    /// @brief Convert to covariance (identity operation for CovarianceRepr)
+    [[nodiscard]] Covariance to_covariance() const noexcept { return P_; }
+
     /// @brief Convert to information matrix (inverse)
     [[nodiscard]] auto to_information() const noexcept -> std::expected<Covariance, std::string> {
         return P_.inverse();

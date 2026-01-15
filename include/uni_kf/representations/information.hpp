@@ -170,7 +170,7 @@ public:
     // Conversion to other representations
     // ------------------------------------------------------------------------
 
-    /// @brief Convert to covariance matrix
+    /// @brief Convert to covariance matrix (Y^-1 = P)
     [[nodiscard]] auto to_covariance() const noexcept -> std::expected<Matrix, std::string> {
         return Y_.inverse();
     }

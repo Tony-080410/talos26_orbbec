@@ -156,9 +156,9 @@ add_library(fcs SHARED
         src/fcs/L3_estimation/tracker/motion_model_config.cpp
         src/fcs/L3_estimation/tracker/config.cpp
         src/fcs/L3_estimation/tracker_systems.cpp
-        src/fcs/L4_planning/gimbal_planner/config.cpp
         src/fcs/L4_planning/gimbal_planner/trajectory_compensator.cpp
         src/fcs/L4_planning/trajectory_config.cpp
+        src/fcs/L4_planning/config.cpp
         src/fcs/L4_planning/mpc_planner/config.cpp
         src/fcs/L4_planning/planning_systems.cpp
         src/fcs/L5_weapon/config.cpp

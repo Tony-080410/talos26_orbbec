@@ -189,7 +189,7 @@ int main() {
 
     // Register L5 Enhanced Weapon System (GimbalPlan + FireCommand -> WeaponCommand)
     fcs::L5::register_enhanced_weapon_system_with_config_and_compensator(
-        scheduler, vision.weapon(), vision.planner().compensator_type);
+        scheduler, vision.weapon(), vision.mpc_planner().compensator_type);
 
     if (foxglove.enabled) {
         auto foxglove_server = fcs::try_create_foxglove_server(foxglove.port, foxglove.host);

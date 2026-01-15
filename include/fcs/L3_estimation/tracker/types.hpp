@@ -110,53 +110,6 @@ struct TrackerOutput {
 };
 
 // ============================================================================
-// Tracker Comparison (InEKF vs ISRCKF)
-// ============================================================================
-
-/// Output from a single filter for comparison
-struct FilterOutput {
-    bool active{false};
-    Eigen::Vector3d position{Eigen::Vector3d::Zero()};
-    Eigen::Vector3d velocity{Eigen::Vector3d::Zero()};
-    double yaw{0};
-    double v_yaw{0};
-    Eigen::Matrix3d position_covariance{Eigen::Matrix3d::Zero()};
-};
-
-/// Comparison result between InEKF and ISRCKF
-struct TrackerComparison {
-    FilterOutput isrckf; // ISRCKF output
-    FilterOutput inekf;  // InEKF output
-
-    // Position difference
-    [[nodiscard]] Eigen::Vector3d position_diff() const noexcept {
-        return isrckf.position - inekf.position;
-    }
-
-    [[nodiscard]] double position_distance() const noexcept { return position_diff().norm(); }
-
-    // Velocity difference
-    [[nodiscard]] Eigen::Vector3d velocity_diff() const noexcept {
-        return isrckf.velocity - inekf.velocity;
-    }
-
-    [[nodiscard]] double velocity_distance() const noexcept { return velocity_diff().norm(); }
-
-    // Yaw difference (account for wraparound)
-    [[nodiscard]] double yaw_diff() const noexcept {
-        double diff = isrckf.yaw - inekf.yaw;
-        while (diff > M_PI)
-            diff -= 2.0 * M_PI;
-        while (diff < -M_PI)
-            diff += 2.0 * M_PI;
-        return diff;
-    }
-
-    // Both filters agree on tracking
-    [[nodiscard]] bool both_active() const noexcept { return isrckf.active && inekf.active; }
-};
-
-// ============================================================================
 // Channel Tags (for ECS)
 // ============================================================================
 

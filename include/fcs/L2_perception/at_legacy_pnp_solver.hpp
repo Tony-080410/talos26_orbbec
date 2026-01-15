@@ -14,7 +14,7 @@
 #include <opencv2/core.hpp>
 #include <opencv2/core/eigen.hpp>
 
-#include "auto_aim/config.hpp"
+#include "fcs/camera_config.hpp"
 
 namespace fcs {
 
@@ -147,59 +147,6 @@ public:
         return true;
     }
 
-    /// Solve PnP for a single detection
-    /// @param detection Armor detection with 4 corners
-    /// @param timestamp_ns Timestamp for the measurement
-    /// @return Measurement with 3D pose, or error
-    [[nodiscard]] PoseResult
-        solve(const AtLegacyArmorDetection& detection, uint64_t timestamp_ns) const {
-        if (!initialized_) {
-            return std::unexpected(PnPError::NotInitialized);
-        }
-
-        // Get object and image points
-        const auto& obj_points =
-            (detection.type == ArmorType::Large) ? large_armor_points_ : small_armor_points_;
-        const auto img_points = detection.image_points();
-
-        if (img_points.size() != 4) {
-            return std::unexpected(PnPError::InvalidDetection);
-        }
-
-        // Solve PnP using IPPE (Infinitesimal Plane-based Pose Estimation)
-        cv::Mat rvec, tvec;
-        bool success = cv::solvePnP(
-            obj_points, img_points, camera_matrix_, dist_coeffs_, rvec, tvec,
-            false, // useExtrinsicGuess
-            cv::SOLVEPNP_IPPE);
-
-        if (!success) {
-            return std::unexpected(PnPError::SolveFailed);
-        }
-
-        // Calculate distance from armor center to image center
-        const cv::Point2f armor_center = detection.center();
-        const float dist_to_center     = cv::norm(armor_center - image_center_);
-
-        return AtLegacyArmorMeasurement(detection, rvec, tvec, timestamp_ns, dist_to_center);
-    }
-
-    /// Solve PnP for multiple detections
-    [[nodiscard]] std::vector<AtLegacyArmorMeasurement> solve_batch(
-        const std::vector<AtLegacyArmorDetection>& detections, uint64_t timestamp_ns) const {
-        std::vector<AtLegacyArmorMeasurement> measurements;
-        measurements.reserve(detections.size());
-
-        for (const auto& det : detections) {
-            auto result = solve(det, timestamp_ns);
-            if (result) {
-                measurements.push_back(std::move(*result));
-            }
-        }
-
-        return measurements;
-    }
-
     /// Solve PnP with yaw-only BA refinement (4DOF optimization)
     /// First solves standard PnP, then refines yaw using Ceres BA
     /// @param detection Armor detection with 4 corners
@@ -209,23 +156,15 @@ public:
     [[nodiscard]] PoseResult solve_with_ba(
         const AtLegacyArmorDetection& detection, const Eigen::Matrix3d& R_imu_cam,
         uint64_t timestamp_ns) const {
-        if (!initialized_) {
-            return std::unexpected(PnPError::NotInitialized);
-        }
-
-        // Get object and image points
-        const auto& obj_points =
-            (detection.type == ArmorType::Large) ? large_armor_points_ : small_armor_points_;
-        const auto img_points = detection.image_points();
-
-        if (img_points.size() != 4) {
-            return std::unexpected(PnPError::InvalidDetection);
+        auto input = make_pnp_input(detection);
+        if (!input) {
+            return std::unexpected(input.error());
         }
 
         // Step 1: Initial 6DoF PnP using IPPE
         cv::Mat rvec, tvec;
         bool success = cv::solvePnP(
-            obj_points, img_points, camera_matrix_, dist_coeffs_, rvec, tvec, false,
+            input->obj_points, input->img_points, camera_matrix_, dist_coeffs_, rvec, tvec, false,
             cv::SOLVEPNP_IPPE);
 
         if (!success) {
@@ -282,14 +221,14 @@ public:
 
         // Step 6: Prepare 3D model points and 2D observations
         std::vector<Eigen::Vector3d> obj_pts_eigen;
-        obj_pts_eigen.reserve(obj_points.size());
-        for (const auto& p : obj_points) {
+        obj_pts_eigen.reserve(input->obj_points.size());
+        for (const auto& p : input->obj_points) {
             obj_pts_eigen.emplace_back(p.x, p.y, p.z);
         }
 
         std::vector<Eigen::Vector2d> img_pts_eigen;
-        img_pts_eigen.reserve(img_points.size());
-        for (const auto& p : img_points) {
+        img_pts_eigen.reserve(input->img_points.size());
+        for (const auto& p : input->img_points) {
             img_pts_eigen.emplace_back(p.x, p.y);
         }
 
@@ -334,11 +273,7 @@ public:
         }
         // If optimization failed, use original PnP result
 
-        // Calculate distance from armor center to image center
-        const cv::Point2f armor_center = detection.center();
-        const float dist_to_center     = cv::norm(armor_center - image_center_);
-
-        return AtLegacyArmorMeasurement(detection, rvec, tvec, timestamp_ns, dist_to_center);
+        return AtLegacyArmorMeasurement(detection, rvec, tvec, timestamp_ns, input->dist_to_center);
     }
 
     /// Solve PnP with BA for multiple detections
@@ -358,20 +293,34 @@ public:
         return measurements;
     }
 
-    /// Calculate distance from armor center to image center
-    [[nodiscard]] float distance_to_center(const AtLegacyArmorDetection& detection) const noexcept {
-        return cv::norm(detection.center() - image_center_);
+private:
+    struct PnPInput {
+        const std::vector<cv::Point3f>& obj_points;
+        std::vector<cv::Point2f> img_points;
+        float dist_to_center;
+    };
+
+    [[nodiscard]] std::expected<PnPInput, PnPError>
+        make_pnp_input(const AtLegacyArmorDetection& detection) const {
+        if (!initialized_) {
+            return std::unexpected(PnPError::NotInitialized);
+        }
+
+        auto img_points = detection.image_points();
+        if (img_points.size() != 4) {
+            return std::unexpected(PnPError::InvalidDetection);
+        }
+
+        const auto& obj_points =
+            (detection.type == ArmorType::Large) ? large_armor_points_ : small_armor_points_;
+
+        return PnPInput{
+            .obj_points     = obj_points,
+            .img_points     = std::move(img_points),
+            .dist_to_center = static_cast<float>(cv::norm(detection.center() - image_center_)),
+        };
     }
 
-    [[nodiscard]] bool is_initialized() const noexcept { return initialized_; }
-
-    /// Get camera matrix
-    [[nodiscard]] const cv::Mat& camera_matrix() const noexcept { return camera_matrix_; }
-
-    /// Get distortion coefficients
-    [[nodiscard]] const cv::Mat& dist_coeffs() const noexcept { return dist_coeffs_; }
-
-private:
     void build_model_points() {
         // Small armor: 135mm x 55mm
         const float sw      = static_cast<float>(AT_LEGACY_SMALL_ARMOR_WIDTH / 2.0);

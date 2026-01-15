@@ -4,7 +4,7 @@
 // Concrete implementations live in `trajectory_compensator_impl.hpp` and are built into the `fcs`
 // library. Prefer including this header from other modules.
 
-#include "config.hpp"
+#include "fcs/L4_planning/trajectory_config.hpp"
 
 #include <Eigen/Core>
 

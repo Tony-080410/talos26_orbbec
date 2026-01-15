@@ -10,6 +10,7 @@
 #include "../spaces/product_space.hpp"
 #include "../strategies/cubature_points.hpp"
 #include "../strategies/first_order.hpp"
+#include "../strategies/sigma_points.hpp"
 #include "belief.hpp"
 #include "models.hpp"
 
@@ -35,22 +36,32 @@ struct CubaturePointsTag {};
 /// @brief Unified Kalman Filter on DifferentialSpaces
 ///
 /// This is the core filter class that works on any DifferentialSpace.
-/// Different filter variants (EKF, UKF, InEKF) are achieved by:
-/// - D: The state space (Euclidean for EKF, LieManifold for InEKF)
-/// - Strategy: Propagation strategy (FirstOrder or SigmaPoints)
+/// Different filter variants are achieved by template composition:
+/// - D: The state space (Euclidean, LieManifold, ProductSpace)
+/// - StrategyTag: Propagation strategy (FirstOrder, SigmaPoints, CubaturePoints)
+/// - ReprTag: Uncertainty representation (Covariance, Information, SquareRoot)
+///
+/// Examples:
+/// - EKF: FirstOrder × Covariance
+/// - UKF: SigmaPoints × Covariance
+/// - SRUKF: SigmaPoints × SquareRoot
+/// - Information Filter: FirstOrder × Information
 ///
 /// @tparam D DifferentialSpace for the state
 /// @tparam StrategyTag Tag selecting propagation strategy
+/// @tparam ReprTag Tag selecting uncertainty representation
 /// @tparam Scalar_ Floating point type
-template <DifferentialSpace D, typename StrategyTag = FirstOrderTag, typename Scalar_ = double>
+template <
+    DifferentialSpace D, typename StrategyTag = FirstOrderTag, typename ReprTag = CovarianceTag,
+    typename Scalar_ = double>
 class UnifiedKalmanFilter {
 public:
     using Space      = D;
     using Scalar     = Scalar_;
     using Point      = typename D::Point;
     using Fiber      = typename D::Fiber;
-    using BeliefType = Belief<D, Scalar>;
-    using Covariance = typename BeliefType::Covariance;
+    using BeliefType = Belief<D, ReprTag, Scalar>;
+    using Covariance = SymmetricMatrix<D::FiberDim, Scalar>;
 
     static constexpr int Dim = D::FiberDim;
 
@@ -70,8 +81,8 @@ private:
         const Eigen::Matrix<Scalar, MeasDim, Dim>& H,
         const SymmetricMatrix<MeasDim, Scalar>& R) const noexcept
         -> std::expected<Eigen::Matrix<Scalar, Dim, MeasDim>, std::string> {
-        typename Covariance::MatrixType P             = belief_.covariance.matrix();
-        Eigen::Matrix<Scalar, MeasDim, MeasDim> S_mat = H * P * H.transpose() + R.matrix();
+        auto P                                        = belief_.covariance();
+        Eigen::Matrix<Scalar, MeasDim, MeasDim> S_mat = H * P.matrix() * H.transpose() + R.matrix();
 
         Eigen::LDLT<Eigen::Matrix<Scalar, MeasDim, MeasDim>> ldlt(S_mat);
         if (ldlt.info() != Eigen::Success) {
@@ -79,7 +90,8 @@ private:
         }
 
         Eigen::Matrix<Scalar, Dim, MeasDim> K =
-            P * H.transpose() * ldlt.solve(Eigen::Matrix<Scalar, MeasDim, MeasDim>::Identity());
+            P.matrix() * H.transpose()
+            * ldlt.solve(Eigen::Matrix<Scalar, MeasDim, MeasDim>::Identity());
         return K;
     }
 
@@ -92,12 +104,12 @@ private:
         belief_.mean = D::act(belief_.mean, Fiber(correction));
 
         // Covariance update (Joseph form for numerical stability)
-        typename Covariance::MatrixType P    = belief_.covariance.matrix();
+        auto P                               = belief_.covariance();
         typename Covariance::MatrixType I_KH = Covariance::MatrixType::Identity() - K * H;
         typename Covariance::MatrixType P_new =
-            I_KH * P * I_KH.transpose() + K * R.matrix() * K.transpose();
+            I_KH * P.matrix() * I_KH.transpose() + K * R.matrix() * K.transpose();
 
-        belief_.covariance = Covariance(P_new);
+        belief_.uncertainty = typename BeliefType::Repr(Covariance(P_new));
     }
 
 public:
@@ -175,21 +187,26 @@ public:
         // Wrapper that captures dt for dynamics function
         auto f = [&dynamics, dt](const Point& x) { return dynamics(x, dt); };
 
+        auto P = belief_.covariance();
+
         if constexpr (std::is_same_v<StrategyTag, FirstOrderTag>) {
-            auto [x_new, P_new] =
-                FirstOrder::predict<D>(belief_.mean, belief_.covariance, f, Q, eps_);
-            belief_.mean       = x_new;
-            belief_.covariance = P_new;
+            auto [x_new, P_new] = FirstOrder::predict<D>(belief_.mean, P, f, Q, eps_);
+            belief_.mean        = x_new;
+            belief_.uncertainty = typename BeliefType::Repr(P_new);
+        } else if constexpr (std::is_same_v<StrategyTag, SigmaPointsTag>) {
+            auto [x_new, P_new] = StandardUKF::predict<D>(belief_.mean, P, f, Q);
+            belief_.mean        = x_new;
+            belief_.uncertainty = typename BeliefType::Repr(P_new);
         } else if constexpr (std::is_same_v<StrategyTag, CubaturePointsTag>) {
-            auto [x_new, P_new] =
-                CubaturePoints::predict<D>(belief_.mean, belief_.covariance, f, Q);
-            belief_.mean       = x_new;
-            belief_.covariance = P_new;
+            auto [x_new, P_new] = CubaturePoints::predict<D>(belief_.mean, P, f, Q);
+            belief_.mean        = x_new;
+            belief_.uncertainty = typename BeliefType::Repr(P_new);
         } else {
             static_assert(
                 std::is_same_v<StrategyTag, FirstOrderTag>
+                    || std::is_same_v<StrategyTag, SigmaPointsTag>
                     || std::is_same_v<StrategyTag, CubaturePointsTag>,
-                "Only FirstOrderTag and CubaturePointsTag implemented");
+                "Only FirstOrderTag, SigmaPointsTag, and CubaturePointsTag implemented");
         }
 
         belief_.symmetrize();
@@ -204,35 +221,40 @@ public:
         }
 
         auto Q = model.process_noise(dt);
+        auto P = belief_.covariance();
 
         if constexpr (std::is_same_v<StrategyTag, FirstOrderTag>) {
             if constexpr (ProcessModelWithJacobian<Model, D>) {
                 // Use analytical Jacobian
                 auto x_new = model.predict(belief_.mean, dt);
                 auto F     = model.jacobian(belief_.mean, dt);
-                auto P_new = FirstOrder::propagate_covariance<D>(belief_.covariance, F, Q);
+                auto P_new = FirstOrder::propagate_covariance<D>(P, F, Q);
 
-                belief_.mean       = x_new;
-                belief_.covariance = P_new;
+                belief_.mean        = x_new;
+                belief_.uncertainty = typename BeliefType::Repr(P_new);
             } else {
                 // Use numerical Jacobian
-                auto f = [&model, dt](const Point& x) { return model.predict(x, dt); };
-                auto [x_new, P_new] =
-                    FirstOrder::predict<D>(belief_.mean, belief_.covariance, f, Q, eps_);
-                belief_.mean       = x_new;
-                belief_.covariance = P_new;
+                auto f              = [&model, dt](const Point& x) { return model.predict(x, dt); };
+                auto [x_new, P_new] = FirstOrder::predict<D>(belief_.mean, P, f, Q, eps_);
+                belief_.mean        = x_new;
+                belief_.uncertainty = typename BeliefType::Repr(P_new);
             }
+        } else if constexpr (std::is_same_v<StrategyTag, SigmaPointsTag>) {
+            auto f              = [&model, dt](const Point& x) { return model.predict(x, dt); };
+            auto [x_new, P_new] = SigmaPoints<>::predict<D>(belief_.mean, P, f, Q);
+            belief_.mean        = x_new;
+            belief_.uncertainty = typename BeliefType::Repr(P_new);
         } else if constexpr (std::is_same_v<StrategyTag, CubaturePointsTag>) {
-            auto f = [&model, dt](const Point& x) { return model.predict(x, dt); };
-            auto [x_new, P_new] =
-                CubaturePoints::predict<D>(belief_.mean, belief_.covariance, f, Q);
-            belief_.mean       = x_new;
-            belief_.covariance = P_new;
+            auto f              = [&model, dt](const Point& x) { return model.predict(x, dt); };
+            auto [x_new, P_new] = CubaturePoints::predict<D>(belief_.mean, P, f, Q);
+            belief_.mean        = x_new;
+            belief_.uncertainty = typename BeliefType::Repr(P_new);
         } else {
             static_assert(
                 std::is_same_v<StrategyTag, FirstOrderTag>
+                    || std::is_same_v<StrategyTag, SigmaPointsTag>
                     || std::is_same_v<StrategyTag, CubaturePointsTag>,
-                "Only FirstOrderTag and CubaturePointsTag implemented");
+                "Only FirstOrderTag, SigmaPointsTag, and CubaturePointsTag implemented");
         }
 
         belief_.symmetrize();
@@ -258,6 +280,7 @@ public:
         }
 
         constexpr int MeasDim = M::FiberDim;
+        auto P                = belief_.covariance();
 
         if constexpr (std::is_same_v<StrategyTag, FirstOrderTag>) {
             // Compute predicted measurement and Jacobian
@@ -274,9 +297,14 @@ public:
             typename Fiber::EigenType correction = (*K_result) * innovation.data;
             apply_joseph_update<MeasDim>(*K_result, H, R, correction);
 
+        } else if constexpr (std::is_same_v<StrategyTag, SigmaPointsTag>) {
+            auto [x_new, P_new] = StandardUKF::update<D, M>(belief_.mean, P, z, h, R);
+            belief_.mean        = x_new;
+            belief_.uncertainty = typename BeliefType::Repr(P_new);
+
         } else if constexpr (std::is_same_v<StrategyTag, CubaturePointsTag>) {
             auto [H_dummy, Pxy, Pzz] = CubaturePoints::measurement_covariances<D, M>(
-                belief_.mean, belief_.covariance, std::forward<MeasFunc>(h), R);
+                belief_.mean, P, std::forward<MeasFunc>(h), R);
 
             // Solve for Kalman gain
             Eigen::LDLT<Eigen::Matrix<Scalar, MeasDim, MeasDim>> ldlt(Pzz);
@@ -294,15 +322,15 @@ public:
             belief_.mean                         = D::act(belief_.mean, Fiber(correction));
 
             // Simplified covariance update for CKF
-            typename Covariance::MatrixType P     = belief_.covariance.matrix();
-            typename Covariance::MatrixType P_new = P - K * Pzz * K.transpose();
-            belief_.covariance                    = Covariance(P_new);
+            typename Covariance::MatrixType P_new = P.matrix() - K * Pzz * K.transpose();
+            belief_.uncertainty                   = typename BeliefType::Repr(Covariance(P_new));
 
         } else {
             static_assert(
                 std::is_same_v<StrategyTag, FirstOrderTag>
+                    || std::is_same_v<StrategyTag, SigmaPointsTag>
                     || std::is_same_v<StrategyTag, CubaturePointsTag>,
-                "Only FirstOrderTag and CubaturePointsTag implemented");
+                "Only FirstOrderTag, SigmaPointsTag, and CubaturePointsTag implemented");
         }
 
         belief_.symmetrize();
@@ -321,6 +349,7 @@ public:
         constexpr int MeasDim = M::FiberDim;
 
         auto R = model.measurement_noise();
+        auto P = belief_.covariance();
 
         if constexpr (std::is_same_v<StrategyTag, FirstOrderTag>) {
             // Compute predicted measurement
@@ -345,10 +374,16 @@ public:
             typename Fiber::EigenType correction = (*K_result) * innovation.data;
             apply_joseph_update<MeasDim>(*K_result, H, R, correction);
 
+        } else if constexpr (std::is_same_v<StrategyTag, SigmaPointsTag>) {
+            auto h              = [&model](const Point& x) { return model.predict(x); };
+            auto [x_new, P_new] = StandardUKF::update<D, M>(belief_.mean, P, z, h, R);
+            belief_.mean        = x_new;
+            belief_.uncertainty = typename BeliefType::Repr(P_new);
+
         } else if constexpr (std::is_same_v<StrategyTag, CubaturePointsTag>) {
-            auto h                   = [&model](const Point& x) { return model.predict(x); };
-            auto [H_dummy, Pxy, Pzz] = CubaturePoints::measurement_covariances<D, M>(
-                belief_.mean, belief_.covariance, h, R);
+            auto h = [&model](const Point& x) { return model.predict(x); };
+            auto [H_dummy, Pxy, Pzz] =
+                CubaturePoints::measurement_covariances<D, M>(belief_.mean, P, h, R);
 
             // Solve for Kalman gain
             Eigen::LDLT<Eigen::Matrix<Scalar, MeasDim, MeasDim>> ldlt(Pzz);
@@ -366,15 +401,15 @@ public:
             belief_.mean                         = D::act(belief_.mean, Fiber(correction));
 
             // Simplified covariance update for CKF
-            typename Covariance::MatrixType P     = belief_.covariance.matrix();
-            typename Covariance::MatrixType P_new = P - K * Pzz * K.transpose();
-            belief_.covariance                    = Covariance(P_new);
+            typename Covariance::MatrixType P_new = P.matrix() - K * Pzz * K.transpose();
+            belief_.uncertainty                   = typename BeliefType::Repr(Covariance(P_new));
 
         } else {
             static_assert(
                 std::is_same_v<StrategyTag, FirstOrderTag>
+                    || std::is_same_v<StrategyTag, SigmaPointsTag>
                     || std::is_same_v<StrategyTag, CubaturePointsTag>,
-                "Only FirstOrderTag and CubaturePointsTag implemented");
+                "Only FirstOrderTag, SigmaPointsTag, and CubaturePointsTag implemented");
         }
 
         belief_.symmetrize();
@@ -449,17 +484,78 @@ public:
         belief_.regularize();
     }
 
-    /// @brief Invariant update with post-processing callback
+    /// @brief Invariant update with correction modifier
     ///
-    /// Useful when you need to apply constraints after update (e.g., zero roll/pitch)
-    template <typename Model, typename PostProcess>
+    /// Useful when you need to modify correction before applying (e.g., zero roll/pitch)
+    template <typename Model, typename CorrectionModifier>
     requires InvariantMeasurementModel<Model, D> void update_invariant(
         const typename Model::MeasurementSpace::Point& z, const Model& model,
-        PostProcess&& post_process) noexcept {
-        update_invariant(z, model);
-        if (initialized_) {
-            post_process(belief_);
+        CorrectionModifier&& modifier) noexcept {
+        if (!initialized_) {
+            return;
         }
+
+        using M               = typename Model::MeasurementSpace;
+        constexpr int MeasDim = M::FiberDim;
+
+        // Compute invariant error and Jacobian
+        auto r = model.invariant_error(belief_.mean, z);
+        auto C = model.error_jacobian(belief_.mean);
+        auto R = model.measurement_noise();
+
+        // Compute Kalman gain
+        auto K_result = compute_kalman_gain<MeasDim>(C, R);
+        if (!K_result) {
+            return;
+        }
+
+        // Compute correction and apply modifier
+        typename Fiber::EigenType correction = (*K_result) * r.data;
+        modifier(correction);
+
+        // Apply update
+        apply_joseph_update<MeasDim>(*K_result, C, R, correction);
+        belief_.symmetrize();
+        belief_.regularize();
+    }
+
+    // ------------------------------------------------------------------------
+    // Linear update with correction modifier
+    // ------------------------------------------------------------------------
+
+    /// @brief Linear measurement update with pre-computed innovation and correction modifier
+    ///
+    /// Useful for spherical observation models where innovation is computed externally
+    /// and correction needs to be modified (e.g., zero out roll/pitch for yaw-only tracking).
+    ///
+    /// @tparam MeasDim Measurement dimension
+    /// @tparam CorrectionModifier Callable that modifies correction vector
+    /// @param H Measurement Jacobian (MeasDim x Dim)
+    /// @param nu Innovation vector (pre-computed: z - h(x))
+    /// @param R Measurement noise covariance
+    /// @param modifier Function to modify correction before applying (e.g., zero roll/pitch)
+    template <int MeasDim, typename CorrectionModifier>
+    void update_linear(
+        const Eigen::Matrix<Scalar, MeasDim, Dim>& H, const Eigen::Matrix<Scalar, MeasDim, 1>& nu,
+        const SymmetricMatrix<MeasDim, Scalar>& R, CorrectionModifier&& modifier) noexcept {
+        if (!initialized_) {
+            return;
+        }
+
+        // Compute Kalman gain
+        auto K_result = compute_kalman_gain<MeasDim>(H, R);
+        if (!K_result) {
+            return;
+        }
+
+        // Compute correction and apply modifier
+        typename Fiber::EigenType correction = (*K_result) * nu;
+        modifier(correction);
+
+        // Apply update
+        apply_joseph_update<MeasDim>(*K_result, H, R, correction);
+        belief_.symmetrize();
+        belief_.regularize();
     }
 
     // ------------------------------------------------------------------------
@@ -477,21 +573,28 @@ public:
 // ============================================================================
 
 /// @brief Extended Kalman Filter on Euclidean space
-template <int N, typename Scalar = double>
-using EKF = UnifiedKalmanFilter<Euclidean<N, Scalar>, FirstOrderTag, Scalar>;
+/// @tparam N State dimension
+/// @tparam ReprTag Uncertainty representation (default: Covariance)
+/// @tparam Scalar Floating point type
+template <int N, typename ReprTag = CovarianceTag, typename Scalar = double>
+using EKF = UnifiedKalmanFilter<Euclidean<N, Scalar>, FirstOrderTag, ReprTag, Scalar>;
 
 /// @brief Extended Kalman Filter on a Lie group
-template <typename G, LieSide Side = LieSide::Right, typename Scalar = double>
-using LieEKF = UnifiedKalmanFilter<LieManifold<G, Side>, FirstOrderTag, Scalar>;
+template <
+    typename G, LieSide Side = LieSide::Right, typename ReprTag = CovarianceTag,
+    typename Scalar = double>
+using LieEKF = UnifiedKalmanFilter<LieManifold<G, Side>, FirstOrderTag, ReprTag, Scalar>;
 
 /// @brief Invariant EKF on SE₂(3)
-template <LieSide Side = LieSide::Right, typename Scalar = double>
+template <LieSide Side = LieSide::Right, typename ReprTag = CovarianceTag, typename Scalar = double>
 using InEKF_SE23 =
-    UnifiedKalmanFilter<LieManifold<group::SEn3<Scalar, 2>, Side>, FirstOrderTag, Scalar>;
+    UnifiedKalmanFilter<LieManifold<group::SEn3<Scalar, 2>, Side>, FirstOrderTag, ReprTag, Scalar>;
 
 /// @brief Invariant CKF on SE₂(3) × ℝⁿ (augmented with extra states)
-template <int ExtraDim, LieSide Side = LieSide::Right, typename Scalar = double>
+template <
+    int ExtraDim, LieSide Side = LieSide::Right, typename ReprTag = CovarianceTag,
+    typename Scalar = double>
 using InCKF_SE23_Augmented =
-    UnifiedKalmanFilter<SE23_Rn<ExtraDim, Scalar, Side>, CubaturePointsTag, Scalar>;
+    UnifiedKalmanFilter<SE23_Rn<ExtraDim, Scalar, Side>, CubaturePointsTag, ReprTag, Scalar>;
 
 } // namespace uni_kf

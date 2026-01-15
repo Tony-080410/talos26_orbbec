@@ -23,10 +23,6 @@ struct GimbalPlan {
     double yaw{0};
     double pitch{0};
 
-    // Angular differences from current pose
-    double yaw_diff{0};
-    double pitch_diff{0};
-
     // Feedforward terms (from MPC planner)
     double yaw_vel{0};   // Planned yaw angular velocity (rad/s)
     double pitch_vel{0}; // Planned pitch angular velocity (rad/s)
@@ -36,12 +32,10 @@ struct GimbalPlan {
     // Target info
     double distance{0};
     bool fire_advice{false};
-    double confidence{0.0};     // Confidence level in the fire decision
     double tracking_error{0.0}; // MPC tracking error (radians)
-    bool track_center;
 
     // Predicted armor position (for visualization)
-    uint64_t predicted_future;
+    uint64_t predicted_future{0};
     std::optional<Eigen::Vector3d> predicted_position;
 
     // Trajectory points (x, z) in muzzle_link frame (for visualization)

@@ -21,9 +21,9 @@ namespace uni_kf {
 /// @brief Parameters for sigma point generation
 template <typename Scalar = double>
 struct SigmaPointParams {
-    Scalar alpha = Scalar{1e-3}; // Spread of sigma points (small = close to mean)
-    Scalar beta  = Scalar{2};    // Prior knowledge (2 = Gaussian)
-    Scalar kappa = Scalar{0};    // Secondary scaling parameter
+    Scalar alpha = Scalar{1.0}; // Spread of sigma points (small = close to mean)
+    Scalar beta  = Scalar{2};   // Prior knowledge (2 = Gaussian)
+    Scalar kappa = Scalar{0};   // Secondary scaling parameter
 
     /// @brief Compute lambda for n-dimensional state
     [[nodiscard]] constexpr Scalar lambda(int n) const noexcept {

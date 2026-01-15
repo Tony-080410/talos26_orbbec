@@ -9,7 +9,7 @@
 
 #include "fcs/L2_perception/at_legacy_config.hpp"
 #include "fcs/L3_estimation/tracker/config.hpp"
-#include "fcs/L4_planning/gimbal_planner/config.hpp"
+#include "fcs/L4_planning/config.hpp"
 #include "fcs/L5_weapon/config.hpp"
 #include "fcs/camera_config.hpp"
 
@@ -54,13 +54,11 @@ struct VisionConfig {
     L5::L5Config l5{};
 
     [[nodiscard]] const L3::TrackerConfig& tracker() const noexcept { return l3.tracker; }
-    [[nodiscard]] const L4::GimbalPlannerConfig& planner() const noexcept { return l4.planner; }
     [[nodiscard]] const L4::MpcPlannerConfig& mpc_planner() const noexcept {
         return l4.mpc_planner;
     }
     [[nodiscard]] const L5::WeaponControllerConfig& weapon() const noexcept { return l5.weapon; }
     [[nodiscard]] L3::TrackerConfig& tracker() noexcept { return l3.tracker; }
-    [[nodiscard]] L4::GimbalPlannerConfig& planner() noexcept { return l4.planner; }
     [[nodiscard]] L4::MpcPlannerConfig& mpc_planner() noexcept { return l4.mpc_planner; }
     [[nodiscard]] L5::WeaponControllerConfig& weapon() noexcept { return l5.weapon; }
 

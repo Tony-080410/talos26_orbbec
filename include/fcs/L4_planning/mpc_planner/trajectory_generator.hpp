@@ -4,6 +4,7 @@
 #include <numbers>
 
 #include "fcs/L3_estimation/tracker/types.hpp"
+#include "fcs/L4_planning/angle_utils.hpp"
 #include "fcs/L4_planning/gimbal_planner/trajectory_compensator.hpp"
 #include "fcs/L4_planning/mpc_planner/config.hpp"
 
@@ -61,10 +62,11 @@ public:
         double& yaw0) const noexcept;
 
 private:
-    /// Normalize angle to [-pi, pi] in O(1)
-    [[nodiscard]] static double normalize_rad(double angle) noexcept {
-        return std::remainder(angle, 2.0 * std::numbers::pi);
-    }
+    template <class PredictFn>
+    [[nodiscard]] Trajectory generate_impl(
+        PredictFn&& predict, uint64_t measurement_ts, uint64_t current_time_ns,
+        double plan_to_muzzle_delay, const TrajectoryCompensator& compensator, double bullet_speed,
+        double& yaw0) const noexcept;
 
     /// Predict robot target position at future time dt
     ///
@@ -101,124 +103,66 @@ inline TrajectoryGenerator::Trajectory TrajectoryGenerator::generate_robot(
     const L3::RobotTargetState& target, uint64_t measurement_ts, uint64_t current_time_ns,
     double plan_to_muzzle_delay, const TrajectoryCompensator& compensator, double bullet_speed,
     double& yaw0) const noexcept {
-
-    Trajectory traj(4, horizon_);
-
-    // Time since measurement
-    const double time_since_meas = static_cast<double>(current_time_ns - measurement_ts) * 1e-9;
-
-    // Iteratively estimate flying time (target moves during bullet flight)
-    // 2-3 iterations typically converge for most target speeds
-    double flying_time       = 0.0;
-    Eigen::Vector3d pred_pos = predict_robot_position(target, time_since_meas);
-    for (int iter = 0; iter < 3; ++iter) {
-        flying_time = compensator.get_flying_time(pred_pos);
-        pred_pos    = predict_robot_position(target, time_since_meas + flying_time);
-    }
-    const double estimated_flying_time = flying_time;
-
-    // Base time offset: time since measurement + flying time + muzzle delay
-    const double base_dt = time_since_meas + estimated_flying_time + plan_to_muzzle_delay;
-
-    // Start from -half_horizon steps before "now"
-    const double start_dt = base_dt - half_horizon_ * dt_;
-
-    // Compute initial aim point for yaw0 reference
-    const auto pos_now = predict_robot_position(target, base_dt);
-    const auto aim_now = compute_aim_point(pos_now, compensator, bullet_speed);
-    yaw0               = aim_now.x();
-
-    // Generate trajectory with central differencing for velocities
-    Eigen::Vector2d aim_prev, aim_curr, aim_next;
-
-    // Initialize prev and curr
-    aim_prev = compute_aim_point(
-        predict_robot_position(target, start_dt - dt_), compensator, bullet_speed);
-    aim_curr =
-        compute_aim_point(predict_robot_position(target, start_dt), compensator, bullet_speed);
-
-    for (int i = 0; i < horizon_; ++i) {
-        const double t = start_dt + (i + 1) * dt_;
-        aim_next = compute_aim_point(predict_robot_position(target, t), compensator, bullet_speed);
-
-        // Central difference for velocity (with wrap-around handling)
-        const double yaw_vel   = normalize_rad(aim_next.x() - aim_prev.x()) / (2.0 * dt_);
-        const double pitch_vel = (aim_next.y() - aim_prev.y()) / (2.0 * dt_);
-
-        // Store trajectory point (yaw relative to yaw0, unwrapped for continuity)
-        double yaw_rel = aim_curr.x() - yaw0;
-        // Unwrap: if previous point exists, ensure continuity
-        if (i > 0) {
-            double prev_yaw = traj(0, i - 1);
-            double delta    = normalize_rad(yaw_rel - prev_yaw);
-            yaw_rel         = prev_yaw + delta;
-        } else {
-            yaw_rel = normalize_rad(yaw_rel);
-        }
-        traj(0, i) = yaw_rel;
-        traj(1, i) = yaw_vel;
-        traj(2, i) = aim_curr.y();
-        traj(3, i) = pitch_vel;
-
-        // Shift for next iteration
-        aim_prev = aim_curr;
-        aim_curr = aim_next;
-    }
-
-    return traj;
+    return generate_impl(
+        [&](double dt) noexcept { return predict_robot_position(target, dt); }, measurement_ts,
+        current_time_ns, plan_to_muzzle_delay, compensator, bullet_speed, yaw0);
 }
 
 inline TrajectoryGenerator::Trajectory TrajectoryGenerator::generate_outpost(
     const L3::OutpostTargetState& target, uint64_t measurement_ts, uint64_t current_time_ns,
     double plan_to_muzzle_delay, const TrajectoryCompensator& compensator, double bullet_speed,
     double& yaw0) const noexcept {
+    return generate_impl(
+        [&](double dt) noexcept { return predict_outpost_position(target, dt); }, measurement_ts,
+        current_time_ns, plan_to_muzzle_delay, compensator, bullet_speed, yaw0);
+}
+
+template <class PredictFn>
+inline TrajectoryGenerator::Trajectory TrajectoryGenerator::generate_impl(
+    PredictFn&& predict, uint64_t measurement_ts, uint64_t current_time_ns,
+    double plan_to_muzzle_delay, const TrajectoryCompensator& compensator, double bullet_speed,
+    double& yaw0) const noexcept {
 
     Trajectory traj(4, horizon_);
 
-    // Time since measurement
     const double time_since_meas = static_cast<double>(current_time_ns - measurement_ts) * 1e-9;
 
     // Iteratively estimate flying time (target moves during bullet flight)
     // 2-3 iterations typically converge for most target speeds
     double flying_time       = 0.0;
-    Eigen::Vector3d pred_pos = predict_outpost_position(target, time_since_meas);
+    Eigen::Vector3d pred_pos = predict(time_since_meas);
     for (int iter = 0; iter < 3; ++iter) {
         flying_time = compensator.get_flying_time(pred_pos);
-        pred_pos    = predict_outpost_position(target, time_since_meas + flying_time);
+        pred_pos    = predict(time_since_meas + flying_time);
     }
-    const double estimated_flying_time = flying_time;
 
-    // Base time offset: time since measurement + flying time + muzzle delay
-    const double base_dt  = time_since_meas + estimated_flying_time + plan_to_muzzle_delay;
+    const double base_dt  = time_since_meas + flying_time + plan_to_muzzle_delay;
     const double start_dt = base_dt - half_horizon_ * dt_;
 
-    const auto pos_now = predict_outpost_position(target, base_dt);
+    const auto pos_now = predict(base_dt);
     const auto aim_now = compute_aim_point(pos_now, compensator, bullet_speed);
     yaw0               = aim_now.x();
 
     Eigen::Vector2d aim_prev, aim_curr, aim_next;
-    aim_prev = compute_aim_point(
-        predict_outpost_position(target, start_dt - dt_), compensator, bullet_speed);
-    aim_curr =
-        compute_aim_point(predict_outpost_position(target, start_dt), compensator, bullet_speed);
+    aim_prev = compute_aim_point(predict(start_dt - dt_), compensator, bullet_speed);
+    aim_curr = compute_aim_point(predict(start_dt), compensator, bullet_speed);
 
     for (int i = 0; i < horizon_; ++i) {
         const double t = start_dt + (i + 1) * dt_;
-        aim_next =
-            compute_aim_point(predict_outpost_position(target, t), compensator, bullet_speed);
+        aim_next       = compute_aim_point(predict(t), compensator, bullet_speed);
 
         const double yaw_vel   = normalize_rad(aim_next.x() - aim_prev.x()) / (2.0 * dt_);
         const double pitch_vel = (aim_next.y() - aim_prev.y()) / (2.0 * dt_);
 
-        // Unwrap yaw for continuity
         double yaw_rel = aim_curr.x() - yaw0;
         if (i > 0) {
-            double prev_yaw = traj(0, i - 1);
-            double delta    = normalize_rad(yaw_rel - prev_yaw);
-            yaw_rel         = prev_yaw + delta;
+            const double prev_yaw = traj(0, i - 1);
+            const double delta    = normalize_rad(yaw_rel - prev_yaw);
+            yaw_rel               = prev_yaw + delta;
         } else {
             yaw_rel = normalize_rad(yaw_rel);
         }
+
         traj(0, i) = yaw_rel;
         traj(1, i) = yaw_vel;
         traj(2, i) = aim_curr.y();

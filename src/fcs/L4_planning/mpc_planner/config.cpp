@@ -31,9 +31,6 @@ std::expected<void, std::string> MpcPlannerConfig::read_from(const toml::table& 
     READ(tbl, trajectory);
     READ(tbl, compensator_type);
 
-    // Operational parameters
-    READ(tbl, plan_to_muzzle_delay);
-
     // Adaptive delay compensation
     READ(tbl, decision_speed);
     READ(tbl, high_speed_delay);

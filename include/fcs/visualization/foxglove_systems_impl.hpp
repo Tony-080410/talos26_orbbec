@@ -559,11 +559,12 @@ void register_foxglove_systems(App& app, talos::Scheduler* scheduler_ptr_ = null
             cmd_json["pitch"]        = cmd->pitch;
             cmd_json["ref_yaw"]      = cmd->ref_yaw;
             cmd_json["ref_pitch"]    = cmd->ref_pitch;
-            cmd_json["ref_yaw_v"]    = cmd->yaw_rate;
-            cmd_json["ref_pitch_v"]  = cmd->pitch_rate;
+            cmd_json["v_yaw"]        = cmd->yaw_vel;
+            cmd_json["v_pitch"]      = cmd->pitch_vel;
+            cmd_json["a_yaw"]        = cmd->yaw_accel;
+            cmd_json["a_pitch"]      = cmd->pitch_accel;
             cmd_json["distance"]     = cmd->distance;
             cmd_json["fire_advice"]  = cmd->fire;
-            cmd_json["track_center"] = cmd->track_center;
 
             GimbalCmdMessage msg;
             msg.data = json_to_bytes(cmd_json.dump());

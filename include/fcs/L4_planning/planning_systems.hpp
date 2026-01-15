@@ -8,24 +8,8 @@ class Scheduler;
 
 namespace fcs::L4 {
 
-class GimbalPlanner;
-struct GimbalPlannerConfig;
 class MpcGimbalPlanner;
 struct MpcPlannerConfig;
-
-/// Register L4 planning pipeline systems (legacy GimbalPlanner)
-///
-/// Pipeline:
-///   L3::TrackerOutput [SPMC] -→ PlanningSystem [pool_compute]
-///                                    ↓
-///                            L4::GimbalPlan [SPMC]
-///
-void register_planning_systems(
-    ::talos::Scheduler& scheduler, std::shared_ptr<GimbalPlanner> planner);
-
-/// Register L4 planning systems with gimbal planner config (legacy)
-void register_planning_systems_with_config(
-    ::talos::Scheduler& scheduler, const GimbalPlannerConfig& config);
 
 /// Register L4 MPC planning pipeline systems
 ///

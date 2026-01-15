@@ -69,7 +69,7 @@ sigma_m = 0.5
 sigma_yaw = 20.0
 radius0 = 0.23
 radius1 = 0.23
-height = 0.0
+height = 0.1
 sigma_r = 1.0
 sigma_h = 0.05
 use_dynamic_noise = true
@@ -113,29 +113,6 @@ sigma_armor_yaw = 0.5
 max_angle_innovation = 0.01  # rad (~86°), set larger to allow fast maneuvers
 max_dist_innovation = 3.0   # meters
 
-[planner]
-shooting_range_w = 0.135
-shooting_range_h = 0.135
-max_tracking_v_yaw = 60.0
-plan_to_muzzle_delay = 0.210
-side_angle = 15.0
-min_switching_v_yaw = 1.0
-transfer_thresh = 5
-compensator_type = "RK4"
-
-[planner.trajectory]
-iteration_times = 20
-bullet_speed = 25.0
-gravity = 9.7997
-resistance = 0.0005
-cd = 0.47
-rho = 1.225
-diameter = 0.017
-mass = 0.0032
-rk4_dt = 0.025
-rk4_min_steps = 1000
-rk4_max_steps = 5000
-
 # MPC-based gimbal trajectory planner (TinyMPC ADMM solver)
 [mpc_planner]
 # MPC cost weights (yaw)
@@ -164,7 +141,6 @@ half_horizon = 50         # Current control at middle of horizon
 
 # Trajectory compensation
 compensator_type = "RK4"
-plan_to_muzzle_delay = 0.016
 
 # Adaptive delay compensation (matching sp_vision_25)
 decision_speed = 8.0       # rad/s, threshold for high/low speed classification

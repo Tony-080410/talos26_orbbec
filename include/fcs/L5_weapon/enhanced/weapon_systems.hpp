@@ -1,6 +1,6 @@
 #pragma once
 
-#include "fcs/L4_planning/gimbal_planner/config.hpp"
+#include "fcs/L4_planning/trajectory_config.hpp"
 
 namespace talos {
 class Scheduler;
@@ -17,4 +17,3 @@ void register_enhanced_weapon_system_with_config_and_compensator(
     fcs::L4::TrajectoryCompensatorType compensator_type);
 
 } // namespace fcs::L5
-

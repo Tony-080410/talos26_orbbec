@@ -251,12 +251,6 @@ struct MpcPlannerConfig {
     // Operational Parameters
     // ========================================================================
 
-    /// Extra latency from planning to bullet leaving muzzle (seconds).
-    ///
-    /// Problem:
-    ///   Same as GimbalPlannerConfig::plan_to_muzzle_delay.
-    double plan_to_muzzle_delay{0.0};
-
     // ========================================================================
     // Adaptive Delay Compensation
     // ========================================================================

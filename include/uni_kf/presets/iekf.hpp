@@ -63,7 +63,7 @@ public:
 
     [[nodiscard]] const BeliefType& belief() const noexcept { return base_.belief(); }
     [[nodiscard]] const Point& mean() const noexcept { return base_.mean(); }
-    [[nodiscard]] const Covariance& covariance() const noexcept { return base_.covariance(); }
+    [[nodiscard]] Covariance covariance() const noexcept { return base_.covariance(); }
     [[nodiscard]] bool is_initialized() const noexcept { return base_.is_initialized(); }
 
     // Prediction (pass through)

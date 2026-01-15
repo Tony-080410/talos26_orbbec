@@ -153,7 +153,7 @@ template <int D, int C, typename Scalar>
 /// @tparam NZ Observation dimension
 /// @tparam Scalar Floating point type
 template <typename Model, int NX, int NZ, typename Scalar = double>
-class SRCKF {
+class TrackerSRCKF {
 public:
     using VecX  = Eigen::Matrix<Scalar, NX, 1>;
     using VecZ  = Eigen::Matrix<Scalar, NZ, 1>;
@@ -163,11 +163,11 @@ public:
     using DevX  = Eigen::Matrix<Scalar, NX, Eigen::Dynamic>;
     using DevZ  = Eigen::Matrix<Scalar, NZ, Eigen::Dynamic>;
 
-    static_assert(NX > 0, "SRCKF: NX must be positive");
-    static_assert(NZ > 0, "SRCKF: NZ must be positive");
+    static_assert(NX > 0, "TrackerSRCKF: NX must be positive");
+    static_assert(NZ > 0, "TrackerSRCKF: NZ must be positive");
 
-    /// Construct SRCKF
-    SRCKF(Model& model, const VecX& x0, const MatXX& P0) noexcept
+    /// Construct TrackerSRCKF
+    TrackerSRCKF(Model& model, const VecX& x0, const MatXX& P0) noexcept
         : model_(model)
         , gamma_(std::sqrt(static_cast<Scalar>(NX)))
         , w_(Scalar(1) / (Scalar(2) * static_cast<Scalar>(NX)))

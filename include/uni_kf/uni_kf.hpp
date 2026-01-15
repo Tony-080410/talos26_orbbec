@@ -67,6 +67,7 @@
 #include "concepts/differential_space.hpp"
 #include "concepts/linear.hpp"
 #include "concepts/quadratic_form.hpp"
+#include "concepts/representation.hpp"
 
 // ============================================================================
 // Spaces
@@ -109,9 +110,12 @@
 #include "presets/ekf.hpp"
 #include "presets/iekf.hpp"
 #include "presets/inekf.hpp"
-#include "presets/tracker_inekf.hpp"
-#include "presets/tracker_srckf.hpp"
 #include "presets/ukf.hpp"
+
+// NOTE:
+// `presets/tracker_inekf.hpp` and `presets/tracker_srckf.hpp` are application-facing wrappers in
+// this repo (they depend on fcs types/OpenCV). They are intentionally not included here so that
+// `<uni_kf/uni_kf.hpp>` remains a standalone, dependency-light umbrella header.
 
 // ============================================================================
 // Version Information

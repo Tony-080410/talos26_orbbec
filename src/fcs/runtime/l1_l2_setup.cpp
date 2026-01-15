@@ -26,24 +26,14 @@
 namespace fcs::runtime {
 namespace {
 
-struct ImuSnapshot {
-    uint64_t timestamp_ns = 0;
-    double roll_deg = 0.0, pitch_deg = 0.0, yaw_deg = 0.0, bullet_speed = 0.0;
-};
-
 struct DaedalusImu {
     std::shared_ptr<ipc::ShmClient> ipc_device;
 
     void system(
-        talos::res_mut<std::shared_ptr<fast_tf::CoordinateSystem<1024>>> tf_buffer,
-        talos::res_mut<ImuSnapshot> imu_out) noexcept {
+        talos::res_mut<std::shared_ptr<fast_tf::CoordinateSystem<1024>>> tf_buffer) noexcept {
         if (const auto pose = ipc_device->recv_pose(ipc::POSE_GIMBAL)) {
             const Eigen::Quaterniond q(pose->qw, pose->qx, pose->qy, pose->qz);
             const auto [roll, pitch, yaw] = math_fuxk::rpy(q).rpy();
-            imu_out->timestamp_ns         = pose->timestamp_ns;
-            imu_out->roll_deg             = roll;
-            imu_out->pitch_deg            = pitch;
-            imu_out->yaw_deg              = yaw;
             fast_tf::update(
                 *tf_buffer->get(),
                 fast_tf::FuckTransform<fast_tf::gimbal_link_fuxk_frame>(
@@ -89,19 +79,15 @@ struct UsbImu {
     talos_gimbal::ReceiveImuData* imu_data = nullptr;
 
     void system(
-        talos::res_mut<std::shared_ptr<fast_tf::CoordinateSystem<1024>>> tf_buffer,
-        talos::res_mut<ImuSnapshot> imu_out) noexcept {
+        talos::res_mut<std::shared_ptr<fast_tf::CoordinateSystem<1024>>> tf_buffer) noexcept {
         device->handle_events();
-        imu_out->timestamp_ns = fcs::clock::now_ns();
-        imu_out->roll_deg     = imu_data->data.roll;
-        imu_out->pitch_deg    = imu_data->data.pitch;
-        imu_out->yaw_deg      = imu_data->data.yaw;
+        const uint64_t timestamp_ns = fcs::clock::now_ns();
         fast_tf::update(
             *tf_buffer->get(),
             fast_tf::FuckTransform<fast_tf::gimbal_link_fuxk_frame>(
                 fast_tf::TransformMatrix4d::from_rpy(
-                    imu_out->roll_deg, imu_out->pitch_deg, imu_out->yaw_deg)),
-            imu_out->timestamp_ns);
+                    imu_data->data.roll, imu_data->data.pitch, imu_data->data.yaw)),
+            timestamp_ns);
     }
 };
 
@@ -109,9 +95,8 @@ struct Imu {
     std::variant<DaedalusImu, UsbImu> impl;
 
     void system(
-        talos::res_mut<std::shared_ptr<fast_tf::CoordinateSystem<1024>>> tf_buffer,
-        talos::res_mut<ImuSnapshot> imu_out) noexcept {
-        std::visit([&](auto& inner) { inner.system(tf_buffer, imu_out); }, impl);
+        talos::res_mut<std::shared_ptr<fast_tf::CoordinateSystem<1024>>> tf_buffer) noexcept {
+        std::visit([&](auto& inner) { inner.system(tf_buffer); }, impl);
     }
 };
 
@@ -188,7 +173,6 @@ std::expected<L1L2SetupResult, std::string> setup_l1_l2(
 
     const auto& cam_info = camera->camera_info();
     world.insert_resource(cam_info);
-    world.insert_resource(ImuSnapshot{});
 
     auto backend_handle_result = fcs::create_detector_backend_handle(vision.at_legacy);
     if (!backend_handle_result) {
@@ -206,8 +190,9 @@ std::expected<L1L2SetupResult, std::string> setup_l1_l2(
     scheduler.add_system<talos::exclusive_silent<1000, 1>>(
         "imu_reader",
         [imu = std::move(imu)](
-            talos::res_mut<std::shared_ptr<fast_tf::CoordinateSystem<1024>>> tf_buffer,
-            talos::res_mut<ImuSnapshot> imu_out) { imu->system(tf_buffer, imu_out); });
+            talos::res_mut<std::shared_ptr<fast_tf::CoordinateSystem<1024>>> tf_buffer) {
+            imu->system(tf_buffer);
+        });
 
     // Camera: 160Hz, notify (triggers compute)
     auto last_seq = std::make_shared<std::atomic<uint64_t>>(0);

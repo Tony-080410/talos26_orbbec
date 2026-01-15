@@ -10,6 +10,7 @@
 #include "tiny_api.hpp"
 
 #include "fcs/L3_estimation/tracker/types.hpp"
+#include "fcs/L4_planning/angle_utils.hpp"
 #include "fcs/L4_planning/gimbal_planner/trajectory_compensator.hpp"
 #include "fcs/L4_planning/mpc_planner/config.hpp"
 #include "fcs/L4_planning/mpc_planner/trajectory_generator.hpp"
@@ -48,14 +49,13 @@ public:
     /// @param target Tracker output with robot state
     /// @param current_time_ns Current time in nanoseconds
     /// @param bullet_speed Bullet velocity in m/s
-    /// @param current_yaw Current gimbal yaw angle (rad)
-    /// @param current_pitch Current gimbal pitch angle (rad)
     /// @return MPC planner output or error string
     [[nodiscard]] std::expected<MpcPlannerOutput, std::string> plan(
-        const L3::TrackerOutput& target, uint64_t current_time_ns, double bullet_speed,
-        double current_yaw, double current_pitch) noexcept;
+        const L3::TrackerOutput& target, uint64_t current_time_ns, double bullet_speed) noexcept;
 
 private:
+    using Trajectory = TrajectoryGenerator::Trajectory;
+
     /// Initialize TinyMPC solvers
     void setup_solvers() noexcept;
 
@@ -65,20 +65,30 @@ private:
     /// Warm start: shift previous solution forward by one step
     void warm_start_shift() noexcept;
 
-    /// Normalize angle to [-pi, pi] in O(1)
-    [[nodiscard]] static double normalize_rad(double angle) noexcept {
-        return std::remainder(angle, 2.0 * std::numbers::pi);
-    }
+    /// Solve both yaw and pitch MPC problems from a reference trajectory.
+    void solve_from_reference(const Trajectory& traj) noexcept;
+
+    /// Fill MPC output fields common to both robot/outpost planning.
+    void fill_common_output(
+        MpcPlannerOutput& output, const Trajectory& traj, double yaw0, uint64_t current_time_ns,
+        bool clamp_pitch) noexcept;
+
+    /// Copy MPC debug arrays into output for visualization.
+    void fill_debug_output(
+        MpcPlannerOutput& output, const Trajectory& traj, double yaw0) const noexcept;
+
+    /// Generate and rotate ballistic trajectory points for visualization.
+    void fill_visualization_trajectory(MpcPlannerOutput& output) const;
 
     /// Plan for robot target
     [[nodiscard]] std::expected<MpcPlannerOutput, std::string> plan_robot(
         const L3::RobotTargetState& target, uint64_t timestamp_ns, uint64_t current_time_ns,
-        double bullet_speed, double current_yaw, double current_pitch) noexcept;
+        double bullet_speed) noexcept;
 
     /// Plan for outpost target
     [[nodiscard]] std::expected<MpcPlannerOutput, std::string> plan_outpost(
         const L3::OutpostTargetState& target, uint64_t timestamp_ns, uint64_t current_time_ns,
-        double bullet_speed, double current_yaw, double current_pitch) noexcept;
+        double bullet_speed) noexcept;
 
     MpcPlannerConfig config_;
 
@@ -185,50 +195,33 @@ inline void MpcGimbalPlanner::setup_solvers() noexcept {
 
     Eigen::VectorXd f = Eigen::VectorXd::Zero(nx);
 
-    // Yaw solver
-    {
+    auto setup_axis = [&](TinySolver*& solver, double q_pos, double q_vel, double r,
+                          double max_acc) noexcept {
         Eigen::Matrix<double, 2, 1> Q_diag;
-        Q_diag << config_.q_yaw_position, config_.q_yaw_velocity;
+        Q_diag << q_pos, q_vel;
         Eigen::Matrix<double, 1, 1> R_diag;
-        R_diag << config_.r_yaw;
+        R_diag << r;
 
         tiny_setup(
-            &yaw_solver_, A, B, f, Q_diag.asDiagonal(), R_diag.asDiagonal(), config_.rho, nx, nu, N,
-            0);
-
-        // Set acceleration constraints
-        Eigen::MatrixXd x_min = Eigen::MatrixXd::Constant(nx, N, -1e17);
-        Eigen::MatrixXd x_max = Eigen::MatrixXd::Constant(nx, N, 1e17);
-        Eigen::MatrixXd u_min = Eigen::MatrixXd::Constant(nu, N - 1, -config_.max_yaw_acc);
-        Eigen::MatrixXd u_max = Eigen::MatrixXd::Constant(nu, N - 1, config_.max_yaw_acc);
-        tiny_set_bound_constraints(yaw_solver_, x_min, x_max, u_min, u_max);
-
-        yaw_solver_->settings->max_iter    = config_.max_iterations;
-        yaw_solver_->settings->abs_pri_tol = config_.abs_tol;
-        yaw_solver_->settings->abs_dua_tol = config_.abs_tol;
-    }
-
-    // Pitch solver
-    {
-        Eigen::Matrix<double, 2, 1> Q_diag;
-        Q_diag << config_.q_pitch_position, config_.q_pitch_velocity;
-        Eigen::Matrix<double, 1, 1> R_diag;
-        R_diag << config_.r_pitch;
-
-        tiny_setup(
-            &pitch_solver_, A, B, f, Q_diag.asDiagonal(), R_diag.asDiagonal(), config_.rho, nx, nu,
-            N, 0);
+            &solver, A, B, f, Q_diag.asDiagonal(), R_diag.asDiagonal(), config_.rho, nx, nu, N, 0);
 
         Eigen::MatrixXd x_min = Eigen::MatrixXd::Constant(nx, N, -1e17);
         Eigen::MatrixXd x_max = Eigen::MatrixXd::Constant(nx, N, 1e17);
-        Eigen::MatrixXd u_min = Eigen::MatrixXd::Constant(nu, N - 1, -config_.max_pitch_acc);
-        Eigen::MatrixXd u_max = Eigen::MatrixXd::Constant(nu, N - 1, config_.max_pitch_acc);
-        tiny_set_bound_constraints(pitch_solver_, x_min, x_max, u_min, u_max);
+        Eigen::MatrixXd u_min = Eigen::MatrixXd::Constant(nu, N - 1, -max_acc);
+        Eigen::MatrixXd u_max = Eigen::MatrixXd::Constant(nu, N - 1, max_acc);
+        tiny_set_bound_constraints(solver, x_min, x_max, u_min, u_max);
 
-        pitch_solver_->settings->max_iter    = config_.max_iterations;
-        pitch_solver_->settings->abs_pri_tol = config_.abs_tol;
-        pitch_solver_->settings->abs_dua_tol = config_.abs_tol;
-    }
+        solver->settings->max_iter    = config_.max_iterations;
+        solver->settings->abs_pri_tol = config_.abs_tol;
+        solver->settings->abs_dua_tol = config_.abs_tol;
+    };
+
+    setup_axis(
+        yaw_solver_, config_.q_yaw_position, config_.q_yaw_velocity, config_.r_yaw,
+        config_.max_yaw_acc);
+    setup_axis(
+        pitch_solver_, config_.q_pitch_position, config_.q_pitch_velocity, config_.r_pitch,
+        config_.max_pitch_acc);
 }
 
 inline void MpcGimbalPlanner::cleanup_solvers() noexcept {
@@ -269,9 +262,107 @@ inline void MpcGimbalPlanner::warm_start_shift() noexcept {
     }
 }
 
+inline void MpcGimbalPlanner::solve_from_reference(const Trajectory& traj) noexcept {
+    const int N = config_.horizon;
+
+    Eigen::Vector2d x0;
+
+    // Yaw
+    x0 << traj(0, 0), traj(1, 0);
+    tiny_set_x0(yaw_solver_, x0);
+    yaw_solver_->work->x    = traj.block(0, 0, 2, N);
+    yaw_solver_->work->u    = Eigen::MatrixXd::Zero(1, N - 1);
+    yaw_solver_->work->Xref = traj.block(0, 0, 2, N);
+    tiny_solve(yaw_solver_);
+
+    // Pitch
+    x0 << traj(2, 0), traj(3, 0);
+    tiny_set_x0(pitch_solver_, x0);
+    pitch_solver_->work->x    = traj.block(2, 0, 2, N);
+    pitch_solver_->work->u    = Eigen::MatrixXd::Zero(1, N - 1);
+    pitch_solver_->work->Xref = traj.block(2, 0, 2, N);
+    tiny_solve(pitch_solver_);
+}
+
+inline void MpcGimbalPlanner::fill_debug_output(
+    MpcPlannerOutput& output, const Trajectory& traj, double yaw0) const noexcept {
+    const int N            = config_.horizon;
+    const int idx          = config_.half_horizon;
+    output.mpc_dt          = config_.dt;
+    output.mpc_current_idx = idx;
+
+    output.ref_yaw.resize(N);
+    output.ref_yaw_vel.resize(N);
+    output.ref_pitch.resize(N);
+    output.ref_pitch_vel.resize(N);
+    output.opt_yaw.resize(N);
+    output.opt_yaw_vel.resize(N);
+    output.opt_pitch.resize(N);
+    output.opt_pitch_vel.resize(N);
+    output.ctrl_yaw_acc.resize(N - 1);
+    output.ctrl_pitch_acc.resize(N - 1);
+
+    for (int k = 0; k < N; ++k) {
+        output.ref_yaw[k]       = normalize_rad(traj(0, k) + yaw0);
+        output.ref_yaw_vel[k]   = traj(1, k);
+        output.ref_pitch[k]     = traj(2, k);
+        output.ref_pitch_vel[k] = traj(3, k);
+
+        output.opt_yaw[k]       = normalize_rad(yaw_solver_->work->x(0, k) + yaw0);
+        output.opt_yaw_vel[k]   = yaw_solver_->work->x(1, k);
+        output.opt_pitch[k]     = pitch_solver_->work->x(0, k);
+        output.opt_pitch_vel[k] = pitch_solver_->work->x(1, k);
+    }
+
+    for (int k = 0; k < N - 1; ++k) {
+        output.ctrl_yaw_acc[k]   = yaw_solver_->work->u(0, k);
+        output.ctrl_pitch_acc[k] = pitch_solver_->work->u(0, k);
+    }
+}
+
+inline void MpcGimbalPlanner::fill_visualization_trajectory(MpcPlannerOutput& output) const {
+    output.planned_trajectory = compensator_->get_trajectory(15, output.pitch);
+    for (auto& p : output.planned_trajectory) {
+        const double x = p.first;
+        const double z = p.second;
+        p.first        = x * std::cos(output.pitch) + z * std::sin(output.pitch);
+        p.second       = -x * std::sin(output.pitch) + z * std::cos(output.pitch);
+    }
+}
+
+inline void MpcGimbalPlanner::fill_common_output(
+    MpcPlannerOutput& output, const Trajectory& traj, double yaw0, uint64_t current_time_ns,
+    bool clamp_pitch) noexcept {
+    const int idx       = config_.half_horizon;
+    output.timestamp_ns = current_time_ns;
+
+    output.yaw     = normalize_rad(yaw_solver_->work->x(0, idx) + yaw0);
+    output.yaw_vel = yaw_solver_->work->x(1, idx);
+    output.yaw_acc = yaw_solver_->work->u(0, idx);
+
+    if (clamp_pitch) {
+        output.pitch =
+            std::clamp(pitch_solver_->work->x(0, idx), config_.pitch_min, config_.pitch_max);
+    } else {
+        output.pitch = pitch_solver_->work->x(0, idx);
+    }
+    output.pitch_vel = pitch_solver_->work->x(1, idx);
+    output.pitch_acc = pitch_solver_->work->u(0, idx);
+
+    const int fire_idx = idx + config_.fire_lookahead;
+    if (fire_idx < config_.horizon) {
+        const double yaw_error   = traj(0, fire_idx) - yaw_solver_->work->x(0, fire_idx);
+        const double pitch_error = traj(2, fire_idx) - pitch_solver_->work->x(0, fire_idx);
+        output.tracking_error    = std::hypot(yaw_error, pitch_error);
+        output.fire_advice       = output.tracking_error < config_.fire_thresh;
+    }
+
+    fill_visualization_trajectory(output);
+    fill_debug_output(output, traj, yaw0);
+}
+
 inline std::expected<MpcPlannerOutput, std::string> MpcGimbalPlanner::plan(
-    const L3::TrackerOutput& target, uint64_t current_time_ns, double bullet_speed,
-    double current_yaw, double current_pitch) noexcept {
+    const L3::TrackerOutput& target, uint64_t current_time_ns, double bullet_speed) noexcept {
     if (!target.is_tracking()) {
         return std::unexpected("Target not tracking");
     }
@@ -283,12 +374,10 @@ inline std::expected<MpcPlannerOutput, std::string> MpcGimbalPlanner::plan(
 
     if (target.is_robot()) {
         return plan_robot(
-            *target.robot_state(), target.timestamp_ns, current_time_ns, bullet_speed, current_yaw,
-            current_pitch);
+            *target.robot_state(), target.timestamp_ns, current_time_ns, bullet_speed);
     } else if (target.is_outpost()) {
         return plan_outpost(
-            *target.outpost_state(), target.timestamp_ns, current_time_ns, bullet_speed,
-            current_yaw, current_pitch);
+            *target.outpost_state(), target.timestamp_ns, current_time_ns, bullet_speed);
     }
 
     return std::unexpected("Unknown target type");
@@ -296,8 +385,7 @@ inline std::expected<MpcPlannerOutput, std::string> MpcGimbalPlanner::plan(
 
 inline std::expected<MpcPlannerOutput, std::string> MpcGimbalPlanner::plan_robot(
     const L3::RobotTargetState& target, uint64_t timestamp_ns, uint64_t current_time_ns,
-    double bullet_speed, [[maybe_unused]] double current_yaw,
-    [[maybe_unused]] double current_pitch) noexcept {
+    double bullet_speed) noexcept {
 
     // Adaptive delay compensation based on target angular velocity
     const double delay = std::abs(target.v_yaw) > config_.decision_speed ? config_.high_speed_delay
@@ -308,55 +396,12 @@ inline std::expected<MpcPlannerOutput, std::string> MpcGimbalPlanner::plan_robot
     auto traj   = trajectory_gen_.generate_robot(
         target, timestamp_ns, current_time_ns, delay, *compensator_, bullet_speed, yaw0);
 
-    // Set initial state for yaw solver (use reference trajectory start point)
-    Eigen::Vector2d x0;
-    x0 << traj(0, 0), traj(1, 0);
-    tiny_set_x0(yaw_solver_, x0);
-
-    // Initialize solver state from reference trajectory (cold start each frame)
-    // This ensures we don't carry over stale solutions when target changes rapidly
-    yaw_solver_->work->x = traj.block(0, 0, 2, config_.horizon);
-    yaw_solver_->work->u.setZero();
-
-    // Set reference trajectory for yaw (rows 0-1)
-    yaw_solver_->work->Xref = traj.block(0, 0, 2, config_.horizon);
-    tiny_solve(yaw_solver_);
-
-    // Set initial state for pitch solver (use reference trajectory start point)
-    x0 << traj(2, 0), traj(3, 0);
-    tiny_set_x0(pitch_solver_, x0);
-
-    // Initialize solver state from reference trajectory (cold start each frame)
-    pitch_solver_->work->x = traj.block(2, 0, 2, config_.horizon);
-    pitch_solver_->work->u.setZero();
-
-    // Set reference trajectory for pitch (rows 2-3)
-    pitch_solver_->work->Xref = traj.block(2, 0, 2, config_.horizon);
-    tiny_solve(pitch_solver_);
+    solve_from_reference(traj);
 
     // Extract results at half_horizon (current time)
     const int idx = config_.half_horizon;
     MpcPlannerOutput output;
-    output.timestamp_ns = current_time_ns;
-
-    // Yaw: add back yaw0 offset
-    output.yaw     = normalize_rad(yaw_solver_->work->x(0, idx) + yaw0);
-    output.yaw_vel = yaw_solver_->work->x(1, idx);
-    output.yaw_acc = yaw_solver_->work->u(0, idx);
-
-    // Pitch (clamp to physical limits)
-    output.pitch = std::clamp(pitch_solver_->work->x(0, idx), config_.pitch_min, config_.pitch_max);
-    output.pitch_vel = pitch_solver_->work->x(1, idx);
-    output.pitch_acc = pitch_solver_->work->u(0, idx);
-
-    // Fire decision: check tracking error at lookahead step
-    const int fire_idx = idx + config_.fire_lookahead;
-    if (fire_idx < config_.horizon) {
-        const double yaw_error   = traj(0, fire_idx) - yaw_solver_->work->x(0, fire_idx);
-        const double pitch_error = traj(2, fire_idx) - pitch_solver_->work->x(0, fire_idx);
-        output.tracking_error    = std::hypot(yaw_error, pitch_error);
-        output.fire_advice       = output.tracking_error < config_.fire_thresh;
-    }
+    fill_common_output(output, traj, yaw0, current_time_ns, true);
 
     // Distance calculation and predicted position
     // Use horizontal distance (x, y) for selecting closest armor, matching sp_vision_25
@@ -393,62 +438,12 @@ inline std::expected<MpcPlannerOutput, std::string> MpcGimbalPlanner::plan_robot
     output.predicted_position = pred_armor_pos;
     output.predicted_future   = current_time_ns + static_cast<uint64_t>(flying_time * 1e9);
 
-    // Generate trajectory for visualization
-    output.planned_trajectory = compensator_->get_trajectory(15, output.pitch);
-    // Rotate trajectory points by pitch
-    for (auto& p : output.planned_trajectory) {
-        double x = p.first;
-        double z = p.second;
-        p.first  = x * std::cos(output.pitch) + z * std::sin(output.pitch);
-        p.second = -x * std::sin(output.pitch) + z * std::cos(output.pitch);
-    }
-
-    // Store MPC debug data for visualization
-    const int N            = config_.horizon;
-    output.mpc_dt          = config_.dt;
-    output.mpc_current_idx = idx;
-
-    // Reserve space
-    output.ref_yaw.resize(N);
-    output.ref_yaw_vel.resize(N);
-    output.ref_pitch.resize(N);
-    output.ref_pitch_vel.resize(N);
-    output.opt_yaw.resize(N);
-    output.opt_yaw_vel.resize(N);
-    output.opt_pitch.resize(N);
-    output.opt_pitch_vel.resize(N);
-    output.ctrl_yaw_acc.resize(N - 1);
-    output.ctrl_pitch_acc.resize(N - 1);
-
-    // Copy reference trajectory (add yaw0 offset back)
-    for (int k = 0; k < N; ++k) {
-        output.ref_yaw[k]       = normalize_rad(traj(0, k) + yaw0);
-        output.ref_yaw_vel[k]   = traj(1, k);
-        output.ref_pitch[k]     = traj(2, k);
-        output.ref_pitch_vel[k] = traj(3, k);
-    }
-
-    // Copy optimized trajectory (add yaw0 offset back)
-    for (int k = 0; k < N; ++k) {
-        output.opt_yaw[k]       = normalize_rad(yaw_solver_->work->x(0, k) + yaw0);
-        output.opt_yaw_vel[k]   = yaw_solver_->work->x(1, k);
-        output.opt_pitch[k]     = pitch_solver_->work->x(0, k);
-        output.opt_pitch_vel[k] = pitch_solver_->work->x(1, k);
-    }
-
-    // Copy control sequence (accelerations)
-    for (int k = 0; k < N - 1; ++k) {
-        output.ctrl_yaw_acc[k]   = yaw_solver_->work->u(0, k);
-        output.ctrl_pitch_acc[k] = pitch_solver_->work->u(0, k);
-    }
-
     return output;
 }
 
 inline std::expected<MpcPlannerOutput, std::string> MpcGimbalPlanner::plan_outpost(
     const L3::OutpostTargetState& target, uint64_t timestamp_ns, uint64_t current_time_ns,
-    double bullet_speed, [[maybe_unused]] double current_yaw,
-    [[maybe_unused]] double current_pitch) noexcept {
+    double bullet_speed) noexcept {
 
     // Adaptive delay compensation based on target angular velocity
     const double delay = std::abs(target.v_yaw) > config_.decision_speed ? config_.high_speed_delay
@@ -458,48 +453,11 @@ inline std::expected<MpcPlannerOutput, std::string> MpcGimbalPlanner::plan_outpo
     auto traj   = trajectory_gen_.generate_outpost(
         target, timestamp_ns, current_time_ns, delay, *compensator_, bullet_speed, yaw0);
 
-    // Set initial state for yaw solver (use reference trajectory start point)
-    Eigen::Vector2d x0;
-    x0 << traj(0, 0), traj(1, 0);
-    tiny_set_x0(yaw_solver_, x0);
-
-    // Initialize solver state from reference trajectory (cold start each frame)
-    yaw_solver_->work->x = traj.block(0, 0, 2, config_.horizon);
-    yaw_solver_->work->u.setZero();
-
-    yaw_solver_->work->Xref = traj.block(0, 0, 2, config_.horizon);
-    tiny_solve(yaw_solver_);
-
-    // Set initial state for pitch solver (use reference trajectory start point)
-    x0 << traj(2, 0), traj(3, 0);
-    tiny_set_x0(pitch_solver_, x0);
-
-    // Initialize solver state from reference trajectory (cold start each frame)
-    pitch_solver_->work->x = traj.block(2, 0, 2, config_.horizon);
-    pitch_solver_->work->u.setZero();
-
-    pitch_solver_->work->Xref = traj.block(2, 0, 2, config_.horizon);
-    tiny_solve(pitch_solver_);
+    solve_from_reference(traj);
 
     const int idx = config_.half_horizon;
     MpcPlannerOutput output;
-    output.timestamp_ns = current_time_ns;
-
-    output.yaw     = normalize_rad(yaw_solver_->work->x(0, idx) + yaw0);
-    output.yaw_vel = yaw_solver_->work->x(1, idx);
-    output.yaw_acc = yaw_solver_->work->u(0, idx);
-
-    output.pitch     = pitch_solver_->work->x(0, idx);
-    output.pitch_vel = pitch_solver_->work->x(1, idx);
-    output.pitch_acc = pitch_solver_->work->u(0, idx);
-
-    const int fire_idx = idx + config_.fire_lookahead;
-    if (fire_idx < config_.horizon) {
-        const double yaw_error   = traj(0, fire_idx) - yaw_solver_->work->x(0, fire_idx);
-        const double pitch_error = traj(2, fire_idx) - pitch_solver_->work->x(0, fire_idx);
-        output.tracking_error    = std::hypot(yaw_error, pitch_error);
-        output.fire_advice       = output.tracking_error < config_.fire_thresh;
-    }
+    fill_common_output(output, traj, yaw0, current_time_ns, false);
 
     // Distance and predicted position for outpost
     Eigen::Vector3d armor_pos_3d{target.position.x(), target.position.y(), target.z[0]};
@@ -517,54 +475,6 @@ inline std::expected<MpcPlannerOutput, std::string> MpcGimbalPlanner::plan_outpo
         target.z[0]};
     output.predicted_position = pred_armor_pos;
     output.predicted_future   = current_time_ns + static_cast<uint64_t>(flying_time * 1e9);
-
-    // Generate trajectory for visualization
-    output.planned_trajectory = compensator_->get_trajectory(15, output.pitch);
-    for (auto& p : output.planned_trajectory) {
-        double x = p.first;
-        double z = p.second;
-        p.first  = x * std::cos(output.pitch) + z * std::sin(output.pitch);
-        p.second = -x * std::sin(output.pitch) + z * std::cos(output.pitch);
-    }
-
-    // Store MPC debug data for visualization
-    const int N            = config_.horizon;
-    output.mpc_dt          = config_.dt;
-    output.mpc_current_idx = idx;
-
-    // Reserve space
-    output.ref_yaw.resize(N);
-    output.ref_yaw_vel.resize(N);
-    output.ref_pitch.resize(N);
-    output.ref_pitch_vel.resize(N);
-    output.opt_yaw.resize(N);
-    output.opt_yaw_vel.resize(N);
-    output.opt_pitch.resize(N);
-    output.opt_pitch_vel.resize(N);
-    output.ctrl_yaw_acc.resize(N - 1);
-    output.ctrl_pitch_acc.resize(N - 1);
-
-    // Copy reference trajectory (add yaw0 offset back)
-    for (int k = 0; k < N; ++k) {
-        output.ref_yaw[k]       = normalize_rad(traj(0, k) + yaw0);
-        output.ref_yaw_vel[k]   = traj(1, k);
-        output.ref_pitch[k]     = traj(2, k);
-        output.ref_pitch_vel[k] = traj(3, k);
-    }
-
-    // Copy optimized trajectory (add yaw0 offset back)
-    for (int k = 0; k < N; ++k) {
-        output.opt_yaw[k]       = normalize_rad(yaw_solver_->work->x(0, k) + yaw0);
-        output.opt_yaw_vel[k]   = yaw_solver_->work->x(1, k);
-        output.opt_pitch[k]     = pitch_solver_->work->x(0, k);
-        output.opt_pitch_vel[k] = pitch_solver_->work->x(1, k);
-    }
-
-    // Copy control sequence (accelerations)
-    for (int k = 0; k < N - 1; ++k) {
-        output.ctrl_yaw_acc[k]   = yaw_solver_->work->u(0, k);
-        output.ctrl_pitch_acc[k] = pitch_solver_->work->u(0, k);
-    }
 
     return output;
 }

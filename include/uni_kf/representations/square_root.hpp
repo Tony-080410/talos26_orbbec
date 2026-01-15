@@ -189,7 +189,7 @@ public:
     // Conversion to other representations
     // ------------------------------------------------------------------------
 
-    /// @brief Convert to standard covariance representation
+    /// @brief Convert to standard covariance representation (P = S*S^T)
     [[nodiscard]] SymmetricMatrix<N, Scalar> to_covariance() const noexcept { return covariance(); }
 
     // ------------------------------------------------------------------------
