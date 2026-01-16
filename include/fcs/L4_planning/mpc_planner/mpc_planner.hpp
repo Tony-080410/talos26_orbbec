@@ -53,6 +53,14 @@ public:
     [[nodiscard]] std::expected<MpcPlannerOutput, std::string> plan(
         const L3::TrackerOutput& target, uint64_t current_time_ns, double bullet_speed) noexcept;
 
+    /// Plan gimbal trajectory using a custom muzzle origin (odom frame).
+    ///
+    /// Use this when tracker positions are in odom/world coordinates but ballistic compensation
+    /// expects target position relative to the muzzle origin.
+    [[nodiscard]] std::expected<MpcPlannerOutput, std::string> plan(
+        const L3::TrackerOutput& target, uint64_t current_time_ns, double bullet_speed,
+        const Eigen::Vector3d& muzzle_pos_odom) noexcept;
+
 private:
     using Trajectory = TrajectoryGenerator::Trajectory;
 
@@ -83,12 +91,12 @@ private:
     /// Plan for robot target
     [[nodiscard]] std::expected<MpcPlannerOutput, std::string> plan_robot(
         const L3::RobotTargetState& target, uint64_t timestamp_ns, uint64_t current_time_ns,
-        double bullet_speed) noexcept;
+        double bullet_speed, const Eigen::Vector3d& muzzle_pos_odom) noexcept;
 
     /// Plan for outpost target
     [[nodiscard]] std::expected<MpcPlannerOutput, std::string> plan_outpost(
         const L3::OutpostTargetState& target, uint64_t timestamp_ns, uint64_t current_time_ns,
-        double bullet_speed) noexcept;
+        double bullet_speed, const Eigen::Vector3d& muzzle_pos_odom) noexcept;
 
     MpcPlannerConfig config_;
 
@@ -363,6 +371,12 @@ inline void MpcGimbalPlanner::fill_common_output(
 
 inline std::expected<MpcPlannerOutput, std::string> MpcGimbalPlanner::plan(
     const L3::TrackerOutput& target, uint64_t current_time_ns, double bullet_speed) noexcept {
+    return plan(target, current_time_ns, bullet_speed, Eigen::Vector3d::Zero());
+}
+
+inline std::expected<MpcPlannerOutput, std::string> MpcGimbalPlanner::plan(
+    const L3::TrackerOutput& target, uint64_t current_time_ns, double bullet_speed,
+    const Eigen::Vector3d& muzzle_pos_odom) noexcept {
     if (!target.is_tracking()) {
         return std::unexpected("Target not tracking");
     }
@@ -374,10 +388,12 @@ inline std::expected<MpcPlannerOutput, std::string> MpcGimbalPlanner::plan(
 
     if (target.is_robot()) {
         return plan_robot(
-            *target.robot_state(), target.timestamp_ns, current_time_ns, bullet_speed);
+            *target.robot_state(), target.timestamp_ns, current_time_ns, bullet_speed,
+            muzzle_pos_odom);
     } else if (target.is_outpost()) {
         return plan_outpost(
-            *target.outpost_state(), target.timestamp_ns, current_time_ns, bullet_speed);
+            *target.outpost_state(), target.timestamp_ns, current_time_ns, bullet_speed,
+            muzzle_pos_odom);
     }
 
     return std::unexpected("Unknown target type");
@@ -385,7 +401,7 @@ inline std::expected<MpcPlannerOutput, std::string> MpcGimbalPlanner::plan(
 
 inline std::expected<MpcPlannerOutput, std::string> MpcGimbalPlanner::plan_robot(
     const L3::RobotTargetState& target, uint64_t timestamp_ns, uint64_t current_time_ns,
-    double bullet_speed) noexcept {
+    double bullet_speed, const Eigen::Vector3d& muzzle_pos_odom) noexcept {
 
     // Adaptive delay compensation based on target angular velocity
     const double delay = std::abs(target.v_yaw) > config_.decision_speed ? config_.high_speed_delay
@@ -394,7 +410,8 @@ inline std::expected<MpcPlannerOutput, std::string> MpcGimbalPlanner::plan_robot
     // Generate reference trajectory
     double yaw0 = 0.0;
     auto traj   = trajectory_gen_.generate_robot(
-        target, timestamp_ns, current_time_ns, delay, *compensator_, bullet_speed, yaw0);
+        target, timestamp_ns, current_time_ns, delay, *compensator_, bullet_speed, muzzle_pos_odom,
+        yaw0);
 
     solve_from_reference(traj);
 
@@ -409,16 +426,18 @@ inline std::expected<MpcPlannerOutput, std::string> MpcGimbalPlanner::plan_robot
     double min_dist        = 1e10;
     int best_idx           = 0;
     for (size_t i = 0; i < armor_poses.size(); ++i) {
-        double dist = armor_poses[i].head<2>().norm();        // horizontal distance
+        const Eigen::Vector3d rel = armor_poses[i].head<3>() - muzzle_pos_odom;
+        const double dist         = std::hypot(rel.x(), rel.y()); // horizontal distance
         if (dist < min_dist) {
             min_dist = dist;
             best_idx = static_cast<int>(i);
         }
     }
-    output.distance = armor_poses[best_idx].head<3>().norm(); // 3D distance for output
+    const Eigen::Vector3d rel_now = armor_poses[best_idx].head<3>() - muzzle_pos_odom;
+    output.distance               = rel_now.norm();               // 3D distance for output
 
     // Predicted position (in odom frame) - use the flying time to predict
-    const double flying_time = compensator_->get_flying_time(armor_poses[best_idx].head<3>());
+    const double flying_time = compensator_->get_flying_time(rel_now);
     const double predict_dt =
         static_cast<double>(current_time_ns - timestamp_ns) * 1e-9 + delay + flying_time;
 
@@ -443,7 +462,7 @@ inline std::expected<MpcPlannerOutput, std::string> MpcGimbalPlanner::plan_robot
 
 inline std::expected<MpcPlannerOutput, std::string> MpcGimbalPlanner::plan_outpost(
     const L3::OutpostTargetState& target, uint64_t timestamp_ns, uint64_t current_time_ns,
-    double bullet_speed) noexcept {
+    double bullet_speed, const Eigen::Vector3d& muzzle_pos_odom) noexcept {
 
     // Adaptive delay compensation based on target angular velocity
     const double delay = std::abs(target.v_yaw) > config_.decision_speed ? config_.high_speed_delay
@@ -451,7 +470,8 @@ inline std::expected<MpcPlannerOutput, std::string> MpcGimbalPlanner::plan_outpo
 
     double yaw0 = 0.0;
     auto traj   = trajectory_gen_.generate_outpost(
-        target, timestamp_ns, current_time_ns, delay, *compensator_, bullet_speed, yaw0);
+        target, timestamp_ns, current_time_ns, delay, *compensator_, bullet_speed, muzzle_pos_odom,
+        yaw0);
 
     solve_from_reference(traj);
 
@@ -461,9 +481,10 @@ inline std::expected<MpcPlannerOutput, std::string> MpcGimbalPlanner::plan_outpo
 
     // Distance and predicted position for outpost
     Eigen::Vector3d armor_pos_3d{target.position.x(), target.position.y(), target.z[0]};
-    output.distance = armor_pos_3d.norm();
+    const Eigen::Vector3d rel_now = armor_pos_3d - muzzle_pos_odom;
+    output.distance               = rel_now.norm();
 
-    const double flying_time = compensator_->get_flying_time(armor_pos_3d);
+    const double flying_time = compensator_->get_flying_time(rel_now);
     const double predict_dt =
         static_cast<double>(current_time_ns - timestamp_ns) * 1e-9 + delay + flying_time;
 

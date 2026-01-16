@@ -165,7 +165,7 @@ public:
 
     [[nodiscard]] const Point& mean() const noexcept { return belief_.mean; }
 
-    [[nodiscard]] const Covariance& covariance() const noexcept { return belief_.covariance; }
+    [[nodiscard]] auto covariance() const noexcept { return belief_.covariance(); }
 
     [[nodiscard]] bool is_initialized() const noexcept { return initialized_; }
 
@@ -303,7 +303,7 @@ public:
             belief_.uncertainty = typename BeliefType::Repr(P_new);
 
         } else if constexpr (std::is_same_v<StrategyTag, CubaturePointsTag>) {
-            auto [H_dummy, Pxy, Pzz] = CubaturePoints::measurement_covariances<D, M>(
+            auto [z_pred, H_dummy, Pxy, Pzz] = CubaturePoints::measurement_covariances<D, M>(
                 belief_.mean, P, std::forward<MeasFunc>(h), R);
 
             // Solve for Kalman gain
@@ -316,7 +316,6 @@ public:
                 Pxy * ldlt.solve(Eigen::Matrix<Scalar, MeasDim, MeasDim>::Identity());
 
             // Compute innovation and apply update
-            auto z_pred                          = h(belief_.mean);
             auto innovation                      = M::diff(z_pred, z);
             typename Fiber::EigenType correction = K * innovation.data;
             belief_.mean                         = D::act(belief_.mean, Fiber(correction));
@@ -382,7 +381,7 @@ public:
 
         } else if constexpr (std::is_same_v<StrategyTag, CubaturePointsTag>) {
             auto h = [&model](const Point& x) { return model.predict(x); };
-            auto [H_dummy, Pxy, Pzz] =
+            auto [z_pred, H_dummy, Pxy, Pzz] =
                 CubaturePoints::measurement_covariances<D, M>(belief_.mean, P, h, R);
 
             // Solve for Kalman gain
@@ -395,7 +394,6 @@ public:
                 Pxy * ldlt.solve(Eigen::Matrix<Scalar, MeasDim, MeasDim>::Identity());
 
             // Compute innovation and apply update
-            auto z_pred                          = model.predict(belief_.mean);
             auto innovation                      = M::diff(z_pred, z);
             typename Fiber::EigenType correction = K * innovation.data;
             belief_.mean                         = D::act(belief_.mean, Fiber(correction));
@@ -595,6 +593,6 @@ template <
     int ExtraDim, LieSide Side = LieSide::Right, typename ReprTag = CovarianceTag,
     typename Scalar = double>
 using InCKF_SE23_Augmented =
-    UnifiedKalmanFilter<SE23_Rn<ExtraDim, Scalar, Side>, CubaturePointsTag, ReprTag, Scalar>;
+    UnifiedKalmanFilter<SE23_Rn<ExtraDim, Scalar, Side>, SigmaPointsTag, ReprTag, Scalar>;
 
 } // namespace uni_kf

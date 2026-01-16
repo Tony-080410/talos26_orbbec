@@ -1,7 +1,7 @@
 #pragma once
 
 #include "inekf_config.hpp"
-#include "motion_model.hpp"
+#include "motion_model_params.hpp"
 #include <expected>
 #include <memory>
 #include <string>
@@ -133,10 +133,10 @@ struct TargetConfig {
 struct TrackerConfig {
     /// Robot target parameters (4-armors).
     /// Problem: robots have 4 armors and geometry parameters (r0/r1/h) to estimate.
-    TargetConfig<RobotModel::Params> robot;
+    TargetConfig<RobotModelParams> robot;
     /// Outpost target parameters (3-armors).
     /// Problem: outposts have 3 armors and a different (simpler) state/geometry.
-    TargetConfig<OutpostModel::Params> outpost;
+    TargetConfig<OutpostModelParams> outpost;
 
     /// Enable InEKF parallel filter.
     ///

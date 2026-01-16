@@ -110,3 +110,28 @@ TEST(TransformMatrix4dTest, LerpRotation) {
     EXPECT_NEAR(euler.pitch, 0.0, 1e-6);
     EXPECT_NEAR(euler.yaw, M_PI / 4.0, 1e-6);
 }
+
+TEST(TransformMatrix4dTest, LerpRightInvariantConsistency) {
+    const auto a = TransformMatrix4d::from_rpy(0.1, -0.2, 0.3, 1.0, 2.0, 3.0);
+    const auto b = TransformMatrix4d::from_rpy(-0.4, 0.5, -0.6, 4.0, 5.0, 6.0);
+
+    constexpr double t = 0.3;
+    const auto mid     = TransformMatrix4d::lerp_se3(a, b, t);
+
+    const auto rel_expected = TransformMatrix4d::exp(a.rminus(b) * t);
+    const auto mid_expected = a * rel_expected;
+
+    const auto M  = mid.matrix();
+    const auto Me = mid_expected.matrix();
+    EXPECT_NEAR((M - Me).norm(), 0.0, 1e-9);
+}
+
+TEST(TransformMatrix4dTest, FromQuaternionNormalizes) {
+    Eigen::Quaterniond q(2.0, 0.0, 0.0, 0.0); // non-unit quaternion (but valid after normalize)
+    const auto tf = TransformMatrix4d::from_quaternion_xyz(q, 1.0, 2.0, 3.0);
+
+    EXPECT_NEAR(tf.quaternion().norm(), 1.0, 1e-12);
+    EXPECT_NEAR(tf.translation().x(), 1.0, 1e-12);
+    EXPECT_NEAR(tf.translation().y(), 2.0, 1e-12);
+    EXPECT_NEAR(tf.translation().z(), 3.0, 1e-12);
+}

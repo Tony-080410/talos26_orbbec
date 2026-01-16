@@ -1,49 +1,41 @@
 # Infantry Vision Configuration
 # extend from vision_base.toml
 
-[tracker.robot_inekf]
-sigma_a_xy = 40.0
-sigma_a_z = 1.0
-sigma_yaw = 20.0
-sigma_w = 0.25
-sigma_m = 1.25
-radius0 = 0.23
-radius1 = 0.23
-height = 0.0
-sigma_r = 0.3
-sigma_h = 0.01
-
 # MPC-based gimbal trajectory planner (TinyMPC ADMM solver)
 [mpc_planner]
+compensator_type = "Ideal"
+
 # MPC cost weights (yaw)
-q_yaw_position = 1.0e6
+q_yaw_position = 9.0e6
 q_yaw_velocity = 0.0
-r_yaw = 0.3
-max_yaw_acc = 5.0
+r_yaw = 0.1
+max_yaw_acc = 10.0
 
 # MPC cost weights (pitch)
-q_pitch_position = 1.0e6
+q_pitch_position = 9.0e6
 q_pitch_velocity = 0.0
-r_pitch = 0.3
+r_pitch = 1.0
 max_pitch_acc = 5.0
 
 # Fire decision parameters
-fire_thresh = 0.002       # ~0.17 degrees tracking error threshold
+fire_thresh = 0.001       # ~0.17 degrees tracking error threshold
 fire_lookahead = 10        # Steps ahead to check for fire decision
 
 # Solver parameters
 max_iterations = 10
 abs_tol = 1.0e-3
-rho = 1.0                 # ADMM penalty parameter
+rho = 2.0                 # ADMM penalty parameter
 dt = 0.004                 # 100Hz control rate
-horizon = 150             # 1 second lookahead
-half_horizon = 100         # Current control at middle of horizon
+horizon = 100             # 1 second lookahead
+half_horizon = 50         # Current control at middle of horizon
 
 decision_speed = 5.0
-high_speed_delay = 0.09
-low_speed_delay = 0.09
+high_speed_delay = 0.001
+low_speed_delay = 0.001
 
 trajectory.bullet_speed = 25.0
 trajectory.cd = 0.22516
 trajectory.diameter = 0.017
 trajectory.mass = 0.00312
+
+trajectory.gravity = 9.81

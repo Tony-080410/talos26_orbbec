@@ -53,7 +53,10 @@ enum Measure : uint8_t {
 // Coordinate Transforms
 // ============================================================================
 
-/// Convert Cartesian to spherical: xyz -> [yaw, pitch, distance]
+/// Convert Cartesian to yaw/pitch/distance in ROS (REP-103) convention:
+/// - yaw: rotation about +Z, positive CCW in XY plane: atan2(y, x)
+/// - pitch: rotation about +Y, positive "down": atan2(-z, hypot(x, y))
+/// - distance: Euclidean norm
 [[nodiscard]] inline Eigen::Vector3d xyz2ypd(const Eigen::Vector3d& xyz) noexcept {
     const double x = xyz.x();
     const double y = xyz.y();
@@ -62,7 +65,7 @@ enum Measure : uint8_t {
     const double distance   = xyz.norm();
     const double yaw        = std::atan2(y, x);
     const double horizontal = std::hypot(x, y); // More accurate and faster than sqrt(x*x + y*y)
-    const double pitch      = std::atan2(z, horizontal);
+    const double pitch      = std::atan2(-z, horizontal);
 
     return {yaw, pitch, distance};
 }
@@ -96,12 +99,12 @@ enum Measure : uint8_t {
     J(0, 1) = x / r2_xy;
     J(0, 2) = 0.0;
 
-    // ∂pitch/∂(x,y,z) where pitch = atan2(z, sqrt(x²+y²))
-    // Using chain rule: d/dx[atan2(z, r_xy)] = -x*z / (r² * r_xy)
+    // ∂pitch/∂(x,y,z) where pitch = atan2(-z, sqrt(x²+y²))
+    // Using chain rule: d/dx[atan2(-z, r_xy)] = x*z / (r² * r_xy)
     const double denom = r2 * r_xy;
-    J(1, 0)            = -x * z / denom;
-    J(1, 1)            = -y * z / denom;
-    J(1, 2)            = r_xy / r2;
+    J(1, 0)            = x * z / denom;
+    J(1, 1)            = y * z / denom;
+    J(1, 2)            = -r_xy / r2;
 
     // ∂distance/∂(x,y,z) where distance = sqrt(x²+y²+z²)
     J(2, 0) = x / r;
@@ -120,7 +123,7 @@ enum Measure : uint8_t {
     const double cp = std::cos(pitch);
     const double x  = distance * cp * std::cos(yaw);
     const double y  = distance * cp * std::sin(yaw);
-    const double z  = distance * std::sin(pitch);
+    const double z  = -distance * std::sin(pitch);
 
     return {x, y, z};
 }

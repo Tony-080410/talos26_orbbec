@@ -292,6 +292,10 @@ target_include_directories(fast_tf PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
 
+target_include_directories(fast_tf SYSTEM PUBLIC
+        3dparty/lieplusplus
+)
+
 target_link_libraries(fast_tf PUBLIC
         Eigen3::Eigen
         TBB::tbb

@@ -6,6 +6,9 @@
 #include "fcs/L4_planning/mpc_planner/mpc_planner.hpp"
 #include "fcs/core/channel_tags.hpp"
 #include "fcs/core/time.hpp"
+#include "math/euler.hpp"
+#include "math/fast_tf/error.hpp"
+#include "math/fast_tf/frame.hpp"
 #include "scheduler/ecs/channel_types.hpp"
 #include "scheduler/ecs/execution_policy.hpp"
 #include "scheduler/scheduler/scheduler.hpp"
@@ -18,6 +21,7 @@ void register_mpc_planning_systems(
         "l4_mpc_planner",
         [planner_instance = std::move(planner), bullet_speed](
             talos::spmc<fcs::L3::TrackerOutput, TrackerOutputChannelTag> tracker_in,
+            talos::res<std::shared_ptr<fast_tf::CoordinateSystem<1024>>> tf_buffer,
             talos::spmc_mut<GimbalPlan, GimbalPlanChannelTag> plan_out) {
             auto target = tracker_in.read();
             if (!target || !target->is_tracking()) {
@@ -26,11 +30,35 @@ void register_mpc_planning_systems(
 
             const uint64_t current_time_ns = clock::now_ns();
 
-            if (auto result = planner_instance->plan(*target, current_time_ns, bullet_speed)) {
+            Eigen::Vector3d muzzle_pos_odom = Eigen::Vector3d::Zero();
+            double muzzle_pitch_mount       = 0.0;
+
+            auto tf =
+                fast_tf::lookup_clamped<fast_tf::odom_fuxk_frame, fast_tf::muzzle_link_fuxk_frame>(
+                    **tf_buffer, fast_tf::FuckTransform<fast_tf::muzzle_link_fuxk_frame>{},
+                    current_time_ns);
+            if (tf) {
+                muzzle_pos_odom = (*tf)->translation();
+                auto tf_g       = fast_tf::lookup_clamped<
+                          fast_tf::odom_fuxk_frame, fast_tf::gimbal_link_fuxk_frame>(
+                    **tf_buffer, fast_tf::FuckTransform<fast_tf::gimbal_link_fuxk_frame>{},
+                    current_time_ns);
+                if (tf_g) {
+                    const Eigen::Matrix3d Rg   = (*tf_g)->rotation();
+                    const Eigen::Matrix3d Rm   = (*tf)->rotation();
+                    const Eigen::Matrix3d Rrel = Rg.transpose() * Rm;
+                    muzzle_pitch_mount = math_fuxk::rpy<double>(Eigen::Quaterniond(Rrel)).pitch;
+                }
+            } else {
+                SPDLOG_WARN("tf not found for {}", fast_tf::to_string(tf.error()));
+            }
+
+            if (auto result = planner_instance->plan(
+                    *target, current_time_ns, bullet_speed, muzzle_pos_odom)) {
                 GimbalPlan plan;
                 plan.timestamp_ns       = result->timestamp_ns;
                 plan.yaw                = result->yaw;
-                plan.pitch              = result->pitch;
+                plan.pitch              = result->pitch - muzzle_pitch_mount;
                 plan.yaw_vel            = result->yaw_vel;
                 plan.pitch_vel          = result->pitch_vel;
                 plan.yaw_acc            = result->yaw_acc;

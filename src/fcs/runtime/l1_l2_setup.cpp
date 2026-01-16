@@ -33,12 +33,10 @@ struct DaedalusImu {
         talos::res_mut<std::shared_ptr<fast_tf::CoordinateSystem<1024>>> tf_buffer) noexcept {
         if (const auto pose = ipc_device->recv_pose(ipc::POSE_GIMBAL)) {
             const Eigen::Quaterniond q(pose->qw, pose->qx, pose->qy, pose->qz);
-            const auto [roll, pitch, yaw] = math_fuxk::rpy(q).rpy();
             fast_tf::update(
                 *tf_buffer->get(),
                 fast_tf::FuckTransform<fast_tf::gimbal_link_fuxk_frame>(
-                    fast_tf::TransformMatrix4d::from_rpy(
-                        roll, pitch, yaw, pose->x, pose->y, pose->z)),
+                    fast_tf::TransformMatrix4d::from_quaternion_xyz(q, pose->x, pose->y, pose->z)),
                 pose->timestamp_ns);
         }
         if (const auto pose = ipc_device->recv_pose(ipc::POSE_ODOM)) {
@@ -50,22 +48,18 @@ struct DaedalusImu {
         }
         if (const auto pose = ipc_device->recv_pose(ipc::POSE_CAMERA)) {
             const Eigen::Quaterniond q(pose->qw, pose->qx, pose->qy, pose->qz);
-            auto [roll, pitch, yaw] = math_fuxk::rpy(q).rpy();
             fast_tf::update(
                 *tf_buffer->get(),
                 fast_tf::FuckTransform<fast_tf::camera_link_fuxk_frame>(
-                    fast_tf::TransformMatrix4d::from_rpy(
-                        roll, pitch, yaw, pose->x, pose->y, pose->z)),
+                    fast_tf::TransformMatrix4d::from_quaternion_xyz(q, pose->x, pose->y, pose->z)),
                 pose->timestamp_ns);
         }
         if (const auto pose = ipc_device->recv_pose(ipc::POSE_MUZZLE)) {
             const Eigen::Quaterniond q(pose->qw, pose->qx, pose->qy, pose->qz);
-            const auto [roll, pitch, yaw] = math_fuxk::rpy(q).rpy();
             fast_tf::update(
                 *tf_buffer->get(),
                 fast_tf::FuckTransform<fast_tf::muzzle_link_fuxk_frame>(
-                    fast_tf::TransformMatrix4d::from_rpy(
-                        roll, pitch, yaw, pose->x, pose->y, pose->z)),
+                    fast_tf::TransformMatrix4d::from_quaternion_xyz(q, pose->x, pose->y, pose->z)),
                 pose->timestamp_ns);
         }
     }

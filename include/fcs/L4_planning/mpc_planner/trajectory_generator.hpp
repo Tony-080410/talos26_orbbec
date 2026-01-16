@@ -55,18 +55,34 @@ public:
         double plan_to_muzzle_delay, const TrajectoryCompensator& compensator, double bullet_speed,
         double& yaw0) const noexcept;
 
+    /// Generate reference trajectory for robot target, using a custom origin in odom frame.
+    ///
+    /// Ballistic compensation expects target position relative to the muzzle origin (or another
+    /// consistent firing origin). If tracker outputs are in odom/world coordinates, pass the
+    /// muzzle position in odom here to remove constant pitch bias from a non-zero origin height.
+    [[nodiscard]] Trajectory generate_robot(
+        const L3::RobotTargetState& target, uint64_t measurement_ts, uint64_t current_time_ns,
+        double plan_to_muzzle_delay, const TrajectoryCompensator& compensator, double bullet_speed,
+        const Eigen::Vector3d& origin_odom, double& yaw0) const noexcept;
+
     /// Generate reference trajectory for outpost target
     [[nodiscard]] Trajectory generate_outpost(
         const L3::OutpostTargetState& target, uint64_t measurement_ts, uint64_t current_time_ns,
         double plan_to_muzzle_delay, const TrajectoryCompensator& compensator, double bullet_speed,
         double& yaw0) const noexcept;
 
+    /// Generate reference trajectory for outpost target, using a custom origin in odom frame.
+    [[nodiscard]] Trajectory generate_outpost(
+        const L3::OutpostTargetState& target, uint64_t measurement_ts, uint64_t current_time_ns,
+        double plan_to_muzzle_delay, const TrajectoryCompensator& compensator, double bullet_speed,
+        const Eigen::Vector3d& origin_odom, double& yaw0) const noexcept;
+
 private:
     template <class PredictFn>
     [[nodiscard]] Trajectory generate_impl(
         PredictFn&& predict, uint64_t measurement_ts, uint64_t current_time_ns,
         double plan_to_muzzle_delay, const TrajectoryCompensator& compensator, double bullet_speed,
-        double& yaw0) const noexcept;
+        const Eigen::Vector3d& origin_odom, double& yaw0) const noexcept;
 
     /// Predict robot target position at future time dt
     ///
@@ -105,7 +121,17 @@ inline TrajectoryGenerator::Trajectory TrajectoryGenerator::generate_robot(
     double& yaw0) const noexcept {
     return generate_impl(
         [&](double dt) noexcept { return predict_robot_position(target, dt); }, measurement_ts,
-        current_time_ns, plan_to_muzzle_delay, compensator, bullet_speed, yaw0);
+        current_time_ns, plan_to_muzzle_delay, compensator, bullet_speed, Eigen::Vector3d::Zero(),
+        yaw0);
+}
+
+inline TrajectoryGenerator::Trajectory TrajectoryGenerator::generate_robot(
+    const L3::RobotTargetState& target, uint64_t measurement_ts, uint64_t current_time_ns,
+    double plan_to_muzzle_delay, const TrajectoryCompensator& compensator, double bullet_speed,
+    const Eigen::Vector3d& origin_odom, double& yaw0) const noexcept {
+    return generate_impl(
+        [&](double dt) noexcept { return predict_robot_position(target, dt); }, measurement_ts,
+        current_time_ns, plan_to_muzzle_delay, compensator, bullet_speed, origin_odom, yaw0);
 }
 
 inline TrajectoryGenerator::Trajectory TrajectoryGenerator::generate_outpost(
@@ -114,14 +140,24 @@ inline TrajectoryGenerator::Trajectory TrajectoryGenerator::generate_outpost(
     double& yaw0) const noexcept {
     return generate_impl(
         [&](double dt) noexcept { return predict_outpost_position(target, dt); }, measurement_ts,
-        current_time_ns, plan_to_muzzle_delay, compensator, bullet_speed, yaw0);
+        current_time_ns, plan_to_muzzle_delay, compensator, bullet_speed, Eigen::Vector3d::Zero(),
+        yaw0);
+}
+
+inline TrajectoryGenerator::Trajectory TrajectoryGenerator::generate_outpost(
+    const L3::OutpostTargetState& target, uint64_t measurement_ts, uint64_t current_time_ns,
+    double plan_to_muzzle_delay, const TrajectoryCompensator& compensator, double bullet_speed,
+    const Eigen::Vector3d& origin_odom, double& yaw0) const noexcept {
+    return generate_impl(
+        [&](double dt) noexcept { return predict_outpost_position(target, dt); }, measurement_ts,
+        current_time_ns, plan_to_muzzle_delay, compensator, bullet_speed, origin_odom, yaw0);
 }
 
 template <class PredictFn>
 inline TrajectoryGenerator::Trajectory TrajectoryGenerator::generate_impl(
     PredictFn&& predict, uint64_t measurement_ts, uint64_t current_time_ns,
     double plan_to_muzzle_delay, const TrajectoryCompensator& compensator, double bullet_speed,
-    double& yaw0) const noexcept {
+    const Eigen::Vector3d& origin_odom, double& yaw0) const noexcept {
 
     Trajectory traj(4, horizon_);
 
@@ -130,26 +166,26 @@ inline TrajectoryGenerator::Trajectory TrajectoryGenerator::generate_impl(
     // Iteratively estimate flying time (target moves during bullet flight)
     // 2-3 iterations typically converge for most target speeds
     double flying_time       = 0.0;
-    Eigen::Vector3d pred_pos = predict(time_since_meas);
+    Eigen::Vector3d pred_pos = predict(time_since_meas) - origin_odom;
     for (int iter = 0; iter < 3; ++iter) {
         flying_time = compensator.get_flying_time(pred_pos);
-        pred_pos    = predict(time_since_meas + flying_time);
+        pred_pos    = predict(time_since_meas + flying_time) - origin_odom;
     }
 
     const double base_dt  = time_since_meas + flying_time + plan_to_muzzle_delay;
     const double start_dt = base_dt - half_horizon_ * dt_;
 
-    const auto pos_now = predict(base_dt);
+    const auto pos_now = predict(base_dt) - origin_odom;
     const auto aim_now = compute_aim_point(pos_now, compensator, bullet_speed);
     yaw0               = aim_now.x();
 
     Eigen::Vector2d aim_prev, aim_curr, aim_next;
-    aim_prev = compute_aim_point(predict(start_dt - dt_), compensator, bullet_speed);
-    aim_curr = compute_aim_point(predict(start_dt), compensator, bullet_speed);
+    aim_prev = compute_aim_point(predict(start_dt - dt_) - origin_odom, compensator, bullet_speed);
+    aim_curr = compute_aim_point(predict(start_dt) - origin_odom, compensator, bullet_speed);
 
     for (int i = 0; i < horizon_; ++i) {
         const double t = start_dt + (i + 1) * dt_;
-        aim_next       = compute_aim_point(predict(t), compensator, bullet_speed);
+        aim_next       = compute_aim_point(predict(t) - origin_odom, compensator, bullet_speed);
 
         const double yaw_vel   = normalize_rad(aim_next.x() - aim_prev.x()) / (2.0 * dt_);
         const double pitch_vel = (aim_next.y() - aim_prev.y()) / (2.0 * dt_);

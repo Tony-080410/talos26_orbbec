@@ -474,7 +474,7 @@ void Scheduler::run_compute_loop() {
             compute_last_time_ns_.store(elapsed, std::memory_order_relaxed);
 
             // Cascade wake: mark dependents of systems that actually wrote
-            std::uint32_t cascade = 0;
+            std::uint64_t cascade = 0;
             for (std::size_t i = 0; i < compute_affects_.size(); ++i) {
                 if (written & (1U << i)) {
                     cascade |= compute_affects_[i];
@@ -502,12 +502,12 @@ void Scheduler::run_compute_loop() {
     }
 }
 
-auto Scheduler::run_compute_selective(const std::uint32_t ready_mask) -> std::uint32_t {
+auto Scheduler::run_compute_selective(const std::uint64_t ready_mask) -> std::uint64_t {
     if (compute_systems_.empty()) [[unlikely]] {
         return 0;
     }
 
-    std::atomic<std::uint32_t> written_mask{0};
+    std::atomic<std::uint64_t> written_mask{0};
 
     compute_arena_->execute([this, ready_mask, &written_mask] {
         // Reusable buffer for system indices to avoid per-call allocation
@@ -750,7 +750,7 @@ auto Scheduler::compute_levels() -> BuildResult {
 
     // Use bitmask for adjacency instead of std::set (O(1) vs O(log n))
     // adj_mask[i] = bitmask of nodes that node i points to
-    std::vector<std::uint32_t> adj_mask(n, 0);
+    std::vector<std::uint64_t> adj_mask(n, 0);
     std::vector<std::size_t> in_degree(n, 0);
 
     for (const auto& [key, usage] : channels) {
@@ -761,7 +761,7 @@ auto Scheduler::compute_levels() -> BuildResult {
         std::size_t writer = usage.writers[0];
         for (std::size_t reader : usage.readers) {
             if (writer != reader) {
-                const std::uint32_t bit = 1U << reader;
+                const std::uint64_t bit = 1U << reader;
                 if ((adj_mask[writer] & bit) == 0) {
                     // New edge
                     adj_mask[writer] |= bit;
@@ -792,7 +792,7 @@ auto Scheduler::compute_levels() -> BuildResult {
 
         std::vector<std::size_t> next_level;
         for (std::size_t node : current_level) {
-            std::uint32_t neighbors = adj_mask[node];
+            std::uint64_t neighbors = adj_mask[node];
             while (neighbors) {
                 const std::size_t neighbor = __builtin_ctzll(neighbors);
                 neighbors &= neighbors - 1; // Clear lowest set bit
@@ -831,7 +831,7 @@ auto Scheduler::compute_levels() -> BuildResult {
             in_stack[node] = true;
             path.push_back(node);
 
-            std::uint32_t neighbors = adj_mask[node];
+            std::uint64_t neighbors = adj_mask[node];
             while (neighbors) {
                 const std::size_t neighbor = __builtin_ctzll(neighbors);
                 neighbors &= neighbors - 1; // Clear lowest set bit
@@ -871,7 +871,7 @@ auto Scheduler::compute_levels() -> BuildResult {
     // ========================================================================
     // Build transitive closure of compute system dependencies
     // dependents[i] = bitmask of all systems that depend on system i (directly or transitively)
-    std::vector<std::uint32_t> dependents = adj_mask; // Direct dependencies are already in adj_mask
+    std::vector<std::uint64_t> dependents = adj_mask; // Direct dependencies are already in adj_mask
 
     // Compute transitive closure (Floyd-Warshall style)
     for (std::size_t k = 0; k < n; ++k) {
@@ -886,7 +886,7 @@ auto Scheduler::compute_levels() -> BuildResult {
     exclusive_affects_.resize(exclusive_systems_.size(), 0);
 
     for (std::size_t i = 0; i < exclusive_systems_.size(); ++i) {
-        std::uint32_t affects = 0;
+        std::uint64_t affects = 0;
         const auto& meta      = exclusive_systems_[i].system->meta();
         // Find compute systems that directly read from this exclusive's channels
         for (const auto& ch : meta.spsc_channels) {

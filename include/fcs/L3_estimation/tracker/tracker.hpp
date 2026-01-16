@@ -7,6 +7,7 @@
 #include "motion_model.hpp"
 #include "spdlog_hook.hpp"
 #include "types.hpp"
+#include "uni_kf_spaces.hpp"
 
 // InEKF tracker using uni_kf framework
 #include "inekf_tracker.hpp"
@@ -74,7 +75,7 @@ public:
 
         if (robot_ckf_.has_value()) {
             robot_ckf_->predict(dt);
-            auto& x = *robot_ckf_->x_raw_ptr();
+            auto& e = robot_ckf_->x_mut().first.data;
             // Clamp radius/height to keep geometry physically plausible and prevent divergence.
             //
             // Problem: wrong associations or spikes can drive geometry to absurd values and then
@@ -82,9 +83,9 @@ public:
             // Intuition: hard bounds keep the filter "sane" even if process noise is large.
             // Analogy: saturating a control signal / enforcing physical joint limits.
             // Precise: these clamps are applied after every ISRCKF predict(), regardless of Q.
-            x[R_0] = std::clamp(x[R_0], 0.17, 0.27);
-            x[R_1] = std::clamp(x[R_1], 0.17, 0.27);
-            x[H]   = std::clamp(x[H], -0.2, 0.2);
+            e(RobotModel::R_0) = std::clamp(e(RobotModel::R_0), 0.17, 0.27);
+            e(RobotModel::R_1) = std::clamp(e(RobotModel::R_1), 0.17, 0.27);
+            e(RobotModel::H)   = std::clamp(e(RobotModel::H), -0.2, 0.2);
         }
 
         if (outpost_ckf_.has_value()) {
@@ -119,7 +120,7 @@ public:
 
         if (is_outpost) {
             auto result = outpost_associator_.match(
-                measurements, outpost_ckf_->x(), outpost_ckf_->Sx(), outpost_model_, target_name_,
+                measurements, outpost_ckf_->x(), outpost_ckf_->Px(), outpost_model_, target_name_,
                 matcher_gate, armors_num);
 
             for (size_t i = 0; i < result.armors.size(); ++i) {
@@ -128,7 +129,7 @@ public:
             }
         } else {
             auto result = robot_associator_.match(
-                measurements, robot_ckf_->x(), robot_ckf_->Sx(), robot_model_, target_name_,
+                measurements, robot_ckf_->x(), robot_ckf_->Px(), robot_model_, target_name_,
                 matcher_gate, armors_num);
 
             match_result.armors = result.armors;
@@ -144,24 +145,18 @@ public:
 
         // Process matched armors
         for (size_t i = 0; i < match_result.armors.size(); ++i) {
-            RoboCKF::VecZ z;
             const auto& meas = match_result.armors[i];
 
-            const auto ypd             = xyz2ypd(meas.transform->translation());
             const double armor_yaw_raw = meas.yaw();
             const auto& armor_pos_odom = meas.transform->translation();
+            const auto z_meas          = ukf::ArmorMeas::make(armor_pos_odom, armor_yaw_raw);
+            const auto ypd             = xyz2ypd(armor_pos_odom);
 
             if (is_outpost) {
-                outpost_model_.armor_id = idx[i];
-                const auto z_pred       = outpost_model_.h(outpost_ckf_->x(), idx[i]);
-                z[0]                    = unwrap_rad(z_pred[0], ypd[0]);
-                z[1]                    = unwrap_rad(z_pred[1], ypd[1]);
-                z[2]                    = ypd[2];
-                z[3]                    = unwrap_rad(z_pred[3], armor_yaw_raw);
-                outpost_ckf_->update(z);
+                const int armor_id = idx[i];
+                outpost_ckf_->update(z_meas, armor_id);
 
                 if (outpost_inekf_.has_value() && config_.inekf_enabled) {
-                    const int armor_id = idx[i];
                     constexpr double kAngleStep =
                         2.0 * std::numbers::pi / static_cast<double>(OutpostModel::ARMORS_NUM);
                     const double yaw_offset = static_cast<double>(armor_id) * kAngleStep;
@@ -170,9 +165,9 @@ public:
                     if (config_.outpost_inekf.use_spherical_observation) {
                         // Spherical mode: update_armor_spherical includes armor_yaw,
                         // so we skip separate update_yaw to avoid double yaw update.
-                        const Eigen::Vector3d armor_ypd{z[0], z[1], z[2]};
+                        const Eigen::Vector3d armor_ypd{ypd.x(), ypd.y(), ypd.z()};
                         outpost_inekf_->update_armor_spherical(
-                            armor_ypd, z[3], armor_id, config_.outpost_inekf);
+                            armor_ypd, armor_yaw_raw, armor_id, config_.outpost_inekf);
                     } else {
                         // Cartesian mode: update yaw separately, then position
                         if (std::isfinite(armor_yaw_raw)) {
@@ -186,17 +181,10 @@ public:
                     }
                 }
             } else {
-                robot_model_.armor_id = idx[i];
-                const auto z_pred     = robot_model_.h(robot_ckf_->x(), idx[i]);
-                z[0]                  = unwrap_rad(z_pred[0], ypd[0]);
-                z[1]                  = unwrap_rad(z_pred[1], ypd[1]);
-                z[2]                  = ypd[2];
-                z[3]                  = unwrap_rad(z_pred[3], armor_yaw_raw);
-                bool is_another_pair  = (idx[i] == 1 || idx[i] == 3);
-                robot_ckf_->update(z);
+                const int armor_id = idx[i];
+                robot_ckf_->update(z_meas, armor_id);
 
                 if (robot_inekf_.has_value() && config_.inekf_enabled) {
-                    const int armor_id = idx[i];
                     constexpr double kAngleStep =
                         2.0 * std::numbers::pi / static_cast<double>(RobotModel::ARMORS_NUM);
                     const double yaw_offset = static_cast<double>(armor_id) * kAngleStep;
@@ -205,9 +193,9 @@ public:
                     if (config_.robot_inekf.use_spherical_observation) {
                         // Spherical mode: update_armor_spherical includes armor_yaw,
                         // so we skip separate update_yaw to avoid double yaw update.
-                        const Eigen::Vector3d armor_ypd{z[0], z[1], z[2]};
+                        const Eigen::Vector3d armor_ypd{ypd.x(), ypd.y(), ypd.z()};
                         robot_inekf_->update_armor_spherical(
-                            armor_ypd, z[3], armor_id, config_.robot_inekf);
+                            armor_ypd, armor_yaw_raw, armor_id, config_.robot_inekf);
                     } else {
                         // Cartesian mode: update yaw separately, then position
                         if (std::isfinite(armor_yaw_raw)) {
@@ -281,9 +269,9 @@ public:
             //   A flat initial guess that the data will sculpt into the correct shape.
             // Precise:
             //   We initialize [z0,z1,z2] = z0.
-            OutpostCKF::VecX xp0{x0, y0, armor_yaw, v0, z0, z0, z0};
-            OutpostCKF::MatXX P0 = OutpostCKF::MatXX::Identity();
-            outpost_ckf_.emplace(outpost_model_, xp0, P0);
+            const auto x_init = OutpostModel::make_state(x0, y0, armor_yaw, v0, z0, z0, z0);
+            const auto P0     = OutpostCKF::CovX::Identity();
+            outpost_ckf_.emplace(outpost_model_, x_init, P0);
             lost_threshold     = config_.outpost.lost_threshold;
             tracking_threshold = config_.outpost.tracking_threshold;
             matcher_gate       = config_.outpost.matcher_gate;
@@ -318,10 +306,10 @@ public:
             const double y0                 = pos.y() + kDefaultRadius * std::sin(armor_yaw);
             const double z0                 = pos.z();
 
-            RoboCKF::VecX xp0{x0, v0, y0, v0, z0, v0, armor_yaw, v0, kDefaultRadius, kDefaultRadius,
-                              0.0};
-            RoboCKF::MatXX P0 = RoboCKF::MatXX::Identity();
-            robot_ckf_.emplace(robot_model_, xp0, P0);
+            const auto x_init = RobotModel::make_state(
+                x0, v0, y0, v0, z0, v0, armor_yaw, v0, kDefaultRadius, kDefaultRadius, 0.0);
+            const auto P0 = RoboCKF::CovX::Identity();
+            robot_ckf_.emplace(robot_model_, x_init, P0);
             lost_threshold     = config_.robot.lost_threshold;
             tracking_threshold = config_.robot.tracking_threshold;
             matcher_gate       = config_.robot.matcher_gate;
@@ -350,14 +338,15 @@ public:
                 return output;
             }
             const auto& x = robot_ckf_->x();
+            const auto& e = x.first.data;
             RobotTargetState state;
-            state.position   = {x[XC], x[YC], x[Z0]};
-            state.velocity   = {x[VX], x[VY], x[VZ]};
-            state.yaw        = x[YAW];
-            state.v_yaw      = x[V_YAW];
-            state.radius0    = x[R_0];
-            state.radius1    = x[R_1];
-            state.z1         = x[Z0] + x[H];
+            state.position   = {e(RobotModel::XC), e(RobotModel::YC), e(RobotModel::Z0)};
+            state.velocity   = {e(RobotModel::VX), e(RobotModel::VY), e(RobotModel::VZ)};
+            state.yaw        = ukf::YawSO3Z::angle(x.second);
+            state.v_yaw      = e(RobotModel::V_YAW);
+            state.radius0    = e(RobotModel::R_0);
+            state.radius1    = e(RobotModel::R_1);
+            state.z1         = e(RobotModel::Z0) + e(RobotModel::H);
             state.armors_num = 4;
             output.state     = state;
         } else if (outpost_ckf_) {
@@ -367,11 +356,12 @@ public:
                 return output;
             }
             const auto& x = outpost_ckf_->x();
+            const auto& e = x.first.data;
             OutpostTargetState state;
-            state.position = {x[O_XC], x[O_YC]};
-            state.yaw      = x[O_YAW];
-            state.v_yaw    = x[O_VYAW];
-            state.z        = {x[O_Z0], x[O_Z1], x[O_Z2]};
+            state.position = {e(OutpostModel::XC), e(OutpostModel::YC)};
+            state.yaw      = ukf::YawSO3Z::angle(x.second);
+            state.v_yaw    = e(OutpostModel::V_YAW);
+            state.z        = {e(OutpostModel::Z0), e(OutpostModel::Z1), e(OutpostModel::Z2)};
             output.state   = state;
         }
 

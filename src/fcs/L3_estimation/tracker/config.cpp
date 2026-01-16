@@ -6,7 +6,7 @@ namespace fcs::L3 {
 
 template <>
 std::expected<void, std::string>
-    TargetConfig<RobotModel::Params>::read_from(const toml::table& tbl) noexcept {
+    TargetConfig<RobotModelParams>::read_from(const toml::table& tbl) noexcept {
     READ(tbl, lost_threshold);
     READ(tbl, tracking_threshold);
     READ(tbl, matcher_gate);
@@ -16,7 +16,7 @@ std::expected<void, std::string>
 
 template <>
 std::expected<void, std::string>
-    TargetConfig<OutpostModel::Params>::read_from(const toml::table& tbl) noexcept {
+    TargetConfig<OutpostModelParams>::read_from(const toml::table& tbl) noexcept {
     READ(tbl, lost_threshold);
     READ(tbl, tracking_threshold);
     READ(tbl, matcher_gate);

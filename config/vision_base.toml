@@ -5,7 +5,7 @@ detect_color = "Red"
 # Required if backend_type = "traditional"
 [traditional]
 advanced_binary = true
-dark_percentage = 0.5
+dark_percentage = 0.9
 binary_threshold = 85
 light_min_ratio = 0.0001
 light_max_ratio = 1.0
@@ -62,32 +62,32 @@ sigma_r1 = 1.0
 sigma_h = 0.5
 
 [tracker.robot_inekf]
-sigma_a_xy = 10.0
+sigma_a_xy = 40.0
 sigma_a_z = 1.0
-sigma_w = 0.25
-sigma_m = 0.5
-sigma_yaw = 20.0
+sigma_w = 0.75
+sigma_m = 0.75
+sigma_yaw = 26.0
 radius0 = 0.23
 radius1 = 0.23
 height = 0.1
 sigma_r = 1.0
 sigma_h = 0.05
-use_dynamic_noise = true
+use_dynamic_noise = false
 dynamic_noise_k_radial = 52.5
 dynamic_noise_k_tangent = 90.0
 # Spherical coordinate observation mode (faster tracking response)
 use_spherical_observation = true
-sigma_yaw_obs = 0.15
-sigma_pitch_obs = 0.15
-sigma_armor_yaw = 0.5
+sigma_yaw_obs = 0.063
+sigma_pitch_obs = 0.063
+sigma_armor_yaw = 0.3
 # Innovation gating (outlier rejection)
-max_angle_innovation = 0.5  # rad (~86°), set larger to allow fast maneuvers
-max_dist_innovation = 3.0   # meters
+max_angle_innovation = 1.5  # rad (~86°), set larger to allow fast maneuvers
+max_dist_innovation = 5.0   # meters
 
 [tracker.outpost]
-matcher_gate = 5.0
-lost_threshold = 1.0
-tracking_threshold = 5
+matcher_gate = 4.0
+lost_threshold = 2.0
+tracking_threshold = 4
 
 [tracker.outpost.model]
 sigma_q_xy = 10.0
@@ -102,15 +102,15 @@ sigma_h = 2.5
 sigma_m = 2.5
 sigma_w = 2.5
 use_dynamic_noise = false
-dynamic_noise_k_radial = 0.01
+dynamic_noise_k_radial = 0.8
 dynamic_noise_k_tangent = 0.0000625
 # Spherical coordinate observation mode (faster tracking response)
-use_spherical_observation = false
-sigma_yaw_obs = 0.15
-sigma_pitch_obs = 0.15
-sigma_armor_yaw = 0.5
+use_spherical_observation = true
+sigma_yaw_obs = 0.063
+sigma_pitch_obs = 0.063
+sigma_armor_yaw = 0.3
 # Innovation gating (outlier rejection)
-max_angle_innovation = 0.01  # rad (~86°), set larger to allow fast maneuvers
+max_angle_innovation = 0.8  # rad (~86°), set larger to allow fast maneuvers
 max_dist_innovation = 3.0   # meters
 
 # MPC-based gimbal trajectory planner (TinyMPC ADMM solver)

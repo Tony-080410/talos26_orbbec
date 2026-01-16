@@ -43,6 +43,7 @@
 #include <memory>
 #include <string>
 #include <thread>
+#include <utility>
 #include <variant>
 #include <vector>
 
@@ -510,8 +511,8 @@ private:
 
     static void run_exclusive_thread(ExclusiveContext ctx);
     void run_compute_loop();
-    [[nodiscard]] std::uint32_t
-        run_compute_selective(std::uint32_t ready_mask); // Returns mask of systems that wrote
+    [[nodiscard]] std::uint64_t
+        run_compute_selective(std::uint64_t ready_mask); // Returns mask of systems that wrote
 
     [[nodiscard]] auto compute_levels() -> BuildResult;
 
@@ -540,10 +541,10 @@ private:
     std::atomic<bool> running_{false};
 
     // Selective notification: wake chains for all systems
-    std::vector<std::uint32_t> exclusive_affects_; // [exclusive_idx] -> bitmask of compute systems
-    std::vector<std::uint32_t>
+    std::vector<std::uint64_t> exclusive_affects_; // [exclusive_idx] -> bitmask of compute systems
+    std::vector<std::uint64_t>
         compute_affects_; // [compute_idx] -> bitmask of dependent compute systems
-    std::atomic<std::uint32_t> ready_systems_{0}; // Bitmask of compute systems pending execution
+    std::atomic<std::uint64_t> ready_systems_{0}; // Bitmask of compute systems pending execution
 
     // Stats
     std::atomic<std::uint64_t> compute_cycles_{0};
@@ -570,9 +571,13 @@ auto Scheduler::add_system(std::string name, F&& func) -> void {
 
     if constexpr (is_exclusive_policy_v<Policy>) {
         exclusive_systems_.push_back(std::move(entry));
-    } else {
-        compute_systems_.push_back(std::move(entry));
+        return;
     }
+    if constexpr (is_pool_policy_v<Policy> || is_visualization_policy_v<Policy>) {
+        compute_systems_.push_back(std::move(entry));
+        return;
+    }
+    std::unreachable();
 }
 
 } // namespace talos

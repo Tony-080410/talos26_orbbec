@@ -9,6 +9,7 @@
 #include "math/fast_tf/robot_factory.hpp"
 #include "scheduler/scheduler.hpp"
 #include "spdlog_hook.hpp"
+#include "stm32.hpp"
 #include "toml_helper.hpp"
 
 #include <atomic>

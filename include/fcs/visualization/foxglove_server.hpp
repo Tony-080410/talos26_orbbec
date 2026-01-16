@@ -72,6 +72,7 @@ public:
         if (sender_thread_.joinable()) {
             sender_thread_.join();
         }
+        server_->stop();
     }
 
     // 禁止拷贝和移动

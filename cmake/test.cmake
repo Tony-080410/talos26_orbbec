@@ -75,6 +75,10 @@ target_include_directories(fast_tf_test PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
 
+target_include_directories(fast_tf_test SYSTEM PRIVATE
+    3dparty/lieplusplus
+)
+
 target_link_libraries(fast_tf_test PRIVATE
     GTest::gtest_main
     Eigen3::Eigen

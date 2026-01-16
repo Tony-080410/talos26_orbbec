@@ -1,30 +1,29 @@
 #pragma once
 
 #include "motion_model.hpp"
+#include "uni_kf_spaces.hpp"
 #include "util.hpp"
 
 #include "fcs/core/types.hpp"
 
 #include <Eigen/Dense>
-#include <array>
 #include <limits>
 #include <queue>
 #include <vector>
 
 namespace fcs::L3 {
 
-/// Template-based data associator for armor matching
-/// Uses Sigma-point gating for robust observation-to-track association
-template <MotionModel Model>
+/// Template-based data associator for armor matching (pure uni_kf CKF gating).
+template <typename Model>
 class DataAssociator {
 public:
     static constexpr int NZ = Model::NZ;
     static constexpr int NX = Model::NX;
 
-    using VecZ  = typename Model::VecZ;
-    using VecX  = Eigen::Matrix<double, NX, 1>;
-    using MatXX = Eigen::Matrix<double, NX, NX>;
-    using MatZ  = Eigen::Matrix<double, NZ, NZ>;
+    using StatePoint = typename Model::StatePoint;
+    using MeasPoint  = typename Model::MeasPoint;
+    using MatXX      = Eigen::Matrix<double, NX, NX>;
+    using MatZ       = Eigen::Matrix<double, NZ, NZ>;
 
     struct MatchResult {
         std::vector<AtLegacyArmorMeasurement> armors;
@@ -79,8 +78,9 @@ public:
     ///     strictness even if gate_threshold stays the same.
     /// @param armors_num Number of armors on target
     [[nodiscard]] MatchResult match(
-        const AtLegacyArmorMeasurementBatch& observations, const VecX& x_pred, const MatXX& Sx_pred,
-        Model& model, ArmorName target_name, double gate_threshold, int armors_num) const noexcept {
+        const AtLegacyArmorMeasurementBatch& observations, const StatePoint& x_pred,
+        const uni_kf::SymmetricMatrix<NX, double>& P_pred, Model& model, ArmorName target_name,
+        double gate_threshold, int armors_num) const noexcept {
 
         MatchResult result;
 
@@ -88,113 +88,61 @@ public:
             return result;
         }
 
-        const int n_obs = static_cast<int>(observations.measurements.size());
-
-        // Cost matrix: fixed-size for armors_num <= 16, dynamic for larger
-        // Using std::array to avoid heap allocation
-        constexpr int MAX_ARMORS = 16;
-        std::array<std::array<double, MAX_ARMORS>, MAX_ARMORS> cost{};
-        cost.fill(std::array<double, MAX_ARMORS>{});
-        for (auto& row : cost) {
-            row.fill(std::numeric_limits<double>::infinity());
-        }
+        const int n_obs_total = static_cast<int>(observations.measurements.size());
 
         // Filter matching armors upfront to avoid repeated checks
         struct FilteredMeas {
-            int obs_idx;
-            VecZ z;
+            int obs_idx; // index into observations.measurements
+            MeasPoint z;
         };
         std::vector<FilteredMeas> filtered_obs;
-        filtered_obs.reserve(n_obs);
+        filtered_obs.reserve(n_obs_total);
 
-        for (int j = 0; j < n_obs; ++j) {
+        for (int j = 0; j < n_obs_total; ++j) {
             if (observations.measurements[j].name != target_name) {
                 continue;
             }
-            const auto& m  = observations.measurements[j];
-            const auto ypd = xyz2ypd(m.transform->translation());
-
-            VecZ z;
-            z[0] = ypd[0]; // yaw
-            z[1] = ypd[1]; // pitch
-            z[2] = ypd[2]; // distance
-            z[3] = m.transform->euler_rot().yaw;
-
-            filtered_obs.push_back({j, z});
+            const auto& m = observations.measurements[j];
+            filtered_obs.push_back({j, ukf::ArmorMeas::make(m.transform->translation(), m.yaw())});
         }
 
         if (filtered_obs.empty()) {
             return result;
         }
 
+        const int n_obs = static_cast<int>(filtered_obs.size());
+
+        std::vector<std::vector<double>> cost(
+            n_obs, std::vector<double>(armors_num, std::numeric_limits<double>::infinity()));
+
         // Pre-compute predicted measurements and covariances for each armor_id
         struct PredMeas {
-            VecZ z_pred;
             MatZ Pzz;
+            MeasPoint z_pred;
         };
         std::vector<PredMeas> pred_cache(armors_num);
 
-        const double gamma = std::sqrt(static_cast<double>(NX));
-        const double w     = 1.0 / (2.0 * static_cast<double>(NX));
-
         for (int id = 0; id < armors_num; ++id) {
-            const VecZ z0 = model.h(x_pred, id);
-
-            std::array<VecZ, 2 * NX> z_sig{};
-            for (int k = 0; k < NX; ++k) {
-                const VecX xp = x_pred + gamma * Sx_pred.col(k);
-                const VecX xm = x_pred - gamma * Sx_pred.col(k);
-
-                VecZ zp = model.h(xp, id);
-                VecZ zm = model.h(xm, id);
-
-                // Unwrap angles for continuity
-                zp[0] = unwrap_rad(z0[0], zp[0]);
-                zp[1] = unwrap_rad(z0[1], zp[1]);
-                zp[3] = unwrap_rad(z0[3], zp[3]);
-
-                zm[0] = unwrap_rad(z0[0], zm[0]);
-                zm[1] = unwrap_rad(z0[1], zm[1]);
-                zm[3] = unwrap_rad(z0[3], zm[3]);
-
-                z_sig[k]      = zp;
-                z_sig[NX + k] = zm;
-            }
-
-            VecZ z_bar = VecZ::Zero();
-            for (const auto& zs : z_sig) {
-                z_bar.noalias() += w * zs;
-            }
-
-            MatZ Pzz = MatZ::Zero();
-            for (const auto& zs : z_sig) {
-                VecZ dz;
-                dz[0] = shortest_rad(z_bar[0], zs[0]);
-                dz[1] = zs[1] - z_bar[1];
-                dz[2] = zs[2] - z_bar[2];
-                dz[3] = shortest_rad(z_bar[3], zs[3]);
-                Pzz.noalias() += w * (dz * dz.transpose());
-            }
-
-            pred_cache[id] = {z_bar, Pzz};
+            const typename fcs::L3::UniTrackerSRCKF<Model>::ArmorMeasurementModel h{
+                &model, id, MeasPoint{}};
+            const auto R0            = uni_kf::SymmetricMatrix<NZ, double>::Zero();
+            const auto z_ref         = model.measure(x_pred, id);
+            auto [H_dummy, Pxy, Pzz] = uni_kf::CubaturePoints::measurement_covariances_about<
+                typename Model::StateSpace, typename Model::MeasSpace>(
+                x_pred, P_pred, h, R0, z_ref);
+            (void)H_dummy;
+            (void)Pxy;
+            pred_cache[id] = {Pzz, z_ref};
         }
 
-        // Compute costs using filtered observations only
-        for (const auto& obs : filtered_obs) {
-            const int j = obs.obs_idx;
-
+        for (int j = 0; j < n_obs; ++j) {
+            const auto& obs = filtered_obs[j];
             for (int id = 0; id < armors_num; ++id) {
-                const auto& z_pred = pred_cache[id].z_pred;
+                const auto innovation = Model::MeasSpace::diff(pred_cache[id].z_pred, obs.z);
+                const auto R_obs      = model.measurement_noise(obs.z);
 
-                VecZ nu;
-                nu[0] = shortest_rad(z_pred[0], obs.z[0]);
-                nu[1] = obs.z[1] - z_pred[1];
-                nu[2] = obs.z[2] - z_pred[2];
-                nu[3] = shortest_rad(z_pred[3], obs.z[3]);
-
-                const Eigen::Matrix<double, NZ, 1> R_diag = model.R_diag(obs.z);
-                MatZ S                                    = pred_cache[id].Pzz;
-                S.diagonal() += R_diag;
+                MatZ S = pred_cache[id].Pzz;
+                S += R_obs.matrix();
                 S = (S + S.transpose()) * 0.5;
                 S.diagonal().array() += 1e-9;
 
@@ -203,7 +151,7 @@ public:
                     continue;
                 }
 
-                double d2 = nu.transpose() * ldlt.solve(nu);
+                const double d2 = innovation.data.transpose() * ldlt.solve(innovation.data);
 
                 // Gating
                 if (std::isfinite(d2) && d2 < gate_threshold) {
@@ -223,10 +171,10 @@ public:
         };
 
         std::priority_queue<CostEntry> pq;
-        for (const auto& obs : filtered_obs) {
+        for (int j = 0; j < n_obs; ++j) {
             for (int id = 0; id < armors_num; ++id) {
-                if (std::isfinite(cost[obs.obs_idx][id])) {
-                    pq.push({cost[obs.obs_idx][id], obs.obs_idx, id});
+                if (std::isfinite(cost[j][id])) {
+                    pq.push({cost[j][id], j, id});
                 }
             }
         }
@@ -245,7 +193,7 @@ public:
             used_obs[entry.obs_idx] = true;
             used_id[entry.armor_id] = true;
 
-            result.armors.push_back(observations.measurements[entry.obs_idx]);
+            result.armors.push_back(observations.measurements[filtered_obs[entry.obs_idx].obs_idx]);
             result.armor_ids.push_back(entry.armor_id);
         }
 

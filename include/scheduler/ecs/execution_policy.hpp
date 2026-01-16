@@ -25,6 +25,7 @@
 
 #include <cstdint>
 #include <type_traits>
+#include <utility>
 
 namespace talos {
 
@@ -111,6 +112,14 @@ using exclusive_silent = detail::exclusive_base<FreqHz, Affinity, Priority, deta
  */
 struct pool_compute {};
 
+/**
+ * @brief Pool compute: TBB thread pool, triggered by exclusive notify
+ *
+ * For visualization.
+ * TODO
+ */
+struct pool_visualization {};
+
 /// Default policy
 using default_policy = pool_compute;
 
@@ -131,6 +140,9 @@ struct is_exclusive_policy<exclusive_silent<F, A, P>> : std::true_type {};
 
 template <typename T>
 struct is_pool_policy : std::is_same<T, pool_compute> {};
+
+template <typename T>
+struct is_visualization_policy : std::is_same<T, pool_visualization> {};
 
 template <typename T>
 struct is_notifying_policy : std::false_type {};
@@ -166,6 +178,9 @@ inline constexpr bool is_exclusive_policy_v = detail::is_exclusive_policy<T>::va
 template <typename T>
 inline constexpr bool is_pool_policy_v = detail::is_pool_policy<T>::value;
 
+template <typename T>
+inline constexpr bool is_visualization_policy_v = detail::is_visualization_policy<T>::value;
+
 /**
  * @brief Check if a policy notifies after execution
  *
@@ -194,8 +209,9 @@ inline constexpr bool is_silent_policy_v = detail::is_silent_policy<T>::value;
  * @brief Runtime representation of a policy's kind
  */
 enum class PolicyKind : std::uint8_t {
-    Exclusive,   ///< Exclusive system (dedicated thread)
-    PoolCompute, ///< Pool compute system (TBB thread pool)
+    Exclusive,         ///< Exclusive system (dedicated thread)
+    PoolCompute,       ///< Pool compute system (TBB thread pool)
+    PoolVisualization, ///< Pool compute system (TBB thread pool)
 };
 
 /**
@@ -229,6 +245,10 @@ struct PolicyInfo {
     [[nodiscard]] constexpr bool is_pool() const noexcept {
         return kind == PolicyKind::PoolCompute;
     }
+
+    [[nodiscard]] constexpr bool is_visualization() const noexcept {
+        return kind == PolicyKind::PoolVisualization;
+    }
 };
 
 /**
@@ -252,9 +272,14 @@ template <typename Policy>
             .thread_priority = Policy::thread_priority,
             .notifies        = Policy::notifies,
         };
-    } else {
+    }
+    if constexpr (is_pool_policy_v<Policy>) {
         return PolicyInfo{.kind = PolicyKind::PoolCompute};
     }
+    if constexpr (is_visualization_policy_v<Policy>) {
+        return PolicyInfo{.kind = PolicyKind::PoolVisualization};
+    }
+    std::unreachable();
 }
 
 } // namespace talos

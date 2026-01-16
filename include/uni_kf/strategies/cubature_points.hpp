@@ -136,6 +136,7 @@ struct CubaturePoints {
         const typename D::Point& x, const CovType& P, MeasFunc&& h,
         const SymmetricMatrix<M::FiberDim, typename D::Scalar>& R) noexcept
         -> std::tuple<
+            typename M::Point,                                           // z_pred (manifold mean)
             Eigen::Matrix<typename D::Scalar, M::FiberDim, D::FiberDim>, // H (dummy)
             Eigen::Matrix<typename D::Scalar, D::FiberDim, M::FiberDim>, // Pxy
             Eigen::Matrix<typename D::Scalar, M::FiberDim, M::FiberDim>> // Pzz
@@ -196,6 +197,62 @@ struct CubaturePoints {
         // Dummy H (not used in CKF, but needed for interface compatibility)
         Eigen::Matrix<Scalar, MeasDim, Dim> H = Eigen::Matrix<Scalar, MeasDim, Dim>::Zero();
 
+        return {z_pred, H, Pxy, Pzz};
+    }
+
+    /// @brief Measurement covariances about a provided reference mean z_ref
+    ///
+    /// This is useful when the "manifold mean" of propagated points can become ambiguous
+    /// (e.g., wide angular uncertainty / multi-modal wraps), and you want a stable local
+    /// linearization around a deterministic prediction z_ref = h(x).
+    template <DifferentialSpace D, DifferentialSpace M, typename MeasFunc, typename CovType>
+    [[nodiscard]] static auto measurement_covariances_about(
+        const typename D::Point& x, const CovType& P, MeasFunc&& h,
+        const SymmetricMatrix<M::FiberDim, typename D::Scalar>& R,
+        const typename M::Point& z_ref) noexcept
+        -> std::tuple<
+            Eigen::Matrix<typename D::Scalar, M::FiberDim, D::FiberDim>, // H (dummy)
+            Eigen::Matrix<typename D::Scalar, D::FiberDim, M::FiberDim>, // Pxy
+            Eigen::Matrix<typename D::Scalar, M::FiberDim, M::FiberDim>> // Pzz
+    {
+        using Scalar            = typename D::Scalar;
+        using Point             = typename D::Point;
+        using Fiber             = typename D::Fiber;
+        using MPoint            = typename M::Point;
+        using MFiber            = typename M::Fiber;
+        constexpr int Dim       = D::FiberDim;
+        constexpr int MeasDim   = M::FiberDim;
+        constexpr int NumPoints = 2 * Dim;
+
+        Eigen::Matrix<Scalar, Dim, Dim> S =
+            P.matrix().template selfadjointView<Eigen::Lower>().llt().matrixL();
+        auto xi_points = generate_cubature_points<D>(S);
+
+        std::vector<MPoint> Z_points;
+        Z_points.reserve(NumPoints);
+
+        for (int i = 0; i < NumPoints; ++i) {
+            Fiber xi_i(xi_points.col(i));
+            Point X_i  = D::act(x, xi_i);
+            MPoint Z_i = h(X_i);
+            Z_points.push_back(Z_i);
+        }
+
+        Eigen::Matrix<Scalar, MeasDim, MeasDim> Pzz =
+            Eigen::Matrix<Scalar, MeasDim, MeasDim>::Zero();
+        Eigen::Matrix<Scalar, Dim, MeasDim> Pxy = Eigen::Matrix<Scalar, Dim, MeasDim>::Zero();
+
+        constexpr Scalar weight = Scalar{1} / static_cast<Scalar>(NumPoints);
+        for (int i = 0; i < NumPoints; ++i) {
+            Fiber xi_i(xi_points.col(i));
+            MFiber dz_i = M::diff(z_ref, Z_points[i]);
+            Pzz += weight * (dz_i.data * dz_i.data.transpose());
+            Pxy += weight * (xi_i.data * dz_i.data.transpose());
+        }
+
+        Pzz += R.matrix();
+
+        Eigen::Matrix<Scalar, MeasDim, Dim> H = Eigen::Matrix<Scalar, MeasDim, Dim>::Zero();
         return {H, Pxy, Pzz};
     }
 

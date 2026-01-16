@@ -149,7 +149,7 @@ public:
         const uint64_t dt = next.timestamp_ns - prev.timestamp_ns;
         const fp_t t      = static_cast<fp_t>(ts - prev.timestamp_ns) / static_cast<fp_t>(dt);
 
-        return TransformEntry(ts, TransformMatrix4d::lerp(prev.transform, next.transform, t));
+        return TransformEntry(ts, TransformMatrix4d::lerp_se3(prev.transform, next.transform, t));
     }
 
     [[nodiscard]] std::expected<TransformEntry, TransformError>
@@ -218,7 +218,7 @@ public:
         const uint64_t dt = next.timestamp_ns - prev.timestamp_ns;
         const fp_t t      = static_cast<fp_t>(ts - prev.timestamp_ns) / static_cast<fp_t>(dt);
 
-        return TransformEntry(ts, TransformMatrix4d::lerp(prev.transform, next.transform, t));
+        return TransformEntry(ts, TransformMatrix4d::lerp_se3(prev.transform, next.transform, t));
     }
 
     // ========================================================================

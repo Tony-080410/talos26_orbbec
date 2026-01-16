@@ -50,6 +50,9 @@ void register_foxglove_systems(App& app, talos::Scheduler* scheduler_ptr_ = null
                 return;
             }
 
+            // 发布 TF
+            (*server)->publish_tf(**tf_buffer, frame->timestamp_ns);
+
             // 克隆图像避免数据竞争
             cv::Mat img_bgr = frame->image.clone();
             auto batch      = det_in.read_current();
@@ -98,9 +101,6 @@ void register_foxglove_systems(App& app, talos::Scheduler* scheduler_ptr_ = null
 
             (*server)->publish_camera_calibration(
                 cam->width, cam->height, camera_matrix_arr, dist_coeffs, frame->timestamp_ns);
-
-            // 发布 TF
-            (*server)->publish_tf(**tf_buffer, frame->timestamp_ns);
         });
 
     // 检测结果发布系统
