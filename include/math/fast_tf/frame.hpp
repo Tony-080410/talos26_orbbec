@@ -78,15 +78,42 @@ struct [[nodiscard]] Fuck {
     [[nodiscard]] const T* operator->() const noexcept { return &val; }
     [[nodiscard]] T* operator->() noexcept { return &val; }
 
+    [[nodiscard]] auto operator*(const T& other) const noexcept { return this * *other; }
+
+    template <frame OtherCoord>
+    auto operator*(const Fuck<OtherCoord, T>& other) const {
+        auto prod = val * (*other);
+        return Fuck<Coordinate, decltype(prod)>(prod);
+    }
+
+    template <frame OtherCoord>
+    auto operator+(const Fuck<OtherCoord, T>& other) const {
+        auto prod = val + (*other);
+        return Fuck<Coordinate, decltype(prod)>(prod);
+    }
+
+    template <frame OtherCoord>
+    auto operator-(const Fuck<OtherCoord, T>& other) const {
+        auto prod = val - (*other);
+        return Fuck<Coordinate, decltype(prod)>(prod);
+    }
+
 private:
     T val;
 };
 
-template <typename T>
-using FuckWorld = Fuck<world_fuxk_frame, T>;
-
 template <frame Coordinate>
 using FuckTransform = Fuck<Coordinate, TransformMatrix4d>;
+
+using FuckWorld = FuckTransform<world_fuxk_frame>;
+
+using FuckOdom   = FuckTransform<odom_fuxk_frame>;
+using FuckGimbal = FuckTransform<gimbal_link_fuxk_frame>;
+
+using FuckMuzzle = FuckTransform<muzzle_link_fuxk_frame>;
+
+using FuckCamera  = FuckTransform<camera_link_fuxk_frame>;
+using FuckOptical = FuckTransform<camera_optical_fuxk_frame>;
 
 template <frame Coordinate>
 using FuckDouble = Fuck<Coordinate, double>;

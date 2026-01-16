@@ -84,9 +84,9 @@ struct YawOnlyReprojError {
         const T& Zc               = Pc(2);
 
         if (Zc <= T(0)) {
-            residuals[0] = T(0);
-            residuals[1] = T(0);
-            return true;
+            // residuals[0] = T(0);
+            // residuals[1] = T(0);
+            return false;
         }
 
         // Normalized image plane coordinates
