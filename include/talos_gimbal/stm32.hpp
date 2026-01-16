@@ -211,6 +211,8 @@ private:
     static void LIBUSB_CALL on_rx_complete(libusb_transfer* tr) noexcept {
         auto self = static_cast<Stm32Impl*>(tr->user_data);
 
+        self->transfer_done_ = true;
+
         if (tr->status == LIBUSB_TRANSFER_CANCELLED) [[unlikely]] {
             self->notify_transfer_done();
             return;
@@ -266,12 +268,16 @@ private:
 
     void wait_transfer_done() noexcept {
         std::unique_lock lock(mtx_);
-        while (!transfer_done_) {
+        auto start = std::chrono::steady_clock::now();
+        while (!transfer_done_ && state_ != State::Disconnected) {
             // 必须在等待时处理事件，否则回调不会被调用
             lock.unlock();
             timeval tv{0, 10000};
-            libusb_handle_events_timeout(ctx_, &tv);
+            libusb_handle_events_timeout_completed(ctx_, &tv, nullptr);
             lock.lock();
+            if (std::chrono::steady_clock::now() - start > std::chrono::milliseconds(200)) {
+                break;
+            }
         }
     }
 
