@@ -27,10 +27,6 @@ struct WeaponCommand {
     double yaw_accel{0.0};
     double pitch_accel{0.0};
 
-    // 云台角度
-    double ref_yaw{0.0};   // 目标 yaw (弧度)
-    double ref_pitch{0.0}; // 目标 pitch (弧度)
-
     // 发射控制
     bool fire{false}; // 发射指令
 
