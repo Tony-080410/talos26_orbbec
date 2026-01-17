@@ -2,6 +2,7 @@
 
 #include <Eigen/Core>
 #include <numbers>
+#include <utility>
 
 #include "fcs/L3_estimation/tracker/types.hpp"
 #include "fcs/L4_planning/angle_utils.hpp"
@@ -23,21 +24,22 @@ namespace fcs::L4 {
 class TrajectoryGenerator {
 public:
     /// Reference trajectory matrix: [yaw, yaw_vel, pitch, pitch_vel] × horizon
-    using Trajectory = Eigen::Matrix<double, 4, Eigen::Dynamic>;
+    using TrajectoryMat = Eigen::Matrix<double, 4, Eigen::Dynamic>;
+    using Trajectory    = std::pair<std::pair<double, Eigen::Vector3d>, TrajectoryMat>;
 
     /// Constructor
     ///
     /// @param config MPC planner configuration
     explicit TrajectoryGenerator(const MpcPlannerConfig& config) noexcept
-        : dt_(config.dt)
-        , horizon_(config.horizon)
-        , half_horizon_(config.half_horizon) {}
+        : ponder_dt_(config.ponder_dt)
+        , ponder_total(config.ponder_ahead + config.ponder_back)
+        , ponder_back(config.ponder_back) {}
 
     /// Update configuration
     void set_config(const MpcPlannerConfig& config) noexcept {
-        dt_           = config.dt;
-        horizon_      = config.horizon;
-        half_horizon_ = config.half_horizon;
+        ponder_dt_   = config.ponder_dt;
+        ponder_total = config.ponder_ahead + config.ponder_back;
+        ponder_back  = config.ponder_back;
     }
 
     /// Generate reference trajectory for robot target
@@ -108,9 +110,6 @@ public:
         double bullet_speed) noexcept;
 
 private:
-    /// Flying time estimation iteration count
-    static constexpr int kFlyingTimeIter = 3;
-
     /// Large initial distance for closest armor selection
     static constexpr double kInitialMinDist = 1e10;
 
@@ -118,12 +117,12 @@ private:
     template <class PredictFn>
     [[nodiscard]] Trajectory generate_trajectory(
         PredictFn&& predict, uint64_t measurement_ts, uint64_t current_time_ns,
-        double plan_to_muzzle_delay, const TrajectoryCompensator& compensator, double bullet_speed,
+        double action_overhead, const TrajectoryCompensator& compensator, double bullet_speed,
         const Eigen::Vector3d& origin_odom, double& yaw0) const noexcept;
 
-    double dt_{0.01};
-    int horizon_{100};
-    int half_horizon_{50};
+    double ponder_dt_{0.01};
+    int ponder_total{100};
+    int ponder_back{50};
 };
 
 // ============================================================================
@@ -132,45 +131,60 @@ private:
 
 template <class PredictFn>
 inline TrajectoryGenerator::Trajectory TrajectoryGenerator::generate_trajectory(
-    PredictFn&& predict, uint64_t measurement_ts, uint64_t current_time_ns,
-    double plan_to_muzzle_delay, const TrajectoryCompensator& compensator, double bullet_speed,
+    PredictFn&& predict, uint64_t measurement_ts, uint64_t current_time_ns, double action_overhead,
+    const TrajectoryCompensator& compensator, double bullet_speed,
     const Eigen::Vector3d& origin_odom, double& yaw0) const noexcept {
-    Trajectory traj(4, horizon_);
+    TrajectoryMat traj(4, ponder_total);
 
-    const double time_since_meas = static_cast<double>(current_time_ns - measurement_ts) * 1e-9;
+    static constexpr int refine_max_iter     = 10;
+    static constexpr double refine_tolerance = 1e-3;
 
-    // Iteratively estimate flying time (target moves during bullet flight)
-    // kFlyingTimeIter iterations typically converge for most target speeds
-    double flying_time       = 0.0;
-    Eigen::Vector3d pred_pos = predict(time_since_meas) - origin_odom;
-    for (int iter = 0; iter < kFlyingTimeIter; ++iter) {
-        flying_time = compensator.get_flying_time(pred_pos);
-        pred_pos    = predict(time_since_meas + flying_time) - origin_odom;
+    // TODO: elimate current_time_ns, add perception_elapsed in caller
+    // compensate_overhead is included in action_overhead, ugly but simplified for now
+
+    action_overhead += static_cast<double>(current_time_ns - measurement_ts) * 1e-9;
+
+    const auto predict_muzzle = [&](double dt) -> Eigen::Vector3d {
+        return predict(dt) - origin_odom;
+    };
+
+    double flying_time = 0.0;
+    for (auto i = 0; i < refine_max_iter; ++i) {
+        auto predicted_target = predict_muzzle(action_overhead + flying_time);
+        auto t_curr           = compensator.get_flying_time(predicted_target);
+
+        if (std::abs(t_curr - flying_time) < refine_tolerance) {
+            break;
+        }
+        flying_time = t_curr;
     }
 
-    const double base_dt  = time_since_meas + flying_time + plan_to_muzzle_delay;
-    const double start_dt = base_dt - half_horizon_ * dt_;
+    const double ideal_time = action_overhead + flying_time;
+    const auto pred_dx      = predict_muzzle(ideal_time);
 
-    const auto pos_now = predict(base_dt) - origin_odom;
+    const double start_dt = ideal_time - ponder_back * ponder_dt_;
+
+    const auto pos_now = predict_muzzle(ideal_time);
     const auto aim_now = compute_aim_point(pos_now, compensator, bullet_speed);
     yaw0               = aim_now.x();
 
     Eigen::Vector2d aim_prev, aim_curr, aim_next;
-    aim_prev = compute_aim_point(predict(start_dt - dt_) - origin_odom, compensator, bullet_speed);
+    aim_prev =
+        compute_aim_point(predict(start_dt - ponder_dt_) - origin_odom, compensator, bullet_speed);
     aim_curr = compute_aim_point(predict(start_dt) - origin_odom, compensator, bullet_speed);
 
-    for (int i = 0; i < horizon_; ++i) {
-        const double t = start_dt + (i + 1) * dt_;
-        aim_next       = compute_aim_point(predict(t) - origin_odom, compensator, bullet_speed);
+    for (int i = 0; i < ponder_total; ++i) {
+        const auto t = start_dt + (i + 1) * ponder_dt_;
+        aim_next     = compute_aim_point(predict_muzzle(t), compensator, bullet_speed);
 
-        const double yaw_vel   = normalize_rad(aim_next.x() - aim_prev.x()) / (2.0 * dt_);
-        const double pitch_vel = (aim_next.y() - aim_prev.y()) / (2.0 * dt_);
+        const double yaw_vel   = normalize_rad(aim_next.x() - aim_prev.x()) / (2.0 * ponder_dt_);
+        const double pitch_vel = (aim_next.y() - aim_prev.y()) / (2.0 * ponder_dt_);
 
         double yaw_rel = aim_curr.x() - yaw0;
         if (i > 0) {
-            const double prev_yaw = traj(0, i - 1);
-            const double delta    = normalize_rad(yaw_rel - prev_yaw);
-            yaw_rel               = prev_yaw + delta;
+            const auto prev_yaw = traj(0, i - 1);
+            const auto delta    = normalize_rad(yaw_rel - prev_yaw);
+            yaw_rel             = prev_yaw + delta;
         } else {
             yaw_rel = normalize_rad(yaw_rel);
         }
@@ -184,7 +198,7 @@ inline TrajectoryGenerator::Trajectory TrajectoryGenerator::generate_trajectory(
         aim_curr = aim_next;
     }
 
-    return traj;
+    return std::make_pair(std::make_pair(ideal_time, predict(ideal_time)), traj);
 }
 
 inline TrajectoryGenerator::Trajectory TrajectoryGenerator::generate_robot(

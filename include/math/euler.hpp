@@ -8,6 +8,7 @@ namespace math_fuxk {
 /// @brief ROS2 标准欧拉角
 template <typename Value>
 struct Ros2EulerRot {
+    // rad
     Value roll, pitch, yaw;
 
     constexpr Ros2EulerRot(Value r, Value p, Value y) noexcept

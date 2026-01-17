@@ -1,15 +1,16 @@
 #pragma once
 
 #include <expected>
+#include <numbers>
+#include <string>
 
 #include "fcs/L4_planning/trajectory_config.hpp"
 
 // Forward declaration
-namespace toml {
-inline namespace v3 {
+
+namespace toml::inline v3 {
 class table;
 }
-} // namespace toml
 
 namespace fcs::L4 {
 
@@ -151,26 +152,11 @@ struct MpcPlannerConfig {
     /// Precise:
     ///   Output pitch is clamped: pitch = clamp(mpc_output, pitch_min, pitch_max).
     ///   Sign convention: positive pitch = gimbal tilted downward (barrel down).
-    double pitch_max{0.3}; // ~+17°
+    double pitch_max{0.3};                        // ~+17°
 
-    // ========================================================================
-    // Fire Decision Parameters
-    // ========================================================================
-
-    /// Fire threshold (radians).
-    ///
-    /// Problem:
-    ///   Need to determine when the gimbal is close enough to the target
-    ///   trajectory to permit firing.
-    ///
-    /// Intuition:
-    ///   Smaller -> more accurate but fires less often;
-    ///   Larger -> fires more often but may miss.
-    ///
-    /// Precise:
-    ///   Fire is advised when ||planned_trajectory - reference|| < fire_thresh
-    ///   at the lookahead step.
-    double fire_thresh{0.003}; // ~0.17 degrees
+    double fire_thresh{180.0 / std::numbers::pi}; // ~0.17 degrees
+    double shooting_range_h{0.135};
+    double shooting_range_w{0.135};
 
     /// Fire decision lookahead (steps into the future).
     ///
@@ -217,25 +203,11 @@ struct MpcPlannerConfig {
     /// Precise:
     ///   Used to construct state transition matrices A, B.
     ///   Smaller dt -> more accurate but more steps needed for same horizon.
-    double dt{0.01}; // 100Hz
+    double ponder_dt{0.01}; // 100Hz
 
-    /// Prediction horizon (number of steps).
-    ///
-    /// Precise:
-    ///   Total prediction time = horizon * dt.
-    ///   With dt=0.01 and horizon=100, this gives 1 second lookahead.
-    int horizon{100};
+    int ponder_ahead{100};
 
-    /// Index in horizon representing "current time" for control extraction.
-    ///
-    /// Problem:
-    ///   The reference trajectory spans [-T/2, +T/2] relative to now.
-    ///   The control to apply is at the "middle" of this trajectory.
-    ///
-    /// Precise:
-    ///   With horizon=100 and half_horizon=50, we extract u[50] and x[50]
-    ///   as the current control and state.
-    int half_horizon{50};
+    int ponder_back{50};
 
     // ========================================================================
     // Trajectory Configuration (reused from GimbalPlanner)

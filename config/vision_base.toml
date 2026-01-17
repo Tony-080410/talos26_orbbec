@@ -135,16 +135,22 @@ r_pitch = 1.0
 max_pitch_acc = 100.0
 
 # Fire decision parameters
-fire_thresh = 0.0035       # ~0.2 degrees tracking error threshold
-fire_lookahead = 2        # Steps ahead to check for fire decision
+fire_thresh = 0.0005
+shooting_range_h = 0.07
+shooting_range_w = 0.075
+fire_lookahead = 4        # Steps ahead to check for fire decision
 
 # Solver parameters
 max_iterations = 10
 abs_tol = 1.0e-3
-rho = 1.0                 # ADMM penalty parameter
-dt = 0.004                 # 250Hz control rate (matching sp_vision_25)
-horizon = 100             # 1 second lookahead
-half_horizon = 50         # Current control at middle of horizon
+rho = 5.0                 # ADMM penalty parameter
+
+ponder_dt = 0.004                 # 250Hz control rate (matching sp_vision_25)
+ponder_back = 20
+ponder_ahead = 40
+
+pitch_min = -0.69813169 # -40deg
+pitch_max = 0.69813169 # 40deg
 
 # Trajectory compensation
 compensator_type = "RK4"

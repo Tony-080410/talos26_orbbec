@@ -40,6 +40,12 @@ DECL(muzzle_link, gimbal_link);
 #undef DECL_ROOT
 #undef DECL
 
+using odom           = odom_fuxk_frame;
+using gimbal         = gimbal_link_fuxk_frame;
+using camera         = camera_link_fuxk_frame;
+using camera_optical = camera_optical_fuxk_frame;
+using muzzle         = muzzle_link_fuxk_frame;
+
 constexpr size_t frame_count = __COUNTER__ - _base - 1;
 
 template <typename T>
@@ -98,9 +104,21 @@ struct [[nodiscard]] Fuck {
         return Fuck<Coordinate, decltype(prod)>(prod);
     }
 
+    template <typename... Args>
+    constexpr auto operator()(Args&&... args) const
+        noexcept(noexcept(val(std::forward<Args>(args)...)))
+            -> decltype(val(std::forward<Args>(args)...)) {
+        return val(std::forward<Args>(args)...);
+    }
+
 private:
     T val;
 };
+
+template <typename Coordinate, typename T>
+inline auto fucked(T&& t) {
+    return Fuck<Coordinate, T>(std::forward<T>(t));
+}
 
 template <frame Coordinate>
 using FuckTransform = Fuck<Coordinate, TransformMatrix4d>;

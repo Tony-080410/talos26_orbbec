@@ -2,8 +2,6 @@
 
 #include "tiny_api.hpp"
 
-#include <utility>
-
 namespace fcs::L4 {
 
 /// RAII wrapper for TinySolver resource management

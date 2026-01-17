@@ -9,17 +9,14 @@
 #include "math/fast_tf/robot_factory.hpp"
 #include "scheduler/scheduler.hpp"
 #include "spdlog_hook.hpp"
-#include "stm32.hpp"
 #include "toml_helper.hpp"
 
-#include <atomic>
 #include <chrono>
 #include <expected>
 #include <memory>
 #include <optional>
 #include <toml++/impl/parse_error.hpp>
 #include <tuple>
-#include <type_traits>
 #include <utility>
 
 struct ImuData;
@@ -176,8 +173,9 @@ int main() {
     SPDLOG_INFO("Tracker initialized");
 
     SPDLOG_INFO(
-        "MPC GimbalPlanner initialized (bullet_speed={:.1f}m/s, horizon={})",
-        vision.mpc_planner().trajectory.bullet_speed, vision.mpc_planner().horizon);
+        "MPC GimbalPlanner initialized (bullet_speed={:.1f}m/s, horizon={}:{})",
+        vision.mpc_planner().trajectory.bullet_speed, vision.mpc_planner().ponder_back,
+        vision.mpc_planner().ponder_ahead);
 
     // Register AT Legacy detection pipeline systems
     fcs::register_at_legacy_detection_systems(scheduler);

@@ -4,10 +4,10 @@
 
 #include "L4_planning/gimbal_planner/types.hpp"
 #include "L5_weapon/fire_control.hpp"
+#include "camera_config.hpp"
 #include "foxglove_server.hpp"
 #include "foxglove_types.hpp"
 
-#include "auto_aim/config.hpp"
 #include "fcs/L3_estimation/tracker/types.hpp"
 #include "fcs/core/channel_tags.hpp"
 #include "fcs/core/types.hpp"
@@ -56,7 +56,7 @@ constexpr foxglove::schemas::Color COLOR_RED    = {1.0, 0.0, 0.0, 0.6};
 constexpr foxglove::schemas::Color COLOR_ORANGE = {1.0, 0.5, 0.0, 0.3};
 
 // Sizes
-constexpr double SPHERE_SIZE_DEFAULT  = 0.1;
+constexpr double SPHERE_SIZE_DEFAULT  = 0.2;
 constexpr double SPHERE_SIZE_SMALL    = 0.08;
 constexpr double SPHERE_SIZE_TINY     = 0.01;
 constexpr double ARMOR_LABEL_OFFSET_Z = 0.1;
@@ -83,11 +83,12 @@ constexpr double VECTOR_PARALLEL_THRESHOLD = 1e-6;
 }
 
 /// Create a SceneEntity with common fields
+template <fast_tf::frame T>
 [[nodiscard]] inline foxglove::schemas::SceneEntity
-    create_scene_entity(std::string id, std::string frame_id, uint64_t timestamp_ns) noexcept {
+    create_scene_entity(std::string id, uint64_t timestamp_ns) noexcept {
     foxglove::schemas::SceneEntity entity;
     entity.id        = std::move(id);
-    entity.frame_id  = std::move(frame_id);
+    entity.frame_id  = T::frame_id;
     entity.lifetime  = foxglove::schemas::Duration{.nsec = SCENE_ENTITY_LIFETIME_NS};
     entity.timestamp = timestamp_from_ns(timestamp_ns);
     return entity;
@@ -503,8 +504,8 @@ void register_foxglove_systems(App& app, talos::Scheduler* scheduler_ptr_ = null
                 obj["name"]     = to_string(m.name);
                 meas_json["measurements"].push_back(obj);
 
-                foxglove::schemas::SceneEntity entity = detail::create_scene_entity(
-                    "armor_" + std::to_string(i), "odom", m.timestamp_ns);
+                foxglove::schemas::SceneEntity entity = detail::create_scene_entity<fast_tf::odom>(
+                    "armor_" + std::to_string(i), m.timestamp_ns);
 
                 const auto position =
                     detail::create_vector3(translation.x(), translation.y(), translation.z());
@@ -610,7 +611,7 @@ void register_foxglove_systems(App& app, talos::Scheduler* scheduler_ptr_ = null
                 std::vector<foxglove::schemas::SceneEntity> entities;
 
                 foxglove::schemas::SceneEntity entity =
-                    detail::create_scene_entity("target", "odom", output->timestamp_ns);
+                    detail::create_scene_entity<fast_tf::odom>("target", output->timestamp_ns);
 
                 const auto position = detail::get_tracker_position(*output);
                 const auto velocity = detail::get_tracker_velocity(*output);
@@ -689,7 +690,7 @@ void register_foxglove_systems(App& app, talos::Scheduler* scheduler_ptr_ = null
             // Selection marker - 瞄准点 (黄绿色球体)
             {
                 foxglove::schemas::SceneEntity entity =
-                    detail::create_scene_entity("selection", "gimbal_link", cmd->timestamp_ns);
+                    detail::create_scene_entity<fast_tf::gimbal>("selection", cmd->timestamp_ns);
 
                 // 根据 yaw, pitch, distance 计算瞄准点位置
                 const double x = cmd->distance * std::cos(cmd->pitch) * std::cos(cmd->yaw);
@@ -706,7 +707,7 @@ void register_foxglove_systems(App& app, talos::Scheduler* scheduler_ptr_ = null
             // Predicted position marker - 预测位置 (橙色球体)
             if (cmd->predicted_position) {
                 foxglove::schemas::SceneEntity entity =
-                    detail::create_scene_entity("predicted", "odom", cmd->predicted_future);
+                    detail::create_scene_entity<fast_tf::odom>("predicted", cmd->predicted_future);
 
                 entity.spheres.push_back(
                     detail::create_sphere(
@@ -721,7 +722,7 @@ void register_foxglove_systems(App& app, talos::Scheduler* scheduler_ptr_ = null
             // Trajectory marker - 弹道轨迹 (点列)
             if (!cmd->trajectory.empty()) {
                 foxglove::schemas::SceneEntity entity =
-                    detail::create_scene_entity("trajectory", "muzzle_link", cmd->timestamp_ns);
+                    detail::create_scene_entity<fast_tf::muzzle>("trajectory", cmd->timestamp_ns);
 
                 // 根据 fire_advice 改变颜色
                 const auto traj_color =
@@ -947,8 +948,8 @@ void register_foxglove_systems(App& app, talos::Scheduler* scheduler_ptr_ = null
             std::vector<foxglove::schemas::SceneEntity> entities;
 
             // Create predicted armors (from tracker state)
-            foxglove::schemas::SceneEntity pred_entity =
-                detail::create_scene_entity("predicted_armors", "odom", output->timestamp_ns);
+            foxglove::schemas::SceneEntity pred_entity = detail::create_scene_entity<fast_tf::odom>(
+                "predicted_armors", output->timestamp_ns);
 
             if (output->is_robot()) {
                 const auto& state      = *output->robot_state();
@@ -995,7 +996,7 @@ void register_foxglove_systems(App& app, talos::Scheduler* scheduler_ptr_ = null
 
             // Create measurements (from PnP solver)
             foxglove::schemas::SceneEntity meas_entity =
-                detail::create_scene_entity("measurements", "odom", batch->timestamp_ns);
+                detail::create_scene_entity<fast_tf::odom>("measurements", batch->timestamp_ns);
 
             for (size_t i = 0; i < batch->measurements.size(); ++i) {
                 const auto& m = batch->measurements[i];
@@ -1108,7 +1109,7 @@ void register_foxglove_systems(App& app, talos::Scheduler* scheduler_ptr_ = null
             std::vector<foxglove::schemas::SceneEntity> entities;
 
             foxglove::schemas::SceneEntity entity =
-                detail::create_scene_entity("covariance", "odom", output->timestamp_ns);
+                detail::create_scene_entity<fast_tf::odom>("covariance", output->timestamp_ns);
 
             const auto position = detail::get_tracker_position(*output);
 
@@ -1305,7 +1306,7 @@ void register_foxglove_systems(App& app, talos::Scheduler* scheduler_ptr_ = null
 
             // Reference trajectory (what MPC tries to track)
             foxglove::schemas::SceneEntity ref_entity =
-                detail::create_scene_entity("mpc_reference", "odom", plan->timestamp_ns);
+                detail::create_scene_entity<fast_tf::odom>("mpc_reference", plan->timestamp_ns);
 
             for (size_t k = 0; k < plan->ref_yaw.size(); ++k) {
                 const double t = (static_cast<int>(k) - plan->mpc_current_idx) * plan->mpc_dt;
@@ -1328,7 +1329,7 @@ void register_foxglove_systems(App& app, talos::Scheduler* scheduler_ptr_ = null
 
             // Optimized trajectory (MPC output)
             foxglove::schemas::SceneEntity opt_entity =
-                detail::create_scene_entity("mpc_optimized", "odom", plan->timestamp_ns);
+                detail::create_scene_entity<fast_tf::odom>("mpc_optimized", plan->timestamp_ns);
 
             for (size_t k = 0; k < plan->opt_yaw.size(); ++k) {
                 const double t = (static_cast<int>(k) - plan->mpc_current_idx) * plan->mpc_dt;
@@ -1351,7 +1352,7 @@ void register_foxglove_systems(App& app, talos::Scheduler* scheduler_ptr_ = null
 
             // Current target with highlighted marker
             foxglove::schemas::SceneEntity current_entity =
-                detail::create_scene_entity("mpc_current", "odom", plan->timestamp_ns);
+                detail::create_scene_entity<fast_tf::odom>("mpc_current", plan->timestamp_ns);
 
             const double distance = plan->distance;
             const double x        = distance * std::cos(plan->pitch) * std::cos(plan->yaw);

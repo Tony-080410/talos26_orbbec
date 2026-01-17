@@ -17,15 +17,20 @@ std::expected<void, std::string> MpcPlannerConfig::read_from(const toml::table& 
 
     // Fire decision parameters
     READ(tbl, fire_thresh);
+    READ(tbl, shooting_range_h);
+    READ(tbl, shooting_range_w);
     READ(tbl, fire_lookahead);
 
     // Solver parameters
     READ(tbl, max_iterations);
     READ(tbl, abs_tol);
     READ(tbl, rho);
-    READ(tbl, dt);
-    READ(tbl, horizon);
-    READ(tbl, half_horizon);
+    READ(tbl, ponder_dt);
+    READ(tbl, ponder_ahead);
+    READ(tbl, ponder_back);
+
+    READ(tbl, pitch_min);
+    READ(tbl, pitch_max);
 
     // Trajectory configuration (nested table)
     READ(tbl, trajectory);

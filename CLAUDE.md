@@ -1,3 +1,10 @@
+# 项目编译
+
+```
+cmake -G Ninja -B build -S .
+cmake --build build -- talos -j64
+```
+
 # C++ 开发规范
 
 ## 元原则

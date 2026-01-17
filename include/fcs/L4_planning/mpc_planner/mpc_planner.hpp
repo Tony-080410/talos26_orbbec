@@ -8,6 +8,7 @@
 
 #include <Eigen/Core>
 
+#include "math/fast_tf/frame.hpp"
 #include "tiny_api.hpp"
 
 #include "fcs/L3_estimation/tracker/types.hpp"
@@ -46,22 +47,13 @@ public:
     /// Update configuration
     void set_config(const MpcPlannerConfig& config) noexcept;
 
-    /// Plan gimbal trajectory for robot target
-    ///
-    /// @param target Tracker output with robot state
-    /// @param current_time_ns Current time in nanoseconds
-    /// @param bullet_speed Bullet velocity in m/s
-    /// @return MPC planner output or error string
-    [[nodiscard]] std::expected<MpcPlannerOutput, std::string> plan(
-        const L3::TrackerOutput& target, uint64_t current_time_ns, double bullet_speed) noexcept;
-
     /// Plan gimbal trajectory using a custom muzzle origin (odom frame).
     ///
     /// Use this when tracker positions are in odom/world coordinates but ballistic compensation
     /// expects target position relative to the muzzle origin.
     [[nodiscard]] std::expected<MpcPlannerOutput, std::string> plan(
         const L3::TrackerOutput& target, uint64_t current_time_ns, double bullet_speed,
-        const Eigen::Vector3d& muzzle_pos_odom) noexcept;
+        const fast_tf::FuckOdom& muzzle_tf, const fast_tf::FuckOdom& gimbal_tf) noexcept;
 
 private:
     using Trajectory = TrajectoryGenerator::Trajectory;
@@ -117,8 +109,8 @@ private:
 
     /// Fill MPC output fields common to both robot/outpost planning.
     void fill_common_output(
-        MpcPlannerOutput& output, const Trajectory& traj, double yaw0, uint64_t current_time_ns,
-        bool clamp_pitch) noexcept;
+        const fast_tf::FuckOdom& gimbal_tf, MpcPlannerOutput& output, const Trajectory& traj,
+        double yaw0, uint64_t current_time_ns) noexcept;
 
     /// Copy MPC debug arrays into output for visualization.
     void fill_debug_output(
@@ -130,18 +122,24 @@ private:
     /// Plan for robot target
     [[nodiscard]] std::expected<MpcPlannerOutput, std::string> plan_robot(
         const L3::RobotTargetState& target, uint64_t timestamp_ns, uint64_t current_time_ns,
-        double bullet_speed, const Eigen::Vector3d& muzzle_pos_odom) noexcept;
+        double bullet_speed, const fast_tf::FuckOdom& muzzle_tf,
+        const fast_tf::FuckOdom& gimbal_tf) noexcept;
 
     /// Plan for outpost target
     [[nodiscard]] std::expected<MpcPlannerOutput, std::string> plan_outpost(
         const L3::OutpostTargetState& target, uint64_t timestamp_ns, uint64_t current_time_ns,
-        double bullet_speed, const Eigen::Vector3d& muzzle_pos_odom) noexcept;
+        double bullet_speed, const fast_tf::FuckOdom& muzzle_tf,
+        const fast_tf::FuckOdom& gimbal_tf) noexcept;
 
     /// Select adaptive delay based on target angular velocity
     [[nodiscard]] inline double select_adaptive_delay(double v_yaw) const noexcept {
         return std::abs(v_yaw) > config_.decision_speed ? config_.high_speed_delay
                                                         : config_.low_speed_delay;
     }
+
+    bool is_on_target(
+        double cur_yaw, double cur_pitch, double target_yaw, double target_pitch,
+        double distance) const noexcept;
 
     /// Calculate flying time and prediction time delta
     [[nodiscard]] inline std::pair<double, double> calculate_prediction_times(
@@ -196,7 +194,9 @@ inline MpcGimbalPlanner::MpcGimbalPlanner(const MpcPlannerConfig& config)
 
 inline void MpcGimbalPlanner::set_config(const MpcPlannerConfig& config) noexcept {
     // Check if solver needs to be recreated (horizon changed)
-    bool need_recreate = (config.horizon != config_.horizon || config.dt != config_.dt);
+    bool need_recreate =
+        ((config.ponder_back + config.ponder_ahead) != (config_.ponder_back + config_.ponder_ahead)
+         || config.ponder_dt != config_.ponder_dt);
 
     config_ = config;
     trajectory_gen_.set_config(config);
@@ -211,8 +211,8 @@ inline void MpcGimbalPlanner::set_config(const MpcPlannerConfig& config) noexcep
 }
 
 inline void MpcGimbalPlanner::setup_solvers() noexcept {
-    const int N     = config_.horizon;
-    const double dt = config_.dt;
+    const auto N    = config_.ponder_ahead + config_.ponder_back;
+    const double dt = config_.ponder_dt;
 
     // Double integrator dynamics: x_{k+1} = A*x_k + B*u_k
     Eigen::Matrix2d A;
@@ -257,7 +257,7 @@ inline void MpcGimbalPlanner::setup_solvers() noexcept {
 inline void MpcGimbalPlanner::warm_start_shift() noexcept {
     // Shift trajectory and control sequence forward by one step for warm start
     // This provides a better initial guess for the solver
-    const int N = config_.horizon;
+    const auto N = config_.ponder_ahead + config_.ponder_back;
 
     auto shift_solver = [N](const SolverHandle& handle) noexcept {
         TinySolver* solver = handle.get();
@@ -279,15 +279,15 @@ inline void MpcGimbalPlanner::warm_start_shift() noexcept {
 }
 
 inline void MpcGimbalPlanner::solve_from_reference(const Trajectory& traj) noexcept {
-    const int N = config_.horizon;
+    const auto N = config_.ponder_ahead + config_.ponder_back;
 
     auto solve_axis = [&](const SolverHandle& handle, int row_offset) noexcept {
         TinySolver* solver = handle.get();
-        Eigen::Vector2d x0 = traj.block(row_offset, 0, 2, 1);
+        Eigen::Vector2d x0 = traj.second.block(row_offset, 0, 2, 1);
         tiny_set_x0(solver, x0);
-        solver->work->x    = traj.block(row_offset, 0, 2, N);
+        solver->work->x    = traj.second.block(row_offset, 0, 2, N);
         solver->work->u    = Eigen::MatrixXd::Zero(kCtrlDim, N - 1);
-        solver->work->Xref = traj.block(row_offset, 0, 2, N);
+        solver->work->Xref = traj.second.block(row_offset, 0, 2, N);
         tiny_solve(solver);
     };
 
@@ -297,9 +297,9 @@ inline void MpcGimbalPlanner::solve_from_reference(const Trajectory& traj) noexc
 
 inline void MpcGimbalPlanner::fill_debug_output(
     MpcPlannerOutput& output, const Trajectory& traj, double yaw0) const noexcept {
-    const int N            = config_.horizon;
-    const int idx          = config_.half_horizon;
-    output.mpc_dt          = config_.dt;
+    const auto N           = config_.ponder_ahead + config_.ponder_back;
+    const int idx          = config_.ponder_back;
+    output.mpc_dt          = config_.ponder_dt;
     output.mpc_current_idx = idx;
 
     // Resize all debug arrays
@@ -315,10 +315,10 @@ inline void MpcGimbalPlanner::fill_debug_output(
     output.ctrl_pitch_acc.resize(N - 1);
 
     for (int k = 0; k < N; ++k) {
-        output.ref_yaw[k]       = normalize_rad(traj(0, k) + yaw0);
-        output.ref_yaw_vel[k]   = traj(1, k);
-        output.ref_pitch[k]     = traj(2, k);
-        output.ref_pitch_vel[k] = traj(3, k);
+        output.ref_yaw[k]       = normalize_rad(traj.second(0, k) + yaw0);
+        output.ref_yaw_vel[k]   = traj.second(1, k);
+        output.ref_pitch[k]     = traj.second(2, k);
+        output.ref_pitch_vel[k] = traj.second(3, k);
 
         output.opt_yaw[k]       = normalize_rad(yaw_solver_.get()->work->x(0, k) + yaw0);
         output.opt_yaw_vel[k]   = yaw_solver_.get()->work->x(1, k);
@@ -343,32 +343,56 @@ inline void MpcGimbalPlanner::fill_visualization_trajectory(MpcPlannerOutput& ou
     }
 }
 
+[[nodiscard]] bool MpcGimbalPlanner::is_on_target(
+    double cur_yaw, double cur_pitch, double target_yaw, double target_pitch,
+    double distance) const noexcept {
+
+    // Convert physical window (meters) to angular tolerance (radians).
+    auto shooting_range_yaw   = std::abs(std::atan2(config_.shooting_range_w / 2.0, distance));
+    auto shooting_range_pitch = std::abs(std::atan2(config_.shooting_range_h / 2.0, distance));
+
+    // Minimum 1 degree range
+    const auto max_error = config_.fire_thresh;
+    shooting_range_yaw   = std::max(shooting_range_yaw, max_error);
+    shooting_range_pitch = std::max(shooting_range_pitch, max_error);
+
+    // NOTE: This uses a raw subtraction; near +/-pi wrap-around, the apparent difference can be
+    // large even if angles are close. If this becomes an issue, consider angle-normalized diff.
+    return std::abs(cur_yaw - target_yaw) < shooting_range_yaw
+        && std::abs(cur_pitch - target_pitch) < shooting_range_pitch;
+}
+
 inline void MpcGimbalPlanner::fill_common_output(
-    MpcPlannerOutput& output, const Trajectory& traj, double yaw0, uint64_t current_time_ns,
-    bool clamp_pitch) noexcept {
-    const int idx       = config_.half_horizon;
+    const fast_tf::FuckOdom& gimbal_tf, MpcPlannerOutput& output, const Trajectory& traj,
+    double yaw0, uint64_t current_time_ns) noexcept {
+    const int idx       = config_.ponder_back;
     output.timestamp_ns = current_time_ns;
 
     output.yaw     = normalize_rad(yaw_solver_.get()->work->x(0, idx) + yaw0);
     output.yaw_vel = yaw_solver_.get()->work->x(1, idx);
     output.yaw_acc = yaw_solver_.get()->work->u(0, idx);
 
-    if (clamp_pitch) {
-        output.pitch =
-            std::clamp(pitch_solver_.get()->work->x(0, idx), config_.pitch_min, config_.pitch_max);
-    } else {
-        output.pitch = pitch_solver_.get()->work->x(0, idx);
-    }
+    output.pitch =
+        std::clamp(pitch_solver_.get()->work->x(0, idx), config_.pitch_min, config_.pitch_max);
     output.pitch_vel = pitch_solver_.get()->work->x(1, idx);
     output.pitch_acc = pitch_solver_.get()->work->u(0, idx);
 
+    output.predicted_position = traj.first.second;
+    output.distance           = output.predicted_position->norm();
+    output.predicted_future =
+        current_time_ns + static_cast<uint64_t>(traj.first.first * kNanosecondsPerSecond);
+
     const int fire_idx = idx + config_.fire_lookahead;
-    if (fire_idx < config_.horizon) {
-        const double yaw_error   = traj(0, fire_idx) - yaw_solver_.get()->work->x(0, fire_idx);
-        const double pitch_error = traj(2, fire_idx) - pitch_solver_.get()->work->x(0, fire_idx);
-        output.tracking_error    = std::hypot(yaw_error, pitch_error);
-        output.fire_advice       = output.tracking_error < config_.fire_thresh;
+    if (fire_idx < (config_.ponder_ahead + config_.ponder_back)) {
+        const double yaw_error =
+            normalize_rad(traj.second(0, fire_idx) - yaw_solver_.get()->work->x(0, fire_idx));
+        const double pitch_error =
+            normalize_rad(traj.second(2, fire_idx) - pitch_solver_.get()->work->x(0, fire_idx));
+        output.tracking_error = std::hypot(yaw_error, pitch_error);
     }
+    auto [roll, pitch, yaw] = gimbal_tf->euler_rot().rpy();
+    // what the fuck negative
+    output.fire_advice = is_on_target(yaw, pitch, output.yaw, -output.pitch, output.distance);
 
     fill_visualization_trajectory(output);
     fill_debug_output(output, traj, yaw0);
@@ -389,7 +413,7 @@ inline void MpcGimbalPlanner::compute_cost_breakdown(
     const Trajectory& traj, double yaw0, std::vector<double>& cost_yaw_pos,
     std::vector<double>& cost_yaw_vel, std::vector<double>& cost_pitch_pos,
     std::vector<double>& cost_pitch_vel, double& total_cost) const noexcept {
-    const int N = config_.horizon;
+    const auto N = config_.ponder_ahead + config_.ponder_back;
 
     cost_yaw_pos.resize(N);
     cost_yaw_vel.resize(N);
@@ -400,12 +424,15 @@ inline void MpcGimbalPlanner::compute_cost_breakdown(
 
     for (int k = 0; k < N; ++k) {
         // Yaw errors
-        const double yaw_pos_err = traj(0, k) - yaw_solver_.get()->work->x(0, k);
-        const double yaw_vel_err = traj(1, k) - yaw_solver_.get()->work->x(1, k);
+
+        const double yaw_pos_err =
+            normalize_rad(traj.second(0, k) - yaw_solver_.get()->work->x(0, k));
+        const double yaw_vel_err = traj.second(1, k) - yaw_solver_.get()->work->x(1, k);
 
         // Pitch errors
-        const double pitch_pos_err = traj(2, k) - pitch_solver_.get()->work->x(0, k);
-        const double pitch_vel_err = traj(3, k) - pitch_solver_.get()->work->x(1, k);
+        const double pitch_pos_err =
+            normalize_rad(traj.second(2, k) - pitch_solver_.get()->work->x(0, k));
+        const double pitch_vel_err = traj.second(3, k) - pitch_solver_.get()->work->x(1, k);
 
         // Cost at this step (quadratic)
         cost_yaw_pos[k]   = config_.q_yaw_position * yaw_pos_err * yaw_pos_err;
@@ -419,7 +446,7 @@ inline void MpcGimbalPlanner::compute_cost_breakdown(
 
 inline void MpcGimbalPlanner::compute_constraint_margins(
     std::vector<double>& yaw_acc_margin, std::vector<double>& pitch_acc_margin) const noexcept {
-    const int N      = config_.horizon;
+    const auto N     = config_.ponder_ahead + config_.ponder_back;
     const int n_ctrl = N - 1;
 
     yaw_acc_margin.resize(n_ctrl);
@@ -438,13 +465,8 @@ inline void MpcGimbalPlanner::compute_constraint_margins(
 }
 
 inline std::expected<MpcPlannerOutput, std::string> MpcGimbalPlanner::plan(
-    const L3::TrackerOutput& target, uint64_t current_time_ns, double bullet_speed) noexcept {
-    return plan(target, current_time_ns, bullet_speed, Eigen::Vector3d::Zero());
-}
-
-inline std::expected<MpcPlannerOutput, std::string> MpcGimbalPlanner::plan(
     const L3::TrackerOutput& target, uint64_t current_time_ns, double bullet_speed,
-    const Eigen::Vector3d& muzzle_pos_odom) noexcept {
+    const fast_tf::FuckOdom& muzzle_tf, const fast_tf::FuckOdom& gimbal_tf) noexcept {
     if (!target.is_tracking()) {
         return std::unexpected("Target not tracking");
     }
@@ -456,12 +478,12 @@ inline std::expected<MpcPlannerOutput, std::string> MpcGimbalPlanner::plan(
 
     if (target.is_robot()) {
         return plan_robot(
-            *target.robot_state(), target.timestamp_ns, current_time_ns, bullet_speed,
-            muzzle_pos_odom);
+            *target.robot_state(), target.timestamp_ns, current_time_ns, bullet_speed, muzzle_tf,
+            gimbal_tf);
     } else if (target.is_outpost()) {
         return plan_outpost(
-            *target.outpost_state(), target.timestamp_ns, current_time_ns, bullet_speed,
-            muzzle_pos_odom);
+            *target.outpost_state(), target.timestamp_ns, current_time_ns, bullet_speed, muzzle_tf,
+            gimbal_tf);
     }
 
     return std::unexpected("Unknown target type");
@@ -469,98 +491,41 @@ inline std::expected<MpcPlannerOutput, std::string> MpcGimbalPlanner::plan(
 
 inline std::expected<MpcPlannerOutput, std::string> MpcGimbalPlanner::plan_robot(
     const L3::RobotTargetState& target, uint64_t timestamp_ns, uint64_t current_time_ns,
-    double bullet_speed, const Eigen::Vector3d& muzzle_pos_odom) noexcept {
+    double bullet_speed, const fast_tf::FuckOdom& muzzle_tf,
+    const fast_tf::FuckOdom& gimbal_tf) noexcept {
 
     const double delay = select_adaptive_delay(target.v_yaw);
 
     // Generate reference trajectory
     double yaw0 = 0.0;
     auto traj   = trajectory_gen_.generate_robot(
-        target, timestamp_ns, current_time_ns, delay, *compensator_, bullet_speed, muzzle_pos_odom,
-        yaw0);
+        target, timestamp_ns, current_time_ns, delay, *compensator_, bullet_speed,
+        muzzle_tf->translation(), yaw0);
 
     solve_from_reference(traj);
 
     // Extract results at half_horizon (current time)
-    const int idx = config_.half_horizon;
     MpcPlannerOutput output;
-    fill_common_output(output, traj, yaw0, current_time_ns, true);
-
-    // Distance calculation and predicted position
-    // Use horizontal distance (x, y) for selecting closest armor, matching sp_vision_25
-    const auto armor_poses = target.armor_poses();
-    double min_dist        = kArmorSelectionMinDist;
-    int best_idx           = 0;
-    for (size_t i = 0; i < armor_poses.size(); ++i) {
-        const Eigen::Vector3d rel = armor_poses[i].head<3>() - muzzle_pos_odom;
-        const double dist         = std::hypot(rel.x(), rel.y()); // horizontal distance
-        if (dist < min_dist) {
-            min_dist = dist;
-            best_idx = static_cast<int>(i);
-        }
-    }
-    const Eigen::Vector3d rel_now = armor_poses[best_idx].head<3>() - muzzle_pos_odom;
-    output.distance               = rel_now.norm();               // 3D distance for output
-
-    // Predicted position (in odom frame) - use the flying time to predict
-    const auto [flying_time, predict_dt] =
-        calculate_prediction_times(rel_now, timestamp_ns, current_time_ns, delay);
-
-    // Predict target center position and the selected armor position
-    Eigen::Vector3d pred_center = target.position + target.velocity * predict_dt;
-    double pred_yaw             = target.yaw + target.v_yaw * predict_dt;
-
-    // Use correct radius and height for selected armor (0,2 use radius0/z0; 1,3 use radius1/z1)
-    const double r         = (best_idx % 2 == 0) ? target.radius0 : target.radius1;
-    const double h         = target.z1 - target.position.z();
-    const double armor_z   = pred_center.z() + ((best_idx % 2 == 0) ? 0.0 : h);
-    const double armor_yaw = pred_yaw + best_idx * (2.0 * std::numbers::pi / target.armors_num);
-
-    Eigen::Vector3d pred_armor_pos{
-        pred_center.x() - r * std::cos(armor_yaw), pred_center.y() - r * std::sin(armor_yaw),
-        armor_z};
-    output.predicted_position = pred_armor_pos;
-    output.predicted_future =
-        current_time_ns + static_cast<uint64_t>(flying_time * kNanosecondsPerSecond);
-
+    fill_common_output(gimbal_tf, output, traj, yaw0, current_time_ns);
     return output;
 }
 
 inline std::expected<MpcPlannerOutput, std::string> MpcGimbalPlanner::plan_outpost(
     const L3::OutpostTargetState& target, uint64_t timestamp_ns, uint64_t current_time_ns,
-    double bullet_speed, const Eigen::Vector3d& muzzle_pos_odom) noexcept {
+    double bullet_speed, const fast_tf::FuckOdom& muzzle_tf,
+    const fast_tf::FuckOdom& gimbal_tf) noexcept {
 
     const double delay = select_adaptive_delay(target.v_yaw);
 
     double yaw0 = 0.0;
     auto traj   = trajectory_gen_.generate_outpost(
-        target, timestamp_ns, current_time_ns, delay, *compensator_, bullet_speed, muzzle_pos_odom,
-        yaw0);
+        target, timestamp_ns, current_time_ns, delay, *compensator_, bullet_speed,
+        muzzle_tf->translation(), yaw0);
 
     solve_from_reference(traj);
 
-    const int idx = config_.half_horizon;
     MpcPlannerOutput output;
-    fill_common_output(output, traj, yaw0, current_time_ns, false);
-
-    // Distance and predicted position for outpost
-    Eigen::Vector3d armor_pos_3d{target.position.x(), target.position.y(), target.z[0]};
-    const Eigen::Vector3d rel_now = armor_pos_3d - muzzle_pos_odom;
-    output.distance               = rel_now.norm();
-
-    const auto [flying_time, predict_dt] =
-        calculate_prediction_times(rel_now, timestamp_ns, current_time_ns, delay);
-
-    double pred_yaw    = target.yaw + target.v_yaw * predict_dt;
-    constexpr double r = L3::OutpostTargetState::radius;
-    Eigen::Vector3d pred_armor_pos{
-        target.position.x() + target.velocity.x() * predict_dt - r * std::cos(pred_yaw),
-        target.position.y() + target.velocity.y() * predict_dt - r * std::sin(pred_yaw),
-        target.z[0]};
-    output.predicted_position = pred_armor_pos;
-    output.predicted_future =
-        current_time_ns + static_cast<uint64_t>(flying_time * kNanosecondsPerSecond);
-
+    fill_common_output(gimbal_tf, output, traj, yaw0, current_time_ns);
     return output;
 }
 
