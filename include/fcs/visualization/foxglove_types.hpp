@@ -97,11 +97,93 @@ struct MpcTrajectoryMessage {
     std::vector<uint8_t> data;
 };
 
+// ============================================================================
+// Debug Message Types (L2/L3/L4 intermediate data)
+// ============================================================================
+
+// L2 Debug: PnP solver metrics
+struct PnPSolverMessage {
+    std::vector<uint8_t> data;
+};
+
+// L2 Debug: NN confidence scores
+struct NNConfidenceMessage {
+    std::vector<uint8_t> data;
+};
+
+// L3 Debug: Association phase probabilities
+struct AssociationPhaseMessage {
+    std::vector<uint8_t> data;
+};
+
+// L3 Debug: Association permutation rankings
+struct AssociationPermutationMessage {
+    std::vector<uint8_t> data;
+};
+
+// L3 Debug: Filter innovation vectors
+struct FilterInnovationMessage {
+    std::vector<uint8_t> data;
+};
+
+// L3 Debug: Filter covariance trace
+struct FilterCovarianceMessage {
+    std::vector<uint8_t> data;
+};
+
+// L3 Debug: Viterbi smoother trellis
+struct ViterbiTrellisMessage {
+    std::vector<uint8_t> data;
+};
+
+// L3 Debug: State machine status
+struct StateMachineMessage {
+    std::vector<uint8_t> data;
+};
+
+// L3 Debug: 3D scene for association visualization
+struct AssociationSceneMessage {
+    foxglove::schemas::SceneUpdate scene;
+};
+
+// L3 Debug: 3D scene for filter covariance visualization
+struct FilterCovarianceSceneMessage {
+    foxglove::schemas::SceneUpdate scene;
+};
+
+// L4 Debug: Full MPC prediction horizon
+struct MpcHorizonMessage {
+    std::vector<uint8_t> data;
+};
+
+// L4 Debug: MPC cost evolution
+struct MpcCostMessage {
+    std::vector<uint8_t> data;
+};
+
+// L4 Debug: MPC constraint margins
+struct MpcConstraintMessage {
+    std::vector<uint8_t> data;
+};
+
+// L4 Debug: 3D scene for MPC prediction visualization
+struct MpcPredictionSceneMessage {
+    foxglove::schemas::SceneUpdate scene;
+};
+
 /// Foxglove 消息联合类型
 using FoxgloveMessage = std::variant<
     ImageMessage, SceneMessage, TrackSceneMessage, TfMessage, ArmorDataMessage, BinaryImageMessage,
     PatternImageMessage, DebugLightsMessage, DebugArmorsMessage, MeasurementMessage, TargetMessage,
-    GimbalCmdMessage, GimbalSceneMessage, PerfStatsMessage, MpcTrajectoryMessage>;
+    GimbalCmdMessage, GimbalSceneMessage, PerfStatsMessage, MpcTrajectoryMessage,
+    // L2 Debug
+    PnPSolverMessage, NNConfidenceMessage,
+    // L3 Debug
+    AssociationPhaseMessage, AssociationPermutationMessage, FilterInnovationMessage,
+    FilterCovarianceMessage, ViterbiTrellisMessage, StateMachineMessage, AssociationSceneMessage,
+    FilterCovarianceSceneMessage,
+    // L4 Debug
+    MpcHorizonMessage, MpcCostMessage, MpcConstraintMessage, MpcPredictionSceneMessage>;
 
 // ============================================================================
 // Utility Functions

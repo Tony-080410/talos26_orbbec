@@ -4,10 +4,13 @@
 #include "data_associator.hpp"
 #include "fcs/core/types.hpp"
 #include "inekf_config.hpp"
+#include "jpda_matcher.hpp"
 #include "motion_model.hpp"
+#include "semantic_context.hpp"
 #include "spdlog_hook.hpp"
 #include "types.hpp"
 #include "uni_kf_spaces.hpp"
+#include "viterbi_smoother.hpp"
 
 // InEKF tracker using uni_kf framework
 #include "inekf_tracker.hpp"
@@ -52,7 +55,9 @@ public:
     Tracker() noexcept = default;
 
     explicit Tracker(const TrackerConfig& config) noexcept
-        : config_(config) {
+        : config_(config)
+        , robot_jpda_matcher_(make_jpda_config<RobotModel>(config))
+        , outpost_jpda_matcher_(make_jpda_config<OutpostModel>(config)) {
         robot_model_.params   = config_.robot.model;
         outpost_model_.params = config_.outpost.model;
     }
@@ -104,9 +109,12 @@ public:
     /// Update step (measurement update)
     /// @return true if matched successfully
     [[nodiscard]] bool update(const AtLegacyArmorMeasurementBatch& measurements) noexcept {
+        // Only Outpost uses 3-armors model, all other targets use 4-armors model
+        // This includes: Sentry, One, Two, Three, Four, Five, Base, BaseLarge, Invalid
         const bool is_outpost = (target_name_ == ArmorName::Outpost);
         const int armors_num  = is_outpost ? 3 : 4;
 
+        // Validate filter state
         if (is_outpost && !outpost_ckf_) {
             return false;
         }
@@ -114,26 +122,70 @@ public:
             return false;
         }
 
-        // Use template-based DataAssociator
+        // Choose matcher based on config
+        const bool use_jpda = config_.jpda_matcher.enable_jpda_matcher;
         typename DataAssociator<RobotModel>::MatchResult match_result;
         std::vector<int> idx;
 
         if (is_outpost) {
-            auto result = outpost_associator_.match(
-                measurements, outpost_ckf_->x(), outpost_ckf_->Px(), outpost_model_, target_name_,
-                matcher_gate, armors_num);
+            if (use_jpda) {
+                // Use JpdaMatcher for outpost
+                semantic_context_.set_enabled(config_.jpda_matcher.enable_semantic);
 
-            for (size_t i = 0; i < result.armors.size(); ++i) {
-                match_result.armors.push_back(result.armors[i]);
-                idx.push_back(result.armor_ids[i]);
+                // Check if target type changed
+                if (target_name_ != last_target_name_) {
+                    outpost_jpda_matcher_.reset(); // Reset Viterbi state
+                    last_target_name_ = target_name_;
+                }
+
+                auto result = outpost_jpda_matcher_.match(
+                    measurements, outpost_ckf_->x(), outpost_ckf_->Px(), outpost_model_,
+                    &semantic_context_, armors_num, matcher_gate, target_name_);
+
+                // Direct use of JpdaMatcher result (no fallback)
+                match_result.armors = result.armors;
+                idx                 = result.armor_ids;
+            } else {
+                // Use legacy DataAssociator
+                auto result = outpost_associator_.match(
+                    measurements, outpost_ckf_->x(), outpost_ckf_->Px(), outpost_model_,
+                    target_name_, matcher_gate, armors_num);
+
+                for (size_t i = 0; i < result.armors.size(); ++i) {
+                    match_result.armors.push_back(result.armors[i]);
+                    idx.push_back(result.armor_ids[i]);
+                }
             }
         } else {
-            auto result = robot_associator_.match(
-                measurements, robot_ckf_->x(), robot_ckf_->Px(), robot_model_, target_name_,
-                matcher_gate, armors_num);
+            if (use_jpda) {
+                // Use JpdaMatcher for robot
+                semantic_context_.set_enabled(config_.jpda_matcher.enable_semantic);
 
-            match_result.armors = result.armors;
-            idx                 = result.armor_ids;
+                // Check if target type changed (e.g., robot → outpost)
+                if (target_name_ != last_target_name_) {
+                    robot_jpda_matcher_.reset(); // Reset Viterbi state
+                    last_target_name_ = target_name_;
+                }
+
+                auto result = robot_jpda_matcher_.match(
+                    measurements, robot_ckf_->x(), robot_ckf_->Px(), robot_model_,
+                    &semantic_context_, armors_num, matcher_gate, target_name_);
+
+                // Direct use of JpdaMatcher result (no fallback)
+                match_result.armors = result.armors;
+                idx                 = result.armor_ids;
+
+                // Note: Viterbi smoothing is now handled inside robot_jpda_matcher_
+                // No need to update phase_smoother_ here
+            } else {
+                // Use legacy DataAssociator
+                auto result = robot_associator_.match(
+                    measurements, robot_ckf_->x(), robot_ckf_->Px(), robot_model_, target_name_,
+                    matcher_gate, armors_num);
+
+                match_result.armors = result.armors;
+                idx                 = result.armor_ids;
+            }
         }
 
         if (match_result.armors.empty()) {
@@ -331,38 +383,126 @@ public:
         output.status      = status_;
         output.target_name = target_name_;
 
+        // Populate state machine debug info
+        output.state_machine_debug                      = StateMachineDebug{};
+        output.state_machine_debug->time_in_state       = 0.0; // TODO: track time in state
+        output.state_machine_debug->detecting_count     = detecting_count_;
+        output.state_machine_debug->lost_time           = lost_time_;
+        output.state_machine_debug->consecutive_updates = 0;   // TODO: track consecutive updates
+
         if (robot_ckf_) {
+            // Populate filter debug info
+            output.filter_debug                   = FilterDebug{};
+            const auto& Px                        = robot_ckf_->Px();
+            output.filter_debug->covariance_trace = Px.trace();
+            // Position uncertainty (sqrt of diagonal elements for x, y, z)
+            const int nx                              = RobotModel::NX;
+            output.filter_debug->position_uncertainty = Eigen::Vector3d(
+                std::sqrt(std::max(0.0, Px(RobotModel::XC, RobotModel::XC))),
+                std::sqrt(std::max(0.0, Px(RobotModel::YC, RobotModel::YC))),
+                std::sqrt(std::max(0.0, Px(RobotModel::Z0, RobotModel::Z0))));
+            // Velocity uncertainty
+            output.filter_debug->velocity_uncertainty = Eigen::Vector3d(
+                std::sqrt(std::max(0.0, Px(RobotModel::VX, RobotModel::VX))),
+                std::sqrt(std::max(0.0, Px(RobotModel::VY, RobotModel::VY))),
+                std::sqrt(std::max(0.0, Px(RobotModel::VZ, RobotModel::VZ))));
+            // Yaw uncertainty
+            output.filter_debug->yaw_uncertainty =
+                std::sqrt(std::max(0.0, Px(RobotModel::V_YAW, RobotModel::V_YAW)));
+
             if (robot_inekf_) {
                 auto state   = robot_inekf_->get_robot_state();
                 output.state = state;
-                return output;
+            } else {
+                const auto& x = robot_ckf_->x();
+                const auto& e = x.first.data;
+                RobotTargetState state;
+                state.position   = {e(RobotModel::XC), e(RobotModel::YC), e(RobotModel::Z0)};
+                state.velocity   = {e(RobotModel::VX), e(RobotModel::VY), e(RobotModel::VZ)};
+                state.yaw        = ukf::YawSO3Z::angle(x.second);
+                state.v_yaw      = e(RobotModel::V_YAW);
+                state.radius0    = e(RobotModel::R_0);
+                state.radius1    = e(RobotModel::R_1);
+                state.z1         = e(RobotModel::Z0) + e(RobotModel::H);
+                state.armors_num = 4;
+                output.state     = state;
             }
-            const auto& x = robot_ckf_->x();
-            const auto& e = x.first.data;
-            RobotTargetState state;
-            state.position   = {e(RobotModel::XC), e(RobotModel::YC), e(RobotModel::Z0)};
-            state.velocity   = {e(RobotModel::VX), e(RobotModel::VY), e(RobotModel::VZ)};
-            state.yaw        = ukf::YawSO3Z::angle(x.second);
-            state.v_yaw      = e(RobotModel::V_YAW);
-            state.radius0    = e(RobotModel::R_0);
-            state.radius1    = e(RobotModel::R_1);
-            state.z1         = e(RobotModel::Z0) + e(RobotModel::H);
-            state.armors_num = 4;
-            output.state     = state;
+
+            // Populate association debug info from JpdaMatcher
+            const auto& matcher_result = robot_jpda_matcher_.get_last_result();
+            if (matcher_result) {
+                output.association_debug               = AssociationDebug{};
+                output.association_debug->phase_probs  = matcher_result->phase_probs;
+                output.association_debug->map_phase    = matcher_result->map_phase;
+                output.association_debug->is_ambiguous = matcher_result->is_ambiguous;
+
+                // Convert permutation probabilities to our format
+                for (const auto& perm_prob : matcher_result->perm_probs) {
+                    AssociationDebug::PermutationInfo info;
+                    info.perm     = perm_prob.perm;
+                    info.log_prob = perm_prob.log_prob;
+                    // Compute Mahalanobis distance from log_prob (approximate)
+                    // log_prob = -0.5 * (d2 + log|S|), so d2 ≈ -2 * log_prob
+                    info.mahalanobis_sq = -2.0 * perm_prob.log_prob;
+                    info.gate_passed =
+                        info.mahalanobis_sq < matcher_gate; // Use matcher_gate as threshold
+                    output.association_debug->top_permutations.push_back(info);
+                }
+            }
         } else if (outpost_ckf_) {
+            // Populate filter debug info for outpost
+            output.filter_debug                   = FilterDebug{};
+            const auto& Px                        = outpost_ckf_->Px();
+            output.filter_debug->covariance_trace = Px.trace();
+            // Position uncertainty (only XC, YC available in OutpostModel)
+            output.filter_debug->position_uncertainty = Eigen::Vector3d(
+                std::sqrt(std::max(0.0, Px(OutpostModel::XC, OutpostModel::XC))),
+                std::sqrt(std::max(0.0, Px(OutpostModel::YC, OutpostModel::YC))),
+                std::sqrt(
+                    std::max(
+                        0.0, (Px(OutpostModel::Z0, OutpostModel::Z0)
+                              + Px(OutpostModel::Z1, OutpostModel::Z1)
+                              + Px(OutpostModel::Z2, OutpostModel::Z2))
+                                 / 3.0)));
+            // Velocity uncertainty - OutpostModel doesn't track Vx, Vy, Vz separately
+            // Use position uncertainty as proxy approximation
+            output.filter_debug->velocity_uncertainty =
+                output.filter_debug->position_uncertainty * 0.1;
+            // Yaw uncertainty
+            output.filter_debug->yaw_uncertainty =
+                std::sqrt(std::max(0.0, Px(OutpostModel::V_YAW, OutpostModel::V_YAW)));
+
             if (outpost_inekf_) {
                 auto state   = outpost_inekf_->get_outpost_state();
                 output.state = state;
-                return output;
+            } else {
+                const auto& x = outpost_ckf_->x();
+                const auto& e = x.first.data;
+                OutpostTargetState state;
+                state.position = {e(OutpostModel::XC), e(OutpostModel::YC)};
+                state.yaw      = ukf::YawSO3Z::angle(x.second);
+                state.v_yaw    = e(OutpostModel::V_YAW);
+                state.z        = {e(OutpostModel::Z0), e(OutpostModel::Z1), e(OutpostModel::Z2)};
+                output.state   = state;
             }
-            const auto& x = outpost_ckf_->x();
-            const auto& e = x.first.data;
-            OutpostTargetState state;
-            state.position = {e(OutpostModel::XC), e(OutpostModel::YC)};
-            state.yaw      = ukf::YawSO3Z::angle(x.second);
-            state.v_yaw    = e(OutpostModel::V_YAW);
-            state.z        = {e(OutpostModel::Z0), e(OutpostModel::Z1), e(OutpostModel::Z2)};
-            output.state   = state;
+
+            // Populate association debug info from JpdaMatcher
+            const auto& matcher_result = outpost_jpda_matcher_.get_last_result();
+            if (matcher_result) {
+                output.association_debug               = AssociationDebug{};
+                output.association_debug->phase_probs  = matcher_result->phase_probs;
+                output.association_debug->map_phase    = matcher_result->map_phase;
+                output.association_debug->is_ambiguous = matcher_result->is_ambiguous;
+
+                for (const auto& perm_prob : matcher_result->perm_probs) {
+                    AssociationDebug::PermutationInfo info;
+                    info.perm           = perm_prob.perm;
+                    info.log_prob       = perm_prob.log_prob;
+                    info.mahalanobis_sq = -2.0 * perm_prob.log_prob;
+                    info.gate_passed    = info.mahalanobis_sq < matcher_gate;
+                    output.association_debug->top_permutations.push_back(info);
+                }
+            }
         }
 
         return output;
@@ -391,6 +531,23 @@ public:
     [[nodiscard]] ArmorName target_name() const noexcept { return target_name_; }
 
 private:
+    /// Helper function to create JpdaMatcher config from TrackerConfig
+    ///
+    /// Problem:
+    ///   JpdaMatcher needs a Config struct with specific field names and types.
+    ///   We need to convert TrackerConfig::JpdaMatcherConfig to JpdaMatcher::Config.
+    ///
+    /// Precise:
+    ///   Extracts the relevant fields from TrackerConfig and constructs JpdaMatcher::Config.
+    template <typename Model>
+    [[nodiscard]] static typename JpdaMatcher<Model>::Config
+        make_jpda_config(const TrackerConfig& cfg) noexcept {
+        return typename JpdaMatcher<Model>::Config{
+            cfg.jpda_matcher.phase_ambiguous_threshold, cfg.jpda_matcher.phase_switch_lambda,
+            cfg.jpda_matcher.semantic_reweight_lambda, cfg.jpda_matcher.enable_semantic,
+            cfg.jpda_matcher.enable_viterbi};
+    }
+
     TrackerConfig config_;
     TrackerStatus status_{TrackerStatus::Idle};
     ArmorName target_name_{ArmorName::Invalid};
@@ -422,6 +579,23 @@ private:
     /// Data associators
     DataAssociator<RobotModel> robot_associator_;
     DataAssociator<OutpostModel> outpost_associator_;
+
+    /// Jpda matchers (advanced phase-permutation JPDA)
+    /// These are optionally used based on config_.jpda_matcher.enable_jpda_matcher
+    JpdaMatcher<RobotModel> robot_jpda_matcher_;
+    JpdaMatcher<OutpostModel> outpost_jpda_matcher_;
+
+    /// Semantic context for breaking symmetry
+    SemanticContext semantic_context_;
+
+    /// Viterbi smoother for phase smoothing (3-frame sliding window)
+    /// Note: This is currently unused because JpdaMatcher has its own internal ViterbiSmoother.
+    /// Kept for potential fallback use in the future.
+    ViterbiSmoother phase_smoother_{4}; // Default to 4 phases (robot)
+
+    /// Last tracked target name for detecting target type switches
+    /// When target_name_ != last_target_name_, we reset the JpdaMatcher's Viterbi state.
+    ArmorName last_target_name_{ArmorName::Invalid};
 
     /// State machine variables
     int detecting_count_{0};

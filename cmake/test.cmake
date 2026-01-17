@@ -120,6 +120,27 @@ target_link_libraries(scheduler_ecs_test PRIVATE
 
 add_test(NAME SchedulerEcsTest COMMAND scheduler_ecs_test)
 
+# Jpda matcher tests
+add_executable(jpda_matcher_test
+    test/jpda_matcher_test.cpp
+)
+
+target_include_directories(jpda_matcher_test PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+
+target_include_directories(jpda_matcher_test SYSTEM PRIVATE
+    3dparty/lieplusplus
+)
+
+target_link_libraries(jpda_matcher_test PRIVATE
+    GTest::gtest_main
+    Eigen3::Eigen
+    ${OpenCV_LIBS}
+)
+
+add_test(NAME JpdaMatcherTest COMMAND jpda_matcher_test)
+
 if (ENABLE_COVERAGE)
     message(STATUS "Coverage enabled for FCS tests")
 endif ()

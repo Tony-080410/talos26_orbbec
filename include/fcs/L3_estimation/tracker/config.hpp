@@ -4,6 +4,7 @@
 #include "motion_model_params.hpp"
 #include <expected>
 #include <memory>
+#include <optional>
 #include <string>
 
 // Forward declaration to avoid including toml++ in config headers.
@@ -130,6 +131,140 @@ struct TargetConfig {
     std::expected<void, std::string> read_from(const toml::table& tbl) noexcept;
 };
 
+// ============================================================================
+// Jpda Matcher Configuration
+// ============================================================================
+
+/// JpdaMatcher configuration for advanced phase-permutation JPDA.
+///
+/// Problem:
+///   The standard DataAssociator uses greedy one-to-one matching with Mahalanobis distance gating.
+///   This can fail in ambiguous symmetric cases where multiple armors have similar likelihoods.
+///
+/// Intuition:
+///   JpdaMatcher enumerates all 4! = 24 permutations, computes exact set likelihood with
+///   log|S| term, and uses implicit phase space to handle yaw wrapping.
+///
+/// Analogy:
+///   Instead of picking the "best-looking" match immediately, JpdaMatcher considers ALL
+///   possible matchings and picks the one with highest joint probability.
+///
+/// Precise:
+///   - Enable via `enable_jpda_matcher = true` in TOML
+///   - Falls back to DataAssociator when disabled (default behavior)
+///   - Phase ambiguity threshold: (max - second) / max < threshold → ambiguous
+///   - Semantic fusion: breaks symmetry using detector confidence and class consistency
+///   - Viterbi smoothing: 3-frame sliding window to eliminate phase jumps
+struct JpdaMatcherConfig {
+    /// Enable JpdaMatcher (vs standard DataAssociator).
+    ///
+    /// Problem:
+    ///   JpdaMatcher is more computationally expensive (~600-900μs vs ~100μs) and may not
+    ///   always be necessary.
+    ///
+    /// Intuition:
+    ///   Enable this when you frequently encounter symmetric ambiguous cases (fast rotation,
+    ///   partial occlusion, high noise).
+    ///
+    /// Analogy:
+    ///   Like upgrading from a "quick heuristic" to an "exact algorithm" when the heuristic
+    ///   starts failing.
+    ///
+    /// Precise:
+    ///   When true, Tracker uses JpdaMatcher for association. When false, uses the legacy
+    ///   DataAssociator (greedy matching with Mahalanobis gating).
+    bool enable_jpda_matcher{false};
+
+    /// Phase ambiguity detection threshold.
+    ///
+    /// Problem:
+    ///   We need to detect when the phase estimate is ambiguous (top-2 phases are close) to
+    ///   decide whether to run multi-hypothesis fusion.
+    ///
+    /// Intuition:
+    ///   Smaller → more sensitive to ambiguity (runs multi-hypothesis more often).
+    ///   Larger → more tolerant (only runs multi-hypothesis in very ambiguous cases).
+    ///
+    /// Analogy:
+    ///   Like a "confidence margin" - if the top two candidates are within this margin,
+    ///   we consider it ambiguous.
+    ///
+    /// Precise:
+    ///   Computed as (max_prob - second_prob) / max_prob < threshold → ambiguous.
+    ///   Default 0.3 means if second is within 30% of max, trigger multi-hypothesis.
+    double phase_ambiguous_threshold{0.3};
+
+    /// Phase switch penalty for Viterbi smoothing.
+    ///
+    /// Problem:
+    ///   Without temporal smoothing, the phase estimate can jump between frames due to
+    ///   measurement noise, causing target state to flicker.
+    ///
+    /// Intuition:
+    ///   Larger → prefer stable phase (resist jumps). Smaller → allow faster phase changes.
+    ///
+    /// Analogy:
+    ///   Like a "hysteresis" or "momentum" term in a control system.
+    ///
+    /// Precise:
+    ///   In Viterbi DP recurrence: cost += -lambda * |phase - prev_phase|.
+    ///   Typical range: 0.05 (very loose) to 0.5 (very strict). Default 0.1 is moderate.
+    double phase_switch_lambda{0.1};
+
+    /// Semantic reweighting lambda (λ_sem).
+    ///
+    /// Problem:
+    ///   Semantic information may be more or less reliable than geometric information,
+    ///   depending on detector quality and operating conditions.
+    ///
+    /// Intuition:
+    ///   Larger → trust semantics more (use class predictions to break geometric ambiguity).
+    ///   Smaller → trust geometry more (semantics as tie-breaker only).
+    ///
+    /// Analogy:
+    ///   Like a "confidence weight" for semantic vs geometric likelihood.
+    ///
+    /// Precise:
+    ///   In semantic reweighting: log L_total = log L_geometry + λ_sem * log L_semantic.
+    ///   Default 1.0 means equal weight. Set < 1.0 for noisy detectors, > 1.0 for reliable ones.
+    double semantic_reweight_lambda{1.0};
+
+    /// Enable semantic fusion (detector confidence + class consistency).
+    ///
+    /// Problem:
+    ///   Pure geometric matching can be ambiguous in symmetric cases. Semantic information
+    ///   (armor color/class) can break this symmetry.
+    ///
+    /// Intuition:
+    ///   Enable this when your detector provides reliable class predictions (color/type).
+    ///
+    /// Analogy:
+    ///   Like using "landmark features" in addition to "distance" for matching.
+    ///
+    /// Precise:
+    ///   When true, refines permutation likelihoods using log P(detected | true) from
+    ///   SemanticContext class transition matrix.
+    bool enable_semantic{false};
+
+    /// Enable Viterbi smoothing (3-frame sliding window).
+    ///
+    /// Problem:
+    ///   Phase estimates can jump between frames due to noise, causing tracker instability.
+    ///
+    /// Intuition:
+    ///   Enable this to smooth out phase transitions and eliminate single-frame outliers.
+    ///
+    /// Analogy:
+    ///   Like a "moving average" but for discrete states with DP.
+    ///
+    /// Precise:
+    ///   When true, runs ViterbiSmoother on phase probabilities and uses smoothed phase
+    ///   for final output.
+    bool enable_viterbi{true};
+
+    std::expected<void, std::string> read_from(const toml::table& tbl) noexcept;
+};
+
 struct TrackerConfig {
     /// Robot target parameters (4-armors).
     /// Problem: robots have 4 armors and geometry parameters (r0/r1/h) to estimate.
@@ -163,6 +298,10 @@ struct TrackerConfig {
     /// InEKF parameters for outpost targets.
     /// Precise: affects InEKF only; outpost radius is fixed in the model.
     OutpostInEKFConfig outpost_inekf;
+    /// JpdaMatcher configuration for advanced phase-permutation JPDA.
+    /// Precise: when enable_jpda_matcher=true, uses JpdaMatcher instead of
+    /// DataAssociator for armor matching. Falls back to DataAssociator when disabled.
+    JpdaMatcherConfig jpda_matcher;
 
     std::expected<void, std::string> read_from(const toml::table& tbl) noexcept;
 };

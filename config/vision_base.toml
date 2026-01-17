@@ -1,6 +1,6 @@
 [detector]
 backend_type = "Traditional"
-detect_color = "Red"
+detect_color = "Blue"
 
 # Required if backend_type = "traditional"
 [traditional]
@@ -47,6 +47,13 @@ top_k = 128
 
 [tracker]
 inekf_enabled = true
+
+[tracker.jpda_matcher]
+enable_jpda_matcher = true   # 启用JpdaMatcher
+phase_ambiguous_threshold = 0.3  # 相位模糊阈值
+phase_switch_lambda = 0.2         # Viterbi切换惩罚
+enable_semantic = true           # 语义融合
+enable_viterbi = true             # Viterbi平滑
 
 [tracker.robot]
 matcher_gate = 5.0

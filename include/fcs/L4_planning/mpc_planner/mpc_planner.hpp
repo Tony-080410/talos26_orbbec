@@ -1,6 +1,7 @@
 #pragma once
 
 #include <algorithm>
+#include <chrono>
 #include <expected>
 #include <memory>
 #include <numbers>
@@ -75,6 +76,16 @@ private:
 
     /// Solve both yaw and pitch MPC problems from a reference trajectory.
     void solve_from_reference(const Trajectory& traj) noexcept;
+
+    /// Compute cost breakdown (position/velocity errors per horizon step)
+    void compute_cost_breakdown(
+        const Trajectory& traj, double yaw0, std::vector<double>& cost_yaw_pos,
+        std::vector<double>& cost_yaw_vel, std::vector<double>& cost_pitch_pos,
+        std::vector<double>& cost_pitch_vel, double& total_cost) const noexcept;
+
+    /// Compute constraint margins (distance to acceleration limits)
+    void compute_constraint_margins(
+        std::vector<double>& yaw_acc_margin, std::vector<double>& pitch_acc_margin) const noexcept;
 
     /// Fill MPC output fields common to both robot/outpost planning.
     void fill_common_output(
@@ -367,6 +378,69 @@ inline void MpcGimbalPlanner::fill_common_output(
 
     fill_visualization_trajectory(output);
     fill_debug_output(output, traj, yaw0);
+
+    // Populate extended MPC debug fields
+    output.mpc_iterations = yaw_solver_->solution->iter;
+    output.mpc_converged  = yaw_solver_->solution->solved != 0;
+
+    compute_cost_breakdown(
+        traj, yaw0, output.cost_yaw_pos, output.cost_yaw_vel, output.cost_pitch_pos,
+        output.cost_pitch_vel, output.total_cost);
+
+    compute_constraint_margins(
+        output.constraint_yaw_acc_margin, output.constraint_pitch_acc_margin);
+}
+
+inline void MpcGimbalPlanner::compute_cost_breakdown(
+    const Trajectory& traj, double yaw0, std::vector<double>& cost_yaw_pos,
+    std::vector<double>& cost_yaw_vel, std::vector<double>& cost_pitch_pos,
+    std::vector<double>& cost_pitch_vel, double& total_cost) const noexcept {
+    const int N = config_.horizon;
+
+    cost_yaw_pos.resize(N);
+    cost_yaw_vel.resize(N);
+    cost_pitch_pos.resize(N);
+    cost_pitch_vel.resize(N);
+
+    total_cost = 0.0;
+
+    for (int k = 0; k < N; ++k) {
+        // Yaw errors
+        const double yaw_pos_err = traj(0, k) - yaw_solver_->work->x(0, k);
+        const double yaw_vel_err = traj(1, k) - yaw_solver_->work->x(1, k);
+
+        // Pitch errors
+        const double pitch_pos_err = traj(2, k) - pitch_solver_->work->x(0, k);
+        const double pitch_vel_err = traj(3, k) - pitch_solver_->work->x(1, k);
+
+        // Cost at this step (quadratic)
+        cost_yaw_pos[k]   = config_.q_yaw_position * yaw_pos_err * yaw_pos_err;
+        cost_yaw_vel[k]   = config_.q_yaw_velocity * yaw_vel_err * yaw_vel_err;
+        cost_pitch_pos[k] = config_.q_pitch_position * pitch_pos_err * pitch_pos_err;
+        cost_pitch_vel[k] = config_.q_pitch_velocity * pitch_vel_err * pitch_vel_err;
+
+        total_cost += cost_yaw_pos[k] + cost_yaw_vel[k] + cost_pitch_pos[k] + cost_pitch_vel[k];
+    }
+}
+
+inline void MpcGimbalPlanner::compute_constraint_margins(
+    std::vector<double>& yaw_acc_margin, std::vector<double>& pitch_acc_margin) const noexcept {
+    const int N      = config_.horizon;
+    const int n_ctrl = N - 1;
+
+    yaw_acc_margin.resize(n_ctrl);
+    pitch_acc_margin.resize(n_ctrl);
+
+    for (int k = 0; k < n_ctrl; ++k) {
+        // Distance from control to acceleration limit (positive = within bounds, negative =
+        // violated)
+        const double yaw_acc   = yaw_solver_->work->u(0, k);
+        const double pitch_acc = pitch_solver_->work->u(0, k);
+
+        yaw_acc_margin[k] = std::min(config_.max_yaw_acc - yaw_acc, yaw_acc + config_.max_yaw_acc);
+        pitch_acc_margin[k] =
+            std::min(config_.max_pitch_acc - pitch_acc, pitch_acc + config_.max_pitch_acc);
+    }
 }
 
 inline std::expected<MpcPlannerOutput, std::string> MpcGimbalPlanner::plan(

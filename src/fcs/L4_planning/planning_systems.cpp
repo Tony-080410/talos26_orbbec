@@ -84,6 +84,18 @@ void register_mpc_planning_systems(
                 plan.ctrl_yaw_acc    = std::move(result->ctrl_yaw_acc);
                 plan.ctrl_pitch_acc  = std::move(result->ctrl_pitch_acc);
 
+                // Copy extended MPC debug data
+                plan.mpc_iterations              = result->mpc_iterations;
+                plan.mpc_solve_time_us           = result->mpc_solve_time_us;
+                plan.mpc_converged               = result->mpc_converged;
+                plan.cost_yaw_pos                = std::move(result->cost_yaw_pos);
+                plan.cost_yaw_vel                = std::move(result->cost_yaw_vel);
+                plan.cost_pitch_pos              = std::move(result->cost_pitch_pos);
+                plan.cost_pitch_vel              = std::move(result->cost_pitch_vel);
+                plan.total_cost                  = result->total_cost;
+                plan.constraint_yaw_acc_margin   = std::move(result->constraint_yaw_acc_margin);
+                plan.constraint_pitch_acc_margin = std::move(result->constraint_pitch_acc_margin);
+
                 plan_out.write(plan);
             }
         });

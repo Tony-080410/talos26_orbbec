@@ -262,6 +262,126 @@ private:
             SPDLOG_ERROR("mpc_traj channel create failed: {}", foxglove::strerror(r.error()));
             init_success_ = false;
         }
+
+        // L2 Debug: PnP solver metrics
+        if (auto r = foxglove::RawChannel::create("/debug/pnp_solver", "json"); r.has_value()) {
+            pnp_solver_ch_.emplace(std::move(r.value()));
+        } else {
+            SPDLOG_ERROR("pnp_solver channel create failed: {}", foxglove::strerror(r.error()));
+            init_success_ = false;
+        }
+
+        if (auto r = foxglove::RawChannel::create("/debug/nn_confidence", "json"); r.has_value()) {
+            nn_confidence_ch_.emplace(std::move(r.value()));
+        } else {
+            SPDLOG_ERROR("nn_confidence channel create failed: {}", foxglove::strerror(r.error()));
+            init_success_ = false;
+        }
+
+        // L3 Debug: Association
+        if (auto r = foxglove::RawChannel::create("/debug/association_phase", "json");
+            r.has_value()) {
+            association_phase_ch_.emplace(std::move(r.value()));
+        } else {
+            SPDLOG_ERROR(
+                "association_phase channel create failed: {}", foxglove::strerror(r.error()));
+            init_success_ = false;
+        }
+
+        if (auto r = foxglove::RawChannel::create("/debug/association_permutation", "json");
+            r.has_value()) {
+            association_permutation_ch_.emplace(std::move(r.value()));
+        } else {
+            SPDLOG_ERROR(
+                "association_permutation channel create failed: {}", foxglove::strerror(r.error()));
+            init_success_ = false;
+        }
+
+        // L3 Debug: Filter
+        if (auto r = foxglove::RawChannel::create("/debug/filter_innovation", "json");
+            r.has_value()) {
+            filter_innovation_ch_.emplace(std::move(r.value()));
+        } else {
+            SPDLOG_ERROR(
+                "filter_innovation channel create failed: {}", foxglove::strerror(r.error()));
+            init_success_ = false;
+        }
+
+        if (auto r = foxglove::RawChannel::create("/debug/filter_covariance", "json");
+            r.has_value()) {
+            filter_covariance_ch_.emplace(std::move(r.value()));
+        } else {
+            SPDLOG_ERROR(
+                "filter_covariance channel create failed: {}", foxglove::strerror(r.error()));
+            init_success_ = false;
+        }
+
+        if (auto r = foxglove::RawChannel::create("/debug/viterbi_trellis", "json");
+            r.has_value()) {
+            viterbi_trellis_ch_.emplace(std::move(r.value()));
+        } else {
+            SPDLOG_ERROR(
+                "viterbi_trellis channel create failed: {}", foxglove::strerror(r.error()));
+            init_success_ = false;
+        }
+
+        if (auto r = foxglove::RawChannel::create("/debug/state_machine", "json"); r.has_value()) {
+            state_machine_ch_.emplace(std::move(r.value()));
+        } else {
+            SPDLOG_ERROR("state_machine channel create failed: {}", foxglove::strerror(r.error()));
+            init_success_ = false;
+        }
+
+        // L3 Debug: 3D scenes
+        if (auto r = foxglove::schemas::SceneUpdateChannel::create("/debug/association_scene");
+            r.has_value()) {
+            association_scene_ch_.emplace(std::move(r.value()));
+        } else {
+            SPDLOG_ERROR(
+                "association_scene channel create failed: {}", foxglove::strerror(r.error()));
+            init_success_ = false;
+        }
+
+        if (auto r =
+                foxglove::schemas::SceneUpdateChannel::create("/debug/filter_covariance_scene");
+            r.has_value()) {
+            filter_covariance_scene_ch_.emplace(std::move(r.value()));
+        } else {
+            SPDLOG_ERROR(
+                "filter_covariance_scene channel create failed: {}", foxglove::strerror(r.error()));
+            init_success_ = false;
+        }
+
+        // L4 Debug: MPC
+        if (auto r = foxglove::RawChannel::create("/debug/mpc_horizon", "json"); r.has_value()) {
+            mpc_horizon_ch_.emplace(std::move(r.value()));
+        } else {
+            SPDLOG_ERROR("mpc_horizon channel create failed: {}", foxglove::strerror(r.error()));
+            init_success_ = false;
+        }
+
+        if (auto r = foxglove::RawChannel::create("/debug/mpc_cost", "json"); r.has_value()) {
+            mpc_cost_ch_.emplace(std::move(r.value()));
+        } else {
+            SPDLOG_ERROR("mpc_cost channel create failed: {}", foxglove::strerror(r.error()));
+            init_success_ = false;
+        }
+
+        if (auto r = foxglove::RawChannel::create("/debug/mpc_constraint", "json"); r.has_value()) {
+            mpc_constraint_ch_.emplace(std::move(r.value()));
+        } else {
+            SPDLOG_ERROR("mpc_constraint channel create failed: {}", foxglove::strerror(r.error()));
+            init_success_ = false;
+        }
+
+        if (auto r = foxglove::schemas::SceneUpdateChannel::create("/debug/mpc_prediction_scene");
+            r.has_value()) {
+            mpc_prediction_scene_ch_.emplace(std::move(r.value()));
+        } else {
+            SPDLOG_ERROR(
+                "mpc_prediction_scene channel create failed: {}", foxglove::strerror(r.error()));
+            init_success_ = false;
+        }
     }
 
     void message_sender_thread() {
@@ -328,6 +448,59 @@ private:
                         if (mpc_traj_ch_)
                             mpc_traj_ch_->log(
                                 reinterpret_cast<const std::byte*>(m.data.data()), m.data.size());
+                    } else if constexpr (std::is_same_v<T, PnPSolverMessage>) {
+                        if (pnp_solver_ch_)
+                            pnp_solver_ch_->log(
+                                reinterpret_cast<const std::byte*>(m.data.data()), m.data.size());
+                    } else if constexpr (std::is_same_v<T, NNConfidenceMessage>) {
+                        if (nn_confidence_ch_)
+                            nn_confidence_ch_->log(
+                                reinterpret_cast<const std::byte*>(m.data.data()), m.data.size());
+                    } else if constexpr (std::is_same_v<T, AssociationPhaseMessage>) {
+                        if (association_phase_ch_)
+                            association_phase_ch_->log(
+                                reinterpret_cast<const std::byte*>(m.data.data()), m.data.size());
+                    } else if constexpr (std::is_same_v<T, AssociationPermutationMessage>) {
+                        if (association_permutation_ch_)
+                            association_permutation_ch_->log(
+                                reinterpret_cast<const std::byte*>(m.data.data()), m.data.size());
+                    } else if constexpr (std::is_same_v<T, FilterInnovationMessage>) {
+                        if (filter_innovation_ch_)
+                            filter_innovation_ch_->log(
+                                reinterpret_cast<const std::byte*>(m.data.data()), m.data.size());
+                    } else if constexpr (std::is_same_v<T, FilterCovarianceMessage>) {
+                        if (filter_covariance_ch_)
+                            filter_covariance_ch_->log(
+                                reinterpret_cast<const std::byte*>(m.data.data()), m.data.size());
+                    } else if constexpr (std::is_same_v<T, ViterbiTrellisMessage>) {
+                        if (viterbi_trellis_ch_)
+                            viterbi_trellis_ch_->log(
+                                reinterpret_cast<const std::byte*>(m.data.data()), m.data.size());
+                    } else if constexpr (std::is_same_v<T, StateMachineMessage>) {
+                        if (state_machine_ch_)
+                            state_machine_ch_->log(
+                                reinterpret_cast<const std::byte*>(m.data.data()), m.data.size());
+                    } else if constexpr (std::is_same_v<T, AssociationSceneMessage>) {
+                        if (association_scene_ch_)
+                            association_scene_ch_->log(m.scene);
+                    } else if constexpr (std::is_same_v<T, FilterCovarianceSceneMessage>) {
+                        if (filter_covariance_scene_ch_)
+                            filter_covariance_scene_ch_->log(m.scene);
+                    } else if constexpr (std::is_same_v<T, MpcHorizonMessage>) {
+                        if (mpc_horizon_ch_)
+                            mpc_horizon_ch_->log(
+                                reinterpret_cast<const std::byte*>(m.data.data()), m.data.size());
+                    } else if constexpr (std::is_same_v<T, MpcCostMessage>) {
+                        if (mpc_cost_ch_)
+                            mpc_cost_ch_->log(
+                                reinterpret_cast<const std::byte*>(m.data.data()), m.data.size());
+                    } else if constexpr (std::is_same_v<T, MpcConstraintMessage>) {
+                        if (mpc_constraint_ch_)
+                            mpc_constraint_ch_->log(
+                                reinterpret_cast<const std::byte*>(m.data.data()), m.data.size());
+                    } else if constexpr (std::is_same_v<T, MpcPredictionSceneMessage>) {
+                        if (mpc_prediction_scene_ch_)
+                            mpc_prediction_scene_ch_->log(m.scene);
                     }
                 },
                 msg);
@@ -358,6 +531,22 @@ private:
     std::optional<foxglove::schemas::CameraCalibrationChannel> camera_calib_ch_;
     std::optional<foxglove::RawChannel> perf_stats_ch_;
     std::optional<foxglove::RawChannel> mpc_traj_ch_;
+
+    // Debug channels (L2/L3/L4)
+    std::optional<foxglove::RawChannel> pnp_solver_ch_;
+    std::optional<foxglove::RawChannel> nn_confidence_ch_;
+    std::optional<foxglove::RawChannel> association_phase_ch_;
+    std::optional<foxglove::RawChannel> association_permutation_ch_;
+    std::optional<foxglove::RawChannel> filter_innovation_ch_;
+    std::optional<foxglove::RawChannel> filter_covariance_ch_;
+    std::optional<foxglove::RawChannel> viterbi_trellis_ch_;
+    std::optional<foxglove::RawChannel> state_machine_ch_;
+    std::optional<foxglove::schemas::SceneUpdateChannel> association_scene_ch_;
+    std::optional<foxglove::schemas::SceneUpdateChannel> filter_covariance_scene_ch_;
+    std::optional<foxglove::RawChannel> mpc_horizon_ch_;
+    std::optional<foxglove::RawChannel> mpc_cost_ch_;
+    std::optional<foxglove::RawChannel> mpc_constraint_ch_;
+    std::optional<foxglove::schemas::SceneUpdateChannel> mpc_prediction_scene_ch_;
 
     // TF exporter (使用外部共享的 CoordinateSystem)
     std::optional<fast_tf::FoxgloveExporter> tf_exporter_;

@@ -92,6 +92,40 @@ struct MpcPlannerOutput {
 
     /// Pitch acceleration control sequence (feedforward)
     std::vector<double> ctrl_pitch_acc;
+
+    // ========================================================================
+    // Extended Debug Data (for detailed Foxglove visualization)
+    // ========================================================================
+
+    /// MPC solver iterations
+    int mpc_iterations{0};
+
+    /// MPC solve time (microseconds)
+    double mpc_solve_time_us{0.0};
+
+    /// MPC convergence status
+    bool mpc_converged{false};
+
+    /// Cost breakdown: yaw position error per horizon step
+    std::vector<double> cost_yaw_pos;
+
+    /// Cost breakdown: yaw velocity error per horizon step
+    std::vector<double> cost_yaw_vel;
+
+    /// Cost breakdown: pitch position error per horizon step
+    std::vector<double> cost_pitch_pos;
+
+    /// Cost breakdown: pitch velocity error per horizon step
+    std::vector<double> cost_pitch_vel;
+
+    /// Total cost (objective value)
+    double total_cost{0.0};
+
+    /// Constraint margin: yaw acceleration distance to limit
+    std::vector<double> constraint_yaw_acc_margin;
+
+    /// Constraint margin: pitch acceleration distance to limit
+    std::vector<double> constraint_pitch_acc_margin;
 };
 
 } // namespace fcs::L4

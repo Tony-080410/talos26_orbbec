@@ -80,6 +80,48 @@ struct OutpostTargetState {
 // Unified Tracker Output
 // ============================================================================
 
+// ============================================================================
+// Debug Information Structures
+// ============================================================================
+
+/// Association debug information (from JpdaMatcher)
+struct AssociationDebug {
+    // Phase probabilities (all 4 or 3 phases)
+    std::vector<double> phase_probs;
+    int map_phase{0};         // MAP phase estimate
+    bool is_ambiguous{false}; // Top-2 phases are close
+
+    // Permutation information
+    struct PermutationInfo {
+        std::vector<int> perm;
+        double log_prob{0.0};
+        bool gate_passed{false};
+        double mahalanobis_sq{0.0};
+    };
+    std::vector<PermutationInfo> top_permutations;
+};
+
+/// Filter debug information
+struct FilterDebug {
+    Eigen::VectorXd innovation; // [dx, dy, dz, dyaw] or similar
+    double covariance_trace{0.0};
+    Eigen::VectorXd position_uncertainty;
+    Eigen::VectorXd velocity_uncertainty;
+    double yaw_uncertainty{0.0};
+};
+
+/// State machine debug information
+struct StateMachineDebug {
+    double time_in_state{0.0};
+    int detecting_count{0};
+    double lost_time{0.0};
+    int consecutive_updates{0};
+};
+
+// ============================================================================
+// Unified Tracker Output
+// ============================================================================
+
 struct TrackerOutput {
     uint64_t timestamp_ns{0};
     TrackerStatus status{TrackerStatus::Idle};
@@ -87,6 +129,11 @@ struct TrackerOutput {
 
     // Variant: empty, robot, or outpost
     std::variant<std::monostate, RobotTargetState, OutpostTargetState> state;
+
+    // Debug information (populated if available)
+    std::optional<AssociationDebug> association_debug;
+    std::optional<FilterDebug> filter_debug;
+    std::optional<StateMachineDebug> state_machine_debug;
 
     [[nodiscard]] bool is_tracking() const noexcept {
         return status == TrackerStatus::Tracking || status == TrackerStatus::TempLost;
