@@ -18,23 +18,39 @@
 namespace fcs {
 
 // ============================================================================
+// Message Type Macros
+// ============================================================================
+
+/// Macro to generate a JSON message type (has std::vector<uint8_t> data member)
+#define FOXGLOVE_JSON_MESSAGE(MessageName) \
+    struct MessageName {                   \
+        std::vector<uint8_t> data;         \
+    };
+
+/// Macro to generate a scene message type (has foxglove::schemas::SceneUpdate scene member)
+#define FOXGLOVE_SCENE_MESSAGE(MessageName)   \
+    struct MessageName {                      \
+        foxglove::schemas::SceneUpdate scene; \
+    };
+
+/// Macro to generate an image message type (has foxglove::schemas::CompressedImage img member)
+#define FOXGLOVE_IMAGE_MESSAGE(MessageName)     \
+    struct MessageName {                        \
+        foxglove::schemas::CompressedImage img; \
+    };
+
+// ============================================================================
 // Foxglove Message Types
 // ============================================================================
 
 /// 压缩图像消息
-struct ImageMessage {
-    foxglove::schemas::CompressedImage img;
-};
+FOXGLOVE_IMAGE_MESSAGE(ImageMessage)
 
 /// 场景更新消息 (PnP 解算结果)
-struct SceneMessage {
-    foxglove::schemas::SceneUpdate scene;
-};
+FOXGLOVE_SCENE_MESSAGE(SceneMessage)
 
 /// 跟踪场景更新消息 (Tracker 预测结果)
-struct TrackSceneMessage {
-    foxglove::schemas::SceneUpdate scene;
-};
+FOXGLOVE_SCENE_MESSAGE(TrackSceneMessage)
 
 /// TF 变换消息
 struct TfMessage {
@@ -42,134 +58,87 @@ struct TfMessage {
 };
 
 /// 装甲板数据消息 (JSON)
-struct ArmorDataMessage {
-    std::vector<uint8_t> data;
-};
+FOXGLOVE_JSON_MESSAGE(ArmorDataMessage)
 
 /// 二值化图像消息
-struct BinaryImageMessage {
-    foxglove::schemas::CompressedImage img;
-};
+FOXGLOVE_IMAGE_MESSAGE(BinaryImageMessage)
 
 /// 数字识别图像消息
-struct PatternImageMessage {
-    foxglove::schemas::CompressedImage img;
-};
+FOXGLOVE_IMAGE_MESSAGE(PatternImageMessage)
 
 /// 灯条调试消息 (JSON)
-struct DebugLightsMessage {
-    std::vector<uint8_t> data;
-};
+FOXGLOVE_JSON_MESSAGE(DebugLightsMessage)
 
 /// 装甲板调试消息 (JSON)
-struct DebugArmorsMessage {
-    std::vector<uint8_t> data;
-};
+FOXGLOVE_JSON_MESSAGE(DebugArmorsMessage)
 
 /// 测量值消息 (JSON)
-struct MeasurementMessage {
-    std::vector<uint8_t> data;
-};
+FOXGLOVE_JSON_MESSAGE(MeasurementMessage)
 
 /// 跟踪目标消息 (JSON)
-struct TargetMessage {
-    std::vector<uint8_t> data;
-};
+FOXGLOVE_JSON_MESSAGE(TargetMessage)
 
 /// 云台指令消息 (JSON)
-struct GimbalCmdMessage {
-    std::vector<uint8_t> data;
-};
+FOXGLOVE_JSON_MESSAGE(GimbalCmdMessage)
 
 /// 云台场景消息 (弹道/预测位置可视化)
-struct GimbalSceneMessage {
-    foxglove::schemas::SceneUpdate scene;
-};
+FOXGLOVE_SCENE_MESSAGE(GimbalSceneMessage)
 
 /// 性能统计消息 (JSON)
-struct PerfStatsMessage {
-    std::vector<uint8_t> data;
-};
+FOXGLOVE_JSON_MESSAGE(PerfStatsMessage)
 
 /// MPC 轨迹消息 (JSON)
-/// 包含参考轨迹、优化轨迹和控制序列，用于 Foxglove Plot 面板可视化
-struct MpcTrajectoryMessage {
-    std::vector<uint8_t> data;
-};
+FOXGLOVE_JSON_MESSAGE(MpcTrajectoryMessage)
 
 // ============================================================================
 // Debug Message Types (L2/L3/L4 intermediate data)
 // ============================================================================
 
 // L2 Debug: PnP solver metrics
-struct PnPSolverMessage {
-    std::vector<uint8_t> data;
-};
+FOXGLOVE_JSON_MESSAGE(PnPSolverMessage)
 
 // L2 Debug: NN confidence scores
-struct NNConfidenceMessage {
-    std::vector<uint8_t> data;
-};
+FOXGLOVE_JSON_MESSAGE(NNConfidenceMessage)
 
 // L3 Debug: Association phase probabilities
-struct AssociationPhaseMessage {
-    std::vector<uint8_t> data;
-};
+FOXGLOVE_JSON_MESSAGE(AssociationPhaseMessage)
 
 // L3 Debug: Association permutation rankings
-struct AssociationPermutationMessage {
-    std::vector<uint8_t> data;
-};
+FOXGLOVE_JSON_MESSAGE(AssociationPermutationMessage)
 
 // L3 Debug: Filter innovation vectors
-struct FilterInnovationMessage {
-    std::vector<uint8_t> data;
-};
+FOXGLOVE_JSON_MESSAGE(FilterInnovationMessage)
 
 // L3 Debug: Filter covariance trace
-struct FilterCovarianceMessage {
-    std::vector<uint8_t> data;
-};
+FOXGLOVE_JSON_MESSAGE(FilterCovarianceMessage)
 
 // L3 Debug: Viterbi smoother trellis
-struct ViterbiTrellisMessage {
-    std::vector<uint8_t> data;
-};
+FOXGLOVE_JSON_MESSAGE(ViterbiTrellisMessage)
 
 // L3 Debug: State machine status
-struct StateMachineMessage {
-    std::vector<uint8_t> data;
-};
+FOXGLOVE_JSON_MESSAGE(StateMachineMessage)
 
 // L3 Debug: 3D scene for association visualization
-struct AssociationSceneMessage {
-    foxglove::schemas::SceneUpdate scene;
-};
+FOXGLOVE_SCENE_MESSAGE(AssociationSceneMessage)
 
 // L3 Debug: 3D scene for filter covariance visualization
-struct FilterCovarianceSceneMessage {
-    foxglove::schemas::SceneUpdate scene;
-};
+FOXGLOVE_SCENE_MESSAGE(FilterCovarianceSceneMessage)
 
 // L4 Debug: Full MPC prediction horizon
-struct MpcHorizonMessage {
-    std::vector<uint8_t> data;
-};
+FOXGLOVE_JSON_MESSAGE(MpcHorizonMessage)
 
 // L4 Debug: MPC cost evolution
-struct MpcCostMessage {
-    std::vector<uint8_t> data;
-};
+FOXGLOVE_JSON_MESSAGE(MpcCostMessage)
 
 // L4 Debug: MPC constraint margins
-struct MpcConstraintMessage {
-    std::vector<uint8_t> data;
-};
+FOXGLOVE_JSON_MESSAGE(MpcConstraintMessage)
 
 // L4 Debug: 3D scene for MPC prediction visualization
-struct MpcPredictionSceneMessage {
-    foxglove::schemas::SceneUpdate scene;
-};
+FOXGLOVE_SCENE_MESSAGE(MpcPredictionSceneMessage)
+
+// ============================================================================
+// Foxglove Message Variant
+// ============================================================================
 
 /// Foxglove 消息联合类型
 using FoxgloveMessage = std::variant<

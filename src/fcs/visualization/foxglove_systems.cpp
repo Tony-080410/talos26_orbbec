@@ -9,11 +9,11 @@ namespace fcs {
 
 std::shared_ptr<FoxgloveServer>
     try_create_foxglove_server(uint16_t port, std::string host) noexcept {
-    auto server = std::make_shared<FoxgloveServer>(port, std::move(host));
-    if (!server->is_initialized()) {
+    auto server = create_foxglove_server(port, std::move(host));
+    if (!server.has_value()) {
         return {};
     }
-    return server;
+    return std::move(*server);
 }
 
 void register_foxglove_systems(talos::Scheduler& scheduler, talos::Scheduler* scheduler_ptr) {

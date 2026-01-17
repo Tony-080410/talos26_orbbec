@@ -63,18 +63,20 @@ constexpr double ARMOR_LABEL_OFFSET_Z = 0.1;
 constexpr double TEXT_OFFSET_Y        = 0.1;
 
 // Quaternions
-constexpr double QUAT_IDENTITY_X = 0.0;
-constexpr double QUAT_IDENTITY_Y = 0.0;
-constexpr double QUAT_IDENTITY_Z = 0.0;
-constexpr double QUAT_IDENTITY_W = 1.0;
-constexpr double QUAT_90_DEG_X   = 0.0;
-constexpr double QUAT_90_DEG_Y   = 0.7071;
-constexpr double QUAT_90_DEG_Z   = 0.0;
-constexpr double QUAT_90_DEG_W   = 0.7071;
+constexpr foxglove::schemas::Quaternion QUAT_IDENTITY{0.0, 0.0, 0.0, 1.0};
+constexpr double QUAT_90_DEG_X = 0.0;
+constexpr double QUAT_90_DEG_Y = 0.7071;
+constexpr double QUAT_90_DEG_Z = 0.0;
+constexpr double QUAT_90_DEG_W = 0.7071;
 
 // Image compression
 constexpr int JPEG_COMPRESSION_QUALITY     = 85;
 constexpr double VECTOR_PARALLEL_THRESHOLD = 1e-6;
+
+// MPC trajectory extrapolation velocity (m/s)
+constexpr double MPC_TRAJECTORY_EXTRAPOLATION_VEL = 5.0;
+// Covariance uncertainty sphere scaling
+constexpr double COVARIANCE_UNCERTAINTY_SCALE = 0.2;
 
 /// Check if Foxglove server is ready and channel has new data
 [[nodiscard]] inline bool
@@ -346,9 +348,49 @@ inline void add_metadata(
 /// Create identity pose (optional position with identity orientation)
 [[nodiscard]] inline foxglove::schemas::Pose create_identity_pose(
     std::optional<foxglove::schemas::Vector3> position = std::nullopt) noexcept {
-    return create_pose(
-        std::move(position),
-        create_quaternion(QUAT_IDENTITY_X, QUAT_IDENTITY_Y, QUAT_IDENTITY_Z, QUAT_IDENTITY_W));
+    return create_pose(position, QUAT_IDENTITY);
+}
+
+/// Publish JSON message to Foxglove server
+template <typename MessageType>
+inline void publish_json_message(
+    const std::shared_ptr<FoxgloveServer>& server, const nlohmann::json& json_obj) noexcept {
+    MessageType msg;
+    msg.data = json_to_bytes(json_obj.dump());
+    server->enqueue_message(std::move(msg));
+}
+
+/// Convert spherical coordinates to Cartesian Vector3
+[[nodiscard]] inline foxglove::schemas::Vector3
+    spherical_to_cartesian(double distance, double yaw, double pitch) noexcept {
+    return create_vector3(
+        distance * std::cos(pitch) * std::cos(yaw), distance * std::cos(pitch) * std::sin(yaw),
+        distance * std::sin(pitch));
+}
+
+/// Publish scene message if entities is non-empty
+template <typename SceneMessageType>
+inline void publish_scene_if_nonempty(
+    const std::shared_ptr<FoxgloveServer>& server,
+    std::vector<foxglove::schemas::SceneEntity> entities) noexcept {
+    if (!entities.empty()) {
+        SceneMessageType msg;
+        msg.scene.entities = std::move(entities);
+        server->enqueue_message(std::move(msg));
+    }
+}
+
+/// Add sphere with label to scene entity
+inline void add_labeled_sphere(
+    foxglove::schemas::SceneEntity& entity, const foxglove::schemas::Pose& pose, std::string label,
+    double size = SPHERE_SIZE_SMALL, foxglove::schemas::Color color = COLOR_GREEN) noexcept {
+    entity.spheres.push_back(create_sphere(pose, size, color));
+
+    auto label_pose = pose;
+    if (label_pose.position) {
+        label_pose.position->z += TEXT_OFFSET_Y;
+    }
+    entity.texts.push_back(create_text_primitive(std::move(label), label_pose));
 }
 
 } // namespace detail
@@ -416,11 +458,7 @@ void register_foxglove_systems(App& app, talos::Scheduler* scheduler_ptr_ = null
 
             // 发布相机标定信息
             std::array<double, 9> camera_matrix_arr;
-            for (int i = 0; i < 3; ++i) {
-                for (int j = 0; j < 3; ++j) {
-                    camera_matrix_arr[i * 3 + j] = cam->camera_matrix(i, j);
-                }
-            }
+            std::copy_n(cam->camera_matrix.data(), 9, camera_matrix_arr.begin());
             std::vector<double> dist_coeffs(
                 cam->distort_coefficient.data(),
                 cam->distort_coefficient.data() + cam->distort_coefficient.size());
@@ -465,9 +503,7 @@ void register_foxglove_systems(App& app, talos::Scheduler* scheduler_ptr_ = null
                 armors_json["armors"].push_back(obj);
             }
 
-            DebugArmorsMessage msg;
-            msg.data = json_to_bytes(armors_json.dump());
-            (*server)->enqueue_message(std::move(msg));
+            detail::publish_json_message<DebugArmorsMessage>(*server, armors_json);
         });
 
     // 测量值发布系统 (PnP 结果)
@@ -542,16 +578,10 @@ void register_foxglove_systems(App& app, talos::Scheduler* scheduler_ptr_ = null
             }
 
             // 发送测量值 JSON
-            MeasurementMessage meas_msg;
-            meas_msg.data = json_to_bytes(meas_json.dump());
-            (*server)->enqueue_message(std::move(meas_msg));
+            detail::publish_json_message<MeasurementMessage>(*server, meas_json);
 
             // 发送 3D 场景
-            if (!entities.empty()) {
-                SceneMessage scene_msg;
-                scene_msg.scene.entities = std::move(entities);
-                (*server)->enqueue_message(std::move(scene_msg));
-            }
+            detail::publish_scene_if_nonempty<SceneMessage>(*server, std::move(entities));
         });
 
     // Tracker 输出发布系统
@@ -602,9 +632,7 @@ void register_foxglove_systems(App& app, talos::Scheduler* scheduler_ptr_ = null
                 target_json["z"]     = {state.z[0], state.z[1], state.z[2]};
             }
 
-            TargetMessage msg;
-            msg.data = json_to_bytes(target_json.dump());
-            (*server)->enqueue_message(std::move(msg));
+            detail::publish_json_message<TargetMessage>(*server, target_json);
 
             // 发布跟踪场景 (预测装甲板位置)
             if (output->is_tracking()) {
@@ -634,9 +662,7 @@ void register_foxglove_systems(App& app, talos::Scheduler* scheduler_ptr_ = null
                 }
 
                 entities.push_back(entity);
-                TrackSceneMessage scene_msg;
-                scene_msg.scene.entities = std::move(entities);
-                (*server)->enqueue_message(std::move(scene_msg));
+                detail::publish_scene_if_nonempty<TrackSceneMessage>(*server, std::move(entities));
             }
         });
 
@@ -667,9 +693,7 @@ void register_foxglove_systems(App& app, talos::Scheduler* scheduler_ptr_ = null
             cmd_json["distance"]     = cmd->distance;
             cmd_json["fire_advice"]  = cmd->fire;
 
-            GimbalCmdMessage msg;
-            msg.data = json_to_bytes(cmd_json.dump());
-            (*server)->enqueue_message(std::move(msg));
+            detail::publish_json_message<GimbalCmdMessage>(*server, cmd_json);
         });
 
     // 云台场景发布系统 (弹道/预测位置/选择点可视化)
@@ -692,15 +716,13 @@ void register_foxglove_systems(App& app, talos::Scheduler* scheduler_ptr_ = null
                 foxglove::schemas::SceneEntity entity =
                     detail::create_scene_entity<fast_tf::gimbal>("selection", cmd->timestamp_ns);
 
-                // 根据 yaw, pitch, distance 计算瞄准点位置
-                const double x = cmd->distance * std::cos(cmd->pitch) * std::cos(cmd->yaw);
-                const double y = cmd->distance * std::cos(cmd->pitch) * std::sin(cmd->yaw);
-                const double z = cmd->distance * std::sin(cmd->pitch);
+                const auto position =
+                    detail::spherical_to_cartesian(cmd->distance, cmd->yaw, cmd->pitch);
 
                 entity.spheres.push_back(
                     detail::create_sphere(
-                        detail::create_identity_pose(detail::create_vector3(x, y, z)),
-                        detail::SPHERE_SIZE_DEFAULT, detail::COLOR_ORANGE));
+                        detail::create_identity_pose(position), detail::SPHERE_SIZE_DEFAULT,
+                        detail::COLOR_ORANGE));
                 entities.push_back(entity);
             }
 
@@ -737,11 +759,7 @@ void register_foxglove_systems(App& app, talos::Scheduler* scheduler_ptr_ = null
                 entities.push_back(entity);
             }
 
-            if (!entities.empty()) {
-                GimbalSceneMessage scene_msg;
-                scene_msg.scene.entities = std::move(entities);
-                (*server)->enqueue_message(std::move(scene_msg));
-            }
+            detail::publish_scene_if_nonempty<GimbalSceneMessage>(*server, std::move(entities));
         });
 
     // MPC 轨迹发布系统 (参考轨迹、优化轨迹、前馈加速度)
@@ -781,9 +799,7 @@ void register_foxglove_systems(App& app, talos::Scheduler* scheduler_ptr_ = null
             mpc_json["yaw_acc"]   = plan->yaw_acc;
             mpc_json["pitch_acc"] = plan->pitch_acc;
 
-            MpcTrajectoryMessage msg;
-            msg.data = json_to_bytes(mpc_json.dump());
-            (*server)->enqueue_message(std::move(msg));
+            detail::publish_json_message<MpcTrajectoryMessage>(*server, mpc_json);
         });
 
     // ============================================================================
@@ -821,9 +837,7 @@ void register_foxglove_systems(App& app, talos::Scheduler* scheduler_ptr_ = null
                 pnp_json["measurements"].push_back(obj);
             }
 
-            PnPSolverMessage msg;
-            msg.data = json_to_bytes(pnp_json.dump());
-            (*server)->enqueue_message(std::move(msg));
+            detail::publish_json_message<PnPSolverMessage>(*server, pnp_json);
         });
 
     // L2: NN confidence scores
@@ -855,9 +869,7 @@ void register_foxglove_systems(App& app, talos::Scheduler* scheduler_ptr_ = null
                 nn_json["detections"].push_back(obj);
             }
 
-            NNConfidenceMessage msg;
-            msg.data = json_to_bytes(nn_json.dump());
-            (*server)->enqueue_message(std::move(msg));
+            detail::publish_json_message<NNConfidenceMessage>(*server, nn_json);
         });
 
     // ============================================================================
@@ -887,9 +899,7 @@ void register_foxglove_systems(App& app, talos::Scheduler* scheduler_ptr_ = null
             phase_json["is_ambiguous"] = debug.is_ambiguous;
             phase_json["n_phases"]     = debug.phase_probs.size();
 
-            AssociationPhaseMessage msg;
-            msg.data = json_to_bytes(phase_json.dump());
-            (*server)->enqueue_message(std::move(msg));
+            detail::publish_json_message<AssociationPhaseMessage>(*server, phase_json);
         });
 
     // L3: Association permutation rankings
@@ -920,9 +930,7 @@ void register_foxglove_systems(App& app, talos::Scheduler* scheduler_ptr_ = null
                 perm_json["permutations"].push_back(p);
             }
 
-            AssociationPermutationMessage msg;
-            msg.data = json_to_bytes(perm_json.dump());
-            (*server)->enqueue_message(std::move(msg));
+            detail::publish_json_message<AssociationPermutationMessage>(*server, perm_json);
         });
 
     // L3: Association 3D scene (predicted vs matched armors)
@@ -1014,11 +1022,8 @@ void register_foxglove_systems(App& app, talos::Scheduler* scheduler_ptr_ = null
             }
             entities.push_back(meas_entity);
 
-            if (!entities.empty()) {
-                AssociationSceneMessage scene_msg;
-                scene_msg.scene.entities = std::move(entities);
-                (*server)->enqueue_message(std::move(scene_msg));
-            }
+            detail::publish_scene_if_nonempty<AssociationSceneMessage>(
+                *server, std::move(entities));
         });
 
     // L3: Filter innovation vectors
@@ -1062,9 +1067,7 @@ void register_foxglove_systems(App& app, talos::Scheduler* scheduler_ptr_ = null
             }
             innov_json["covariance_trace"] = debug.covariance_trace;
 
-            FilterInnovationMessage msg;
-            msg.data = json_to_bytes(innov_json.dump());
-            (*server)->enqueue_message(std::move(msg));
+            detail::publish_json_message<FilterInnovationMessage>(*server, innov_json);
         });
 
     // L3: Filter covariance trace
@@ -1087,9 +1090,7 @@ void register_foxglove_systems(App& app, talos::Scheduler* scheduler_ptr_ = null
             cov_json["cov_trace"]       = debug.covariance_trace;
             cov_json["yaw_uncertainty"] = debug.yaw_uncertainty;
 
-            FilterCovarianceMessage msg;
-            msg.data = json_to_bytes(cov_json.dump());
-            (*server)->enqueue_message(std::move(msg));
+            detail::publish_json_message<FilterCovarianceMessage>(*server, cov_json);
         });
 
     // L3: Filter covariance 3D scene (uncertainty visualization)
@@ -1113,21 +1114,16 @@ void register_foxglove_systems(App& app, talos::Scheduler* scheduler_ptr_ = null
 
             const auto position = detail::get_tracker_position(*output);
 
-            // Sphere size indicates uncertainty (placeholder)
-            const double uncertainty_scale = 0.2;
             entity.spheres.push_back(
                 detail::create_sphere(
                     detail::create_identity_pose(position),
-                    detail::SPHERE_SIZE_DEFAULT * uncertainty_scale,
+                    detail::SPHERE_SIZE_DEFAULT * detail::COVARIANCE_UNCERTAINTY_SCALE,
                     detail::create_color(1.0, 0.5, 0.0, 0.2)));
 
             entities.push_back(entity);
 
-            if (!entities.empty()) {
-                FilterCovarianceSceneMessage scene_msg;
-                scene_msg.scene.entities = std::move(entities);
-                (*server)->enqueue_message(std::move(scene_msg));
-            }
+            detail::publish_scene_if_nonempty<FilterCovarianceSceneMessage>(
+                *server, std::move(entities));
         });
 
     // L3: Viterbi smoother trellis
@@ -1152,9 +1148,7 @@ void register_foxglove_systems(App& app, talos::Scheduler* scheduler_ptr_ = null
             viterbi_json["map_phase"]    = debug.map_phase;
             viterbi_json["is_ambiguous"] = debug.is_ambiguous;
 
-            ViterbiTrellisMessage msg;
-            msg.data = json_to_bytes(viterbi_json.dump());
-            (*server)->enqueue_message(std::move(msg));
+            detail::publish_json_message<ViterbiTrellisMessage>(*server, viterbi_json);
         });
 
     // L3: State machine status
@@ -1182,9 +1176,7 @@ void register_foxglove_systems(App& app, talos::Scheduler* scheduler_ptr_ = null
             sm_json["lost_time"]           = debug.lost_time;
             sm_json["consecutive_updates"] = debug.consecutive_updates;
 
-            StateMachineMessage msg;
-            msg.data = json_to_bytes(sm_json.dump());
-            (*server)->enqueue_message(std::move(msg));
+            detail::publish_json_message<StateMachineMessage>(*server, sm_json);
         });
 
     // ============================================================================
@@ -1224,9 +1216,7 @@ void register_foxglove_systems(App& app, talos::Scheduler* scheduler_ptr_ = null
             horizon_json["opt_yaw_vel"]   = plan->opt_yaw_vel;
             horizon_json["opt_pitch_vel"] = plan->opt_pitch_vel;
 
-            MpcHorizonMessage msg;
-            msg.data = json_to_bytes(horizon_json.dump());
-            (*server)->enqueue_message(std::move(msg));
+            detail::publish_json_message<MpcHorizonMessage>(*server, horizon_json);
         });
 
     // L4: MPC cost evolution
@@ -1254,9 +1244,7 @@ void register_foxglove_systems(App& app, talos::Scheduler* scheduler_ptr_ = null
             cost_json["cost_pitch_pos"]       = plan->cost_pitch_pos;
             cost_json["cost_pitch_vel"]       = plan->cost_pitch_vel;
 
-            MpcCostMessage msg;
-            msg.data = json_to_bytes(cost_json.dump());
-            (*server)->enqueue_message(std::move(msg));
+            detail::publish_json_message<MpcCostMessage>(*server, cost_json);
         });
 
     // L4: MPC constraint margins
@@ -1277,9 +1265,7 @@ void register_foxglove_systems(App& app, talos::Scheduler* scheduler_ptr_ = null
             constraint_json["yaw_acc_margin"]   = plan->constraint_yaw_acc_margin;
             constraint_json["pitch_acc_margin"] = plan->constraint_pitch_acc_margin;
 
-            MpcConstraintMessage msg;
-            msg.data = json_to_bytes(constraint_json.dump());
-            (*server)->enqueue_message(std::move(msg));
+            detail::publish_json_message<MpcConstraintMessage>(*server, constraint_json);
         });
 
     // L4: MPC prediction 3D scene (entire horizon trajectory)
@@ -1310,7 +1296,8 @@ void register_foxglove_systems(App& app, talos::Scheduler* scheduler_ptr_ = null
 
             for (size_t k = 0; k < plan->ref_yaw.size(); ++k) {
                 const double t = (static_cast<int>(k) - plan->mpc_current_idx) * plan->mpc_dt;
-                const double distance = plan->distance + t * 5.0;
+                const double distance =
+                    plan->distance + t * detail::MPC_TRAJECTORY_EXTRAPOLATION_VEL;
                 const double x =
                     distance * std::cos(plan->ref_pitch[k]) * std::cos(plan->ref_yaw[k]);
                 const double y =
@@ -1333,7 +1320,8 @@ void register_foxglove_systems(App& app, talos::Scheduler* scheduler_ptr_ = null
 
             for (size_t k = 0; k < plan->opt_yaw.size(); ++k) {
                 const double t = (static_cast<int>(k) - plan->mpc_current_idx) * plan->mpc_dt;
-                const double distance = plan->distance + t * 5.0;
+                const double distance =
+                    plan->distance + t * detail::MPC_TRAJECTORY_EXTRAPOLATION_VEL;
                 const double x =
                     distance * std::cos(plan->opt_pitch[k]) * std::cos(plan->opt_yaw[k]);
                 const double y =
@@ -1365,11 +1353,8 @@ void register_foxglove_systems(App& app, talos::Scheduler* scheduler_ptr_ = null
                     detail::SPHERE_SIZE_DEFAULT, detail::COLOR_GREEN));
             entities.push_back(current_entity);
 
-            if (!entities.empty()) {
-                MpcPredictionSceneMessage scene_msg;
-                scene_msg.scene.entities = std::move(entities);
-                (*server)->enqueue_message(std::move(scene_msg));
-            }
+            detail::publish_scene_if_nonempty<MpcPredictionSceneMessage>(
+                *server, std::move(entities));
         });
 
     // 性能统计发布系统 (1 Hz, exclusive_silent)
