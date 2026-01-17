@@ -1,10 +1,10 @@
 #pragma once
 
 #include <algorithm>
-#include <chrono>
 #include <expected>
 #include <memory>
 #include <numbers>
+#include <utility>
 
 #include <Eigen/Core>
 
@@ -14,6 +14,7 @@
 #include "fcs/L4_planning/angle_utils.hpp"
 #include "fcs/L4_planning/gimbal_planner/trajectory_compensator.hpp"
 #include "fcs/L4_planning/mpc_planner/config.hpp"
+#include "fcs/L4_planning/mpc_planner/solver_handle.hpp"
 #include "fcs/L4_planning/mpc_planner/trajectory_generator.hpp"
 #include "fcs/L4_planning/mpc_planner/types.hpp"
 
@@ -34,13 +35,13 @@ namespace fcs::L4 {
 class MpcGimbalPlanner {
 public:
     explicit MpcGimbalPlanner(const MpcPlannerConfig& config);
-    ~MpcGimbalPlanner();
+    ~MpcGimbalPlanner() = default;
 
-    // Non-copyable, movable
-    MpcGimbalPlanner(const MpcGimbalPlanner&)            = delete;
-    MpcGimbalPlanner& operator=(const MpcGimbalPlanner&) = delete;
-    MpcGimbalPlanner(MpcGimbalPlanner&&) noexcept;
-    MpcGimbalPlanner& operator=(MpcGimbalPlanner&&) noexcept;
+    // Non-copyable, movable (RAII handles manage resources automatically)
+    MpcGimbalPlanner(const MpcGimbalPlanner&)                = delete;
+    MpcGimbalPlanner& operator=(const MpcGimbalPlanner&)     = delete;
+    MpcGimbalPlanner(MpcGimbalPlanner&&) noexcept            = default;
+    MpcGimbalPlanner& operator=(MpcGimbalPlanner&&) noexcept = default;
 
     /// Update configuration
     void set_config(const MpcPlannerConfig& config) noexcept;
@@ -64,6 +65,33 @@ public:
 
 private:
     using Trajectory = TrajectoryGenerator::Trajectory;
+
+    // MPC constants (double integrator: [angle, velocity] state, [acceleration] control)
+    static constexpr int kStateDim = 2; ///< [angle, angular_velocity]
+    static constexpr int kCtrlDim  = 1; ///< [angular_acceleration]
+
+    /// MPC axis configuration (cost weights and constraints)
+    struct AxisConfig {
+        double q_pos;   ///< Position tracking weight
+        double q_vel;   ///< Velocity tracking weight
+        double r;       ///< Control effort weight
+        double max_acc; ///< Maximum acceleration constraint
+    };
+
+    /// Update compensator parameters from config
+    void update_compensator_params() noexcept {
+        compensator_->velocity        = config_.trajectory.bullet_speed;
+        compensator_->gravity         = config_.trajectory.gravity;
+        compensator_->iteration_times = config_.trajectory.iteration_times;
+        compensator_->cd              = config_.trajectory.cd;
+        compensator_->rho             = config_.trajectory.rho;
+        compensator_->diameter        = config_.trajectory.diameter;
+        compensator_->mass            = config_.trajectory.mass;
+        compensator_->rk4_dt          = config_.trajectory.rk4_dt;
+        compensator_->rk4_min_steps   = config_.trajectory.rk4_min_steps;
+        compensator_->rk4_max_steps   = config_.trajectory.rk4_max_steps;
+        compensator_->on_params_updated();
+    }
 
     /// Initialize TinyMPC solvers
     void setup_solvers() noexcept;
@@ -109,11 +137,43 @@ private:
         const L3::OutpostTargetState& target, uint64_t timestamp_ns, uint64_t current_time_ns,
         double bullet_speed, const Eigen::Vector3d& muzzle_pos_odom) noexcept;
 
+    /// Select adaptive delay based on target angular velocity
+    [[nodiscard]] inline double select_adaptive_delay(double v_yaw) const noexcept {
+        return std::abs(v_yaw) > config_.decision_speed ? config_.high_speed_delay
+                                                        : config_.low_speed_delay;
+    }
+
+    /// Calculate flying time and prediction time delta
+    [[nodiscard]] inline std::pair<double, double> calculate_prediction_times(
+        const Eigen::Vector3d& target_rel_pos, uint64_t timestamp_ns, uint64_t current_time_ns,
+        double delay) const noexcept {
+        const double flying_time = compensator_->get_flying_time(target_rel_pos);
+        const double predict_dt =
+            static_cast<double>(current_time_ns - timestamp_ns) * kSecondsPerNanosecond + delay
+            + flying_time;
+        return {flying_time, predict_dt};
+    }
+
+    /// Large initial distance for closest armor selection
+    static constexpr double kArmorSelectionMinDist = 1e10;
+
+    /// Infinity bound for MPC constraints (effectively no constraint)
+    static constexpr double kInfinityBound = 1e17;
+
+    /// Maximum distance for trajectory visualization (meters)
+    static constexpr double kMaxVisualizationDistance = 15.0;
+
+    /// Nanoseconds per second conversion factor
+    static constexpr double kNanosecondsPerSecond = 1e9;
+
+    /// Seconds per nanosecond conversion factor
+    static constexpr double kSecondsPerNanosecond = 1e-9;
+
     MpcPlannerConfig config_;
 
-    // TinyMPC solvers (yaw and pitch are independent)
-    TinySolver* yaw_solver_{nullptr};
-    TinySolver* pitch_solver_{nullptr};
+    // TinyMPC solvers (RAII-managed, yaw and pitch are independent)
+    SolverHandle yaw_solver_;
+    SolverHandle pitch_solver_;
 
     // Trajectory generator
     TrajectoryGenerator trajectory_gen_;
@@ -129,48 +189,9 @@ private:
 inline MpcGimbalPlanner::MpcGimbalPlanner(const MpcPlannerConfig& config)
     : config_(config)
     , trajectory_gen_(config) {
-    compensator_                  = create_compensator(config.compensator_type);
-    compensator_->velocity        = config.trajectory.bullet_speed;
-    compensator_->gravity         = config.trajectory.gravity;
-    compensator_->iteration_times = config.trajectory.iteration_times;
-
-    // RK4-specific parameters
-    compensator_->cd            = config.trajectory.cd;
-    compensator_->rho           = config.trajectory.rho;
-    compensator_->diameter      = config.trajectory.diameter;
-    compensator_->mass          = config.trajectory.mass;
-    compensator_->rk4_dt        = config.trajectory.rk4_dt;
-    compensator_->rk4_min_steps = config.trajectory.rk4_min_steps;
-    compensator_->rk4_max_steps = config.trajectory.rk4_max_steps;
-    compensator_->on_params_updated();
-
+    compensator_ = create_compensator(config.compensator_type);
+    update_compensator_params();
     setup_solvers();
-}
-
-inline MpcGimbalPlanner::~MpcGimbalPlanner() { cleanup_solvers(); }
-
-inline MpcGimbalPlanner::MpcGimbalPlanner(MpcGimbalPlanner&& other) noexcept
-    : config_(other.config_)
-    , yaw_solver_(other.yaw_solver_)
-    , pitch_solver_(other.pitch_solver_)
-    , trajectory_gen_(other.trajectory_gen_)
-    , compensator_(std::move(other.compensator_)) {
-    other.yaw_solver_   = nullptr;
-    other.pitch_solver_ = nullptr;
-}
-
-inline MpcGimbalPlanner& MpcGimbalPlanner::operator=(MpcGimbalPlanner&& other) noexcept {
-    if (this != &other) {
-        cleanup_solvers();
-        config_             = other.config_;
-        yaw_solver_         = other.yaw_solver_;
-        pitch_solver_       = other.pitch_solver_;
-        trajectory_gen_     = other.trajectory_gen_;
-        compensator_        = std::move(other.compensator_);
-        other.yaw_solver_   = nullptr;
-        other.pitch_solver_ = nullptr;
-    }
-    return *this;
 }
 
 inline void MpcGimbalPlanner::set_config(const MpcPlannerConfig& config) noexcept {
@@ -179,128 +200,99 @@ inline void MpcGimbalPlanner::set_config(const MpcPlannerConfig& config) noexcep
 
     config_ = config;
     trajectory_gen_.set_config(config);
-
-    // Update compensator
-    compensator_->velocity        = config.trajectory.bullet_speed;
-    compensator_->gravity         = config.trajectory.gravity;
-    compensator_->iteration_times = config.trajectory.iteration_times;
-    compensator_->cd              = config.trajectory.cd;
-    compensator_->rho             = config.trajectory.rho;
-    compensator_->diameter        = config.trajectory.diameter;
-    compensator_->mass            = config.trajectory.mass;
-    compensator_->rk4_dt          = config.trajectory.rk4_dt;
-    compensator_->rk4_min_steps   = config.trajectory.rk4_min_steps;
-    compensator_->rk4_max_steps   = config.trajectory.rk4_max_steps;
-    compensator_->on_params_updated();
+    update_compensator_params();
 
     if (need_recreate) {
-        cleanup_solvers();
+        // SolverHandle automatically cleans up when reset
+        yaw_solver_.reset();
+        pitch_solver_.reset();
         setup_solvers();
     }
 }
 
 inline void MpcGimbalPlanner::setup_solvers() noexcept {
-    const int nx    = 2; // [angle, velocity]
-    const int nu    = 1; // [acceleration]
     const int N     = config_.horizon;
     const double dt = config_.dt;
 
     // Double integrator dynamics: x_{k+1} = A*x_k + B*u_k
-    Eigen::MatrixXd A(nx, nx);
+    Eigen::Matrix2d A;
     A << 1, dt, 0, 1;
 
-    Eigen::MatrixXd B(nx, nu);
+    Eigen::Vector2d B;
     B << 0, dt;
 
-    Eigen::VectorXd f = Eigen::VectorXd::Zero(nx);
+    Eigen::Vector2d f = Eigen::Vector2d::Zero();
 
-    auto setup_axis = [&](TinySolver*& solver, double q_pos, double q_vel, double r,
-                          double max_acc) noexcept {
-        Eigen::Matrix<double, 2, 1> Q_diag;
-        Q_diag << q_pos, q_vel;
-        Eigen::Matrix<double, 1, 1> R_diag;
-        R_diag << r;
+    auto setup_axis = [&](SolverHandle& handle, const AxisConfig& cfg) noexcept {
+        Eigen::Vector2d Q_diag{cfg.q_pos, cfg.q_vel};
+        Eigen::Matrix<double, 1, 1> R_diag{cfg.r};
 
+        TinySolver* solver = nullptr;
         tiny_setup(
-            &solver, A, B, f, Q_diag.asDiagonal(), R_diag.asDiagonal(), config_.rho, nx, nu, N, 0);
+            &solver, A, B, f, Q_diag.asDiagonal(), R_diag.asDiagonal(), config_.rho, kStateDim,
+            kCtrlDim, N, 0);
 
-        Eigen::MatrixXd x_min = Eigen::MatrixXd::Constant(nx, N, -1e17);
-        Eigen::MatrixXd x_max = Eigen::MatrixXd::Constant(nx, N, 1e17);
-        Eigen::MatrixXd u_min = Eigen::MatrixXd::Constant(nu, N - 1, -max_acc);
-        Eigen::MatrixXd u_max = Eigen::MatrixXd::Constant(nu, N - 1, max_acc);
+        Eigen::MatrixXd x_min = Eigen::MatrixXd::Constant(kStateDim, N, -kInfinityBound);
+        Eigen::MatrixXd x_max = Eigen::MatrixXd::Constant(kStateDim, N, kInfinityBound);
+        Eigen::MatrixXd u_min = Eigen::MatrixXd::Constant(kCtrlDim, N - 1, -cfg.max_acc);
+        Eigen::MatrixXd u_max = Eigen::MatrixXd::Constant(kCtrlDim, N - 1, cfg.max_acc);
         tiny_set_bound_constraints(solver, x_min, x_max, u_min, u_max);
 
         solver->settings->max_iter    = config_.max_iterations;
         solver->settings->abs_pri_tol = config_.abs_tol;
         solver->settings->abs_dua_tol = config_.abs_tol;
+
+        // Transfer ownership to RAII handle
+        handle.reset(solver);
     };
 
     setup_axis(
-        yaw_solver_, config_.q_yaw_position, config_.q_yaw_velocity, config_.r_yaw,
-        config_.max_yaw_acc);
+        yaw_solver_,
+        {config_.q_yaw_position, config_.q_yaw_velocity, config_.r_yaw, config_.max_yaw_acc});
     setup_axis(
-        pitch_solver_, config_.q_pitch_position, config_.q_pitch_velocity, config_.r_pitch,
-        config_.max_pitch_acc);
-}
-
-inline void MpcGimbalPlanner::cleanup_solvers() noexcept {
-    if (yaw_solver_) {
-        tiny_cleanup(yaw_solver_);
-        yaw_solver_ = nullptr;
-    }
-    if (pitch_solver_) {
-        tiny_cleanup(pitch_solver_);
-        pitch_solver_ = nullptr;
-    }
+        pitch_solver_, {config_.q_pitch_position, config_.q_pitch_velocity, config_.r_pitch,
+                        config_.max_pitch_acc});
 }
 
 inline void MpcGimbalPlanner::warm_start_shift() noexcept {
     // Shift trajectory and control sequence forward by one step for warm start
     // This provides a better initial guess for the solver
-    if (yaw_solver_ && yaw_solver_->work) {
-        const int N = config_.horizon;
+    const int N = config_.horizon;
+
+    auto shift_solver = [N](const SolverHandle& handle) noexcept {
+        TinySolver* solver = handle.get();
+        if (!solver || !solver->work)
+            return;
         // Shift state trajectory: x[:, 0:N-1] = x[:, 1:N]
-        yaw_solver_->work->x.leftCols(N - 1) = yaw_solver_->work->x.rightCols(N - 1).eval();
+        solver->work->x.leftCols(N - 1) = solver->work->x.rightCols(N - 1).eval();
         // Shift control sequence: u[:, 0:N-2] = u[:, 1:N-1]
         if (N > 2) {
-            yaw_solver_->work->u.leftCols(N - 2) = yaw_solver_->work->u.rightCols(N - 2).eval();
+            solver->work->u.leftCols(N - 2) = solver->work->u.rightCols(N - 2).eval();
         }
         // Reset dual variables for better convergence with new reference
-        yaw_solver_->work->g.setZero();
-        yaw_solver_->work->y.setZero();
-    }
+        solver->work->g.setZero();
+        solver->work->y.setZero();
+    };
 
-    if (pitch_solver_ && pitch_solver_->work) {
-        const int N                            = config_.horizon;
-        pitch_solver_->work->x.leftCols(N - 1) = pitch_solver_->work->x.rightCols(N - 1).eval();
-        if (N > 2) {
-            pitch_solver_->work->u.leftCols(N - 2) = pitch_solver_->work->u.rightCols(N - 2).eval();
-        }
-        pitch_solver_->work->g.setZero();
-        pitch_solver_->work->y.setZero();
-    }
+    shift_solver(yaw_solver_);
+    shift_solver(pitch_solver_);
 }
 
 inline void MpcGimbalPlanner::solve_from_reference(const Trajectory& traj) noexcept {
     const int N = config_.horizon;
 
-    Eigen::Vector2d x0;
+    auto solve_axis = [&](const SolverHandle& handle, int row_offset) noexcept {
+        TinySolver* solver = handle.get();
+        Eigen::Vector2d x0 = traj.block(row_offset, 0, 2, 1);
+        tiny_set_x0(solver, x0);
+        solver->work->x    = traj.block(row_offset, 0, 2, N);
+        solver->work->u    = Eigen::MatrixXd::Zero(kCtrlDim, N - 1);
+        solver->work->Xref = traj.block(row_offset, 0, 2, N);
+        tiny_solve(solver);
+    };
 
-    // Yaw
-    x0 << traj(0, 0), traj(1, 0);
-    tiny_set_x0(yaw_solver_, x0);
-    yaw_solver_->work->x    = traj.block(0, 0, 2, N);
-    yaw_solver_->work->u    = Eigen::MatrixXd::Zero(1, N - 1);
-    yaw_solver_->work->Xref = traj.block(0, 0, 2, N);
-    tiny_solve(yaw_solver_);
-
-    // Pitch
-    x0 << traj(2, 0), traj(3, 0);
-    tiny_set_x0(pitch_solver_, x0);
-    pitch_solver_->work->x    = traj.block(2, 0, 2, N);
-    pitch_solver_->work->u    = Eigen::MatrixXd::Zero(1, N - 1);
-    pitch_solver_->work->Xref = traj.block(2, 0, 2, N);
-    tiny_solve(pitch_solver_);
+    solve_axis(yaw_solver_, 0);   // Yaw: rows 0-1
+    solve_axis(pitch_solver_, 2); // Pitch: rows 2-3
 }
 
 inline void MpcGimbalPlanner::fill_debug_output(
@@ -310,6 +302,7 @@ inline void MpcGimbalPlanner::fill_debug_output(
     output.mpc_dt          = config_.dt;
     output.mpc_current_idx = idx;
 
+    // Resize all debug arrays
     output.ref_yaw.resize(N);
     output.ref_yaw_vel.resize(N);
     output.ref_pitch.resize(N);
@@ -327,20 +320,21 @@ inline void MpcGimbalPlanner::fill_debug_output(
         output.ref_pitch[k]     = traj(2, k);
         output.ref_pitch_vel[k] = traj(3, k);
 
-        output.opt_yaw[k]       = normalize_rad(yaw_solver_->work->x(0, k) + yaw0);
-        output.opt_yaw_vel[k]   = yaw_solver_->work->x(1, k);
-        output.opt_pitch[k]     = pitch_solver_->work->x(0, k);
-        output.opt_pitch_vel[k] = pitch_solver_->work->x(1, k);
+        output.opt_yaw[k]       = normalize_rad(yaw_solver_.get()->work->x(0, k) + yaw0);
+        output.opt_yaw_vel[k]   = yaw_solver_.get()->work->x(1, k);
+        output.opt_pitch[k]     = pitch_solver_.get()->work->x(0, k);
+        output.opt_pitch_vel[k] = pitch_solver_.get()->work->x(1, k);
     }
 
     for (int k = 0; k < N - 1; ++k) {
-        output.ctrl_yaw_acc[k]   = yaw_solver_->work->u(0, k);
-        output.ctrl_pitch_acc[k] = pitch_solver_->work->u(0, k);
+        output.ctrl_yaw_acc[k]   = yaw_solver_.get()->work->u(0, k);
+        output.ctrl_pitch_acc[k] = pitch_solver_.get()->work->u(0, k);
     }
 }
 
 inline void MpcGimbalPlanner::fill_visualization_trajectory(MpcPlannerOutput& output) const {
-    output.planned_trajectory = compensator_->get_trajectory(15, output.pitch);
+    output.planned_trajectory =
+        compensator_->get_trajectory(kMaxVisualizationDistance, output.pitch);
     for (auto& p : output.planned_trajectory) {
         const double x = p.first;
         const double z = p.second;
@@ -355,23 +349,23 @@ inline void MpcGimbalPlanner::fill_common_output(
     const int idx       = config_.half_horizon;
     output.timestamp_ns = current_time_ns;
 
-    output.yaw     = normalize_rad(yaw_solver_->work->x(0, idx) + yaw0);
-    output.yaw_vel = yaw_solver_->work->x(1, idx);
-    output.yaw_acc = yaw_solver_->work->u(0, idx);
+    output.yaw     = normalize_rad(yaw_solver_.get()->work->x(0, idx) + yaw0);
+    output.yaw_vel = yaw_solver_.get()->work->x(1, idx);
+    output.yaw_acc = yaw_solver_.get()->work->u(0, idx);
 
     if (clamp_pitch) {
         output.pitch =
-            std::clamp(pitch_solver_->work->x(0, idx), config_.pitch_min, config_.pitch_max);
+            std::clamp(pitch_solver_.get()->work->x(0, idx), config_.pitch_min, config_.pitch_max);
     } else {
-        output.pitch = pitch_solver_->work->x(0, idx);
+        output.pitch = pitch_solver_.get()->work->x(0, idx);
     }
-    output.pitch_vel = pitch_solver_->work->x(1, idx);
-    output.pitch_acc = pitch_solver_->work->u(0, idx);
+    output.pitch_vel = pitch_solver_.get()->work->x(1, idx);
+    output.pitch_acc = pitch_solver_.get()->work->u(0, idx);
 
     const int fire_idx = idx + config_.fire_lookahead;
     if (fire_idx < config_.horizon) {
-        const double yaw_error   = traj(0, fire_idx) - yaw_solver_->work->x(0, fire_idx);
-        const double pitch_error = traj(2, fire_idx) - pitch_solver_->work->x(0, fire_idx);
+        const double yaw_error   = traj(0, fire_idx) - yaw_solver_.get()->work->x(0, fire_idx);
+        const double pitch_error = traj(2, fire_idx) - pitch_solver_.get()->work->x(0, fire_idx);
         output.tracking_error    = std::hypot(yaw_error, pitch_error);
         output.fire_advice       = output.tracking_error < config_.fire_thresh;
     }
@@ -380,8 +374,8 @@ inline void MpcGimbalPlanner::fill_common_output(
     fill_debug_output(output, traj, yaw0);
 
     // Populate extended MPC debug fields
-    output.mpc_iterations = yaw_solver_->solution->iter;
-    output.mpc_converged  = yaw_solver_->solution->solved != 0;
+    output.mpc_iterations = yaw_solver_.get()->solution->iter;
+    output.mpc_converged  = yaw_solver_.get()->solution->solved != 0;
 
     compute_cost_breakdown(
         traj, yaw0, output.cost_yaw_pos, output.cost_yaw_vel, output.cost_pitch_pos,
@@ -406,12 +400,12 @@ inline void MpcGimbalPlanner::compute_cost_breakdown(
 
     for (int k = 0; k < N; ++k) {
         // Yaw errors
-        const double yaw_pos_err = traj(0, k) - yaw_solver_->work->x(0, k);
-        const double yaw_vel_err = traj(1, k) - yaw_solver_->work->x(1, k);
+        const double yaw_pos_err = traj(0, k) - yaw_solver_.get()->work->x(0, k);
+        const double yaw_vel_err = traj(1, k) - yaw_solver_.get()->work->x(1, k);
 
         // Pitch errors
-        const double pitch_pos_err = traj(2, k) - pitch_solver_->work->x(0, k);
-        const double pitch_vel_err = traj(3, k) - pitch_solver_->work->x(1, k);
+        const double pitch_pos_err = traj(2, k) - pitch_solver_.get()->work->x(0, k);
+        const double pitch_vel_err = traj(3, k) - pitch_solver_.get()->work->x(1, k);
 
         // Cost at this step (quadratic)
         cost_yaw_pos[k]   = config_.q_yaw_position * yaw_pos_err * yaw_pos_err;
@@ -434,8 +428,8 @@ inline void MpcGimbalPlanner::compute_constraint_margins(
     for (int k = 0; k < n_ctrl; ++k) {
         // Distance from control to acceleration limit (positive = within bounds, negative =
         // violated)
-        const double yaw_acc   = yaw_solver_->work->u(0, k);
-        const double pitch_acc = pitch_solver_->work->u(0, k);
+        const double yaw_acc   = yaw_solver_.get()->work->u(0, k);
+        const double pitch_acc = pitch_solver_.get()->work->u(0, k);
 
         yaw_acc_margin[k] = std::min(config_.max_yaw_acc - yaw_acc, yaw_acc + config_.max_yaw_acc);
         pitch_acc_margin[k] =
@@ -477,9 +471,7 @@ inline std::expected<MpcPlannerOutput, std::string> MpcGimbalPlanner::plan_robot
     const L3::RobotTargetState& target, uint64_t timestamp_ns, uint64_t current_time_ns,
     double bullet_speed, const Eigen::Vector3d& muzzle_pos_odom) noexcept {
 
-    // Adaptive delay compensation based on target angular velocity
-    const double delay = std::abs(target.v_yaw) > config_.decision_speed ? config_.high_speed_delay
-                                                                         : config_.low_speed_delay;
+    const double delay = select_adaptive_delay(target.v_yaw);
 
     // Generate reference trajectory
     double yaw0 = 0.0;
@@ -497,7 +489,7 @@ inline std::expected<MpcPlannerOutput, std::string> MpcGimbalPlanner::plan_robot
     // Distance calculation and predicted position
     // Use horizontal distance (x, y) for selecting closest armor, matching sp_vision_25
     const auto armor_poses = target.armor_poses();
-    double min_dist        = 1e10;
+    double min_dist        = kArmorSelectionMinDist;
     int best_idx           = 0;
     for (size_t i = 0; i < armor_poses.size(); ++i) {
         const Eigen::Vector3d rel = armor_poses[i].head<3>() - muzzle_pos_odom;
@@ -511,9 +503,8 @@ inline std::expected<MpcPlannerOutput, std::string> MpcGimbalPlanner::plan_robot
     output.distance               = rel_now.norm();               // 3D distance for output
 
     // Predicted position (in odom frame) - use the flying time to predict
-    const double flying_time = compensator_->get_flying_time(rel_now);
-    const double predict_dt =
-        static_cast<double>(current_time_ns - timestamp_ns) * 1e-9 + delay + flying_time;
+    const auto [flying_time, predict_dt] =
+        calculate_prediction_times(rel_now, timestamp_ns, current_time_ns, delay);
 
     // Predict target center position and the selected armor position
     Eigen::Vector3d pred_center = target.position + target.velocity * predict_dt;
@@ -529,7 +520,8 @@ inline std::expected<MpcPlannerOutput, std::string> MpcGimbalPlanner::plan_robot
         pred_center.x() - r * std::cos(armor_yaw), pred_center.y() - r * std::sin(armor_yaw),
         armor_z};
     output.predicted_position = pred_armor_pos;
-    output.predicted_future   = current_time_ns + static_cast<uint64_t>(flying_time * 1e9);
+    output.predicted_future =
+        current_time_ns + static_cast<uint64_t>(flying_time * kNanosecondsPerSecond);
 
     return output;
 }
@@ -538,9 +530,7 @@ inline std::expected<MpcPlannerOutput, std::string> MpcGimbalPlanner::plan_outpo
     const L3::OutpostTargetState& target, uint64_t timestamp_ns, uint64_t current_time_ns,
     double bullet_speed, const Eigen::Vector3d& muzzle_pos_odom) noexcept {
 
-    // Adaptive delay compensation based on target angular velocity
-    const double delay = std::abs(target.v_yaw) > config_.decision_speed ? config_.high_speed_delay
-                                                                         : config_.low_speed_delay;
+    const double delay = select_adaptive_delay(target.v_yaw);
 
     double yaw0 = 0.0;
     auto traj   = trajectory_gen_.generate_outpost(
@@ -558,9 +548,8 @@ inline std::expected<MpcPlannerOutput, std::string> MpcGimbalPlanner::plan_outpo
     const Eigen::Vector3d rel_now = armor_pos_3d - muzzle_pos_odom;
     output.distance               = rel_now.norm();
 
-    const double flying_time = compensator_->get_flying_time(rel_now);
-    const double predict_dt =
-        static_cast<double>(current_time_ns - timestamp_ns) * 1e-9 + delay + flying_time;
+    const auto [flying_time, predict_dt] =
+        calculate_prediction_times(rel_now, timestamp_ns, current_time_ns, delay);
 
     double pred_yaw    = target.yaw + target.v_yaw * predict_dt;
     constexpr double r = L3::OutpostTargetState::radius;
@@ -569,7 +558,8 @@ inline std::expected<MpcPlannerOutput, std::string> MpcGimbalPlanner::plan_outpo
         target.position.y() + target.velocity.y() * predict_dt - r * std::sin(pred_yaw),
         target.z[0]};
     output.predicted_position = pred_armor_pos;
-    output.predicted_future   = current_time_ns + static_cast<uint64_t>(flying_time * 1e9);
+    output.predicted_future =
+        current_time_ns + static_cast<uint64_t>(flying_time * kNanosecondsPerSecond);
 
     return output;
 }

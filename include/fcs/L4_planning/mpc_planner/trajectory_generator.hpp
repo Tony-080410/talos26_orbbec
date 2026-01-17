@@ -53,7 +53,11 @@ public:
     [[nodiscard]] Trajectory generate_robot(
         const L3::RobotTargetState& target, uint64_t measurement_ts, uint64_t current_time_ns,
         double plan_to_muzzle_delay, const TrajectoryCompensator& compensator, double bullet_speed,
-        double& yaw0) const noexcept;
+        double& yaw0) const noexcept {
+        return generate_robot(
+            target, measurement_ts, current_time_ns, plan_to_muzzle_delay, compensator,
+            bullet_speed, Eigen::Vector3d::Zero(), yaw0);
+    }
 
     /// Generate reference trajectory for robot target, using a custom origin in odom frame.
     ///
@@ -69,18 +73,15 @@ public:
     [[nodiscard]] Trajectory generate_outpost(
         const L3::OutpostTargetState& target, uint64_t measurement_ts, uint64_t current_time_ns,
         double plan_to_muzzle_delay, const TrajectoryCompensator& compensator, double bullet_speed,
-        double& yaw0) const noexcept;
+        double& yaw0) const noexcept {
+        return generate_outpost(
+            target, measurement_ts, current_time_ns, plan_to_muzzle_delay, compensator,
+            bullet_speed, Eigen::Vector3d::Zero(), yaw0);
+    }
 
     /// Generate reference trajectory for outpost target, using a custom origin in odom frame.
     [[nodiscard]] Trajectory generate_outpost(
         const L3::OutpostTargetState& target, uint64_t measurement_ts, uint64_t current_time_ns,
-        double plan_to_muzzle_delay, const TrajectoryCompensator& compensator, double bullet_speed,
-        const Eigen::Vector3d& origin_odom, double& yaw0) const noexcept;
-
-private:
-    template <class PredictFn>
-    [[nodiscard]] Trajectory generate_impl(
-        PredictFn&& predict, uint64_t measurement_ts, uint64_t current_time_ns,
         double plan_to_muzzle_delay, const TrajectoryCompensator& compensator, double bullet_speed,
         const Eigen::Vector3d& origin_odom, double& yaw0) const noexcept;
 
@@ -89,12 +90,12 @@ private:
     /// @param target Current target state
     /// @param dt Time delta from current state (seconds)
     /// @return Predicted armor position (x, y, z)
-    [[nodiscard]] Eigen::Vector3d
-        predict_robot_position(const L3::RobotTargetState& target, double dt) const noexcept;
+    [[nodiscard]] static Eigen::Vector3d
+        predict_robot_position(const L3::RobotTargetState& target, double dt) noexcept;
 
     /// Predict outpost target position at future time dt
-    [[nodiscard]] Eigen::Vector3d
-        predict_outpost_position(const L3::OutpostTargetState& target, double dt) const noexcept;
+    [[nodiscard]] static Eigen::Vector3d
+        predict_outpost_position(const L3::OutpostTargetState& target, double dt) noexcept;
 
     /// Compute aim point (yaw, pitch) for given target position
     ///
@@ -102,9 +103,23 @@ private:
     /// @param compensator Ballistic compensator
     /// @param bullet_speed Bullet velocity (m/s)
     /// @return (yaw, pitch) in radians
-    [[nodiscard]] Eigen::Vector2d compute_aim_point(
+    [[nodiscard]] static Eigen::Vector2d compute_aim_point(
         const Eigen::Vector3d& target_pos, const TrajectoryCompensator& compensator,
-        double bullet_speed) const noexcept;
+        double bullet_speed) noexcept;
+
+private:
+    /// Flying time estimation iteration count
+    static constexpr int kFlyingTimeIter = 3;
+
+    /// Large initial distance for closest armor selection
+    static constexpr double kInitialMinDist = 1e10;
+
+    /// Generate trajectory from prediction function (zero-cost abstraction)
+    template <class PredictFn>
+    [[nodiscard]] Trajectory generate_trajectory(
+        PredictFn&& predict, uint64_t measurement_ts, uint64_t current_time_ns,
+        double plan_to_muzzle_delay, const TrajectoryCompensator& compensator, double bullet_speed,
+        const Eigen::Vector3d& origin_odom, double& yaw0) const noexcept;
 
     double dt_{0.01};
     int horizon_{100};
@@ -115,59 +130,20 @@ private:
 // Implementation (header-only for simplicity)
 // ============================================================================
 
-inline TrajectoryGenerator::Trajectory TrajectoryGenerator::generate_robot(
-    const L3::RobotTargetState& target, uint64_t measurement_ts, uint64_t current_time_ns,
-    double plan_to_muzzle_delay, const TrajectoryCompensator& compensator, double bullet_speed,
-    double& yaw0) const noexcept {
-    return generate_impl(
-        [&](double dt) noexcept { return predict_robot_position(target, dt); }, measurement_ts,
-        current_time_ns, plan_to_muzzle_delay, compensator, bullet_speed, Eigen::Vector3d::Zero(),
-        yaw0);
-}
-
-inline TrajectoryGenerator::Trajectory TrajectoryGenerator::generate_robot(
-    const L3::RobotTargetState& target, uint64_t measurement_ts, uint64_t current_time_ns,
-    double plan_to_muzzle_delay, const TrajectoryCompensator& compensator, double bullet_speed,
-    const Eigen::Vector3d& origin_odom, double& yaw0) const noexcept {
-    return generate_impl(
-        [&](double dt) noexcept { return predict_robot_position(target, dt); }, measurement_ts,
-        current_time_ns, plan_to_muzzle_delay, compensator, bullet_speed, origin_odom, yaw0);
-}
-
-inline TrajectoryGenerator::Trajectory TrajectoryGenerator::generate_outpost(
-    const L3::OutpostTargetState& target, uint64_t measurement_ts, uint64_t current_time_ns,
-    double plan_to_muzzle_delay, const TrajectoryCompensator& compensator, double bullet_speed,
-    double& yaw0) const noexcept {
-    return generate_impl(
-        [&](double dt) noexcept { return predict_outpost_position(target, dt); }, measurement_ts,
-        current_time_ns, plan_to_muzzle_delay, compensator, bullet_speed, Eigen::Vector3d::Zero(),
-        yaw0);
-}
-
-inline TrajectoryGenerator::Trajectory TrajectoryGenerator::generate_outpost(
-    const L3::OutpostTargetState& target, uint64_t measurement_ts, uint64_t current_time_ns,
-    double plan_to_muzzle_delay, const TrajectoryCompensator& compensator, double bullet_speed,
-    const Eigen::Vector3d& origin_odom, double& yaw0) const noexcept {
-    return generate_impl(
-        [&](double dt) noexcept { return predict_outpost_position(target, dt); }, measurement_ts,
-        current_time_ns, plan_to_muzzle_delay, compensator, bullet_speed, origin_odom, yaw0);
-}
-
 template <class PredictFn>
-inline TrajectoryGenerator::Trajectory TrajectoryGenerator::generate_impl(
+inline TrajectoryGenerator::Trajectory TrajectoryGenerator::generate_trajectory(
     PredictFn&& predict, uint64_t measurement_ts, uint64_t current_time_ns,
     double plan_to_muzzle_delay, const TrajectoryCompensator& compensator, double bullet_speed,
     const Eigen::Vector3d& origin_odom, double& yaw0) const noexcept {
-
     Trajectory traj(4, horizon_);
 
     const double time_since_meas = static_cast<double>(current_time_ns - measurement_ts) * 1e-9;
 
     // Iteratively estimate flying time (target moves during bullet flight)
-    // 2-3 iterations typically converge for most target speeds
+    // kFlyingTimeIter iterations typically converge for most target speeds
     double flying_time       = 0.0;
     Eigen::Vector3d pred_pos = predict(time_since_meas) - origin_odom;
-    for (int iter = 0; iter < 3; ++iter) {
+    for (int iter = 0; iter < kFlyingTimeIter; ++iter) {
         flying_time = compensator.get_flying_time(pred_pos);
         pred_pos    = predict(time_since_meas + flying_time) - origin_odom;
     }
@@ -211,8 +187,26 @@ inline TrajectoryGenerator::Trajectory TrajectoryGenerator::generate_impl(
     return traj;
 }
 
+inline TrajectoryGenerator::Trajectory TrajectoryGenerator::generate_robot(
+    const L3::RobotTargetState& target, uint64_t measurement_ts, uint64_t current_time_ns,
+    double plan_to_muzzle_delay, const TrajectoryCompensator& compensator, double bullet_speed,
+    const Eigen::Vector3d& origin_odom, double& yaw0) const noexcept {
+    return generate_trajectory(
+        [&](double dt) noexcept { return predict_robot_position(target, dt); }, measurement_ts,
+        current_time_ns, plan_to_muzzle_delay, compensator, bullet_speed, origin_odom, yaw0);
+}
+
+inline TrajectoryGenerator::Trajectory TrajectoryGenerator::generate_outpost(
+    const L3::OutpostTargetState& target, uint64_t measurement_ts, uint64_t current_time_ns,
+    double plan_to_muzzle_delay, const TrajectoryCompensator& compensator, double bullet_speed,
+    const Eigen::Vector3d& origin_odom, double& yaw0) const noexcept {
+    return generate_trajectory(
+        [&](double dt) noexcept { return predict_outpost_position(target, dt); }, measurement_ts,
+        current_time_ns, plan_to_muzzle_delay, compensator, bullet_speed, origin_odom, yaw0);
+}
+
 inline Eigen::Vector3d TrajectoryGenerator::predict_robot_position(
-    const L3::RobotTargetState& target, double dt) const noexcept {
+    const L3::RobotTargetState& target, double dt) noexcept {
     // Robot model: rotating armors around center
     // Predict center position and yaw, then find the closest armor
 
@@ -232,7 +226,7 @@ inline Eigen::Vector3d TrajectoryGenerator::predict_robot_position(
 
     // Compute all armor positions and select closest one (matching sp_vision_25 behavior)
     const int n                   = target.armors_num;
-    double min_dist               = 1e10;
+    double min_dist               = kInitialMinDist;
     Eigen::Vector3d closest_armor = center_pred;
 
     for (int i = 0; i < n; ++i) {
@@ -262,7 +256,7 @@ inline Eigen::Vector3d TrajectoryGenerator::predict_robot_position(
 }
 
 inline Eigen::Vector3d TrajectoryGenerator::predict_outpost_position(
-    const L3::OutpostTargetState& target, double dt) const noexcept {
+    const L3::OutpostTargetState& target, double dt) noexcept {
     // Outpost model: 3 armors rotating around center
     const Eigen::Vector2d center_2d = target.position;
     const Eigen::Vector3d velocity  = target.velocity;
@@ -275,7 +269,7 @@ inline Eigen::Vector3d TrajectoryGenerator::predict_outpost_position(
     const double yaw_pred      = yaw + v_yaw * dt;
 
     // Find closest armor among 3 armors
-    double min_dist = 1e10;
+    double min_dist = kInitialMinDist;
     Eigen::Vector3d closest_armor{center_x_pred, center_y_pred, target.z[0]};
 
     for (int i = 0; i < 3; ++i) {
@@ -298,7 +292,7 @@ inline Eigen::Vector3d TrajectoryGenerator::predict_outpost_position(
 
 inline Eigen::Vector2d TrajectoryGenerator::compute_aim_point(
     const Eigen::Vector3d& target_pos, const TrajectoryCompensator& compensator,
-    double bullet_speed) const noexcept {
+    double bullet_speed) noexcept {
     // Compute yaw (azimuth angle)
     const double yaw = std::atan2(target_pos.y(), target_pos.x());
 

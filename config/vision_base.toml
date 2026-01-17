@@ -123,9 +123,9 @@ max_dist_innovation = 3.0   # meters
 # MPC-based gimbal trajectory planner (TinyMPC ADMM solver)
 [mpc_planner]
 # MPC cost weights (yaw)
-q_yaw_position = 9.0e7
+q_yaw_position = 9.0e6
 q_yaw_velocity = 0.0
-r_yaw = 0.5
+r_yaw = 1.0
 max_yaw_acc = 50.0
 
 # MPC cost weights (pitch)
@@ -135,7 +135,7 @@ r_pitch = 1.0
 max_pitch_acc = 100.0
 
 # Fire decision parameters
-fire_thresh = 0.003       # ~0.17 degrees tracking error threshold
+fire_thresh = 0.0035       # ~0.2 degrees tracking error threshold
 fire_lookahead = 2        # Steps ahead to check for fire decision
 
 # Solver parameters
@@ -155,7 +155,7 @@ high_speed_delay = 0.015   # seconds, delay for fast-spinning targets
 low_speed_delay = 0.015    # seconds, delay for slow targets
 
 [mpc_planner.trajectory]
-iteration_times = 20
+iteration_times = 10
 bullet_speed = 25.0
 gravity = 9.7997
 resistance = 0.0005
@@ -164,5 +164,5 @@ rho = 1.225
 diameter = 0.017
 mass = 0.0032
 rk4_dt = 0.025
-rk4_min_steps = 1000
-rk4_max_steps = 5000
+rk4_min_steps = 500
+rk4_max_steps = 2000

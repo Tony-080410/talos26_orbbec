@@ -16,6 +16,16 @@
 
 namespace fcs::L4 {
 
+// ============================================================================
+// Constants
+// ============================================================================
+
+namespace compensator_constants {
+constexpr double kDhThreshold    = 0.01; ///< Convergence threshold for height error (m)
+constexpr double kMaxAngle       = std::numbers::pi / 2.5; ///< Max valid pitch angle (rad)
+constexpr double kTrajectoryStep = 0.03;                   ///< Trajectory visualization step (m)
+} // namespace compensator_constants
+
 /// Abstract trajectory compensator for ballistic compensation
 class TrajectoryCompensator {
 public:
@@ -51,30 +61,29 @@ public:
     [[nodiscard]] virtual bool compensate_pitch(
         const Eigen::Vector3d& target_position, double& pitch,
         double bullet_velocity) const noexcept {
-        const double target_height    = target_position.z();
-        double iterative_height       = target_height;
-        double impact_height          = 0.0;
-        const double distance         = std::hypot(target_position.x(), target_position.y());
-        double angle                  = std::atan2(target_height, distance);
-        double dh                     = 0.0;
-        constexpr double kDhThreshold = 0.01;
-        constexpr double kMaxAngle    = std::numbers::pi / 2.5;
+        const double target_height = target_position.z();
+        double iterative_height    = target_height;
+        double impact_height       = 0.0;
+        const double distance      = std::hypot(target_position.x(), target_position.y());
+        double angle               = std::atan2(target_height, distance);
+        double dh                  = 0.0;
 
         for (int i = 0; i < iteration_times; ++i) {
             angle = std::atan2(iterative_height, distance);
-            if (std::abs(angle) > kMaxAngle) {
+            if (std::abs(angle) > compensator_constants::kMaxAngle) {
                 break;
             }
 
             impact_height = calculate_trajectory(distance, angle, bullet_velocity);
             dh            = target_height - impact_height;
-            if (std::abs(dh) < kDhThreshold) {
+            if (std::abs(dh) < compensator_constants::kDhThreshold) {
                 break;
             }
             iterative_height += dh;
         }
 
-        if (std::abs(dh) > kDhThreshold || std::abs(angle) > kMaxAngle) {
+        if (std::abs(dh) > compensator_constants::kDhThreshold
+            || std::abs(angle) > compensator_constants::kMaxAngle) {
             return false;
         }
 
@@ -93,11 +102,12 @@ public:
             return {};
         }
 
-        const size_t num_points = static_cast<size_t>(max_distance / 0.03) + 1;
+        const size_t num_points =
+            static_cast<size_t>(max_distance / compensator_constants::kTrajectoryStep) + 1;
         std::vector<std::pair<double, double>> trajectory;
         trajectory.reserve(num_points);
 
-        for (double x = 0; x < max_distance; x += 0.03) {
+        for (double x = 0; x < max_distance; x += compensator_constants::kTrajectoryStep) {
             trajectory.emplace_back(x, calculate_trajectory(x, pitch));
         }
 
