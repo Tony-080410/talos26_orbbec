@@ -42,9 +42,23 @@ public:
         Eigen::Matrix<T, 3, 3> R;
         cv::cv2eigen(rmat_cv, R);
 
-        assert(
-            std::abs(R.determinant() - T(1)) < T(1e-6)
-            && "Rotation matrix must have determinant 1");
+        // Stricter determinant check for numerical stability
+        const T det = R.determinant();
+        if (std::abs(det - T(1)) > T(1e-10)) {
+            // SVD orthogonalization to fix numerical errors
+            Eigen::JacobiSVD<Eigen::Matrix<T, 3, 3>> svd(
+                R, Eigen::ComputeFullU | Eigen::ComputeFullV);
+            R = svd.matrixU() * svd.matrixV().transpose();
+
+            // Ensure right-handed coordinate system
+            if (R.determinant() < T(0)) {
+                R.col(2) = -R.col(2);
+            }
+
+            // Final validation
+            const T det_new = R.determinant();
+            assert(std::abs(det_new - T(1)) < T(1e-12));
+        }
 
         return from_rt(R, Eigen::Matrix<T, 3, 1>(tvec[0], tvec[1], tvec[2]));
     }
@@ -64,7 +78,14 @@ public:
         const Eigen::Quaternion<T>& q_in,
         const Eigen::Matrix<T, 3, 1>& t = Eigen::Matrix<T, 3, 1>::Zero()) {
         Eigen::Quaternion<T> q = q_in;
-        q.normalize();
+
+        // Check if normalization is needed (avoid sqrt precision loss)
+        const T norm_sq = q.squaredNorm();
+        if (std::abs(norm_sq - T(1)) > T(1e-12)) {
+            // Only normalize when necessary to reduce precision loss
+            q.normalize();
+        }
+
         return from_rt(q.toRotationMatrix(), t);
     }
 
@@ -148,12 +169,17 @@ public:
     /// SE(3) geodesic interpolation (right-invariant):
     /// γ(t) = a · Exp(t · Log(a^{-1} · b))
     static TransformMatrix4 lerp_se3(const TransformMatrix4& a, const TransformMatrix4& b, T t) {
-        if (t <= T(0)) {
+        constexpr T epsilon = T(1e-10);
+
+        // Use relative error for boundary conditions
+        if (t < epsilon) {
             return a;
         }
-        if (t >= T(1)) {
+        if (t > T(1) - epsilon) {
             return b;
         }
+
+        // Midpoint interpolation: use standard formula
         const SE3 delta  = a.pose_.inv() * b.pose_;
         const auto xi    = SE3::log(delta);
         const SE3 interp = a.pose_ * SE3::exp(xi * t);

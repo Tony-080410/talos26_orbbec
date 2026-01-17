@@ -146,8 +146,15 @@ public:
         }
 
         // Interpolate
-        const uint64_t dt = next.timestamp_ns - prev.timestamp_ns;
-        const fp_t t      = static_cast<fp_t>(ts - prev.timestamp_ns) / static_cast<fp_t>(dt);
+        const uint64_t dt        = next.timestamp_ns - prev.timestamp_ns;
+        const uint64_t time_diff = ts - prev.timestamp_ns;
+
+        const fp_t t = static_cast<fp_t>(time_diff) / static_cast<fp_t>(dt);
+
+        // Defensive check for numerical stability
+        if (std::isnan(t) || std::isinf(t) || t < 0.0 || t > 1.0) {
+            return std::unexpected(TransformError::FutureExtrapolationRequired);
+        }
 
         return TransformEntry(ts, TransformMatrix4d::lerp_se3(prev.transform, next.transform, t));
     }
@@ -165,7 +172,6 @@ public:
             if (entry.timestamp_ns == ts) {
                 return entry;
             }
-            // static transform
             if (entry.timestamp_ns == 0) {
                 return TransformEntry{ts, entry.transform};
             }
@@ -215,8 +221,15 @@ public:
         const auto& next = at_logical(lo);
 
         // Interpolate
-        const uint64_t dt = next.timestamp_ns - prev.timestamp_ns;
-        const fp_t t      = static_cast<fp_t>(ts - prev.timestamp_ns) / static_cast<fp_t>(dt);
+        const uint64_t dt        = next.timestamp_ns - prev.timestamp_ns;
+        const uint64_t time_diff = ts - prev.timestamp_ns;
+
+        const fp_t t = static_cast<fp_t>(time_diff) / static_cast<fp_t>(dt);
+
+        // Defensive check for numerical stability
+        if (std::isnan(t) || std::isinf(t) || t < 0.0 || t > 1.0) {
+            return std::unexpected(TransformError::FutureExtrapolationRequired);
+        }
 
         return TransformEntry(ts, TransformMatrix4d::lerp_se3(prev.transform, next.transform, t));
     }
