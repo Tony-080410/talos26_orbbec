@@ -126,6 +126,8 @@ std::expected<void, DetectorError> AtLegacyNNBackend::init() {
 AtLegacyNNBackend::PreprocContext
     AtLegacyNNBackend::preprocess(const cv::Mat& image, const AtLegacyNNConfig& /*cfg*/) const {
     PreprocContext ctx;
+    ctx.orig_w = image.cols;
+    ctx.orig_h = image.rows;
 
     // Get input shape from model
     auto ip         = impl_->compiled.input();
@@ -222,7 +224,7 @@ std::vector<AtLegacyArmorDetection>
 
     const auto& shape = out.get_shape();
 
-    // YOLO11-pose output: [1, C, anchors] or [1, anchors, C]
+    // ArmorPoseHead export output: [1, C+NK, N] or [1, N, C+NK]
     if (shape.size() != 3 || shape[0] != 1) {
         SPDLOG_WARN("[AtLegacyNNBackend] Unexpected output shape");
         return detections;
@@ -237,17 +239,17 @@ std::vector<AtLegacyArmorDetection>
     constexpr int kpt_dim = 2;                // x, y per keypoint
     constexpr int nk      = nkpt * kpt_dim;
 
-    // dims = 4 (bbox) + num_cls + nk (keypoints)
-    const int num_cls = dims - 4 - nk;
-    if (num_cls <= 0) {
+    // dims = C (joint classes) + nk (keypoints)
+    const int num_joint = dims - nk;
+    if (num_joint <= 0) {
         SPDLOG_ERROR("[AtLegacyNNBackend] Invalid output dimensions");
         return detections;
     }
-    if (constexpr int total_cfg_cls = NUM_COLORS * NUM_CLASSES; total_cfg_cls != num_cls) {
+    if (constexpr int expected = NUM_COLORS * NUM_SIZES * NUM_CLASSES; expected != num_joint) {
         SPDLOG_ERROR(
-            "[AtLegacyNNBackend] Model nc ({}) != NUM_COLORS*NUM_CLASSES ({}), check config and "
-            "constants.",
-            num_cls, total_cfg_cls);
+            "[AtLegacyNNBackend] Model nc ({}) != NUM_COLORS*NUM_SIZES*NUM_CLASSES ({}), check "
+            "config and constants.",
+            num_joint, expected);
         return detections;
     }
     const bool channel_first = (dim1 < dim2);
@@ -259,33 +261,51 @@ std::vector<AtLegacyArmorDetection>
         return p[static_cast<size_t>(anchor) * dims + d];
     };
 
-    // Transform from model coordinates to original image coordinates
-    auto map_point = [&](float x, float y) -> cv::Point2f {
-        return cv::Point2f((x - ctx.pad_x) * ctx.scale_x, (y - ctx.pad_y) * ctx.scale_y);
+    auto clampf = [](float v, float lo, float hi) -> float {
+        return std::max(lo, std::min(v, hi));
+    };
+
+    auto undo_letterbox = [&](float x, float y) -> cv::Point2f {
+        float px = (x - ctx.pad_x) * ctx.scale_x;
+        float py = (y - ctx.pad_y) * ctx.scale_y;
+        if (ctx.orig_w > 0 && ctx.orig_h > 0) {
+            px = clampf(px, 0.0f, static_cast<float>(ctx.orig_w - 1));
+            py = clampf(py, 0.0f, static_cast<float>(ctx.orig_h - 1));
+        }
+        return cv::Point2f(px, py);
+    };
+
+    auto decode_joint_id = [](int cls_id, int nc_num, int nc_size, int& color, int& size,
+                              int& num) {
+        num     = cls_id % nc_num;
+        int tmp = cls_id / nc_num;
+        size    = tmp % nc_size;
+        color   = tmp / nc_size;
+    };
+
+    auto num_id_to_name = [](int num_id) -> ArmorName {
+        switch (num_id) {
+        case 0: return ArmorName::Sentry;  // G
+        case 1: return ArmorName::One;
+        case 2: return ArmorName::Two;
+        case 3: return ArmorName::Three;
+        case 4: return ArmorName::Four;
+        case 5: return ArmorName::Five;
+        case 6: return ArmorName::Outpost; // O
+        case 7: return ArmorName::Base;    // B
+        default: return ArmorName::Invalid;
+        }
     };
 
     detections.reserve(128);
     const float conf_thresh = static_cast<float>(cfg.confidence_threshold);
 
     for (int i = 0; i < anchors; ++i) {
-        // 1) Get bbox (already decoded xywh)
-        const float cx = get(i, 0);
-        const float cy = get(i, 1);
-        const float w  = get(i, 2);
-        const float h  = get(i, 3);
-
-        if (!(std::isfinite(cx) && std::isfinite(cy) && std::isfinite(w) && std::isfinite(h))) {
-            continue;
-        }
-        if (w <= 0.0f || h <= 0.0f) {
-            continue;
-        }
-
-        // 2) Find best class
+        // 1) Find best joint class
         float best_score = 0.0f;
         int best_idx     = -1;
-        for (int c = 0; c < num_cls; ++c) {
-            const float sc = get(i, 4 + c);
+        for (int c = 0; c < num_joint; ++c) {
+            const float sc = get(i, c);
             if (sc > best_score) {
                 best_score = sc;
                 best_idx   = c;
@@ -296,44 +316,39 @@ std::vector<AtLegacyArmorDetection>
             continue;
         }
 
-        // Map combined class to color + cls
-        // Format: color * NUM_CLASSES + cls
-        const auto color = static_cast<ArmorColor>(best_idx / NUM_CLASSES);
-        const auto cls   = static_cast<ArmorName>(best_idx % NUM_CLASSES);
+        int color_id = -1;
+        int size_id  = -1;
+        int num_id   = -1;
+        decode_joint_id(best_idx, NUM_CLASSES, NUM_SIZES, color_id, size_id, num_id);
 
-        // 3) Get keypoints (4 corners)
-        // Model outputs corners in counter-clockwise order: TL, BL, BR, TR
-        // PnP expects clockwise order: TL, TR, BR, BL
-        std::array<cv::Point2f, 4> raw_corners;
-        const int kp_base = 4 + num_cls;
-        bool kp_valid     = true;
+        if (color_id < 0 || color_id >= NUM_COLORS || size_id < 0 || size_id >= NUM_SIZES) {
+            continue;
+        }
+
+        ArmorName cls = num_id_to_name(num_id);
+        if (cls == ArmorName::Invalid) {
+            continue;
+        }
+        if (cls == ArmorName::Base && size_id == 1) {
+            cls = ArmorName::BaseLarge;
+        }
+        const auto color = static_cast<ArmorColor>(color_id);
+
+        // 2) Get keypoints (4 corners: TL, TR, BR, BL)
+        std::array<cv::Point2f, 4> corners;
+        bool kp_valid = true;
         for (int k = 0; k < nkpt; ++k) {
-            const float kx = get(i, kp_base + 2 * k);
-            const float ky = get(i, kp_base + 2 * k + 1);
+            const float kx = get(i, num_joint + 2 * k);
+            const float ky = get(i, num_joint + 2 * k + 1);
             if (!std::isfinite(kx) || !std::isfinite(ky)) {
                 kp_valid = false;
                 break;
             }
-            raw_corners[k] = map_point(kx, ky);
+            corners[k] = undo_letterbox(kx, ky);
         }
 
-        std::array<cv::Point2f, 4> corners;
         if (!kp_valid) {
-            // Fallback to bbox corners if keypoints invalid (already in correct order)
-            const float x1 = cx - 0.5f * w;
-            const float y1 = cy - 0.5f * h;
-            const float x2 = cx + 0.5f * w;
-            const float y2 = cy + 0.5f * h;
-            corners[0]     = map_point(x1, y1); // TL
-            corners[1]     = map_point(x2, y1); // TR
-            corners[2]     = map_point(x2, y2); // BR
-            corners[3]     = map_point(x1, y2); // BL
-        } else {
-            // Remap from counter-clockwise to clockwise
-            corners[0] = raw_corners[0]; // TL
-            corners[1] = raw_corners[3]; // TR (was raw[3])
-            corners[2] = raw_corners[2]; // BR
-            corners[3] = raw_corners[1]; // BL (was raw[1])
+            continue;
         }
 
         // Create detection

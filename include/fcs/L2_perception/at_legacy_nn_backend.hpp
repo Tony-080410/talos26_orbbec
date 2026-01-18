@@ -33,8 +33,9 @@ public:
     static constexpr int INPUT_W     = 640;
     static constexpr int INPUT_H     = 640;
     static constexpr int NUM_COLORS  = 4;
-    static constexpr int NUM_CLASSES = 13;
-    static constexpr int NUM_KPTS    = 4; // yolo11pose: 4 corner keypoints (x,y,score)
+    static constexpr int NUM_SIZES   = 2;
+    static constexpr int NUM_CLASSES = 8; // G, 1, 2, 3, 4, 5, O, B
+    static constexpr int NUM_KPTS    = 4; // 4 corner keypoints (x, y)
     using DetectionResult = std::expected<std::vector<AtLegacyArmorDetection>, DetectorError>;
     using ConfigPtr       = std::shared_ptr<const AtLegacyNNConfig>;
 
@@ -78,6 +79,8 @@ private:
         float scale_y = 1.0f; // Scale factor for y coordinates
         float pad_x   = 0.0f; // Padding offset x
         float pad_y   = 0.0f; // Padding offset y
+        int orig_w    = 0;
+        int orig_h    = 0;
     };
 
     [[nodiscard]] PreprocContext
