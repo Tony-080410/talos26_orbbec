@@ -64,6 +64,7 @@ std::expected<void, DetectorError> AtLegacyNNBackend::init() {
 
         // Load model
         impl_->model = impl_->core.read_model(cfg->model_path);
+        impl_->model->reshape({1, 3, INPUT_H, INPUT_W});
 
         // Configure preprocessing
         ov::preprocess::PrePostProcessor ppp(impl_->model);
@@ -246,11 +247,10 @@ std::vector<AtLegacyArmorDetection>
         return detections;
     }
     if (constexpr int expected = NUM_COLORS * NUM_SIZES * NUM_CLASSES; expected != num_joint) {
-        SPDLOG_ERROR(
-            "[AtLegacyNNBackend] Model nc ({}) != NUM_COLORS*NUM_SIZES*NUM_CLASSES ({}), check "
-            "config and constants.",
+        SPDLOG_WARN(
+            "[AtLegacyNNBackend] Model nc ({}) != NUM_COLORS*NUM_SIZES*NUM_CLASSES ({}); "
+            "continuing with model nc.",
             num_joint, expected);
-        return detections;
     }
     const bool channel_first = (dim1 < dim2);
 
@@ -334,9 +334,11 @@ std::vector<AtLegacyArmorDetection>
         }
         const auto color = static_cast<ArmorColor>(color_id);
 
-        // 2) Get keypoints (4 corners: TL, TR, BR, BL)
+        // 2) Get keypoints (model outputs: TL, BL, BR, TR)
+        // Remap to expected order: TL, TR, BR, BL
         std::array<cv::Point2f, 4> corners;
         bool kp_valid = true;
+        std::array<cv::Point2f, 4> raw_kpts;
         for (int k = 0; k < nkpt; ++k) {
             const float kx = get(i, num_joint + 2 * k);
             const float ky = get(i, num_joint + 2 * k + 1);
@@ -344,7 +346,14 @@ std::vector<AtLegacyArmorDetection>
                 kp_valid = false;
                 break;
             }
-            corners[k] = undo_letterbox(kx, ky);
+            raw_kpts[k] = undo_letterbox(kx, ky);
+        }
+        // Remap: TL, BL, BR, TR -> TL, TR, BR, BL
+        if (kp_valid) {
+            corners[0] = raw_kpts[0]; // TL
+            corners[1] = raw_kpts[3]; // TR
+            corners[2] = raw_kpts[2]; // BR
+            corners[3] = raw_kpts[1]; // BL
         }
 
         if (!kp_valid) {
@@ -454,6 +463,34 @@ AtLegacyNNBackend::DetectionResult AtLegacyNNBackend::detect_impl(const cv::Mat&
 
     // NMS
     auto result = nms(detections, *cfg);
+
+    // Debug: print detection results
+    // SPDLOG_INFO("[AtLegacyNNBackend] ===== Detection Results =====");
+    // SPDLOG_INFO("[AtLegacyNNBackend] Total detections: {}", result.size());
+    // for (size_t i = 0; i < result.size(); ++i) {
+    //     const auto& det = result[i];
+    //     const auto center = det.center();
+
+    //     SPDLOG_INFO("[AtLegacyNNBackend] [{}] {} {} | conf={:.3f} | area={}",
+    //         i,
+    //         to_string(det.name),
+    //         to_string(det.color),
+    //         det.confidence,
+    //         det.area);
+
+    //     SPDLOG_INFO("[AtLegacyNNBackend]     Center: ({:.1f}, {:.1f})", center.x, center.y);
+
+    //     SPDLOG_INFO("[AtLegacyNNBackend]     Corners: TL=({:.1f},{:.1f}) TR=({:.1f},{:.1f})
+    //     BR=({:.1f},{:.1f}) BL=({:.1f},{:.1f})",
+    //         det.corners[0].x, det.corners[0].y,
+    //         det.corners[1].x, det.corners[1].y,
+    //         det.corners[2].x, det.corners[2].y,
+    //         det.corners[3].x, det.corners[3].y);
+
+    //     SPDLOG_INFO("[AtLegacyNNBackend]     BBox: x={:.1f} y={:.1f} w={:.1f} h={:.1f}",
+    //         det.rect.x, det.rect.y, det.rect.width, det.rect.height);
+    // }
+    // SPDLOG_INFO("[AtLegacyNNBackend] =================================");
 
     return result;
 }

@@ -1,5 +1,5 @@
 [detector]
-backend_type = "Traditional"
+backend_type = "NeuralNetwork"  # Options: "NeuralNetwork", "traditional"
 detect_color = "Blue"
 
 # Required if backend_type = "traditional"
@@ -26,7 +26,7 @@ classifier_use_softmax = true
 
 # Required if backend_type = "nn"
 [nn]
-model_path = "at.onnx"
+model_path = "best.onnx"
 device = "AUTO"
 device_priorities = "GPU,CPU"
 enable_profiling = false
