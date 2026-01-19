@@ -10,7 +10,7 @@
 #include <ranges>
 #include <spdlog/spdlog.h>
 
-namespace fcs {
+namespace fcs::L2 {
 
 // ============================================================================
 // Constructor
@@ -397,4 +397,4 @@ cv::Mat AtLegacyTraditionalBackend::extract_number(
     return number_image;
 }
 
-} // namespace fcs
+} // namespace fcs::L2

@@ -2,6 +2,7 @@
 
 #include "fcs/L4_planning/gimbal_planner/trajectory_compensator.hpp"
 #include "fcs/L4_planning/gimbal_planner/types.hpp"
+#include "fcs/L4_planning/mpc_planner/config.hpp"
 #include "fcs/L5_weapon/config.hpp"
 #include "fcs/L5_weapon/enhanced/weapon_controller.hpp"
 #include "fcs/core/channel_tags.hpp"
@@ -13,17 +14,43 @@
 
 namespace fcs::L5 {
 
-void register_enhanced_weapon_system_with_config_and_compensator(
-    talos::Scheduler& scheduler, const WeaponControllerConfig& config,
-    fcs::L4::TrajectoryCompensatorType compensator_type) {
-    auto compensator = fcs::L4::create_compensator(compensator_type);
-    auto controller  = std::make_shared<EnhancedWeaponController>(config, std::move(compensator));
-
+void register_enhanced_weapon_system(
+    talos::Scheduler& scheduler, WeaponControllerConfig&& config,
+    fcs::L4::MpcPlannerConfig&& l4_config) {
+    scheduler.world().insert_resource(std::move(config));
+    scheduler.world().insert_resource(std::move(l4_config));
     scheduler.add_system<talos::exclusive<250>>(
         "enhanced_weapon_control",
-        [controller = std::move(controller)](
+        [controller = std::shared_ptr<EnhancedWeaponController>{},
+         comp_type  = fcs::L4::TrajectoryCompensatorType::Ideal](
+            talos::res<fcs::L4::MpcPlannerConfig> l4_config,
+            talos::res<WeaponControllerConfig> config,
             talos::spmc<fcs::L4::GimbalPlan, GimbalPlanChannelTag> plan_in,
-            talos::spmc_mut<WeaponCommand, WeaponCommandChannelTag> weapon_out) {
+            talos::spmc_mut<WeaponCommand, WeaponCommandChannelTag> weapon_out) mutable {
+            if (!controller) {
+                auto comp_type   = l4_config->compensator_type;
+                auto compensator = fcs::L4::create_compensator(comp_type);
+                controller =
+                    std::make_shared<EnhancedWeaponController>(*config, std::move(compensator));
+            }
+
+            if (config.is_changed()) {
+                controller->set_config(*config);
+            }
+
+            // Only recreate compensator if type actually changed
+            if (l4_config.is_changed() && l4_config->compensator_type != comp_type) {
+                const auto old_type = comp_type;
+                comp_type           = l4_config->compensator_type;
+
+                SPDLOG_INFO(
+                    "EnhancedWeaponController: switching compensator type from {} to {}",
+                    magic_enum::enum_name(old_type).data(),
+                    magic_enum::enum_name(comp_type).data());
+
+                controller->sync_config(fcs::L4::create_compensator(comp_type));
+            }
+
             auto plan = plan_in.read();
             if (!plan) {
                 return;

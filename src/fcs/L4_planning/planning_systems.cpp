@@ -14,14 +14,24 @@
 
 namespace fcs::L4 {
 
-void register_mpc_planning_systems(
-    talos::Scheduler& scheduler, std::shared_ptr<MpcGimbalPlanner> planner, double bullet_speed) {
+void register_mpc_planning_systems(talos::Scheduler& scheduler, MpcPlannerConfig&& config) {
+    scheduler.world().insert_resource(std::move(config));
     scheduler.add_system<talos::pool_compute>(
         "l4_mpc_planner",
-        [planner_instance = std::move(planner), bullet_speed](
+        [planner = std::shared_ptr<MpcGimbalPlanner>{}](
+            talos::res<MpcPlannerConfig> config,
             talos::spmc<fcs::L3::TrackerOutput, TrackerOutputChannelTag> tracker_in,
             talos::res<std::shared_ptr<fast_tf::CoordinateSystem<1024>>> tf_buffer,
-            talos::spmc_mut<GimbalPlan, GimbalPlanChannelTag> plan_out) {
+            talos::spmc_mut<GimbalPlan, GimbalPlanChannelTag> plan_out) mutable {
+            if (!planner) {
+                planner = std::make_shared<MpcGimbalPlanner>(*config);
+            }
+
+            if (config.is_changed()) {
+                planner->set_config(*config);
+                planner->sync_config(); // Apply config changes (rebuild solvers if needed)
+            }
+
             auto target = tracker_in.read();
             if (!target || !target->is_tracking()) {
                 return;
@@ -47,8 +57,9 @@ void register_mpc_planning_systems(
                 return;
             }
 
-            if (auto result = planner_instance->plan(
-                    *target, current_time_ns, bullet_speed, *muzzle_tf, *gimbal_tf)) {
+            if (auto result = planner->plan(
+                    *target, current_time_ns, config->trajectory.bullet_speed, *muzzle_tf,
+                    *gimbal_tf)) {
                 GimbalPlan plan;
                 plan.timestamp_ns       = result->timestamp_ns;
                 plan.yaw                = result->yaw;
@@ -93,12 +104,6 @@ void register_mpc_planning_systems(
                 plan_out.write(plan);
             }
         });
-}
-
-void register_mpc_planning_systems_with_config(
-    talos::Scheduler& scheduler, const MpcPlannerConfig& config) {
-    auto planner = std::make_shared<MpcGimbalPlanner>(config);
-    register_mpc_planning_systems(scheduler, std::move(planner), config.trajectory.bullet_speed);
 }
 
 } // namespace fcs::L4

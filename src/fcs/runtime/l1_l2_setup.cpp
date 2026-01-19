@@ -168,7 +168,7 @@ std::expected<L1L2SetupResult, std::string> setup_l1_l2(
     const auto& cam_info = camera->camera_info();
     world.insert_resource(cam_info);
 
-    auto backend_handle_result = fcs::create_detector_backend_handle(vision.at_legacy);
+    auto backend_handle_result = fcs::L2::create_detector_backend_handle(vision.at_legacy);
     if (!backend_handle_result) {
         return std::unexpected(
             fmt::format("create detector backend: {}", backend_handle_result.error()));
@@ -178,7 +178,7 @@ std::expected<L1L2SetupResult, std::string> setup_l1_l2(
         fcs::to_string(vision.at_legacy.detector.detect_color));
 
     world.insert_resource(std::move(backend_handle_result->backend));
-    world.insert_resource(fcs::create_pnp_solver(cam_info));
+    world.insert_resource(fcs::L2::create_pnp_solver(cam_info));
 
     // IMU: 100Hz, silent update (no notify)
     scheduler.add_system<talos::exclusive_silent<1000, 1>>(

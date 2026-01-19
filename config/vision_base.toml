@@ -1,5 +1,5 @@
 [detector]
-backend_type = "NeuralNetwork"  # Options: "NeuralNetwork", "traditional"
+backend_type = "Traditional"  # Options: "Traditional", "NeuralNetwork", "NeuralNetworkTup"
 detect_color = "Blue"
 
 # Required if backend_type = "traditional"

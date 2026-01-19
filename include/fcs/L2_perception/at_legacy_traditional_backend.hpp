@@ -10,7 +10,7 @@
 
 #include <opencv2/core.hpp>
 
-namespace fcs {
+namespace fcs::L2 {
 
 // Forward declare config (defined in at_legacy_config.hpp)
 struct AtLegacyTraditionalConfig;
@@ -82,4 +82,4 @@ private:
         ArmorType armor_type) const noexcept;
 };
 
-} // namespace fcs
+} // namespace fcs::L2

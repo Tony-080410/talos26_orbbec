@@ -18,7 +18,7 @@ class CompiledModel;
 class InferRequest;
 } // namespace ov
 
-namespace fcs {
+namespace fcs::L2 {
 
 // Forward declare config (defined in at_legacy_config.hpp)
 struct AtLegacyNNTupConfig;
@@ -123,4 +123,4 @@ private:
     std::unique_ptr<Impl> impl_;
 };
 
-} // namespace fcs
+} // namespace fcs::L2

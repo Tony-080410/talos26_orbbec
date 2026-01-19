@@ -13,7 +13,7 @@ class table;
 }
 } // namespace toml
 
-namespace fcs {
+namespace fcs::L2 {
 
 enum class AtLegacyBackendTypeConfig : int {
     Traditional      = 0,
@@ -126,4 +126,4 @@ struct AtLegacyConfig {
     std::expected<void, std::string> read_from(const toml::table& tbl) noexcept;
 };
 
-} // namespace fcs
+} // namespace fcs::L2

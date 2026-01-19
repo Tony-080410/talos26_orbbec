@@ -48,7 +48,7 @@ struct HardwareConfig {
 };
 
 struct VisionConfig {
-    AtLegacyConfig at_legacy{};
+    L2::AtLegacyConfig at_legacy{};
     L3::L3Config l3{};
     L4::L4Config l4{};
     L5::L5Config l5{};

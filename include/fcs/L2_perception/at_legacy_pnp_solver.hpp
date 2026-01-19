@@ -16,7 +16,7 @@
 
 #include "fcs/camera_config.hpp"
 
-namespace fcs {
+namespace fcs::L2 {
 
 // ============================================================================
 // PnP Solver Error Types
@@ -353,4 +353,4 @@ private:
     std::vector<cv::Point3f> large_armor_points_;
 };
 
-} // namespace fcs
+} // namespace fcs::L2

@@ -12,7 +12,7 @@
 #include <openvino/openvino.hpp>
 #include <spdlog/spdlog.h>
 
-namespace fcs {
+namespace fcs::L2 {
 
 // ============================================================================
 // PIMPL Implementation
@@ -448,4 +448,4 @@ std::vector<std::string> AtLegacyNNTupBackend::execution_devices() const {
     }
 }
 
-} // namespace fcs
+} // namespace fcs::L2

@@ -21,7 +21,11 @@ struct TrackerConfig;
 ///                                               ↓
 ///                                        TrackerOutput [SPMC]
 ///
-void register_tracker_systems(talos::Scheduler& scheduler);
+/// ## Parameters
+///
+/// - `scheduler`: the scheduler to register systems with
+/// - `config`: tracker configuration (will be moved into resource)
+void register_tracker_systems(talos::Scheduler& scheduler, TrackerConfig&& config);
 
 /// Create tracker resource from config (implementation in .cpp).
 [[nodiscard]] std::shared_ptr<Tracker> create_tracker(const TrackerConfig& config);

@@ -2,7 +2,7 @@
 
 #include "toml_helper.hpp"
 
-namespace fcs {
+namespace fcs::L2 {
 
 std::expected<void, std::string>
     AtLegacyTraditionalConfig::read_from(const toml::table& tbl) noexcept {
@@ -69,4 +69,4 @@ std::expected<void, std::string> AtLegacyConfig::read_from(const toml::table& tb
     return {};
 }
 
-} // namespace fcs
+} // namespace fcs::L2

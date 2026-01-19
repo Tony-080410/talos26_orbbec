@@ -341,6 +341,15 @@ public:
     template <typename Policy = default_policy, typename F>
     auto add_system(std::string name, F&& func) -> void;
 
+    /**
+     * @brief Get the ECS world
+     *
+     * ## Returns
+     *
+     * Reference to the World containing resources and channels
+     */
+    [[nodiscard]] World& world() noexcept { return world_; }
+
     // ========================================================================
     // Lifecycle
     // ========================================================================

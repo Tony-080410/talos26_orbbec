@@ -4,11 +4,32 @@
 #include "system_meta.hpp"
 
 #include <any>
+#include <atomic>
+#include <expected>
 #include <memory>
+#include <string>
 #include <typeindex>
 #include <unordered_map>
 
 namespace talos {
+
+// ============================================================================
+// Versioned Resource Wrapper
+// ============================================================================
+
+template <typename T>
+struct VersionedResource {
+    T value;
+    std::atomic<uint64_t> version{0};
+
+    explicit VersionedResource(T val) noexcept
+        : value(std::move(val)) {}
+
+    uint64_t update(T new_value) noexcept {
+        value = std::move(new_value);
+        return version.fetch_add(1, std::memory_order_release) + 1;
+    }
+};
 
 // ============================================================================
 // Design Note: Type Erasure for Heterogeneous Storage
@@ -89,7 +110,7 @@ public:
 
     template <typename T>
     void insert_resource(T resource) {
-        resources_[typeid(T)] = std::move(resource);
+        resources_[typeid(T)] = std::make_shared<VersionedResource<T>>(std::move(resource));
     }
 
     template <typename T>
@@ -101,16 +122,31 @@ public:
     [[nodiscard]] res<T> get_res() const {
         const auto it = resources_.find(typeid(T));
         if (it == resources_.end())
-            return res<T>{nullptr};
-        return res<T>{std::any_cast<const T>(&it->second)};
+            return res<T>{nullptr, nullptr, 0};
+
+        auto storage = std::any_cast<std::shared_ptr<VersionedResource<T>>>(it->second);
+        return res<T>{&storage->value, &storage->version, 0};
     }
 
     template <typename T>
     [[nodiscard]] res_mut<T> get_res_mut() {
         const auto it = resources_.find(typeid(T));
         if (it == resources_.end())
-            return res_mut<T>{nullptr};
-        return res_mut<T>{std::any_cast<T>(&it->second)};
+            return res_mut<T>{nullptr, nullptr, 0};
+
+        auto storage = std::any_cast<std::shared_ptr<VersionedResource<T>>>(it->second);
+        return res_mut<T>{&storage->value, &storage->version, 0};
+    }
+
+    template <typename T>
+    std::expected<uint64_t, std::string> update_resource(T new_value) {
+        auto it = resources_.find(typeid(T));
+        if (it == resources_.end()) {
+            return std::unexpected("Resource not found: " + std::string(typeid(T).name()));
+        }
+
+        auto storage = std::any_cast<std::shared_ptr<VersionedResource<T>>>(it->second);
+        return storage->update(std::move(new_value));
     }
 
     // ==================== SPSC Channel API ====================

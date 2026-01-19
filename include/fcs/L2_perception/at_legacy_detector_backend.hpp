@@ -12,7 +12,7 @@ namespace cv {
 class Mat;
 }
 
-namespace fcs {
+namespace fcs::L2 {
 
 // ============================================================================
 // Detector Backend Error Types
@@ -79,6 +79,12 @@ class AtLegacyTraditionalBackend;
 class AtLegacyNNBackend;
 class AtLegacyNNTupBackend;
 
+// Forward declare config types (defined in at_legacy_config.hpp)
+struct AtLegacyConfig;
+struct AtLegacyNNConfig;
+struct AtLegacyNNTupConfig;
+struct AtLegacyTraditionalConfig;
+
 // ============================================================================
 // Runtime Polymorphic Backend Wrapper (using std::variant)
 // ============================================================================
@@ -120,10 +126,16 @@ public:
     /// Get active backend name
     [[nodiscard]] std::string_view name() const noexcept;
 
+    /// Set detection color for all backends
+    void set_detect_color(ArmorColor color) noexcept;
+
     /// Switch to a different backend
     void set_backend(std::unique_ptr<AtLegacyTraditionalBackend> backend);
     void set_backend(std::unique_ptr<AtLegacyNNBackend> backend);
     void set_backend(std::unique_ptr<AtLegacyNNTupBackend> backend);
+
+    /// Update config for the active backend (forward declaration, implemented in .cpp)
+    void update_config(const AtLegacyConfig& config) noexcept;
 
     /// Check if backend variant holds a specific type
     template <typename Backend>
@@ -150,15 +162,9 @@ private:
 // Backend Factory (forward declarations)
 // ============================================================================
 
-// Forward declare config types (defined in at_legacy_config.hpp)
-struct AtLegacyConfig;
-struct AtLegacyNNConfig;
-struct AtLegacyNNTupConfig;
-struct AtLegacyTraditionalConfig;
-
 /// Create detector backend from unified config
 /// Implementation in at_legacy_detector_backend.cpp
 [[nodiscard]] std::expected<AtLegacyDetectorBackend, DetectorError>
     create_detector_backend(const AtLegacyConfig& config);
 
-} // namespace fcs
+} // namespace fcs::L2

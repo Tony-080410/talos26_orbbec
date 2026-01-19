@@ -9,7 +9,7 @@
 #include <opencv2/core.hpp>
 #include <opencv2/dnn.hpp>
 
-namespace fcs {
+namespace fcs::L2 {
 
 // ============================================================================
 // AT Legacy Traditional ONNX Classifier
@@ -50,4 +50,4 @@ private:
     [[nodiscard]] static ArmorName index_to_armor_name(int idx) noexcept;
 };
 
-} // namespace fcs
+} // namespace fcs::L2

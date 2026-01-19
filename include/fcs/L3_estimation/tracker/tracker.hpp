@@ -62,6 +62,20 @@ public:
         outpost_model_.params = config_.outpost.model;
     }
 
+    /// Set configuration (lightweight: only stores config values)
+    void set_config(const TrackerConfig& config) noexcept { config_ = config; }
+
+    /// Sync configuration (heavyweight: applies config and resets tracker state)
+    void sync_config() noexcept {
+        SPDLOG_INFO("Tracker: syncing config, resetting to IDLE state");
+        robot_model_.params   = config_.robot.model;
+        outpost_model_.params = config_.outpost.model;
+
+        // Reset tracker to IDLE state when config changes
+        // JPDA matchers will use new config values on next match() call
+        reset();
+    }
+
     /// Combined predict + update step
     void step(double dt, const AtLegacyArmorMeasurementBatch& measurements) noexcept {
         predict(dt);

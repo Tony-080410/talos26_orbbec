@@ -44,8 +44,11 @@ public:
     MpcGimbalPlanner(MpcGimbalPlanner&&) noexcept            = default;
     MpcGimbalPlanner& operator=(MpcGimbalPlanner&&) noexcept = default;
 
-    /// Update configuration
-    void set_config(const MpcPlannerConfig& config) noexcept;
+    /// Set configuration (lightweight: only stores config, does not rebuild resources)
+    void set_config(const MpcPlannerConfig& config) noexcept { config_ = config; }
+
+    /// Sync configuration (heavyweight: applies config and rebuilds resources if needed)
+    void sync_config() noexcept;
 
     /// Plan gimbal trajectory using a custom muzzle origin (odom frame).
     ///
@@ -178,6 +181,10 @@ private:
 
     // Ballistic compensator
     std::unique_ptr<TrajectoryCompensator> compensator_;
+
+    // Track current solver configuration for change detection
+    int current_horizon_{0};
+    double current_dt_{0.0};
 };
 
 // ============================================================================
@@ -192,18 +199,21 @@ inline MpcGimbalPlanner::MpcGimbalPlanner(const MpcPlannerConfig& config)
     setup_solvers();
 }
 
-inline void MpcGimbalPlanner::set_config(const MpcPlannerConfig& config) noexcept {
-    // Check if solver needs to be recreated (horizon changed)
-    bool need_recreate =
-        ((config.ponder_back + config.ponder_ahead) != (config_.ponder_back + config_.ponder_ahead)
-         || config.ponder_dt != config_.ponder_dt);
-
-    config_ = config;
-    trajectory_gen_.set_config(config);
+inline void MpcGimbalPlanner::sync_config() noexcept {
+    trajectory_gen_.set_config(config_);
     update_compensator_params();
 
+    // Check if solver needs to be recreated (horizon or dt changed)
+    const int new_horizon = config_.ponder_ahead + config_.ponder_back;
+    const double new_dt = config_.ponder_dt;
+
+    const bool need_recreate =
+        (new_horizon != current_horizon_) || (new_dt != current_dt_);
+
     if (need_recreate) {
-        // SolverHandle automatically cleans up when reset
+        SPDLOG_INFO(
+            "MpcPlanner: rebuilding solvers (horizon: {}->{}, dt: {}->{})",
+            current_horizon_, new_horizon, current_dt_, new_dt);
         yaw_solver_.reset();
         pitch_solver_.reset();
         setup_solvers();
@@ -252,6 +262,10 @@ inline void MpcGimbalPlanner::setup_solvers() noexcept {
     setup_axis(
         pitch_solver_, {config_.q_pitch_position, config_.q_pitch_velocity, config_.r_pitch,
                         config_.max_pitch_acc});
+
+    // Update tracked configuration
+    current_horizon_ = config_.ponder_ahead + config_.ponder_back;
+    current_dt_ = config_.ponder_dt;
 }
 
 inline void MpcGimbalPlanner::warm_start_shift() noexcept {

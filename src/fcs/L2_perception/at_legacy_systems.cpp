@@ -1,5 +1,6 @@
 #include "fcs/L2_perception/at_legacy_systems.hpp"
 
+#include "fcs/L2_perception/at_legacy_config.hpp"
 #include "fcs/L2_perception/at_legacy_detector_backend.hpp"
 #include "fcs/L2_perception/at_legacy_pnp_solver.hpp"
 #include "fcs/core/channel_tags.hpp"
@@ -10,18 +11,28 @@
 
 #include <spdlog/spdlog.h>
 
-namespace fcs {
+namespace fcs::L2 {
 
-void register_at_legacy_detection_systems(talos::Scheduler& scheduler) {
+void register_at_legacy_detection_systems(talos::Scheduler& scheduler, AtLegacyConfig&& config) {
+    scheduler.world().insert_resource(std::move(config));
     scheduler.add_system<talos::pool_compute>(
         "at_legacy_armor_detector_pnp_solver",
-        [](talos::spmc<AtLegacyImageFrame, AtLegacyImageChannelTag> image_in,
-           talos::spmc_mut<AtLegacyArmorDetectionBatch, AtLegacyDetectionChannelTag> detection_out,
-           talos::spmc_mut<AtLegacyArmorMeasurementBatch, AtLegacyMeasurementChannelTag>
-               measurement_out,
-           talos::res_mut<std::shared_ptr<AtLegacyDetectorBackend>> backend_ptr,
-           talos::res<std::shared_ptr<AtLegacyPnPSolver>> solver_ptr,
-           talos::res<std::shared_ptr<fast_tf::CoordinateSystem<1024>>> tf_system) {
+        [last_detect_color = ArmorColor::Neutral](
+            talos::spmc<AtLegacyImageFrame, AtLegacyImageChannelTag> image_in,
+            talos::spmc_mut<AtLegacyArmorDetectionBatch, AtLegacyDetectionChannelTag> detection_out,
+            talos::spmc_mut<AtLegacyArmorMeasurementBatch, AtLegacyMeasurementChannelTag>
+                measurement_out,
+            talos::res<AtLegacyConfig> config,
+            talos::res_mut<std::shared_ptr<AtLegacyDetectorBackend>> backend_ptr,
+            talos::res<std::shared_ptr<AtLegacyPnPSolver>> solver_ptr,
+            talos::res<std::shared_ptr<fast_tf::CoordinateSystem<1024>>> tf_system) mutable {
+            // Reactively update backend config and detect color when changed
+            if (config.is_changed()) {
+                (*backend_ptr)->update_config(*config);
+                (*backend_ptr)->set_detect_color(config->detector.detect_color);
+                last_detect_color = config->detector.detect_color;
+            }
+
             if (!image_in.has_new()) {
                 return;
             }
@@ -93,4 +104,4 @@ std::shared_ptr<AtLegacyPnPSolver> create_pnp_solver(const CameraConfig& config)
     return solver;
 }
 
-} // namespace fcs
+} // namespace fcs::L2

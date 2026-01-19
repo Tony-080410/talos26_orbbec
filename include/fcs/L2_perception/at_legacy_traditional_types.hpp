@@ -10,7 +10,7 @@
 #include <ranges>
 #include <vector>
 
-namespace fcs {
+namespace fcs::L2 {
 
 // ============================================================================
 // AT Legacy Light Structure (for Traditional Backend)
@@ -144,4 +144,4 @@ struct AtLegacyLight : public cv::RotatedRect {
     return det;
 }
 
-} // namespace fcs
+} // namespace fcs::L2

@@ -6,7 +6,7 @@
 
 #include <opencv2/imgproc.hpp>
 
-namespace fcs {
+namespace fcs::L2 {
 
 // ============================================================================
 // Corner Correction
@@ -214,4 +214,4 @@ cv::Point2f AtLegacyLightCornerCorrector::find_corner(
     return cv::Point2f(-1, -1);
 }
 
-} // namespace fcs
+} // namespace fcs::L2

@@ -5,7 +5,7 @@
 #include <opencv2/imgproc.hpp>
 #include <spdlog/spdlog.h>
 
-namespace fcs {
+namespace fcs::L2 {
 
 // ============================================================================
 // Constructor and Initialization
@@ -131,4 +131,4 @@ ArmorName AtLegacyTraditionalClassifier::index_to_armor_name(int idx) noexcept {
     }
 }
 
-} // namespace fcs
+} // namespace fcs::L2

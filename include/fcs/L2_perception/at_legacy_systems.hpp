@@ -10,13 +10,14 @@
 namespace talos {
 class Scheduler;
 } // namespace talos
-
 namespace fcs {
+struct CameraConfig;
+};
+namespace fcs::L2 {
 
 struct AtLegacyConfig;
 class AtLegacyDetectorBackend;
 class AtLegacyPnPSolver;
-struct CameraConfig;
 
 // ============================================================================
 // AT Legacy Armor Detection Pipeline Systems
@@ -33,22 +34,12 @@ struct CameraConfig;
 ///         ↓
 ///   TrackerSystem (external)
 ///
-/// Usage:
-///   auto app = talos::App::create();
+/// ## Parameters
 ///
-///   // Register resources
-///   app.insert_resource<AtLegacyDetectorBackend>(std::move(backend));
-///   app.insert_resource<AtLegacyPnPSolver>(std::move(solver));
-///
-///   // Register channels
-///   app.init_spmc_channel<AtLegacyImageFrame, AtLegacyImageChannelTag>();
-///   app.init_spmc_channel<AtLegacyArmorDetectionBatch, AtLegacyDetectionChannelTag>();
-///   app.init_spmc_channel<AtLegacyArmorMeasurementBatch, AtLegacyMeasurementChannelTag>();
-///
-///   // Register systems
-///   register_at_legacy_detection_systems(app);
-
-void register_at_legacy_detection_systems(talos::Scheduler& scheduler);
+/// - `scheduler`: the scheduler to register systems with
+/// - `config`: L2 perception configuration (will be moved into resource)
+void register_at_legacy_detection_systems(
+    talos::Scheduler& scheduler, AtLegacyConfig&& config);
 
 // ============================================================================
 // Configuration Helpers
@@ -68,4 +59,4 @@ struct DetectorBackendHandle {
 /// @param config camera config
 [[nodiscard]] std::shared_ptr<AtLegacyPnPSolver> create_pnp_solver(const CameraConfig& config);
 
-} // namespace fcs
+} // namespace fcs::L2

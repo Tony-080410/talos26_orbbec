@@ -1,5 +1,6 @@
 #include "fcs/L3_estimation/tracker_systems.hpp"
 
+#include "fcs/L3_estimation/tracker/config.hpp"
 #include "fcs/L3_estimation/tracker/tracker.hpp"
 #include "fcs/L3_estimation/tracker/types.hpp"
 #include "fcs/core/channel_tags.hpp"
@@ -15,13 +16,21 @@ std::shared_ptr<Tracker> create_tracker(const TrackerConfig& config) {
     return std::make_shared<Tracker>(config);
 }
 
-void register_tracker_systems(talos::Scheduler& scheduler) {
+void register_tracker_systems(talos::Scheduler& scheduler, TrackerConfig&& config) {
+    scheduler.world().insert_resource(std::move(config));
     scheduler.add_system<talos::pool_compute>(
         "armor_tracker",
         [last_timestamp_ns = uint64_t{0}](
             talos::spmc<AtLegacyArmorMeasurementBatch, AtLegacyMeasurementChannelTag> meas_in,
             talos::spmc_mut<TrackerOutput, TrackerOutputChannelTag> tracker_out,
+            talos::res<TrackerConfig> config,
             talos::res_mut<std::shared_ptr<Tracker>> tracker) mutable {
+            // Reactively update tracker config when changed
+            if (config.is_changed()) {
+                (*tracker)->set_config(*config);
+                (*tracker)->sync_config(); // Apply config changes
+            }
+
             if (!meas_in.has_new()) {
                 return;
             }

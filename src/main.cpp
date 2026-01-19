@@ -1,5 +1,5 @@
-#include "L2_perception/at_legacy_systems.hpp"
 #include "auto_aim/config.hpp"
+#include "fcs/L2_perception/at_legacy_systems.hpp"
 #include "fcs/L3_estimation/tracker_systems.hpp"
 #include "fcs/L4_planning/planning_systems.hpp"
 #include "fcs/L5_weapon/enhanced/weapon_systems.hpp"
@@ -161,6 +161,11 @@ int main() {
     world.insert_resource(robot);
     world.insert_resource(std::make_shared<fcs::VisionConfig>(vision));
 
+    // Save config values for logging before move
+    const double bullet_speed = vision.l4.mpc_planner.trajectory.bullet_speed;
+    const int ponder_back = vision.l4.mpc_planner.ponder_back;
+    const int ponder_ahead = vision.l4.mpc_planner.ponder_ahead;
+
     auto setup_result = fcs::runtime::setup_l1_l2(
         world, scheduler, vision, daedalus, hardware ? &*hardware : nullptr);
     if (!setup_result) {
@@ -169,26 +174,24 @@ int main() {
     }
 
     // Create Tracker using config from toml
-    world.insert_resource(fcs::L3::create_tracker(vision.tracker()));
+    world.insert_resource(fcs::L3::create_tracker(vision.l3.tracker));
     SPDLOG_INFO("Tracker initialized");
 
     SPDLOG_INFO(
         "MPC GimbalPlanner initialized (bullet_speed={:.1f}m/s, horizon={}:{})",
-        vision.mpc_planner().trajectory.bullet_speed, vision.mpc_planner().ponder_back,
-        vision.mpc_planner().ponder_ahead);
+        bullet_speed, ponder_back, ponder_ahead);
 
     // Register AT Legacy detection pipeline systems
-    fcs::register_at_legacy_detection_systems(scheduler);
+    fcs::L2::register_at_legacy_detection_systems(scheduler, std::move(vision.at_legacy));
 
     // Register L3 Tracker pipeline (Measurement -> TrackerOutput)
-    fcs::L3::register_tracker_systems(scheduler);
+    fcs::L3::register_tracker_systems(scheduler, std::move(vision.l3.tracker));
 
     // Register L4 Planning pipeline (TrackerOutput -> GimbalPlan + FireCommand)
-    fcs::L4::register_mpc_planning_systems_with_config(scheduler, vision.mpc_planner());
+    fcs::L4::register_mpc_planning_systems(scheduler, std::move(vision.l4.mpc_planner));
 
     // Register L5 Enhanced Weapon System (GimbalPlan + FireCommand -> WeaponCommand)
-    fcs::L5::register_enhanced_weapon_system_with_config_and_compensator(
-        scheduler, vision.weapon(), vision.mpc_planner().compensator_type);
+    fcs::L5::register_enhanced_weapon_system(scheduler, std::move(vision.l5.weapon), std::move(vision.l4.mpc_planner));
 
     if (foxglove.enabled) {
         auto foxglove_server = fcs::try_create_foxglove_server(foxglove.port, foxglove.host);

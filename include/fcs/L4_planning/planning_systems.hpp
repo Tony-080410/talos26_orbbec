@@ -12,18 +12,6 @@ class MpcGimbalPlanner;
 struct MpcPlannerConfig;
 
 /// Register L4 MPC planning pipeline systems
-///
-/// Pipeline:
-///   L3::TrackerOutput [SPMC] -→ MpcPlanningSystem [pool_compute]
-///                                    ↓
-///                            L4::GimbalPlan [SPMC]
-///
-/// Uses TinyMPC (ADMM-based QP solver) for optimal gimbal trajectory planning.
-void register_mpc_planning_systems(
-    ::talos::Scheduler& scheduler, std::shared_ptr<MpcGimbalPlanner> planner, double bullet_speed);
-
-/// Register L4 MPC planning systems with config
-void register_mpc_planning_systems_with_config(
-    ::talos::Scheduler& scheduler, const MpcPlannerConfig& config);
+void register_mpc_planning_systems(::talos::Scheduler& scheduler, MpcPlannerConfig&& config);
 
 } // namespace fcs::L4

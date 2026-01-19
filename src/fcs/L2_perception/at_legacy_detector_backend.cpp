@@ -1,11 +1,11 @@
-#include "fcs/L2_perception/at_legacy_detector_backend.hpp"
-
 #include "fcs/L2_perception/at_legacy_config.hpp"
 #include "fcs/L2_perception/at_legacy_nn_backend.hpp"
 #include "fcs/L2_perception/at_legacy_nn_tup_backend.hpp"
 #include "fcs/L2_perception/at_legacy_traditional_backend.hpp"
 
-namespace fcs {
+#include <type_traits>
+
+namespace fcs::L2 {
 
 // ============================================================================
 // AtLegacyDetectorBackend Implementation
@@ -66,6 +66,34 @@ void AtLegacyDetectorBackend::set_backend(std::unique_ptr<AtLegacyNNTupBackend> 
     backend_ = std::move(backend);
 }
 
+void AtLegacyDetectorBackend::set_detect_color(ArmorColor color) noexcept {
+    std::visit(
+        [color](auto& backend) {
+            if (backend) {
+                backend->set_detect_color(color);
+            }
+        },
+        backend_);
+}
+
+void AtLegacyDetectorBackend::update_config(const AtLegacyConfig& config) noexcept {
+    std::visit(
+        [&config](auto& backend) {
+            if (!backend) {
+                return;
+            }
+            using BackendT = std::decay_t<decltype(*backend)>;
+            if constexpr (std::is_same_v<BackendT, AtLegacyTraditionalBackend>) {
+                backend->update_config(config.traditional_ptr());
+            } else if constexpr (std::is_same_v<BackendT, AtLegacyNNBackend>) {
+                backend->update_config(config.nn_ptr());
+            } else if constexpr (std::is_same_v<BackendT, AtLegacyNNTupBackend>) {
+                backend->update_config(config.nn_tup_ptr());
+            }
+        },
+        backend_);
+}
+
 // ============================================================================
 // Factory Function
 // ============================================================================
@@ -101,4 +129,4 @@ void AtLegacyDetectorBackend::set_backend(std::unique_ptr<AtLegacyNNTupBackend> 
     return std::unexpected(DetectorError::NotInitialized);
 }
 
-} // namespace fcs
+} // namespace fcs::L2

@@ -4,7 +4,7 @@
 
 #include <opencv2/core.hpp>
 
-namespace fcs {
+namespace fcs::L2 {
 
 // ============================================================================
 // Symmetry Axis Structure
@@ -43,4 +43,4 @@ private:
         bool is_top) const noexcept;
 };
 
-} // namespace fcs
+} // namespace fcs::L2
