@@ -160,6 +160,11 @@ public:
         double semantic_reweight_lambda{1.0};  // Semantic weight λ_sem
         bool enable_semantic{false};
         bool enable_viterbi{true};
+        // Geometry consistency parameters
+        bool enable_geometry{true};  // Enable geometric consistency constraints
+        double geometry_weight{1.0}; // Weight for geometry term in likelihood
+        double sigma_radius{0.02};   // Expected radius uncertainty (m)
+        double sigma_height{0.03};   // Expected height uncertainty (m)
     };
 
     explicit JpdaMatcher(const Config& config = Config{}) noexcept
@@ -253,6 +258,13 @@ private:
         std::vector<PredictedArmor> predictions;
         int armors_num;                  // Actual number of armors (3 or 4)
         Eigen::Vector2d center_xy;       // Precomputed geometric center for phase extraction
+        // Geometry error matrices for geometric consistency constraints
+        // radius_error[i][j] = implied_radius(obs_i) - expected_radius(armor_j)
+        // height_error[i][j] = obs_z(obs_i) - expected_height(armor_j)
+        std::vector<std::vector<double>> radius_error;
+        std::vector<std::vector<double>> height_error;
+        // State-derived center for geometry computation (from state, not from predictions)
+        Eigen::Vector2d state_center_xy;
     };
 
     [[nodiscard]] PermutationCache precompute(
@@ -426,6 +438,32 @@ typename JpdaMatcher<Model>::PermutationCache JpdaMatcher<Model>::precompute(
     // Precompute center_xy for phase extraction (optimization: compute once)
     cache.center_xy = estimate_center_xy(cache.predictions, armors_num);
 
+    // Step 5: Compute geometry errors for geometric consistency constraints
+    // Get state-derived center (more accurate than prediction-derived for geometry)
+    cache.state_center_xy = model.center_xy(x_pred);
+
+    // Initialize geometry error matrices
+    cache.radius_error.resize(N_MAX_ARMORS, std::vector<double>(N_MAX_ARMORS, 0.0));
+    cache.height_error.resize(N_MAX_ARMORS, std::vector<double>(N_MAX_ARMORS, 0.0));
+
+    for (size_t i = 0; i < n_obs && i < N_MAX_ARMORS; ++i) {
+        // Get observation XYZ
+        const Eigen::Vector3d obs_xyz = meas_xyz(cache.obs_meas[i]);
+
+        for (int j = 0; j < armors_num; ++j) {
+            // Compute implied radius from observation position relative to state center
+            const double implied_r = (obs_xyz.head<2>() - cache.state_center_xy).norm();
+
+            // Get expected radius and height for this armor_id from model
+            const double expected_r = model.expected_radius(x_pred, j);
+            const double expected_z = model.expected_height(x_pred, j);
+
+            // Compute errors
+            cache.radius_error[i][j] = implied_r - expected_r;
+            cache.height_error[i][j] = obs_xyz.z() - expected_z;
+        }
+    }
+
     return cache;
 }
 
@@ -513,17 +551,22 @@ std::vector<typename JpdaMatcher<Model>::PermutationProb>
         // else: n_obs == 0 or >4, keep results empty
     }
 
+    // Precompute geometry normalization constants (avoid division in inner loop)
+    const double inv_sigma_r2 = 1.0 / (config_.sigma_radius * config_.sigma_radius);
+    const double inv_sigma_h2 = 1.0 / (config_.sigma_height * config_.sigma_height);
+
     // For each permutation, compute log likelihood via table lookup
     for (auto& pp : results) {
         // Table lookup: log L(π) = -0.5 * Σ(d²[i,π(i)] + log|S[i,π(i)]|)
-        double log_lik = 0.0;
-        bool valid     = true;
+        double log_lik     = 0.0;
+        double geo_penalty = 0.0;
+        bool valid         = true;
 
         // Now permutation length == n_obs, so we can iterate over all elements
         for (size_t i = 0; i < pp.perm.size(); ++i) {
             const int j = pp.perm[i];
             if (j >= 0 && j < armors_num && i < cache.d2_matrix.size()
-                && j < cache.d2_matrix[i].size()) {
+                && static_cast<size_t>(j) < cache.d2_matrix[i].size()) {
                 const double d2      = cache.d2_matrix[i][j];
                 const double log_det = cache.log_det_S[i][j];
 
@@ -538,6 +581,14 @@ std::vector<typename JpdaMatcher<Model>::PermutationProb>
                     break;
                 }
                 log_lik += d2 + log_det;
+
+                // Accumulate geometry penalty if enabled
+                if (config_.enable_geometry && i < cache.radius_error.size()
+                    && static_cast<size_t>(j) < cache.radius_error[i].size()) {
+                    const double r_err = cache.radius_error[i][j];
+                    const double h_err = cache.height_error[i][j];
+                    geo_penalty += (r_err * r_err) * inv_sigma_r2 + (h_err * h_err) * inv_sigma_h2;
+                }
             } else {
                 valid = false;
                 break;
@@ -545,7 +596,9 @@ std::vector<typename JpdaMatcher<Model>::PermutationProb>
         }
 
         if (valid && std::isfinite(log_lik)) {
-            pp.log_prob = -0.5 * log_lik;
+            // Combined likelihood: measurement + geometry
+            // log L_total = -0.5 * (measurement_term + geometry_weight * geometry_term)
+            pp.log_prob = -0.5 * (log_lik + config_.geometry_weight * geo_penalty);
         } else {
             pp.log_prob = INVALID_LOG_PROB; // Very low probability for invalid permutations
         }

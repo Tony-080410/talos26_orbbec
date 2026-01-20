@@ -41,6 +41,11 @@ std::expected<void, std::string> JpdaMatcherConfig::read_from(const toml::table&
     READ_OPT(tbl, semantic_reweight_lambda);
     READ_OPT(tbl, enable_semantic);
     READ_OPT(tbl, enable_viterbi);
+    // Geometry consistency parameters
+    READ_OPT(tbl, enable_geometry);
+    READ_OPT(tbl, geometry_weight);
+    READ_OPT(tbl, sigma_radius);
+    READ_OPT(tbl, sigma_height);
     return {};
 }
 

@@ -262,6 +262,66 @@ struct JpdaMatcherConfig {
     ///   for final output.
     bool enable_viterbi{true};
 
+    /// Enable geometric consistency constraints.
+    ///
+    /// Problem:
+    ///   Phase ambiguity occurs because 4 armors look geometrically similar in measurement space.
+    ///   The filter state contains geometry estimates (r0, r1, h) that could discriminate.
+    ///
+    /// Intuition:
+    ///   Each permutation implies a specific geometric configuration. We can compute the implied
+    ///   geometry from observations and compare against the state estimate geometry to add an
+    ///   additional term to the likelihood.
+    ///
+    /// Analogy:
+    ///   Like using "shape matching" in addition to "position matching" for association.
+    ///
+    /// Precise:
+    ///   When true, adds geometry error term to permutation likelihood:
+    ///   log L_geo(π) = -0.5 * Σ (geometry_error(π)² / σ_geo²)
+    bool enable_geometry{true};
+
+    /// Weight for geometry consistency term in likelihood.
+    ///
+    /// Problem:
+    ///   Geometry estimates may be inaccurate early in tracking, so we need to balance
+    ///   geometry constraint against measurement innovation.
+    ///
+    /// Intuition:
+    ///   Larger → trust geometry more (stronger constraint). Smaller → trust measurements more.
+    ///
+    /// Analogy:
+    ///   Like a "confidence weight" for geometric vs measurement likelihood.
+    ///
+    /// Precise:
+    ///   Multiplier for geometry penalty in log-likelihood:
+    ///   log L += geometry_weight * (-0.5 * geo_penalty)
+    double geometry_weight{1.0};
+
+    /// Expected uncertainty in radius estimate (meters).
+    ///
+    /// Problem:
+    ///   Radius estimates have uncertainty that varies with tracking phase.
+    ///
+    /// Intuition:
+    ///   Larger → more tolerant of radius mismatch. Smaller → stricter radius matching.
+    ///
+    /// Precise:
+    ///   Standard deviation for radius error: (r_implied - r_expected)² / σ_r²
+    double sigma_radius{0.02};
+
+    /// Expected uncertainty in height estimate (meters).
+    ///
+    /// Problem:
+    ///   Height estimates have uncertainty that varies with tracking phase.
+    ///
+    /// Intuition:
+    ///   Larger → more tolerant of height mismatch. Smaller → stricter height matching.
+    ///
+    /// Precise:
+    ///   Standard deviation for height error: (z_obs - z_expected)² / σ_h²
+    double sigma_height{0.03};
+
     std::expected<void, std::string> read_from(const toml::table& tbl) noexcept;
 };
 

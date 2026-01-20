@@ -159,6 +159,44 @@ struct RobotModel {
             std::log(std::abs(distance) + 1.0) / 200.0 + 9e-2;
         return uni_kf::SymmetricMatrix<NZ, Scalar>::Diagonal(diag);
     }
+
+    /// Get the expected radius for a given armor ID.
+    ///
+    /// Problem:
+    ///   For geometric consistency constraints, we need to know the expected radius
+    ///   for each armor based on the current state estimate.
+    ///
+    /// Precise:
+    ///   Robot armors 0,2 use r0; armors 1,3 use r1.
+    [[nodiscard]] Scalar expected_radius(const StatePoint& x, int armor_id) const noexcept {
+        const auto& e = x.first.data;
+        if (armor_id == kHighArmorIdA || armor_id == kHighArmorIdB) {
+            return e(R_1);
+        }
+        return e(R_0);
+    }
+
+    /// Get the expected height (z-coordinate) for a given armor ID.
+    ///
+    /// Problem:
+    ///   For geometric consistency constraints, we need to know the expected height
+    ///   for each armor based on the current state estimate.
+    ///
+    /// Precise:
+    ///   Robot armors 0,2 use z0; armors 1,3 use z0 + h.
+    [[nodiscard]] Scalar expected_height(const StatePoint& x, int armor_id) const noexcept {
+        const auto& e = x.first.data;
+        if (armor_id == kHighArmorIdA || armor_id == kHighArmorIdB) {
+            return e(Z0) + e(H);
+        }
+        return e(Z0);
+    }
+
+    /// Get the center XY coordinates from state.
+    [[nodiscard]] Eigen::Vector2d center_xy(const StatePoint& x) const noexcept {
+        const auto& e = x.first.data;
+        return {e(XC), e(YC)};
+    }
 };
 
 // ============================================================================
@@ -272,6 +310,43 @@ struct OutpostModel {
         diag << 4e-3, 4e-3, std::log(delta_angle + 1.0) + 1.0,
             std::log(std::abs(distance) + 1.0) / 200.0 + 9e-2;
         return uni_kf::SymmetricMatrix<NZ, Scalar>::Diagonal(diag);
+    }
+
+    /// Get the expected radius for a given armor ID.
+    ///
+    /// Problem:
+    ///   For geometric consistency constraints, we need to know the expected radius
+    ///   for each armor based on the current state estimate.
+    ///
+    /// Precise:
+    ///   Outpost has fixed radius for all armors.
+    [[nodiscard]] static constexpr Scalar expected_radius(
+        [[maybe_unused]] const StatePoint& x, [[maybe_unused]] int armor_id) noexcept {
+        return OUTPOST_RADIUS;
+    }
+
+    /// Get the expected height (z-coordinate) for a given armor ID.
+    ///
+    /// Problem:
+    ///   For geometric consistency constraints, we need to know the expected height
+    ///   for each armor based on the current state estimate.
+    ///
+    /// Precise:
+    ///   Outpost armors have independent heights: z0, z1, z2.
+    [[nodiscard]] Scalar expected_height(const StatePoint& x, int armor_id) const noexcept {
+        const auto& e = x.first.data;
+        switch (armor_id) {
+        case 0: return e(Z0);
+        case 1: return e(Z1);
+        case 2: return e(Z2);
+        default: return e(Z0);
+        }
+    }
+
+    /// Get the center XY coordinates from state.
+    [[nodiscard]] Eigen::Vector2d center_xy(const StatePoint& x) const noexcept {
+        const auto& e = x.first.data;
+        return {e(XC), e(YC)};
     }
 };
 

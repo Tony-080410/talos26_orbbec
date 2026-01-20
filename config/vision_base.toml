@@ -50,10 +50,15 @@ inekf_enabled = true
 
 [tracker.jpda_matcher]
 enable_jpda_matcher = true   # 启用JpdaMatcher
-phase_ambiguous_threshold = 0.3  # 相位模糊阈值
+phase_ambiguous_threshold = 0.2  # 相位模糊阈值
 phase_switch_lambda = 0.2         # Viterbi切换惩罚
 enable_semantic = true           # 语义融合
 enable_viterbi = true             # Viterbi平滑
+# Geometry consistency parameters
+enable_geometry = true           # 启用几何一致性约束
+geometry_weight = 1.0            # 几何约束权重
+sigma_radius = 0.02              # 半径不确定度 (m)
+sigma_height = 0.03              # 高度不确定度 (m)
 
 [tracker.robot]
 matcher_gate = 5.0
@@ -102,7 +107,7 @@ sigma_q_z = 2.0
 sigma_a_yaw = 8.0
 
 [tracker.outpost_inekf]
-sigma_a_xy = 15.0
+sigma_a_xy = 25.0
 sigma_a_z = 2.0
 sigma_yaw = 20.0
 sigma_h = 2.5
@@ -112,7 +117,7 @@ use_dynamic_noise = false
 dynamic_noise_k_radial = 0.8
 dynamic_noise_k_tangent = 0.0000625
 # Spherical coordinate observation mode (faster tracking response)
-use_spherical_observation = true
+use_spherical_observation = false
 sigma_yaw_obs = 0.063
 sigma_pitch_obs = 0.063
 sigma_armor_yaw = 0.3
