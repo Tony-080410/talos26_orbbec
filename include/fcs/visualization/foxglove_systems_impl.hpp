@@ -12,6 +12,7 @@
 #include "fcs/core/channel_tags.hpp"
 #include "fcs/core/types.hpp"
 #include "math/fast_tf/frame.hpp"
+#include "math/fast_tf/matrix.hpp"
 #include "scheduler/ecs/channel_types.hpp"
 #include "scheduler/scheduler.hpp"
 
@@ -224,7 +225,7 @@ inline void add_velocity_arrows(
     cube.size = {
         ARMOR_CUBE_THICKNESS, is_big_armor ? ARMOR_CUBE_HEIGHT_BIG : ARMOR_CUBE_HEIGHT_SMALL,
         ARMOR_CUBE_WIDTH};
-    cube.color = create_color(0.0, 1.0, 0.0, alpha);
+    cube.color = COLOR_WHITE;
     return cube;
 }
 
@@ -648,7 +649,7 @@ void register_foxglove_systems(App& app, talos::Scheduler* scheduler_ptr_ = null
                 const auto pose = detail::create_identity_pose(position);
 
                 entity.spheres.push_back(
-                    detail::create_sphere(pose, detail::SPHERE_SIZE_DEFAULT, detail::COLOR_GREEN));
+                    detail::create_sphere(pose, detail::SPHERE_SIZE_SMALL, detail::COLOR_WHITE));
 
                 // 绘制速度箭头
                 detail::add_velocity_arrows(entity, position, v_yaw, velocity);
@@ -721,7 +722,7 @@ void register_foxglove_systems(App& app, talos::Scheduler* scheduler_ptr_ = null
 
                 entity.spheres.push_back(
                     detail::create_sphere(
-                        detail::create_identity_pose(position), detail::SPHERE_SIZE_DEFAULT,
+                        detail::create_identity_pose(position), detail::SPHERE_SIZE_SMALL,
                         detail::COLOR_ORANGE));
                 entities.push_back(entity);
             }
@@ -737,7 +738,7 @@ void register_foxglove_systems(App& app, talos::Scheduler* scheduler_ptr_ = null
                             detail::create_vector3(
                                 cmd->predicted_position->x(), cmd->predicted_position->y(),
                                 cmd->predicted_position->z())),
-                        detail::SPHERE_SIZE_SMALL, detail::COLOR_RED));
+                        detail::SPHERE_SIZE_SMALL, detail::COLOR_YELLOW));
                 entities.push_back(entity);
             }
 
@@ -1308,9 +1309,7 @@ void register_foxglove_systems(App& app, talos::Scheduler* scheduler_ptr_ = null
 
                 const double alpha = (k == static_cast<size_t>(plan->mpc_current_idx)) ? 1.0 : 0.3;
                 ref_entity.spheres.push_back(
-                    detail::create_sphere(
-                        pose, detail::SPHERE_SIZE_TINY,
-                        detail::create_color(0.0, 0.5, 1.0, alpha)));
+                    detail::create_sphere(pose, detail::SPHERE_SIZE_TINY, detail::COLOR_RED));
             }
             entities.push_back(ref_entity);
 
@@ -1332,9 +1331,7 @@ void register_foxglove_systems(App& app, talos::Scheduler* scheduler_ptr_ = null
 
                 const double alpha = (k == static_cast<size_t>(plan->mpc_current_idx)) ? 1.0 : 0.5;
                 opt_entity.spheres.push_back(
-                    detail::create_sphere(
-                        pose, detail::SPHERE_SIZE_TINY,
-                        detail::create_color(0.0, 1.0, 0.0, alpha)));
+                    detail::create_sphere(pose, detail::SPHERE_SIZE_TINY, detail::COLOR_GREEN));
             }
             entities.push_back(opt_entity);
 
@@ -1350,7 +1347,7 @@ void register_foxglove_systems(App& app, talos::Scheduler* scheduler_ptr_ = null
             current_entity.spheres.push_back(
                 detail::create_sphere(
                     detail::create_identity_pose(detail::create_vector3(x, y, z)),
-                    detail::SPHERE_SIZE_DEFAULT, detail::COLOR_GREEN));
+                    detail::SPHERE_SIZE_DEFAULT, detail::COLOR_CYAN));
             entities.push_back(current_entity);
 
             detail::publish_scene_if_nonempty<MpcPredictionSceneMessage>(

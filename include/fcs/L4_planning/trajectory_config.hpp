@@ -1,6 +1,7 @@
 #pragma once
 
 #include <expected>
+#include <string>
 
 // Forward declaration to avoid including toml++ in config headers.
 namespace toml {

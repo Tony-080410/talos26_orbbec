@@ -64,6 +64,54 @@ struct RobotInEKFConfig {
     /// Precise: this is *process noise* (not measurement noise). Used in
     /// process_noise_covariance().
     double sigma_yaw{20.0};
+
+    /// Enable coordinated-turn kinematics in prediction.
+    ///
+    /// Problem:
+    ///   CV mean prediction moves in a straight line even when the target is turning, which
+    ///   increases lag around turning points.
+    ///
+    /// Intuition:
+    ///   When v_yaw != 0, rotate velocity by yaw increment and integrate position along a circular
+    ///   arc (coordinated turn). This tightens tracking for turning targets without increasing
+    ///   state dimension.
+    bool use_coordinated_turn{true};
+
+    /// Enable slip-gated coupling between yaw-rate and translation.
+    ///
+    /// Problem:
+    ///   In many games/simulations, targets can translate in an arbitrary direction while yaw
+    ///   rotates independently ("cat-walk"/strafing). In that case, coupling translation to v_yaw
+    ///   (coordinated turn) is wrong and can hurt tracking.
+    ///
+    /// Solution:
+    ///   Estimate a slip angle between the velocity heading and yaw. Only apply coordinated-turn
+    ///   integration when heading ≈ yaw; otherwise fall back to straight-line CV for translation.
+    bool enable_slip_gated_turn{true};
+
+    /// Enable adaptive scaling of process noise based on innovation magnitude.
+    ///
+    /// Problem:
+    ///   Fixed Q is a compromise: small Q is stable but laggy during maneuvers; large Q follows
+    ///   maneuvers but becomes noisy in steady state.
+    ///
+    /// Intuition:
+    ///   Increase Q temporarily when innovations are large (maneuver), then decay back to 1.
+    bool enable_adaptive_process_noise{true};
+
+    /// Enable pseudo-velocity updates derived from consecutive spherical armor observations.
+    ///
+    /// Problem:
+    ///   With pose-only observations, velocity is an inferred first-derivative state and can lag
+    ///   during fast maneuvers (snake, stop-go, reverse).
+    ///
+    /// Solution:
+    ///   Convert spherical armor observations to a target-center position measurement, then use a
+    ///   finite-difference velocity measurement over a short interval to directly update v.
+    bool enable_pseudo_velocity_update{true};
+
+    /// Enable soft robust weighting (downweight extreme outliers instead of skipping updates).
+    bool enable_robust_update{true};
     /// Geometry radius random-walk noise std-dev (≈ m/√s), shared for r0/r1.
     /// Problem: geometry is not perfectly known and can drift (mounting, calibration bias).
     /// Intuition: larger → geometry adapts faster but can drift; smaller → geometry stays stable.
@@ -227,6 +275,21 @@ struct OutpostInEKFConfig {
     /// Yaw angular-acceleration process-noise std-dev (≈ rad/s^2).
     /// Problem/Intuition/Analogy/Precise: same as RobotInEKFConfig::sigma_yaw.
     double sigma_yaw{20.0};
+
+    /// Enable coordinated-turn kinematics in prediction (same meaning as RobotInEKFConfig).
+    bool use_coordinated_turn{true};
+
+    /// Enable slip-gated coupling between yaw-rate and translation (same meaning as RobotInEKFConfig).
+    bool enable_slip_gated_turn{true};
+
+    /// Enable adaptive scaling of process noise based on innovation magnitude.
+    bool enable_adaptive_process_noise{true};
+
+    /// Enable pseudo-velocity updates derived from consecutive spherical armor observations.
+    bool enable_pseudo_velocity_update{true};
+
+    /// Enable soft robust weighting (downweight extreme outliers instead of skipping updates).
+    bool enable_robust_update{true};
     /// dz drift noise std-dev (≈ m/√s) for dz1/dz2 random walk.
     /// Problem: outpost radius is fixed; only relative armor heights (dz1/dz2) are modeled.
     /// Intuition: larger → dz adapts faster but can drift; smaller → dz stays stable.

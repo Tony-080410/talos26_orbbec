@@ -198,7 +198,7 @@ inline TrajectoryGenerator::Trajectory TrajectoryGenerator::generate_trajectory(
         aim_curr = aim_next;
     }
 
-    return std::make_pair(std::make_pair(ideal_time, predict(ideal_time)), traj);
+    return std::make_pair(std::make_pair(action_overhead, predict(action_overhead)), traj);
 }
 
 inline TrajectoryGenerator::Trajectory TrajectoryGenerator::generate_robot(

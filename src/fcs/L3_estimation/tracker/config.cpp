@@ -30,22 +30,22 @@ std::expected<void, std::string> TrackerConfig::read_from(const toml::table& tbl
     READ(tbl, inekf_enabled);
     READ(tbl, robot_inekf);
     READ(tbl, outpost_inekf);
-    READ_OPT(tbl, jpda_matcher);
+    READ(tbl, jpda_matcher);
     return {};
 }
 
 std::expected<void, std::string> JpdaMatcherConfig::read_from(const toml::table& tbl) noexcept {
-    READ_OPT(tbl, enable_jpda_matcher);
-    READ_OPT(tbl, phase_ambiguous_threshold);
-    READ_OPT(tbl, phase_switch_lambda);
-    READ_OPT(tbl, semantic_reweight_lambda);
-    READ_OPT(tbl, enable_semantic);
-    READ_OPT(tbl, enable_viterbi);
+    READ(tbl, enable_jpda_matcher);
+    READ(tbl, phase_ambiguous_threshold);
+    READ(tbl, phase_switch_lambda);
+    READ(tbl, semantic_reweight_lambda);
+    READ(tbl, enable_semantic);
+    READ(tbl, enable_viterbi);
     // Geometry consistency parameters
-    READ_OPT(tbl, enable_geometry);
-    READ_OPT(tbl, geometry_weight);
-    READ_OPT(tbl, sigma_radius);
-    READ_OPT(tbl, sigma_height);
+    READ(tbl, enable_geometry);
+    READ(tbl, geometry_weight);
+    READ(tbl, sigma_radius);
+    READ(tbl, sigma_height);
     return {};
 }
 

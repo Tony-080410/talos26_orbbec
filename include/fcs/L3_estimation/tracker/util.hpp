@@ -128,6 +128,36 @@ enum Measure : uint8_t {
     return {x, y, z};
 }
 
+/// Jacobian of ypd2xyz transformation: ∂(x, y, z)/∂(yaw, pitch, distance)
+[[nodiscard]] inline Eigen::Matrix3d ypd2xyz_jacobian(const Eigen::Vector3d& ypd) noexcept {
+    const double yaw      = ypd.x();
+    const double pitch    = ypd.y();
+    const double distance = ypd.z();
+
+    const double cy = std::cos(yaw);
+    const double sy = std::sin(yaw);
+    const double cp = std::cos(pitch);
+    const double sp = std::sin(pitch);
+
+    Eigen::Matrix3d J;
+    // x = r cp cy
+    J(0, 0) = -distance * cp * sy; // dx/dyaw
+    J(0, 1) = -distance * sp * cy; // dx/dpitch
+    J(0, 2) = cp * cy;             // dx/dr
+
+    // y = r cp sy
+    J(1, 0) = distance * cp * cy;  // dy/dyaw
+    J(1, 1) = -distance * sp * sy; // dy/dpitch
+    J(1, 2) = cp * sy;             // dy/dr
+
+    // z = -r sp
+    J(2, 0) = 0.0;          // dz/dyaw
+    J(2, 1) = -distance * cp; // dz/dpitch
+    J(2, 2) = -sp;          // dz/dr
+
+    return J;
+}
+
 // ============================================================================
 // Angle Utilities
 // ============================================================================

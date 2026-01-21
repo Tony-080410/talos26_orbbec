@@ -50,15 +50,16 @@ inekf_enabled = true
 
 [tracker.jpda_matcher]
 enable_jpda_matcher = true   # 启用JpdaMatcher
-phase_ambiguous_threshold = 0.2  # 相位模糊阈值
-phase_switch_lambda = 0.2         # Viterbi切换惩罚
+phase_ambiguous_threshold = 0.1  # 相位模糊阈值
+phase_switch_lambda = 0.8         # Viterbi切换惩罚
+semantic_reweight_lambda = 0.5
 enable_semantic = true           # 语义融合
 enable_viterbi = true             # Viterbi平滑
 # Geometry consistency parameters
 enable_geometry = true           # 启用几何一致性约束
-geometry_weight = 1.0            # 几何约束权重
-sigma_radius = 0.02              # 半径不确定度 (m)
-sigma_height = 0.03              # 高度不确定度 (m)
+geometry_weight = 0.7            # 几何约束权重
+sigma_radius = 0.12              # 半径不确定度 (m)
+sigma_height = 0.13              # 高度不确定度 (m)
 
 [tracker.robot]
 matcher_gate = 5.0
@@ -77,16 +78,16 @@ sigma_h = 0.5
 sigma_a_xy = 40.0
 sigma_a_z = 1.0
 sigma_w = 0.75
-sigma_m = 0.75
-sigma_yaw = 26.0
+sigma_m = 0.5
+sigma_yaw = 6.28
 radius0 = 0.23
 radius1 = 0.23
 height = 0.1
-sigma_r = 1.0
-sigma_h = 0.05
-use_dynamic_noise = false
-dynamic_noise_k_radial = 52.5
-dynamic_noise_k_tangent = 90.0
+sigma_r = 1.5
+sigma_h = 0.5
+use_dynamic_noise = true
+dynamic_noise_k_radial = 10.0
+dynamic_noise_k_tangent = 0.00625
 # Spherical coordinate observation mode (faster tracking response)
 use_spherical_observation = true
 sigma_yaw_obs = 0.063
@@ -95,6 +96,12 @@ sigma_armor_yaw = 0.3
 # Innovation gating (outlier rejection)
 max_angle_innovation = 1.5  # rad (~86°), set larger to allow fast maneuvers
 max_dist_innovation = 5.0   # meters
+
+use_coordinated_turn = true
+enable_slip_gated_turn = true
+enable_adaptive_process_noise = true
+enable_pseudo_velocity_update = true
+enable_robust_update = true
 
 [tracker.outpost]
 matcher_gate = 4.0
@@ -109,21 +116,27 @@ sigma_a_yaw = 8.0
 [tracker.outpost_inekf]
 sigma_a_xy = 25.0
 sigma_a_z = 2.0
-sigma_yaw = 20.0
-sigma_h = 2.5
-sigma_m = 2.5
-sigma_w = 2.5
-use_dynamic_noise = false
-dynamic_noise_k_radial = 0.8
-dynamic_noise_k_tangent = 0.0000625
+sigma_yaw = 9.0
+sigma_h = 0.5
+sigma_m = 0.5
+sigma_w = 0.5
+use_dynamic_noise = true
+dynamic_noise_k_radial = 1.0
+dynamic_noise_k_tangent = 10.0
 # Spherical coordinate observation mode (faster tracking response)
-use_spherical_observation = false
+use_spherical_observation = true
 sigma_yaw_obs = 0.063
 sigma_pitch_obs = 0.063
 sigma_armor_yaw = 0.3
 # Innovation gating (outlier rejection)
-max_angle_innovation = 0.8  # rad (~86°), set larger to allow fast maneuvers
+max_angle_innovation = 1.8  # rad (~86°), set larger to allow fast maneuvers
 max_dist_innovation = 3.0   # meters
+
+use_coordinated_turn = true
+enable_slip_gated_turn = true
+enable_adaptive_process_noise = true
+enable_pseudo_velocity_update = true
+enable_robust_update = true
 
 # MPC-based gimbal trajectory planner (TinyMPC ADMM solver)
 [mpc_planner]
