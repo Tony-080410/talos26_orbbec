@@ -1,12 +1,13 @@
 #pragma once
 
-// Implementation header; prefer including `fcs/visualization/foxglove_systems.hpp`.
-
 #include "L4_planning/gimbal_planner/types.hpp"
 #include "L5_weapon/fire_control.hpp"
 #include "camera_config.hpp"
+#include "ecs/execution_policy.hpp"
 #include "foxglove_server.hpp"
 #include "foxglove_types.hpp"
+#include "scene_builder.hpp"
+#include "tactical_palette.hpp"
 
 #include "fcs/L3_estimation/tracker/types.hpp"
 #include "fcs/core/channel_tags.hpp"
@@ -28,56 +29,15 @@
 
 namespace fcs {
 
+// Shorthand for commonly used namespaces
+namespace viz = visualization::builder;
+namespace tac = visualization::tactical;
+
 // ============================================================================
-// Foxglove System Helpers
+// SYSTEM HELPERS
 // ============================================================================
 
 namespace detail {
-
-// Constants for visualization
-constexpr double ARROW_SHAFT_DIAMETER       = 0.02;
-constexpr double ARROW_HEAD_DIAMETER        = 0.04;
-constexpr double ARROW_MIN_LENGTH           = 0.0001;
-constexpr double ARROW_SHAFT_LENGTH_RATIO   = 0.8;
-constexpr double ARROW_HEAD_LENGTH_RATIO    = 0.2;
-constexpr double TEXT_DEFAULT_FONT_SIZE     = 0.05;
-constexpr uint64_t SCENE_ENTITY_LIFETIME_NS = 100000000;
-constexpr double ARMOR_CUBE_THICKNESS       = 0.03;
-constexpr double ARMOR_CUBE_HEIGHT_SMALL    = 0.135;
-constexpr double ARMOR_CUBE_HEIGHT_BIG      = 0.23;
-constexpr double ARMOR_CUBE_WIDTH           = 0.125;
-constexpr double ARMOR_TILT_ANGLE           = 0.2618; // 15 degrees in radians
-
-// Colors
-constexpr foxglove::schemas::Color COLOR_YELLOW = {1.0, 1.0, 0.0, 0.8};
-constexpr foxglove::schemas::Color COLOR_CYAN   = {0.0, 1.0, 1.0, 0.8};
-constexpr foxglove::schemas::Color COLOR_GREEN  = {0.0, 1.0, 0.0, 0.6};
-constexpr foxglove::schemas::Color COLOR_WHITE  = {1.0, 1.0, 1.0, 0.3};
-constexpr foxglove::schemas::Color COLOR_RED    = {1.0, 0.0, 0.0, 0.6};
-constexpr foxglove::schemas::Color COLOR_ORANGE = {1.0, 0.5, 0.0, 0.3};
-
-// Sizes
-constexpr double SPHERE_SIZE_DEFAULT  = 0.2;
-constexpr double SPHERE_SIZE_SMALL    = 0.08;
-constexpr double SPHERE_SIZE_TINY     = 0.01;
-constexpr double ARMOR_LABEL_OFFSET_Z = 0.1;
-constexpr double TEXT_OFFSET_Y        = 0.1;
-
-// Quaternions
-constexpr foxglove::schemas::Quaternion QUAT_IDENTITY{0.0, 0.0, 0.0, 1.0};
-constexpr double QUAT_90_DEG_X = 0.0;
-constexpr double QUAT_90_DEG_Y = 0.7071;
-constexpr double QUAT_90_DEG_Z = 0.0;
-constexpr double QUAT_90_DEG_W = 0.7071;
-
-// Image compression
-constexpr int JPEG_COMPRESSION_QUALITY     = 85;
-constexpr double VECTOR_PARALLEL_THRESHOLD = 1e-6;
-
-// MPC trajectory extrapolation velocity (m/s)
-constexpr double MPC_TRAJECTORY_EXTRAPOLATION_VEL = 5.0;
-// Covariance uncertainty sphere scaling
-constexpr double COVARIANCE_UNCERTAINTY_SCALE = 0.2;
 
 /// Check if Foxglove server is ready and channel has new data
 [[nodiscard]] inline bool
@@ -85,198 +45,23 @@ constexpr double COVARIANCE_UNCERTAINTY_SCALE = 0.2;
     return server && server->is_initialized() && channel.has_new();
 }
 
-/// Create a SceneEntity with common fields
-template <fast_tf::frame T>
-[[nodiscard]] inline foxglove::schemas::SceneEntity
-    create_scene_entity(std::string id, uint64_t timestamp_ns) noexcept {
-    foxglove::schemas::SceneEntity entity;
-    entity.id        = std::move(id);
-    entity.frame_id  = T::frame_id;
-    entity.lifetime  = foxglove::schemas::Duration{.nsec = SCENE_ENTITY_LIFETIME_NS};
-    entity.timestamp = timestamp_from_ns(timestamp_ns);
-    return entity;
+/// Publish JSON message to Foxglove server
+template <typename MessageType>
+inline void publish_json_message(
+    const std::shared_ptr<FoxgloveServer>& server, const nlohmann::json& json_obj) noexcept {
+    MessageType msg;
+    msg.data = json_to_bytes(json_obj.dump());
+    server->enqueue_message(std::move(msg));
 }
 
-/// Create a Pose from position (optional) and orientation (optional)
-[[nodiscard]] inline foxglove::schemas::Pose create_pose(
-    std::optional<foxglove::schemas::Vector3> position       = std::nullopt,
-    std::optional<foxglove::schemas::Quaternion> orientation = std::nullopt) noexcept {
-    foxglove::schemas::Pose pose;
-    pose.position    = std::move(position);
-    pose.orientation = std::move(orientation);
-    return pose;
-}
-
-/// Create a Vector3
+/// Convert spherical coordinates to Cartesian Vector3
 [[nodiscard]] inline foxglove::schemas::Vector3
-    create_vector3(double x, double y, double z) noexcept {
+    spherical_to_cartesian(double distance, double yaw, double pitch) noexcept {
     foxglove::schemas::Vector3 v;
-    v.x = x;
-    v.y = y;
-    v.z = z;
+    v.x = distance * std::cos(pitch) * std::cos(yaw);
+    v.y = distance * std::cos(pitch) * std::sin(yaw);
+    v.z = distance * std::sin(pitch);
     return v;
-}
-
-/// Create a Quaternion from components
-[[nodiscard]] inline foxglove::schemas::Quaternion
-    create_quaternion(double x, double y, double z, double w) noexcept {
-    foxglove::schemas::Quaternion q;
-    q.x = x;
-    q.y = y;
-    q.z = z;
-    q.w = w;
-    return q;
-}
-
-/// Create a Color
-[[nodiscard]] inline foxglove::schemas::Color
-    create_color(double r, double g, double b, double a) noexcept {
-    foxglove::schemas::Color c;
-    c.r = r;
-    c.g = g;
-    c.b = b;
-    c.a = a;
-    return c;
-}
-
-/// Create a standardized text primitive
-[[nodiscard]] inline foxglove::schemas::TextPrimitive create_text_primitive(
-    std::string text, foxglove::schemas::Pose pose, double font_size = TEXT_DEFAULT_FONT_SIZE,
-    foxglove::schemas::Color color = create_color(1.0, 1.0, 1.0, 0.9)) noexcept {
-    foxglove::schemas::TextPrimitive text_prim;
-    text_prim.text      = std::move(text);
-    text_prim.pose      = std::move(pose);
-    text_prim.font_size = font_size;
-    text_prim.color     = std::move(color);
-    text_prim.billboard = true;
-    return text_prim;
-}
-
-/// Create arrow primitive for angular velocity (along Z axis)
-[[nodiscard]] inline foxglove::schemas::ArrowPrimitive create_angular_velocity_arrow(
-    const foxglove::schemas::Vector3& position, double v_yaw) noexcept {
-    foxglove::schemas::ArrowPrimitive arrow;
-    const double length = std::abs(v_yaw) / M_PI;
-    if (length <= ARROW_MIN_LENGTH) {
-        return arrow;
-    }
-
-    arrow.pose           = create_pose();
-    arrow.pose->position = position;
-    const double sign    = v_yaw >= 0 ? -1.0 : 1.0;
-    arrow.pose->orientation =
-        create_quaternion(QUAT_90_DEG_X, sign * QUAT_90_DEG_Y, QUAT_90_DEG_Z, QUAT_90_DEG_W);
-    arrow.shaft_length   = length * ARROW_SHAFT_LENGTH_RATIO;
-    arrow.shaft_diameter = ARROW_SHAFT_DIAMETER;
-    arrow.head_length    = length * ARROW_HEAD_LENGTH_RATIO;
-    arrow.head_diameter  = ARROW_HEAD_DIAMETER;
-    arrow.color          = COLOR_YELLOW;
-    return arrow;
-}
-
-/// Create arrow primitive for linear velocity
-[[nodiscard]] inline foxglove::schemas::ArrowPrimitive create_linear_velocity_arrow(
-    const foxglove::schemas::Vector3& position, const Eigen::Vector3d& velocity) noexcept {
-    foxglove::schemas::ArrowPrimitive arrow;
-    const double length = velocity.norm();
-    if (length <= ARROW_MIN_LENGTH) {
-        return arrow;
-    }
-
-    arrow.pose           = create_pose();
-    arrow.pose->position = position;
-
-    const Eigen::Vector3d vel_dir = velocity.normalized();
-    const Eigen::Vector3d default_dir(1, 0, 0);
-    Eigen::Quaterniond q;
-    if ((vel_dir + default_dir).norm() < VECTOR_PARALLEL_THRESHOLD) {
-        q = Eigen::Quaterniond(Eigen::AngleAxisd(M_PI, Eigen::Vector3d::UnitZ()));
-    } else {
-        q = Eigen::Quaterniond::FromTwoVectors(default_dir, vel_dir);
-    }
-    arrow.pose->orientation = create_quaternion(q.x(), q.y(), q.z(), q.w());
-    arrow.shaft_length      = length * ARROW_SHAFT_LENGTH_RATIO;
-    arrow.shaft_diameter    = ARROW_SHAFT_DIAMETER;
-    arrow.head_length       = length * ARROW_HEAD_LENGTH_RATIO;
-    arrow.head_diameter     = ARROW_HEAD_DIAMETER;
-    arrow.color             = COLOR_CYAN;
-    return arrow;
-}
-
-/// Add velocity arrows to scene entity for robot/outpost states
-inline void add_velocity_arrows(
-    foxglove::schemas::SceneEntity& entity, const foxglove::schemas::Vector3& position,
-    double v_yaw, const Eigen::Vector3d& linear_velocity) noexcept {
-    if (auto angular_arrow = create_angular_velocity_arrow(position, v_yaw);
-        angular_arrow.pose.has_value()) {
-        entity.arrows.push_back(std::move(angular_arrow));
-    }
-    if (auto linear_arrow = create_linear_velocity_arrow(position, linear_velocity);
-        linear_arrow.pose.has_value()) {
-        entity.arrows.push_back(std::move(linear_arrow));
-    }
-}
-
-/// Create armor cube primitive with standardized sizing
-[[nodiscard]] inline foxglove::schemas::CubePrimitive create_armor_cube(
-    const foxglove::schemas::Pose& pose, bool is_big_armor, double alpha = 0.3) noexcept {
-    foxglove::schemas::CubePrimitive cube;
-    cube.pose = pose;
-    cube.size = {
-        ARMOR_CUBE_THICKNESS, is_big_armor ? ARMOR_CUBE_HEIGHT_BIG : ARMOR_CUBE_HEIGHT_SMALL,
-        ARMOR_CUBE_WIDTH};
-    cube.color = COLOR_WHITE;
-    return cube;
-}
-
-/// Create quaternion from armor pose (yaw, pitch, roll)
-[[nodiscard]] inline Eigen::Quaterniond
-    armor_pose_to_quaternion(double yaw, double pitch, double roll) noexcept {
-    return Eigen::AngleAxisd(yaw, Eigen::Vector3d::UnitZ())
-         * Eigen::AngleAxisd(pitch, Eigen::Vector3d::UnitY())
-         * Eigen::AngleAxisd(roll, Eigen::Vector3d::UnitX());
-}
-
-/// Add armor cubes to scene entity for outpost target
-inline void add_outpost_armor_cubes(
-    foxglove::schemas::SceneEntity& entity, const L3::OutpostTargetState& state) noexcept {
-    const auto armor_poses = state.armor_poses();
-    static_assert(armor_poses.size() == 3);
-
-    for (const auto& armor_pose : armor_poses) {
-        const Eigen::Quaterniond q =
-            armor_pose_to_quaternion(armor_pose[3], -ARMOR_TILT_ANGLE, 0.0);
-
-        const auto pose = create_pose(
-            create_vector3(armor_pose[0], armor_pose[1], armor_pose[2]),
-            create_quaternion(q.x(), q.y(), q.z(), q.w()));
-
-        entity.cubes.push_back(create_armor_cube(pose, false));
-    }
-}
-
-/// Add armor cubes to scene entity for robot target
-inline void add_robot_armor_cubes(
-    foxglove::schemas::SceneEntity& entity, const L3::RobotTargetState& state,
-    ArmorName target_name) noexcept {
-    const bool is_big_armor = target_name == ArmorName::One || target_name == ArmorName::Base;
-    const auto armor_poses  = state.armor_poses();
-    static_assert(armor_poses.size() == 4);
-
-    for (int i = 0; i < 4; i++) {
-        const Eigen::Quaterniond q =
-            armor_pose_to_quaternion(armor_poses[i][3], ARMOR_TILT_ANGLE, 0.0);
-
-        const auto pose = create_pose(
-            create_vector3(armor_poses[i][0], armor_poses[i][1], armor_poses[i][2]),
-            create_quaternion(q.x(), q.y(), q.z(), q.w()));
-
-        entity.cubes.push_back(create_armor_cube(pose, is_big_armor));
-
-        auto label_pose = pose;
-        label_pose.position->z += ARMOR_LABEL_OFFSET_Z;
-        entity.texts.push_back(create_text_primitive(fmt::format("{}", i), label_pose));
-    }
 }
 
 /// Get center position from tracker output as Vector3
@@ -284,14 +69,14 @@ inline void add_robot_armor_cubes(
     get_tracker_position(const L3::TrackerOutput& output) noexcept {
     if (output.is_robot()) {
         const auto& state = *output.robot_state();
-        return create_vector3(state.position.x(), state.position.y(), state.position.z());
+        return viz::make_vector3(state.position.x(), state.position.y(), state.position.z());
     }
     if (output.is_outpost()) {
         const auto& state  = *output.outpost_state();
         const double avg_z = (state.z[0] + state.z[1] + state.z[2]) / 3.0;
-        return create_vector3(state.position.x(), state.position.y(), avg_z);
+        return viz::make_vector3(state.position.x(), state.position.y(), avg_z);
     }
-    return create_vector3(0, 0, 0);
+    return viz::make_vector3(0, 0, 0);
 }
 
 /// Get velocity from tracker output
@@ -317,94 +102,75 @@ inline void add_robot_armor_cubes(
     return 0.0;
 }
 
-/// Add metadata key-value pair to scene entity
-inline void add_metadata(
-    foxglove::schemas::SceneEntity& entity, std::string key, std::string value) noexcept {
-    foxglove::schemas::KeyValuePair kv;
-    kv.key   = std::move(key);
-    kv.value = std::move(value);
-    entity.metadata.push_back(std::move(kv));
-}
+/// Add armor cubes to scene entity for outpost target
+inline void add_outpost_armor_cubes(
+    foxglove::schemas::SceneEntity& entity, const L3::OutpostTargetState& state) noexcept {
+    const auto armor_poses = state.armor_poses();
+    static_assert(armor_poses.size() == 3);
 
-/// Create armor color based on armor color enum
-[[nodiscard]] inline foxglove::schemas::Color
-    get_armor_color(ArmorColor color, bool alternate = false) noexcept {
-    if (color == ArmorColor::Red) {
-        return alternate ? create_color(1.0, 0.5, 0.0, 0.5) : create_color(1.0, 0.0, 0.0, 0.5);
-    }
-    return alternate ? create_color(0.0, 0.5, 1.0, 0.5) : create_color(0.0, 0.0, 1.0, 0.5);
-}
+    for (const auto& armor_pose : armor_poses) {
+        const Eigen::Quaterniond q =
+            Eigen::AngleAxisd(armor_pose[3], Eigen::Vector3d::UnitZ())
+            * Eigen::AngleAxisd(-tac::Geometry::ARMOR_TILT_ANGLE, Eigen::Vector3d::UnitY());
 
-/// Create a sphere primitive with standardized sizing
-[[nodiscard]] inline foxglove::schemas::SpherePrimitive create_sphere(
-    const foxglove::schemas::Pose& pose, double size = SPHERE_SIZE_DEFAULT,
-    foxglove::schemas::Color color = COLOR_GREEN) noexcept {
-    foxglove::schemas::SpherePrimitive sphere;
-    sphere.pose  = pose;
-    sphere.size  = {size, size, size};
-    sphere.color = color;
-    return sphere;
-}
-
-/// Create identity pose (optional position with identity orientation)
-[[nodiscard]] inline foxglove::schemas::Pose create_identity_pose(
-    std::optional<foxglove::schemas::Vector3> position = std::nullopt) noexcept {
-    return create_pose(position, QUAT_IDENTITY);
-}
-
-/// Publish JSON message to Foxglove server
-template <typename MessageType>
-inline void publish_json_message(
-    const std::shared_ptr<FoxgloveServer>& server, const nlohmann::json& json_obj) noexcept {
-    MessageType msg;
-    msg.data = json_to_bytes(json_obj.dump());
-    server->enqueue_message(std::move(msg));
-}
-
-/// Convert spherical coordinates to Cartesian Vector3
-[[nodiscard]] inline foxglove::schemas::Vector3
-    spherical_to_cartesian(double distance, double yaw, double pitch) noexcept {
-    return create_vector3(
-        distance * std::cos(pitch) * std::cos(yaw), distance * std::cos(pitch) * std::sin(yaw),
-        distance * std::sin(pitch));
-}
-
-/// Publish scene message if entities is non-empty
-template <typename SceneMessageType>
-inline void publish_scene_if_nonempty(
-    const std::shared_ptr<FoxgloveServer>& server,
-    std::vector<foxglove::schemas::SceneEntity> entities) noexcept {
-    if (!entities.empty()) {
-        SceneMessageType msg;
-        msg.scene.entities = std::move(entities);
-        server->enqueue_message(std::move(msg));
+        entity.cubes.push_back(
+            viz::EntityBuilder::create<fast_tf::odom>("l3", "outpost_armor")
+                .position(armor_pose[0], armor_pose[1], armor_pose[2])
+                .orientation(q)
+                .cube(
+                    tac::Geometry::ARMOR_THICKNESS, tac::Geometry::ARMOR_HEIGHT_SMALL,
+                    tac::Geometry::ARMOR_WIDTH)
+                .build()
+                .cubes.back());
     }
 }
 
-/// Add sphere with label to scene entity
-inline void add_labeled_sphere(
-    foxglove::schemas::SceneEntity& entity, const foxglove::schemas::Pose& pose, std::string label,
-    double size = SPHERE_SIZE_SMALL, foxglove::schemas::Color color = COLOR_GREEN) noexcept {
-    entity.spheres.push_back(create_sphere(pose, size, color));
+/// Add armor cubes to scene entity for robot target
+inline void add_robot_armor_cubes(
+    foxglove::schemas::SceneEntity& entity, const L3::RobotTargetState& state,
+    ArmorName target_name) noexcept {
+    const bool is_big_armor = target_name == ArmorName::One || target_name == ArmorName::Base;
+    const auto armor_poses  = state.armor_poses();
+    static_assert(armor_poses.size() == 4);
 
-    auto label_pose = pose;
-    if (label_pose.position) {
-        label_pose.position->z += TEXT_OFFSET_Y;
+    for (int i = 0; i < 4; i++) {
+        const Eigen::Quaterniond q =
+            Eigen::AngleAxisd(armor_poses[i][3], Eigen::Vector3d::UnitZ())
+            * Eigen::AngleAxisd(tac::Geometry::ARMOR_TILT_ANGLE, Eigen::Vector3d::UnitY());
+
+        const auto armor_entity =
+            viz::EntityBuilder::create<fast_tf::odom>("l3", fmt::format("armor_{}", i))
+                .position(armor_poses[i][0], armor_poses[i][1], armor_poses[i][2])
+                .orientation(q)
+                .cube(
+                    tac::Geometry::ARMOR_THICKNESS,
+                    is_big_armor ? tac::Geometry::ARMOR_HEIGHT_BIG
+                                 : tac::Geometry::ARMOR_HEIGHT_SMALL,
+                    tac::Geometry::ARMOR_WIDTH)
+                .text_with_offset(
+                    fmt::format("{}", i), 0, 0, tac::L3::LABEL_OFFSET_Z, tac::Text::SIZE_SMALL)
+                .build();
+
+        entity.cubes.push_back(armor_entity.cubes.back());
+        entity.texts.push_back(armor_entity.texts.back());
     }
-    entity.texts.push_back(create_text_primitive(std::move(label), label_pose));
 }
 
 } // namespace detail
 
 // ============================================================================
-// Foxglove Publisher Systems
+// FOXGLOVE PUBLISHER SYSTEMS - TACTICAL NEURAL INTERFACE V2.0
 // ============================================================================
 
-/// 注册所有 Foxglove 发布系统
+/// Register all Foxglove publishing systems
 template <typename App>
 void register_foxglove_systems(App& app, talos::Scheduler* scheduler_ptr_ = nullptr) {
-    // 图像发布系统 (同时发布 camera_calibration 和 TF)
-    app.template add_system<talos::pool_compute>(
+
+    // =========================================================================
+    // IMAGE PUBLISHER (Camera calibration + TF)
+    // =========================================================================
+
+    app.template add_system<talos::exclusive<30>>(
         "foxglove_image_pub",
         [](talos::spmc<AtLegacyImageFrame, AtLegacyImageChannelTag> img_in,
            talos::res<std::shared_ptr<FoxgloveServer>> server, talos::res<fcs::CameraConfig> cam,
@@ -419,18 +185,15 @@ void register_foxglove_systems(App& app, talos::Scheduler* scheduler_ptr_ = null
                 return;
             }
 
-            // 发布 TF
+            // Publish TF
             (*server)->publish_tf(**tf_buffer, frame->timestamp_ns);
 
-            // 克隆图像避免数据竞争
+            // Clone image and draw detection boxes
             cv::Mat img_bgr = frame->image.clone();
             auto batch      = det_in.read_current();
             if (batch) {
                 for (size_t i = 0; i < batch->detections.size(); ++i) {
                     const auto& det = batch->detections[i];
-                    nlohmann::json obj;
-                    obj["center"]["x"] = det.center().x;
-                    obj["center"]["y"] = det.center().y;
                     cv::circle(img_bgr, det.center(), 5, cv::Scalar(0, 0, 255), 5);
                     for (auto i = 0; i < det.corners.size(); i++) {
                         auto pp1 = det.corners[i];
@@ -439,14 +202,15 @@ void register_foxglove_systems(App& app, talos::Scheduler* scheduler_ptr_ = null
                     }
                 }
             }
-            // 压缩为 JPEG
+
+            // Compress to JPEG
             std::vector<uint8_t> compressed;
-            std::vector<int> params{cv::IMWRITE_JPEG_QUALITY, detail::JPEG_COMPRESSION_QUALITY};
+            std::vector<int> params{cv::IMWRITE_JPEG_QUALITY, 85};
             if (!cv::imencode(".jpg", img_bgr, compressed, params)) {
                 return;
             }
 
-            // 构造消息
+            // Construct image message
             ImageMessage msg;
             msg.img.timestamp = timestamp_from_ns(frame->timestamp_ns);
             msg.img.frame_id  = "camera_optical_frame";
@@ -457,7 +221,7 @@ void register_foxglove_systems(App& app, talos::Scheduler* scheduler_ptr_ = null
 
             (*server)->enqueue_message(std::move(msg));
 
-            // 发布相机标定信息
+            // Publish camera calibration
             std::array<double, 9> camera_matrix_arr;
             std::copy_n(cam->camera_matrix.data(), 9, camera_matrix_arr.begin());
             std::vector<double> dist_coeffs(
@@ -468,7 +232,10 @@ void register_foxglove_systems(App& app, talos::Scheduler* scheduler_ptr_ = null
                 cam->width, cam->height, camera_matrix_arr, dist_coeffs, frame->timestamp_ns);
         });
 
-    // 检测结果发布系统
+    // =========================================================================
+    // DETECTION PUBLISHER
+    // =========================================================================
+
     app.template add_system<talos::pool_compute>(
         "foxglove_detection_pub",
         [](talos::spmc<AtLegacyArmorDetectionBatch, AtLegacyDetectionChannelTag> det_in,
@@ -482,7 +249,7 @@ void register_foxglove_systems(App& app, talos::Scheduler* scheduler_ptr_ = null
                 return;
             }
 
-            // 发布装甲板检测 JSON
+            // Publish armor detection JSON
             nlohmann::json armors_json;
             armors_json["timestamp_ns"] = batch->timestamp_ns;
             armors_json["armors"]       = nlohmann::json::array();
@@ -507,7 +274,67 @@ void register_foxglove_systems(App& app, talos::Scheduler* scheduler_ptr_ = null
             detail::publish_json_message<DebugArmorsMessage>(*server, armors_json);
         });
 
-    // 测量值发布系统 (PnP 结果)
+    // =========================================================================
+    // MEASUREMENT VISUALIZATION (L2)
+    // =========================================================================
+
+    app.template add_system<talos::pool_compute>(
+        "foxglove_l2_measurement_scene",
+        [](talos::spmc<AtLegacyArmorMeasurementBatch, AtLegacyMeasurementChannelTag> meas_in,
+           talos::res<std::shared_ptr<FoxgloveServer>> server) {
+            if (!detail::foxglove_ready(*server, meas_in))
+                return;
+
+            auto batch = meas_in.read();
+            if (!batch)
+                return;
+
+            std::vector<foxglove::schemas::SceneEntity> entities;
+
+            for (size_t i = 0; i < batch->measurements.size(); ++i) {
+                const auto& m = batch->measurements[i];
+                const auto t  = m.transform->translation();
+                const auto q  = m.transform->quaternion();
+
+                // Use convenience builder - semantic layer organization
+                auto entity =
+                    viz::EntityBuilder::create<fast_tf::odom>("l2", fmt::format("armor_{}", i))
+                        .position(t.x(), t.y(), t.z())
+                        .orientation(q.x(), q.y(), q.z(), q.w())
+                        .cube(
+                            tac::Geometry::ARMOR_THICKNESS, tac::Geometry::ARMOR_HEIGHT_SMALL,
+                            tac::Geometry::ARMOR_WIDTH)
+                        .color(tac::L2::MEASUREMENT_GHOST)
+                        .text_with_offset(
+                            fmt::format("{} {}", to_string(m.name), to_string(m.type)), 0,
+                            -tac::Text::SIZE_MEDIUM, 0, tac::L2::LABEL_FONT_SIZE)
+                        .metadata("confidence", fmt::format("{:.3f}", m.confidence))
+                        .metadata("color", std::string(to_string(m.color)))
+                        .timestamp(m.timestamp_ns)
+                        .build();
+
+                // Also add a sphere at same position
+                auto sphere =
+                    viz::EntityBuilder::create<fast_tf::odom>("l2", fmt::format("sphere_{}", i))
+                        .position(t.x(), t.y(), t.z())
+                        .size(tac::L2::ARMOR_SIZE)
+                        .color(tac::L2::MEASUREMENT_GHOST)
+                        .sphere()
+                        .timestamp(m.timestamp_ns)
+                        .build();
+
+                entities.push_back(std::move(entity));
+                entities.push_back(std::move(sphere));
+            }
+
+            // Publish to semantic channel
+            viz::publish_scene_if_nonempty<SceneMessage>(*server, std::move(entities));
+        });
+
+    // =========================================================================
+    // MEASUREMENT JSON PUBLISHER
+    // =========================================================================
+
     app.template add_system<talos::pool_compute>(
         "foxglove_measurement_pub",
         [](talos::spmc<AtLegacyArmorMeasurementBatch, AtLegacyMeasurementChannelTag> meas_in,
@@ -521,13 +348,10 @@ void register_foxglove_systems(App& app, talos::Scheduler* scheduler_ptr_ = null
                 return;
             }
 
-            // 发布测量值 JSON
+            // Publish measurement JSON
             nlohmann::json meas_json;
             meas_json["timestamp_ns"] = batch->timestamp_ns;
             meas_json["measurements"] = nlohmann::json::array();
-
-            // 构造 3D 场景
-            std::vector<foxglove::schemas::SceneEntity> entities;
 
             for (size_t i = 0; i < batch->measurements.size(); ++i) {
                 const auto& m = batch->measurements[i];
@@ -540,52 +364,69 @@ void register_foxglove_systems(App& app, talos::Scheduler* scheduler_ptr_ = null
                 obj["type"]     = to_string(m.type);
                 obj["name"]     = to_string(m.name);
                 meas_json["measurements"].push_back(obj);
-
-                foxglove::schemas::SceneEntity entity = detail::create_scene_entity<fast_tf::odom>(
-                    "armor_" + std::to_string(i), m.timestamp_ns);
-
-                const auto position =
-                    detail::create_vector3(translation.x(), translation.y(), translation.z());
-                const auto q    = m.transform->quaternion();
-                const auto pose = detail::create_pose(
-                    position, detail::create_quaternion(q.x(), q.y(), q.z(), q.w()));
-
-                foxglove::schemas::CubePrimitive cube;
-                cube.pose = pose;
-                cube.size = {
-                    detail::ARMOR_CUBE_THICKNESS, detail::ARMOR_CUBE_HEIGHT_SMALL,
-                    detail::ARMOR_CUBE_WIDTH};
-                cube.color = detail::get_armor_color(m.color, false);
-                entity.cubes.push_back(cube);
-
-                foxglove::schemas::SpherePrimitive sphere;
-                sphere.pose = pose;
-                sphere.size = {
-                    detail::ARMOR_CUBE_THICKNESS, detail::ARMOR_CUBE_HEIGHT_SMALL,
-                    detail::ARMOR_CUBE_WIDTH};
-                sphere.color = detail::get_armor_color(m.color, true);
-                entity.spheres.push_back(sphere);
-
-                auto text_pose = pose;
-                text_pose.position->y -= detail::TEXT_OFFSET_Y;
-                entity.texts.push_back(
-                    detail::create_text_primitive(
-                        fmt::format("{} {}", to_string(m.name), to_string(m.type)), text_pose));
-
-                detail::add_metadata(entity, "confidence", std::to_string(m.confidence));
-                detail::add_metadata(entity, "color", std::string(to_string(m.color)));
-
-                entities.push_back(entity);
             }
 
-            // 发送测量值 JSON
             detail::publish_json_message<MeasurementMessage>(*server, meas_json);
-
-            // 发送 3D 场景
-            detail::publish_scene_if_nonempty<SceneMessage>(*server, std::move(entities));
         });
 
-    // Tracker 输出发布系统
+    // =========================================================================
+    // TRACKER VISUALIZATION (L3)
+    // =========================================================================
+
+    app.template add_system<talos::pool_compute>(
+        "foxglove_l3_tracker_scene",
+        [](talos::spmc<L3::TrackerOutput, TrackerOutputChannelTag> tracker_in,
+           talos::res<std::shared_ptr<FoxgloveServer>> server) {
+            if (!detail::foxglove_ready(*server, tracker_in))
+                return;
+            auto output = tracker_in.read();
+            if (!output || !output->is_tracking())
+                return;
+
+            const auto pos   = detail::get_tracker_position(*output);
+            const auto vel   = detail::get_tracker_velocity(*output);
+            const auto v_yaw = detail::get_tracker_v_yaw(*output);
+
+            std::vector<foxglove::schemas::SceneEntity> entities;
+
+            // Main target sphere (status-colored)
+            entities.push_back(
+                viz::patterns::tracker_target<fast_tf::odom>(
+                    Eigen::Vector3d(pos.x, pos.y, pos.z), static_cast<int>(output->status),
+                    output->timestamp_ns));
+
+            // Velocity arrows
+            entities.push_back(
+                viz::patterns::velocity_arrows<fast_tf::odom>(
+                    Eigen::Vector3d(pos.x, pos.y, pos.z), vel, v_yaw, output->timestamp_ns));
+
+            // Armor cubes
+            if (output->is_robot()) {
+                foxglove::schemas::SceneEntity armor_entity =
+                    viz::EntityBuilder::create<fast_tf::odom>("l3", "robot_armors")
+                        .timestamp(output->timestamp_ns)
+                        .build();
+
+                detail::add_robot_armor_cubes(
+                    armor_entity, *output->robot_state(), output->target_name);
+                entities.push_back(std::move(armor_entity));
+            } else if (output->is_outpost()) {
+                foxglove::schemas::SceneEntity armor_entity =
+                    viz::EntityBuilder::create<fast_tf::odom>("l3", "outpost_armors")
+                        .timestamp(output->timestamp_ns)
+                        .build();
+
+                detail::add_outpost_armor_cubes(armor_entity, *output->outpost_state());
+                entities.push_back(std::move(armor_entity));
+            }
+
+            viz::publish_scene_if_nonempty<TrackSceneMessage>(*server, std::move(entities));
+        });
+
+    // =========================================================================
+    // TRACKER JSON PUBLISHER
+    // =========================================================================
+
     app.template add_system<talos::pool_compute>(
         "foxglove_tracker_pub",
         [](talos::spmc<L3::TrackerOutput, TrackerOutputChannelTag> tracker_in,
@@ -599,7 +440,7 @@ void register_foxglove_systems(App& app, talos::Scheduler* scheduler_ptr_ = null
                 return;
             }
 
-            // 发布目标状态 JSON
+            // Publish target state JSON
             nlohmann::json target_json;
             target_json["timestamp_ns"] = output->timestamp_ns;
             target_json["status"]       = to_string(output->status);
@@ -634,40 +475,80 @@ void register_foxglove_systems(App& app, talos::Scheduler* scheduler_ptr_ = null
             }
 
             detail::publish_json_message<TargetMessage>(*server, target_json);
-
-            // 发布跟踪场景 (预测装甲板位置)
-            if (output->is_tracking()) {
-                std::vector<foxglove::schemas::SceneEntity> entities;
-
-                foxglove::schemas::SceneEntity entity =
-                    detail::create_scene_entity<fast_tf::odom>("target", output->timestamp_ns);
-
-                const auto position = detail::get_tracker_position(*output);
-                const auto velocity = detail::get_tracker_velocity(*output);
-                const auto v_yaw    = detail::get_tracker_v_yaw(*output);
-
-                const auto pose = detail::create_identity_pose(position);
-
-                entity.spheres.push_back(
-                    detail::create_sphere(pose, detail::SPHERE_SIZE_SMALL, detail::COLOR_WHITE));
-
-                // 绘制速度箭头
-                detail::add_velocity_arrows(entity, position, v_yaw, velocity);
-
-                // 添加装甲板
-                if (output->is_outpost()) {
-                    detail::add_outpost_armor_cubes(entity, *output->outpost_state());
-                } else if (output->is_robot()) {
-                    detail::add_robot_armor_cubes(
-                        entity, *output->robot_state(), output->target_name);
-                }
-
-                entities.push_back(entity);
-                detail::publish_scene_if_nonempty<TrackSceneMessage>(*server, std::move(entities));
-            }
         });
 
-    // 云台指令发布系统
+    // =========================================================================
+    // ASSOCIATION VISUALIZATION (L3) - Predicted vs Measured
+    // =========================================================================
+
+    app.template add_system<talos::pool_compute>(
+        "foxglove_l3_association_scene",
+        [](talos::spmc<L3::TrackerOutput, TrackerOutputChannelTag> tracker_in,
+           talos::spmc<AtLegacyArmorMeasurementBatch, AtLegacyMeasurementChannelTag> meas_in,
+           talos::res<std::shared_ptr<FoxgloveServer>> server) {
+            if (!detail::foxglove_ready(*server, tracker_in))
+                return;
+
+            auto output = tracker_in.read();
+            if (!output || !output->is_tracking())
+                return;
+
+            auto batch = meas_in.read_current();
+            if (!batch)
+                return;
+
+            std::vector<foxglove::schemas::SceneEntity> entities;
+
+            // Predicted armors (present) - neon cyan
+            if (output->is_robot()) {
+                const auto& state = *output->robot_state();
+                const auto armors = state.armor_poses();
+                for (int i = 0; i < 4; i++) {
+                    entities.push_back(
+                        viz::patterns::predicted_armor<fast_tf::odom>(
+                            Eigen::Vector3d(armors[i][0], armors[i][1], armors[i][2]), i,
+                            output->timestamp_ns));
+                }
+            } else if (output->is_outpost()) {
+                const auto& state           = *output->outpost_state();
+                constexpr double kAngleStep = 2.0 * std::numbers::pi / 3.0;
+                for (int i = 0; i < 3; i++) {
+                    const double armor_yaw = state.yaw + i * kAngleStep;
+                    const auto& pos        = state.position;
+                    constexpr double r     = L3::OutpostTargetState::radius;
+                    const Eigen::Vector3d armor_pos{
+                        pos.x() + r * std::cos(armor_yaw), pos.y() + r * std::sin(armor_yaw),
+                        state.z[i]};
+
+                    entities.push_back(
+                        viz::EntityBuilder::create<fast_tf::odom>("l3", fmt::format("pred_{}", i))
+                            .position(armor_pos)
+                            .size(tac::L3::ARMOR_PLATE_SIZE)
+                            .color(tac::L3::TRACKING_LOCKED)
+                            .sphere()
+                            .text_with_offset(
+                                fmt::format("pred_{}", i), 0, 0, tac::L3::LABEL_OFFSET_Z)
+                            .timestamp(output->timestamp_ns)
+                            .build());
+                }
+            }
+
+            // Measurements (past) - ghost silver
+            for (size_t i = 0; i < batch->measurements.size(); ++i) {
+                const auto& m = batch->measurements[i];
+                const auto t  = m.transform->translation();
+                entities.push_back(
+                    viz::patterns::measurement_sphere<fast_tf::odom>(
+                        Eigen::Vector3d(t.x(), t.y(), t.z()), m.confidence, m.timestamp_ns));
+            }
+
+            viz::publish_scene_if_nonempty<AssociationSceneMessage>(*server, std::move(entities));
+        });
+
+    // =========================================================================
+    // GIMBAL COMMAND PUBLISHER
+    // =========================================================================
+
     app.template add_system<talos::pool_compute>(
         "foxglove_gimbal_cmd_pub",
         [](talos::spmc<L5::WeaponCommand, WeaponCommandChannelTag> cmd_in,
@@ -697,73 +578,85 @@ void register_foxglove_systems(App& app, talos::Scheduler* scheduler_ptr_ = null
             detail::publish_json_message<GimbalCmdMessage>(*server, cmd_json);
         });
 
-    // 云台场景发布系统 (弹道/预测位置/选择点可视化)
-    app.template add_system<talos::pool_compute>(
-        "foxglove_gimbal_scene_pub", [](talos::spmc<L4::GimbalPlan, GimbalPlanChannelTag> cmd_in,
-                                        talos::res<std::shared_ptr<FoxgloveServer>> server) {
-            if (!detail::foxglove_ready(*server, cmd_in)) {
-                return;
-            }
+    // =========================================================================
+    // GIMBAL SCENE VISUALIZATION (L4) - Selection + Prediction + Trajectory
+    // =========================================================================
 
-            auto cmd = cmd_in.read();
-            if (!cmd || cmd->distance <= 0) {
+    app.template add_system<talos::pool_compute>(
+        "foxglove_l4_gimbal_scene", [](talos::spmc<L4::GimbalPlan, GimbalPlanChannelTag> plan_in,
+                                       talos::res<std::shared_ptr<FoxgloveServer>> server) {
+            if (!detail::foxglove_ready(*server, plan_in))
                 return;
-            }
+            auto plan = plan_in.read();
+            if (!plan || plan->distance <= 0)
+                return;
 
             std::vector<foxglove::schemas::SceneEntity> entities;
 
-            // Selection marker - 瞄准点 (黄绿色球体)
+            // Selection marker (fire decision aware)
             {
                 foxglove::schemas::SceneEntity entity =
-                    detail::create_scene_entity<fast_tf::gimbal>("selection", cmd->timestamp_ns);
+                    viz::EntityBuilder::create<fast_tf::gimbal>("l4", "selection")
+                        .timestamp(plan->timestamp_ns)
+                        .build();
 
                 const auto position =
-                    detail::spherical_to_cartesian(cmd->distance, cmd->yaw, cmd->pitch);
+                    detail::spherical_to_cartesian(plan->distance, plan->yaw, plan->pitch);
 
-                entity.spheres.push_back(
-                    detail::create_sphere(
-                        detail::create_identity_pose(position), detail::SPHERE_SIZE_SMALL,
-                        detail::COLOR_ORANGE));
+                const auto color =
+                    plan->fire_advice ? tac::L4::GIMBAL_AIM_FIRE : tac::L4::GIMBAL_AIM_HOLD;
+
+                foxglove::schemas::SpherePrimitive sphere;
+                sphere.pose = viz::make_pose(position);
+                sphere.size = {
+                    tac::L4::SELECTION_SIZE, tac::L4::SELECTION_SIZE, tac::L4::SELECTION_SIZE};
+                sphere.color = color;
+                entity.spheres.push_back(sphere);
+
                 entities.push_back(entity);
             }
 
-            // Predicted position marker - 预测位置 (橙色球体)
-            if (cmd->predicted_position) {
+            // Predicted position marker
+            if (plan->predicted_position) {
                 foxglove::schemas::SceneEntity entity =
-                    detail::create_scene_entity<fast_tf::odom>("predicted", cmd->predicted_future);
+                    viz::EntityBuilder::create<fast_tf::odom>("l3", "predicted")
+                        .timestamp(plan->predicted_future)
+                        .build();
 
-                entity.spheres.push_back(
-                    detail::create_sphere(
-                        detail::create_identity_pose(
-                            detail::create_vector3(
-                                cmd->predicted_position->x(), cmd->predicted_position->y(),
-                                cmd->predicted_position->z())),
-                        detail::SPHERE_SIZE_SMALL, detail::COLOR_YELLOW));
+                const auto position = viz::make_vector3(
+                    plan->predicted_position->x(), plan->predicted_position->y(),
+                    plan->predicted_position->z());
+
+                foxglove::schemas::SpherePrimitive sphere;
+                sphere.pose = viz::make_pose(position);
+                sphere.size = {
+                    tac::L4::PREDICTION_SIZE, tac::L4::PREDICTION_SIZE, tac::L4::PREDICTION_SIZE};
+                sphere.color = tac::L3::PREDICTION_AMBER;
+                entity.spheres.push_back(sphere);
+
                 entities.push_back(entity);
             }
 
-            // Trajectory marker - 弹道轨迹 (点列)
-            if (!cmd->trajectory.empty()) {
-                foxglove::schemas::SceneEntity entity =
-                    detail::create_scene_entity<fast_tf::muzzle>("trajectory", cmd->timestamp_ns);
-
-                // 根据 fire_advice 改变颜色
-                const auto traj_color =
-                    cmd->fire_advice ? detail::COLOR_GREEN : detail::COLOR_WHITE;
-
-                for (const auto& [x, z] : cmd->trajectory) {
-                    entity.spheres.push_back(
-                        detail::create_sphere(
-                            detail::create_identity_pose(detail::create_vector3(x, 0, z)),
-                            detail::SPHERE_SIZE_TINY, traj_color));
+            // Bullet trajectory
+            if (!plan->trajectory.empty()) {
+                std::vector<Eigen::Vector3d> traj_points;
+                for (const auto& [x, z] : plan->trajectory) {
+                    traj_points.emplace_back(x, 0, z);
                 }
-                entities.push_back(entity);
+                auto traj_entities = viz::patterns::bullet_trajectory(
+                    traj_points, plan->fire_advice, plan->timestamp_ns);
+                entities.insert(
+                    entities.end(), std::make_move_iterator(traj_entities.begin()),
+                    std::make_move_iterator(traj_entities.end()));
             }
 
-            detail::publish_scene_if_nonempty<GimbalSceneMessage>(*server, std::move(entities));
+            viz::publish_scene_if_nonempty<GimbalSceneMessage>(*server, std::move(entities));
         });
 
-    // MPC 轨迹发布系统 (参考轨迹、优化轨迹、前馈加速度)
+    // =========================================================================
+    // MPC TRAJECTORY JSON PUBLISHER
+    // =========================================================================
+
     app.template add_system<talos::pool_compute>(
         "foxglove_mpc_trajectory_pub", [](talos::spmc<L4::GimbalPlan, GimbalPlanChannelTag> plan_in,
                                           talos::res<std::shared_ptr<FoxgloveServer>> server) {
@@ -803,11 +696,67 @@ void register_foxglove_systems(App& app, talos::Scheduler* scheduler_ptr_ = null
             detail::publish_json_message<MpcTrajectoryMessage>(*server, mpc_json);
         });
 
-    // ============================================================================
-    // L2 Debug Visualization Systems
-    // ============================================================================
+    // =========================================================================
+    // MPC PREDICTION SCENE (L4) - Full Horizon Visualization
+    // =========================================================================
 
-    // L2: PnP solver metrics (reprojection errors, solve time)
+    app.template add_system<talos::pool_compute>(
+        "foxglove_l4_mpc_prediction_scene",
+        [](talos::spmc<L4::GimbalPlan, GimbalPlanChannelTag> plan_in,
+           talos::spmc<L3::TrackerOutput, TrackerOutputChannelTag> tracker_in,
+           talos::res<std::shared_ptr<FoxgloveServer>> server) {
+            if (!detail::foxglove_ready(*server, plan_in))
+                return;
+
+            auto plan = plan_in.read();
+            if (!plan || plan->ref_yaw.empty())
+                return;
+
+            auto tracker_out = tracker_in.read_current();
+            if (!tracker_out || !tracker_out->is_tracking())
+                return;
+
+            std::vector<foxglove::schemas::SceneEntity> entities;
+
+            // Reference trajectory
+            for (size_t k = 0; k < plan->ref_yaw.size(); ++k) {
+                const double t    = (static_cast<int>(k) - plan->mpc_current_idx) * plan->mpc_dt;
+                const double dist = plan->distance + t * tac::Temporal::MPC_EXTRAPOLATION_VEL;
+                const double x = dist * std::cos(plan->ref_pitch[k]) * std::cos(plan->ref_yaw[k]);
+                const double y = dist * std::cos(plan->ref_pitch[k]) * std::sin(plan->ref_yaw[k]);
+                const double z = dist * std::sin(plan->ref_pitch[k]);
+
+                int temporal_dist = std::abs(static_cast<int>(k) - plan->mpc_current_idx);
+                entities.push_back(
+                    viz::patterns::mpc_trajectory_point<fast_tf::odom>(
+                        Eigen::Vector3d(x, y, z), temporal_dist,
+                        true, // is_reference
+                        plan->timestamp_ns));
+            }
+
+            // Optimized trajectory
+            for (size_t k = 0; k < plan->opt_yaw.size(); ++k) {
+                const double t    = (static_cast<int>(k) - plan->mpc_current_idx) * plan->mpc_dt;
+                const double dist = plan->distance + t * tac::Temporal::MPC_EXTRAPOLATION_VEL;
+                const double x = dist * std::cos(plan->opt_pitch[k]) * std::cos(plan->opt_yaw[k]);
+                const double y = dist * std::cos(plan->opt_pitch[k]) * std::sin(plan->opt_yaw[k]);
+                const double z = dist * std::sin(plan->opt_pitch[k]);
+
+                int temporal_dist = std::abs(static_cast<int>(k) - plan->mpc_current_idx);
+                entities.push_back(
+                    viz::patterns::mpc_trajectory_point<fast_tf::odom>(
+                        Eigen::Vector3d(x, y, z), temporal_dist,
+                        false, // is_optimized
+                        plan->timestamp_ns));
+            }
+
+            viz::publish_scene_if_nonempty<MpcPredictionSceneMessage>(*server, std::move(entities));
+        });
+
+    // =========================================================================
+    // L2 DEBUG: PnP Solver Metrics
+    // =========================================================================
+
     app.template add_system<talos::pool_compute>(
         "foxglove_pnp_debug_pub",
         [](talos::spmc<AtLegacyArmorMeasurementBatch, AtLegacyMeasurementChannelTag> meas_in,
@@ -841,7 +790,10 @@ void register_foxglove_systems(App& app, talos::Scheduler* scheduler_ptr_ = null
             detail::publish_json_message<PnPSolverMessage>(*server, pnp_json);
         });
 
-    // L2: NN confidence scores
+    // =========================================================================
+    // L2 DEBUG: NN Confidence Scores
+    // =========================================================================
+
     app.template add_system<talos::pool_compute>(
         "foxglove_nn_confidence_pub",
         [](talos::spmc<AtLegacyArmorDetectionBatch, AtLegacyDetectionChannelTag> det_in,
@@ -873,11 +825,10 @@ void register_foxglove_systems(App& app, talos::Scheduler* scheduler_ptr_ = null
             detail::publish_json_message<NNConfidenceMessage>(*server, nn_json);
         });
 
-    // ============================================================================
-    // L3 Debug Visualization Systems
-    // ============================================================================
+    // =========================================================================
+    // L3 DEBUG: Association Phase Probabilities
+    // =========================================================================
 
-    // L3: Association phase probabilities
     app.template add_system<talos::pool_compute>(
         "foxglove_association_phase_pub",
         [](talos::spmc<L3::TrackerOutput, TrackerOutputChannelTag> tracker_in,
@@ -903,7 +854,10 @@ void register_foxglove_systems(App& app, talos::Scheduler* scheduler_ptr_ = null
             detail::publish_json_message<AssociationPhaseMessage>(*server, phase_json);
         });
 
-    // L3: Association permutation rankings
+    // =========================================================================
+    // L3 DEBUG: Association Permutation Rankings
+    // =========================================================================
+
     app.template add_system<talos::pool_compute>(
         "foxglove_association_permutation_pub",
         [](talos::spmc<L3::TrackerOutput, TrackerOutputChannelTag> tracker_in,
@@ -934,100 +888,10 @@ void register_foxglove_systems(App& app, talos::Scheduler* scheduler_ptr_ = null
             detail::publish_json_message<AssociationPermutationMessage>(*server, perm_json);
         });
 
-    // L3: Association 3D scene (predicted vs matched armors)
-    app.template add_system<talos::pool_compute>(
-        "foxglove_association_scene_pub",
-        [](talos::spmc<L3::TrackerOutput, TrackerOutputChannelTag> tracker_in,
-           talos::spmc<AtLegacyArmorMeasurementBatch, AtLegacyMeasurementChannelTag> meas_in,
-           talos::res<std::shared_ptr<FoxgloveServer>> server) {
-            if (!detail::foxglove_ready(*server, tracker_in)) {
-                return;
-            }
+    // =========================================================================
+    // L3 DEBUG: Filter Innovation Vectors
+    // =========================================================================
 
-            auto output = tracker_in.read();
-            if (!output || !output->is_tracking()) {
-                return;
-            }
-
-            auto batch = meas_in.read_current();
-            if (!batch) {
-                return;
-            }
-
-            std::vector<foxglove::schemas::SceneEntity> entities;
-
-            // Create predicted armors (from tracker state)
-            foxglove::schemas::SceneEntity pred_entity = detail::create_scene_entity<fast_tf::odom>(
-                "predicted_armors", output->timestamp_ns);
-
-            if (output->is_robot()) {
-                const auto& state      = *output->robot_state();
-                const auto armor_poses = state.armor_poses();
-                for (int i = 0; i < 4; i++) {
-                    const auto pose = detail::create_identity_pose(
-                        detail::create_vector3(
-                            armor_poses[i][0], armor_poses[i][1], armor_poses[i][2]));
-
-                    pred_entity.spheres.push_back(
-                        detail::create_sphere(
-                            pose, detail::SPHERE_SIZE_SMALL, detail::COLOR_GREEN));
-
-                    auto label_pose = pose;
-                    label_pose.position->z += detail::TEXT_OFFSET_Y;
-                    pred_entity.texts.push_back(
-                        detail::create_text_primitive(fmt::format("pred_{}", i), label_pose));
-                }
-            } else if (output->is_outpost()) {
-                const auto& state           = *output->outpost_state();
-                constexpr double kAngleStep = 2.0 * std::numbers::pi / 3.0;
-                for (int i = 0; i < 3; i++) {
-                    const double armor_yaw = state.yaw + i * kAngleStep;
-                    const auto& pos        = state.position;
-                    constexpr double r     = L3::OutpostTargetState::radius;
-                    const Eigen::Vector3d armor_pos{
-                        pos.x() + r * std::cos(armor_yaw), pos.y() + r * std::sin(armor_yaw),
-                        state.z[i]};
-
-                    const auto pose = detail::create_identity_pose(
-                        detail::create_vector3(armor_pos.x(), armor_pos.y(), armor_pos.z()));
-
-                    pred_entity.spheres.push_back(
-                        detail::create_sphere(
-                            pose, detail::SPHERE_SIZE_SMALL, detail::COLOR_GREEN));
-
-                    auto label_pose = pose;
-                    label_pose.position->z += detail::TEXT_OFFSET_Y;
-                    pred_entity.texts.push_back(
-                        detail::create_text_primitive(fmt::format("pred_{}", i), label_pose));
-                }
-            }
-            entities.push_back(pred_entity);
-
-            // Create measurements (from PnP solver)
-            foxglove::schemas::SceneEntity meas_entity =
-                detail::create_scene_entity<fast_tf::odom>("measurements", batch->timestamp_ns);
-
-            for (size_t i = 0; i < batch->measurements.size(); ++i) {
-                const auto& m = batch->measurements[i];
-                const auto t  = m.transform->translation();
-                const auto pose =
-                    detail::create_identity_pose(detail::create_vector3(t.x(), t.y(), t.z()));
-
-                meas_entity.spheres.push_back(
-                    detail::create_sphere(pose, detail::SPHERE_SIZE_SMALL, detail::COLOR_YELLOW));
-
-                auto label_pose = pose;
-                label_pose.position->z += detail::TEXT_OFFSET_Y;
-                meas_entity.texts.push_back(
-                    detail::create_text_primitive(fmt::format("meas_{}", i), label_pose));
-            }
-            entities.push_back(meas_entity);
-
-            detail::publish_scene_if_nonempty<AssociationSceneMessage>(
-                *server, std::move(entities));
-        });
-
-    // L3: Filter innovation vectors
     app.template add_system<talos::pool_compute>(
         "foxglove_filter_innovation_pub",
         [](talos::spmc<L3::TrackerOutput, TrackerOutputChannelTag> tracker_in,
@@ -1071,7 +935,10 @@ void register_foxglove_systems(App& app, talos::Scheduler* scheduler_ptr_ = null
             detail::publish_json_message<FilterInnovationMessage>(*server, innov_json);
         });
 
-    // L3: Filter covariance trace
+    // =========================================================================
+    // L3 DEBUG: Filter Covariance Trace
+    // =========================================================================
+
     app.template add_system<talos::pool_compute>(
         "foxglove_filter_covariance_pub",
         [](talos::spmc<L3::TrackerOutput, TrackerOutputChannelTag> tracker_in,
@@ -1094,40 +961,37 @@ void register_foxglove_systems(App& app, talos::Scheduler* scheduler_ptr_ = null
             detail::publish_json_message<FilterCovarianceMessage>(*server, cov_json);
         });
 
-    // L3: Filter covariance 3D scene (uncertainty visualization)
+    // =========================================================================
+    // L3 DEBUG: Filter Covariance 3D Scene
+    // =========================================================================
+
     app.template add_system<talos::pool_compute>(
         "foxglove_filter_covariance_scene_pub",
         [](talos::spmc<L3::TrackerOutput, TrackerOutputChannelTag> tracker_in,
            talos::res<std::shared_ptr<FoxgloveServer>> server) {
-            if (!detail::foxglove_ready(*server, tracker_in)) {
+            if (!detail::foxglove_ready(*server, tracker_in))
                 return;
-            }
 
             auto output = tracker_in.read();
-            if (!output || !output->is_tracking()) {
+            if (!output || !output->is_tracking())
                 return;
-            }
 
             std::vector<foxglove::schemas::SceneEntity> entities;
 
-            foxglove::schemas::SceneEntity entity =
-                detail::create_scene_entity<fast_tf::odom>("covariance", output->timestamp_ns);
+            const auto pos_vec = detail::get_tracker_position(*output);
+            const Eigen::Vector3d pos(pos_vec.x, pos_vec.y, pos_vec.z);
 
-            const auto position = detail::get_tracker_position(*output);
+            entities.push_back(
+                viz::patterns::uncertainty_sphere<fast_tf::odom>(pos, 1.0, output->timestamp_ns));
 
-            entity.spheres.push_back(
-                detail::create_sphere(
-                    detail::create_identity_pose(position),
-                    detail::SPHERE_SIZE_DEFAULT * detail::COVARIANCE_UNCERTAINTY_SCALE,
-                    detail::create_color(1.0, 0.5, 0.0, 0.2)));
-
-            entities.push_back(entity);
-
-            detail::publish_scene_if_nonempty<FilterCovarianceSceneMessage>(
+            viz::publish_scene_if_nonempty<FilterCovarianceSceneMessage>(
                 *server, std::move(entities));
         });
 
-    // L3: Viterbi smoother trellis
+    // =========================================================================
+    // L3 DEBUG: Viterbi Smaller Trellis
+    // =========================================================================
+
     app.template add_system<talos::pool_compute>(
         "foxglove_viterbi_trellis_pub",
         [](talos::spmc<L3::TrackerOutput, TrackerOutputChannelTag> tracker_in,
@@ -1152,7 +1016,10 @@ void register_foxglove_systems(App& app, talos::Scheduler* scheduler_ptr_ = null
             detail::publish_json_message<ViterbiTrellisMessage>(*server, viterbi_json);
         });
 
-    // L3: State machine status
+    // =========================================================================
+    // L3 DEBUG: State Machine Status
+    // =========================================================================
+
     app.template add_system<talos::pool_compute>(
         "foxglove_state_machine_pub",
         [](talos::spmc<L3::TrackerOutput, TrackerOutputChannelTag> tracker_in,
@@ -1180,11 +1047,10 @@ void register_foxglove_systems(App& app, talos::Scheduler* scheduler_ptr_ = null
             detail::publish_json_message<StateMachineMessage>(*server, sm_json);
         });
 
-    // ============================================================================
-    // L4 Debug Visualization Systems
-    // ============================================================================
+    // =========================================================================
+    // L4 DEBUG: Full MPC Prediction Horizon
+    // =========================================================================
 
-    // L4: Full MPC prediction horizon
     app.template add_system<talos::pool_compute>(
         "foxglove_mpc_horizon_pub", [](talos::spmc<L4::GimbalPlan, GimbalPlanChannelTag> plan_in,
                                        talos::res<std::shared_ptr<FoxgloveServer>> server) {
@@ -1220,7 +1086,10 @@ void register_foxglove_systems(App& app, talos::Scheduler* scheduler_ptr_ = null
             detail::publish_json_message<MpcHorizonMessage>(*server, horizon_json);
         });
 
-    // L4: MPC cost evolution
+    // =========================================================================
+    // L4 DEBUG: MPC Cost Evolution
+    // =========================================================================
+
     app.template add_system<talos::pool_compute>(
         "foxglove_mpc_cost_pub", [](talos::spmc<L4::GimbalPlan, GimbalPlanChannelTag> plan_in,
                                     talos::res<std::shared_ptr<FoxgloveServer>> server) {
@@ -1248,7 +1117,10 @@ void register_foxglove_systems(App& app, talos::Scheduler* scheduler_ptr_ = null
             detail::publish_json_message<MpcCostMessage>(*server, cost_json);
         });
 
-    // L4: MPC constraint margins
+    // =========================================================================
+    // L4 DEBUG: MPC Constraint Margins
+    // =========================================================================
+
     app.template add_system<talos::pool_compute>(
         "foxglove_mpc_constraint_pub", [](talos::spmc<L4::GimbalPlan, GimbalPlanChannelTag> plan_in,
                                           talos::res<std::shared_ptr<FoxgloveServer>> server) {
@@ -1269,92 +1141,10 @@ void register_foxglove_systems(App& app, talos::Scheduler* scheduler_ptr_ = null
             detail::publish_json_message<MpcConstraintMessage>(*server, constraint_json);
         });
 
-    // L4: MPC prediction 3D scene (entire horizon trajectory)
-    app.template add_system<talos::pool_compute>(
-        "foxglove_mpc_prediction_scene_pub",
-        [](talos::spmc<L4::GimbalPlan, GimbalPlanChannelTag> plan_in,
-           talos::spmc<L3::TrackerOutput, TrackerOutputChannelTag> tracker_in,
-           talos::res<std::shared_ptr<FoxgloveServer>> server) {
-            if (!detail::foxglove_ready(*server, plan_in)) {
-                return;
-            }
+    // =========================================================================
+    // PERFORMANCE STATISTICS PUBLISHER (1 Hz, exclusive_silent)
+    // =========================================================================
 
-            auto plan = plan_in.read();
-            if (!plan || plan->ref_yaw.empty()) {
-                return;
-            }
-
-            auto tracker_out = tracker_in.read_current();
-            if (!tracker_out || !tracker_out->is_tracking()) {
-                return;
-            }
-
-            std::vector<foxglove::schemas::SceneEntity> entities;
-
-            // Reference trajectory (what MPC tries to track)
-            foxglove::schemas::SceneEntity ref_entity =
-                detail::create_scene_entity<fast_tf::odom>("mpc_reference", plan->timestamp_ns);
-
-            for (size_t k = 0; k < plan->ref_yaw.size(); ++k) {
-                const double t = (static_cast<int>(k) - plan->mpc_current_idx) * plan->mpc_dt;
-                const double distance =
-                    plan->distance + t * detail::MPC_TRAJECTORY_EXTRAPOLATION_VEL;
-                const double x =
-                    distance * std::cos(plan->ref_pitch[k]) * std::cos(plan->ref_yaw[k]);
-                const double y =
-                    distance * std::cos(plan->ref_pitch[k]) * std::sin(plan->ref_yaw[k]);
-                const double z = distance * std::sin(plan->ref_pitch[k]);
-
-                const auto pose = detail::create_identity_pose(detail::create_vector3(x, y, z));
-
-                const double alpha = (k == static_cast<size_t>(plan->mpc_current_idx)) ? 1.0 : 0.3;
-                ref_entity.spheres.push_back(
-                    detail::create_sphere(pose, detail::SPHERE_SIZE_TINY, detail::COLOR_RED));
-            }
-            entities.push_back(ref_entity);
-
-            // Optimized trajectory (MPC output)
-            foxglove::schemas::SceneEntity opt_entity =
-                detail::create_scene_entity<fast_tf::odom>("mpc_optimized", plan->timestamp_ns);
-
-            for (size_t k = 0; k < plan->opt_yaw.size(); ++k) {
-                const double t = (static_cast<int>(k) - plan->mpc_current_idx) * plan->mpc_dt;
-                const double distance =
-                    plan->distance + t * detail::MPC_TRAJECTORY_EXTRAPOLATION_VEL;
-                const double x =
-                    distance * std::cos(plan->opt_pitch[k]) * std::cos(plan->opt_yaw[k]);
-                const double y =
-                    distance * std::cos(plan->opt_pitch[k]) * std::sin(plan->opt_yaw[k]);
-                const double z = distance * std::sin(plan->opt_pitch[k]);
-
-                const auto pose = detail::create_identity_pose(detail::create_vector3(x, y, z));
-
-                const double alpha = (k == static_cast<size_t>(plan->mpc_current_idx)) ? 1.0 : 0.5;
-                opt_entity.spheres.push_back(
-                    detail::create_sphere(pose, detail::SPHERE_SIZE_TINY, detail::COLOR_GREEN));
-            }
-            entities.push_back(opt_entity);
-
-            // Current target with highlighted marker
-            foxglove::schemas::SceneEntity current_entity =
-                detail::create_scene_entity<fast_tf::odom>("mpc_current", plan->timestamp_ns);
-
-            const double distance = plan->distance;
-            const double x        = distance * std::cos(plan->pitch) * std::cos(plan->yaw);
-            const double y        = distance * std::cos(plan->pitch) * std::sin(plan->yaw);
-            const double z        = distance * std::sin(plan->pitch);
-
-            current_entity.spheres.push_back(
-                detail::create_sphere(
-                    detail::create_identity_pose(detail::create_vector3(x, y, z)),
-                    detail::SPHERE_SIZE_DEFAULT, detail::COLOR_CYAN));
-            entities.push_back(current_entity);
-
-            detail::publish_scene_if_nonempty<MpcPredictionSceneMessage>(
-                *server, std::move(entities));
-        });
-
-    // 性能统计发布系统 (1 Hz, exclusive_silent)
     if (scheduler_ptr_) {
         app.template add_system<talos::exclusive_silent<100>>(
             "foxglove_perf_stats_pub",
@@ -1364,10 +1154,10 @@ void register_foxglove_systems(App& app, talos::Scheduler* scheduler_ptr_ = null
                     return;
                 }
 
-                // 获取 scheduler 的性能统计 JSON
+                // Get scheduler performance statistics JSON
                 std::string json_str = scheduler_ptr_->get_stats_json();
 
-                // 发送到 foxglove
+                // Send to foxglove
                 PerfStatsMessage msg;
                 msg.data = json_to_bytes(json_str);
                 server_ptr->enqueue_message(std::move(msg));

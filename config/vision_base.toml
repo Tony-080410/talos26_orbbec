@@ -77,8 +77,8 @@ sigma_h = 0.5
 [tracker.robot_inekf]
 sigma_a_xy = 40.0
 sigma_a_z = 1.0
-sigma_w = 0.75
-sigma_m = 0.5
+sigma_w = 1.75
+sigma_m = 1.5
 sigma_yaw = 6.28
 radius0 = 0.23
 radius1 = 0.23
@@ -86,7 +86,7 @@ height = 0.1
 sigma_r = 1.5
 sigma_h = 0.5
 use_dynamic_noise = true
-dynamic_noise_k_radial = 10.0
+dynamic_noise_k_radial = 1.0
 dynamic_noise_k_tangent = 0.00625
 # Spherical coordinate observation mode (faster tracking response)
 use_spherical_observation = true
@@ -114,11 +114,11 @@ sigma_q_z = 2.0
 sigma_a_yaw = 8.0
 
 [tracker.outpost_inekf]
-sigma_a_xy = 25.0
+sigma_a_xy = 1.0
 sigma_a_z = 2.0
-sigma_yaw = 9.0
+sigma_yaw = 3.14
 sigma_h = 0.5
-sigma_m = 0.5
+sigma_m = 0.25
 sigma_w = 0.5
 use_dynamic_noise = true
 dynamic_noise_k_radial = 1.0
