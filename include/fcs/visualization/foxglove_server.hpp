@@ -56,10 +56,14 @@ struct FoxgloveChannels {
     FOXGLOVE_SCENE_CHANNEL(association_scene_ch)
     FOXGLOVE_SCENE_CHANNEL(filter_covariance_scene_ch)
     FOXGLOVE_SCENE_CHANNEL(mpc_prediction_scene_ch)
+    FOXGLOVE_SCENE_CHANNEL(rune_scene_ch)
 
     FOXGLOVE_IMAGE_CHANNEL(img_ch)
     FOXGLOVE_IMAGE_CHANNEL(binary_img_ch)
     FOXGLOVE_IMAGE_CHANNEL(pattern_img_ch)
+    FOXGLOVE_IMAGE_CHANNEL(rune_arrow_img_ch)
+    FOXGLOVE_IMAGE_CHANNEL(rune_target_img_ch)
+    FOXGLOVE_IMAGE_CHANNEL(rune_center_img_ch)
 
     FOXGLOVE_JSON_CHANNEL(armor_ch)
     FOXGLOVE_JSON_CHANNEL(debug_lights_ch)
@@ -69,6 +73,7 @@ struct FoxgloveChannels {
     FOXGLOVE_JSON_CHANNEL(cmd_gimbal_ch)
     FOXGLOVE_JSON_CHANNEL(perf_stats_ch)
     FOXGLOVE_JSON_CHANNEL(mpc_traj_ch)
+    FOXGLOVE_JSON_CHANNEL(rune_debug_ch)
 
     FOXGLOVE_JSON_CHANNEL(pnp_solver_ch)
     FOXGLOVE_JSON_CHANNEL(nn_confidence_ch)
@@ -121,6 +126,7 @@ struct ChannelTraits;
 FOXGLOVE_JSON_TRAIT(ArmorDataMessage, armor_ch)
 FOXGLOVE_JSON_TRAIT(DebugLightsMessage, debug_lights_ch)
 FOXGLOVE_JSON_TRAIT(DebugArmorsMessage, debug_armors_ch)
+FOXGLOVE_JSON_TRAIT(RuneDebugMessage, rune_debug_ch)
 FOXGLOVE_JSON_TRAIT(MeasurementMessage, measurement_ch)
 FOXGLOVE_JSON_TRAIT(TargetMessage, target_ch)
 FOXGLOVE_JSON_TRAIT(GimbalCmdMessage, cmd_gimbal_ch)
@@ -151,6 +157,7 @@ FOXGLOVE_JSON_TRAIT(MpcConstraintMessage, mpc_constraint_ch)
 FOXGLOVE_SCENE_TRAIT(SceneMessage, scene_ch)
 FOXGLOVE_SCENE_TRAIT(TrackSceneMessage, track_scene_ch)
 FOXGLOVE_SCENE_TRAIT(GimbalSceneMessage, gimbal_scene_ch)
+FOXGLOVE_SCENE_TRAIT(RuneSceneMessage, rune_scene_ch)
 FOXGLOVE_SCENE_TRAIT(AssociationSceneMessage, association_scene_ch)
 FOXGLOVE_SCENE_TRAIT(FilterCovarianceSceneMessage, filter_covariance_scene_ch)
 FOXGLOVE_SCENE_TRAIT(MpcPredictionSceneMessage, mpc_prediction_scene_ch)
@@ -168,6 +175,9 @@ FOXGLOVE_SCENE_TRAIT(MpcPredictionSceneMessage, mpc_prediction_scene_ch)
 FOXGLOVE_IMAGE_TRAIT(ImageMessage, img_ch)
 FOXGLOVE_IMAGE_TRAIT(BinaryImageMessage, binary_img_ch)
 FOXGLOVE_IMAGE_TRAIT(PatternImageMessage, pattern_img_ch)
+FOXGLOVE_IMAGE_TRAIT(RuneArrowImageMessage, rune_arrow_img_ch)
+FOXGLOVE_IMAGE_TRAIT(RuneTargetImageMessage, rune_target_img_ch)
+FOXGLOVE_IMAGE_TRAIT(RuneCenterImageMessage, rune_center_img_ch)
 #undef FOXGLOVE_IMAGE_TRAIT
 
 template <>
@@ -397,10 +407,14 @@ std::expected<std::unique_ptr<FoxgloveServer>, std::string>
     TRY_CREATE_SCENE_CHANNEL(association_scene_ch, "/debug/association_scene");
     TRY_CREATE_SCENE_CHANNEL(filter_covariance_scene_ch, "/debug/filter_covariance_scene");
     TRY_CREATE_SCENE_CHANNEL(mpc_prediction_scene_ch, "/debug/mpc_prediction_scene");
+    TRY_CREATE_SCENE_CHANNEL(rune_scene_ch, "/rune/scene");
 
     TRY_CREATE_IMAGE_CHANNEL(img_ch, "/image");
     TRY_CREATE_IMAGE_CHANNEL(binary_img_ch, "/debug/binary_img");
     TRY_CREATE_IMAGE_CHANNEL(pattern_img_ch, "/debug/number_img");
+    TRY_CREATE_IMAGE_CHANNEL(rune_arrow_img_ch, "/rune/arrow_img");
+    TRY_CREATE_IMAGE_CHANNEL(rune_target_img_ch, "/rune/target_img");
+    TRY_CREATE_IMAGE_CHANNEL(rune_center_img_ch, "/rune/center_img");
 
     TRY_CREATE_JSON_CHANNEL(armor_ch, "/armor_data");
     TRY_CREATE_JSON_CHANNEL(debug_lights_ch, "/debug/lights");
@@ -410,6 +424,7 @@ std::expected<std::unique_ptr<FoxgloveServer>, std::string>
     TRY_CREATE_JSON_CHANNEL(cmd_gimbal_ch, "/solver/cmd_gimbal");
     TRY_CREATE_JSON_CHANNEL(perf_stats_ch, "/perf_stats");
     TRY_CREATE_JSON_CHANNEL(mpc_traj_ch, "/mpc/trajectory");
+    TRY_CREATE_JSON_CHANNEL(rune_debug_ch, "/rune/debug");
 
     TRY_CREATE_JSON_CHANNEL(pnp_solver_ch, "/debug/pnp_solver");
     TRY_CREATE_JSON_CHANNEL(nn_confidence_ch, "/debug/nn_confidence");

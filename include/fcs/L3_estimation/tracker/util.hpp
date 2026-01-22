@@ -151,9 +151,9 @@ enum Measure : uint8_t {
     J(1, 2) = cp * sy;             // dy/dr
 
     // z = -r sp
-    J(2, 0) = 0.0;          // dz/dyaw
+    J(2, 0) = 0.0;            // dz/dyaw
     J(2, 1) = -distance * cp; // dz/dpitch
-    J(2, 2) = -sp;          // dz/dr
+    J(2, 2) = -sp;            // dz/dr
 
     return J;
 }

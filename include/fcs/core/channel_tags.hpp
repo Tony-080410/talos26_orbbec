@@ -30,11 +30,26 @@ struct AtLegacyMeasurementChannelTag {};
 /// Mode: SPMC (single producer, multiple consumers)
 struct TrackerOutputChannelTag {};
 
+struct RuneObservationChannelTag {};
+struct RuneDebugFrameChannelTag {};
+
+struct EnergyMeterStateChannelTag {};
+
 // ============================================================================
 // L4 Planning Pipeline Channel Tags
 // ============================================================================
 
-/// @brief Gimbal plan channel (Planner → Weapon System)
+/// @brief Candidate gimbal plan from armor pipeline (Planner → PlanMux)
+/// Data type: fcs::L4::GimbalPlan
+/// Mode: SPMC (single producer, multiple consumers)
+struct ArmorGimbalPlanChannelTag {};
+
+/// @brief Candidate gimbal plan from rune pipeline (Planner → PlanMux)
+/// Data type: fcs::L4::GimbalPlan
+/// Mode: SPMC (single producer, multiple consumers)
+struct RuneGimbalPlanChannelTag {};
+
+/// @brief Final gimbal plan channel (PlanMux → Weapon System)
 /// Data type: fcs::L4::GimbalPlan
 /// Mode: SPMC (single producer, multiple consumers)
 struct GimbalPlanChannelTag {};

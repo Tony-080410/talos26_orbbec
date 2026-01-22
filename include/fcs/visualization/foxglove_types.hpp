@@ -72,6 +72,12 @@ FOXGLOVE_JSON_MESSAGE(DebugLightsMessage)
 /// 装甲板调试消息 (JSON)
 FOXGLOVE_JSON_MESSAGE(DebugArmorsMessage)
 
+FOXGLOVE_IMAGE_MESSAGE(RuneArrowImageMessage)
+FOXGLOVE_IMAGE_MESSAGE(RuneTargetImageMessage)
+FOXGLOVE_IMAGE_MESSAGE(RuneCenterImageMessage)
+FOXGLOVE_JSON_MESSAGE(RuneDebugMessage)
+FOXGLOVE_SCENE_MESSAGE(RuneSceneMessage)
+
 /// 测量值消息 (JSON)
 FOXGLOVE_JSON_MESSAGE(MeasurementMessage)
 
@@ -143,8 +149,10 @@ FOXGLOVE_SCENE_MESSAGE(MpcPredictionSceneMessage)
 /// Foxglove 消息联合类型
 using FoxgloveMessage = std::variant<
     ImageMessage, SceneMessage, TrackSceneMessage, TfMessage, ArmorDataMessage, BinaryImageMessage,
-    PatternImageMessage, DebugLightsMessage, DebugArmorsMessage, MeasurementMessage, TargetMessage,
-    GimbalCmdMessage, GimbalSceneMessage, PerfStatsMessage, MpcTrajectoryMessage,
+    PatternImageMessage, DebugLightsMessage, DebugArmorsMessage, RuneArrowImageMessage,
+    RuneTargetImageMessage, RuneCenterImageMessage, RuneDebugMessage, RuneSceneMessage,
+    MeasurementMessage, TargetMessage, GimbalCmdMessage, GimbalSceneMessage, PerfStatsMessage,
+    MpcTrajectoryMessage,
     // L2 Debug
     PnPSolverMessage, NNConfidenceMessage,
     // L3 Debug

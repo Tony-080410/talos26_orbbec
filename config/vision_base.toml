@@ -190,3 +190,34 @@ mass = 0.0032
 rk4_dt = 0.025
 rk4_min_steps = 500
 rk4_max_steps = 2000
+
+[rune_detector]
+enabled = true
+detect_color = "Red"
+arrow_threshold = 170
+target_threshold = 130
+rcenter_threshold = 120
+
+[rune_planner]
+enabled = true
+
+[plan_mux]
+mode = "Rune"
+
+[energy_meter]
+smooth_alpha = 0.8
+min_data_points = 15
+control_delay_s = 0.05
+is_big_rune = true
+
+[energy_meter.tracker]
+lost_thres = 10
+tracking_thres = 3
+matcher_gate = 25.0
+
+[energy_meter.tracker.energy_params]
+sigma_xy = 10.0
+sigma_z = 1.0
+sigma_roll = 1.0
+radius = 0.7
+meas_dist_k = 0.43

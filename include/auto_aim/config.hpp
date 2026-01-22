@@ -8,8 +8,12 @@
 #include <string>
 
 #include "fcs/L2_perception/at_legacy_config.hpp"
+#include "fcs/L2_perception/rune/rune_config.hpp"
+#include "fcs/L3_estimation/energy_meter/energy_meter_systems.hpp"
 #include "fcs/L3_estimation/tracker/config.hpp"
 #include "fcs/L4_planning/config.hpp"
+#include "fcs/L4_planning/plan_mux/plan_mux_systems.hpp"
+#include "fcs/L4_planning/rune_planner/rune_planner_systems.hpp"
 #include "fcs/L5_weapon/config.hpp"
 #include "fcs/camera_config.hpp"
 
@@ -49,8 +53,15 @@ struct HardwareConfig {
 
 struct VisionConfig {
     L2::AtLegacyConfig at_legacy{};
+    rune::RuneDetectorConfig rune_detector{};
+
     L3::L3Config l3{};
+    energy_meter::EnergyMeterL3Config energy_meter{};
+
     L4::L4Config l4{};
+    L4::RunePlannerConfig rune_planner{};
+    L4::PlanMuxConfig plan_mux{};
+
     L5::L5Config l5{};
 
     [[nodiscard]] const L3::TrackerConfig& tracker() const noexcept { return l3.tracker; }

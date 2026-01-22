@@ -51,8 +51,7 @@ private:
         fcs::L4::TrajectoryCompensatorType new_type) noexcept {
         SPDLOG_INFO(
             "EnhancedWeaponController: switching compensator type from {} to {}",
-            magic_enum::enum_name(old_type).data(),
-            magic_enum::enum_name(new_type).data());
+            magic_enum::enum_name(old_type).data(), magic_enum::enum_name(new_type).data());
     }
 
     /// @brief Calculate bullet time of flight for target distance

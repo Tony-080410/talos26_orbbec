@@ -160,9 +160,9 @@ struct res {
     static constexpr bool is_res_mut = false;
     static constexpr bool is_atomic  = false;
 
-    const T* ptr_ = nullptr;
+    const T* ptr_                         = nullptr;
     const std::atomic<uint64_t>* version_ = nullptr;
-    mutable uint64_t last_seen_version_ = 0;
+    mutable uint64_t last_seen_version_   = 0;
 
     [[nodiscard]] const T& operator*() const noexcept {
         if (version_) [[likely]]
@@ -177,7 +177,8 @@ struct res {
     [[nodiscard]] bool valid() const { return ptr_ != nullptr; }
 
     [[nodiscard]] bool is_changed() const noexcept {
-        if (!version_) return false;
+        if (!version_)
+            return false;
         uint64_t current = version_->load(std::memory_order_acquire);
         if (current != last_seen_version_) {
             last_seen_version_ = current;
@@ -199,8 +200,8 @@ struct res_mut {
     static constexpr bool is_res_mut = true;
     static constexpr bool is_atomic  = false;
 
-    T* ptr_ = nullptr;
-    std::atomic<uint64_t>* version_ = nullptr;
+    T* ptr_                             = nullptr;
+    std::atomic<uint64_t>* version_     = nullptr;
     mutable uint64_t last_seen_version_ = 0;
 
     [[nodiscard]] T& operator*() noexcept {
@@ -218,7 +219,8 @@ struct res_mut {
     [[nodiscard]] bool valid() const { return ptr_ != nullptr; }
 
     [[nodiscard]] bool is_changed() const noexcept {
-        if (!version_) return false;
+        if (!version_)
+            return false;
         uint64_t current = version_->load(std::memory_order_acquire);
         if (current != last_seen_version_) {
             last_seen_version_ = current;

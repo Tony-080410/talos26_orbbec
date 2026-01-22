@@ -14,11 +14,8 @@
 
 namespace fcs::L5 {
 
-void register_enhanced_weapon_system(
-    talos::Scheduler& scheduler, WeaponControllerConfig&& config,
-    fcs::L4::MpcPlannerConfig&& l4_config) {
+void register_enhanced_weapon_system(talos::Scheduler& scheduler, WeaponControllerConfig&& config) {
     scheduler.world().insert_resource(std::move(config));
-    scheduler.world().insert_resource(std::move(l4_config));
     scheduler.add_system<talos::exclusive<250>>(
         "enhanced_weapon_control",
         [controller = std::shared_ptr<EnhancedWeaponController>{},

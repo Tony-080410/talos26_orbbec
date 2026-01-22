@@ -9,6 +9,8 @@
 #include "scene_builder.hpp"
 #include "tactical_palette.hpp"
 
+#include "fcs/L2_perception/rune/rune_config.hpp"
+#include "fcs/L2_perception/rune/types.hpp"
 #include "fcs/L3_estimation/tracker/types.hpp"
 #include "fcs/core/channel_tags.hpp"
 #include "fcs/core/types.hpp"
@@ -20,6 +22,7 @@
 #include <Eigen/Core>
 #include <Eigen/Geometry>
 #include <cmath>
+#include <fmt/format.h>
 #include <nlohmann/json.hpp>
 #include <opencv2/core/types.hpp>
 #include <opencv2/imgcodecs.hpp>
@@ -249,7 +252,6 @@ void register_foxglove_systems(App& app, talos::Scheduler* scheduler_ptr_ = null
                 return;
             }
 
-            // Publish armor detection JSON
             nlohmann::json armors_json;
             armors_json["timestamp_ns"] = batch->timestamp_ns;
             armors_json["armors"]       = nlohmann::json::array();
@@ -272,6 +274,126 @@ void register_foxglove_systems(App& app, talos::Scheduler* scheduler_ptr_ = null
             }
 
             detail::publish_json_message<DebugArmorsMessage>(*server, armors_json);
+        });
+
+    app.template add_system<talos::exclusive<30>>(
+        "foxglove_rune_debug_images",
+        [](talos::spmc<rune::RuneDebugFrame, RuneDebugFrameChannelTag> dbg_in,
+           talos::res<std::shared_ptr<FoxgloveServer>> server) {
+            if (!detail::foxglove_ready(*server, dbg_in)) {
+                return;
+            }
+
+            auto dbg = dbg_in.read();
+            if (!dbg) {
+                return;
+            }
+
+            auto publish = [&](const std::vector<uint8_t>& bytes, auto builder) {
+                if (bytes.empty()) {
+                    return;
+                }
+                auto msg          = builder();
+                msg.img.timestamp = timestamp_from_ns(dbg->timestamp_ns);
+                msg.img.frame_id  = "camera_optical_frame";
+                msg.img.format    = "jpeg";
+                msg.img.data      = std::vector<std::byte>(
+                    reinterpret_cast<const std::byte*>(bytes.data()),
+                    reinterpret_cast<const std::byte*>(bytes.data() + bytes.size()));
+                (*server)->enqueue_message(std::move(msg));
+            };
+
+            publish(dbg->arrow_jpeg, [] { return RuneArrowImageMessage{}; });
+            publish(dbg->target_jpeg, [] { return RuneTargetImageMessage{}; });
+            publish(dbg->rcenter_jpeg, [] { return RuneCenterImageMessage{}; });
+        });
+
+    app.template add_system<talos::pool_compute>(
+        "foxglove_rune_debug_json",
+        [](talos::spmc<rune::RuneDebugFrame, RuneDebugFrameChannelTag> dbg_in,
+           talos::res<std::shared_ptr<FoxgloveServer>> server,
+           talos::res<rune::RuneDetectorConfig> cfg) {
+            if (!detail::foxglove_ready(*server, dbg_in)) {
+                return;
+            }
+
+            auto dbg = dbg_in.read();
+            if (!dbg) {
+                return;
+            }
+
+            fmt::memory_buffer buf;
+            fmt::format_to(
+                std::back_inserter(buf),
+                "{{\"timestamp_ns\":{},\"frame_id\":{},\"enabled\":{},\"detect_ok\":{},\"tf_ok\":{}"
+                ",\"solve_ok\":{},\"observation_valid\":{},\"status_code\":{},\"arrows\":{},"
+                "\"targets\":{},\"global_roi\":{{\"x\":{:.3f},\"y\":{:.3f},\"w\":{:.3f},\"h\":{:."
+                "3f}}},\"center_roi\":{{\"x\":{:.3f},\"y\":{:.3f},\"w\":{:.3f},\"h\":{:.3f}}},"
+                "\"target_rois\":[",
+                dbg->timestamp_ns, dbg->frame_id, dbg->enabled ? "true" : "false",
+                dbg->detect_reversed ? "true" : "false", dbg->tf_ok ? "true" : "false",
+                dbg->solve_ok ? "true" : "false", dbg->observation_valid ? "true" : "false",
+                dbg->status_code, dbg->arrows_count, dbg->targets_count, dbg->global_roi.x,
+                dbg->global_roi.y, dbg->global_roi.w, dbg->global_roi.h, dbg->center_roi.x,
+                dbg->center_roi.y, dbg->center_roi.w, dbg->center_roi.h);
+
+            for (size_t i = 0; i < dbg->target_rois.size(); ++i) {
+                const auto& r = dbg->target_rois[i];
+                if (i != 0) {
+                    fmt::format_to(std::back_inserter(buf), ",");
+                }
+                fmt::format_to(
+                    std::back_inserter(buf),
+                    "{{\"x\":{:.3f},\"y\":{:.3f},\"w\":{:.3f},\"h\":{:.3f}}}", r.x, r.y, r.w, r.h);
+            }
+
+            fmt::format_to(
+                std::back_inserter(buf),
+                "],\"thresholds\":{{\"arrow\":{},\"target\":{},\"rcenter\":{}}}}}",
+                cfg->arrow_threshold, cfg->target_threshold, cfg->rcenter_threshold);
+
+            RuneDebugMessage msg;
+            msg.data = json_to_bytes(fmt::to_string(buf));
+            (*server)->enqueue_message(std::move(msg));
+        });
+
+    app.template add_system<talos::pool_compute>(
+        "foxglove_rune_scene",
+        [](talos::spmc<rune::RuneObservation, RuneObservationChannelTag> obs_in,
+           talos::res<std::shared_ptr<FoxgloveServer>> server) {
+            if (!detail::foxglove_ready(*server, obs_in)) {
+                return;
+            }
+
+            auto obs = obs_in.read();
+            if (!obs || !obs->valid) {
+                return;
+            }
+
+            std::vector<foxglove::schemas::SceneEntity> entities;
+
+            entities.push_back(
+                viz::EntityBuilder::create<fast_tf::odom>("rune", "r_center")
+                    .position(obs->r_center_odom)
+                    .size(0.08)
+                    .color(tac::L3::PREDICTION_AMBER)
+                    .sphere()
+                    .timestamp(obs->timestamp_ns)
+                    .build());
+
+            for (size_t i = 0; i < obs->target_positions_odom.size(); ++i) {
+                const auto& p = obs->target_positions_odom[i];
+                entities.push_back(
+                    viz::EntityBuilder::create<fast_tf::odom>("rune", fmt::format("target_{}", i))
+                        .position(p)
+                        .size(0.06)
+                        .color(tac::L3::TRACKING_LOCKED)
+                        .sphere()
+                        .timestamp(obs->timestamp_ns)
+                        .build());
+            }
+
+            viz::publish_scene_if_nonempty<RuneSceneMessage>(*server, std::move(entities));
         });
 
     // =========================================================================

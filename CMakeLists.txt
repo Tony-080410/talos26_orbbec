@@ -149,6 +149,9 @@ add_library(fcs SHARED
         src/fcs/L2_perception/at_legacy_nn_backend.cpp
         src/fcs/L2_perception/at_legacy_nn_tup_backend.cpp
         src/fcs/L2_perception/at_legacy_systems.cpp
+        src/fcs/L2_perception/rune/rune_detector.cpp
+        src/fcs/L2_perception/rune/rune_config.cpp
+        src/fcs/L2_perception/rune/rune_systems.cpp
         src/fcs/L2_perception/at_legacy_traditional_backend.cpp
         src/fcs/L2_perception/at_legacy_traditional_classifier.cpp
         src/fcs/L2_perception/at_legacy_light_corner_corrector.cpp
@@ -156,11 +159,16 @@ add_library(fcs SHARED
         src/fcs/L3_estimation/tracker/motion_model_config.cpp
         src/fcs/L3_estimation/tracker/config.cpp
         src/fcs/L3_estimation/tracker_systems.cpp
+        src/fcs/L3_estimation/energy_meter_solver/angle_fitter.cpp
+        src/fcs/L3_estimation/energy_meter_solver/energy_meter_tracker.cpp
+        src/fcs/L3_estimation/energy_meter/energy_meter_systems.cpp
         src/fcs/L4_planning/gimbal_planner/trajectory_compensator.cpp
         src/fcs/L4_planning/trajectory_config.cpp
         src/fcs/L4_planning/config.cpp
         src/fcs/L4_planning/mpc_planner/config.cpp
         src/fcs/L4_planning/planning_systems.cpp
+        src/fcs/L4_planning/plan_mux/plan_mux_systems.cpp
+        src/fcs/L4_planning/rune_planner/rune_planner_systems.cpp
         src/fcs/L5_weapon/config.cpp
         src/fcs/visualization/foxglove_systems.cpp
         src/fcs/L5_weapon/enhanced/weapon_controller.cpp

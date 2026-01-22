@@ -279,7 +279,8 @@ struct OutpostInEKFConfig {
     /// Enable coordinated-turn kinematics in prediction (same meaning as RobotInEKFConfig).
     bool use_coordinated_turn{true};
 
-    /// Enable slip-gated coupling between yaw-rate and translation (same meaning as RobotInEKFConfig).
+    /// Enable slip-gated coupling between yaw-rate and translation (same meaning as
+    /// RobotInEKFConfig).
     bool enable_slip_gated_turn{true};
 
     /// Enable adaptive scaling of process noise based on innovation magnitude.

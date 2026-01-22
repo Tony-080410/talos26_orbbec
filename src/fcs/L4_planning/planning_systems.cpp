@@ -22,7 +22,7 @@ void register_mpc_planning_systems(talos::Scheduler& scheduler, MpcPlannerConfig
             talos::res<MpcPlannerConfig> config,
             talos::spmc<fcs::L3::TrackerOutput, TrackerOutputChannelTag> tracker_in,
             talos::res<std::shared_ptr<fast_tf::CoordinateSystem<1024>>> tf_buffer,
-            talos::spmc_mut<GimbalPlan, GimbalPlanChannelTag> plan_out) mutable {
+            talos::spmc_mut<GimbalPlan, ArmorGimbalPlanChannelTag> plan_out) mutable {
             if (!planner) {
                 planner = std::make_shared<MpcGimbalPlanner>(*config);
             }

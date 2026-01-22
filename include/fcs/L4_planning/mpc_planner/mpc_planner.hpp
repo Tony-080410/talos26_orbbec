@@ -205,15 +205,14 @@ inline void MpcGimbalPlanner::sync_config() noexcept {
 
     // Check if solver needs to be recreated (horizon or dt changed)
     const int new_horizon = config_.ponder_ahead + config_.ponder_back;
-    const double new_dt = config_.ponder_dt;
+    const double new_dt   = config_.ponder_dt;
 
-    const bool need_recreate =
-        (new_horizon != current_horizon_) || (new_dt != current_dt_);
+    const bool need_recreate = (new_horizon != current_horizon_) || (new_dt != current_dt_);
 
     if (need_recreate) {
         SPDLOG_INFO(
-            "MpcPlanner: rebuilding solvers (horizon: {}->{}, dt: {}->{})",
-            current_horizon_, new_horizon, current_dt_, new_dt);
+            "MpcPlanner: rebuilding solvers (horizon: {}->{}, dt: {}->{})", current_horizon_,
+            new_horizon, current_dt_, new_dt);
         yaw_solver_.reset();
         pitch_solver_.reset();
         setup_solvers();
@@ -265,7 +264,7 @@ inline void MpcGimbalPlanner::setup_solvers() noexcept {
 
     // Update tracked configuration
     current_horizon_ = config_.ponder_ahead + config_.ponder_back;
-    current_dt_ = config_.ponder_dt;
+    current_dt_      = config_.ponder_dt;
 }
 
 inline void MpcGimbalPlanner::warm_start_shift() noexcept {

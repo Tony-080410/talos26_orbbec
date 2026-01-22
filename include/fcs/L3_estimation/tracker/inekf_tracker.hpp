@@ -14,8 +14,8 @@
 #include "types.hpp"
 #include "util.hpp"
 
-#include <Eigen/Core>
 #include <Eigen/Cholesky>
+#include <Eigen/Core>
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -37,10 +37,10 @@ using OutpostTargetState = fcs::L3::OutpostTargetState;
 namespace detail {
 
 // Constants for regularization and constraints
-inline constexpr double kCovarianceRegularization = 1e-12;
-inline constexpr double kCoordinatedTurnOmegaEpsilon = 1e-3;
-inline constexpr double kSlipGatingSigmaRad          = 0.35;
-inline constexpr double kSlipGatingMinSpeed          = 0.3;
+inline constexpr double kCovarianceRegularization     = 1e-12;
+inline constexpr double kCoordinatedTurnOmegaEpsilon  = 1e-3;
+inline constexpr double kSlipGatingSigmaRad           = 0.35;
+inline constexpr double kSlipGatingMinSpeed           = 0.3;
 inline constexpr double kAdaptiveProcessNoiseMaxScale = 6.0;
 inline constexpr double kAdaptiveProcessNoiseDecayTau = 0.25;
 inline constexpr double kRobustMaxRScale              = 100.0;
@@ -186,12 +186,12 @@ inline constexpr double kPseudoVelocityMaxInterval    = 0.25;
     return std::isfinite(value) ? value : fallback;
 }
 
-[[nodiscard]] inline double adaptive_scale_from_maha(
-    double maha, int dof, double max_scale) noexcept {
+[[nodiscard]] inline double
+    adaptive_scale_from_maha(double maha, int dof, double max_scale) noexcept {
     if (!(max_scale >= 1.0) || !std::isfinite(maha)) {
         return 1.0;
     }
-    dof = std::max(dof, 1);
+    dof                     = std::max(dof, 1);
     const double normalized = maha / static_cast<double>(dof);
     if (!(normalized > 1.0)) {
         return 1.0;
@@ -210,14 +210,13 @@ inline constexpr double kPseudoVelocityMaxInterval    = 0.25;
     return 1.0 + (value - 1.0) * a;
 }
 
-[[nodiscard]] inline double gaussian_slip_weight(
-    double slip, double speed_xy) noexcept {
+[[nodiscard]] inline double gaussian_slip_weight(double slip, double speed_xy) noexcept {
     if (!(speed_xy > kSlipGatingMinSpeed)) {
         return 0.0;
     }
     const double sigma = kSlipGatingSigmaRad;
-    slip = wrap_pi(slip);
-    const double r = slip / sigma;
+    slip               = wrap_pi(slip);
+    const double r     = slip / sigma;
     return std::exp(-0.5 * r * r);
 }
 
@@ -230,7 +229,8 @@ inline constexpr double kPseudoVelocityMaxInterval    = 0.25;
     default:
         // Wilson-Hilferty approximation for 99% quantile (z≈2.326).
         // q ≈ k*(1 - 2/(9k) + z*sqrt(2/(9k)))^3
-        if (dof <= 0) return 1.0;
+        if (dof <= 0)
+            return 1.0;
         const double k = static_cast<double>(dof);
         const double z = 2.326347874; // Phi^-1(0.99)
         const double t = 1.0 - 2.0 / (9.0 * k) + z * std::sqrt(2.0 / (9.0 * k));
@@ -238,11 +238,12 @@ inline constexpr double kPseudoVelocityMaxInterval    = 0.25;
     }
 }
 
-[[nodiscard]] inline double robust_R_scale_from_maha(double maha, int dof, double max_scale) noexcept {
+[[nodiscard]] inline double
+    robust_R_scale_from_maha(double maha, int dof, double max_scale) noexcept {
     if (!(max_scale >= 1.0) || !std::isfinite(maha)) {
         return 1.0;
     }
-    dof = std::max(dof, 1);
+    dof            = std::max(dof, 1);
     const double q = chi2_99(dof);
     if (!(q > 0.0) || !(maha > q)) {
         return 1.0;
@@ -309,7 +310,7 @@ public:
                 const double speed_xy = std::hypot(v0.x(), v0.y());
                 const double heading  = std::atan2(v0.y(), v0.x());
                 const double slip     = detail::wrap_pi(heading - yaw0);
-                const double w = detail::gaussian_slip_weight(slip, speed_xy);
+                const double w        = detail::gaussian_slip_weight(slip, speed_xy);
                 omega *= w;
             }
             const double eps   = detail::kCoordinatedTurnOmegaEpsilon;
@@ -469,7 +470,7 @@ public:
                 const double speed_xy = std::hypot(v0.x(), v0.y());
                 const double heading  = std::atan2(v0.y(), v0.x());
                 const double slip     = detail::wrap_pi(heading - yaw0);
-                const double w = detail::gaussian_slip_weight(slip, speed_xy);
+                const double w        = detail::gaussian_slip_weight(slip, speed_xy);
                 omega *= w;
             }
             const double eps   = detail::kCoordinatedTurnOmegaEpsilon;
@@ -1333,8 +1334,8 @@ protected:
             adaptive_process_noise_scale_ = 1.0;
             return;
         }
-        const double s = detail::adaptive_scale_from_maha(
-            maha, dof, detail::kAdaptiveProcessNoiseMaxScale);
+        const double s =
+            detail::adaptive_scale_from_maha(maha, dof, detail::kAdaptiveProcessNoiseMaxScale);
         adaptive_process_noise_scale_ = std::max(adaptive_process_noise_scale_, s);
     }
 
@@ -1344,8 +1345,8 @@ protected:
             adaptive_process_noise_scale_ = 1.0;
             return;
         }
-        adaptive_process_noise_scale_ =
-            detail::decay_to_one(adaptive_process_noise_scale_, dt, detail::kAdaptiveProcessNoiseDecayTau);
+        adaptive_process_noise_scale_ = detail::decay_to_one(
+            adaptive_process_noise_scale_, dt, detail::kAdaptiveProcessNoiseDecayTau);
         adaptive_process_noise_scale_ = std::clamp(adaptive_process_noise_scale_, 1.0, 1e6);
     }
 
@@ -1365,11 +1366,11 @@ protected:
         center_latest_cov_ = cov_meas;
         has_center_latest_ = true;
         if (!has_center_ref_) {
-            center_ref_      = p_meas;
-            center_ref_cov_  = cov_meas;
-            has_center_ref_  = true;
+            center_ref_        = p_meas;
+            center_ref_cov_    = cov_meas;
+            has_center_ref_    = true;
             has_center_latest_ = false;
-            center_dt_acc_   = 0.0;
+            center_dt_acc_     = 0.0;
         }
     }
 
@@ -1394,7 +1395,7 @@ protected:
             return;
         }
 
-        const double dt     = center_dt_acc_;
+        const double dt = center_dt_acc_;
 
         if (dt > detail::kPseudoVelocityMaxInterval) {
             // Too long since reference; reset to avoid stale diff.
@@ -1412,12 +1413,12 @@ protected:
         const Vec3 v_meas = (center_latest_ - center_ref_) / dt;
 
         // Linear update on velocity (world/camera frame): nu = v_meas - v_est, H = [0 R 0 ...]
-        const auto& x = filter_.mean();
+        const auto& x    = filter_.mean();
         const Vec3 v_est = x.first.v();
         const Vec3 nu    = v_meas - v_est;
 
         Eigen::Matrix<double, 3, kStateDim> H = Eigen::Matrix<double, 3, kStateDim>::Zero();
-        H.template block<3, 3>(0, 3)         = x.first.R(); // map body-frame δv to world
+        H.template block<3, 3>(0, 3)          = x.first.R(); // map body-frame δv to world
 
         Eigen::Matrix3d Rv = (center_latest_cov_ + center_ref_cov_) / (dt * dt);
         Rv.diagonal().array() += detail::kCovarianceRegularization;
@@ -1585,10 +1586,10 @@ public:
 
         // Innovation-driven maneuver detection for adaptive Q (optional).
         if (config.enable_adaptive_process_noise) {
-            const auto& x = filter_.mean();
-            const auto z  = RobotArmorMeasurementModel::MeasPoint{y};
-            const auto r  = meas_model.invariant_error(x, z).data;
-            const auto R  = meas_model.measurement_noise().matrix();
+            const auto& x     = filter_.mean();
+            const auto z      = RobotArmorMeasurementModel::MeasPoint{y};
+            const auto r      = meas_model.invariant_error(x, z).data;
+            const auto R      = meas_model.measurement_noise().matrix();
             const double maha = r.dot(R.ldlt().solve(r));
             maybe_bump_adaptive_process_noise(maha, 3, config);
         }
@@ -1641,26 +1642,26 @@ public:
 
         // Pseudo-velocity update: infer target center position measurement from armor observation.
         if (config.enable_pseudo_velocity_update) {
-            const auto& x = filter_.mean();
-            const bool is_high = (armor_id == kHighArmorIdA || armor_id == kHighArmorIdB);
-            const double radius = is_high ? x.second(kIdxR1) : x.second(kIdxR0);
+            const auto& x         = filter_.mean();
+            const bool is_high    = (armor_id == kHighArmorIdA || armor_id == kHighArmorIdB);
+            const double radius   = is_high ? x.second(kIdxR1) : x.second(kIdxR0);
             const double z_offset = is_high ? x.second(kIdxH) : 0.0;
 
             const Vec3 armor_xyz_meas = fcs::L3::ypd2xyz(armor_ypd); // camera_optical
-            const double a = armor_yaw_meas; // ~= target_yaw + armor_id * step
-            Vec3 center_meas = armor_xyz_meas;
+            const double a            = armor_yaw_meas; // ~= target_yaw + armor_id * step
+            Vec3 center_meas          = armor_xyz_meas;
             center_meas.x() += radius * std::cos(a);
             center_meas.y() += radius * std::sin(a);
             center_meas.z() -= z_offset;
 
             // Derive center measurement covariance from spherical noise (proper, parameter-free).
             const Eigen::Matrix3d J_xyz_ypd = fcs::L3::ypd2xyz_jacobian(armor_ypd);
-            const double delta_angle = detail::wrap_pi(armor_yaw_meas - armor_ypd.x());
-            const double dist_var    = std::log(std::abs(delta_angle) + 1.0) + 1.0;
-            Eigen::Matrix3d R_ypd = Eigen::Matrix3d::Zero();
-            R_ypd(0, 0) = config.sigma_yaw_obs * config.sigma_yaw_obs;
-            R_ypd(1, 1) = config.sigma_pitch_obs * config.sigma_pitch_obs;
-            R_ypd(2, 2) = dist_var;
+            const double delta_angle        = detail::wrap_pi(armor_yaw_meas - armor_ypd.x());
+            const double dist_var           = std::log(std::abs(delta_angle) + 1.0) + 1.0;
+            Eigen::Matrix3d R_ypd           = Eigen::Matrix3d::Zero();
+            R_ypd(0, 0)                     = config.sigma_yaw_obs * config.sigma_yaw_obs;
+            R_ypd(1, 1)                     = config.sigma_pitch_obs * config.sigma_pitch_obs;
+            R_ypd(2, 2)                     = dist_var;
 
             Eigen::Matrix3d P_center = J_xyz_ypd * R_ypd * J_xyz_ypd.transpose();
 
@@ -1698,8 +1699,9 @@ public:
         const double max_angle = config.max_angle_innovation;
         const double max_dist  = config.max_dist_innovation;
         const double ratio_angle =
-            (max_angle > 0.0) ? std::max({std::abs(nu(0)), std::abs(nu(1)), std::abs(nu(3))}) / max_angle
-                              : 0.0;
+            (max_angle > 0.0)
+                ? std::max({std::abs(nu(0)), std::abs(nu(1)), std::abs(nu(3))}) / max_angle
+                : 0.0;
         const double ratio_dist = (max_dist > 0.0) ? std::abs(nu(2)) / max_dist : 0.0;
         const double ratio      = std::max(ratio_angle, ratio_dist);
         if (!config.enable_robust_update && (ratio > 1.0) && std::isfinite(ratio)) {
@@ -1707,9 +1709,9 @@ public:
         }
 
         // Compute Jacobian and measurement noise
-        const auto H = model.observation_jacobian(state);
-        auto R       = model.measurement_noise();
-        const auto R_nominal = R.matrix();
+        const auto H              = model.observation_jacobian(state);
+        auto R                    = model.measurement_noise();
+        const auto R_nominal      = R.matrix();
         const double maha_nominal = nu.dot(R_nominal.ldlt().solve(nu));
 
         if (config.enable_adaptive_process_noise) {
@@ -1723,15 +1725,15 @@ public:
                 return;
             }
             const double scale = std::clamp(ratio * ratio, 1.0, detail::kRobustMaxRScale);
-            auto Rm = R.matrix();
+            auto Rm            = R.matrix();
             Rm *= scale;
             R = decltype(R)(Rm);
         }
 
         // Additional robust weighting based on Mahalanobis distance (extreme outliers).
         if (config.enable_robust_update) {
-            const double scale = detail::robust_R_scale_from_maha(
-                maha_nominal, 4, detail::kRobustMaxRScale);
+            const double scale =
+                detail::robust_R_scale_from_maha(maha_nominal, 4, detail::kRobustMaxRScale);
             if (scale != 1.0) {
                 auto Rm2 = R.matrix();
                 Rm2 *= scale;
@@ -1887,10 +1889,10 @@ public:
             config.dynamic_noise_k_tangent);
 
         if (config.enable_adaptive_process_noise) {
-            const auto& x = filter_.mean();
-            const auto z  = OutpostArmorMeasurementModel::MeasPoint{y};
-            const auto r  = meas_model.invariant_error(x, z).data;
-            const auto R  = meas_model.measurement_noise().matrix();
+            const auto& x     = filter_.mean();
+            const auto z      = OutpostArmorMeasurementModel::MeasPoint{y};
+            const auto r      = meas_model.invariant_error(x, z).data;
+            const auto R      = meas_model.measurement_noise().matrix();
             const double maha = r.dot(R.ldlt().solve(r));
             maybe_bump_adaptive_process_noise(maha, 3, config);
         }
@@ -1941,7 +1943,7 @@ public:
             armor_id, config.sigma_yaw_obs, config.sigma_pitch_obs, config.sigma_armor_yaw);
 
         if (config.enable_pseudo_velocity_update) {
-            const auto& x = filter_.mean();
+            const auto& x   = filter_.mean();
             double z_offset = 0.0;
             if (armor_id == 1) {
                 z_offset = x.second(kIdxDz1);
@@ -1950,26 +1952,26 @@ public:
             }
 
             const Vec3 armor_xyz_meas = fcs::L3::ypd2xyz(armor_ypd); // camera_optical
-            const double a = armor_yaw_meas;
-            Vec3 center_meas = armor_xyz_meas;
+            const double a            = armor_yaw_meas;
+            Vec3 center_meas          = armor_xyz_meas;
             center_meas.x() += OutpostSphericalMeasurementModel::kOutpostRadius * std::cos(a);
             center_meas.y() += OutpostSphericalMeasurementModel::kOutpostRadius * std::sin(a);
             center_meas.z() -= z_offset;
 
             const Eigen::Matrix3d J_xyz_ypd = fcs::L3::ypd2xyz_jacobian(armor_ypd);
-            const double delta_angle = detail::wrap_pi(armor_yaw_meas - armor_ypd.x());
-            const double dist_var    = std::log(std::abs(delta_angle) + 1.0) + 1.0;
-            Eigen::Matrix3d R_ypd = Eigen::Matrix3d::Zero();
-            R_ypd(0, 0) = config.sigma_yaw_obs * config.sigma_yaw_obs;
-            R_ypd(1, 1) = config.sigma_pitch_obs * config.sigma_pitch_obs;
-            R_ypd(2, 2) = dist_var;
+            const double delta_angle        = detail::wrap_pi(armor_yaw_meas - armor_ypd.x());
+            const double dist_var           = std::log(std::abs(delta_angle) + 1.0) + 1.0;
+            Eigen::Matrix3d R_ypd           = Eigen::Matrix3d::Zero();
+            R_ypd(0, 0)                     = config.sigma_yaw_obs * config.sigma_yaw_obs;
+            R_ypd(1, 1)                     = config.sigma_pitch_obs * config.sigma_pitch_obs;
+            R_ypd(2, 2)                     = dist_var;
 
             Eigen::Matrix3d P_center = J_xyz_ypd * R_ypd * J_xyz_ypd.transpose();
 
             const double sigma_a =
                 std::log(std::max(0.0, armor_ypd.z()) + 1.0) / 200.0 + config.sigma_armor_yaw;
             const double var_a = sigma_a * sigma_a;
-            const double r = OutpostSphericalMeasurementModel::kOutpostRadius;
+            const double r     = OutpostSphericalMeasurementModel::kOutpostRadius;
             const Eigen::Vector3d d_center_da{-r * std::sin(a), r * std::cos(a), 0.0};
             P_center += d_center_da * d_center_da.transpose() * var_a;
             P_center.diagonal().array() += detail::kCovarianceRegularization;
@@ -1997,8 +1999,9 @@ public:
         const double max_angle = config.max_angle_innovation;
         const double max_dist  = config.max_dist_innovation;
         const double ratio_angle =
-            (max_angle > 0.0) ? std::max({std::abs(nu(0)), std::abs(nu(1)), std::abs(nu(3))}) / max_angle
-                              : 0.0;
+            (max_angle > 0.0)
+                ? std::max({std::abs(nu(0)), std::abs(nu(1)), std::abs(nu(3))}) / max_angle
+                : 0.0;
         const double ratio_dist = (max_dist > 0.0) ? std::abs(nu(2)) / max_dist : 0.0;
         const double ratio      = std::max(ratio_angle, ratio_dist);
         if (!config.enable_robust_update && (ratio > 1.0) && std::isfinite(ratio)) {
@@ -2006,9 +2009,9 @@ public:
         }
 
         // Compute Jacobian and measurement noise
-        const auto H = model.observation_jacobian(state);
-        auto R       = model.measurement_noise();
-        const auto R_nominal = R.matrix();
+        const auto H              = model.observation_jacobian(state);
+        auto R                    = model.measurement_noise();
+        const auto R_nominal      = R.matrix();
         const double maha_nominal = nu.dot(R_nominal.ldlt().solve(nu));
 
         if (config.enable_adaptive_process_noise) {
@@ -2020,14 +2023,14 @@ public:
                 return;
             }
             const double scale = std::clamp(ratio * ratio, 1.0, detail::kRobustMaxRScale);
-            auto Rm = R.matrix();
+            auto Rm            = R.matrix();
             Rm *= scale;
             R = decltype(R)(Rm);
         }
 
         if (config.enable_robust_update) {
-            const double scale = detail::robust_R_scale_from_maha(
-                maha_nominal, 4, detail::kRobustMaxRScale);
+            const double scale =
+                detail::robust_R_scale_from_maha(maha_nominal, 4, detail::kRobustMaxRScale);
             if (scale != 1.0) {
                 auto Rm2 = R.matrix();
                 Rm2 *= scale;
