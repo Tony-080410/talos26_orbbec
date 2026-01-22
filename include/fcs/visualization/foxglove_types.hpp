@@ -142,6 +142,9 @@ FOXGLOVE_JSON_MESSAGE(MpcConstraintMessage)
 // L4 Debug: 3D scene for MPC prediction visualization
 FOXGLOVE_SCENE_MESSAGE(MpcPredictionSceneMessage)
 
+/// Energy meter state message (JSON)
+FOXGLOVE_JSON_MESSAGE(EnergyMeterMessage)
+
 // ============================================================================
 // Foxglove Message Variant
 // ============================================================================
@@ -160,7 +163,9 @@ using FoxgloveMessage = std::variant<
     FilterCovarianceMessage, ViterbiTrellisMessage, StateMachineMessage, AssociationSceneMessage,
     FilterCovarianceSceneMessage,
     // L4 Debug
-    MpcHorizonMessage, MpcCostMessage, MpcConstraintMessage, MpcPredictionSceneMessage>;
+    MpcHorizonMessage, MpcCostMessage, MpcConstraintMessage, MpcPredictionSceneMessage,
+    // Energy Meter
+    EnergyMeterMessage>;
 
 // ============================================================================
 // Utility Functions

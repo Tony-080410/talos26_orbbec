@@ -89,6 +89,8 @@ struct FoxgloveChannels {
     FOXGLOVE_JSON_CHANNEL(mpc_cost_ch)
     FOXGLOVE_JSON_CHANNEL(mpc_constraint_ch)
 
+    FOXGLOVE_JSON_CHANNEL(energy_meter_ch)
+
     FOXGLOVE_TF_CHANNEL(tf_ch)
     FOXGLOVE_CALIB_CHANNEL(camera_calib_ch)
 };
@@ -143,6 +145,7 @@ FOXGLOVE_JSON_TRAIT(StateMachineMessage, state_machine_ch)
 FOXGLOVE_JSON_TRAIT(MpcHorizonMessage, mpc_horizon_ch)
 FOXGLOVE_JSON_TRAIT(MpcCostMessage, mpc_cost_ch)
 FOXGLOVE_JSON_TRAIT(MpcConstraintMessage, mpc_constraint_ch)
+FOXGLOVE_JSON_TRAIT(EnergyMeterMessage, energy_meter_ch)
 #undef FOXGLOVE_JSON_TRAIT
 
 #define FOXGLOVE_SCENE_TRAIT(MsgType, ChMember)                        \
@@ -439,6 +442,8 @@ std::expected<std::unique_ptr<FoxgloveServer>, std::string>
     TRY_CREATE_JSON_CHANNEL(mpc_horizon_ch, "/debug/mpc_horizon");
     TRY_CREATE_JSON_CHANNEL(mpc_cost_ch, "/debug/mpc_cost");
     TRY_CREATE_JSON_CHANNEL(mpc_constraint_ch, "/debug/mpc_constraint");
+
+    TRY_CREATE_JSON_CHANNEL(energy_meter_ch, "/energy_meter/state");
 
     TRY_CREATE_SPECIAL_CHANNEL(tf_ch, "/tf", foxglove::schemas::FrameTransformsChannel);
     TRY_CREATE_SPECIAL_CHANNEL(

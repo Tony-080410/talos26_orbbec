@@ -108,7 +108,9 @@ struct PredictionResult {
     double prediction_time_offset{0.0};
 };
 
-struct EnergyMeterConfig {
+// Legacy config struct for backward compatibility (deprecated)
+// Use fcs::energy_meter::EnergyMeterL3Config for new code
+struct [[deprecated("Use fcs::energy_meter::EnergyMeterL3Config instead")]] EnergyMeterConfig {
     std::string rune_type;
     double predict_time{};
     std::string gimbal_frame;

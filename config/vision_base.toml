@@ -75,7 +75,7 @@ sigma_r1 = 1.0
 sigma_h = 0.5
 
 [tracker.robot_inekf]
-sigma_a_xy = 40.0
+sigma_a_xy = 10.0
 sigma_a_z = 1.0
 sigma_w = 1.75
 sigma_m = 1.5
@@ -205,19 +205,38 @@ enabled = true
 mode = "Rune"
 
 [energy_meter]
-smooth_alpha = 0.8
-min_data_points = 15
-control_delay_s = 0.05
+# Rune type: true for big rune (sinusoidal model), false for small rune (linear)
 is_big_rune = true
+# Control delay for predictive shooting (seconds)
+control_delay_s = 0.05
 
+# Angle fitter configuration (velocity-based LSQ model fitting)
+[energy_meter.angle_fitter]
+# Velocity filter exponential smoothing factor (0-1)
+# Larger → smoother but laggier; smaller → more responsive but noisier
+smooth_alpha = 0.8
+# Minimum observations before fitting the angle model
+# Larger → more stable but slower convergence; smaller → faster but more noise
+min_data_points = 15
+
+# ISRCKF tracker configuration for energy meter
 [energy_meter.tracker]
+# Lost frames before returning to IDLE from TEMP_LOST (seconds)
 lost_thres = 10
+# Consecutive frames required to transition DETECTING -> TRACKING
 tracking_thres = 3
+# Mahalanobis distance-squared gate for observation-to-track association
 matcher_gate = 25.0
 
+# Process noise covariance for ISRCKF tracker
 [energy_meter.tracker.energy_params]
+# XY position process noise std-dev (m)
 sigma_xy = 10.0
+# Z position process noise std-dev (m)
 sigma_z = 1.0
+# Roll angle process noise std-dev (rad)
 sigma_roll = 1.0
+# Initial radius guess (m)
 radius = 0.7
+# Measurement distance scaling factor
 meas_dist_k = 0.43

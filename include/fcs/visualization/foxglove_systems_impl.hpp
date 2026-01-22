@@ -11,6 +11,7 @@
 
 #include "fcs/L2_perception/rune/rune_config.hpp"
 #include "fcs/L2_perception/rune/types.hpp"
+#include "fcs/L3_estimation/energy_meter/types.hpp"
 #include "fcs/L3_estimation/tracker/types.hpp"
 #include "fcs/core/channel_tags.hpp"
 #include "fcs/core/types.hpp"
@@ -1261,6 +1262,43 @@ void register_foxglove_systems(App& app, talos::Scheduler* scheduler_ptr_ = null
             constraint_json["pitch_acc_margin"] = plan->constraint_pitch_acc_margin;
 
             detail::publish_json_message<MpcConstraintMessage>(*server, constraint_json);
+        });
+
+    // =========================================================================
+    // ENERGY METER STATE PUBLISHER (L3)
+    // =========================================================================
+
+    app.template add_system<talos::pool_compute>(
+        "foxglove_energy_meter_pub",
+        [](talos::spmc<fcs::energy_meter::EnergyMeterState, EnergyMeterStateChannelTag> state_in,
+           talos::res<std::shared_ptr<FoxgloveServer>> server) {
+            if (!detail::foxglove_ready(*server, state_in)) {
+                return;
+            }
+
+            auto state = state_in.read();
+            if (!state) {
+                return;
+            }
+
+            nlohmann::json em_json;
+            em_json["timestamp_ns"]   = state->timestamp_ns;
+            em_json["tracking_valid"] = state->tracking_valid;
+            em_json["r_center_odom"]  = {
+                state->r_center_odom.x(), state->r_center_odom.y(), state->r_center_odom.z()};
+            em_json["radius"]                  = state->radius;
+            em_json["roll"]                    = state->roll;
+            em_json["v_roll"]                  = state->v_roll;
+            em_json["blade_id"]                = state->blade_id;
+            em_json["predicted_position_odom"] = {
+                state->predicted_position_odom.x(), state->predicted_position_odom.y(),
+                state->predicted_position_odom.z()};
+            em_json["predicted_future_ns"] = state->predicted_future_ns;
+            em_json["is_big_rune"]         = state->is_big_rune;
+            em_json["model_valid"]         = state->model_valid;
+            em_json["fit_error"]           = state->fit_error;
+
+            detail::publish_json_message<EnergyMeterMessage>(*server, em_json);
         });
 
     // =========================================================================

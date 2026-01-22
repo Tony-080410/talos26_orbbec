@@ -12,7 +12,10 @@ namespace energy_meter {
 
 class AngleFitter {
 public:
-    explicit AngleFitter(const EnergyMeterConfig& config);
+    // Talos-style constructor: accepts individual parameters
+    // smooth_alpha: velocity filter exponential smoothing factor
+    // min_data_points: minimum observations before fitting
+    explicit AngleFitter(double smooth_alpha = 0.8, int min_data_points = 15);
     ~AngleFitter();
 
     AngleFitter(const AngleFitter&)            = delete;
@@ -38,14 +41,19 @@ public:
         current_model_.velocity_filter_valid = true;
     }
 
+    // Fit sinusoidal model (big rune) using velocity-based LSQ
+    // Returns true if fitting succeeded
     bool fitAngleModelLSQ();
 
+    // Apply posterior constraints to the current model (a, ω, b bounds)
+    // Should be called after fitAngleModelLSQ() for big runes
     void applyPosteriorConstraints();
 
+    // Fit linear model (small rune): θ(t) = ω·t + b
+    // Returns true if fitting succeeded
     bool fitLinearModelPublic();
 
 private:
-    EnergyMeterConfig config_;
     int min_data_points_{};
     size_t max_observations_{};
 

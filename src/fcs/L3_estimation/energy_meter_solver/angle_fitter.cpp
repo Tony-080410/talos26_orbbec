@@ -7,13 +7,12 @@
 
 namespace energy_meter {
 
-AngleFitter::AngleFitter(const EnergyMeterConfig& config)
-    : config_(config)
-    , min_data_points_(config.min_data_points)
+AngleFitter::AngleFitter(double smooth_alpha, int min_data_points)
+    : min_data_points_(min_data_points)
     , max_observations_(100)
     , last_prediction_error_(0)
     , start_time_(0)
-    , smooth_alpha_(config.smooth_alpha)
+    , smooth_alpha_(smooth_alpha)
     , fit_interval_ms_(50)
     , last_angle_(0.0)
     , last_timestamp_(0.0)
@@ -21,7 +20,7 @@ AngleFitter::AngleFitter(const EnergyMeterConfig& config)
     , last_real_observation_time_(0)
     , last_real_observation_angle_(0) {
     current_model_.is_valid    = false;
-    current_model_.is_big_rune = config.rune_type == "big";
+    current_model_.is_big_rune = false;     // Will be set by fit methods
 }
 
 AngleFitter::~AngleFitter() = default;
@@ -37,7 +36,7 @@ void AngleFitter::reset() {
         std::unique_lock<std::shared_mutex> lock(model_mutex_);
         current_model_             = AngleModel();
         current_model_.is_valid    = false;
-        current_model_.is_big_rune = config_.rune_type == "big";
+        current_model_.is_big_rune = false; // Will be set by fit methods
     }
 
     start_time_                  = 0.0;

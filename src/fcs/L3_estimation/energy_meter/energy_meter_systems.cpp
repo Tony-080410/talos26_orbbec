@@ -18,87 +18,44 @@
 namespace fcs::energy_meter {
 
 std::expected<void, std::string> EnergyMeterL3Config::read_from(const toml::table& tbl) noexcept {
-    // TODO: use READ macro for a robust parsing
-    if (const toml::node* node = tbl.get("tracker")) {
-        const auto tracker_tbl = node->as_table();
-        if (!tracker_tbl) {
-            return std::unexpected("tracker: expected table");
-        }
-
-        if (auto v = toml_helper::take_optional<int>(*tracker_tbl, "lost_thres"); !v) {
-            return std::unexpected(v.error());
-        } else if (*v) {
-            tracker.lost_thres = **v;
-        }
-
-        if (auto v = toml_helper::take_optional<int>(*tracker_tbl, "tracking_thres"); !v) {
-            return std::unexpected(v.error());
-        } else if (*v) {
-            tracker.tracking_thres = **v;
-        }
-
-        if (auto v = toml_helper::take_optional<double>(*tracker_tbl, "matcher_gate"); !v) {
-            return std::unexpected(v.error());
-        } else if (*v) {
-            tracker.matcher_gate = **v;
-        }
-
-        if (const toml::node* energy_node = tracker_tbl->get("energy_params")) {
-            const auto energy_tbl = energy_node->as_table();
-            if (!energy_tbl) {
-                return std::unexpected("energy_params: expected table");
-            }
-
-            if (auto v = toml_helper::take_optional<double>(*energy_tbl, "sigma_xy"); !v) {
-                return std::unexpected(v.error());
-            } else if (*v) {
-                tracker.energy_params.sigma_xy = **v;
-            }
-
-            if (auto v = toml_helper::take_optional<double>(*energy_tbl, "sigma_z"); !v) {
-                return std::unexpected(v.error());
-            } else if (*v) {
-                tracker.energy_params.sigma_z = **v;
-            }
-
-            if (auto v = toml_helper::take_optional<double>(*energy_tbl, "sigma_roll"); !v) {
-                return std::unexpected(v.error());
-            } else if (*v) {
-                tracker.energy_params.sigma_roll = **v;
-            }
-
-            if (auto v = toml_helper::take_optional<double>(*energy_tbl, "radius"); !v) {
-                return std::unexpected(v.error());
-            } else if (*v) {
-                tracker.energy_params.radius = **v;
-            }
-
-            if (auto v = toml_helper::take_optional<double>(*energy_tbl, "meas_dist_k"); !v) {
-                return std::unexpected(v.error());
-            } else if (*v) {
-                tracker.energy_params.meas_dist_k = **v;
-            }
-
-            if (auto unread = toml_helper::ensure_all_read(*energy_tbl, "energy_params"); !unread) {
-                return std::unexpected(unread.error());
-            }
-
-            (void)const_cast<toml::table&>(*tracker_tbl).erase("energy_params");
-        }
-
-        if (auto unread = toml_helper::ensure_all_read(*tracker_tbl, "tracker"); !unread) {
-            return std::unexpected(unread.error());
-        }
-
-        (void)const_cast<toml::table&>(tbl).erase("tracker");
-    }
-
-    READ_OPT(tbl, smooth_alpha);
-    READ_OPT(tbl, min_data_points);
+    READ_OPT(tbl, angle_fitter);
+    READ_OPT(tbl, tracker);
     READ_OPT(tbl, control_delay_s);
     READ_OPT(tbl, is_big_rune);
     return {};
 }
+
+std::expected<void, std::string> AngleFitterConfig::read_from(const toml::table& tbl) noexcept {
+    READ_OPT(tbl, smooth_alpha);
+    READ_OPT(tbl, min_data_points);
+    return {};
+}
+
+} // namespace fcs::energy_meter
+
+// Define Tracker::Params::read_from in the correct namespace
+namespace energy_meter {
+
+std::expected<void, std::string> Tracker::Params::read_from(const toml::table& tbl) noexcept {
+    READ_OPT(tbl, lost_thres);
+    READ_OPT(tbl, tracking_thres);
+    READ_OPT(tbl, matcher_gate);
+    READ_OPT(tbl, energy_params);
+    return {};
+}
+
+std::expected<void, std::string> EnergyMeter::Params::read_from(const toml::table& tbl) noexcept {
+    READ_OPT(tbl, sigma_xy);
+    READ_OPT(tbl, sigma_z);
+    READ_OPT(tbl, sigma_roll);
+    READ_OPT(tbl, radius);
+    READ_OPT(tbl, meas_dist_k);
+    return {};
+}
+
+} // namespace energy_meter
+
+namespace fcs::energy_meter {
 
 namespace {
 
@@ -106,20 +63,37 @@ constexpr auto ns_to_sec(uint64_t ns) -> double { return static_cast<double>(ns)
 
 } // namespace
 
+// 模型类型判断状态
+bool model_type_determined_           = false; // 是否已确定模型类型
+int detection_frame_count_            = 0;     // 检测帧计数
+static constexpr int DETECTION_FRAMES = 20;    // 前20帧用于判断类型
+
+// 防误判机制
+static constexpr double SWITCH_THRESHOLD    = 1.5; // v
+int switch_cooldown_count_                  = 0;   // 切换后的冷却帧计数
+static constexpr int SWITCH_COOLDOWN_FRAMES = 30;  // 切换后等待30帧再检测
+int frame_fps_                              = 0;
+static constexpr int FPS_THRESHOLD          = 100;
+
+// 速度统计（用于判断大小能量机关）
+int velocity_frame_count_                  = 0;
+double velocity_max_                       = -std::numeric_limits<double>::max();
+double velocity_min_                       = std::numeric_limits<double>::max();
+static constexpr int VELOCITY_SKIP_FRAMES_ = 5;
+
+void resetVelocityStats() {
+    velocity_frame_count_ = 0;
+    velocity_max_         = -std::numeric_limits<double>::max();
+    velocity_min_         = std::numeric_limits<double>::max();
+}
+
 void register_energy_meter_systems(::talos::Scheduler& scheduler, EnergyMeterL3Config&& config) {
     scheduler.world().insert_resource(std::move(config));
 
     scheduler.world().insert_resource(std::make_shared<::energy_meter::Tracker>());
     scheduler.world().insert_resource(
-        std::make_shared<::energy_meter::AngleFitter>(::energy_meter::EnergyMeterConfig{
-            .rune_type       = config.is_big_rune ? "big" : "small",
-            .predict_time    = 0.0,
-            .gimbal_frame    = "",
-            .world_frame     = "",
-            .smooth_alpha    = config.smooth_alpha,
-            .min_data_points = config.min_data_points,
-            .control_delay   = config.control_delay_s,
-        }));
+        std::make_shared<::energy_meter::AngleFitter>(
+            config.angle_fitter.smooth_alpha, config.angle_fitter.min_data_points));
 
     scheduler.add_system<talos::pool_compute>(
         "l3_energy_meter",
@@ -143,6 +117,22 @@ void register_energy_meter_systems(::talos::Scheduler& scheduler, EnergyMeterL3C
                 dt = static_cast<double>(obs->timestamp_ns - last_timestamp_ns) / 1e9;
             }
             last_timestamp_ns = obs->timestamp_ns;
+
+            // 如果间隔超过 2s，重置所有状态
+            if (dt > 2) {
+                (*tracker)->state = ::energy_meter::Tracker::IDLE;
+                (*tracker)->energy_ukf.reset();
+                last_timestamp_ns = 0;
+                // 重置拟合器和类型判断状态
+                (*fitter)->reset();
+                model_type_determined_ = false;
+                detection_frame_count_ = 0;
+                switch_cooldown_count_ = 0;
+                resetVelocityStats();
+                frame_fps_ = 0;
+                std::cerr << "时间间隔过大, " << dt << "重置类型判断" << std::endl;
+                return;
+            }
 
             if (!(*tracker)->energy_ukf.has_value()) {
                 (*tracker)->first_meet_u(
@@ -168,11 +158,93 @@ void register_energy_meter_systems(::talos::Scheduler& scheduler, EnergyMeterL3C
             ao.blade_offset     = (*tracker)->getCurrentBladeId();
             (void)(*fitter)->addObservation(ao);
 
-            if (cfg->is_big_rune) {
-                (void)(*fitter)->fitAngleModelLSQ();
-                (*fitter)->applyPosteriorConstraints();
-            } else {
-                (void)(*fitter)->fitLinearModelPublic();
+            // 速度统计：从第5帧开始记录最大值和最小值
+            velocity_frame_count_++;
+            if (velocity_frame_count_ > VELOCITY_SKIP_FRAMES_) {
+                double vel = v_roll;
+
+                if (vel > velocity_max_)
+                    velocity_max_ = vel;
+                if (vel < velocity_min_)
+                    velocity_min_ = vel;
+            }
+            // 拟合逻辑
+            if ((*fitter)->getDataPointCount() >= 15) {
+
+                if (!model_type_determined_) {
+                    // 前20帧：判断模型类型
+                    detection_frame_count_++;
+
+                    (*fitter)->fitAngleModelLSQ();
+                    (*fitter)->applyPosteriorConstraints();
+
+                    // 通过速度变化范围判断大小符
+                    // 小符: 速度恒定，max-min 很小
+                    // 大符: 速度变化大，max-min 较大
+                    double velocity_range                     = velocity_max_ - velocity_min_;
+                    constexpr double VELOCITY_RANGE_THRESHOLD = 0.5; // 速度变化阈值
+                    bool velocity_suggests_big_rune =
+                        (std::abs(velocity_range) > VELOCITY_RANGE_THRESHOLD);
+
+                    if (!velocity_suggests_big_rune) {
+                        // 速度变化小，判定为小符
+                        (*fitter)->fitLinearModelPublic();
+                    }
+
+                    // 20帧后锁定类型
+                    if (detection_frame_count_ >= DETECTION_FRAMES) {
+                        model_type_determined_ = true;
+                        auto final_model       = (*fitter)->getModel();
+                        std::cerr << "模型类型已确定: " << final_model.is_big_rune
+                                  << ", 速度范围: " << velocity_range << "max= " << velocity_max_
+                                  << "min= " << velocity_min_ << std::endl;
+                        resetVelocityStats();
+                        frame_fps_ = 0;
+                    }
+
+                } else {
+                    // 类型已确定，只更新参数不切换类型
+                    auto model = (*fitter)->getModel();
+                    if (model.is_big_rune) {
+                        (*fitter)->fitAngleModelLSQ();
+                        (*fitter)->applyPosteriorConstraints();
+                    } else {
+                        (*fitter)->fitLinearModelPublic();
+                    }
+
+                    // 防误判机制：冷却期结束后，误差超过10 rad时切换类型
+                    if (switch_cooldown_count_ > 0) {
+                        switch_cooldown_count_--;
+                    } else {
+                        frame_fps_++;
+                        if (frame_fps_ > FPS_THRESHOLD) {
+                            double velocity_range = velocity_max_ - velocity_min_;
+                            auto updated_model    = (*fitter)->getModel();
+                            if (velocity_range > SWITCH_THRESHOLD && !updated_model.is_big_rune) {
+                                std::cerr << "速度差值过大 " << velocity_range
+                                          << " ，切换类型: 小符 -> 大符" << std::endl;
+
+                                (*fitter)->fitAngleModelLSQ();
+                                (*fitter)->applyPosteriorConstraints();
+
+                                // 启动冷却
+                                switch_cooldown_count_ = SWITCH_COOLDOWN_FRAMES;
+
+                            } else if (
+                                velocity_range < SWITCH_THRESHOLD && updated_model.is_big_rune) {
+                                std::cerr << "速度差值过小 " << velocity_range
+                                          << " ，切换类型: 大符 ->小符" << std::endl;
+
+                                (*fitter)->fitLinearModelPublic();
+
+                                // 启动冷却
+                                switch_cooldown_count_ = SWITCH_COOLDOWN_FRAMES;
+                            }
+                            frame_fps_ = 0;
+                            resetVelocityStats();
+                        }
+                    }
+                }
             }
 
             const auto model = (*fitter)->getModel();
