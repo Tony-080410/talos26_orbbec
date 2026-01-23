@@ -1542,4 +1542,238 @@ TEST(RclCompatOwnership, PublisherOutsideCallback) {
     EXPECT_TRUE(pub.ready());
 }
 
+// -------------------------------------------------------------------------
+// Test Suite: ResourceAccessor
+// -------------------------------------------------------------------------
+
+// Test resource type
+struct TestResource {
+    int value        = 0;
+    std::string name = "test";
+};
+
+TEST(ResourceAccessor, DefaultConstruction) {
+    rclcompat::ResourceAccessor<TestResource> accessor;
+
+    EXPECT_FALSE(accessor.valid());
+}
+
+TEST(ResourceAccessor, CreateFromNode) {
+    World world;
+    Scheduler scheduler(world);
+
+    rclcompat::Node node("test", scheduler);
+
+    // Insert a resource into the world
+    node.insert_resource(TestResource{.value = 42, .name = "test_resource"});
+
+    // Create a resource accessor
+    auto accessor = node.create_resource<TestResource>();
+
+    EXPECT_TRUE(accessor.valid());
+}
+
+TEST(ResourceAccessor, GetImmutableResource) {
+    World world;
+    Scheduler scheduler(world);
+
+    rclcompat::Node node("test", scheduler);
+
+    // Insert a resource into the world
+    node.insert_resource(TestResource{.value = 42, .name = "test_resource"});
+
+    // Create a resource accessor
+    auto accessor = node.create_resource<TestResource>();
+
+    // Get the resource
+    auto res = accessor.get();
+
+    EXPECT_NE(res.ptr_, nullptr);
+    EXPECT_EQ(res->value, 42);
+    EXPECT_EQ(res->name, "test_resource");
+}
+
+TEST(ResourceAccessor, GetMutableResource) {
+    World world;
+    Scheduler scheduler(world);
+
+    rclcompat::Node node("test", scheduler);
+
+    // Insert a resource into the world
+    node.insert_resource(TestResource{.value = 42, .name = "test_resource"});
+
+    // Create a resource accessor
+    auto accessor = node.create_resource<TestResource>();
+
+    // Get mutable access
+    auto res_mut = accessor.get_mut();
+
+    EXPECT_NE(res_mut.ptr_, nullptr);
+    EXPECT_EQ(res_mut->value, 42);
+
+    // Modify the resource
+    res_mut->value = 100;
+    res_mut->name  = "modified";
+
+    // Get again to verify the change
+    auto res2 = accessor.get();
+    EXPECT_EQ(res2->value, 100);
+    EXPECT_EQ(res2->name, "modified");
+}
+
+TEST(ResourceAccessor, HasResource) {
+    World world;
+    Scheduler scheduler(world);
+
+    rclcompat::Node node("test", scheduler);
+
+    // Resource doesn't exist yet
+    EXPECT_FALSE(node.has_resource<TestResource>());
+
+    // Insert a resource
+    node.insert_resource(TestResource{.value = 42, .name = "test_resource"});
+
+    // Now it exists
+    EXPECT_TRUE(node.has_resource<TestResource>());
+}
+
+TEST(ResourceAccessor, UpdateResource) {
+    World world;
+    Scheduler scheduler(world);
+
+    rclcompat::Node node("test", scheduler);
+
+    // Insert initial resource
+    node.insert_resource(TestResource{.value = 42, .name = "original"});
+
+    auto accessor = node.create_resource<TestResource>();
+    auto res      = accessor.get();
+    EXPECT_EQ(res->value, 42);
+
+    // Update the resource
+    auto result = node.update_resource(TestResource{.value = 100, .name = "updated"});
+    EXPECT_TRUE(result.has_value());
+    EXPECT_GT(*result, 0); // Version should be > 0
+
+    // Verify the update
+    auto res2 = accessor.get();
+    EXPECT_EQ(res2->value, 100);
+    EXPECT_EQ(res2->name, "updated");
+}
+
+// -------------------------------------------------------------------------
+// Test: ResourceAccessor_WithCallback
+// -------------------------------------------------------------------------
+// TEST PURPOSE:
+//   验证 ResourceAccessor 可以在回调中使用
+//
+// VERIFICATION:
+//   1. 回调可以通过 ResourceAccessor 访问资源
+//   2. 资源的修改对后续访问可见
+// -------------------------------------------------------------------------
+
+TEST(ResourceAccessor, WithCallback) {
+    World world;
+    Scheduler scheduler(world);
+
+    rclcompat::Node node("test", scheduler);
+
+    // Insert a resource
+    node.insert_resource(TestResource{.value = 0, .name = "counter"});
+
+    // Create resource accessor (can be stored as class member)
+    auto counter_accessor = node.create_resource<TestResource>();
+
+    // Create a subscription that uses the resource accessor
+    std::atomic<bool> callback_executed{false};
+    std::atomic<int> final_value{0};
+
+    node.create_subscription<TestMessage, TestTag1>(
+        [&counter_accessor, &callback_executed, &final_value](const TestMessage& msg) {
+            callback_executed.store(true);
+
+            // Access the resource
+            auto counter = counter_accessor.get_mut();
+
+            // Increment the counter
+            counter->value += 1;
+            final_value.store(counter->value);
+        });
+
+    // Create exclusive system that writes to the same SPMC channel
+    // Note: Use spmc_mut (not spsc_mut) to trigger the subscription
+    // IMPORTANT: Add exclusive system BEFORE calling node.finalize()!
+    std::atomic<int> trigger_count{0};
+    scheduler.add_system<talos::exclusive<100>>(
+        "trigger_source",
+        [&trigger_count](talos::spmc_mut<TestMessage, TestTag1> trigger_out) {
+            trigger_count.fetch_add(1);
+            trigger_out.write(TestMessage{.value = trigger_count.load(), .text = "trigger"});
+            return true;
+        });
+
+    // Now finalize (this will call scheduler.build())
+    EXPECT_TRUE(node.finalize().has_value());
+
+    // Run scheduler in a separate thread
+    std::jthread scheduler_thread([&scheduler]() { (void)scheduler.run(); });
+
+    // Give scheduler time to run
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+
+    // Stop the scheduler
+    scheduler.stop();
+    scheduler_thread.join();
+
+    // Verify the callback was executed and the resource was modified
+    EXPECT_TRUE(callback_executed.load());
+    EXPECT_GT(final_value.load(), 0);
+    EXPECT_GT(trigger_count.load(), 0);
+}
+
+// -------------------------------------------------------------------------
+// Test: ResourceAccessor_Copyable
+// -------------------------------------------------------------------------
+// TEST PURPOSE:
+//   验证 ResourceAccessor 是可复制的（与 Publisher 不同）
+//
+// VERIFICATION:
+//   1. ResourceAccessor 可以被复制
+//   2. 复制后的 accessor 访问同一个资源
+// -------------------------------------------------------------------------
+
+TEST(ResourceAccessor, Copyable) {
+    World world;
+    Scheduler scheduler(world);
+
+    rclcompat::Node node("test", scheduler);
+
+    // Insert a resource
+    node.insert_resource(TestResource{.value = 42, .name = "original"});
+
+    // Create a resource accessor
+    auto accessor1 = node.create_resource<TestResource>();
+
+    // Copy the accessor
+    auto accessor2 = accessor1; // NOLINT: Testing copy behavior
+
+    // Both accessors should be valid and access the same resource
+    EXPECT_TRUE(accessor1.valid());
+    EXPECT_TRUE(accessor2.valid());
+
+    auto res1 = accessor1.get();
+    auto res2 = accessor2.get();
+
+    EXPECT_EQ(res1->value, 42);
+    EXPECT_EQ(res2->value, 42);
+
+    // Modify through accessor2
+    auto mut2 = accessor2.get_mut();
+    mut2->value = 100;
+
+    // Changes should be visible through accessor1
+    auto res1_after = accessor1.get();
+    EXPECT_EQ(res1_after->value, 100);
+}
+
 } // namespace talos::test

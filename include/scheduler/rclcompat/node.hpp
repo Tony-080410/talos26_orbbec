@@ -1,6 +1,7 @@
 #pragma once
 
 #include "demangle.hpp"
+#include "ecs/channel_types.hpp"
 #include "scheduler/rclcompat/system.hpp"
 #include "scheduler/scheduler.hpp"
 
@@ -129,6 +130,97 @@ public:
 
         pending_systems_.push_back(
             std::make_unique<RclSubSystem<T, Topic>>(system_name, std::move(callback)));
+    }
+
+    /**
+     * @brief Create a resource accessor
+     *
+     * Returns a copyable ResourceAccessor handle that can be used to access
+     * resources from the World. Can be stored as a class member and used from
+     * callbacks.
+     *
+     * ## Template parameters
+     *
+     * - `T`: resource type
+     *
+     * ## Returns
+     *
+     * ResourceAccessor handle for accessing the resource
+     *
+     * ## Example
+     *
+     * ```cpp
+     * class Detector {
+     *     ResourceAccessor<TfBuffer> tf_buffer_;
+     *     Publisher<Detection> det_pub_;
+     *
+     *     void init(Node& node) {
+     *         tf_buffer_ = node.create_resource<TfBuffer>();
+     *         det_pub_ = node.create_publisher<Detection>();
+     *
+     *         node.create_subscription<Image>([this](const Image& img) {
+     *             auto tf = tf_buffer_.get();  // Access resource
+     *             det_pub_.publish(process(img, tf));
+     *         });
+     *     }
+     * };
+     * ```
+     */
+    template <typename T>
+    [[nodiscard]] ResourceAccessor<T> create_resource() noexcept {
+        return ResourceAccessor<T>(&scheduler_.world());
+    }
+
+    /**
+     * @brief Check if a resource exists in the World
+     *
+     * ## Template parameters
+     *
+     * - `T`: resource type
+     *
+     * ## Returns
+     *
+     * `true` if the resource exists
+     */
+    template <typename T>
+    [[nodiscard]] bool has_resource() const noexcept {
+        return scheduler_.world().template has_resource<T>();
+    }
+
+    /**
+     * @brief Insert a resource into the World
+     *
+     * ## Template parameters
+     *
+     * - `T`: resource type
+     *
+     * ## Parameters
+     *
+     * - `resource`: the resource to insert (moved)
+     */
+    template <typename T>
+    void insert_resource(T resource) {
+        scheduler_.world().insert_resource(std::move(resource));
+    }
+
+    /**
+     * @brief Update a resource in the World
+     *
+     * ## Template parameters
+     *
+     * - `T`: resource type
+     *
+     * ## Parameters
+     *
+     * - `new_value`: the new resource value (moved)
+     *
+     * ## Returns
+     *
+     * `std::expected<uint64_t, std::string>` - the new version number on success
+     */
+    template <typename T>
+    [[nodiscard]] std::expected<uint64_t, std::string> update_resource(T new_value) {
+        return scheduler_.world().update_resource(std::move(new_value));
     }
 
     /**

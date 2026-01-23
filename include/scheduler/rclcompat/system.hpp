@@ -431,4 +431,110 @@ private:
     std::vector<std::atomic<bool>*> tracked_write_flags_;
 };
 
+// ============================================================================
+// ResourceAccessor: Proxy for accessing World resources
+// ============================================================================
+
+/**
+ * @brief Proxy for accessing resources from the World
+ *
+ * Similar to Publisher, this is a lightweight handle that provides access
+ * to resources stored in the World. Can be stored as a class member and
+ * used from callbacks.
+ *
+ * ## Template parameters
+ *
+ * - `T`: resource type
+ *
+ * ## Example
+ *
+ * ```cpp
+ * class Detector {
+ *     ResourceAccessor<TfBuffer> tf_buffer_;
+ *     Publisher<Detection> det_pub_;
+ *
+ *     void init(Node& node) {
+ *         tf_buffer_ = node.create_resource<TfBuffer>();
+ *         det_pub_ = node.create_publisher<Detection>();
+ *
+ *         node.create_subscription<Image>([this](const Image& img) {
+ *             auto tf = tf_buffer_.get();  // Access resource
+ *             det_pub_.publish(process(img, tf));
+ *         });
+ *     }
+ * };
+ * ```
+ */
+template <typename T>
+class ResourceAccessor {
+public:
+    ResourceAccessor() noexcept = default;
+
+    /**
+     * @brief Construct a resource accessor
+     *
+     * ## Parameters
+     *
+     * - `world`: pointer to the ECS world (non-owning)
+     */
+    explicit ResourceAccessor(World* world) noexcept
+        : world_(world) {}
+
+    /**
+     * @brief Get immutable access to the resource
+     *
+     * ## Returns
+     *
+     * `res<T>` handle for reading the resource
+     *
+     * ## Thread safety
+     *
+     * Multiple threads can call get() concurrently.
+     */
+    [[nodiscard]] res<T> get() const noexcept {
+        if (!world_) [[unlikely]] {
+            SPDLOG_CRITICAL("ResourceAccessor::get() called on invalid accessor");
+            std::abort();
+        }
+        return world_->template get_res<T>();
+    }
+
+    /**
+     * @brief Get mutable access to the resource
+     *
+     * ## Returns
+     *
+     * `res_mut<T>` handle for reading/writing the resource
+     *
+     * ## Thread safety
+     *
+     * Multiple threads can call get_mut(), but concurrent writes must be
+     * synchronized externally. The resource version is automatically
+     * incremented on write.
+     */
+    [[nodiscard]] res_mut<T> get_mut() const noexcept {
+        if (!world_) [[unlikely]] {
+            SPDLOG_CRITICAL("ResourceAccessor::get_mut() called on invalid accessor");
+            std::abort();
+        }
+        return world_->template get_res_mut<T>();
+    }
+
+    /**
+     * @brief Check if a resource accessor is valid
+     *
+     * ## Returns
+     *
+     * `true` if this accessor is bound to a World
+     */
+    [[nodiscard]] bool valid() const noexcept { return world_ != nullptr; }
+
+    // Copyable (multiple accessors can reference the same World)
+    ResourceAccessor(const ResourceAccessor&)            = default;
+    ResourceAccessor& operator=(const ResourceAccessor&) = default;
+
+private:
+    World* world_ = nullptr;
+};
+
 } // namespace talos::rclcompat
