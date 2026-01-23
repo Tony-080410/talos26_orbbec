@@ -58,7 +58,7 @@ Talos 是一个基于自定义 ECS 调度器的机器人视觉框架，采用 5 
    - `run()`: 执行系统，返回是否写入数据
 
 4. **调度器** (`include/scheduler/scheduler/scheduler.hpp`)
-   - **exclusive<FreqHz, Affinity, Priority>**: 独占线程，定频触发
+   - **fixed_rate<FreqHz, Affinity, Priority>**: 独占线程，定频触发
    - **pool_compute**: TBB 线程池，依赖触发
    - 编译期验证：单写入者、无循环依赖、孤儿检测
 

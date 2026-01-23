@@ -16,7 +16,7 @@ namespace fcs::L5 {
 
 void register_enhanced_weapon_system(talos::Scheduler& scheduler, WeaponControllerConfig&& config) {
     scheduler.world().insert_resource(std::move(config));
-    scheduler.add_system<talos::exclusive<250>>(
+    scheduler.add_system<talos::fixed_rate<250>>(
         "enhanced_weapon_control",
         [controller = std::shared_ptr<EnhancedWeaponController>{},
          comp_type  = fcs::L4::TrajectoryCompensatorType::Ideal](

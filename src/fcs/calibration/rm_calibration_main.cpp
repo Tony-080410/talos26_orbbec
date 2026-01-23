@@ -285,7 +285,7 @@ int main(int argc, char* argv[]) {
     }
 
     // Camera reader system
-    scheduler.add_system<talos::exclusive<30>>(
+    scheduler.add_system<talos::fixed_rate<30>>(
         "camera_reader",
         [&input](talos::spmc_mut<fcs::AtLegacyImageFrame, fcs::AtLegacyImageChannelTag> cam_out) {
             auto frame = input.try_recv();
@@ -301,22 +301,24 @@ int main(int argc, char* argv[]) {
     // IMU reader system - different implementation for daedalus vs real hardware
     if (use_daedalus && ipc_device) {
         // Daedalus: read pose from shared memory
-        scheduler.add_system<talos::exclusive_silent<100>>("imu_reader", [ipc_device, tf_buffer]() {
-            if (const auto pose = ipc_device->recv_pose(ipc::POSE_GIMBAL)) {
-                const Eigen::Quaterniond q(pose->qw, pose->qx, pose->qy, pose->qz);
-                const auto euler = math_fuxk::rpy(q);
+        scheduler.add_system<talos::fixed_rate_silent<100>>(
+            "imu_reader", [ipc_device, tf_buffer]() {
+                if (const auto pose = ipc_device->recv_pose(ipc::POSE_GIMBAL)) {
+                    const Eigen::Quaterniond q(pose->qw, pose->qx, pose->qy, pose->qz);
+                    const auto euler = math_fuxk::rpy(q);
 
-                // Update gimbal_link transform
-                fast_tf::update(
-                    *tf_buffer,
-                    fast_tf::FuckTransform<fast_tf::gimbal_link_fuxk_frame>(
-                        fast_tf::TransformMatrix4d::from_rpy(euler.roll, euler.pitch, euler.yaw)),
-                    pose->timestamp_ns);
-            }
-        });
+                    // Update gimbal_link transform
+                    fast_tf::update(
+                        *tf_buffer,
+                        fast_tf::FuckTransform<fast_tf::gimbal_link_fuxk_frame>(
+                            fast_tf::TransformMatrix4d::from_rpy(
+                                euler.roll, euler.pitch, euler.yaw)),
+                        pose->timestamp_ns);
+                }
+            });
     } else if (stm32_connected && stm32) {
         // Real hardware: read from STM32
-        scheduler.add_system<talos::exclusive_silent<100>>(
+        scheduler.add_system<talos::fixed_rate_silent<100>>(
             "imu_reader", [stm32, tf_buffer, &imu_data]() {
                 // Handle USB events (this updates latest_imu via callback)
                 stm32->handle_events();

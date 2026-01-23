@@ -147,7 +147,7 @@ public:
      *
      * ## Template parameters
      *
-     * - `Policy`: execution policy (exclusive, exclusive_silent, pool_compute)
+     * - `Policy`: execution policy (fixed_rate, fixed_rate_silent, pool_compute)
      * - `F`: callable type for the system function
      *
      * ## Parameters
@@ -207,8 +207,8 @@ public:
         for (const auto& sys : systems_) {
             const auto& m   = sys->meta();
             auto policy_str = "pool";
-            if (m.policy.is_exclusive()) {
-                policy_str = m.policy.notifies ? "exclusive" : "silent";
+            if (m.policy.is_fixed_rate()) {
+                policy_str = m.policy.notifies ? "fixed_rate" : "silent";
             }
             printf(
                 "  [%s] policy:%s spsc:%zu spmc:%zu res:%zu res_mut:%zu\n", m.name.c_str(),

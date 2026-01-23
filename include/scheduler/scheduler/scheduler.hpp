@@ -4,19 +4,19 @@
  * @file
  * @brief Scheduler for data-driven task execution
  *
- * This module provides a scheduler that manages exclusive (single-threaded)
+ * This module provides a scheduler that manages fixed_rate (single-threaded)
  * and compute (thread-pool) systems with dependency-aware execution.
  *
  * ## Architecture
  *
- * - **Exclusive systems**: Run on dedicated threads, can notify the scheduler
+ * - **FixedRate systems**: Run on dedicated threads, can notify the scheduler
  * - **Compute systems**: Run on TBB thread pool, triggered by notifications
  * - **Dependency graph**: Built from channel connections, enables selective wakeup
  *
  * ## Execution model
  *
- * 1. Exclusive systems run on their own threads
- * 2. When an exclusive system notifies, it triggers dependent compute systems
+ * 1. FixedRate systems run on their own threads
+ * 2. When an fixed_rate system notifies, it triggers dependent compute systems
  * 3. Compute systems run in topological order (levels)
  * 4. TBB arena manages thread pool concurrency
  *
@@ -272,7 +272,7 @@ struct SystemEntry {
 /**
  * @brief Main scheduler for data-driven task execution
  *
- * The scheduler manages exclusive systems (single-threaded, dedicated threads)
+ * The scheduler manages fixed_rate systems (single-threaded, dedicated threads)
  * and compute systems (thread-pool based) with dependency-aware execution.
  *
  * ## Usage
@@ -281,7 +281,7 @@ struct SystemEntry {
  * World world;
  * Scheduler scheduler(world);
  *
- * scheduler.add_system<exclusive<30>>("camera", [](talos::spmc_mut<fcs::AtLegacyImageFrame,
+ * scheduler.add_system<fixed_rate<30>>("camera", [](talos::spmc_mut<fcs::AtLegacyImageFrame,
  * fcs::AtLegacyImageChannelTag> cam_out) {
  *     // Process camera input, write to channel
  *     cam_out.write(...);
@@ -334,7 +334,7 @@ public:
      *
      * ## Template parameters
      *
-     * - `Policy`: execution policy (exclusive, exclusive_silent, pool_compute)
+     * - `Policy`: execution policy (fixed_rate, fixed_rate_silent, pool_compute)
      * - `F`: callable type for the system function
      *
      * ## Parameters
@@ -397,7 +397,7 @@ public:
     /**
      * @brief Start scheduler, blocks until stop() is called
      *
-     * Launches exclusive system threads and enters the compute loop.
+     * Launches fixed_rate system threads and enters the compute loop.
      *
      * ## Returns
      *
@@ -412,7 +412,7 @@ public:
     /**
      * @brief Request graceful shutdown
      *
-     * Sets the running flag to false. Exclusive threads will exit
+     * Sets the running flag to false. FixedRate threads will exit
      * after their current tick completes.
      */
     void stop() noexcept;
@@ -451,22 +451,22 @@ public:
     [[nodiscard]] auto is_running() const noexcept -> bool;
 
     // ========================================================================
-    // Notification (called by exclusive threads)
+    // Notification (called by fixed_rate threads)
     // ========================================================================
 
     /**
      * @brief Notify scheduler that a system has produced data
      *
-     * Called by exclusive systems to trigger dependent compute systems.
+     * Called by fixed_rate systems to trigger dependent compute systems.
      * The notification uses a bitmask for efficient selective wakeup.
      *
      * ## Parameters
      *
-     * - `system_index`: index of the exclusive system in exclusive_systems_
+     * - `system_index`: index of the fixed_rate system in fixed_rate_systems_
      *
      * ## Thread safety
      *
-     * Safe to call from any exclusive system thread.
+     * Safe to call from any fixed_rate system thread.
      */
     void notify(std::size_t system_index) noexcept;
 
@@ -528,7 +528,7 @@ private:
     // Internal Types
     // ========================================================================
 
-    struct ExclusiveContext {
+    struct FixedRateContext {
         SystemBase* system;
         PolicyInfo policy;
         std::atomic<bool>* running;
@@ -538,22 +538,22 @@ private:
     };
 
     /**
-     * @brief Performance statistics for exclusive systems
+     * @brief Performance statistics for fixed_rate systems
      */
-    struct ExclusiveStats {
+    struct FixedRateStats {
         std::atomic<std::uint64_t> notify_count{0};
         LatencyHistogram latency_hist;
 
-        ExclusiveStats() = default;
+        FixedRateStats() = default;
 
         // Move constructor: atomics are not movable, so we load and store
-        ExclusiveStats(ExclusiveStats&& other) noexcept
+        FixedRateStats(FixedRateStats&& other) noexcept
             : notify_count(other.notify_count.load(std::memory_order_relaxed))
             , latency_hist(other.latency_hist) {}
 
-        ExclusiveStats(const ExclusiveStats&)            = delete;
-        ExclusiveStats& operator=(const ExclusiveStats&) = delete;
-        ExclusiveStats& operator=(ExclusiveStats&&)      = delete;
+        FixedRateStats(const FixedRateStats&)            = delete;
+        FixedRateStats& operator=(const FixedRateStats&) = delete;
+        FixedRateStats& operator=(FixedRateStats&&)      = delete;
     };
 
     /**
@@ -573,7 +573,7 @@ private:
     // Internal Methods
     // ========================================================================
 
-    static void run_exclusive_thread(ExclusiveContext ctx);
+    static void run_fixed_rate_thread(FixedRateContext ctx);
     void run_compute_loop();
     [[nodiscard]] std::uint64_t
         run_compute_selective(std::uint64_t ready_mask); // Returns mask of systems that wrote
@@ -588,14 +588,14 @@ private:
     SchedulerConfig config_;
 
     // Systems
-    std::vector<SystemEntry> exclusive_systems_;
+    std::vector<SystemEntry> fixed_rate_systems_;
     std::vector<SystemEntry> compute_systems_;
 
     // Execution levels for compute systems (topologically sorted)
     std::vector<std::vector<std::size_t>> levels_;
 
     // Threads
-    std::vector<std::jthread> exclusive_threads_;
+    std::vector<std::jthread> fixed_rate_threads_;
 
     // TBB
     std::unique_ptr<tbb::task_arena> compute_arena_;
@@ -605,16 +605,17 @@ private:
     std::atomic<bool> running_{false};
 
     // Selective notification: wake chains for all systems
-    std::vector<std::uint64_t> exclusive_affects_; // [exclusive_idx] -> bitmask of compute systems
     std::vector<std::uint64_t>
-        compute_affects_; // [compute_idx] -> bitmask of dependent compute systems
+        fixed_rate_affects_; // [fixed_rate_idx] -> bitmask of compute systems
+    std::vector<std::uint64_t>
+        compute_affects_;    // [compute_idx] -> bitmask of dependent compute systems
     std::atomic<std::uint64_t> ready_systems_{0}; // Bitmask of compute systems pending execution
 
     // Stats
     std::atomic<std::uint64_t> compute_cycles_{0};
     std::atomic<std::uint64_t> compute_total_time_ns_{0};
     std::atomic<std::uint64_t> compute_last_time_ns_{0};
-    std::vector<ExclusiveStats> exclusive_stats_;
+    std::vector<FixedRateStats> fixed_rate_stats_;
     std::vector<ComputeStats> compute_stats_;
     TimePoint stats_start_time_;
 
@@ -649,8 +650,8 @@ auto Scheduler::add_system(std::string name, F&& func) -> void {
         .policy = policy,
     };
 
-    if constexpr (is_exclusive_policy_v<Policy>) {
-        exclusive_systems_.push_back(std::move(entry));
+    if constexpr (is_fixed_rate_policy_v<Policy>) {
+        fixed_rate_systems_.push_back(std::move(entry));
         return;
     }
     if constexpr (is_pool_policy_v<Policy> || is_visualization_policy_v<Policy>) {

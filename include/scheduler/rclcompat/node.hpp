@@ -137,7 +137,7 @@ public:
      * @brief Create a wall timer
      *
      * Creates a timer that invokes a callback at a fixed frequency.
-     * The callback runs on a dedicated exclusive thread.
+     * The callback runs on a dedicated fixed_rate thread.
      *
      * ## Parameters
      *

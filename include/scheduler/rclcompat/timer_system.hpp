@@ -10,7 +10,7 @@ namespace talos::rclcompat {
 /**
  * @brief Fixed-frequency timer system
  *
- * Runs on a dedicated exclusive thread at a fixed frequency.
+ * Runs on a dedicated fixed_rate thread at a fixed frequency.
  * Inherits from RclSubSystemBase to enable Publisher auto-binding mechanism.
  *
  * ## Template parameters
@@ -23,7 +23,7 @@ template <std::uint32_t FrequencyHz, std::int32_t Affinity = -1, std::int32_t Pr
 class RclTimerSystem : public RclSubSystemBase {
 public:
     using Callback = std::function<void()>;
-    using Policy   = talos::exclusive<FrequencyHz, Affinity, Priority>;
+    using Policy   = talos::fixed_rate<FrequencyHz, Affinity, Priority>;
 
     explicit RclTimerSystem(std::string name, Callback callback) noexcept
         : callback_(std::move(callback)) {

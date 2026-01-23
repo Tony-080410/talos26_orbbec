@@ -5,14 +5,14 @@
  * @brief Execution policies for systems
  *
  * This module defines policies that specify how systems are executed:
- * - **Exclusive**: Runs on a dedicated thread (single-producer)
+ * - **FixedRate**: Runs on a dedicated thread (single-producer)
  * - **Pool compute**: Runs on the TBB thread pool (multi-consumer)
  *
  * ## Usage
  *
  * ```cpp
- * // Camera: exclusive, runs at 30Hz, pinned to core 0
- * scheduler.add_system<exclusive<30, 0, 0>>("camera", [](auto input, auto output) {
+ * // Camera: fixed_rate, runs at 30Hz, pinned to core 0
+ * scheduler.add_system<fixed_rate<30, 0, 0>>("camera", [](auto input, auto output) {
  *     // ...
  * });
  *
@@ -39,7 +39,7 @@ struct NotifyingTopic {};
 struct SilentTopic {};
 
 /**
- * @brief Base template for exclusive execution policies
+ * @brief Base template for fixed_rate execution policies
  *
  * @tparam FreqHz Execution frequency in Hz, 0 = run as fast as possible
  * @tparam Affinity CPU core affinity, -1 = no binding
@@ -49,7 +49,7 @@ struct SilentTopic {};
 template <
     std::uint32_t FreqHz = 0, std::int32_t Affinity = -1, std::int32_t Priority = 0,
     typename Topic = NotifyingTopic>
-struct exclusive_base {
+struct fixed_rate_base {
     static constexpr std::uint32_t frequency_hz   = FreqHz;
     static constexpr std::int32_t cpu_affinity    = Affinity;
     static constexpr std::int32_t thread_priority = Priority;
@@ -59,7 +59,7 @@ struct exclusive_base {
 } // namespace detail
 
 /**
- * @brief Exclusive with notify: dedicated thread, notifies scheduler after each tick
+ * @brief FixedRate with notify: dedicated thread, notifies scheduler after each tick
  *
  * Use for: data sources that should trigger compute (e.g., Camera)
  *
@@ -73,16 +73,16 @@ struct exclusive_base {
  *
  * ```cpp
  * // 30Hz camera, pinned to core 0, normal priority
- * add_system<exclusive<30, 0, 0>>("camera", [](auto in, auto out) {
+ * add_system<fixed_rate<30, 0, 0>>("camera", [](auto in, auto out) {
  *     // ...
  * });
  * ```
  */
 template <std::uint32_t FreqHz = 0, std::int32_t Affinity = -1, std::int32_t Priority = 0>
-using exclusive = detail::exclusive_base<FreqHz, Affinity, Priority, detail::NotifyingTopic>;
+using fixed_rate = detail::fixed_rate_base<FreqHz, Affinity, Priority, detail::NotifyingTopic>;
 
 /**
- * @brief Exclusive silent: dedicated thread, does NOT notify scheduler
+ * @brief FixedRate silent: dedicated thread, does NOT notify scheduler
  *
  * Use for: high-frequency data sources (e.g., IMU) that update silently
  *
@@ -96,24 +96,24 @@ using exclusive = detail::exclusive_base<FreqHz, Affinity, Priority, detail::Not
  *
  * ```cpp
  * // 500Hz IMU, pinned to core 1
- * add_system<exclusive_silent<500, 1, 0>>("imu", [](auto in, auto out) {
+ * add_system<fixed_rate_silent<500, 1, 0>>("imu", [](auto in, auto out) {
  *     // ...
  * });
  * ```
  */
 template <std::uint32_t FreqHz = 0, std::int32_t Affinity = -1, std::int32_t Priority = 0>
-using exclusive_silent = detail::exclusive_base<FreqHz, Affinity, Priority, detail::SilentTopic>;
+using fixed_rate_silent = detail::fixed_rate_base<FreqHz, Affinity, Priority, detail::SilentTopic>;
 
 /**
- * @brief Pool compute: TBB thread pool, triggered by exclusive notify
+ * @brief Pool compute: TBB thread pool, triggered by fixed_rate notify
  *
  * Default policy. Systems run on the TBB thread pool and are
- * selectively woken when exclusive systems produce data.
+ * selectively woken when fixed_rate systems produce data.
  */
 struct pool_compute {};
 
 /**
- * @brief Pool compute: TBB thread pool, triggered by exclusive notify
+ * @brief Pool compute: TBB thread pool, triggered by fixed_rate notify
  *
  * For visualization.
  * TODO
@@ -130,13 +130,13 @@ using default_policy = pool_compute;
 namespace detail {
 
 template <typename T>
-struct is_exclusive_policy : std::false_type {};
+struct is_fixed_rate_policy : std::false_type {};
 
 template <std::uint32_t F, std::int32_t A, std::int32_t P>
-struct is_exclusive_policy<exclusive<F, A, P>> : std::true_type {};
+struct is_fixed_rate_policy<fixed_rate<F, A, P>> : std::true_type {};
 
 template <std::uint32_t F, std::int32_t A, std::int32_t P>
-struct is_exclusive_policy<exclusive_silent<F, A, P>> : std::true_type {};
+struct is_fixed_rate_policy<fixed_rate_silent<F, A, P>> : std::true_type {};
 
 template <typename T>
 struct is_pool_policy : std::is_same<T, pool_compute> {};
@@ -148,25 +148,25 @@ template <typename T>
 struct is_notifying_policy : std::false_type {};
 
 template <std::uint32_t F, std::int32_t A, std::int32_t P>
-struct is_notifying_policy<exclusive<F, A, P>> : std::true_type {};
+struct is_notifying_policy<fixed_rate<F, A, P>> : std::true_type {};
 
 template <typename T>
 struct is_silent_policy : std::false_type {};
 
 template <std::uint32_t F, std::int32_t A, std::int32_t P>
-struct is_silent_policy<exclusive_silent<F, A, P>> : std::true_type {};
+struct is_silent_policy<fixed_rate_silent<F, A, P>> : std::true_type {};
 
 } // namespace detail
 
 /**
- * @brief Check if a policy is exclusive
+ * @brief Check if a policy is fixed_rate
  *
  * ## Template parameters
  *
  * - `T`: policy type to check
  */
 template <typename T>
-inline constexpr bool is_exclusive_policy_v = detail::is_exclusive_policy<T>::value;
+inline constexpr bool is_fixed_rate_policy_v = detail::is_fixed_rate_policy<T>::value;
 
 /**
  * @brief Check if a policy is pool compute
@@ -209,7 +209,7 @@ inline constexpr bool is_silent_policy_v = detail::is_silent_policy<T>::value;
  * @brief Runtime representation of a policy's kind
  */
 enum class PolicyKind : std::uint8_t {
-    Exclusive,         ///< Exclusive system (dedicated thread)
+    FixedRate,         ///< FixedRate system (dedicated thread)
     PoolCompute,       ///< Pool compute system (TBB thread pool)
     PoolVisualization, ///< Pool compute system (TBB thread pool)
 };
@@ -225,14 +225,14 @@ struct PolicyInfo {
     bool notifies                = false;
 
     /**
-     * @brief Check if this is an exclusive policy
+     * @brief Check if this is an fixed_rate policy
      *
      * ## Returns
      *
-     * `true` if exclusive, `false` if pool compute
+     * `true` if fixed_rate, `false` if pool compute
      */
-    [[nodiscard]] constexpr bool is_exclusive() const noexcept {
-        return kind == PolicyKind::Exclusive;
+    [[nodiscard]] constexpr bool is_fixed_rate() const noexcept {
+        return kind == PolicyKind::FixedRate;
     }
 
     /**
@@ -240,7 +240,7 @@ struct PolicyInfo {
      *
      * ## Returns
      *
-     * `true` if pool compute, `false` if exclusive
+     * `true` if pool compute, `false` if fixed_rate
      */
     [[nodiscard]] constexpr bool is_pool() const noexcept {
         return kind == PolicyKind::PoolCompute;
@@ -264,9 +264,9 @@ struct PolicyInfo {
  */
 template <typename Policy>
 [[nodiscard]] constexpr auto make_policy_info() noexcept -> PolicyInfo {
-    if constexpr (is_exclusive_policy_v<Policy>) {
+    if constexpr (is_fixed_rate_policy_v<Policy>) {
         return PolicyInfo{
-            .kind            = PolicyKind::Exclusive,
+            .kind            = PolicyKind::FixedRate,
             .frequency_hz    = Policy::frequency_hz,
             .cpu_affinity    = Policy::cpu_affinity,
             .thread_priority = Policy::thread_priority,

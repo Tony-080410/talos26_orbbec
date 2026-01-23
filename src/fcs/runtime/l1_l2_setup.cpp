@@ -181,7 +181,7 @@ std::expected<L1L2SetupResult, std::string> setup_l1_l2(
     world.insert_resource(fcs::L2::create_pnp_solver(cam_info));
 
     // IMU: 100Hz, silent update (no notify)
-    scheduler.add_system<talos::exclusive_silent<1000, 1>>(
+    scheduler.add_system<talos::fixed_rate_silent<1000, 1>>(
         "imu_reader",
         [imu = std::move(imu)](
             talos::res_mut<std::shared_ptr<fast_tf::CoordinateSystem<1024>>> tf_buffer) {
@@ -190,7 +190,7 @@ std::expected<L1L2SetupResult, std::string> setup_l1_l2(
 
     // Camera: 160Hz, notify (triggers compute)
     auto last_seq = std::make_shared<std::atomic<uint64_t>>(0);
-    scheduler.add_system<talos::exclusive<250, 1>>(
+    scheduler.add_system<talos::fixed_rate<250, 1>>(
         "camera_reader", [camera = std::move(camera), last_seq](
                              talos::spmc_mut<AtLegacyImageFrame, AtLegacyImageChannelTag> cam_out) {
             const auto frame = camera->try_recv();
@@ -210,7 +210,7 @@ std::expected<L1L2SetupResult, std::string> setup_l1_l2(
         });
 
     // L1 Output System: Send WeaponCommand to device
-    scheduler.add_system<talos::exclusive<250, 1>>(
+    scheduler.add_system<talos::fixed_rate<250, 1>>(
         "weapon_output",
         [output = std::move(output)](
             talos::spmc<fcs::L5::WeaponCommand, fcs::WeaponCommandChannelTag> cmd_in) {

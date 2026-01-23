@@ -175,31 +175,31 @@ void test_execution_policies() {
     printf("=== Test: Execution Policies ===\n");
 
     // Static assertions for policy traits
-    static_assert(talos::is_exclusive_policy_v<talos::exclusive<30>>);
-    static_assert(talos::is_exclusive_policy_v<talos::exclusive<1000, 0, 99>>);
-    static_assert(talos::is_exclusive_policy_v<talos::exclusive_silent<1000>>);
-    static_assert(!talos::is_exclusive_policy_v<talos::pool_compute>);
+    static_assert(talos::is_fixed_rate_policy_v<talos::fixed_rate<30>>);
+    static_assert(talos::is_fixed_rate_policy_v<talos::fixed_rate<1000, 0, 99>>);
+    static_assert(talos::is_fixed_rate_policy_v<talos::fixed_rate_silent<1000>>);
+    static_assert(!talos::is_fixed_rate_policy_v<talos::pool_compute>);
 
     static_assert(talos::is_pool_policy_v<talos::pool_compute>);
-    static_assert(!talos::is_pool_policy_v<talos::exclusive<30>>);
-    static_assert(!talos::is_pool_policy_v<talos::exclusive_silent<1000>>);
+    static_assert(!talos::is_pool_policy_v<talos::fixed_rate<30>>);
+    static_assert(!talos::is_pool_policy_v<talos::fixed_rate_silent<1000>>);
 
     // Notify vs silent traits
-    static_assert(talos::is_notifying_policy_v<talos::exclusive<30>>);
-    static_assert(!talos::is_notifying_policy_v<talos::exclusive_silent<1000>>);
-    static_assert(talos::is_silent_policy_v<talos::exclusive_silent<1000>>);
-    static_assert(!talos::is_silent_policy_v<talos::exclusive<30>>);
+    static_assert(talos::is_notifying_policy_v<talos::fixed_rate<30>>);
+    static_assert(!talos::is_notifying_policy_v<talos::fixed_rate_silent<1000>>);
+    static_assert(talos::is_silent_policy_v<talos::fixed_rate_silent<1000>>);
+    static_assert(!talos::is_silent_policy_v<talos::fixed_rate<30>>);
 
     // Test policy info extraction
-    constexpr auto ex_info = talos::make_policy_info<talos::exclusive<30, 2, 50>>();
-    static_assert(ex_info.kind == talos::PolicyKind::Exclusive);
+    constexpr auto ex_info = talos::make_policy_info<talos::fixed_rate<30, 2, 50>>();
+    static_assert(ex_info.kind == talos::PolicyKind::FixedRate);
     static_assert(ex_info.frequency_hz == 30);
     static_assert(ex_info.cpu_affinity == 2);
     static_assert(ex_info.thread_priority == 50);
     static_assert(ex_info.notifies == true);
 
-    constexpr auto silent_info = talos::make_policy_info<talos::exclusive_silent<1000, 1, 10>>();
-    static_assert(silent_info.kind == talos::PolicyKind::Exclusive);
+    constexpr auto silent_info = talos::make_policy_info<talos::fixed_rate_silent<1000, 1, 10>>();
+    static_assert(silent_info.kind == talos::PolicyKind::FixedRate);
     static_assert(silent_info.frequency_hz == 1000);
     static_assert(silent_info.cpu_affinity == 1);
     static_assert(silent_info.thread_priority == 10);
@@ -215,9 +215,9 @@ void test_execution_policies() {
     struct ImuPipe {};
 
     talos::App app;
-    app.add_system<talos::exclusive<30>>(
+    app.add_system<talos::fixed_rate<30>>(
            "camera", [](talos::spsc_mut<int, DataPipe> out) { out.write(42); })
-        .add_system<talos::exclusive_silent<1000>>(
+        .add_system<talos::fixed_rate_silent<1000>>(
             "imu", [](talos::spsc_mut<int, ImuPipe> out) { out.write(123); })
         .add_system<talos::pool_compute>(
             "processor", [](talos::spsc<int, DataPipe> in, talos::spsc<int, ImuPipe> imu) {
@@ -235,10 +235,10 @@ void test_execution_policies() {
     bool found_processor = false;
 
     for (const auto* m : metas) {
-        if (m->name == "camera" && m->policy.is_exclusive() && m->policy.notifies) {
+        if (m->name == "camera" && m->policy.is_fixed_rate() && m->policy.notifies) {
             found_camera = true;
         }
-        if (m->name == "imu" && m->policy.is_exclusive() && !m->policy.notifies) {
+        if (m->name == "imu" && m->policy.is_fixed_rate() && !m->policy.notifies) {
             found_imu = true;
         }
         if (m->name == "processor" && m->policy.kind == talos::PolicyKind::PoolCompute) {

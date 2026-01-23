@@ -35,10 +35,10 @@ struct FusionChannel {};
 struct CustomFusionOut {};
 
 // ============================================================================
-// Test: Scheduler with Exclusive and Pool Systems
+// Test: Scheduler with Fixed rate and Pool Systems
 // ============================================================================
-void test_scheduler_exclusive_and_pool() {
-    printf("=== Test: Exclusive + Pool Systems ===\n");
+void test_scheduler_fixed_rate_and_pool() {
+    printf("=== Test: Fixed rate + Pool Systems ===\n");
 
     talos::World world;
     talos::Scheduler scheduler(world);
@@ -49,14 +49,14 @@ void test_scheduler_exclusive_and_pool() {
     std::atomic test_done{false};
 
     // IMU: 100Hz, silent update (no notify)
-    scheduler.add_system<talos::exclusive_silent<100>>(
+    scheduler.add_system<talos::fixed_rate_silent<100>>(
         "imu_reader", [&imu_count](talos::spmc_mut<ImuData, ImuChannel> imu_out) {
             const int seq = imu_count.fetch_add(1, std::memory_order_relaxed);
             imu_out.write(ImuData{.seq = seq, .accel_x = 0.1f * seq});
         });
 
     // Camera: 30Hz, notify (triggers compute)
-    scheduler.add_system<talos::exclusive<30>>(
+    scheduler.add_system<talos::fixed_rate<30>>(
         "camera_reader", [&camera_count](talos::spmc_mut<CameraFrame, CameraChannel> cam_out) {
             const int frame = camera_count.fetch_add(1, std::memory_order_relaxed);
             cam_out.write(CameraFrame{.frame_id = frame});
@@ -123,7 +123,7 @@ void test_scheduler_exclusive_and_pool() {
         stats.notify_count == static_cast<uint64_t>(final_camera); // Only camera notifies
 
     if (imu_ok && camera_ok && fusion_ok && notify_ok) {
-        printf("  Exclusive + Pool test passed!\n\n");
+        printf("  Fixed rate + Pool test passed!\n\n");
     } else {
         printf("  ERROR: Test failed\n");
         printf(
@@ -146,12 +146,12 @@ void test_silent_vs_notify() {
     std::atomic notify_count{0};
 
     // Silent system at 200Hz - should NOT trigger compute
-    scheduler.add_system<talos::exclusive_silent<200>>("silent_source", [&silent_count]() {
+    scheduler.add_system<talos::fixed_rate_silent<200>>("silent_source", [&silent_count]() {
         silent_count.fetch_add(1, std::memory_order_relaxed);
     });
 
     // Notify system at 50Hz - SHOULD trigger compute
-    scheduler.add_system<talos::exclusive<50>>("notify_source", [&notify_count]() {
+    scheduler.add_system<talos::fixed_rate<50>>("notify_source", [&notify_count]() {
         notify_count.fetch_add(1, std::memory_order_relaxed);
     });
 
@@ -528,7 +528,7 @@ void test_custom_system_injection() {
     std::atomic<int> camera_count{0};
     std::atomic<int> custom_runs{0};
 
-    scheduler.add_system<talos::exclusive<60>>(
+    scheduler.add_system<talos::fixed_rate<60>>(
         "camera_reader", [&camera_count](talos::spmc_mut<CameraFrame, CameraChannel> cam_out) {
             const int frame = camera_count.fetch_add(1, std::memory_order_relaxed);
             cam_out.write(CameraFrame{.frame_id = frame});
@@ -570,7 +570,7 @@ int main() {
     printf("==========================================\n\n");
 
     // Lifecycle tests
-    test_scheduler_exclusive_and_pool();
+    test_scheduler_fixed_rate_and_pool();
     test_silent_vs_notify();
 
     // Conflict detection tests

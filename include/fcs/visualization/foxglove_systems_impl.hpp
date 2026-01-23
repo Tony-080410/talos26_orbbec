@@ -174,7 +174,7 @@ void register_foxglove_systems(App& app, talos::Scheduler* scheduler_ptr_ = null
     // IMAGE PUBLISHER (Camera calibration + TF)
     // =========================================================================
 
-    app.template add_system<talos::exclusive<30>>(
+    app.template add_system<talos::fixed_rate<30>>(
         "foxglove_image_pub",
         [](talos::spmc<AtLegacyImageFrame, AtLegacyImageChannelTag> img_in,
            talos::res<std::shared_ptr<FoxgloveServer>> server, talos::res<fcs::CameraConfig> cam,
@@ -277,7 +277,7 @@ void register_foxglove_systems(App& app, talos::Scheduler* scheduler_ptr_ = null
             detail::publish_json_message<DebugArmorsMessage>(*server, armors_json);
         });
 
-    app.template add_system<talos::exclusive<30>>(
+    app.template add_system<talos::fixed_rate<30>>(
         "foxglove_rune_debug_images",
         [](talos::spmc<rune::RuneDebugFrame, RuneDebugFrameChannelTag> dbg_in,
            talos::res<std::shared_ptr<FoxgloveServer>> server) {
@@ -1302,11 +1302,11 @@ void register_foxglove_systems(App& app, talos::Scheduler* scheduler_ptr_ = null
         });
 
     // =========================================================================
-    // PERFORMANCE STATISTICS PUBLISHER (1 Hz, exclusive_silent)
+    // PERFORMANCE STATISTICS PUBLISHER (1 Hz, fixed_rate_silent)
     // =========================================================================
 
     if (scheduler_ptr_) {
-        app.template add_system<talos::exclusive_silent<100>>(
+        app.template add_system<talos::fixed_rate_silent<100>>(
             "foxglove_perf_stats_pub",
             [scheduler_ptr_](talos::res<std::shared_ptr<FoxgloveServer>> server) {
                 auto& server_ptr = *server; // 引用绑定

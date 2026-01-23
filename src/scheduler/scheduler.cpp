@@ -26,7 +26,7 @@ Scheduler::Scheduler(World& world, const SchedulerConfig config)
 Scheduler::~Scheduler() {
     stop();
 
-    for (auto& t : exclusive_threads_) {
+    for (auto& t : fixed_rate_threads_) {
         if (t.joinable()) {
             t.join();
         }
@@ -59,9 +59,9 @@ uint32_t Scheduler::add_system(std::unique_ptr<SystemBase> system) {
         .policy = policy,
     };
 
-    if (policy.is_exclusive()) {
-        exclusive_systems_.push_back(std::move(entry));
-        return exclusive_systems_.size() - 1;
+    if (policy.is_fixed_rate()) {
+        fixed_rate_systems_.push_back(std::move(entry));
+        return fixed_rate_systems_.size() - 1;
     }
     if (policy.is_pool() || policy.is_visualization()) {
         compute_systems_.push_back(std::move(entry));
@@ -88,10 +88,10 @@ auto Scheduler::build() -> BuildResult {
     }
 
     // Ensure stats capacity matches system count
-    if (exclusive_stats_.size() < exclusive_systems_.size()) {
-        exclusive_stats_.reserve(exclusive_systems_.size());
-        for (std::size_t i = exclusive_stats_.size(); i < exclusive_systems_.size(); ++i) {
-            exclusive_stats_.emplace_back();
+    if (fixed_rate_stats_.size() < fixed_rate_systems_.size()) {
+        fixed_rate_stats_.reserve(fixed_rate_systems_.size());
+        for (std::size_t i = fixed_rate_stats_.size(); i < fixed_rate_systems_.size(); ++i) {
+            fixed_rate_stats_.emplace_back();
         }
     }
 
@@ -103,7 +103,7 @@ auto Scheduler::build() -> BuildResult {
     }
 
     // Bind all systems (pre-create channel readers/writers, single-threaded)
-    for (auto& entry : exclusive_systems_) {
+    for (auto& entry : fixed_rate_systems_) {
         entry.system->bind(world_);
     }
     for (auto& entry : compute_systems_) {
@@ -123,10 +123,10 @@ auto Scheduler::run() -> std::expected<void, SchedulerError> {
         return std::unexpected(SchedulerError::AlreadyRunning);
     }
 
-    // Start exclusive threads
-    for (std::size_t i = 0; i < exclusive_systems_.size(); ++i) {
-        auto& entry = exclusive_systems_[i];
-        ExclusiveContext ctx{
+    // Start fixed_rate threads
+    for (std::size_t i = 0; i < fixed_rate_systems_.size(); ++i) {
+        auto& entry = fixed_rate_systems_[i];
+        FixedRateContext ctx{
             .system       = entry.system.get(),
             .policy       = entry.policy,
             .running      = &running_,
@@ -135,19 +135,19 @@ auto Scheduler::run() -> std::expected<void, SchedulerError> {
             .system_index = i,
         };
 
-        exclusive_threads_.emplace_back([ctx]() mutable { run_exclusive_thread(ctx); });
+        fixed_rate_threads_.emplace_back([ctx]() mutable { run_fixed_rate_thread(ctx); });
     }
 
     // Run compute loop on main thread (blocking)
     run_compute_loop();
 
-    // Wait for exclusive threads
-    for (auto& t : exclusive_threads_) {
+    // Wait for fixed_rate threads
+    for (auto& t : fixed_rate_threads_) {
         if (t.joinable()) {
             t.join();
         }
     }
-    exclusive_threads_.clear();
+    fixed_rate_threads_.clear();
 
     return {};
 }
@@ -176,8 +176,8 @@ auto Scheduler::hot_add_system(std::unique_ptr<SystemBase> system) -> BuildResul
             .policy = policy,
         };
 
-        if (policy.is_exclusive()) {
-            exclusive_systems_.push_back(std::move(entry));
+        if (policy.is_fixed_rate()) {
+            fixed_rate_systems_.push_back(std::move(entry));
         } else if (policy.is_pool() || policy.is_visualization()) {
             compute_systems_.push_back(std::move(entry));
         } else {
@@ -206,9 +206,9 @@ auto Scheduler::hot_add_system(std::unique_ptr<SystemBase> system) -> BuildResul
         .policy = policy,
     };
 
-    const bool is_exclusive = policy.is_exclusive();
-    if (is_exclusive) {
-        exclusive_systems_.push_back(std::move(entry));
+    const bool is_fixed_rate = policy.is_fixed_rate();
+    if (is_fixed_rate) {
+        fixed_rate_systems_.push_back(std::move(entry));
     } else if (policy.is_pool() || policy.is_visualization()) {
         compute_systems_.push_back(std::move(entry));
     } else {
@@ -219,8 +219,8 @@ auto Scheduler::hot_add_system(std::unique_ptr<SystemBase> system) -> BuildResul
     auto result = compute_levels();
     if (!result) {
         // Rollback: remove the just-added system
-        if (is_exclusive) {
-            exclusive_systems_.pop_back();
+        if (is_fixed_rate) {
+            fixed_rate_systems_.pop_back();
         } else {
             compute_systems_.pop_back();
         }
@@ -236,10 +236,10 @@ auto Scheduler::hot_add_system(std::unique_ptr<SystemBase> system) -> BuildResul
     }
 
     // Update stats capacity
-    if (exclusive_stats_.size() < exclusive_systems_.size()) {
-        exclusive_stats_.reserve(exclusive_systems_.size());
-        for (std::size_t i = exclusive_stats_.size(); i < exclusive_systems_.size(); ++i) {
-            exclusive_stats_.emplace_back();
+    if (fixed_rate_stats_.size() < fixed_rate_systems_.size()) {
+        fixed_rate_stats_.reserve(fixed_rate_systems_.size());
+        for (std::size_t i = fixed_rate_stats_.size(); i < fixed_rate_systems_.size(); ++i) {
+            fixed_rate_stats_.emplace_back();
         }
     }
 
@@ -251,13 +251,13 @@ auto Scheduler::hot_add_system(std::unique_ptr<SystemBase> system) -> BuildResul
     }
 
     // Bind the new system
-    if (is_exclusive) {
-        auto& new_entry = exclusive_systems_.back();
+    if (is_fixed_rate) {
+        auto& new_entry = fixed_rate_systems_.back();
         new_entry.system->bind(world_);
 
-        // Launch new exclusive thread
-        const auto idx = exclusive_systems_.size() - 1;
-        ExclusiveContext ctx{
+        // Launch new fixed_rate thread
+        const auto idx = fixed_rate_systems_.size() - 1;
+        FixedRateContext ctx{
             .system       = new_entry.system.get(),
             .policy       = new_entry.policy,
             .running      = &running_,
@@ -265,7 +265,7 @@ auto Scheduler::hot_add_system(std::unique_ptr<SystemBase> system) -> BuildResul
             .world        = &world_,
             .system_index = idx,
         };
-        exclusive_threads_.emplace_back([ctx]() mutable { run_exclusive_thread(ctx); });
+        fixed_rate_threads_.emplace_back([ctx]() mutable { run_fixed_rate_thread(ctx); });
     } else {
         compute_systems_.back().system->bind(world_);
     }
@@ -290,11 +290,11 @@ auto Scheduler::is_running() const noexcept -> bool {
 
 void Scheduler::notify(const std::size_t system_index) noexcept {
     // Selective wake: only mark affected compute systems as ready
-    if (system_index < exclusive_affects_.size()) {
-        ready_systems_.fetch_or(exclusive_affects_[system_index], std::memory_order_release);
+    if (system_index < fixed_rate_affects_.size()) {
+        ready_systems_.fetch_or(fixed_rate_affects_[system_index], std::memory_order_release);
     }
-    if (system_index < exclusive_stats_.size()) {
-        exclusive_stats_[system_index].notify_count.fetch_add(1, std::memory_order_relaxed);
+    if (system_index < fixed_rate_stats_.size()) {
+        fixed_rate_stats_[system_index].notify_count.fetch_add(1, std::memory_order_relaxed);
     }
 }
 
@@ -303,9 +303,9 @@ void Scheduler::notify(const std::size_t system_index) noexcept {
 // ============================================================================
 
 auto Scheduler::stats() const noexcept -> Stats {
-    // Sum notify counts from all exclusive systems
+    // Sum notify counts from all fixed_rate systems
     std::uint64_t total_notifies = 0;
-    for (const auto& s : exclusive_stats_) {
+    for (const auto& s : fixed_rate_stats_) {
         total_notifies += s.notify_count.load(std::memory_order_relaxed);
     }
     return Stats{
@@ -315,8 +315,8 @@ auto Scheduler::stats() const noexcept -> Stats {
 }
 
 void Scheduler::print_systems() const {
-    printf("Exclusive systems (%zu):\n", exclusive_systems_.size());
-    for (const auto& entry : exclusive_systems_) {
+    printf("FixedRate systems (%zu):\n", fixed_rate_systems_.size());
+    for (const auto& entry : fixed_rate_systems_) {
         const auto& m = entry.system->meta();
         printf(
             "  [%s] freq:%uHz affinity:%d priority:%d notify:%s spsc:%zu spmc:%zu\n",
@@ -343,10 +343,10 @@ void Scheduler::print_systems() const {
     }
 
     // Print wake chains (which systems trigger which compute systems)
-    printf("Wake chains (exclusive -> compute):\n");
-    for (std::size_t i = 0; i < exclusive_systems_.size(); ++i) {
-        const auto& excl_name = exclusive_systems_[i].system->meta().name;
-        const auto affects    = i < exclusive_affects_.size() ? exclusive_affects_[i] : 0U;
+    printf("Wake chains (fixed_rate -> compute):\n");
+    for (std::size_t i = 0; i < fixed_rate_systems_.size(); ++i) {
+        const auto& excl_name = fixed_rate_systems_[i].system->meta().name;
+        const auto affects    = i < fixed_rate_affects_.size() ? fixed_rate_affects_[i] : 0U;
 
         printf("  [%s] -> ", excl_name.c_str());
         if (affects == 0) {
@@ -392,9 +392,9 @@ void Scheduler::print_mermaid_wake_chains() const {
     printf("```mermaid\n");
     printf("flowchart LR\n\n");
 
-    // Exclusive nodes
-    for (std::size_t i = 0; i < exclusive_systems_.size(); ++i) {
-        const auto& name = exclusive_systems_[i].system->meta().name;
+    // FixedRate nodes
+    for (std::size_t i = 0; i < fixed_rate_systems_.size(); ++i) {
+        const auto& name = fixed_rate_systems_[i].system->meta().name;
         printf("    E%d[%s]\n", (int)i, name.c_str());
     }
 
@@ -406,9 +406,9 @@ void Scheduler::print_mermaid_wake_chains() const {
 
     printf("\n");
 
-    // Exclusive → Compute
-    for (std::size_t i = 0; i < exclusive_systems_.size(); ++i) {
-        auto affects = i < exclusive_affects_.size() ? exclusive_affects_[i] : 0U;
+    // FixedRate → Compute
+    for (std::size_t i = 0; i < fixed_rate_systems_.size(); ++i) {
+        auto affects = i < fixed_rate_affects_.size() ? fixed_rate_affects_[i] : 0U;
         for (std::size_t j = 0; j < compute_systems_.size(); ++j) {
             if (affects & (1U << j)) {
                 printf("    E%d --> C%d\n", (int)i, (int)j);
@@ -437,7 +437,7 @@ void Scheduler::print_stats() const {
     const auto compute_last   = compute_last_time_ns_.load(std::memory_order_relaxed);
 
     std::uint64_t notify_total = 0;
-    for (const auto& s : exclusive_stats_) {
+    for (const auto& s : fixed_rate_stats_) {
         notify_total += s.notify_count.load(std::memory_order_relaxed);
     }
 
@@ -452,10 +452,10 @@ void Scheduler::print_stats() const {
             compute_last / 1e6);
     }
     printf(" | notifies: %-4" PRIu64 " (%.1f Hz)\n", notify_total, notify_total / elapsed_sec);
-    // Exclusive systems - system name on one line, stats on the next
-    for (std::size_t i = 0; i < exclusive_systems_.size(); ++i) {
-        const auto& entry     = exclusive_systems_[i];
-        const auto& sys_stats = exclusive_stats_[i];
+    // FixedRate systems - system name on one line, stats on the next
+    for (std::size_t i = 0; i < fixed_rate_systems_.size(); ++i) {
+        const auto& entry     = fixed_rate_systems_[i];
+        const auto& sys_stats = fixed_rate_stats_[i];
         const auto notify_cnt = sys_stats.notify_count.load(std::memory_order_relaxed);
         const auto latency    = sys_stats.latency_hist.compute();
         const auto actual_hz  = latency.count / elapsed_sec;
@@ -510,9 +510,9 @@ auto Scheduler::get_stats_json() const -> std::string {
     const auto total_time = compute_total_time_ns_.load(std::memory_order_relaxed);
     const auto last_time  = compute_last_time_ns_.load(std::memory_order_relaxed);
 
-    // Sum notify counts from all exclusive systems
+    // Sum notify counts from all fixed_rate systems
     std::uint64_t notify_total = 0;
-    for (const auto& s : exclusive_stats_) {
+    for (const auto& s : fixed_rate_stats_) {
         notify_total += s.notify_count.load(std::memory_order_relaxed);
     }
 
@@ -527,11 +527,11 @@ auto Scheduler::get_stats_json() const -> std::string {
     compute_json["last_time_ms"]   = last_time / 1e6;
     compute_json["total_notifies"] = notify_total;
 
-    // Exclusive systems
-    json& exclusive_arr = root["exclusive_systems"] = json::array();
-    for (std::size_t i = 0; i < exclusive_systems_.size(); ++i) {
-        const auto& entry     = exclusive_systems_[i];
-        const auto& sys_stats = exclusive_stats_[i];
+    // FixedRate systems
+    json& fixed_rate_arr = root["fixed_rate_systems"] = json::array();
+    for (std::size_t i = 0; i < fixed_rate_systems_.size(); ++i) {
+        const auto& entry     = fixed_rate_systems_[i];
+        const auto& sys_stats = fixed_rate_stats_[i];
         const auto notify_cnt = sys_stats.notify_count.load(std::memory_order_relaxed);
         const auto latency    = sys_stats.latency_hist.compute();
 
@@ -550,7 +550,7 @@ auto Scheduler::get_stats_json() const -> std::string {
         sys["max_ms"]    = latency.max_ns / 1e6;
         sys["stddev_ms"] = latency.stddev_ns / 1e6;
 
-        exclusive_arr.push_back(sys);
+        fixed_rate_arr.push_back(sys);
     }
 
     // Compute systems
@@ -580,10 +580,10 @@ auto Scheduler::get_stats_json() const -> std::string {
 }
 
 // ============================================================================
-// Exclusive Thread
+// FixedRate Thread
 // ============================================================================
 
-void Scheduler::run_exclusive_thread(ExclusiveContext ctx) {
+void Scheduler::run_fixed_rate_thread(FixedRateContext ctx) {
     // Set CPU affinity
     if (ctx.policy.cpu_affinity >= 0) {
         auto result = primitive::ThreadAffinity::pin_to_core(
@@ -608,7 +608,7 @@ void Scheduler::run_exclusive_thread(ExclusiveContext ctx) {
     }
 
     const auto frequency = ctx.policy.frequency_hz;
-    auto& stats          = ctx.scheduler->exclusive_stats_[ctx.system_index];
+    auto& stats          = ctx.scheduler->fixed_rate_stats_[ctx.system_index];
 
     if (frequency == 0) {
         // Unlimited frequency mode: run as fast as possible
@@ -819,35 +819,35 @@ auto Scheduler::compute_levels() -> BuildResult {
 
     struct ChannelUsage {
         bool is_spsc = false;
-        std::vector<std::size_t> writers;  // Compute system indices
-        std::vector<std::size_t> readers;  // Compute system indices
-        bool has_exclusive_writer = false; // Written by exclusive system
-        std::string first_system;          // For kind conflict reporting
+        std::vector<std::size_t> writers;   // Compute system indices
+        std::vector<std::size_t> readers;   // Compute system indices
+        bool has_fixed_rate_writer = false; // Written by fixed_rate system
+        std::string first_system;           // For kind conflict reporting
     };
 
     std::unordered_map<ChannelKey, ChannelUsage, ChannelKeyHash> channels;
 
-    // First, collect exclusive systems' outputs as external sources
-    for (const auto& entry : exclusive_systems_) {
+    // First, collect fixed_rate systems' outputs as external sources
+    for (const auto& entry : fixed_rate_systems_) {
         const auto& meta = entry.system->meta();
 
         for (const auto& ch : meta.spsc_channels) {
             if (!ch.is_reader) {
                 ChannelKey key{ch.type, ch.topic};
-                auto& usage                = channels[key];
-                usage.is_spsc              = true;
-                usage.has_exclusive_writer = true;
-                usage.first_system         = meta.name;
+                auto& usage                 = channels[key];
+                usage.is_spsc               = true;
+                usage.has_fixed_rate_writer = true;
+                usage.first_system          = meta.name;
             }
         }
 
         for (const auto& ch : meta.spmc_channels) {
             if (!ch.is_reader) {
                 ChannelKey key{ch.type, ch.topic};
-                auto& usage                = channels[key];
-                usage.is_spsc              = false;
-                usage.has_exclusive_writer = true;
-                usage.first_system         = meta.name;
+                auto& usage                 = channels[key];
+                usage.is_spsc               = false;
+                usage.has_fixed_rate_writer = true;
+                usage.first_system          = meta.name;
             }
         }
     }
@@ -916,14 +916,14 @@ auto Scheduler::compute_levels() -> BuildResult {
     // ========================================================================
 
     for (const auto& [key, usage] : channels) {
-        // Count total writers (exclusive + compute)
-        std::size_t total_writers = usage.writers.size() + (usage.has_exclusive_writer ? 1 : 0);
+        // Count total writers (fixed_rate + compute)
+        std::size_t total_writers = usage.writers.size() + (usage.has_fixed_rate_writer ? 1 : 0);
 
         // Multiple writers is always an error
         if (total_writers > 1) {
             std::vector<std::string> writer_names;
-            if (usage.has_exclusive_writer) {
-                writer_names.push_back(usage.first_system + " (exclusive)");
+            if (usage.has_fixed_rate_writer) {
+                writer_names.push_back(usage.first_system + " (fixed_rate)");
             }
             for (auto idx : usage.writers) {
                 writer_names.push_back(compute_systems_[idx].system->meta().name);
@@ -949,7 +949,7 @@ auto Scheduler::compute_levels() -> BuildResult {
                 });
         }
 
-        // Reader without writer is an error (neither exclusive nor compute writer)
+        // Reader without writer is an error (neither fixed_rate nor compute writer)
         if (total_writers == 0 && !usage.readers.empty()) {
             std::vector<std::string> reader_names;
             reader_names.reserve(usage.readers.size());
@@ -964,8 +964,8 @@ auto Scheduler::compute_levels() -> BuildResult {
         }
 
         // Orphaned compute writer is a warning (printed but not an error)
-        // Note: exclusive writers with no readers are fine (they notify the scheduler)
-        if (!usage.writers.empty() && usage.readers.empty() && !usage.has_exclusive_writer) {
+        // Note: fixed_rate writers with no readers are fine (they notify the scheduler)
+        if (!usage.writers.empty() && usage.readers.empty() && !usage.has_fixed_rate_writer) {
             SPDLOG_WARN(
                 "[WARN] Channel has writer '{}' but no readers\n",
                 compute_systems_[usage.writers[0]].system->meta().name.c_str());
@@ -1095,7 +1095,7 @@ auto Scheduler::compute_levels() -> BuildResult {
     }
 
     // ========================================================================
-    // Phase 6: Compute notify groups (which exclusive systems wake which compute systems)
+    // Phase 6: Compute notify groups (which fixed_rate systems wake which compute systems)
     // ========================================================================
     // Build transitive closure of compute system dependencies
     // dependents[i] = bitmask of all systems that depend on system i (directly or transitively)
@@ -1110,13 +1110,13 @@ auto Scheduler::compute_levels() -> BuildResult {
         }
     }
 
-    // For each exclusive system, compute which compute systems it affects
-    exclusive_affects_.resize(exclusive_systems_.size(), 0);
+    // For each fixed_rate system, compute which compute systems it affects
+    fixed_rate_affects_.resize(fixed_rate_systems_.size(), 0);
 
-    for (std::size_t i = 0; i < exclusive_systems_.size(); ++i) {
+    for (std::size_t i = 0; i < fixed_rate_systems_.size(); ++i) {
         std::uint64_t affects = 0;
-        const auto& meta      = exclusive_systems_[i].system->meta();
-        // Find compute systems that directly read from this exclusive's channels
+        const auto& meta      = fixed_rate_systems_[i].system->meta();
+        // Find compute systems that directly read from this fixed_rate's channels
         for (const auto& ch : meta.spsc_channels) {
             if (!ch.is_reader) {
                 ChannelKey key{ch.type, ch.topic};
@@ -1141,7 +1141,7 @@ auto Scheduler::compute_levels() -> BuildResult {
             }
         }
 
-        exclusive_affects_[i] = affects;
+        fixed_rate_affects_[i] = affects;
     }
 
     // For each compute system, compute which other compute systems it affects

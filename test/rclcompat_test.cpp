@@ -1291,13 +1291,13 @@ TEST(RclCompatEdge, MultipleFinalizesWithNoSystems) {
 //   验证在 scheduler 真正运行时，Publisher 自动绑定到回调
 //
 // DATA FLOW:
-//   Step 1: 创建一个 exclusive 系统定期触发
-//   Step 2: exclusive 系统发布消息，触发订阅回调
+//   Step 1: 创建一个 fixed_rate 系统定期触发
+//   Step 2: fixed_rate 系统发布消息，触发订阅回调
 //   Step 3: 回调内部使用 Publisher，自动绑定
 //   Step 4: 验证 Publisher 成功写入
 //
 // VERIFICATION:
-//   1. exclusive 系统运行
+//   1. fixed_rate 系统运行
 //   2. 回调被触发
 //   3. Publisher 自动绑定并成功发布
 // -------------------------------------------------------------------------
@@ -1306,14 +1306,14 @@ TEST(RclCompatOwnership, AutoBindWithSchedulerRunning) {
     World world;
     Scheduler scheduler(world);
 
-    // Create an exclusive system that will trigger the subscription
-    std::atomic<bool> exclusive_ran{false};
+    // Create an fixed_rate system that will trigger the subscription
+    std::atomic<bool> fixed_rate_ran{false};
     std::atomic<int> trigger_count{0};
 
-    scheduler.add_system<talos::exclusive<100>>(
+    scheduler.add_system<talos::fixed_rate<100>>(
         "trigger_source",
-        [&exclusive_ran, &trigger_count](talos::spmc_mut<TestMessage, TestTag1> trigger_out) {
-            exclusive_ran.store(true);
+        [&fixed_rate_ran, &trigger_count](talos::spmc_mut<TestMessage, TestTag1> trigger_out) {
+            fixed_rate_ran.store(true);
             trigger_count.fetch_add(1);
             trigger_out.write(TestMessage{.value = trigger_count.load(), .text = "trigger"});
             return true;
@@ -1350,15 +1350,15 @@ TEST(RclCompatOwnership, AutoBindWithSchedulerRunning) {
     // Run scheduler in a separate thread
     std::jthread scheduler_thread([&scheduler]() { (void)scheduler.run(); });
 
-    // Give scheduler time to run the exclusive system and trigger callbacks
+    // Give scheduler time to run the fixed_rate system and trigger callbacks
     std::this_thread::sleep_for(std::chrono::milliseconds(300));
 
     // Stop the scheduler
     scheduler.stop();
     scheduler_thread.join();
 
-    // Verify the exclusive system ran and the callback was executed
-    EXPECT_TRUE(exclusive_ran.load());
+    // Verify the fixed_rate system ran and the callback was executed
+    EXPECT_TRUE(fixed_rate_ran.load());
     EXPECT_TRUE(callback_executed.load());
     EXPECT_GT(received_value.load(), 0);
 }
@@ -1395,7 +1395,7 @@ TEST(RclCompatOwnership, RejectSecondCallback_DeathTest) {
 
     auto pub = node.create_publisher<TestMessage, TestTag1>();
 
-    scheduler.add_system<talos::exclusive<150>>(
+    scheduler.add_system<talos::fixed_rate<150>>(
         "sys", [](talos::spmc_mut<TestMessage, TestTag2> out,
                   talos::spmc_mut<TestMessage, TestTag3> out2) {
             out.write(TestMessage{.value = 1, .text = "from_a"});
@@ -1414,7 +1414,7 @@ TEST(RclCompatOwnership, RejectSecondCallback_DeathTest) {
     scheduler.print_mermaid_wake_chains();
     std::jthread scheduler_thread([&scheduler]() { (void)scheduler.run(); });
 
-    // Give scheduler time to run the exclusive systems and trigger callbacks
+    // Give scheduler time to run the fixed_rate systems and trigger callbacks
     std::this_thread::sleep_for(std::chrono::milliseconds(300));
 
     // Stop the scheduler
@@ -1449,18 +1449,18 @@ TEST(RclCompatOwnership, MultipleCallbacksMultiplePublishers) {
     World world;
     Scheduler scheduler(world);
 
-    // Create two exclusive systems as triggers for the two callbacks
+    // Create two fixed_rate systems as triggers for the two callbacks
     std::atomic<int> trigger_a_count{0};
     std::atomic<int> trigger_b_count{0};
 
-    scheduler.add_system<talos::exclusive<100>>(
+    scheduler.add_system<talos::fixed_rate<100>>(
         "trigger_a", [&trigger_a_count](talos::spmc_mut<TestMessage, TestTag1> trigger_out) {
             int count = trigger_a_count.fetch_add(1) + 1;
             trigger_out.write(TestMessage{.value = count, .text = "trigger_a"});
             return true;
         });
 
-    scheduler.add_system<talos::exclusive<150>>(
+    scheduler.add_system<talos::fixed_rate<150>>(
         "trigger_b", [&trigger_b_count](talos::spmc_mut<AnotherMessage, TestTag1> trigger_out) {
             int count = trigger_b_count.fetch_add(1) + 1;
             trigger_out.write(AnotherMessage{.x = count * 1.0, .y = count * 2.0});
@@ -1503,7 +1503,7 @@ TEST(RclCompatOwnership, MultipleCallbacksMultiplePublishers) {
     // Run scheduler in a separate thread
     std::jthread scheduler_thread([&scheduler]() { (void)scheduler.run(); });
 
-    // Give scheduler time to run the exclusive systems and trigger callbacks
+    // Give scheduler time to run the fixed_rate systems and trigger callbacks
     std::this_thread::sleep_for(std::chrono::milliseconds(300));
 
     // Stop the scheduler
@@ -1701,11 +1701,11 @@ TEST(ResourceAccessor, WithCallback) {
             final_value.store(counter->value);
         });
 
-    // Create exclusive system that writes to the same SPMC channel
+    // Create fixed_rate system that writes to the same SPMC channel
     // Note: Use spmc_mut (not spsc_mut) to trigger the subscription
-    // IMPORTANT: Add exclusive system BEFORE calling node.finalize()!
+    // IMPORTANT: Add fixed_rate system BEFORE calling node.finalize()!
     std::atomic<int> trigger_count{0};
-    scheduler.add_system<talos::exclusive<100>>(
+    scheduler.add_system<talos::fixed_rate<100>>(
         "trigger_source", [&trigger_count](talos::spmc_mut<TestMessage, TestTag1> trigger_out) {
             trigger_count.fetch_add(1);
             trigger_out.write(TestMessage{.value = trigger_count.load(), .text = "trigger"});
