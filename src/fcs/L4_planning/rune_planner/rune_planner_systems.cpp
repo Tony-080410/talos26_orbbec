@@ -5,7 +5,7 @@
 #include "fcs/L4_planning/gimbal_planner/trajectory_compensator.hpp"
 #include "fcs/L4_planning/gimbal_planner/types.hpp"
 #include "fcs/L4_planning/mpc_planner/config.hpp"
-#include "fcs/core/channel_tags.hpp"
+#include "fcs/core/channel_topics.hpp"
 #include "fcs/core/time.hpp"
 #include "math/fast_tf/frame.hpp"
 #include "scheduler/ecs/channel_types.hpp"
@@ -67,9 +67,10 @@ void register_rune_planning_systems(talos::Scheduler& scheduler, RunePlannerConf
         [compensator = std::shared_ptr<TrajectoryCompensator>{}, last_timestamp_ns = uint64_t{0},
          last_yaw = 0.0, last_pitch = 0.0](
             talos::res<RunePlannerConfig> cfg, talos::res<MpcPlannerConfig> mpc_cfg,
-            talos::spmc<fcs::energy_meter::EnergyMeterState, EnergyMeterStateChannelTag> state_in,
+            talos::subscribe<fcs::energy_meter::EnergyMeterState, EnergyMeterStateChannelTopic>
+                state_in,
             talos::res<std::shared_ptr<fast_tf::CoordinateSystem<1024>>> tf_buffer,
-            talos::spmc_mut<GimbalPlan, RuneGimbalPlanChannelTag> plan_out) mutable {
+            talos::publish<GimbalPlan, RuneGimbalPlanChannelTopic> plan_out) mutable {
             if (!cfg->enabled) {
                 return;
             }

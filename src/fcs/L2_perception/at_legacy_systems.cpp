@@ -3,7 +3,7 @@
 #include "fcs/L2_perception/at_legacy_config.hpp"
 #include "fcs/L2_perception/at_legacy_detector_backend.hpp"
 #include "fcs/L2_perception/at_legacy_pnp_solver.hpp"
-#include "fcs/core/channel_tags.hpp"
+#include "fcs/core/channel_topics.hpp"
 #include "math/fast_tf/frame.hpp"
 #include "scheduler/ecs/channel_types.hpp"
 #include "scheduler/ecs/execution_policy.hpp"
@@ -18,9 +18,9 @@ void register_at_legacy_detection_systems(talos::Scheduler& scheduler, AtLegacyC
     scheduler.add_system<talos::pool_compute>(
         "at_legacy_armor_detector_pnp_solver",
         [last_detect_color = ArmorColor::Neutral](
-            talos::spmc<AtLegacyImageFrame, AtLegacyImageChannelTag> image_in,
-            talos::spmc_mut<AtLegacyArmorDetectionBatch, AtLegacyDetectionChannelTag> detection_out,
-            talos::spmc_mut<AtLegacyArmorMeasurementBatch, AtLegacyMeasurementChannelTag>
+            talos::spmc<AtLegacyImageFrame, AtLegacyImageChannelTopic> image_in,
+            talos::spmc_mut<AtLegacyArmorDetectionBatch, AtLegacyDetectionChannelTopic> detection_out,
+            talos::spmc_mut<AtLegacyArmorMeasurementBatch, AtLegacyMeasurementChannelTopic>
                 measurement_out,
             talos::res<AtLegacyConfig> config,
             talos::res_mut<std::shared_ptr<AtLegacyDetectorBackend>> backend_ptr,

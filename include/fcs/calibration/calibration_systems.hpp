@@ -9,7 +9,7 @@
 #include "intrinsic_calibrator.hpp"
 
 #include "fcs/L1_sensor/parcel.hpp"
-#include "fcs/core/channel_tags.hpp"
+#include "fcs/core/channel_topics.hpp"
 #include "fcs/visualization/foxglove_server.hpp"
 #include "fcs/visualization/foxglove_types.hpp"
 #include "math/fast_tf/frame.hpp"
@@ -42,8 +42,8 @@ void register_calibration_systems(
     app.template add_system<talos::pool_compute>(
         "calibration_corner_detector",
         [board](
-            talos::spmc<AtLegacyImageFrame, AtLegacyImageChannelTag> img_in,
-            talos::spmc_mut<CornerDetection, CalibrationCornerChannelTag> corner_out,
+            talos::spmc<AtLegacyImageFrame, AtLegacyImageChannelTopic> img_in,
+            talos::spmc_mut<CornerDetection, CalibrationCornerChannelTopic> corner_out,
             talos::res<std::shared_ptr<CalibrationStatus>> status) {
             if (!img_in.has_new()) {
                 return;
@@ -70,7 +70,7 @@ void register_calibration_systems(
     app.template add_system<talos::pool_compute>(
         "calibration_intrinsic_collector",
         [intrinsic_calibrator, config](
-            talos::spmc<CornerDetection, CalibrationCornerChannelTag> corner_in,
+            talos::spmc<CornerDetection, CalibrationCornerChannelTopic> corner_in,
             talos::res_mut<std::shared_ptr<CalibrationStatus>> status) {
             if (!corner_in.has_new()) {
                 return;
@@ -115,7 +115,7 @@ void register_calibration_systems(
     app.template add_system<talos::pool_compute>(
         "calibration_handeye_collector",
         [handeye_calibrator, intrinsic_result, config](
-            talos::spmc<CornerDetection, CalibrationCornerChannelTag> corner_in,
+            talos::spmc<CornerDetection, CalibrationCornerChannelTopic> corner_in,
             talos::res<std::shared_ptr<fast_tf::CoordinateSystem<1024>>> tf_buffer,
             talos::res_mut<std::shared_ptr<CalibrationStatus>> status) {
             if (!corner_in.has_new()) {
@@ -191,8 +191,8 @@ void register_calibration_systems(
     app.template add_system<talos::fixed_rate<30>>(
         "calibration_visualization",
         [board, config](
-            talos::spmc<CornerDetection, CalibrationCornerChannelTag> corner_in,
-            talos::spmc<AtLegacyImageFrame, AtLegacyImageChannelTag> img_in,
+            talos::spmc<CornerDetection, CalibrationCornerChannelTopic> corner_in,
+            talos::spmc<AtLegacyImageFrame, AtLegacyImageChannelTopic> img_in,
             talos::res<std::shared_ptr<FoxgloveServer>> server,
             talos::res<std::shared_ptr<CalibrationStatus>> status) {
             if (!(*server)->is_initialized()) {

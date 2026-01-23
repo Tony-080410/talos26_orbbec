@@ -102,7 +102,7 @@ private:
         std::vector<std::unique_ptr<ImageBuffer>> buffers;
         std::vector<std::uint32_t> next;
 
-        // Tagged freelist head to avoid ABA: low32 = index, high32 = tag.
+        // Topic-ed freelist head to avoid ABA: low32 = index, high32 = tag.
         std::atomic<std::uint64_t> head{pack_head(kNullIndex, 0)};
 
         std::atomic<std::uint32_t> available{0};

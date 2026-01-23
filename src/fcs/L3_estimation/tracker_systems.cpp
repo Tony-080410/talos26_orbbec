@@ -3,7 +3,7 @@
 #include "fcs/L3_estimation/tracker/config.hpp"
 #include "fcs/L3_estimation/tracker/tracker.hpp"
 #include "fcs/L3_estimation/tracker/types.hpp"
-#include "fcs/core/channel_tags.hpp"
+#include "fcs/core/channel_topics.hpp"
 #include "scheduler/ecs/channel_types.hpp"
 #include "scheduler/ecs/execution_policy.hpp"
 #include "scheduler/scheduler/scheduler.hpp"
@@ -21,8 +21,8 @@ void register_tracker_systems(talos::Scheduler& scheduler, TrackerConfig&& confi
     scheduler.add_system<talos::pool_compute>(
         "armor_tracker",
         [last_timestamp_ns = uint64_t{0}](
-            talos::spmc<AtLegacyArmorMeasurementBatch, AtLegacyMeasurementChannelTag> meas_in,
-            talos::spmc_mut<TrackerOutput, TrackerOutputChannelTag> tracker_out,
+            talos::spmc<AtLegacyArmorMeasurementBatch, AtLegacyMeasurementChannelTopic> meas_in,
+            talos::spmc_mut<TrackerOutput, TrackerOutputChannelTopic> tracker_out,
             talos::res<TrackerConfig> config,
             talos::res_mut<std::shared_ptr<Tracker>> tracker) mutable {
             // Reactively update tracker config when changed

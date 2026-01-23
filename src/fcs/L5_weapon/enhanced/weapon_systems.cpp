@@ -5,7 +5,7 @@
 #include "fcs/L4_planning/mpc_planner/config.hpp"
 #include "fcs/L5_weapon/config.hpp"
 #include "fcs/L5_weapon/enhanced/weapon_controller.hpp"
-#include "fcs/core/channel_tags.hpp"
+#include "fcs/core/channel_topics.hpp"
 #include "scheduler/ecs/channel_types.hpp"
 #include "scheduler/ecs/execution_policy.hpp"
 #include "scheduler/scheduler/scheduler.hpp"
@@ -22,8 +22,8 @@ void register_enhanced_weapon_system(talos::Scheduler& scheduler, WeaponControll
          comp_type  = fcs::L4::TrajectoryCompensatorType::Ideal](
             talos::res<fcs::L4::MpcPlannerConfig> l4_config,
             talos::res<WeaponControllerConfig> config,
-            talos::spmc<fcs::L4::GimbalPlan, GimbalPlanChannelTag> plan_in,
-            talos::spmc_mut<WeaponCommand, WeaponCommandChannelTag> weapon_out) mutable {
+            talos::spmc<fcs::L4::GimbalPlan, GimbalPlanChannelTopic> plan_in,
+            talos::spmc_mut<WeaponCommand, WeaponCommandChannelTopic> weapon_out) mutable {
             if (!controller) {
                 auto comp_type   = l4_config->compensator_type;
                 auto compensator = fcs::L4::create_compensator(comp_type);

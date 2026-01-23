@@ -21,7 +21,7 @@ struct AxisY {
     [[nodiscard]] static auto unit() noexcept -> Eigen::Vector3d { return {0.0, 1.0, 0.0}; }
 };
 
-template <typename AxisTag, typename Scalar_ = double>
+template <typename AxisTopic, typename Scalar_ = double>
 struct AxisSO3 {
     using Point  = group::SO3<Scalar_>;
     using Scalar = Scalar_;
@@ -35,13 +35,13 @@ struct AxisSO3 {
 
     [[nodiscard]] static Point act(const Point& p, const Fiber& v) noexcept {
         const Scalar angle = v.data(0);
-        const auto axis    = AxisTag::unit().template cast<Scalar>();
+        const auto axis    = AxisTopic::unit().template cast<Scalar>();
         const auto so3     = Point::exp(axis * angle);
         return p * so3;
     }
 
     [[nodiscard]] static Fiber diff(const Point& p, const Point& q) noexcept {
-        const auto axis = AxisTag::unit().template cast<Scalar>();
+        const auto axis = AxisTopic::unit().template cast<Scalar>();
         Eigen::Matrix<Scalar, 3, 1> w;
         w = Point::log(p.inv() * q);
         return Fiber(typename Fiber::EigenType(axis.dot(w)));

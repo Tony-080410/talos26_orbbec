@@ -4,7 +4,7 @@
 #include "fcs/L3_estimation/energy_meter_solver/angle_fitter.hpp"
 #include "fcs/L3_estimation/energy_meter_solver/energy_meter_tracker.hpp"
 #include "fcs/L3_estimation/energy_meter_solver/types.hpp"
-#include "fcs/core/channel_tags.hpp"
+#include "fcs/core/channel_topics.hpp"
 #include "fcs/core/time.hpp"
 #include "scheduler/ecs/channel_types.hpp"
 #include "scheduler/ecs/execution_policy.hpp"
@@ -101,8 +101,8 @@ void register_energy_meter_systems(::talos::Scheduler& scheduler, EnergyMeterL3C
             talos::res<EnergyMeterL3Config> cfg,
             talos::res_mut<std::shared_ptr<::energy_meter::Tracker>> tracker,
             talos::res_mut<std::shared_ptr<::energy_meter::AngleFitter>> fitter,
-            talos::spmc<fcs::rune::RuneObservation, RuneObservationChannelTag> obs_in,
-            talos::spmc_mut<EnergyMeterState, EnergyMeterStateChannelTag> state_out) mutable {
+            talos::subscribe<fcs::rune::RuneObservation, RuneObservationChannelTopic> obs_in,
+            talos::publish<EnergyMeterState, EnergyMeterStateChannelTopic> state_out) mutable {
             auto obs = obs_in.read();
             if (!obs || !obs->valid || obs->target_positions_odom.empty()
                 || obs->target_quats_odom.empty()) {

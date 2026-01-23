@@ -3,64 +3,64 @@
 namespace fcs {
 
 // ============================================================================
-// AT Legacy Armor Detection Pipeline Channel Tags
+// AT Legacy Armor Detection Pipeline Channel Topics
 // ============================================================================
 
 /// @brief Image frame channel (Camera → Detector)
 /// Data type: AtLegacyImageFrame
 /// Mode: SPMC (single producer, multiple consumers)
-struct AtLegacyImageChannelTag {};
+struct AtLegacyImageChannelTopic {};
 
 /// @brief Detection result channel (Detector → PnPSolver)
 /// Data type: AtLegacyArmorDetectionBatch
 /// Mode: SPMC (single producer, multiple consumers)
-struct AtLegacyDetectionChannelTag {};
+struct AtLegacyDetectionChannelTopic {};
 
 /// @brief Measurement result channel (PnPSolver → Tracker)
 /// Data type: AtLegacyArmorMeasurementBatch
 /// Mode: SPMC (single producer, multiple consumers)
-struct AtLegacyMeasurementChannelTag {};
+struct AtLegacyMeasurementChannelTopic {};
 
 // ============================================================================
-// L3 Estimation Pipeline Channel Tags
+// L3 Estimation Pipeline Channel Topics
 // ============================================================================
 
 /// @brief Tracker output channel (Tracker → Solver)
 /// Data type: fcs::L3::TrackerOutput
 /// Mode: SPMC (single producer, multiple consumers)
-struct TrackerOutputChannelTag {};
+struct TrackerOutputChannelTopic {};
 
-struct RuneObservationChannelTag {};
-struct RuneDebugFrameChannelTag {};
+struct RuneObservationChannelTopic {};
+struct RuneDebugFrameChannelTopic {};
 
-struct EnergyMeterStateChannelTag {};
+struct EnergyMeterStateChannelTopic {};
 
 // ============================================================================
-// L4 Planning Pipeline Channel Tags
+// L4 Planning Pipeline Channel Topics
 // ============================================================================
 
 /// @brief Candidate gimbal plan from armor pipeline (Planner → PlanMux)
 /// Data type: fcs::L4::GimbalPlan
 /// Mode: SPMC (single producer, multiple consumers)
-struct ArmorGimbalPlanChannelTag {};
+struct ArmorGimbalPlanChannelTopic {};
 
 /// @brief Candidate gimbal plan from rune pipeline (Planner → PlanMux)
 /// Data type: fcs::L4::GimbalPlan
 /// Mode: SPMC (single producer, multiple consumers)
-struct RuneGimbalPlanChannelTag {};
+struct RuneGimbalPlanChannelTopic {};
 
 /// @brief Final gimbal plan channel (PlanMux → Weapon System)
 /// Data type: fcs::L4::GimbalPlan
 /// Mode: SPMC (single producer, multiple consumers)
-struct GimbalPlanChannelTag {};
+struct GimbalPlanChannelTopic {};
 
 // ============================================================================
-// L5 Weapon System Channel Tags
+// L5 Weapon System Channel Topics
 // ============================================================================
 
 /// @brief Weapon command channel (Fire Control → Output Interface)
 /// Data type: fcs::L5::WeaponCommand
 /// Mode: SPMC (single producer, multiple consumers)
-struct WeaponCommandChannelTag {};
+struct WeaponCommandChannelTopic {};
 
 } // namespace fcs

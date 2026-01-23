@@ -4,7 +4,7 @@
 #include "fcs/L4_planning/gimbal_planner/types.hpp"
 #include "fcs/L4_planning/mpc_planner/config.hpp"
 #include "fcs/L4_planning/mpc_planner/mpc_planner.hpp"
-#include "fcs/core/channel_tags.hpp"
+#include "fcs/core/channel_topics.hpp"
 #include "fcs/core/time.hpp"
 #include "math/fast_tf/error.hpp"
 #include "math/fast_tf/frame.hpp"
@@ -20,9 +20,9 @@ void register_mpc_planning_systems(talos::Scheduler& scheduler, MpcPlannerConfig
         "l4_mpc_planner",
         [planner = std::shared_ptr<MpcGimbalPlanner>{}](
             talos::res<MpcPlannerConfig> config,
-            talos::spmc<fcs::L3::TrackerOutput, TrackerOutputChannelTag> tracker_in,
+            talos::spmc<fcs::L3::TrackerOutput, TrackerOutputChannelTopic> tracker_in,
             talos::res<std::shared_ptr<fast_tf::CoordinateSystem<1024>>> tf_buffer,
-            talos::spmc_mut<GimbalPlan, ArmorGimbalPlanChannelTag> plan_out) mutable {
+            talos::spmc_mut<GimbalPlan, ArmorGimbalPlanChannelTopic> plan_out) mutable {
             if (!planner) {
                 planner = std::make_shared<MpcGimbalPlanner>(*config);
             }

@@ -4,7 +4,7 @@
 #include "fcs/L1_sensor/camera_interface.hpp"
 #include "fcs/L1_sensor/output_interface.hpp"
 #include "fcs/L2_perception/at_legacy_systems.hpp"
-#include "fcs/core/channel_tags.hpp"
+#include "fcs/core/channel_topics.hpp"
 #include "fcs/core/time.hpp"
 #include "fcs/core/types.hpp"
 #include "math/euler.hpp"
@@ -192,7 +192,7 @@ std::expected<L1L2SetupResult, std::string> setup_l1_l2(
     auto last_seq = std::make_shared<std::atomic<uint64_t>>(0);
     scheduler.add_system<talos::fixed_rate<250, 1>>(
         "camera_reader", [camera = std::move(camera), last_seq](
-                             talos::spmc_mut<AtLegacyImageFrame, AtLegacyImageChannelTag> cam_out) {
+                             talos::spmc_mut<AtLegacyImageFrame, AtLegacyImageChannelTopic> cam_out) {
             const auto frame = camera->try_recv();
             if (!frame) {
                 return;
@@ -213,7 +213,7 @@ std::expected<L1L2SetupResult, std::string> setup_l1_l2(
     scheduler.add_system<talos::fixed_rate<250, 1>>(
         "weapon_output",
         [output = std::move(output)](
-            talos::spmc<fcs::L5::WeaponCommand, fcs::WeaponCommandChannelTag> cmd_in) {
+            talos::spmc<fcs::L5::WeaponCommand, fcs::WeaponCommandChannelTopic> cmd_in) {
             auto cmd = cmd_in.read();
             if (!cmd) {
                 return;

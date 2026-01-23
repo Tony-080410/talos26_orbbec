@@ -21,7 +21,7 @@
 #include "auto_aim/config.hpp"
 #include "fcs/L1_sensor/camera_interface.hpp"
 #include "fcs/L1_sensor/parcel.hpp"
-#include "fcs/core/channel_tags.hpp"
+#include "fcs/core/channel_topics.hpp"
 #include "fcs/core/time.hpp"
 #include "fcs/visualization/foxglove_server.hpp"
 #include "ipc/shm_client.hpp"
@@ -287,7 +287,7 @@ int main(int argc, char* argv[]) {
     // Camera reader system
     scheduler.add_system<talos::fixed_rate<30>>(
         "camera_reader",
-        [&input](talos::spmc_mut<fcs::AtLegacyImageFrame, fcs::AtLegacyImageChannelTag> cam_out) {
+        [&input](talos::spmc_mut<fcs::AtLegacyImageFrame, fcs::AtLegacyImageChannelTopic> cam_out) {
             auto frame = input.try_recv();
             if (!frame)
                 return;

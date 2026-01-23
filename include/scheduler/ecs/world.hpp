@@ -217,4 +217,10 @@ public:
     }
 };
 
+template <typename T, typename Topic = DefaultTopic>
+using publish = spmc_mut<T, Topic>;
+
+template <typename T, typename Topic = DefaultTopic>
+using subscribe = spmc<T, Topic>;
+
 } // namespace talos

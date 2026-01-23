@@ -15,14 +15,14 @@
 namespace fcs::calibration {
 
 // ============================================================================
-// Channel Tags
+// Channel Topics
 // ============================================================================
 
 /// @brief Channel tag for corner detection results
-struct CalibrationCornerChannelTag {};
+struct CalibrationCornerChannelTopic {};
 
 /// @brief Channel tag for calibration status updates
-struct CalibrationStatusChannelTag {};
+struct CalibrationStatusChannelTopic {};
 
 // ============================================================================
 // Enum Classes (magic_enum auto-parses from TOML strings)

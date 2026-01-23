@@ -1,7 +1,7 @@
 #pragma once
 
 #include "fcs/L3_estimation/tracker/types.hpp"
-#include "fcs/core/channel_tags.hpp"
+#include "fcs/core/channel_topics.hpp"
 
 #include <Eigen/Core>
 #include <cstdint>
@@ -118,11 +118,11 @@ struct GimbalPlan {
 };
 
 // ============================================================================
-// L4 Channel Tags (for ECS)
+// L4 Channel Topics (for ECS)
 // ============================================================================
 
 // Re-export L3 types for convenience
 using fcs::L3::TrackerOutput;
-using fcs::L3::TrackerOutputChannelTag;
+using fcs::L3::TrackerOutputChannelTopic;
 
 } // namespace fcs::L4

@@ -1,7 +1,7 @@
 #include "fcs/L4_planning/plan_mux/plan_mux_systems.hpp"
 
 #include "fcs/L4_planning/gimbal_planner/types.hpp"
-#include "fcs/core/channel_tags.hpp"
+#include "fcs/core/channel_topics.hpp"
 #include "scheduler/ecs/channel_types.hpp"
 #include "scheduler/ecs/execution_policy.hpp"
 #include "scheduler/scheduler/scheduler.hpp"
@@ -19,9 +19,9 @@ void register_plan_mux_systems(::talos::Scheduler& scheduler, PlanMuxConfig&& co
 
     scheduler.add_system<talos::pool_compute>(
         "l4_plan_mux", [](talos::res<PlanMuxConfig> config,
-                          talos::spmc<GimbalPlan, ArmorGimbalPlanChannelTag> armor_plan_in,
-                          talos::spmc<GimbalPlan, RuneGimbalPlanChannelTag> rune_plan_in,
-                          talos::spmc_mut<GimbalPlan, GimbalPlanChannelTag> final_plan_out) {
+                          talos::spmc<GimbalPlan, ArmorGimbalPlanChannelTopic> armor_plan_in,
+                          talos::spmc<GimbalPlan, RuneGimbalPlanChannelTopic> rune_plan_in,
+                          talos::spmc_mut<GimbalPlan, GimbalPlanChannelTopic> final_plan_out) {
             const auto armor_plan = armor_plan_in.read();
             const auto rune_plan  = rune_plan_in.read();
 

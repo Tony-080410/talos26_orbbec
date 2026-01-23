@@ -4,7 +4,7 @@
 #include "fcs/L2_perception/rune/rune_detector.hpp"
 #include "fcs/L2_perception/rune/types.hpp"
 #include "fcs/camera_config.hpp"
-#include "fcs/core/channel_tags.hpp"
+#include "fcs/core/channel_topics.hpp"
 #include "fcs/core/types.hpp"
 #include "math/fast_tf/frame.hpp"
 #include "scheduler/ecs/channel_types.hpp"
@@ -58,9 +58,9 @@ void register_rune_detection_systems(talos::Scheduler& scheduler, RuneDetectorCo
         [detector = std::make_shared<::fyt::rune::RuneDetector>(
              to_enemy_color(config.detect_color), config.arrow_threshold, config.target_threshold,
              config.rcenter_threshold)](
-            talos::spmc<AtLegacyImageFrame, AtLegacyImageChannelTag> image_in,
-            talos::spmc_mut<RuneObservation, RuneObservationChannelTag> obs_out,
-            talos::spmc_mut<RuneDebugFrame, RuneDebugFrameChannelTag> debug_out,
+            talos::spmc<AtLegacyImageFrame, AtLegacyImageChannelTopic> image_in,
+            talos::spmc_mut<RuneObservation, RuneObservationChannelTopic> obs_out,
+            talos::spmc_mut<RuneDebugFrame, RuneDebugFrameChannelTopic> debug_out,
             talos::res<RuneDetectorConfig> cfg, talos::res<CameraConfig> cam_cfg,
             talos::res<std::shared_ptr<fast_tf::CoordinateSystem<1024>>> tf_system) mutable {
             if (!image_in.has_new()) {

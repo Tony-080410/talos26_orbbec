@@ -13,7 +13,7 @@
 #include "fcs/L2_perception/rune/types.hpp"
 #include "fcs/L3_estimation/energy_meter/types.hpp"
 #include "fcs/L3_estimation/tracker/types.hpp"
-#include "fcs/core/channel_tags.hpp"
+#include "fcs/core/channel_topics.hpp"
 #include "fcs/core/types.hpp"
 #include "math/fast_tf/frame.hpp"
 #include "math/fast_tf/matrix.hpp"
@@ -176,9 +176,9 @@ void register_foxglove_systems(App& app, talos::Scheduler* scheduler_ptr_ = null
 
     app.template add_system<talos::fixed_rate<30>>(
         "foxglove_image_pub",
-        [](talos::spmc<AtLegacyImageFrame, AtLegacyImageChannelTag> img_in,
+        [](talos::spmc<AtLegacyImageFrame, AtLegacyImageChannelTopic> img_in,
            talos::res<std::shared_ptr<FoxgloveServer>> server, talos::res<fcs::CameraConfig> cam,
-           talos::spmc<AtLegacyArmorDetectionBatch, AtLegacyDetectionChannelTag> det_in,
+           talos::spmc<AtLegacyArmorDetectionBatch, AtLegacyDetectionChannelTopic> det_in,
            talos::res<std::shared_ptr<fast_tf::CoordinateSystem<1024>>> tf_buffer) {
             if (!detail::foxglove_ready(*server, img_in)) {
                 return;
@@ -242,7 +242,7 @@ void register_foxglove_systems(App& app, talos::Scheduler* scheduler_ptr_ = null
 
     app.template add_system<talos::pool_compute>(
         "foxglove_detection_pub",
-        [](talos::spmc<AtLegacyArmorDetectionBatch, AtLegacyDetectionChannelTag> det_in,
+        [](talos::spmc<AtLegacyArmorDetectionBatch, AtLegacyDetectionChannelTopic> det_in,
            talos::res<std::shared_ptr<FoxgloveServer>> server) {
             if (!detail::foxglove_ready(*server, det_in)) {
                 return;
@@ -279,7 +279,7 @@ void register_foxglove_systems(App& app, talos::Scheduler* scheduler_ptr_ = null
 
     app.template add_system<talos::fixed_rate<30>>(
         "foxglove_rune_debug_images",
-        [](talos::spmc<rune::RuneDebugFrame, RuneDebugFrameChannelTag> dbg_in,
+        [](talos::spmc<rune::RuneDebugFrame, RuneDebugFrameChannelTopic> dbg_in,
            talos::res<std::shared_ptr<FoxgloveServer>> server) {
             if (!detail::foxglove_ready(*server, dbg_in)) {
                 return;
@@ -311,7 +311,7 @@ void register_foxglove_systems(App& app, talos::Scheduler* scheduler_ptr_ = null
 
     app.template add_system<talos::pool_compute>(
         "foxglove_rune_debug_json",
-        [](talos::spmc<rune::RuneDebugFrame, RuneDebugFrameChannelTag> dbg_in,
+        [](talos::spmc<rune::RuneDebugFrame, RuneDebugFrameChannelTopic> dbg_in,
            talos::res<std::shared_ptr<FoxgloveServer>> server,
            talos::res<rune::RuneDetectorConfig> cfg) {
             if (!detail::foxglove_ready(*server, dbg_in)) {
@@ -360,7 +360,7 @@ void register_foxglove_systems(App& app, talos::Scheduler* scheduler_ptr_ = null
 
     app.template add_system<talos::pool_compute>(
         "foxglove_rune_scene",
-        [](talos::spmc<rune::RuneObservation, RuneObservationChannelTag> obs_in,
+        [](talos::spmc<rune::RuneObservation, RuneObservationChannelTopic> obs_in,
            talos::res<std::shared_ptr<FoxgloveServer>> server) {
             if (!detail::foxglove_ready(*server, obs_in)) {
                 return;
@@ -403,7 +403,7 @@ void register_foxglove_systems(App& app, talos::Scheduler* scheduler_ptr_ = null
 
     app.template add_system<talos::pool_compute>(
         "foxglove_l2_measurement_scene",
-        [](talos::spmc<AtLegacyArmorMeasurementBatch, AtLegacyMeasurementChannelTag> meas_in,
+        [](talos::spmc<AtLegacyArmorMeasurementBatch, AtLegacyMeasurementChannelTopic> meas_in,
            talos::res<std::shared_ptr<FoxgloveServer>> server) {
             if (!detail::foxglove_ready(*server, meas_in))
                 return;
@@ -460,7 +460,7 @@ void register_foxglove_systems(App& app, talos::Scheduler* scheduler_ptr_ = null
 
     app.template add_system<talos::pool_compute>(
         "foxglove_measurement_pub",
-        [](talos::spmc<AtLegacyArmorMeasurementBatch, AtLegacyMeasurementChannelTag> meas_in,
+        [](talos::spmc<AtLegacyArmorMeasurementBatch, AtLegacyMeasurementChannelTopic> meas_in,
            talos::res<std::shared_ptr<FoxgloveServer>> server) {
             if (!detail::foxglove_ready(*server, meas_in)) {
                 return;
@@ -498,7 +498,7 @@ void register_foxglove_systems(App& app, talos::Scheduler* scheduler_ptr_ = null
 
     app.template add_system<talos::pool_compute>(
         "foxglove_l3_tracker_scene",
-        [](talos::spmc<L3::TrackerOutput, TrackerOutputChannelTag> tracker_in,
+        [](talos::spmc<L3::TrackerOutput, TrackerOutputChannelTopic> tracker_in,
            talos::res<std::shared_ptr<FoxgloveServer>> server) {
             if (!detail::foxglove_ready(*server, tracker_in))
                 return;
@@ -552,7 +552,7 @@ void register_foxglove_systems(App& app, talos::Scheduler* scheduler_ptr_ = null
 
     app.template add_system<talos::pool_compute>(
         "foxglove_tracker_pub",
-        [](talos::spmc<L3::TrackerOutput, TrackerOutputChannelTag> tracker_in,
+        [](talos::spmc<L3::TrackerOutput, TrackerOutputChannelTopic> tracker_in,
            talos::res<std::shared_ptr<FoxgloveServer>> server) {
             if (!detail::foxglove_ready(*server, tracker_in)) {
                 return;
@@ -606,8 +606,8 @@ void register_foxglove_systems(App& app, talos::Scheduler* scheduler_ptr_ = null
 
     app.template add_system<talos::pool_compute>(
         "foxglove_l3_association_scene",
-        [](talos::spmc<L3::TrackerOutput, TrackerOutputChannelTag> tracker_in,
-           talos::spmc<AtLegacyArmorMeasurementBatch, AtLegacyMeasurementChannelTag> meas_in,
+        [](talos::spmc<L3::TrackerOutput, TrackerOutputChannelTopic> tracker_in,
+           talos::spmc<AtLegacyArmorMeasurementBatch, AtLegacyMeasurementChannelTopic> meas_in,
            talos::res<std::shared_ptr<FoxgloveServer>> server) {
             if (!detail::foxglove_ready(*server, tracker_in))
                 return;
@@ -674,7 +674,7 @@ void register_foxglove_systems(App& app, talos::Scheduler* scheduler_ptr_ = null
 
     app.template add_system<talos::pool_compute>(
         "foxglove_gimbal_cmd_pub",
-        [](talos::spmc<L5::WeaponCommand, WeaponCommandChannelTag> cmd_in,
+        [](talos::spmc<L5::WeaponCommand, WeaponCommandChannelTopic> cmd_in,
            talos::res<std::shared_ptr<FoxgloveServer>> server) {
             if (!detail::foxglove_ready(*server, cmd_in)) {
                 return;
@@ -706,7 +706,7 @@ void register_foxglove_systems(App& app, talos::Scheduler* scheduler_ptr_ = null
     // =========================================================================
 
     app.template add_system<talos::pool_compute>(
-        "foxglove_l4_gimbal_scene", [](talos::spmc<L4::GimbalPlan, GimbalPlanChannelTag> plan_in,
+        "foxglove_l4_gimbal_scene", [](talos::spmc<L4::GimbalPlan, GimbalPlanChannelTopic> plan_in,
                                        talos::res<std::shared_ptr<FoxgloveServer>> server) {
             if (!detail::foxglove_ready(*server, plan_in))
                 return;
@@ -781,7 +781,7 @@ void register_foxglove_systems(App& app, talos::Scheduler* scheduler_ptr_ = null
     // =========================================================================
 
     app.template add_system<talos::pool_compute>(
-        "foxglove_mpc_trajectory_pub", [](talos::spmc<L4::GimbalPlan, GimbalPlanChannelTag> plan_in,
+        "foxglove_mpc_trajectory_pub", [](talos::spmc<L4::GimbalPlan, GimbalPlanChannelTopic> plan_in,
                                           talos::res<std::shared_ptr<FoxgloveServer>> server) {
             if (!detail::foxglove_ready(*server, plan_in)) {
                 return;
@@ -825,8 +825,8 @@ void register_foxglove_systems(App& app, talos::Scheduler* scheduler_ptr_ = null
 
     app.template add_system<talos::pool_compute>(
         "foxglove_l4_mpc_prediction_scene",
-        [](talos::spmc<L4::GimbalPlan, GimbalPlanChannelTag> plan_in,
-           talos::spmc<L3::TrackerOutput, TrackerOutputChannelTag> tracker_in,
+        [](talos::spmc<L4::GimbalPlan, GimbalPlanChannelTopic> plan_in,
+           talos::spmc<L3::TrackerOutput, TrackerOutputChannelTopic> tracker_in,
            talos::res<std::shared_ptr<FoxgloveServer>> server) {
             if (!detail::foxglove_ready(*server, plan_in))
                 return;
@@ -882,7 +882,7 @@ void register_foxglove_systems(App& app, talos::Scheduler* scheduler_ptr_ = null
 
     app.template add_system<talos::pool_compute>(
         "foxglove_pnp_debug_pub",
-        [](talos::spmc<AtLegacyArmorMeasurementBatch, AtLegacyMeasurementChannelTag> meas_in,
+        [](talos::spmc<AtLegacyArmorMeasurementBatch, AtLegacyMeasurementChannelTopic> meas_in,
            talos::res<std::shared_ptr<FoxgloveServer>> server) {
             if (!detail::foxglove_ready(*server, meas_in)) {
                 return;
@@ -919,7 +919,7 @@ void register_foxglove_systems(App& app, talos::Scheduler* scheduler_ptr_ = null
 
     app.template add_system<talos::pool_compute>(
         "foxglove_nn_confidence_pub",
-        [](talos::spmc<AtLegacyArmorDetectionBatch, AtLegacyDetectionChannelTag> det_in,
+        [](talos::spmc<AtLegacyArmorDetectionBatch, AtLegacyDetectionChannelTopic> det_in,
            talos::res<std::shared_ptr<FoxgloveServer>> server) {
             if (!detail::foxglove_ready(*server, det_in)) {
                 return;
@@ -954,7 +954,7 @@ void register_foxglove_systems(App& app, talos::Scheduler* scheduler_ptr_ = null
 
     app.template add_system<talos::pool_compute>(
         "foxglove_association_phase_pub",
-        [](talos::spmc<L3::TrackerOutput, TrackerOutputChannelTag> tracker_in,
+        [](talos::spmc<L3::TrackerOutput, TrackerOutputChannelTopic> tracker_in,
            talos::res<std::shared_ptr<FoxgloveServer>> server) {
             if (!detail::foxglove_ready(*server, tracker_in)) {
                 return;
@@ -983,7 +983,7 @@ void register_foxglove_systems(App& app, talos::Scheduler* scheduler_ptr_ = null
 
     app.template add_system<talos::pool_compute>(
         "foxglove_association_permutation_pub",
-        [](talos::spmc<L3::TrackerOutput, TrackerOutputChannelTag> tracker_in,
+        [](talos::spmc<L3::TrackerOutput, TrackerOutputChannelTopic> tracker_in,
            talos::res<std::shared_ptr<FoxgloveServer>> server) {
             if (!detail::foxglove_ready(*server, tracker_in)) {
                 return;
@@ -1017,7 +1017,7 @@ void register_foxglove_systems(App& app, talos::Scheduler* scheduler_ptr_ = null
 
     app.template add_system<talos::pool_compute>(
         "foxglove_filter_innovation_pub",
-        [](talos::spmc<L3::TrackerOutput, TrackerOutputChannelTag> tracker_in,
+        [](talos::spmc<L3::TrackerOutput, TrackerOutputChannelTopic> tracker_in,
            talos::res<std::shared_ptr<FoxgloveServer>> server) {
             if (!detail::foxglove_ready(*server, tracker_in)) {
                 return;
@@ -1064,7 +1064,7 @@ void register_foxglove_systems(App& app, talos::Scheduler* scheduler_ptr_ = null
 
     app.template add_system<talos::pool_compute>(
         "foxglove_filter_covariance_pub",
-        [](talos::spmc<L3::TrackerOutput, TrackerOutputChannelTag> tracker_in,
+        [](talos::spmc<L3::TrackerOutput, TrackerOutputChannelTopic> tracker_in,
            talos::res<std::shared_ptr<FoxgloveServer>> server) {
             if (!detail::foxglove_ready(*server, tracker_in)) {
                 return;
@@ -1090,7 +1090,7 @@ void register_foxglove_systems(App& app, talos::Scheduler* scheduler_ptr_ = null
 
     app.template add_system<talos::pool_compute>(
         "foxglove_filter_covariance_scene_pub",
-        [](talos::spmc<L3::TrackerOutput, TrackerOutputChannelTag> tracker_in,
+        [](talos::spmc<L3::TrackerOutput, TrackerOutputChannelTopic> tracker_in,
            talos::res<std::shared_ptr<FoxgloveServer>> server) {
             if (!detail::foxglove_ready(*server, tracker_in))
                 return;
@@ -1117,7 +1117,7 @@ void register_foxglove_systems(App& app, talos::Scheduler* scheduler_ptr_ = null
 
     app.template add_system<talos::pool_compute>(
         "foxglove_viterbi_trellis_pub",
-        [](talos::spmc<L3::TrackerOutput, TrackerOutputChannelTag> tracker_in,
+        [](talos::spmc<L3::TrackerOutput, TrackerOutputChannelTopic> tracker_in,
            talos::res<std::shared_ptr<FoxgloveServer>> server) {
             if (!detail::foxglove_ready(*server, tracker_in)) {
                 return;
@@ -1145,7 +1145,7 @@ void register_foxglove_systems(App& app, talos::Scheduler* scheduler_ptr_ = null
 
     app.template add_system<talos::pool_compute>(
         "foxglove_state_machine_pub",
-        [](talos::spmc<L3::TrackerOutput, TrackerOutputChannelTag> tracker_in,
+        [](talos::spmc<L3::TrackerOutput, TrackerOutputChannelTopic> tracker_in,
            talos::res<std::shared_ptr<FoxgloveServer>> server) {
             if (!detail::foxglove_ready(*server, tracker_in)) {
                 return;
@@ -1175,7 +1175,7 @@ void register_foxglove_systems(App& app, talos::Scheduler* scheduler_ptr_ = null
     // =========================================================================
 
     app.template add_system<talos::pool_compute>(
-        "foxglove_mpc_horizon_pub", [](talos::spmc<L4::GimbalPlan, GimbalPlanChannelTag> plan_in,
+        "foxglove_mpc_horizon_pub", [](talos::spmc<L4::GimbalPlan, GimbalPlanChannelTopic> plan_in,
                                        talos::res<std::shared_ptr<FoxgloveServer>> server) {
             if (!detail::foxglove_ready(*server, plan_in)) {
                 return;
@@ -1214,7 +1214,7 @@ void register_foxglove_systems(App& app, talos::Scheduler* scheduler_ptr_ = null
     // =========================================================================
 
     app.template add_system<talos::pool_compute>(
-        "foxglove_mpc_cost_pub", [](talos::spmc<L4::GimbalPlan, GimbalPlanChannelTag> plan_in,
+        "foxglove_mpc_cost_pub", [](talos::spmc<L4::GimbalPlan, GimbalPlanChannelTopic> plan_in,
                                     talos::res<std::shared_ptr<FoxgloveServer>> server) {
             if (!detail::foxglove_ready(*server, plan_in)) {
                 return;
@@ -1245,7 +1245,7 @@ void register_foxglove_systems(App& app, talos::Scheduler* scheduler_ptr_ = null
     // =========================================================================
 
     app.template add_system<talos::pool_compute>(
-        "foxglove_mpc_constraint_pub", [](talos::spmc<L4::GimbalPlan, GimbalPlanChannelTag> plan_in,
+        "foxglove_mpc_constraint_pub", [](talos::spmc<L4::GimbalPlan, GimbalPlanChannelTopic> plan_in,
                                           talos::res<std::shared_ptr<FoxgloveServer>> server) {
             if (!detail::foxglove_ready(*server, plan_in)) {
                 return;
@@ -1270,7 +1270,7 @@ void register_foxglove_systems(App& app, talos::Scheduler* scheduler_ptr_ = null
 
     app.template add_system<talos::pool_compute>(
         "foxglove_energy_meter_pub",
-        [](talos::spmc<fcs::energy_meter::EnergyMeterState, EnergyMeterStateChannelTag> state_in,
+        [](talos::spmc<fcs::energy_meter::EnergyMeterState, EnergyMeterStateChannelTopic> state_in,
            talos::res<std::shared_ptr<FoxgloveServer>> server) {
             if (!detail::foxglove_ready(*server, state_in)) {
                 return;

@@ -7,7 +7,7 @@
 #include <optional>
 #include <variant>
 
-#include "fcs/core/channel_tags.hpp"
+#include "fcs/core/channel_topics.hpp"
 #include "fcs/core/types.hpp"
 #include <numbers>
 
@@ -157,15 +157,15 @@ struct TrackerOutput {
 };
 
 // ============================================================================
-// Channel Tags (for ECS)
+// Channel Topics (for ECS)
 // ============================================================================
 
-// Channel tags are defined in fcs/core/channel_tags.hpp:
-// - fcs::TrackerOutputChannelTag
-// - fcs::SolverOutputChannelTag
+// Channel topics are defined in fcs/core/channel_topics.hpp:
+// - fcs::TrackerOutputChannelTopic
+// - fcs::SolverOutputChannelTopic
 
 // Re-export for convenience
-using ::fcs::TrackerOutputChannelTag;
+using ::fcs::TrackerOutputChannelTopic;
 
 // ============================================================================
 // Implementation
