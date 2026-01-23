@@ -126,6 +126,7 @@ struct spmc_mut {
 };
 
 /// Atomic reference wrapper
+/// Atomic reference wrapper
 template <typename T, typename Topic = DefaultTopic>
 struct atomic_ref {
     using value_type                 = T;
@@ -142,6 +143,12 @@ struct atomic_ref {
     [[nodiscard]] T load() const noexcept { return ptr_->load(std::memory_order_acquire); }
     void store(T value) noexcept { ptr_->store(value, std::memory_order_release); }
     [[nodiscard]] bool valid() const noexcept { return ptr_ != nullptr; }
+
+    // Transparent access: forward . and -> to std::atomic<T>
+    [[nodiscard]] std::atomic<T>* operator->() noexcept { return ptr_; }
+    [[nodiscard]] const std::atomic<T>* operator->() const noexcept { return ptr_; }
+    [[nodiscard]] std::atomic<T>& operator*() noexcept { return *ptr_; }
+    [[nodiscard]] const std::atomic<T>& operator*() const noexcept { return *ptr_; }
 };
 
 // ============================================================================
@@ -227,6 +234,19 @@ struct res_mut {
             return true;
         }
         return false;
+    }
+
+    // Transparent access: forward . and -> to T
+    template <typename U>
+    [[nodiscard]] auto operator->*(U T::* member) noexcept -> decltype(&(ptr_->*member)) {
+        if (version_) [[likely]]
+            version_->fetch_add(1, std::memory_order_release);
+        return &(ptr_->*member);
+    }
+
+    template <typename U>
+    [[nodiscard]] auto operator->*(U T::* member) const noexcept -> decltype(&(ptr_->*member)) {
+        return &(ptr_->*member);
     }
 };
 

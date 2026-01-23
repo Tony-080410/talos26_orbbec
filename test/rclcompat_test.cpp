@@ -1705,8 +1705,7 @@ TEST(ResourceAccessor, WithCallback) {
     // IMPORTANT: Add exclusive system BEFORE calling node.finalize()!
     std::atomic<int> trigger_count{0};
     scheduler.add_system<talos::exclusive<100>>(
-        "trigger_source",
-        [&trigger_count](talos::spmc_mut<TestMessage, TestTag1> trigger_out) {
+        "trigger_source", [&trigger_count](talos::spmc_mut<TestMessage, TestTag1> trigger_out) {
             trigger_count.fetch_add(1);
             trigger_out.write(TestMessage{.value = trigger_count.load(), .text = "trigger"});
             return true;
@@ -1768,7 +1767,7 @@ TEST(ResourceAccessor, Copyable) {
     EXPECT_EQ(res2->value, 42);
 
     // Modify through accessor2
-    auto mut2 = accessor2.get_mut();
+    auto mut2   = accessor2.get_mut();
     mut2->value = 100;
 
     // Changes should be visible through accessor1
