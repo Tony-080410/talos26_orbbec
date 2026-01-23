@@ -160,6 +160,15 @@ struct inner_type<res_mut<T>> {
     using topic = void;
 };
 
+/**
+ * @brief Extract inner type from local<T>
+ */
+template <typename T>
+struct inner_type<local<T>> {
+    using type  = T;
+    using topic = void;
+};
+
 template <typename T>
 using inner_type_t = inner_type<T>::type;
 
@@ -211,6 +220,15 @@ struct is_res_type : std::bool_constant<T::is_res> {};
  */
 template <typename T>
 struct is_res_mut_type : std::bool_constant<T::is_res_mut> {};
+
+/**
+ * @brief Check if type is a local variable (defaults to false if is_local not defined)
+ */
+template <typename T, typename = void>
+struct is_local_type : std::false_type {};
+
+template <typename T>
+struct is_local_type<T, std::void_t<decltype(T::is_local)>> : std::bool_constant<T::is_local> {};
 
 } // namespace detail
 
@@ -266,6 +284,8 @@ constexpr void extract_one_param(SystemMeta& meta) noexcept {
         meta.reads.emplace_back(typeid(Inner));
     } else if constexpr (is_res_mut_type<T>::value) {
         meta.writes.emplace_back(typeid(Inner));
+    } else if constexpr (is_local_type<T>::value) {
+        // Local variables don't participate in dependency analysis
     }
 }
 

@@ -781,8 +781,9 @@ void register_foxglove_systems(App& app, talos::Scheduler* scheduler_ptr_ = null
     // =========================================================================
 
     app.template add_system<talos::pool_compute>(
-        "foxglove_mpc_trajectory_pub", [](talos::spmc<L4::GimbalPlan, GimbalPlanChannelTopic> plan_in,
-                                          talos::res<std::shared_ptr<FoxgloveServer>> server) {
+        "foxglove_mpc_trajectory_pub",
+        [](talos::spmc<L4::GimbalPlan, GimbalPlanChannelTopic> plan_in,
+           talos::res<std::shared_ptr<FoxgloveServer>> server) {
             if (!detail::foxglove_ready(*server, plan_in)) {
                 return;
             }
@@ -1245,8 +1246,9 @@ void register_foxglove_systems(App& app, talos::Scheduler* scheduler_ptr_ = null
     // =========================================================================
 
     app.template add_system<talos::pool_compute>(
-        "foxglove_mpc_constraint_pub", [](talos::spmc<L4::GimbalPlan, GimbalPlanChannelTopic> plan_in,
-                                          talos::res<std::shared_ptr<FoxgloveServer>> server) {
+        "foxglove_mpc_constraint_pub",
+        [](talos::spmc<L4::GimbalPlan, GimbalPlanChannelTopic> plan_in,
+           talos::res<std::shared_ptr<FoxgloveServer>> server) {
             if (!detail::foxglove_ready(*server, plan_in)) {
                 return;
             }

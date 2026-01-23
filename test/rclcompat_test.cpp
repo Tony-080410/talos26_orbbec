@@ -1,10 +1,12 @@
 #include "ecs/channel_types.hpp"
 #include "ecs/execution_policy.hpp"
 #include "rclcompat/node.hpp"
+#include "rclcompat/timer_constants.hpp"
 #include "scheduler/rclcompat/registry.hpp"
 #include "scheduler/rclcompat/system.hpp"
 #include "scheduler/scheduler.hpp"
 
+#include <functional>
 #include <gtest/gtest.h>
 
 #include <atomic>
@@ -1978,15 +1980,26 @@ TEST(RclTimer, MultipleNodesWithTimers) {
 //   2. Frequency is rounded appropriately
 // -------------------------------------------------------------------------
 
+class ProperNode : public Node {
+public:
+    explicit ProperNode(std::string name, Scheduler& scheduler) noexcept
+        : Node(std::move(name), scheduler) {
+        // deprecated:
+        // this->create_wall_timer(Frequency::Hz_27, std::bind(&ProperNode::tick, this));
+        //
+        // suggested:
+        this->create_wall_timer(Frequency::Hz_27, [this]() { this->tick(); });
+    }
+    void tick() noexcept { count.fetch_add(1); }
+    std::atomic<int> count{0};
+};
+
 TEST(RclTimer, TimerFrequencyRounding) {
     World world;
     Scheduler scheduler(world);
-    Node node("test", scheduler);
+    ProperNode node("test", scheduler);
 
-    std::atomic<int> count{0};
     // 27Hz timer
-    node.create_wall_timer(Frequency::Hz_27, [&count]() { count.fetch_add(1); });
-
     EXPECT_TRUE(node.finalize().has_value());
 
     scheduler.print_systems();
@@ -1999,8 +2012,8 @@ TEST(RclTimer, TimerFrequencyRounding) {
 
     // 37ms * 4 = 148ms, so we expect ~4 executions
     // With rounding to 27Hz (~37ms), we should get approximately 4 executions
-    EXPECT_GE(count.load(), 3);
-    EXPECT_LE(count.load(), 5);
+    EXPECT_GE(node.count.load(), 3);
+    EXPECT_LE(node.count.load(), 5);
 }
 
 } // namespace talos::test

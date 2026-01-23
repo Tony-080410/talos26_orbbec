@@ -27,6 +27,56 @@ public:
 
 namespace detail {
 
+// Compile-time counter: count how many local<T> types appear before a given index
+template <typename ArgsTuple, std::size_t TargetIdx, std::size_t CurrentIdx = 0>
+struct count_locals_before;
+
+// Base case: when CurrentIdx reaches TargetIdx, stop counting
+template <typename... Args, std::size_t TargetIdx>
+struct count_locals_before<std::tuple<Args...>, TargetIdx, TargetIdx> {
+    static constexpr std::size_t value = 0;
+};
+
+// Recursive case: check if current argument is local, then continue
+template <typename... Args, std::size_t TargetIdx, std::size_t CurrentIdx>
+requires(CurrentIdx < TargetIdx)
+struct count_locals_before<std::tuple<Args...>, TargetIdx, CurrentIdx> {
+    using CurrentArg                       = std::tuple_element_t<CurrentIdx, std::tuple<Args...>>;
+    static constexpr bool is_current_local = is_local_type<CurrentArg>::value;
+    static constexpr std::size_t value =
+        (is_current_local ? 1 : 0)
+        + count_locals_before<std::tuple<Args...>, TargetIdx, CurrentIdx + 1>::value;
+};
+
+// Extract types of all local<T> arguments
+template <typename Tuple>
+struct extract_local_types;
+
+// Helper: wrap type in tuple if local, otherwise empty tuple
+template <typename T, bool is_local>
+struct local_to_tuple_impl;
+
+template <typename T>
+struct local_to_tuple_impl<T, true> {
+    using type = std::tuple<inner_type_t<T>>;
+};
+
+template <typename T>
+struct local_to_tuple_impl<T, false> {
+    using type = std::tuple<>;
+};
+
+template <typename T>
+using local_to_tuple_t = typename local_to_tuple_impl<T, is_local_type<T>::value>::type;
+
+template <typename... Ts>
+struct extract_local_types<std::tuple<Ts...>> {
+    using type = decltype(std::tuple_cat(std::declval<local_to_tuple_t<Ts>>()...));
+};
+
+template <typename Tuple>
+using extract_local_types_t = typename extract_local_types<Tuple>::type;
+
 template <typename T>
 auto make_arg(World& world) noexcept {
     using Inner = inner_type_t<T>;
@@ -51,6 +101,30 @@ auto make_arg(World& world) noexcept {
     }
 }
 
+// Overload for local<T> and non-local types with storage - uses compile-time index
+template <typename T, typename LocalStorage, std::size_t LocalIdx>
+auto make_arg(
+    World& world, LocalStorage& local_storage,
+    std::integral_constant<std::size_t, LocalIdx>) noexcept {
+    if constexpr (is_local_type<T>::value) {
+        using Inner   = inner_type_t<T>;
+        auto& storage = std::get<LocalIdx>(local_storage);
+        return local<Inner>{&storage};
+    } else {
+        return make_arg<T>(world);
+    }
+}
+
+// Helper to build args_tuple with guaranteed left-to-right evaluation
+// In C++17, braced initializer list elements are evaluated left-to-right (sequenced)
+template <typename ArgsTuple, typename LocalStorage, std::size_t... Is>
+auto make_args_sequenced(
+    World& world, LocalStorage& local_storage, std::index_sequence<Is...>) noexcept {
+    return ArgsTuple{make_arg<std::tuple_element_t<Is, ArgsTuple>>(
+        world, local_storage,
+        std::integral_constant<std::size_t, count_locals_before<ArgsTuple, Is>::value>{})...};
+}
+
 } // namespace detail
 
 // ============================================================================
@@ -66,6 +140,7 @@ class System : public SystemBase {
     SystemMeta meta_;
     std::optional<args_tuple> cached_args_;
     bool written_ = false;
+    detail::extract_local_types_t<args_tuple> local_storage_{};
 
     // Recursively set written_flag_ for all writer arguments
     template <std::size_t I = 0>
@@ -90,9 +165,8 @@ public:
         if (cached_args_) {
             return; // Already bound
         }
-        cached_args_ = [&]<std::size_t... Is>(std::index_sequence<Is...>) {
-            return args_tuple{detail::make_arg<std::tuple_element_t<Is, args_tuple>>(world)...};
-        }(std::make_index_sequence<traits::arity>{});
+        cached_args_ = detail::make_args_sequenced<args_tuple>(
+            world, local_storage_, std::make_index_sequence<traits::arity>{});
         bind_written_flags();
     }
 

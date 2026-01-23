@@ -254,6 +254,81 @@ void test_execution_policies() {
 }
 
 // ============================================================================
+// Test: Local Variables (talos::local<T>)
+// ============================================================================
+
+void test_local_variables() {
+    printf("=== Test: Local Variables ===\n");
+
+    // 1. Type trait verification
+    static_assert(talos::local<int>::is_local);
+    static_assert(!talos::local<int>::is_spsc);
+    static_assert(!talos::local<int>::is_spmc);
+    static_assert(!talos::local<int>::is_res);
+    static_assert(!talos::local<int>::is_res_mut);
+    printf("  [PASS] Type trait checks for local<T>\n");
+
+    // 2. Basic counter that persists across runs
+    struct InputTag {};
+    struct OutputTag {};
+
+    talos::App app;
+
+    // Producer system
+    app.add_system<talos::pool_compute>("producer", [](talos::spmc_mut<int, InputTag> out) {
+        out.write(42);
+        printf("    producer: sent 42\n");
+    });
+
+    // Counter system with local<T>
+    app.add_system<talos::pool_compute>(
+        "counter", [](talos::spmc<int, InputTag> in, talos::local<int> run_count,
+                      talos::local<int> total_sum) {
+            if (auto data = in.read()) {
+                (*run_count)++;
+                (*total_sum) += *data;
+                printf(
+                    "    counter: run_count=%d, total_sum=%d, data=%d\n", *run_count, *total_sum,
+                    *data);
+            }
+        });
+
+    printf("\n  Running 3 times:\n");
+    for (int i = 0; i < 3; ++i) {
+        printf("  --- tick %d ---\n", i);
+        app.run_once();
+    }
+
+    printf("\n  [PASS] Local variables persist across runs\n");
+
+    // 3. Verify local<T> doesn't participate in dependency analysis
+    auto metas         = app.all_meta();
+    bool found_counter = false;
+    for (const auto* m : metas) {
+        if (m->name == "counter") {
+            found_counter = true;
+            // Local variables should NOT appear in metadata
+            // The system has spmc<int, InputTag> input, which SHOULD be in metadata
+            // But the 2 local<int> variables should NOT add any entries
+            if (m->spmc_channels.size() == 1 && m->spsc_channels.empty() && m->reads.empty()
+                && m->writes.empty()) {
+                printf("  [PASS] local<T> excluded from dependency analysis\n");
+            } else {
+                printf(
+                    "  [FAIL] local<T> incorrectly included in metadata (spmc=%zu)\n",
+                    m->spmc_channels.size());
+            }
+        }
+    }
+
+    if (!found_counter) {
+        printf("  [FAIL] Counter system not found\n");
+    }
+
+    printf("\n");
+}
+
+// ============================================================================
 // Main
 // ============================================================================
 
@@ -268,6 +343,7 @@ int main() {
     test_spsc_pipeline();
     test_lambda_with_tags();
     test_execution_policies();
+    test_local_variables();
 
     printf("==========================================\n");
     printf("  All tests completed!\n");

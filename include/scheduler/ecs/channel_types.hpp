@@ -152,6 +152,34 @@ struct atomic_ref {
 };
 
 // ============================================================================
+// Local Variables (per-system storage)
+// ============================================================================
+
+/// System-local variable (mutable, per-system instance)
+/// Unlike channels and resources, local<T> is NOT shared across systems
+/// and does NOT participate in dependency analysis.
+template <typename T>
+struct local {
+    using value_type                 = T;
+    using topic_type                 = void;
+    static constexpr bool is_spsc    = false;
+    static constexpr bool is_spmc    = false;
+    static constexpr bool is_reader  = false;
+    static constexpr bool is_res     = false;
+    static constexpr bool is_res_mut = false;
+    static constexpr bool is_atomic  = false;
+    static constexpr bool is_local   = true;
+
+    T* ptr_ = nullptr;
+
+    [[nodiscard]] T& operator*() noexcept { return *ptr_; }
+    [[nodiscard]] T* operator->() noexcept { return ptr_; }
+    [[nodiscard]] const T& operator*() const noexcept { return *ptr_; }
+    [[nodiscard]] const T* operator->() const noexcept { return ptr_; }
+    [[nodiscard]] bool valid() const noexcept { return ptr_ != nullptr; }
+};
+
+// ============================================================================
 // Resource Types
 // ============================================================================
 

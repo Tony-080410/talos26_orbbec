@@ -191,8 +191,9 @@ std::expected<L1L2SetupResult, std::string> setup_l1_l2(
     // Camera: 160Hz, notify (triggers compute)
     auto last_seq = std::make_shared<std::atomic<uint64_t>>(0);
     scheduler.add_system<talos::fixed_rate<250, 1>>(
-        "camera_reader", [camera = std::move(camera), last_seq](
-                             talos::spmc_mut<AtLegacyImageFrame, AtLegacyImageChannelTopic> cam_out) {
+        "camera_reader",
+        [camera = std::move(camera),
+         last_seq](talos::spmc_mut<AtLegacyImageFrame, AtLegacyImageChannelTopic> cam_out) {
             const auto frame = camera->try_recv();
             if (!frame) {
                 return;

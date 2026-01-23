@@ -19,7 +19,8 @@ void register_at_legacy_detection_systems(talos::Scheduler& scheduler, AtLegacyC
         "at_legacy_armor_detector_pnp_solver",
         [last_detect_color = ArmorColor::Neutral](
             talos::spmc<AtLegacyImageFrame, AtLegacyImageChannelTopic> image_in,
-            talos::spmc_mut<AtLegacyArmorDetectionBatch, AtLegacyDetectionChannelTopic> detection_out,
+            talos::spmc_mut<AtLegacyArmorDetectionBatch, AtLegacyDetectionChannelTopic>
+                detection_out,
             talos::spmc_mut<AtLegacyArmorMeasurementBatch, AtLegacyMeasurementChannelTopic>
                 measurement_out,
             talos::res<AtLegacyConfig> config,
