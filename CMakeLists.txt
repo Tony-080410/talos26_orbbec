@@ -14,7 +14,7 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 
 include(cmake/dependencies.cmake)
 include(cmake/test.cmake)
-# include(cmake/calibration.cmake)
+include(cmake/calibration.cmake)
 
 get_filename_component(PROJECT_SOURCE_DIR_ABS "${CMAKE_SOURCE_DIR}" REALPATH)
 
@@ -192,7 +192,7 @@ target_include_directories(fcs SYSTEM PUBLIC
         3dparty/tinympc
 )
 
-message(STATUS "OpenCV libs: ${OpenCV_LIBS}")
+# message(STATUS "OpenCV libs: ${OpenCV_LIBS}")
 
 target_link_libraries(fcs PUBLIC
         talos_std

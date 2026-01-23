@@ -141,6 +141,24 @@ target_link_libraries(jpda_matcher_test PRIVATE
 
 add_test(NAME JpdaMatcherTest COMMAND jpda_matcher_test)
 
+# ROS2 compatibility layer tests
+add_executable(rclcompat_test
+    test/rclcompat_test.cpp
+)
+
+target_include_directories(rclcompat_test PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/include/scheduler
+)
+
+target_link_libraries(rclcompat_test PRIVATE
+    scheduler
+    GTest::gtest_main
+    Threads::Threads
+)
+
+add_test(NAME RclCompatTest COMMAND rclcompat_test)
+
 if (ENABLE_COVERAGE)
     message(STATUS "Coverage enabled for FCS tests")
 endif ()

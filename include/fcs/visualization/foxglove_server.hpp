@@ -394,9 +394,11 @@ template <typename ChannelType>
 std::expected<std::unique_ptr<FoxgloveServer>, std::string>
     FoxgloveServerFactory::create(uint16_t port, std::string host) noexcept {
     foxglove::WebSocketServerOptions ws;
-    ws.host = std::move(host);
-    ws.port = port;
+    ws.host       = std::move(host);
+    ws.port       = port;
+    ws.session_id = "talos";
 
+    assert(static_cast<int>(ws.capabilities) == 0);
     auto server_r = foxglove::WebSocketServer::create(std::move(ws));
     if (!server_r.has_value())
         return std::unexpected(

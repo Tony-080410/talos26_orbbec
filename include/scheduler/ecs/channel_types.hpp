@@ -7,20 +7,20 @@
 namespace talos {
 
 // ============================================================================
-// Default Tag (used when no tag specified)
+// Default Topic (used when no topic specified)
 // ============================================================================
 
-struct DefaultTag {};
+struct DefaultTopic {};
 
 // ============================================================================
 // Channel Wrappers: Hold pointers to channel components
 // ============================================================================
 
 /// SPSC Reader wrapper
-template <typename T, typename Tag = DefaultTag>
+template <typename T, typename Topic = DefaultTopic>
 struct spsc {
     using value_type                 = T;
-    using tag_type                   = Tag;
+    using topic_type                 = Topic;
     using ReaderType                 = primitive::SpscChannel<T>::Reader;
     static constexpr bool is_spsc    = true;
     static constexpr bool is_spmc    = false;
@@ -31,20 +31,20 @@ struct spsc {
 
     ReaderType* ptr_ = nullptr;
 
-    [[nodiscard]] std::optional<T> read() { return ptr_ ? ptr_->read() : std::nullopt; }
-    [[nodiscard]] std::optional<T> read_current() {
+    [[nodiscard]] std::optional<T> read() noexcept { return ptr_ ? ptr_->read() : std::nullopt; }
+    [[nodiscard]] std::optional<T> read_current() noexcept {
         return ptr_ ? ptr_->read_current() : std::nullopt;
     }
-    [[nodiscard]] bool has_new() const { return ptr_ && ptr_->has_new(); }
-    [[nodiscard]] const T& current() const { return ptr_->current(); }
-    [[nodiscard]] bool valid() const { return ptr_ != nullptr; }
+    [[nodiscard]] bool has_new() const noexcept { return ptr_ && ptr_->has_new(); }
+    [[nodiscard]] const T& current() const noexcept { return ptr_->current(); }
+    [[nodiscard]] bool valid() const noexcept { return ptr_ != nullptr; }
 };
 
 /// SPSC Writer wrapper
-template <typename T, typename Tag = DefaultTag>
+template <typename T, typename Topic = DefaultTopic>
 struct spsc_mut {
     using value_type                 = T;
-    using tag_type                   = Tag;
+    using topic_type                 = Topic;
     using WriterType                 = primitive::SpscChannel<T>::Writer;
     static constexpr bool is_spsc    = true;
     static constexpr bool is_spmc    = false;
@@ -56,21 +56,21 @@ struct spsc_mut {
     WriterType* ptr_    = nullptr;
     bool* written_flag_ = nullptr; // Set by scheduler before system runs
 
-    void write(T value) {
+    void write(T value) noexcept {
         if (ptr_) [[likely]] {
             ptr_->write(std::move(value));
             if (written_flag_)
                 *written_flag_ = true;
         }
     }
-    [[nodiscard]] bool valid() const { return ptr_ != nullptr; }
+    [[nodiscard]] bool valid() const noexcept { return ptr_ != nullptr; }
 };
 
 /// SPMC Reader wrapper
-template <typename T, typename Tag = DefaultTag>
+template <typename T, typename Topic = DefaultTopic>
 struct spmc {
     using value_type                 = T;
-    using tag_type                   = Tag;
+    using topic_type                 = Topic;
     using ReaderType                 = primitive::SpmcChannel<T>::Reader;
     static constexpr bool is_spsc    = false;
     static constexpr bool is_spmc    = true;
@@ -81,29 +81,29 @@ struct spmc {
 
     ReaderType* ptr_ = nullptr;
 
-    [[nodiscard]] std::optional<T> read() {
+    [[nodiscard]] std::optional<T> read() noexcept {
         if (ptr_) [[likely]] {
             return ptr_->read();
         } else {
             return std::nullopt;
         }
     }
-    [[nodiscard]] std::optional<T> read_current() {
+    [[nodiscard]] std::optional<T> read_current() noexcept {
         if (ptr_) [[likely]] {
             return ptr_->read_current();
         } else {
             return std::nullopt;
         }
     }
-    [[nodiscard]] bool has_new() const { return ptr_ && ptr_->has_new(); }
-    [[nodiscard]] bool valid() const { return ptr_ != nullptr; }
+    [[nodiscard]] bool has_new() const noexcept { return ptr_ && ptr_->has_new(); }
+    [[nodiscard]] bool valid() const noexcept { return ptr_ != nullptr; }
 };
 
 /// SPMC Writer wrapper (uses channel's write directly)
-template <typename T, typename Tag = DefaultTag>
+template <typename T, typename Topic = DefaultTopic>
 struct spmc_mut {
     using value_type                 = T;
-    using tag_type                   = Tag;
+    using topic_type                 = Topic;
     using ChannelType                = primitive::SpmcChannel<T>;
     static constexpr bool is_spsc    = false;
     static constexpr bool is_spmc    = true;
@@ -115,21 +115,21 @@ struct spmc_mut {
     ChannelType* ptr_   = nullptr;
     bool* written_flag_ = nullptr; // Set by scheduler before system runs
 
-    void write(T value) {
+    void write(T value) noexcept {
         if (ptr_) [[likely]] {
             ptr_->write(std::move(value));
             if (written_flag_)
                 *written_flag_ = true;
         }
     }
-    [[nodiscard]] bool valid() const { return ptr_ != nullptr; }
+    [[nodiscard]] bool valid() const noexcept { return ptr_ != nullptr; }
 };
 
 /// Atomic reference wrapper
-template <typename T, typename Tag = DefaultTag>
+template <typename T, typename Topic = DefaultTopic>
 struct atomic_ref {
     using value_type                 = T;
-    using tag_type                   = Tag;
+    using topic_type                 = Topic;
     static constexpr bool is_spsc    = false;
     static constexpr bool is_spmc    = false;
     static constexpr bool is_reader  = true;
@@ -139,9 +139,9 @@ struct atomic_ref {
 
     std::atomic<T>* ptr_ = nullptr;
 
-    [[nodiscard]] T load() const { return ptr_->load(std::memory_order_acquire); }
-    void store(T value) { ptr_->store(value, std::memory_order_release); }
-    [[nodiscard]] bool valid() const { return ptr_ != nullptr; }
+    [[nodiscard]] T load() const noexcept { return ptr_->load(std::memory_order_acquire); }
+    void store(T value) noexcept { ptr_->store(value, std::memory_order_release); }
+    [[nodiscard]] bool valid() const noexcept { return ptr_ != nullptr; }
 };
 
 // ============================================================================
@@ -152,7 +152,7 @@ struct atomic_ref {
 template <typename T>
 struct res {
     using value_type                 = T;
-    using tag_type                   = void;
+    using topic_type                 = void;
     static constexpr bool is_spsc    = false;
     static constexpr bool is_spmc    = false;
     static constexpr bool is_reader  = false;
@@ -174,7 +174,7 @@ struct res {
             last_seen_version_ = version_->load(std::memory_order_acquire);
         return ptr_;
     }
-    [[nodiscard]] bool valid() const { return ptr_ != nullptr; }
+    [[nodiscard]] bool valid() const noexcept { return ptr_ != nullptr; }
 
     [[nodiscard]] bool is_changed() const noexcept {
         if (!version_)
@@ -192,7 +192,7 @@ struct res {
 template <typename T>
 struct res_mut {
     using value_type                 = T;
-    using tag_type                   = void;
+    using topic_type                 = void;
     static constexpr bool is_spsc    = false;
     static constexpr bool is_spmc    = false;
     static constexpr bool is_reader  = false;
@@ -216,7 +216,7 @@ struct res_mut {
     }
     [[nodiscard]] const T& operator*() const noexcept { return *ptr_; }
     [[nodiscard]] const T* operator->() const noexcept { return ptr_; }
-    [[nodiscard]] bool valid() const { return ptr_ != nullptr; }
+    [[nodiscard]] bool valid() const noexcept { return ptr_ != nullptr; }
 
     [[nodiscard]] bool is_changed() const noexcept {
         if (!version_)

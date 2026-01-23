@@ -4,7 +4,7 @@ if (ENABLE_SCCACHE)
     find_program(SCCACHE_PROGRAM sccache)
 
     if (SCCACHE_PROGRAM)
-        message(STATUS "sccache found: ${SCCACHE_PROGRAM}")
+        message(STATUS "Sccache found at: ${SCCACHE_PROGRAM}")
         if (NOT CMAKE_C_COMPILER_LAUNCHER)
             set(CMAKE_C_COMPILER_LAUNCHER ${SCCACHE_PROGRAM})
         endif ()

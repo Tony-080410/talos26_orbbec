@@ -1,5 +1,10 @@
 option(TALOS_OFFLINE "Build without network" ON)
 
+set(CMAKE_WARN_DEPRECATED OFF)
+if(POLICY CMP0135)
+    cmake_policy(SET CMP0135 OLD)
+endif()
+
 if (TALOS_OFFLINE)
     set(FETCHCONTENT_UPDATES_DISCONNECTED ON)
 endif ()
@@ -70,10 +75,10 @@ endif ()
 
 message(STATUS "Foxglove platform: ${FOXGLOVE_PLATFORM}")
 
-set(FOXGLOVE_VERSION "v0.16.2")
-set(FOXGLOVE_SHA256_aarch64-apple-darwin "7bb818be22396dce6f2430df3451bb2deb4faf9bcff4cd007d737172e0eec764")
-set(FOXGLOVE_SHA256_aarch64-unknown-linux-gnu "20dd412fa8be481e6ed84d88879f368e1a55a146e9a98f936a05931742e1dea5")
-set(FOXGLOVE_SHA256_x86_64-unknown-linux-gnu "d8afbb8f99b75d7ad0f1b2885d35cacead28e6f2e36bd4d1a30e17413ebab896")
+set(FOXGLOVE_VERSION "v0.16.5")
+set(FOXGLOVE_SHA256_aarch64-apple-darwin "0799fcb999616fe25d16d7e4b2894adb6f7fa97ce9671bd908d8412505887bec")
+set(FOXGLOVE_SHA256_aarch64-unknown-linux-gnu "54cbc57c60a550473e0a75f8f360efb6fa245ebb7f582db5efa64f1c297e554f")
+set(FOXGLOVE_SHA256_x86_64-unknown-linux-gnu "54cbc57c60a550473e0a75f8f360efb6fa245ebb7f582db5efa64f1c297e554f")
 
 # Check for local Foxglove cache
 set(FOXGLOVE_LOCAL_ZIP "${CMAKE_CURRENT_SOURCE_DIR}/3dparty/foxglove-${FOXGLOVE_VERSION}-cpp-${FOXGLOVE_PLATFORM}.zip")

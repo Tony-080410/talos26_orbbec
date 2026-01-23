@@ -15,10 +15,10 @@ namespace talos {
 
 class SystemBase {
 public:
-    virtual ~SystemBase()                  = default;
-    virtual void bind(World& world)        = 0; // Pre-create channels/resources (single-threaded)
-    virtual bool run(World& world)         = 0; // Returns true if any channel was written
-    virtual const SystemMeta& meta() const = 0;
+    virtual ~SystemBase() noexcept           = default;
+    virtual void bind(World& world) noexcept = 0; // Pre-create channels/resources (single-threaded)
+    virtual bool run(World& world) noexcept  = 0; // Returns true if any channel was written
+    virtual const SystemMeta& meta() const noexcept = 0;
 };
 
 // ============================================================================
@@ -28,24 +28,24 @@ public:
 namespace detail {
 
 template <typename T>
-auto make_arg(World& world) {
+auto make_arg(World& world) noexcept {
     using Inner = inner_type_t<T>;
-    using Tag   = inner_tag_t<T>;
+    using Topic = inner_topic_t<T>;
 
     if constexpr (is_res_type<T>::value) {
         return world.get_res<Inner>();
     } else if constexpr (is_res_mut_type<T>::value) {
         return world.get_res_mut<Inner>();
     } else if constexpr (is_spsc_reader<T>::value) {
-        return world.get_spsc_reader<Inner, Tag>();
+        return world.get_spsc_reader<Inner, Topic>();
     } else if constexpr (is_spsc_writer<T>::value) {
-        return world.get_spsc_writer<Inner, Tag>();
+        return world.get_spsc_writer<Inner, Topic>();
     } else if constexpr (is_spmc_reader<T>::value) {
-        return world.get_spmc_reader<Inner, Tag>();
+        return world.get_spmc_reader<Inner, Topic>();
     } else if constexpr (is_spmc_writer<T>::value) {
-        return world.get_spmc_writer<Inner, Tag>();
+        return world.get_spmc_writer<Inner, Topic>();
     } else if constexpr (is_atomic_type<T>::value) {
-        return world.get_atomic<Inner, Tag>();
+        return world.get_atomic<Inner, Topic>();
     } else {
         static_assert(sizeof(T) == 0, "Unknown parameter type");
     }
@@ -69,7 +69,7 @@ class System : public SystemBase {
 
     // Recursively set written_flag_ for all writer arguments
     template <std::size_t I = 0>
-    void bind_written_flags() {
+    void bind_written_flags() noexcept {
         if constexpr (I < std::tuple_size_v<args_tuple>) {
             using ArgType = std::tuple_element_t<I, args_tuple>;
             if constexpr (
@@ -81,12 +81,12 @@ class System : public SystemBase {
     }
 
 public:
-    System(std::string name, F func)
+    System(std::string name, F func) noexcept
         : func_(std::move(func))
         , meta_(extract_system_meta<F, Policy>(std::move(name))) {}
 
     /// Pre-create all channel readers/writers (must be called single-threaded before run)
-    void bind(World& world) override {
+    void bind(World& world) noexcept override {
         if (cached_args_) {
             return; // Already bound
         }
@@ -96,13 +96,13 @@ public:
         bind_written_flags();
     }
 
-    bool run([[maybe_unused]] World& world) override {
+    bool run([[maybe_unused]] World& world) noexcept override {
         written_ = false;
         std::apply(func_, *cached_args_);
         return written_;
     }
 
-    const SystemMeta& meta() const override { return meta_; }
+    const SystemMeta& meta() const noexcept override { return meta_; }
 };
 
 // ============================================================================
@@ -112,7 +112,7 @@ public:
 using SystemRunner = std::function<void(World&)>;
 
 template <typename F, typename Policy = default_policy>
-[[nodiscard]] std::unique_ptr<SystemBase> make_system(std::string name, F&& func) {
+[[nodiscard]] std::unique_ptr<SystemBase> make_system(std::string name, F&& func) noexcept {
     return std::make_unique<System<std::decay_t<F>, Policy>>(
         std::move(name), std::forward<F>(func));
 }

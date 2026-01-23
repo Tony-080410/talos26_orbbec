@@ -100,12 +100,12 @@ struct SpmcStorage {
 // ============================================================================
 
 class World {
+public:
     std::unordered_map<std::type_index, std::any> resources_;
     std::unordered_map<ChannelKey, std::any, ChannelKeyHash> spsc_storage_;
     std::unordered_map<ChannelKey, std::any, ChannelKeyHash> spmc_storage_;
     std::unordered_map<std::type_index, std::any> atomics_;
 
-public:
     // ==================== Resource API ====================
 
     template <typename T>
@@ -151,53 +151,53 @@ public:
 
     // ==================== SPSC Channel API ====================
 
-    template <typename T, typename Tag = DefaultTag>
+    template <typename T, typename Topic = DefaultTopic>
     void ensure_spsc() {
-        if (const ChannelKey key{typeid(T), typeid(Tag)}; !spsc_storage_.contains(key)) {
+        if (const ChannelKey key{typeid(T), typeid(Topic)}; !spsc_storage_.contains(key)) {
             spsc_storage_[key] = SpscStorage<T>::create();
         }
     }
 
-    template <typename T, typename Tag = DefaultTag>
-    [[nodiscard]] spsc<T, Tag> get_spsc_reader() {
-        const ChannelKey key{typeid(T), typeid(Tag)};
-        ensure_spsc<T, Tag>();
+    template <typename T, typename Topic = DefaultTopic>
+    [[nodiscard]] spsc<T, Topic> get_spsc_reader() {
+        const ChannelKey key{typeid(T), typeid(Topic)};
+        ensure_spsc<T, Topic>();
         auto storage_ptr = std::any_cast<std::shared_ptr<SpscStorage<T>>>(spsc_storage_.at(key));
-        return spsc<T, Tag>{storage_ptr->reader.get()};
+        return spsc<T, Topic>{storage_ptr->reader.get()};
     }
 
-    template <typename T, typename Tag = DefaultTag>
-    [[nodiscard]] spsc_mut<T, Tag> get_spsc_writer() {
-        const ChannelKey key{typeid(T), typeid(Tag)};
-        ensure_spsc<T, Tag>();
+    template <typename T, typename Topic = DefaultTopic>
+    [[nodiscard]] spsc_mut<T, Topic> get_spsc_writer() {
+        const ChannelKey key{typeid(T), typeid(Topic)};
+        ensure_spsc<T, Topic>();
         auto storage_ptr = std::any_cast<std::shared_ptr<SpscStorage<T>>>(spsc_storage_.at(key));
-        return spsc_mut<T, Tag>{storage_ptr->writer.get()};
+        return spsc_mut<T, Topic>{storage_ptr->writer.get()};
     }
 
     // ==================== SPMC Channel API ====================
 
-    template <typename T, typename Tag = DefaultTag>
+    template <typename T, typename Topic = DefaultTopic>
     void ensure_spmc() {
-        if (const ChannelKey key{typeid(T), typeid(Tag)}; !spmc_storage_.contains(key)) {
+        if (const ChannelKey key{typeid(T), typeid(Topic)}; !spmc_storage_.contains(key)) {
             spmc_storage_[key] = SpmcStorage<T>::create();
         }
     }
 
-    template <typename T, typename Tag = DefaultTag>
-    [[nodiscard]] spmc<T, Tag> get_spmc_reader() {
-        const ChannelKey key{typeid(T), typeid(Tag)};
-        ensure_spmc<T, Tag>();
+    template <typename T, typename Topic = DefaultTopic>
+    [[nodiscard]] spmc<T, Topic> get_spmc_reader() {
+        const ChannelKey key{typeid(T), typeid(Topic)};
+        ensure_spmc<T, Topic>();
         auto storage_ptr = std::any_cast<std::shared_ptr<SpmcStorage<T>>>(spmc_storage_.at(key));
         auto reader      = storage_ptr->add_reader();
-        return spmc<T, Tag>{reader.get()};
+        return spmc<T, Topic>{reader.get()};
     }
 
-    template <typename T, typename Tag = DefaultTag>
-    [[nodiscard]] spmc_mut<T, Tag> get_spmc_writer() {
-        const ChannelKey key{typeid(T), typeid(Tag)};
-        ensure_spmc<T, Tag>();
+    template <typename T, typename Topic = DefaultTopic>
+    [[nodiscard]] spmc_mut<T, Topic> get_spmc_writer() {
+        const ChannelKey key{typeid(T), typeid(Topic)};
+        ensure_spmc<T, Topic>();
         auto storage_ptr = std::any_cast<std::shared_ptr<SpmcStorage<T>>>(spmc_storage_.at(key));
-        return spmc_mut<T, Tag>{storage_ptr->channel.get()};
+        return spmc_mut<T, Topic>{storage_ptr->channel.get()};
     }
 
     // ==================== Atomic API ====================
@@ -207,13 +207,13 @@ public:
         atomics_[typeid(T)] = std::make_shared<std::atomic<T>>(initial_value);
     }
 
-    template <typename T, typename Tag = DefaultTag>
-    [[nodiscard]] atomic_ref<T, Tag> get_atomic() {
+    template <typename T, typename Topic = DefaultTopic>
+    [[nodiscard]] atomic_ref<T, Topic> get_atomic() {
         const auto it = atomics_.find(typeid(T));
         if (it == atomics_.end())
-            return atomic_ref<T, Tag>{nullptr};
+            return atomic_ref<T, Topic>{nullptr};
         auto& ptr = std::any_cast<std::shared_ptr<std::atomic<T>>&>(it->second);
-        return atomic_ref<T, Tag>{ptr.get()};
+        return atomic_ref<T, Topic>{ptr.get()};
     }
 };
 

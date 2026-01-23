@@ -32,6 +32,7 @@ struct FusionResult {
 struct ImuChannel {};
 struct CameraChannel {};
 struct FusionChannel {};
+struct CustomFusionOut {};
 
 // ============================================================================
 // Test: Scheduler with Exclusive and Pool Systems
@@ -425,25 +426,25 @@ void test_dependency_cycle_error() {
 void test_valid_dependency_chain() {
     printf("=== Test: Valid Dependency Chain ===\n");
 
-    struct Stage1Out {};
-    struct Stage2Out {};
-    struct Stage3Out {};
+    struct Stopice1Out {};
+    struct Stopice2Out {};
+    struct Stopice3Out {};
 
     talos::World world;
     talos::Scheduler scheduler(world);
 
-    // Linear pipeline: stage1 -> stage2 -> stage3
+    // Linear pipeline: stopice1 -> stopice2 -> stopice3
     scheduler.add_system<talos::pool_compute>(
-        "stage1", [](talos::spsc_mut<int, Stage1Out> out) { out.write(1); });
+        "stopice1", [](talos::spsc_mut<int, Stopice1Out> out) { out.write(1); });
 
     scheduler.add_system<talos::pool_compute>(
-        "stage2", [](talos::spsc<int, Stage1Out> in, talos::spsc_mut<int, Stage2Out> out) {
+        "stopice2", [](talos::spsc<int, Stopice1Out> in, talos::spsc_mut<int, Stopice2Out> out) {
             if (const auto v = in.read())
                 out.write(*v + 1);
         });
 
     scheduler.add_system<talos::pool_compute>(
-        "stage3", [](talos::spsc<int, Stage2Out> in, talos::spsc_mut<int, Stage3Out> out) {
+        "stopice3", [](talos::spsc<int, Stopice2Out> in, talos::spsc_mut<int, Stopice3Out> out) {
             if (const auto v = in.read())
                 out.write(*v + 1);
         });
@@ -456,6 +457,106 @@ void test_valid_dependency_chain() {
 
     scheduler.print_systems();
     printf("  Valid Dependency Chain test passed!\n\n");
+}
+
+// ============================================================================
+// Test: Inject Custom SystemBase into Scheduler
+// ============================================================================
+class CustomFusionSystem final : public talos::SystemBase {
+    talos::SystemMeta meta_;
+    std::atomic<int>* runs_;
+    talos::spmc<CameraFrame, CameraChannel> cam_in_{};
+    talos::spsc_mut<FusionResult, CustomFusionOut> out_{};
+    bool written_ = false;
+
+public:
+    explicit CustomFusionSystem(std::atomic<int>& runs) noexcept
+        : runs_(&runs) {
+        meta_.name   = "custom_fusion";
+        meta_.policy = talos::make_policy_info<talos::pool_compute>();
+
+        meta_.spmc_channels.push_back(
+            talos::ChannelMeta{
+                .type      = typeid(CameraFrame),
+                .topic     = typeid(CameraChannel),
+                .is_reader = true,
+                .is_spsc   = false,
+                .is_spmc   = true,
+            });
+        meta_.spsc_channels.push_back(
+            talos::ChannelMeta{
+                .type      = typeid(FusionResult),
+                .topic     = typeid(CustomFusionOut),
+                .is_reader = false,
+                .is_spsc   = true,
+                .is_spmc   = false,
+            });
+    }
+
+    void bind(talos::World& world) noexcept override {
+        cam_in_            = world.get_spmc_reader<CameraFrame, CameraChannel>();
+        out_               = world.get_spsc_writer<FusionResult, CustomFusionOut>();
+        out_.written_flag_ = &written_;
+    }
+
+    bool run(talos::World& /*world*/) noexcept override {
+        written_ = false;
+        if (!cam_in_.has_new()) {
+            return false;
+        }
+        if (const auto cam = cam_in_.read()) {
+            runs_->fetch_add(1, std::memory_order_relaxed);
+            out_.write(
+                FusionResult{
+                    .imu_seq  = 0,
+                    .frame_id = cam->frame_id,
+                    .state_x  = 0.0f,
+                });
+        }
+        return written_;
+    }
+
+    const talos::SystemMeta& meta() const noexcept override { return meta_; }
+};
+
+void test_custom_system_injection() {
+    printf("=== Test: Custom System Injection ===\n");
+
+    talos::World world;
+    talos::Scheduler scheduler(world);
+
+    std::atomic<int> camera_count{0};
+    std::atomic<int> custom_runs{0};
+
+    scheduler.add_system<talos::exclusive<60>>(
+        "camera_reader", [&camera_count](talos::spmc_mut<CameraFrame, CameraChannel> cam_out) {
+            const int frame = camera_count.fetch_add(1, std::memory_order_relaxed);
+            cam_out.write(CameraFrame{.frame_id = frame});
+        });
+
+    scheduler.add_system(std::make_unique<CustomFusionSystem>(custom_runs));
+
+    auto build_result = scheduler.build();
+    if (!build_result) {
+        printf(
+            "  ERROR: Build failed: %s\n", talos::format_build_error(build_result.error()).c_str());
+        return;
+    }
+
+    std::jthread scheduler_thread([&scheduler]() { (void)scheduler.run(); });
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+
+    scheduler.stop();
+    scheduler_thread.join();
+
+    const auto runs = custom_runs.load(std::memory_order_relaxed);
+    printf("  Custom system runs: %d\n", runs);
+    if (runs <= 0) {
+        printf("  ERROR: Expected custom system to run at least once.\n\n");
+        return;
+    }
+    printf("  Custom System Injection test passed!\n\n");
 }
 
 // ============================================================================
@@ -480,6 +581,7 @@ int main() {
     test_channel_kind_conflict();
     test_dependency_cycle_error();
     test_valid_dependency_chain();
+    test_custom_system_injection();
 
     printf("==========================================\n");
     printf("  All scheduler tests completed!\n");

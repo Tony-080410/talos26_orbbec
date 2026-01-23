@@ -21,27 +21,27 @@
 namespace talos {
 
 // ============================================================================
-// Channel Key: (Type, Tag) for unique identification
+// Channel Key: (Type, Topic) for unique identification
 // ============================================================================
 
 /**
- * @brief Uniquely identifies a channel by (data type, tag) pair
+ * @brief Uniquely identifies a channel by (data type, topic) pair
  *
  * Used for tracking channel usage across systems and detecting conflicts.
  */
 struct ChannelKey {
     std::type_index type;
-    std::type_index tag;
+    std::type_index topic;
 
-    bool operator==(const ChannelKey&) const = default;
+    constexpr bool operator==(const ChannelKey&) const noexcept = default;
 };
 
 /**
  * @brief Hash function for ChannelKey
  */
 struct ChannelKeyHash {
-    std::size_t operator()(const ChannelKey& k) const noexcept {
-        return std::hash<std::type_index>{}(k.type) ^ std::hash<std::type_index>{}(k.tag) << 1;
+    constexpr std::size_t operator()(const ChannelKey& k) const noexcept {
+        return std::hash<std::type_index>{}(k.type) ^ std::hash<std::type_index>{}(k.topic) << 1;
     }
 };
 
@@ -84,57 +84,62 @@ struct function_traits : function_traits<decltype(&F::operator())> {};
 // ============================================================================
 
 /**
- * @brief Default: inner type is the type itself, tag is void
+ * @brief Default: inner type is the type itself, topic is void
  */
 template <typename T>
 struct inner_type {
-    using type = T;
-    using tag  = void;
+    using type  = T;
+    using topic = void;
+};
+
+template <typename T>
+concept topic_type = requires(T) {
+    { sizeof(T) == 0 };
 };
 
 /**
- * @brief Extract inner type from spsc<T, Tag>
+ * @brief Extract inner type from spsc<T, Topic>
  */
-template <typename T, typename Tag>
-struct inner_type<spsc<T, Tag>> {
-    using type = T;
-    using tag  = Tag;
+template <typename T, typename Topic>
+struct inner_type<spsc<T, Topic>> {
+    using type  = T;
+    using topic = Topic;
 };
 
 /**
- * @brief Extract inner type from spsc_mut<T, Tag>
+ * @brief Extract inner type from spsc_mut<T, Topic>
  */
-template <typename T, typename Tag>
-struct inner_type<spsc_mut<T, Tag>> {
-    using type = T;
-    using tag  = Tag;
+template <typename T, typename Topic>
+struct inner_type<spsc_mut<T, Topic>> {
+    using type  = T;
+    using topic = Topic;
 };
 
 /**
- * @brief Extract inner type from spmc<T, Tag>
+ * @brief Extract inner type from spmc<T, Topic>
  */
-template <typename T, typename Tag>
-struct inner_type<spmc<T, Tag>> {
-    using type = T;
-    using tag  = Tag;
+template <typename T, typename Topic>
+struct inner_type<spmc<T, Topic>> {
+    using type  = T;
+    using topic = Topic;
 };
 
 /**
- * @brief Extract inner type from spmc_mut<T, Tag>
+ * @brief Extract inner type from spmc_mut<T, Topic>
  */
-template <typename T, typename Tag>
-struct inner_type<spmc_mut<T, Tag>> {
-    using type = T;
-    using tag  = Tag;
+template <typename T, typename Topic>
+struct inner_type<spmc_mut<T, Topic>> {
+    using type  = T;
+    using topic = Topic;
 };
 
 /**
- * @brief Extract inner type from atomic_ref<T, Tag>
+ * @brief Extract inner type from atomic_ref<T, Topic>
  */
-template <typename T, typename Tag>
-struct inner_type<atomic_ref<T, Tag>> {
-    using type = T;
-    using tag  = Tag;
+template <typename T, typename Topic>
+struct inner_type<atomic_ref<T, Topic>> {
+    using type  = T;
+    using topic = Topic;
 };
 
 /**
@@ -142,8 +147,8 @@ struct inner_type<atomic_ref<T, Tag>> {
  */
 template <typename T>
 struct inner_type<res<T>> {
-    using type = T;
-    using tag  = void;
+    using type  = T;
+    using topic = void;
 };
 
 /**
@@ -151,15 +156,15 @@ struct inner_type<res<T>> {
  */
 template <typename T>
 struct inner_type<res_mut<T>> {
-    using type = T;
-    using tag  = void;
+    using type  = T;
+    using topic = void;
 };
 
 template <typename T>
 using inner_type_t = inner_type<T>::type;
 
 template <typename T>
-using inner_tag_t = inner_type<T>::tag;
+using inner_topic_t = inner_type<T>::topic;
 
 // ============================================================================
 // Type Predicates
@@ -218,7 +223,7 @@ struct is_res_mut_type : std::bool_constant<T::is_res_mut> {};
  */
 struct ChannelMeta {
     std::type_index type;
-    std::type_index tag;
+    std::type_index topic;
     bool is_reader;
     bool is_spsc;
     bool is_spmc;
@@ -245,16 +250,16 @@ namespace detail {
  * @brief Extract channel/resource metadata from a single parameter
  */
 template <typename T>
-void extract_one_param(SystemMeta& meta) {
+constexpr void extract_one_param(SystemMeta& meta) noexcept {
     using Inner = inner_type_t<T>;
-    using Tag   = inner_tag_t<T>;
+    using Topic = inner_topic_t<T>;
 
     if constexpr (is_spsc_reader<T>::value || is_spsc_writer<T>::value) {
         meta.spsc_channels.emplace_back(
-            ChannelMeta{typeid(Inner), typeid(Tag), T::is_reader, true, false});
+            ChannelMeta{typeid(Inner), typeid(Topic), T::is_reader, true, false});
     } else if constexpr (is_spmc_reader<T>::value || is_spmc_writer<T>::value) {
         meta.spmc_channels.emplace_back(
-            ChannelMeta{typeid(Inner), typeid(Tag), T::is_reader, false, true});
+            ChannelMeta{typeid(Inner), typeid(Topic), T::is_reader, false, true});
     } else if constexpr (is_atomic_type<T>::value) {
         meta.atomics.emplace_back(typeid(Inner));
     } else if constexpr (is_res_type<T>::value) {
@@ -288,7 +293,7 @@ void extract_one_param(SystemMeta& meta) {
  * SystemMeta describing the system
  */
 template <typename F, typename Policy = default_policy>
-SystemMeta extract_system_meta(std::string name) {
+constexpr SystemMeta extract_system_meta(std::string name) noexcept {
     SystemMeta meta;
     meta.name   = std::move(name);
     meta.policy = make_policy_info<Policy>();

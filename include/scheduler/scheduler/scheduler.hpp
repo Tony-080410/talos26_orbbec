@@ -34,13 +34,17 @@
 #include "ecs/world.hpp"
 #include "performance_probe.hpp"
 
+#include <cstdint>
 #include <tbb/task_arena.h>
 #include <tbb/task_group.h>
 
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
+#include <cstdlib>
 #include <expected>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <thread>
 #include <utility>
@@ -342,6 +346,21 @@ public:
     auto add_system(std::string name, F&& func) -> void;
 
     /**
+     * @brief Add a pre-built custom system to the scheduler
+     *
+     * This overload allows advanced users to provide their own SystemBase implementation,
+     * including custom bind/run behavior and runtime-constructed SystemMeta.
+     *
+     * The system's execution policy is taken from `system->meta().policy`.
+     *
+     * ## Notes
+     *
+     * - Registration is only valid before `build()`.
+     * - The scheduler's dependency analysis and validation still uses SystemMeta.
+     */
+    auto add_system(std::unique_ptr<SystemBase> system) -> uint32_t;
+
+    /**
      * @brief Get the ECS world
      *
      * ## Returns
@@ -361,6 +380,9 @@ public:
      * - No dependency cycles
      * - Channel constraints (SPSC single writer, etc.)
      * - Orphaned readers detected
+     *
+     * Can be called multiple times for dynamic system addition (idempotent).
+     * Each call re-validates all channels and rebuilds wake-up chains.
      *
      * ## Returns
      *
@@ -394,6 +416,30 @@ public:
      * after their current tick completes.
      */
     void stop() noexcept;
+
+    /**
+     * @brief Hot-add a system while the scheduler is running
+     *
+     * Pauses the compute loop, adds the system, rebuilds wake chains,
+     * and resumes execution. Safe to call from any thread.
+     *
+     * ## Parameters
+     *
+     * - `system`: the system to add (moved)
+     *
+     * ## Returns
+     *
+     * BuildResult indicating success or failure
+     *
+     * ## Thread safety
+     *
+     * Thread-safe. Uses pause/resume protocol to safely modify the graph.
+     *
+     * ## Notes
+     *
+     * If the scheduler is not running, this behaves like add_system() + build().
+     */
+    [[nodiscard]] auto hot_add_system(std::unique_ptr<SystemBase> system) -> BuildResult;
 
     /**
      * @brief Check if running
@@ -451,6 +497,15 @@ public:
      * Outputs system names, policies, and channel counts to stdout.
      */
     void print_systems() const;
+
+    /*
+     * @brief Print wake chains as Mermaid diagram
+     *
+     * Outputs the dependency graph showing which systems trigger other systems
+     * in Mermaid flowchart syntax for visualization.
+     *
+     */
+    void print_mermaid_wake_chains() const;
 
     /**
      * @brief Print performance statistics
@@ -562,6 +617,12 @@ private:
     std::vector<ExclusiveStats> exclusive_stats_;
     std::vector<ComputeStats> compute_stats_;
     TimePoint stats_start_time_;
+
+    // Hot-add pause state
+    std::atomic<bool> pause_requested_{false};
+    std::atomic<bool> paused_{false};
+    std::condition_variable pause_cv_;
+    std::mutex pause_mutex_;
 };
 
 // ============================================================================
@@ -570,6 +631,16 @@ private:
 
 template <typename Policy, typename F>
 auto Scheduler::add_system(std::string name, F&& func) -> void {
+    // If already running, must use hot_add_system instead
+    if (running_.load(std::memory_order_acquire)) {
+        std::abort();
+    }
+
+    // Allow adding systems after build (will require re-build)
+    if (built_.load(std::memory_order_acquire)) {
+        built_.store(false, std::memory_order_release);
+    }
+
     auto system = make_system<F, Policy>(std::move(name), std::forward<F>(func));
     auto policy = make_policy_info<Policy>();
 

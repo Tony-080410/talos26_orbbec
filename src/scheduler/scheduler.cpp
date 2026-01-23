@@ -37,35 +37,69 @@ Scheduler::~Scheduler() {
 // Lifecycle
 // ============================================================================
 
-auto Scheduler::build() -> BuildResult {
-    if (built_.exchange(true, std::memory_order_acq_rel)) {
-        return std::unexpected(SchedulerError::AlreadyBuilt);
+uint32_t Scheduler::add_system(std::unique_ptr<SystemBase> system) {
+    if (!system) {
+        std::abort();
+    }
+    // If already running, must use hot_add_system instead
+    if (running_.load(std::memory_order_acquire)) {
+        SPDLOG_CRITICAL("Cannot call add_system while scheduler is running. Use hot_add_system.");
+        std::abort();
     }
 
-    // Compute execution levels for pool_compute systems
-    if (auto result = compute_levels(); !result) {
+    // Allow adding systems after build (will require re-build)
+    // Mark as not-built so build() can be called again
+    if (built_.load(std::memory_order_acquire)) {
         built_.store(false, std::memory_order_release);
+    }
+
+    const auto policy = system->meta().policy;
+    SystemEntry entry{
+        .system = std::move(system),
+        .policy = policy,
+    };
+
+    if (policy.is_exclusive()) {
+        exclusive_systems_.push_back(std::move(entry));
+        return exclusive_systems_.size() - 1;
+    }
+    if (policy.is_pool() || policy.is_visualization()) {
+        compute_systems_.push_back(std::move(entry));
+        return compute_systems_.size() - 1;
+    }
+    std::unreachable();
+}
+
+auto Scheduler::build() -> BuildResult {
+    // Compute execution levels for pool_compute systems
+    // This re-validates all channels and rebuilds wake-up chains on each call
+    if (auto result = compute_levels(); !result) {
         return result;
     }
 
-    // Create TBB arena
-    if (config_.compute_concurrency > 0) {
-        compute_arena_ =
-            std::make_unique<tbb::task_arena>(static_cast<int>(config_.compute_concurrency));
-    } else {
-        compute_arena_ = std::make_unique<tbb::task_arena>();
+    // Create TBB arena only on first call
+    if (!compute_arena_) {
+        if (config_.compute_concurrency > 0) {
+            compute_arena_ =
+                std::make_unique<tbb::task_arena>(static_cast<int>(config_.compute_concurrency));
+        } else {
+            compute_arena_ = std::make_unique<tbb::task_arena>();
+        }
     }
 
-    // Initialize stats for exclusive systems
-    exclusive_stats_.reserve(exclusive_systems_.size());
-    for (std::size_t i = 0; i < exclusive_systems_.size(); ++i) {
-        exclusive_stats_.emplace_back();
+    // Ensure stats capacity matches system count
+    if (exclusive_stats_.size() < exclusive_systems_.size()) {
+        exclusive_stats_.reserve(exclusive_systems_.size());
+        for (std::size_t i = exclusive_stats_.size(); i < exclusive_systems_.size(); ++i) {
+            exclusive_stats_.emplace_back();
+        }
     }
 
-    // Initialize stats for compute systems
-    compute_stats_.reserve(compute_systems_.size());
-    for (std::size_t i = 0; i < compute_systems_.size(); ++i) {
-        compute_stats_.emplace_back();
+    if (compute_stats_.size() < compute_systems_.size()) {
+        compute_stats_.reserve(compute_systems_.size());
+        for (std::size_t i = compute_stats_.size(); i < compute_systems_.size(); ++i) {
+            compute_stats_.emplace_back();
+        }
     }
 
     // Bind all systems (pre-create channel readers/writers, single-threaded)
@@ -76,6 +110,7 @@ auto Scheduler::build() -> BuildResult {
         entry.system->bind(world_);
     }
 
+    built_.store(true, std::memory_order_release);
     return {};
 }
 
@@ -117,7 +152,133 @@ auto Scheduler::run() -> std::expected<void, SchedulerError> {
     return {};
 }
 
-void Scheduler::stop() noexcept { running_.store(false, std::memory_order_release); }
+void Scheduler::stop() noexcept {
+    running_.store(false, std::memory_order_release);
+
+    // Wake up compute loop if it's paused
+    {
+        std::lock_guard lock(pause_mutex_);
+        pause_requested_.store(false, std::memory_order_release);
+    }
+    pause_cv_.notify_all();
+}
+
+auto Scheduler::hot_add_system(std::unique_ptr<SystemBase> system) -> BuildResult {
+    if (!system) {
+        std::abort();
+    }
+
+    // If not running, just do a regular add + build
+    if (!running_.load(std::memory_order_acquire)) {
+        const auto policy = system->meta().policy;
+        SystemEntry entry{
+            .system = std::move(system),
+            .policy = policy,
+        };
+
+        if (policy.is_exclusive()) {
+            exclusive_systems_.push_back(std::move(entry));
+        } else if (policy.is_pool() || policy.is_visualization()) {
+            compute_systems_.push_back(std::move(entry));
+        } else {
+            std::unreachable();
+        }
+
+        return build();
+    }
+
+    // Hot-add: request pause
+    {
+        std::lock_guard lock(pause_mutex_);
+        pause_requested_.store(true, std::memory_order_release);
+    }
+
+    // Wait for compute loop to pause
+    {
+        std::unique_lock lock(pause_mutex_);
+        pause_cv_.wait(lock, [this] { return paused_.load(std::memory_order_acquire); });
+    }
+
+    // Now safely add the system
+    const auto policy = system->meta().policy;
+    SystemEntry entry{
+        .system = std::move(system),
+        .policy = policy,
+    };
+
+    const bool is_exclusive = policy.is_exclusive();
+    if (is_exclusive) {
+        exclusive_systems_.push_back(std::move(entry));
+    } else if (policy.is_pool() || policy.is_visualization()) {
+        compute_systems_.push_back(std::move(entry));
+    } else {
+        std::unreachable();
+    }
+
+    // Rebuild wake chains
+    auto result = compute_levels();
+    if (!result) {
+        // Rollback: remove the just-added system
+        if (is_exclusive) {
+            exclusive_systems_.pop_back();
+        } else {
+            compute_systems_.pop_back();
+        }
+
+        // Resume compute loop
+        {
+            std::lock_guard lock(pause_mutex_);
+            pause_requested_.store(false, std::memory_order_release);
+        }
+        pause_cv_.notify_all();
+
+        return result;
+    }
+
+    // Update stats capacity
+    if (exclusive_stats_.size() < exclusive_systems_.size()) {
+        exclusive_stats_.reserve(exclusive_systems_.size());
+        for (std::size_t i = exclusive_stats_.size(); i < exclusive_systems_.size(); ++i) {
+            exclusive_stats_.emplace_back();
+        }
+    }
+
+    if (compute_stats_.size() < compute_systems_.size()) {
+        compute_stats_.reserve(compute_systems_.size());
+        for (std::size_t i = compute_stats_.size(); i < compute_systems_.size(); ++i) {
+            compute_stats_.emplace_back();
+        }
+    }
+
+    // Bind the new system
+    if (is_exclusive) {
+        auto& new_entry = exclusive_systems_.back();
+        new_entry.system->bind(world_);
+
+        // Launch new exclusive thread
+        const auto idx = exclusive_systems_.size() - 1;
+        ExclusiveContext ctx{
+            .system       = new_entry.system.get(),
+            .policy       = new_entry.policy,
+            .running      = &running_,
+            .scheduler    = this,
+            .world        = &world_,
+            .system_index = idx,
+        };
+        exclusive_threads_.emplace_back([ctx]() mutable { run_exclusive_thread(ctx); });
+    } else {
+        compute_systems_.back().system->bind(world_);
+    }
+
+    // Resume compute loop
+    {
+        std::lock_guard lock(pause_mutex_);
+        pause_requested_.store(false, std::memory_order_release);
+    }
+    pause_cv_.notify_all();
+
+    return {};
+}
 
 auto Scheduler::is_running() const noexcept -> bool {
     return running_.load(std::memory_order_acquire);
@@ -225,6 +386,47 @@ void Scheduler::print_systems() const {
         }
         printf("\n");
     }
+}
+
+void Scheduler::print_mermaid_wake_chains() const {
+    printf("```mermaid\n");
+    printf("flowchart LR\n\n");
+
+    // Exclusive nodes
+    for (std::size_t i = 0; i < exclusive_systems_.size(); ++i) {
+        const auto& name = exclusive_systems_[i].system->meta().name;
+        printf("    E%d[%s]\n", (int)i, name.c_str());
+    }
+
+    // Compute nodes
+    for (std::size_t i = 0; i < compute_systems_.size(); ++i) {
+        const auto& name = compute_systems_[i].system->meta().name;
+        printf("    C%d[%s]\n", (int)i, name.c_str());
+    }
+
+    printf("\n");
+
+    // Exclusive → Compute
+    for (std::size_t i = 0; i < exclusive_systems_.size(); ++i) {
+        auto affects = i < exclusive_affects_.size() ? exclusive_affects_[i] : 0U;
+        for (std::size_t j = 0; j < compute_systems_.size(); ++j) {
+            if (affects & (1U << j)) {
+                printf("    E%d --> C%d\n", (int)i, (int)j);
+            }
+        }
+    }
+
+    // Compute → Compute
+    for (std::size_t i = 0; i < compute_systems_.size(); ++i) {
+        auto affects = i < compute_affects_.size() ? compute_affects_[i] : 0U;
+        for (std::size_t j = 0; j < compute_systems_.size(); ++j) {
+            if ((affects & (1U << j)) && i != j) {
+                printf("    C%d --> C%d\n", (int)i, (int)j);
+            }
+        }
+    }
+
+    printf("```\n");
 }
 
 void Scheduler::print_stats() const {
@@ -418,7 +620,7 @@ void Scheduler::run_exclusive_thread(ExclusiveContext ctx) {
 
             if (!writer || (writer && written)) [[likely]] {
                 stats.latency_hist.record(elapsed);
-                if (written) [[likely]] {
+                if (written && ctx.policy.notifies) [[likely]] {
                     ctx.scheduler->notify(ctx.system_index);
                 }
             }
@@ -442,7 +644,7 @@ void Scheduler::run_exclusive_thread(ExclusiveContext ctx) {
 
         if (!writer || (writer && written)) [[likely]] {
             stats.latency_hist.record(elapsed);
-            if (written) [[likely]] {
+            if (written && ctx.policy.notifies) [[likely]] {
                 ctx.scheduler->notify(ctx.system_index);
             }
         }
@@ -461,6 +663,32 @@ void Scheduler::run_compute_loop() {
     auto last_print           = Clock::now();
 
     while (running_.load(std::memory_order_acquire)) [[likely]] {
+        // Check for pause request (hot-add in progress)
+        if (pause_requested_.load(std::memory_order_acquire)) [[unlikely]] {
+            // Signal that we've paused
+            {
+                std::lock_guard lock(pause_mutex_);
+                paused_.store(true, std::memory_order_release);
+            }
+            pause_cv_.notify_all();
+
+            // Wait for resume signal
+            {
+                std::unique_lock lock(pause_mutex_);
+                pause_cv_.wait(lock, [this] {
+                    return !pause_requested_.load(std::memory_order_acquire)
+                        || !running_.load(std::memory_order_acquire);
+                });
+                paused_.store(false, std::memory_order_release);
+            }
+
+            // Check if we should exit after resume
+            if (!running_.load(std::memory_order_acquire)) {
+                break;
+            }
+            continue;
+        }
+
         // Atomically exchange ready_systems with 0, getting the set of systems to run
         const auto ready = ready_systems_.exchange(0, std::memory_order_acq_rel);
 
@@ -605,7 +833,7 @@ auto Scheduler::compute_levels() -> BuildResult {
 
         for (const auto& ch : meta.spsc_channels) {
             if (!ch.is_reader) {
-                ChannelKey key{ch.type, ch.tag};
+                ChannelKey key{ch.type, ch.topic};
                 auto& usage                = channels[key];
                 usage.is_spsc              = true;
                 usage.has_exclusive_writer = true;
@@ -615,7 +843,7 @@ auto Scheduler::compute_levels() -> BuildResult {
 
         for (const auto& ch : meta.spmc_channels) {
             if (!ch.is_reader) {
-                ChannelKey key{ch.type, ch.tag};
+                ChannelKey key{ch.type, ch.topic};
                 auto& usage                = channels[key];
                 usage.is_spsc              = false;
                 usage.has_exclusive_writer = true;
@@ -630,7 +858,7 @@ auto Scheduler::compute_levels() -> BuildResult {
 
         // Process SPSC channels
         for (const auto& ch : meta.spsc_channels) {
-            ChannelKey key{ch.type, ch.tag};
+            ChannelKey key{ch.type, ch.topic};
             auto& usage = channels[key];
 
             // Check for kind conflict (same key used as both SPSC and SPMC)
@@ -638,7 +866,7 @@ auto Scheduler::compute_levels() -> BuildResult {
                 if (!usage.is_spsc) {
                     return std::unexpected(
                         ChannelKindConflict{
-                            .key           = ChannelKeyInfo(ch.type, ch.tag, true),
+                            .key           = ChannelKeyInfo(ch.type, ch.topic, true),
                             .first_system  = usage.first_system,
                             .second_system = meta.name,
                         });
@@ -657,7 +885,7 @@ auto Scheduler::compute_levels() -> BuildResult {
 
         // Process SPMC channels
         for (const auto& ch : meta.spmc_channels) {
-            ChannelKey key{ch.type, ch.tag};
+            ChannelKey key{ch.type, ch.topic};
             auto& usage = channels[key];
 
             // Check for kind conflict
@@ -665,7 +893,7 @@ auto Scheduler::compute_levels() -> BuildResult {
                 if (usage.is_spsc) {
                     return std::unexpected(
                         ChannelKindConflict{
-                            .key           = ChannelKeyInfo(ch.type, ch.tag, false),
+                            .key           = ChannelKeyInfo(ch.type, ch.topic, false),
                             .first_system  = usage.first_system,
                             .second_system = meta.name,
                         });
@@ -702,7 +930,7 @@ auto Scheduler::compute_levels() -> BuildResult {
             }
             return std::unexpected(
                 MultipleWritersError{
-                    .key     = ChannelKeyInfo(key.type, key.tag, usage.is_spsc),
+                    .key     = ChannelKeyInfo(key.type, key.topic, usage.is_spsc),
                     .writers = std::move(writer_names),
                 });
         }
@@ -716,7 +944,7 @@ auto Scheduler::compute_levels() -> BuildResult {
             }
             return std::unexpected(
                 MultipleReadersError{
-                    .key     = ChannelKeyInfo(key.type, key.tag, true),
+                    .key     = ChannelKeyInfo(key.type, key.topic, true),
                     .readers = std::move(reader_names),
                 });
         }
@@ -730,7 +958,7 @@ auto Scheduler::compute_levels() -> BuildResult {
             }
             return std::unexpected(
                 OrphanedReaderError{
-                    .key     = ChannelKeyInfo(key.type, key.tag, usage.is_spsc),
+                    .key     = ChannelKeyInfo(key.type, key.topic, usage.is_spsc),
                     .readers = std::move(reader_names),
                 });
         }
@@ -739,7 +967,7 @@ auto Scheduler::compute_levels() -> BuildResult {
         // Note: exclusive writers with no readers are fine (they notify the scheduler)
         if (!usage.writers.empty() && usage.readers.empty() && !usage.has_exclusive_writer) {
             SPDLOG_WARN(
-                "[WARN] Channel has writer '%s' but no readers\n",
+                "[WARN] Channel has writer '{}' but no readers\n",
                 compute_systems_[usage.writers[0]].system->meta().name.c_str());
         }
     }
@@ -891,7 +1119,7 @@ auto Scheduler::compute_levels() -> BuildResult {
         // Find compute systems that directly read from this exclusive's channels
         for (const auto& ch : meta.spsc_channels) {
             if (!ch.is_reader) {
-                ChannelKey key{ch.type, ch.tag};
+                ChannelKey key{ch.type, ch.topic};
                 if (auto it = channels.find(key); it != channels.end()) {
                     for (auto reader : it->second.readers) {
                         affects |= (1U << reader);     // Direct reader
@@ -903,7 +1131,7 @@ auto Scheduler::compute_levels() -> BuildResult {
 
         for (const auto& ch : meta.spmc_channels) {
             if (!ch.is_reader) {
-                ChannelKey key{ch.type, ch.tag};
+                ChannelKey key{ch.type, ch.topic};
                 if (auto it = channels.find(key); it != channels.end()) {
                     for (auto reader : it->second.readers) {
                         affects |= (1U << reader);

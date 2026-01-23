@@ -30,13 +30,13 @@
 namespace talos {
 
 // ============================================================================
-// Execution Policy Tags
+// Execution Policy Topics
 // ============================================================================
 
 namespace detail {
 
-struct NotifyingTag {};
-struct SilentTag {};
+struct NotifyingTopic {};
+struct SilentTopic {};
 
 /**
  * @brief Base template for exclusive execution policies
@@ -44,16 +44,16 @@ struct SilentTag {};
  * @tparam FreqHz Execution frequency in Hz, 0 = run as fast as possible
  * @tparam Affinity CPU core affinity, -1 = no binding
  * @tparam Priority Thread priority, 0 = default
- * @tparam Tag Notification behavior tag
+ * @tparam Topic Notification behavior topic
  */
 template <
     std::uint32_t FreqHz = 0, std::int32_t Affinity = -1, std::int32_t Priority = 0,
-    typename Tag = NotifyingTag>
+    typename Topic = NotifyingTopic>
 struct exclusive_base {
     static constexpr std::uint32_t frequency_hz   = FreqHz;
     static constexpr std::int32_t cpu_affinity    = Affinity;
     static constexpr std::int32_t thread_priority = Priority;
-    static constexpr bool notifies                = std::is_same_v<Tag, NotifyingTag>;
+    static constexpr bool notifies                = std::is_same_v<Topic, NotifyingTopic>;
 };
 
 } // namespace detail
@@ -79,7 +79,7 @@ struct exclusive_base {
  * ```
  */
 template <std::uint32_t FreqHz = 0, std::int32_t Affinity = -1, std::int32_t Priority = 0>
-using exclusive = detail::exclusive_base<FreqHz, Affinity, Priority, detail::NotifyingTag>;
+using exclusive = detail::exclusive_base<FreqHz, Affinity, Priority, detail::NotifyingTopic>;
 
 /**
  * @brief Exclusive silent: dedicated thread, does NOT notify scheduler
@@ -102,7 +102,7 @@ using exclusive = detail::exclusive_base<FreqHz, Affinity, Priority, detail::Not
  * ```
  */
 template <std::uint32_t FreqHz = 0, std::int32_t Affinity = -1, std::int32_t Priority = 0>
-using exclusive_silent = detail::exclusive_base<FreqHz, Affinity, Priority, detail::SilentTag>;
+using exclusive_silent = detail::exclusive_base<FreqHz, Affinity, Priority, detail::SilentTopic>;
 
 /**
  * @brief Pool compute: TBB thread pool, triggered by exclusive notify
