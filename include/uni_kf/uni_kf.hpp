@@ -102,16 +102,6 @@
 #include "core/models.hpp"
 #include "core/types.hpp"
 
-// ============================================================================
-// Presets
-// ============================================================================
-
-#include "presets/ckf.hpp"
-#include "presets/ekf.hpp"
-#include "presets/iekf.hpp"
-#include "presets/inekf.hpp"
-#include "presets/ukf.hpp"
-
 // NOTE:
 // `presets/tracker_inekf.hpp` and `presets/tracker_srckf.hpp` are application-facing wrappers in
 // this repo (they depend on fcs types/OpenCV). They are intentionally not included here so that
