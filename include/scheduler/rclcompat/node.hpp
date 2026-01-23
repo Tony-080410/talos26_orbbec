@@ -3,6 +3,7 @@
 #include "demangle.hpp"
 #include "ecs/channel_types.hpp"
 #include "scheduler/rclcompat/system.hpp"
+#include "scheduler/rclcompat/timer_factory.hpp"
 #include "scheduler/scheduler.hpp"
 
 namespace talos::rclcompat {
@@ -130,6 +131,45 @@ public:
 
         pending_systems_.push_back(
             std::make_unique<RclSubSystem<T, Topic>>(system_name, std::move(callback)));
+    }
+
+    /**
+     * @brief Create a wall timer
+     *
+     * Creates a timer that invokes a callback at a fixed frequency.
+     * The callback runs on a dedicated exclusive thread.
+     *
+     * ## Parameters
+     *
+     * - `frequency`: Timer frequency from the Frequency enum (Hz_1 to Hz_1000)
+     * - `callback`: function to call at each timer tick
+     *
+     * ## Example
+     *
+     * ```cpp
+     * // Simple timer at 10Hz
+     * node.create_wall_timer(Frequency::Hz_10, []() {
+     *     // Executes at 10Hz
+     * });
+     *
+     * // Timer with Publisher at 30Hz
+     * auto pub = node.create_publisher<ImageFrame>();
+     * node.create_wall_timer(Frequency::Hz_30, [&pub]() {
+     *     pub.publish(...);
+     * });
+     *
+     * // Timer with ResourceAccessor at 20Hz
+     * auto tf = node.create_resource<TfBuffer>();
+     * node.create_wall_timer(Frequency::Hz_20, [&tf]() {
+     *     auto transform = tf.get();
+     * });
+     * ```
+     */
+    void create_wall_timer(Frequency frequency, std::function<void()> callback) {
+        const std::string system_name = name_ + "/timer/" + std::to_string(pending_systems_.size());
+
+        auto system = create_timer_system(system_name, frequency, std::move(callback));
+        pending_systems_.push_back(std::move(system));
     }
 
     /**

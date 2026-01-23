@@ -63,6 +63,7 @@ target_link_libraries(talos_std INTERFACE
 # scheduler library
 add_library(scheduler SHARED
         src/scheduler/scheduler.cpp
+        src/scheduler/rclcompat/timer_factory.cpp
 )
 
 target_include_directories(scheduler PUBLIC

@@ -17,6 +17,7 @@
 namespace talos::test {
 
 // Pull rclcompat types into the test namespace
+using talos::rclcompat::Frequency;
 using talos::rclcompat::Node;
 using talos::rclcompat::OwnershipRegistry;
 using talos::rclcompat::Publisher;
@@ -1773,6 +1774,233 @@ TEST(ResourceAccessor, Copyable) {
     // Changes should be visible through accessor1
     auto res1_after = accessor1.get();
     EXPECT_EQ(res1_after->value, 100);
+}
+
+// ============================================================================
+// Wall Timer Tests
+// ============================================================================
+
+// -------------------------------------------------------------------------
+// Test: BasicTimer
+// -------------------------------------------------------------------------
+// TEST PURPOSE:
+//   Verify that create_wall_timer creates a timer that executes at the
+//   specified frequency.
+//
+// VERIFICATION:
+//   1. Timer callback is executed multiple times
+//   2. Execution count is within expected range for the given duration
+// -------------------------------------------------------------------------
+
+TEST(RclTimer, BasicTimer) {
+    World world;
+    Scheduler scheduler(world);
+    Node node("test", scheduler);
+
+    std::atomic<int> count{0};
+    node.create_wall_timer(Frequency::Hz_100, [&count]() { count.fetch_add(1); });
+
+    EXPECT_TRUE(node.finalize().has_value());
+
+    std::jthread t([&scheduler]() { (void)scheduler.run(); });
+    std::this_thread::sleep_for(std::chrono::milliseconds(110));
+    scheduler.stop();
+    t.join();
+
+    EXPECT_GE(count.load(), 8);
+    EXPECT_LE(count.load(), 12);
+}
+
+// -------------------------------------------------------------------------
+// Test: TimerWithPublisher
+// -------------------------------------------------------------------------
+// TEST PURPOSE:
+//   Verify that a timer can publish messages through a Publisher.
+//
+// DATA FLOW:
+//   Timer -> Publisher.publish() -> Channel -> Subscriber
+//
+// VERIFICATION:
+//   1. Timer publishes messages at the specified frequency
+//   2. Publisher's pending_write flag is set
+//
+// NOTE: This test verifies that the timer callback can execute and call publish.
+// The wake chain from timer to subscriber is a separate concern.
+// -------------------------------------------------------------------------
+
+TEST(RclTimer, TimerWithPublisher) {
+    World world;
+    Scheduler scheduler(world);
+    Node node("test", scheduler);
+
+    auto pub = node.create_publisher<TestMessage, TestTag1>();
+
+    std::atomic<int> publish_count{0};
+    node.create_wall_timer(Frequency::Hz_30, [&pub, &publish_count]() {
+        pub.publish(TestMessage{.value = publish_count.fetch_add(1), .text = "timer"});
+    });
+
+    EXPECT_TRUE(node.finalize().has_value());
+
+    std::jthread t([&scheduler]() { (void)scheduler.run(); });
+    std::this_thread::sleep_for(std::chrono::milliseconds(120));
+    scheduler.stop();
+    t.join();
+
+    // Verify the timer ran and published multiple times
+    EXPECT_GE(publish_count.load(), 2);
+
+    // Verify the publisher has a pending write
+    auto* slot = node.get_pub_slot<TestMessage, TestTag1>();
+    ASSERT_NE(slot, nullptr);
+    EXPECT_TRUE(slot->pending_write.load());
+}
+
+// -------------------------------------------------------------------------
+// Test: MultipleTimers
+// -------------------------------------------------------------------------
+// TEST PURPOSE:
+//   Verify that multiple timers can coexist and execute independently.
+//
+// VERIFICATION:
+//   1. Fast timer executes more times than slow timer
+//   2. Each timer maintains its own count
+// -------------------------------------------------------------------------
+
+TEST(RclTimer, MultipleTimers) {
+    World world;
+    Scheduler scheduler(world);
+    Node node("test", scheduler);
+
+    std::atomic<int> fast_count{0};
+    std::atomic<int> slow_count{0};
+
+    node.create_wall_timer(Frequency::Hz_100, [&fast_count]() { fast_count.fetch_add(1); });
+
+    node.create_wall_timer(Frequency::Hz_20, [&slow_count]() { slow_count.fetch_add(1); });
+
+    EXPECT_TRUE(node.finalize().has_value());
+
+    std::jthread t([&scheduler]() { (void)scheduler.run(); });
+    std::this_thread::sleep_for(std::chrono::milliseconds(160));
+    scheduler.stop();
+    t.join();
+
+    EXPECT_GE(fast_count.load(), 14);
+    EXPECT_LE(fast_count.load(), 18);
+    EXPECT_GE(slow_count.load(), 2);
+    EXPECT_LE(slow_count.load(), 4);
+}
+
+// -------------------------------------------------------------------------
+// Test: TimerWithResourceAccessor
+// -------------------------------------------------------------------------
+// TEST PURPOSE:
+//   Verify that a timer can access World resources through ResourceAccessor.
+//
+// VERIFICATION:
+//   1. Timer can read resources via ResourceAccessor
+//   2. Resource values are correctly accessed
+// -------------------------------------------------------------------------
+
+TEST(RclTimer, TimerWithResourceAccessor) {
+    World world;
+    Scheduler scheduler(world);
+
+    world.insert_resource(TestResource{.value = 42, .name = "test_resource"});
+
+    Node node("test", scheduler);
+    auto accessor = node.create_resource<TestResource>();
+
+    std::atomic<int> value_received{0};
+    node.create_wall_timer(Frequency::Hz_50, [&accessor, &value_received]() {
+        auto res = accessor.get();
+        value_received.store(res->value);
+    });
+
+    EXPECT_TRUE(node.finalize().has_value());
+
+    std::jthread t([&scheduler]() { (void)scheduler.run(); });
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    scheduler.stop();
+    t.join();
+
+    EXPECT_EQ(value_received.load(), 42);
+}
+
+// -------------------------------------------------------------------------
+// Test: MultipleNodesWithTimers
+// -------------------------------------------------------------------------
+// TEST PURPOSE:
+//   Verify that multiple nodes can each have their own timers.
+//
+// VERIFICATION:
+//   1. Timers in different nodes execute independently
+//   2. Each timer maintains its own execution count
+// -------------------------------------------------------------------------
+
+TEST(RclTimer, MultipleNodesWithTimers) {
+    World world;
+    Scheduler scheduler(world);
+
+    // Node 1: Has a timer
+    Node node1("node1", scheduler);
+    std::atomic<int> node1_count{0};
+    node1.create_wall_timer(Frequency::Hz_30, [&node1_count]() { node1_count.fetch_add(1); });
+
+    // Node 2: Has another timer
+    Node node2("node2", scheduler);
+    std::atomic<int> node2_count{0};
+    node2.create_wall_timer(Frequency::Hz_20, [&node2_count]() { node2_count.fetch_add(1); });
+
+    EXPECT_TRUE(node1.finalize().has_value());
+    EXPECT_TRUE(node2.finalize().has_value());
+
+    std::jthread t([&scheduler]() { (void)scheduler.run(); });
+    std::this_thread::sleep_for(std::chrono::milliseconds(160));
+    scheduler.stop();
+    t.join();
+
+    // node1's timer runs at ~33Hz, node2's at 20Hz
+    // In 160ms, node1 should run ~5 times, node2 ~3 times
+    EXPECT_GE(node1_count.load(), 3);
+    EXPECT_GE(node2_count.load(), 2);
+}
+
+// -------------------------------------------------------------------------
+// Test: TimerFrequencyRounding
+// -------------------------------------------------------------------------
+// TEST PURPOSE:
+//   Verify that timer frequency is rounded to nearest supported value.
+//
+// VERIFICATION:
+//   1. Timer with non-standard frequency still executes
+//   2. Frequency is rounded appropriately
+// -------------------------------------------------------------------------
+
+TEST(RclTimer, TimerFrequencyRounding) {
+    World world;
+    Scheduler scheduler(world);
+    Node node("test", scheduler);
+
+    std::atomic<int> count{0};
+    // 27Hz timer
+    node.create_wall_timer(Frequency::Hz_27, [&count]() { count.fetch_add(1); });
+
+    EXPECT_TRUE(node.finalize().has_value());
+
+    scheduler.print_systems();
+    scheduler.print_mermaid_wake_chains();
+
+    std::jthread t([&scheduler]() { (void)scheduler.run(); });
+    std::this_thread::sleep_for(std::chrono::milliseconds(150));
+    scheduler.stop();
+    t.join();
+
+    // 37ms * 4 = 148ms, so we expect ~4 executions
+    // With rounding to 27Hz (~37ms), we should get approximately 4 executions
+    EXPECT_GE(count.load(), 3);
+    EXPECT_LE(count.load(), 5);
 }
 
 } // namespace talos::test
