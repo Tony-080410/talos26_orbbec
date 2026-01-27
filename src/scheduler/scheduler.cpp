@@ -37,7 +37,7 @@ Scheduler::~Scheduler() {
 // Lifecycle
 // ============================================================================
 
-uint64_t Scheduler::add_system(std::unique_ptr<SystemBase> system) {
+uint32_t Scheduler::add_system(std::unique_ptr<SystemBase> system) {
     if (!system) {
         std::abort();
     }
@@ -354,7 +354,7 @@ void Scheduler::print_systems() const {
         } else {
             bool first = true;
             for (std::size_t j = 0; j < compute_systems_.size(); ++j) {
-                if (affects & (1UL << j)) {
+                if (affects & (1U << j)) {
                     if (!first)
                         printf(", ");
                     printf("[%s]", compute_systems_[j].system->meta().name.c_str());
@@ -376,7 +376,7 @@ void Scheduler::print_systems() const {
         } else {
             bool first = true;
             for (std::size_t j = 0; j < compute_systems_.size(); ++j) {
-                if (affects & (1UL << j)) {
+                if (affects & (1U << j)) {
                     if (!first)
                         printf(", ");
                     printf("[%s]", compute_systems_[j].system->meta().name.c_str());
@@ -410,7 +410,7 @@ void Scheduler::print_mermaid_wake_chains() const {
     for (std::size_t i = 0; i < fixed_rate_systems_.size(); ++i) {
         auto affects = i < fixed_rate_affects_.size() ? fixed_rate_affects_[i] : 0U;
         for (std::size_t j = 0; j < compute_systems_.size(); ++j) {
-            if (affects & (1UL << j)) {
+            if (affects & (1U << j)) {
                 printf("    E%d --> C%d\n", (int)i, (int)j);
             }
         }
@@ -420,7 +420,7 @@ void Scheduler::print_mermaid_wake_chains() const {
     for (std::size_t i = 0; i < compute_systems_.size(); ++i) {
         auto affects = i < compute_affects_.size() ? compute_affects_[i] : 0U;
         for (std::size_t j = 0; j < compute_systems_.size(); ++j) {
-            if ((affects & (1UL << j)) && i != j) {
+            if ((affects & (1U << j)) && i != j) {
                 printf("    C%d --> C%d\n", (int)i, (int)j);
             }
         }
@@ -587,7 +587,7 @@ void Scheduler::run_fixed_rate_thread(FixedRateContext ctx) {
     // Set CPU affinity
     if (ctx.policy.cpu_affinity >= 0) {
         auto result = primitive::ThreadAffinity::pin_to_core(
-            static_cast<std::uint64_t>(ctx.policy.cpu_affinity));
+            static_cast<std::uint32_t>(ctx.policy.cpu_affinity));
         if (!result) {
             // Log warning but continue
             SPDLOG_WARN(
@@ -704,7 +704,7 @@ void Scheduler::run_compute_loop() {
             // Cascade wake: mark dependents of systems that actually wrote
             std::uint64_t cascade = 0;
             for (std::size_t i = 0; i < compute_affects_.size(); ++i) {
-                if (written & (1UL << i)) {
+                if (written & (1U << i)) {
                     cascade |= compute_affects_[i];
                 }
             }
@@ -739,15 +739,15 @@ auto Scheduler::run_compute_selective(const std::uint64_t ready_mask) -> std::ui
 
     compute_arena_->execute([this, ready_mask, &written_mask] {
         // Reusable buffer for system indices to avoid per-call allocation
-        // Max 64 systems, so 64 elements is sufficient
-        std::size_t to_run_buf[64];
+        // Max 32 systems, so 32 elements is sufficient
+        std::size_t to_run_buf[32];
         std::size_t to_run_count = 0;
 
         for (const auto& level : levels_) {
             // Filter systems in this level that are ready (inline, no temporary vector)
             to_run_count = 0;
             for (const auto idx : level) {
-                if (ready_mask & (1UL << idx)) {
+                if (ready_mask & (1U << idx)) {
                     to_run_buf[to_run_count++] = idx;
                 }
             }
@@ -767,7 +767,7 @@ auto Scheduler::run_compute_selective(const std::uint64_t ready_mask) -> std::ui
                 if (!writer || (writer && written)) [[likely]] {
                     compute_stats_[idx].latency_hist.record(elapsed);
                     if (written) [[likely]] {
-                        written_mask.fetch_or(1UL << idx, std::memory_order_relaxed);
+                        written_mask.fetch_or(1U << idx, std::memory_order_relaxed);
                     }
                 }
             } else {
@@ -784,7 +784,7 @@ auto Scheduler::run_compute_selective(const std::uint64_t ready_mask) -> std::ui
                         if (!writer || (writer && written)) [[likely]] {
                             compute_stats_[idx].latency_hist.record(elapsed);
                             if (written) [[likely]] {
-                                written_mask.fetch_or(1UL << idx, std::memory_order_relaxed);
+                                written_mask.fetch_or(1U << idx, std::memory_order_relaxed);
                             }
                         }
                     });
@@ -808,7 +808,7 @@ auto Scheduler::compute_levels() -> BuildResult {
 
     const auto n = compute_systems_.size();
 
-    // Enforce max 64 compute systems for bitmask scheduling
+    // Enforce max 32 compute systems for bitmask scheduling
     if (n > TooManyComputeSystemsError::max_count) {
         return std::unexpected(TooManyComputeSystemsError{.count = n});
     }
@@ -989,7 +989,7 @@ auto Scheduler::compute_levels() -> BuildResult {
         std::size_t writer = usage.writers[0];
         for (std::size_t reader : usage.readers) {
             if (writer != reader) {
-                const std::uint64_t bit = 1UL << reader;
+                const std::uint64_t bit = 1U << reader;
                 if ((adj_mask[writer] & bit) == 0) {
                     // New edge
                     adj_mask[writer] |= bit;
@@ -1104,7 +1104,7 @@ auto Scheduler::compute_levels() -> BuildResult {
     // Compute transitive closure (Floyd-Warshall style)
     for (std::size_t k = 0; k < n; ++k) {
         for (std::size_t i = 0; i < n; ++i) {
-            if (dependents[i] & (1UL << k)) {
+            if (dependents[i] & (1U << k)) {
                 dependents[i] |= dependents[k];
             }
         }
@@ -1122,7 +1122,7 @@ auto Scheduler::compute_levels() -> BuildResult {
                 ChannelKey key{ch.type, ch.topic};
                 if (auto it = channels.find(key); it != channels.end()) {
                     for (auto reader : it->second.readers) {
-                        affects |= (1UL << reader);    // Direct reader
+                        affects |= (1U << reader);     // Direct reader
                         affects |= dependents[reader]; // Transitive dependents
                     }
                 }
@@ -1134,7 +1134,7 @@ auto Scheduler::compute_levels() -> BuildResult {
                 ChannelKey key{ch.type, ch.topic};
                 if (auto it = channels.find(key); it != channels.end()) {
                     for (auto reader : it->second.readers) {
-                        affects |= (1UL << reader);
+                        affects |= (1U << reader);
                         affects |= dependents[reader];
                     }
                 }
