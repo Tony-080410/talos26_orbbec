@@ -3,14 +3,16 @@
 #include "error.hpp"
 #include "matrix.hpp"
 #include <algorithm>
-#include <array>
-#include <cassert>
 #include <cstdint>
 #include <expected>
 #include <optional>
 #include <tbb/spin_rw_mutex.h>
+#include <utility>
+#include <vector>
 
 namespace fast_tf {
+
+// Note: frame_count is defined in frame.hpp, CoordinateSystem is also defined there
 
 // ============================================================================
 // Transform Entry
@@ -29,27 +31,27 @@ struct TransformEntry {
 };
 
 // ============================================================================
-// Circular Transform Buffer (Optimized)
+// Time Range Buffer (Time-window + Capacity)
 // ============================================================================
 
-/// Fixed-size circular buffer for transform entries.
-/// Assumes timestamps are strictly increasing (typical for sensor data).
-/// Zero heap allocation, O(log n) lookup.
-template <std::size_t Capacity>
-class CircularTransformBuffer {
+/// Time-windowed buffer with capacity limit.
+/// Automatically removes data outside the time window on every push/operation.
+/// Timestamp==0 represents static data (never expires, stored separately).
+template <std::size_t Capacity, uint64_t KeepDurationNs>
+class TimeRangeBuffer {
 public:
     static_assert(Capacity > 0, "Capacity must be greater than 0");
+    static_assert(KeepDurationNs > 0, "KeepDurationNs must be greater than 0");
     static constexpr std::size_t capacity_value = Capacity;
 
-    using value_type = TransformEntry;
     using mutex_type = tbb::spin_rw_mutex;
 
-    CircularTransformBuffer() = default;
+    TimeRangeBuffer() = default;
 
-    CircularTransformBuffer(const CircularTransformBuffer&)            = delete;
-    CircularTransformBuffer& operator=(const CircularTransformBuffer&) = delete;
-    CircularTransformBuffer(CircularTransformBuffer&&)                 = default;
-    CircularTransformBuffer& operator=(CircularTransformBuffer&&)      = default;
+    TimeRangeBuffer(const TimeRangeBuffer&)            = delete;
+    TimeRangeBuffer& operator=(const TimeRangeBuffer&) = delete;
+    TimeRangeBuffer(TimeRangeBuffer&&)                 = default;
+    TimeRangeBuffer& operator=(TimeRangeBuffer&&)      = default;
 
     // ========================================================================
     // Write
@@ -58,29 +60,36 @@ public:
     void push(timestamp_ns_t timestamp_ns, const TransformMatrix4d& transform) {
         mutex_type::scoped_lock lock(mutex_);
 
-        // Debug: ensure timestamps are increasing
-        if (newest_ts_ != 0 && timestamp_ns == newest_ts_) {
+        // Handle static transform (timestamp == 0)
+        if (timestamp_ns == 0) {
+            static_transform_ = TransformEntry(0, transform);
+            has_static_       = true;
             return;
         }
-        if (timestamp_ns != 0 && timestamp_ns < newest_ts_) {
+
+        // Reject out-of-order timestamps
+        if (!dynamic_entries_.empty() && timestamp_ns < dynamic_entries_.back().timestamp_ns) {
             return;
         }
 
-        buffer_[head_] = TransformEntry(timestamp_ns, transform);
-
-        if (size_ == 0) {
-            oldest_ts_ = timestamp_ns;
+        // Reject duplicate timestamps
+        if (!dynamic_entries_.empty() && dynamic_entries_.back().timestamp_ns == timestamp_ns) {
+            return;
         }
-        newest_ts_ = timestamp_ns;
 
-        head_ = (head_ + 1) % Capacity;
+        // Add new entry
+        dynamic_entries_.push_back(TransformEntry(timestamp_ns, transform));
 
-        if (size_ < Capacity) {
-            ++size_;
-        } else {
-            // Buffer full, oldest entry overwritten, update oldest_ts
-            oldest_ts_ = buffer_[head_].timestamp_ns;
+        // Enforce capacity limit (remove oldest if needed)
+        if (dynamic_entries_.size() > Capacity) {
+            dynamic_entries_.erase(dynamic_entries_.begin());
         }
+
+        // Remove entries outside time window
+        prune_expired(timestamp_ns);
+
+        // Update time range bounds
+        update_time_bounds();
     }
 
     // ========================================================================
@@ -90,55 +99,249 @@ public:
     [[nodiscard]] std::expected<TransformEntry, TransformError> latest() const {
         mutex_type::scoped_lock lock(mutex_, false);
 
-        if (size_ == 0) {
+        // Prefer static transform if available
+        if (has_static_) {
+            return static_transform_;
+        }
+
+        if (dynamic_entries_.empty()) {
             return std::unexpected(TransformError::NoDataAvailable);
         }
 
-        return buffer_[(head_ + Capacity - 1) % Capacity];
+        return dynamic_entries_.back();
     }
 
     [[nodiscard]] std::expected<TransformEntry, TransformError>
         at_interpolated_clamped(timestamp_ns_t ts) const {
         mutex_type::scoped_lock lock(mutex_, false);
 
-        if (size_ == 0) {
+        // Static transform handles all timestamps
+        if (has_static_) {
+            return TransformEntry(ts, static_transform_.transform);
+        }
+
+        if (dynamic_entries_.empty()) {
             return std::unexpected(TransformError::NoDataAvailable);
         }
 
-        if (size_ == 1) {
-            return buffer_[(head_ + Capacity - 1) % Capacity];
+        if (dynamic_entries_.size() == 1) {
+            return dynamic_entries_.front();
         }
 
         // Clamp to bounds
-        if (ts <= oldest_ts_) {
-            return at_logical(0);
+        const timestamp_ns_t oldest_ts = dynamic_entries_.front().timestamp_ns;
+        const timestamp_ns_t newest_ts = dynamic_entries_.back().timestamp_ns;
+
+        if (ts <= oldest_ts) {
+            return dynamic_entries_.front();
         }
-        if (ts >= newest_ts_) {
-            return at_logical(size_ - 1);
+        if (ts >= newest_ts) {
+            return dynamic_entries_.back();
         }
 
-        // Binary search for the first entry with timestamp > ts
-        // Result: upper points to entry just after ts
-        std::size_t lo = 0;
-        std::size_t hi = size_;
+        // Binary search for interpolation
+        return interpolate(ts);
+    }
 
-        while (lo < hi) {
-            std::size_t mid       = lo + (hi - lo) / 2;
-            timestamp_ns_t mid_ts = at_logical(mid).timestamp_ns;
+    [[nodiscard]] std::expected<TransformEntry, TransformError>
+        at_interpolated(timestamp_ns_t ts) const {
+        mutex_type::scoped_lock lock(mutex_, false);
 
-            if (mid_ts <= ts) {
-                lo = mid + 1;
+        // Static transform handles all timestamps
+        if (has_static_) {
+            return TransformEntry(ts, static_transform_.transform);
+        }
+
+        if (dynamic_entries_.empty()) {
+            return std::unexpected(TransformError::NoDataAvailable);
+        }
+
+        if (dynamic_entries_.size() == 1) {
+            const auto& entry = dynamic_entries_.front();
+            if (entry.timestamp_ns == ts) {
+                return entry;
+            }
+            return std::unexpected(TransformError::FutureExtrapolationRequired);
+        }
+
+        // Check bounds (no extrapolation)
+        const timestamp_ns_t oldest_ts = dynamic_entries_.front().timestamp_ns;
+        const timestamp_ns_t newest_ts = dynamic_entries_.back().timestamp_ns;
+
+        if (ts < oldest_ts) {
+            return std::unexpected(TransformError::PastExtrapolationRequired);
+        }
+        if (ts > newest_ts) {
+            return std::unexpected(TransformError::FutureExtrapolationRequired);
+        }
+
+        // Binary search for interpolation
+        return interpolate(ts);
+    }
+
+    // ========================================================================
+    // Query
+    // ========================================================================
+
+    struct ClosestTimestampInfo {
+        timestamp_ns_t closest_ts;
+        uint64_t delta_ns;
+    };
+
+    [[nodiscard]] std::expected<ClosestTimestampInfo, TransformError>
+        get_closest_timestamp_info(timestamp_ns_t ts) const {
+        mutex_type::scoped_lock lock(mutex_, false);
+
+        // Static transform is always valid with delta=0
+        if (has_static_) {
+            return ClosestTimestampInfo{0, 0};
+        }
+
+        if (dynamic_entries_.empty()) {
+            return std::unexpected(TransformError::NoDataAvailable);
+        }
+
+        const timestamp_ns_t oldest_ts = dynamic_entries_.front().timestamp_ns;
+        const timestamp_ns_t newest_ts = dynamic_entries_.back().timestamp_ns;
+
+        timestamp_ns_t closest;
+        uint64_t delta_ns;
+
+        if (ts <= oldest_ts) {
+            closest  = oldest_ts;
+            delta_ns = oldest_ts - ts;
+        } else if (ts >= newest_ts) {
+            closest  = newest_ts;
+            delta_ns = ts - newest_ts;
+        } else {
+            // Find closest entry within range
+            auto it = std::lower_bound(
+                dynamic_entries_.begin(), dynamic_entries_.end(), ts,
+                [](const TransformEntry& entry, timestamp_ns_t t) {
+                    return entry.timestamp_ns < t;
+                });
+
+            if (it == dynamic_entries_.begin()) {
+                closest  = it->timestamp_ns;
+                delta_ns = it->timestamp_ns - ts;
+            } else if (it == dynamic_entries_.end()) {
+                --it;
+                closest  = it->timestamp_ns;
+                delta_ns = ts - it->timestamp_ns;
             } else {
-                hi = mid;
+                // Check both neighbors
+                const uint64_t delta_prev = ts - (it - 1)->timestamp_ns;
+                const uint64_t delta_next = it->timestamp_ns - ts;
+
+                if (delta_prev <= delta_next) {
+                    --it;
+                    closest  = it->timestamp_ns;
+                    delta_ns = delta_prev;
+                } else {
+                    closest  = it->timestamp_ns;
+                    delta_ns = delta_next;
+                }
             }
         }
 
-        // lo is now the index of first entry with timestamp > ts
-        // We interpolate between lo-1 and lo
-        assert(lo > 0 && lo < size_);
+        return ClosestTimestampInfo{closest, delta_ns};
+    }
 
-        const auto& prev = at_logical(lo - 1);
-        const auto& next = at_logical(lo);
+    [[nodiscard]] std::optional<std::pair<timestamp_ns_t, timestamp_ns_t>> time_range() const {
+        mutex_type::scoped_lock lock(mutex_, false);
+
+        if (has_static_) {
+            return std::make_pair(0, UINT64_MAX);
+        }
+
+        if (dynamic_entries_.empty()) {
+            return std::nullopt;
+        }
+
+        return std::make_pair(
+            dynamic_entries_.front().timestamp_ns, dynamic_entries_.back().timestamp_ns);
+    }
+
+    [[nodiscard]] std::size_t size() const {
+        mutex_type::scoped_lock lock(mutex_, false);
+        return dynamic_entries_.size() + (has_static_ ? 1 : 0);
+    }
+
+    [[nodiscard]] constexpr std::size_t capacity() const { return Capacity; }
+
+    [[nodiscard]] bool is_full() const {
+        mutex_type::scoped_lock lock(mutex_, false);
+        return dynamic_entries_.size() >= Capacity;
+    }
+
+    [[nodiscard]] bool is_empty() const {
+        mutex_type::scoped_lock lock(mutex_, false);
+        return dynamic_entries_.empty() && !has_static_;
+    }
+
+    [[nodiscard]] bool contains_time(timestamp_ns_t ts) const {
+        mutex_type::scoped_lock lock(mutex_, false);
+
+        // Static transform contains all timestamps
+        if (has_static_) {
+            return true;
+        }
+
+        if (dynamic_entries_.empty()) {
+            return false;
+        }
+
+        return ts >= dynamic_entries_.front().timestamp_ns
+            && ts <= dynamic_entries_.back().timestamp_ns;
+    }
+
+    void clear() {
+        mutex_type::scoped_lock lock(mutex_);
+        dynamic_entries_.clear();
+        has_static_ = false;
+    }
+
+    /// Get the keep duration (time window) in nanoseconds
+    [[nodiscard]] constexpr uint64_t keep_duration_ns() const { return KeepDurationNs; }
+
+private:
+    /// Remove entries older than (newest_ts - KeepDurationNs)
+    void prune_expired(timestamp_ns_t current_ts) {
+        const timestamp_ns_t expiry_threshold =
+            (current_ts >= KeepDurationNs) ? current_ts - KeepDurationNs : 0;
+
+        // Find first entry that is not expired
+        auto it = std::find_if(
+            dynamic_entries_.begin(), dynamic_entries_.end(),
+            [expiry_threshold](const TransformEntry& entry) {
+                return entry.timestamp_ns >= expiry_threshold;
+            });
+
+        // Remove expired entries
+        if (it != dynamic_entries_.begin()) {
+            dynamic_entries_.erase(dynamic_entries_.begin(), it);
+        }
+    }
+
+    /// Update cached time bounds after modifications
+    void update_time_bounds() {
+        // Time bounds are computed on-demand from dynamic_entries_
+    }
+
+    /// Binary search interpolation helper
+    [[nodiscard]] std::expected<TransformEntry, TransformError>
+        interpolate(timestamp_ns_t ts) const {
+        // Find first entry with timestamp > ts
+        auto it = std::upper_bound(
+            dynamic_entries_.begin(), dynamic_entries_.end(), ts,
+            [](timestamp_ns_t t, const TransformEntry& entry) { return t < entry.timestamp_ns; });
+
+        if (it == dynamic_entries_.begin() || it == dynamic_entries_.end()) {
+            return std::unexpected(TransformError::FutureExtrapolationRequired);
+        }
+
+        const auto& prev = *(it - 1);
+        const auto& next = *it;
 
         // Exact match check
         if (prev.timestamp_ns == ts) {
@@ -151,7 +354,6 @@ public:
 
         const fp_t t = static_cast<fp_t>(time_diff) / static_cast<fp_t>(dt);
 
-        // Defensive check for numerical stability
         if (std::isnan(t) || std::isinf(t) || t < 0.0 || t > 1.0) {
             return std::unexpected(TransformError::FutureExtrapolationRequired);
         }
@@ -159,140 +361,13 @@ public:
         return TransformEntry(ts, TransformMatrix4d::lerp_se3(prev.transform, next.transform, t));
     }
 
-    [[nodiscard]] std::expected<TransformEntry, TransformError>
-        at_interpolated(timestamp_ns_t ts) const {
-        mutex_type::scoped_lock lock(mutex_, false);
+    // Dynamic (time-varying) entries
+    std::vector<TransformEntry> dynamic_entries_;
 
-        if (size_ == 0) {
-            return std::unexpected(TransformError::NoDataAvailable);
-        }
+    // Static transform (timestamp == 0, never expires)
+    TransformEntry static_transform_{};
+    bool has_static_ = false;
 
-        if (size_ == 1) {
-            const auto& entry = buffer_[(head_ + Capacity - 1) % Capacity];
-            if (entry.timestamp_ns == ts) {
-                return entry;
-            }
-            if (entry.timestamp_ns == 0) {
-                return TransformEntry{ts, entry.transform};
-            }
-            return std::unexpected(TransformError::FutureExtrapolationRequired);
-        }
-
-        // Check bounds (no extrapolation)
-        if (ts < oldest_ts_) {
-            return std::unexpected(TransformError::PastExtrapolationRequired);
-        }
-        if (ts > newest_ts_) {
-            return std::unexpected(TransformError::FutureExtrapolationRequired);
-        }
-
-        // Binary search
-        std::size_t lo = 0;
-        std::size_t hi = size_;
-
-        while (lo < hi) {
-            std::size_t mid       = lo + (hi - lo) / 2;
-            timestamp_ns_t mid_ts = at_logical(mid).timestamp_ns;
-
-            if (mid_ts <= ts) {
-                lo = mid + 1;
-            } else {
-                hi = mid;
-            }
-        }
-
-        if (lo == 0) {
-            // ts < all entries (shouldn't happen due to bounds check)
-            return std::unexpected(TransformError::FutureExtrapolationRequired);
-        }
-
-        const auto& prev = at_logical(lo - 1);
-
-        // Exact match
-        if (prev.timestamp_ns == ts) {
-            return prev;
-        }
-
-        if (lo >= size_) {
-            // ts > all entries
-            return std::unexpected(TransformError::FutureExtrapolationRequired);
-        }
-
-        const auto& next = at_logical(lo);
-
-        // Interpolate
-        const uint64_t dt        = next.timestamp_ns - prev.timestamp_ns;
-        const uint64_t time_diff = ts - prev.timestamp_ns;
-
-        const fp_t t = static_cast<fp_t>(time_diff) / static_cast<fp_t>(dt);
-
-        // Defensive check for numerical stability
-        if (std::isnan(t) || std::isinf(t) || t < 0.0 || t > 1.0) {
-            return std::unexpected(TransformError::FutureExtrapolationRequired);
-        }
-
-        return TransformEntry(ts, TransformMatrix4d::lerp_se3(prev.transform, next.transform, t));
-    }
-
-    // ========================================================================
-    // Query
-    // ========================================================================
-
-    [[nodiscard]] std::optional<std::pair<timestamp_ns_t, timestamp_ns_t>> time_range() const {
-        mutex_type::scoped_lock lock(mutex_, false);
-
-        if (size_ == 0) {
-            return std::nullopt;
-        }
-
-        return std::make_pair(oldest_ts_, newest_ts_);
-    }
-
-    [[nodiscard]] std::size_t size() const {
-        mutex_type::scoped_lock lock(mutex_, false);
-        return size_;
-    }
-
-    [[nodiscard]] constexpr std::size_t capacity() const { return Capacity; }
-
-    [[nodiscard]] bool is_full() const {
-        mutex_type::scoped_lock lock(mutex_, false);
-        return size_ == Capacity;
-    }
-
-    [[nodiscard]] bool is_empty() const {
-        mutex_type::scoped_lock lock(mutex_, false);
-        return size_ == 0;
-    }
-
-    [[nodiscard]] bool contains_time(timestamp_ns_t ts) const {
-        mutex_type::scoped_lock lock(mutex_, false);
-        if (size_ == 0)
-            return false;
-        return ts >= oldest_ts_ && ts <= newest_ts_;
-    }
-
-    void clear() {
-        mutex_type::scoped_lock lock(mutex_);
-        head_      = 0;
-        size_      = 0;
-        oldest_ts_ = 0;
-        newest_ts_ = 0;
-    }
-
-private:
-    /// Get entry by logical index (0 = oldest, size_-1 = newest)
-    [[nodiscard]] const TransformEntry& at_logical(std::size_t idx) const {
-        // tail is at (head_ + Capacity - size_) % Capacity
-        std::size_t physical = (head_ + Capacity - size_ + idx) % Capacity;
-        return buffer_[physical];
-    }
-
-    std::array<TransformEntry, Capacity> buffer_{};
-    std::size_t head_         = 0;
-    std::size_t size_         = 0;
-    timestamp_ns_t oldest_ts_ = 0;
-    timestamp_ns_t newest_ts_ = 0;
     mutable mutex_type mutex_;
 };
 

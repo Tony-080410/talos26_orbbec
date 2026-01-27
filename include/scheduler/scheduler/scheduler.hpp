@@ -26,7 +26,7 @@
  * - Single writer per channel (SPSC) / multiple writers allowed (SPMC)
  * - No cycles in dependency graph
  * - Orphaned readers detected
- * - Max 32 compute systems for bitmask scheduling
+ * - Max 64 compute systems for bitmask scheduling
  */
 
 #include "ecs/execution_policy.hpp"
@@ -152,11 +152,11 @@ struct DependencyCycleError {
 };
 
 /**
- * @brief Too many compute systems (max 32 for efficient bitmask scheduling)
+ * @brief Too many compute systems (max 64 for efficient bitmask scheduling)
  */
 struct TooManyComputeSystemsError {
     std::size_t count;
-    static constexpr std::size_t max_count = 32;
+    static constexpr std::size_t max_count = 64;
 };
 
 /**
@@ -358,7 +358,7 @@ public:
      * - Registration is only valid before `build()`.
      * - The scheduler's dependency analysis and validation still uses SystemMeta.
      */
-    auto add_system(std::unique_ptr<SystemBase> system) -> uint32_t;
+    auto add_system(std::unique_ptr<SystemBase> system) -> uint64_t;
 
     /**
      * @brief Get the ECS world

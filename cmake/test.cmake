@@ -159,6 +159,30 @@ target_link_libraries(rclcompat_test PRIVATE
 
 add_test(NAME RclCompatTest COMMAND rclcompat_test)
 
+# ============================================================================
+# uni_kf/redact Kalman filter framework tests
+# ============================================================================
+
+add_executable(uni_kf_redact_test
+    test/uni_kf_redact_test.cpp
+)
+
+target_include_directories(uni_kf_redact_test PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+
+target_include_directories(uni_kf_redact_test SYSTEM PRIVATE
+    3dparty/lieplusplus
+)
+
+target_link_libraries(uni_kf_redact_test PRIVATE
+    GTest::gtest_main
+    Eigen3::Eigen
+    Threads::Threads
+)
+
+add_test(NAME UniKfRedactTest COMMAND uni_kf_redact_test)
+
 if (ENABLE_COVERAGE)
     message(STATUS "Coverage enabled for FCS tests")
 endif ()

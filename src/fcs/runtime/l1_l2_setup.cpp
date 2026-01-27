@@ -31,37 +31,45 @@ struct DaedalusImu {
 
     void system(
         talos::res_mut<std::shared_ptr<fast_tf::CoordinateSystem<1024>>> tf_buffer) noexcept {
+        auto& system = *tf_buffer->get();
+
+        // Collect all updates without holding locks (prevents tearing)
+        std::vector<std::pair<size_t, std::pair<fast_tf::TransformMatrix4d, uint64_t>>> updates;
+
         if (const auto pose = ipc_device->recv_pose(ipc::POSE_GIMBAL)) {
             const Eigen::Quaterniond q(pose->qw, pose->qx, pose->qy, pose->qz);
-            fast_tf::update(
-                *tf_buffer->get(),
-                fast_tf::FuckTransform<fast_tf::gimbal_link_fuxk_frame>(
-                    fast_tf::TransformMatrix4d::from_quaternion_xyz(q, pose->x, pose->y, pose->z)),
-                pose->timestamp_ns);
+            updates.push_back({
+                fast_tf::gimbal_link_fuxk_frame::index,
+                {fast_tf::TransformMatrix4d::from_quaternion_xyz(q, pose->x, pose->y, pose->z),
+                                                 pose->timestamp_ns}
+            });
         }
         if (const auto pose = ipc_device->recv_pose(ipc::POSE_ODOM)) {
-            fast_tf::update(
-                *tf_buffer->get(),
-                fast_tf::FuckTransform<fast_tf::odom_fuxk_frame>(
-                    fast_tf::TransformMatrix4d::from_translation(pose->x, pose->y, pose->z)),
-                pose->timestamp_ns);
+            updates.push_back({
+                fast_tf::odom_fuxk_frame::index,
+                {fast_tf::TransformMatrix4d::from_translation(pose->x, pose->y, pose->z),
+                                          pose->timestamp_ns}
+            });
         }
         if (const auto pose = ipc_device->recv_pose(ipc::POSE_CAMERA)) {
             const Eigen::Quaterniond q(pose->qw, pose->qx, pose->qy, pose->qz);
-            fast_tf::update(
-                *tf_buffer->get(),
-                fast_tf::FuckTransform<fast_tf::camera_link_fuxk_frame>(
-                    fast_tf::TransformMatrix4d::from_quaternion_xyz(q, pose->x, pose->y, pose->z)),
-                pose->timestamp_ns);
+            updates.push_back({
+                fast_tf::camera_link_fuxk_frame::index,
+                {fast_tf::TransformMatrix4d::from_quaternion_xyz(q, pose->x, pose->y, pose->z),
+                                                 pose->timestamp_ns}
+            });
         }
         if (const auto pose = ipc_device->recv_pose(ipc::POSE_MUZZLE)) {
             const Eigen::Quaterniond q(pose->qw, pose->qx, pose->qy, pose->qz);
-            fast_tf::update(
-                *tf_buffer->get(),
-                fast_tf::FuckTransform<fast_tf::muzzle_link_fuxk_frame>(
-                    fast_tf::TransformMatrix4d::from_quaternion_xyz(q, pose->x, pose->y, pose->z)),
-                pose->timestamp_ns);
+            updates.push_back({
+                fast_tf::muzzle_link_fuxk_frame::index,
+                {fast_tf::TransformMatrix4d::from_quaternion_xyz(q, pose->x, pose->y, pose->z),
+                                                 pose->timestamp_ns}
+            });
         }
+
+        // Single transactional batch update (atomic operation, holds global lock <10μs)
+        system.update_transaction_batch(updates);
     }
 };
 
