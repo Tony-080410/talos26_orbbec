@@ -190,6 +190,61 @@ config/robot/<name>.toml    # 硬件配置
 3. 第三方库异常在模块边界 try-catch 转换为 expected
 4. 禁止 bool 表达多义性错误
 
+## 错误消息规范
+
+**核心原则：错误消息必须包含足够的诊断信息，避免歧义。**
+
+### 详细错误消息要求
+
+1. **禁止模糊错误** ❌
+   ```cpp
+   // 错误：不知道具体哪个字段有问题
+   return std::unexpected("Invalid transform: NaN or Inf detected");
+
+   // 错误：知道是 RPY 但不知道具体哪个值
+   return std::unexpected("RPY is NaN");
+   ```
+
+2. **必须包含完整上下文** ✅
+   ```cpp
+   // 正确：明确指出哪个字段有问题、具体值是什么
+   return std::unexpected(fmt::format(
+       "StaticTransformDesc validation failed: [pitch is Inf]. "
+       "Full values: roll=0°, pitch=inf°, yaw=1.35°, x=0.044m, y=0.010m, z=-0.053m"));
+   ```
+
+### 错误消息模板
+
+| 场景 | 格式 | 示例 |
+|------|------|------|
+| **数值验证失败** | `"[字段名 is 错误类型]. Full values: 完整值列表"` | `"pitch is NaN. Full values: r=0, p=nan, y=1.35"` |
+| **文件/资源错误** | `"操作 failed on 资源: 具体原因 (路径: xxx)"` | `"Failed to open config: Permission denied (path: /etc/robot.toml)"` |
+| **类型转换错误** | `"类型转换失败: FromType → ToType, 值=xxx"` | `"Enum conversion failed: 5 → RobotType, value=5 is not valid"` |
+| **约束违反** | `"约束违反: 约束名称 (期望值 vs 实际值)"` | `"Buffer overflow: capacity=1024 (attempted to write 1025)"` |
+| **依赖缺失** | `"缺失依赖: dependency_name (需要版本)"` | `"Missing library: libtorch (required >= 2.0)"` |
+
+### 枚举到字符串转换
+
+使用 **magic_enum** 进行枚举到字符串转换，然后统一转换为小写：
+
+```cpp
+#include <magic_enum.hpp>
+#include <algorithm>
+#include <string>
+
+enum class RobotType { Infantry, Hero, Sentry };
+
+std::string robot_type_to_string(RobotType type) {
+    std::string_view sv = magic_enum::enum_name(type);
+    std::string result(sv);
+    // 转换为小写
+    std::transform(result.begin(), result.end(), result.begin(),
+                   [](unsigned char c) { return std::tolower(c); });
+    return result;
+}
+// RobotType::Hero → "hero"
+```
+
 ## 控制流
 
 1. 枚举 switch：开启 -Wswitch-enum，禁止 default 兜底
