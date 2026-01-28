@@ -7,7 +7,7 @@
 #include <uni_kf/concepts/quadratic_form.hpp>
 #include <uni_kf/core/filter.hpp>
 
-#include <Eigen/Dense>
+#include <Eigen/Core>
 #include <cassert>
 #include <cmath>
 #include <expected>

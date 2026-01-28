@@ -1,17 +1,7 @@
 #pragma once
 
 #include <cmath>
-
-#if defined(__clang__)
-# pragma clang diagnostic push
-# pragma clang diagnostic ignored "-Weverything"
-#endif
-
 #include <foxglove/schemas.hpp>
-
-#if defined(__clang__)
-# pragma clang diagnostic pop
-#endif
 
 namespace fcs::visualization::tactical {
 

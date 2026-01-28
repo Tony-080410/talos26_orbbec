@@ -6,7 +6,7 @@
 
 #include "fcs/core/types.hpp"
 
-#include <Eigen/Dense>
+#include <Eigen/Core>
 #include <limits>
 #include <queue>
 #include <vector>

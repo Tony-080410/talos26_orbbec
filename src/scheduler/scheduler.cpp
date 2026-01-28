@@ -1,7 +1,7 @@
-#include "scheduler/scheduler/scheduler.hpp"
-#include "performance_probe.hpp"
-#include "scheduler/primitives/thread_affinity.hpp"
-#include "scheduler/scheduler/error_formatter.hpp"
+#include "scheduler/scheduler.hpp"
+#include "primitives/performance_probe.hpp"
+#include "primitives/thread_affinity.hpp"
+#include "scheduler/error_formatter.hpp"
 
 #include "scheduler/spin.hpp"
 #include <algorithm>

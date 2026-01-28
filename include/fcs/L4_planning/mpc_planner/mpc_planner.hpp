@@ -18,6 +18,7 @@
 #include "fcs/L4_planning/mpc_planner/solver_handle.hpp"
 #include "fcs/L4_planning/mpc_planner/trajectory_generator.hpp"
 #include "fcs/L4_planning/mpc_planner/types.hpp"
+#include <spdlog/spdlog.h>
 
 namespace fcs::L4 {
 

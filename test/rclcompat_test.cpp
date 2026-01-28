@@ -1344,9 +1344,7 @@ TEST(RclCompatOwnership, AutoBindWithSchedulerRunning) {
     // Build and run the scheduler
     auto build_result = scheduler.build();
     if (!build_result) {
-        printf(
-            "  ERROR: Build failed: %s\n", talos::format_build_error(build_result.error()).c_str());
-        FAIL() << "Build failed";
+        FAIL() << "Build failed: " << fmt::format("{}", build_result.error());
         return;
     }
 
@@ -1497,9 +1495,7 @@ TEST(RclCompatOwnership, MultipleCallbacksMultiplePublishers) {
     // Build and run the scheduler
     auto build_result = scheduler.build();
     if (!build_result) {
-        printf(
-            "  ERROR: Build failed: %s\n", talos::format_build_error(build_result.error()).c_str());
-        FAIL() << "Build failed";
+        FAIL() << "Build failed" << fmt::format("{}", build_result.error());
         return;
     }
 

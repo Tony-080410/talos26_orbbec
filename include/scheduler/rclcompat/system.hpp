@@ -3,7 +3,7 @@
 #include "demangle.hpp"
 #include "ecs/system.hpp"
 #include "rclcompat/registry.hpp"
-#include "scheduler/rclcompat/system_builder.hpp"
+#include "rclcompat/system_builder.hpp"
 #include <spdlog/spdlog.h>
 
 namespace talos::rclcompat {

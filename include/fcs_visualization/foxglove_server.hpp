@@ -16,18 +16,9 @@
 #include <spdlog/spdlog.h>
 #include <tbb/concurrent_queue.h>
 
-#if defined(__clang__)
-# pragma clang diagnostic push
-# pragma clang diagnostic ignored "-Weverything"
-#endif
-
 #include <foxglove/error.hpp>
 #include <foxglove/foxglove.hpp>
 #include <foxglove/server.hpp>
-
-#if defined(__clang__)
-# pragma clang diagnostic pop
-#endif
 
 namespace fcs {
 

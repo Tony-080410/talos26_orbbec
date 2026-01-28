@@ -27,9 +27,9 @@ add_library(toml_impl STATIC
         ${tomlplusplus_SOURCE_DIR}/src/toml.cpp
 )
 
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fPIC")
-set(CMAKE_POSITION_INDEPENDENT_CODE ON)
-target_include_directories(toml_impl PUBLIC
+silence_target_warnings(toml_impl)
+
+target_include_directories(toml_impl SYSTEM PUBLIC
         ${tomlplusplus_SOURCE_DIR}/include
 )
 
@@ -38,27 +38,34 @@ target_compile_definitions(toml_impl PUBLIC
         TOML_EXCEPTIONS=0
 )
 
-# talos std library (header-only)
-add_library(talos_std INTERFACE
-        include/performance_probe.hpp
-        include/spdlog_hook.hpp
-        include/toml_helper.hpp
+# Create tinympc implementation library
+add_library(tinympc STATIC
+        # TinyMPC solver
+        3dparty/tinympc/admm.cpp
+        3dparty/tinympc/tiny_api.cpp
+        3dparty/tinympc/rho_benchmark.cpp
 )
 
-target_include_directories(talos_std INTERFACE include)
-target_include_directories(talos_std INTERFACE 3dparty/magic_enum)
+silence_target_warnings(tinympc)
 
-target_compile_definitions(talos_std INTERFACE
+target_include_directories(tinympc SYSTEM PUBLIC
+        3dparty/tinympc
+)
+
+target_link_libraries(tinympc PUBLIC Eigen3::Eigen)
+
+add_library(magic_enum INTERFACE)
+
+target_include_directories(magic_enum INTERFACE 3dparty/magic_enum)
+
+target_compile_definitions(magic_enum INTERFACE
         MAGIC_ENUM_RANGE_MIN=0
         MAGIC_ENUM_RANGE_MAX=16
 )
 
-target_link_libraries(talos_std INTERFACE
-        toml_impl
-        Eigen3::Eigen
-        spdlog::spdlog
-        fmt::fmt
-)
+add_library(lieplusplus INTERFACE)
+
+target_include_directories(lieplusplus INTERFACE 3dparty/lieplusplus)
 
 # scheduler library
 add_library(scheduler SHARED
@@ -68,12 +75,12 @@ add_library(scheduler SHARED
 
 target_include_directories(scheduler PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/include/scheduler
-        ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
 
 target_link_libraries(scheduler PUBLIC
-        talos_std
-        ${OpenCV_LIBS}
+        magic_enum
+        spdlog::spdlog
+        fmt::fmt
         TBB::tbb
 )
 
@@ -93,26 +100,6 @@ target_link_libraries(foxglove_cpp PUBLIC
         "$<$<PLATFORM_ID:Darwin>:-framework CoreFoundation>"
         "$<$<PLATFORM_ID:Darwin>:-framework SystemConfiguration>"
         "$<$<PLATFORM_ID:Darwin>:-mmacosx-version-min=15.5>"
-)
-
-# auto aim library
-add_library(auto_aim STATIC
-        src/auto_aim/config.cpp
-)
-
-target_include_directories(auto_aim PUBLIC
-        ${CMAKE_CURRENT_SOURCE_DIR}/include
-        ${CMAKE_CURRENT_SOURCE_DIR}/include/fcs
-        ${CMAKE_CURRENT_SOURCE_DIR}/include/auto_aim
-        ${foxglove_SOURCE_DIR}/include
-        ${foxglove_SOURCE_DIR}/include/foxglove
-)
-
-target_link_libraries(auto_aim PUBLIC
-        talos_std
-        scheduler
-        ${OpenCV_LIBS}
-        $<$<TARGET_EXISTS:openvino::runtime>:openvino::runtime>
 )
 
 # ipc library
@@ -135,12 +122,12 @@ target_include_directories(talos_gimbal INTERFACE
 )
 
 target_link_libraries(talos_gimbal INTERFACE
-        talos_std
         ${LIBUSB_LINK_LIBRARIES}
 )
 
 # FCS library (Fire Control System - refactored architecture)
 add_library(fcs SHARED
+        src/auto_aim/config.cpp
         src/fcs/camera_config.cpp
         src/fcs/L1_sensor/camera_interface.cpp
         src/fcs/L1_sensor/output_interface.cpp
@@ -171,48 +158,61 @@ add_library(fcs SHARED
         src/fcs/L4_planning/plan_mux/plan_mux_systems.cpp
         src/fcs/L4_planning/rune_planner/rune_planner_systems.cpp
         src/fcs/L5_weapon/config.cpp
-        src/fcs/visualization/foxglove_systems.cpp
         src/fcs/L5_weapon/enhanced/weapon_controller.cpp
         src/fcs/L5_weapon/enhanced/weapon_systems.cpp
-        # TinyMPC solver
-        3dparty/tinympc/admm.cpp
-        3dparty/tinympc/tiny_api.cpp
-        3dparty/tinympc/rho_benchmark.cpp
 )
 
 target_include_directories(fcs PUBLIC
-        ${CMAKE_CURRENT_SOURCE_DIR}/include
         ${CMAKE_CURRENT_SOURCE_DIR}/include/fcs
-)
-
-# Add foxglove headers for fast_tf support
-target_include_directories(fcs SYSTEM PUBLIC
-        ${foxglove_SOURCE_DIR}/include
-        ${foxglove_SOURCE_DIR}/include/foxglove
-        3dparty/lieplusplus
-        3dparty/tinympc
+        ${CMAKE_CURRENT_SOURCE_DIR}/include/auto_aim
 )
 
 # message(STATUS "OpenCV libs: ${OpenCV_LIBS}")
 
 target_link_libraries(fcs PUBLIC
-        talos_std
-        talos_gimbal
-        ipc
-        hikcamera
+        toml_impl
         scheduler
-        foxglove_cpp
-        Ceres::ceres
-        ${OpenCV_LIBS}
         Eigen3::Eigen
-        spdlog::spdlog
-        ${LIBUSB_LINK_LIBRARIES}
+        Ceres::ceres
+        tinympc
+        lieplusplus
+
+        talos_gimbal
+        hikcamera
+        ipc
+
+        ${OpenCV_LIBS}
         $<$<TARGET_EXISTS:openvino::runtime>:openvino::runtime>
 )
 
 # Use precompiled headers for fcs library (speeds up compilation by 50-70%)
 target_precompile_headers(fcs PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/include/fcs/pch.hpp
+)
+
+add_library(fcs_visualization SHARED src/fcs_visualization/foxglove_systems.cpp)
+
+target_include_directories(fcs_visualization PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/include/fcs
+        ${CMAKE_CURRENT_SOURCE_DIR}/include/auto_aim
+)
+
+# Add foxglove headers for fast_tf support
+target_include_directories(fcs_visualization SYSTEM PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/include/fcs_visualization
+)
+
+target_link_libraries(fcs_visualization PUBLIC
+        fcs
+        scheduler
+        foxglove_cpp
+        ${OpenCV_LIBS}
+        Eigen3::Eigen
+        spdlog::spdlog
+)
+
+target_precompile_headers(fcs_visualization PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include/fcs_visualization/pch.hpp
 )
 
 # hikcamera library (HIK SDK only available on Linux x86_64)
@@ -231,7 +231,8 @@ if (CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_SYSTEM_PROCESSOR STREQUAL "x86_
     )
 
     target_link_libraries(hikcamera PUBLIC
-            talos_std
+            magic_enum
+            Eigen3::Eigen
             spdlog::spdlog
             ${OpenCV_LIBS}
     )
@@ -254,7 +255,8 @@ else ()
     )
 
     target_link_libraries(hikcamera PUBLIC
-            talos_std
+            magic_enum
+            Eigen3::Eigen
             spdlog::spdlog
             ${OpenCV_LIBS}
     )
@@ -266,26 +268,13 @@ add_executable(${PROJECT_NAME}
 )
 
 target_include_directories(${PROJECT_NAME} PRIVATE include)
-target_include_directories(${PROJECT_NAME} SYSTEM PRIVATE ${foxglove_SOURCE_DIR}/include)
-target_include_directories(${PROJECT_NAME} SYSTEM PRIVATE ${foxglove_SOURCE_DIR}/include/foxglove)
 
 target_link_libraries(${PROJECT_NAME} PRIVATE
-        talos_gimbal
-        scheduler
-        auto_aim
-        hikcamera
         fcs
-        ipc
+        fcs_visualization
         fast_tf
-        foxglove_cpp
-        ${OpenCV_LIBS}
         spdlog::spdlog
         fmt::fmt
-        Eigen3::Eigen
-        TBB::tbb
-
-        nlohmann_json::nlohmann_json
-        ${LIBUSB_LINK_LIBRARIES}
         "$<$<PLATFORM_ID:Darwin>:-mmacosx-version-min=15.5>"
 )
 
@@ -298,19 +287,25 @@ add_library(fast_tf SHARED
 )
 
 target_include_directories(fast_tf PUBLIC
-        ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/include/math/fast_tf
 )
 
 target_include_directories(fast_tf SYSTEM PUBLIC
         3dparty/lieplusplus
-        3dparty/magic_enum
 )
 
 target_link_libraries(fast_tf PUBLIC
+        magic_enum
         Eigen3::Eigen
         TBB::tbb
+        fmt::fmt
         ${OpenCV_LIBS}
 )
+
+target_precompile_headers(fast_tf PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include/math/fast_tf/pch.hpp
+)
+
 # CMake package configuration for hikcamera
 if (CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_SYSTEM_PROCESSOR STREQUAL "x86_64")
     include(CMakePackageConfigHelpers)

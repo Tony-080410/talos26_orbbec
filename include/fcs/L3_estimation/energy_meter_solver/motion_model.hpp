@@ -3,7 +3,7 @@
 #include "fcs/L3_estimation/energy_meter_solver/isrckf.hpp"
 #include "fcs/L3_estimation/energy_meter_solver/types.hpp"
 
-#include <Eigen/Dense>
+#include <Eigen/Core>
 #include <expected>
 #include <string>
 

@@ -1,9 +1,8 @@
 #pragma once
 
-#include "math/euler.hpp"
-#include "types.hpp"
+#include "../euler.hpp"
 
-#include <Eigen/Dense>
+#include <Eigen/Core>
 #include <algorithm>
 #include <cassert>
 #include <groups/SEn3.hpp>

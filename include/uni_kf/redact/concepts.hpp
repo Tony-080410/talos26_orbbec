@@ -1,6 +1,6 @@
 #pragma once
 #include "space.hpp"
-#include <Eigen/Dense>
+#include <Eigen/Core>
 #include <concepts>
 
 namespace uni_kf::redact {

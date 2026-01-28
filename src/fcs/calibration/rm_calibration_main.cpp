@@ -346,8 +346,7 @@ int main(int argc, char* argv[]) {
 
     // Build scheduler
     if (auto build_result = scheduler.build(); !build_result) {
-        SPDLOG_CRITICAL(
-            "Failed to build scheduler: {}", talos::format_build_error(build_result.error()));
+        SPDLOG_CRITICAL("Failed to build scheduler: {}", build_result.error());
         return 1;
     }
 

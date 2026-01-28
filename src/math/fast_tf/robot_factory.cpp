@@ -1,8 +1,8 @@
-#include "math/fast_tf/robot_factory.hpp"
+#include "robot_factory.hpp"
 
-#include "math/fast_tf/hero.hpp"
-#include "math/fast_tf/infantry.hpp"
-#include "math/fast_tf/sentry.hpp"
+#include "hero.hpp"
+#include "infantry.hpp"
+#include "sentry.hpp"
 
 namespace fast_tf {
 

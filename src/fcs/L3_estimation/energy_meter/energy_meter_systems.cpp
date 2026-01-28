@@ -274,7 +274,7 @@ void register_energy_meter_systems(::talos::Scheduler& scheduler, EnergyMeterL3C
             out.tracking_valid =
                 ((*tracker)->state == ::energy_meter::Tracker::TRACKING
                  || (*tracker)->state == ::energy_meter::Tracker::TEMP_LOST);
-            out.r_center_odom           = obs->r_center_odom;
+            out.r_center_odom           = obs->r_center_odom.eval();
             out.radius                  = radius;
             out.roll                    = roll;
             out.v_roll                  = v_roll;

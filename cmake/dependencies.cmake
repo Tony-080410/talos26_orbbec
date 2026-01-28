@@ -124,3 +124,13 @@ set(FOXGLOVE_SOURCES
     "${foxglove_SOURCE_DIR}/src/server/parameter.cpp"
     "${foxglove_SOURCE_DIR}/src/server/service.cpp"
 )
+
+function(silence_target_warnings tgt)
+    if (CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+        target_compile_options(${tgt} PRIVATE -Wno-everything)
+    elseif (CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+        target_compile_options(${tgt} PRIVATE -w)
+    elseif (MSVC)
+        target_compile_options(${tgt} PRIVATE /W0)
+    endif()
+endfunction()

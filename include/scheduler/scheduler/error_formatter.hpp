@@ -11,7 +11,7 @@
  *   SPDLOG_ERROR("Build failed: {}", error);
  */
 
-#include "scheduler/scheduler/scheduler.hpp"
+#include "scheduler/scheduler.hpp"
 
 #include <fmt/format.h>
 #include <fmt/std.h> // For std::variant, std::vector, etc.

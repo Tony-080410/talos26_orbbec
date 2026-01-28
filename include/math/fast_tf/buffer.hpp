@@ -2,7 +2,7 @@
 
 #include "error.hpp"
 #include "matrix.hpp"
-#include <algorithm>
+#include "types.hpp"
 #include <array>
 #include <cassert>
 #include <cstdint>

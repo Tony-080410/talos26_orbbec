@@ -1,7 +1,7 @@
 #pragma once
 #include "../concepts.hpp" // Use canonical concepts (LieGroup, etc.)
 #include "../space.hpp"
-#include <Eigen/Dense>
+#include <Eigen/Core>
 #include <concepts>
 #include <vector>
 

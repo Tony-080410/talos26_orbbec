@@ -32,7 +32,7 @@
 #include "ecs/execution_policy.hpp"
 #include "ecs/system.hpp"
 #include "ecs/world.hpp"
-#include "performance_probe.hpp"
+#include "primitives/performance_probe.hpp"
 
 #include <cstdint>
 #include <tbb/task_arena.h>
@@ -155,9 +155,6 @@ using BuildError = std::variant<
  * @brief Build result type
  */
 using BuildResult = std::expected<void, BuildError>;
-
-// Forward declaration (implementation in error_formatter.cpp)
-[[nodiscard]] auto format_build_error(const BuildError& err) -> std::string;
 
 // ============================================================================
 // Configuration

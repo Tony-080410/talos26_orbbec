@@ -3,7 +3,8 @@
 #include "fcs/L3_estimation/energy_meter_solver/isrckf.hpp"
 #include "fcs/L3_estimation/energy_meter_solver/motion_model.hpp"
 
-#include <Eigen/Dense>
+#include <Eigen/Core>
+#include <Eigen/Geometry>
 #include <expected>
 #include <string>
 

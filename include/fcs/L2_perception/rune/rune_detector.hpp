@@ -3,7 +3,7 @@
 #define RUNE_DETECTOR_RUNE_DETECTOR_HPP_
 
 // std
-#include <Eigen/Dense>
+#include <Eigen/Core>
 #include <filesystem>
 #include <functional>
 #include <future>

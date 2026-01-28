@@ -2,7 +2,7 @@
 
 #include "covariance.hpp"
 #include "space.hpp"
-#include <Eigen/Dense>
+#include <Eigen/Core>
 #include <cmath>
 #include <expected>
 

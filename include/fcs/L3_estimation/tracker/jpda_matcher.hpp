@@ -8,7 +8,7 @@
 
 #include "fcs/core/types.hpp"
 
-#include <Eigen/Dense>
+#include <Eigen/Core>
 #include <algorithm>
 #include <array>
 #include <cmath>

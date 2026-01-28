@@ -1,7 +1,7 @@
-#include "fcs/visualization/foxglove_systems.hpp"
+#include "fcs_visualization/foxglove_systems.hpp"
 
-#include "fcs/visualization/foxglove_server.hpp"
-#include "fcs/visualization/foxglove_systems_impl.hpp"
+#include "fcs_visualization/foxglove_server.hpp"
+#include "fcs_visualization/foxglove_systems_impl.hpp"
 
 #include "scheduler/scheduler/scheduler.hpp"
 

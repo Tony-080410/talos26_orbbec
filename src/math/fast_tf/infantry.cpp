@@ -1,4 +1,4 @@
-#include "math/fast_tf/infantry.hpp"
+#include "infantry.hpp"
 
 namespace fast_tf {
 

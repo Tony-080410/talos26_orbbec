@@ -11,6 +11,7 @@
 #include "scheduler/ecs/channel_types.hpp"
 #include "scheduler/ecs/execution_policy.hpp"
 #include "scheduler/scheduler/scheduler.hpp"
+#include <spdlog/spdlog.h>
 
 namespace fcs::L4 {
 

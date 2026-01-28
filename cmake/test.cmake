@@ -3,6 +3,11 @@ option(ENABLE_ASAN "Enable AddressSanitizer" OFF)
 option(ENABLE_TSAN "Enable ThreadSanitizer" OFF)
 option(ENABLE_COVERAGE "Enable code coverage" OFF)
 
+# Sanitizer mutual exclusion check
+if (ENABLE_ASAN AND ENABLE_TSAN)
+    message(FATAL_ERROR "Cannot enable both AddressSanitizer and ThreadSanitizer simultaneously")
+endif ()
+
 if (ENABLE_ASAN)
     message(STATUS "AddressSanitizer enabled")
     add_compile_options(-fsanitize=address -fno-omit-frame-pointer)
@@ -17,146 +22,75 @@ endif ()
 
 enable_testing()
 
+# ============================================================================
+# Test Helper Functions - Reduce boilerplate and ensure consistency
+# ============================================================================
+
+# Helper function to create tests with consistent setup
+function(talos_add_test test_name source_file)
+    add_executable(${test_name} ${source_file})
+    target_include_directories(${test_name} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+    target_link_libraries(${test_name} PRIVATE GTest::gtest_main Threads::Threads)
+    add_test(NAME ${test_name} COMMAND ${test_name})
+endfunction()
+
+# Helper for tests requiring OpenCV (core + imgproc)
+function(talos_add_test_opencv test_name source_file)
+    add_executable(${test_name} ${source_file})
+    target_include_directories(${test_name} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+    target_link_libraries(${test_name} PRIVATE GTest::gtest_main Threads::Threads ${OpenCV_LIBS})
+    add_test(NAME ${test_name} COMMAND ${test_name})
+endfunction()
+
+# Helper for fast_tf tests (need Eigen3 + TBB + OpenCV + lieplusplus)
+function(talos_add_test_fast_tf test_name source_file)
+    add_executable(${test_name} ${source_file})
+    target_include_directories(${test_name} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+    target_include_directories(${test_name} SYSTEM PRIVATE 3dparty/lieplusplus)
+    target_link_libraries(${test_name} PRIVATE fast_tf GTest::gtest_main Eigen3::Eigen TBB::tbb ${OpenCV_LIBS})
+    add_test(NAME ${test_name} COMMAND ${test_name})
+endfunction()
+
+# Helper for scheduler tests
+function(talos_add_test_scheduler test_name source_file)
+    add_executable(${test_name} ${source_file})
+    target_include_directories(${test_name} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+    target_link_libraries(${test_name} PRIVATE scheduler GTest::gtest_main Threads::Threads)
+    add_test(NAME ${test_name} COMMAND ${test_name})
+endfunction()
+
+# ============================================================================
+# Test Definitions
+# ============================================================================
+
 # Triple buffer tests
-add_executable(triple_buffer_test
-    test/triple_buffer_test.cpp
-)
+talos_add_test(triple_buffer_test test/triple_buffer_test.cpp)
 
-target_include_directories(triple_buffer_test PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/include
-)
-
-target_link_libraries(triple_buffer_test PRIVATE
-    GTest::gtest_main
-    Threads::Threads
-)
-
-add_test(NAME TripleBufferTest COMMAND triple_buffer_test)
-
-# Scheduler primitives tests
-add_executable(primitives_test
-    test/primitives_test.cpp
-)
-
-target_include_directories(primitives_test PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/include
-)
-
-target_link_libraries(primitives_test PRIVATE
-    GTest::gtest_main
-    Threads::Threads
-    ${OpenCV_LIBS}
-)
-
-add_test(NAME PrimitivesTest COMMAND primitives_test)
+# Scheduler primitives tests - needs OpenCV
+talos_add_test_opencv(primitives_test test/primitives_test.cpp)
 
 # Flow graph tests
-add_executable(flow_graph_test
-    test/flow_graph_test.cpp
-)
+talos_add_test(flow_graph_test test/flow_graph_test.cpp)
 
-target_include_directories(flow_graph_test PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/include
-)
+# Fast TF tests - needs Eigen3 + TBB + OpenCV + lieplusplus
+talos_add_test_fast_tf(fast_tf_test test/fast_tf_test.cpp)
 
-target_link_libraries(flow_graph_test PRIVATE
-    GTest::gtest_main
-    Threads::Threads
-)
-
-add_test(NAME FlowGraphTest COMMAND flow_graph_test)
-
-# Fast TF tests
-add_executable(fast_tf_test
-    test/fast_tf_test.cpp
-)
-
-target_include_directories(fast_tf_test PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/include
-)
-
-target_include_directories(fast_tf_test SYSTEM PRIVATE
-    3dparty/lieplusplus
-)
-
-target_link_libraries(fast_tf_test PRIVATE
-    GTest::gtest_main
-    Eigen3::Eigen
-    TBB::tbb
-    ${OpenCV_LIBS}
-)
-
-add_test(NAME FastTfTest COMMAND fast_tf_test)
-
-# Bevy-style ECS tests
-add_executable(bevy_ecs_test
-    test/bevy_ecs_test.cpp
-)
-
-target_include_directories(bevy_ecs_test PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/include
-)
-
-target_link_libraries(bevy_ecs_test PRIVATE
-    Threads::Threads
-    TBB::tbb
-)
-
+# Bevy-style ECS tests - needs TBB (special case, custom setup)
+add_executable(bevy_ecs_test test/bevy_ecs_test.cpp)
+target_include_directories(bevy_ecs_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_link_libraries(bevy_ecs_test PRIVATE GTest::gtest_main Threads::Threads TBB::tbb)
 add_test(NAME BevyEcsTest COMMAND bevy_ecs_test)
 
 # Scheduler tests
-add_executable(scheduler_ecs_test
-    test/scheduler_ecs_test.cpp
-)
+talos_add_test_scheduler(scheduler_ecs_test test/scheduler_ecs_test.cpp)
 
-target_include_directories(scheduler_ecs_test PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/include
-)
+# Jpda matcher tests - needs Eigen3 + OpenCV + lieplusplus
+talos_add_test_fast_tf(jpda_matcher_test test/jpda_matcher_test.cpp)
 
-target_link_libraries(scheduler_ecs_test PRIVATE
-    scheduler
-    Threads::Threads
-)
-
-add_test(NAME SchedulerEcsTest COMMAND scheduler_ecs_test)
-
-# Jpda matcher tests
-add_executable(jpda_matcher_test
-    test/jpda_matcher_test.cpp
-)
-
-target_include_directories(jpda_matcher_test PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/include
-)
-
-target_include_directories(jpda_matcher_test SYSTEM PRIVATE
-    3dparty/lieplusplus
-)
-
-target_link_libraries(jpda_matcher_test PRIVATE
-    GTest::gtest_main
-    Eigen3::Eigen
-    ${OpenCV_LIBS}
-)
-
-add_test(NAME JpdaMatcherTest COMMAND jpda_matcher_test)
-
-# ROS2 compatibility layer tests
-add_executable(rclcompat_test
-    test/rclcompat_test.cpp
-)
-
-target_include_directories(rclcompat_test PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/include
-    ${CMAKE_CURRENT_SOURCE_DIR}/include/scheduler
-)
-
-target_link_libraries(rclcompat_test PRIVATE
-    scheduler
-    GTest::gtest_main
-    Threads::Threads
-)
-
+# ROS2 compatibility layer tests - needs scheduler + special include paths
+add_executable(rclcompat_test test/rclcompat_test.cpp)
+target_include_directories(rclcompat_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include ${CMAKE_CURRENT_SOURCE_DIR}/include/scheduler)
+target_link_libraries(rclcompat_test PRIVATE scheduler GTest::gtest_main Threads::Threads)
 add_test(NAME RclCompatTest COMMAND rclcompat_test)
 
 if (ENABLE_COVERAGE)

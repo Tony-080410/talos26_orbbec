@@ -3,7 +3,7 @@
 #include "../concepts.hpp"
 #include "../space.hpp"
 
-#include <Eigen/Dense>
+#include <Eigen/Core>
 #include <utility>
 #include <vector>
 

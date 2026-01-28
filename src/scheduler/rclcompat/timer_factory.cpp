@@ -1,5 +1,5 @@
-#include "scheduler/rclcompat/timer_factory.hpp"
-#include "scheduler/rclcompat/timer_constants.hpp"
+#include "rclcompat/timer_factory.hpp"
+#include "rclcompat/timer_constants.hpp"
 #include <utility>
 
 namespace talos::rclcompat {

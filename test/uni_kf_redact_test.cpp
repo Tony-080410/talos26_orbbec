@@ -12,7 +12,7 @@
 #include "uni_kf/redact/spaces/lie_group.hpp"
 #include "uni_kf/redact/variants.hpp"
 
-#include <Eigen/Dense>
+#include <Eigen/Core>
 
 using namespace uni_kf::redact;
 using namespace uni_kf::redact::spaces;

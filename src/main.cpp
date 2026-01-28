@@ -8,7 +8,7 @@
 #include "fcs/L4_planning/rune_planner/rune_planner_systems.hpp"
 #include "fcs/L5_weapon/enhanced/weapon_systems.hpp"
 #include "fcs/runtime/l1_l2_setup.hpp"
-#include "fcs/visualization/foxglove_systems.hpp"
+#include "fcs_visualization/foxglove_systems.hpp"
 #include "magic_enum.hpp"
 #include "math/fast_tf/robot_factory.hpp"
 #include "scheduler/scheduler/error_formatter.hpp"

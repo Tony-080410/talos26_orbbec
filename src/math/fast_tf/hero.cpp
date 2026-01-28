@@ -1,4 +1,4 @@
-#include "math/fast_tf/hero.hpp"
+#include "hero.hpp"
 
 namespace fast_tf {
 

@@ -17,7 +17,7 @@
 #include "../concepts.hpp"
 #include "../space.hpp"
 
-#include <Eigen/Dense>
+#include <Eigen/Core>
 #include <concepts>
 #include <utility>
 #include <vector>

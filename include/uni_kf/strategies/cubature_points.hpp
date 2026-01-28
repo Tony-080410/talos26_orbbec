@@ -17,7 +17,7 @@
 #include "../concepts/differential_space.hpp"
 #include "../concepts/quadratic_form.hpp"
 #include <Eigen/Cholesky>
-#include <Eigen/Dense>
+#include <Eigen/Core>
 #include <cmath>
 #include <vector>
 

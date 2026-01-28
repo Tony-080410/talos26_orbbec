@@ -2,7 +2,7 @@
 
 #include "ecs/execution_policy.hpp"
 #include "rclcompat/system.hpp"
-#include "scheduler/rclcompat/system_builder.hpp"
+#include "rclcompat/system_builder.hpp"
 #include <spdlog/spdlog.h>
 
 namespace talos::rclcompat {

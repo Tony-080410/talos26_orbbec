@@ -2,7 +2,7 @@
 #include "concepts.hpp"
 #include "factorization/cholupdate.hpp"
 #include "space.hpp"
-#include <Eigen/Dense>
+#include <Eigen/Core>
 #include <functional>
 #include <type_traits>
 
