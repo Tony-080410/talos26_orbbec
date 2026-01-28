@@ -98,15 +98,11 @@ void register_rune_planning_systems(talos::Scheduler& scheduler, RunePlannerConf
                     current_time_ns);
 
             if (!muzzle_tf) {
-                SPDLOG_DEBUG(
-                    "rune planner: muzzle_tf lookup failed: {}",
-                    fast_tf::to_string(muzzle_tf.error()));
+                SPDLOG_DEBUG("rune planner: muzzle_tf lookup failed: {}", muzzle_tf.error());
                 return;
             }
             if (!gimbal_tf) {
-                SPDLOG_DEBUG(
-                    "rune planner: gimbal_tf lookup failed: {}",
-                    fast_tf::to_string(gimbal_tf.error()));
+                SPDLOG_DEBUG("rune planner: gimbal_tf lookup failed: {}", gimbal_tf.error());
                 return;
             }
 

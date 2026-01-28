@@ -30,7 +30,8 @@ namespace uni_kf::redact::factorization {
 /// @param x Vector to add/remove
 /// @param sign +1 for update (LL^T + xx^T), -1 for downdate (LL^T - xx^T)
 /// @return true if successful, false if downdate would make matrix non-SPD
-inline bool cholupdate_lower_inplace(Eigen::MatrixXd& L, Eigen::VectorXd x, int sign) {
+[[nodiscard]] inline bool
+    cholupdate_lower_inplace(Eigen::MatrixXd& L, Eigen::VectorXd x, int sign) {
     const int n = static_cast<int>(L.rows());
     if (L.cols() != n || x.size() != n) {
         return false;

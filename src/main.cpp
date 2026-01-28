@@ -218,11 +218,11 @@ int main() {
 
     // Build
     if (auto build_result = scheduler.build(); !build_result) {
-        SPDLOG_CRITICAL("build scheduler: {}", fmt::format("{}", build_result.error()));
+        SPDLOG_CRITICAL("build scheduler: {}", build_result.error());
         return 1;
     }
 
     if (const auto result = scheduler.run(); !result) {
-        SPDLOG_CRITICAL("run scheduler: {}", to_string(result.error()));
+        SPDLOG_CRITICAL("run scheduler: {}", result.error());
     }
 }

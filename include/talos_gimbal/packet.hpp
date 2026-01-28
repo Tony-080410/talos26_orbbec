@@ -4,6 +4,8 @@
 #include <iostream>
 #include <string_view>
 
+#include "magic_enum.hpp"
+
 namespace talos_gimbal {
 
 // 机器人自身颜色 (来自裁判系统)
@@ -11,14 +13,6 @@ enum class Color : uint8_t {
     Red  = 0,
     Blue = 1,
 };
-
-constexpr std::string_view color_name(Color c) {
-    switch (c) {
-    case Color::Red: return "RED";
-    case Color::Blue: return "BLUE";
-    }
-    return "UNKNOWN";
-}
 
 #pragma pack(1)
 struct HeaderFrame {
@@ -72,7 +66,7 @@ inline void print_imu(const ReceiveImuData& imu) {
     std::cout << "\r" << std::string(120, ' ') << "\r"; // 清空整行
 
     std::cout << "IMU | stamp: " << std::setw(8) << imu.time_stamp << " ms | "
-              << "color: " << color_name(imu.data.self_color) << " | "
+              << "color: " << magic_enum::enum_name(imu.data.self_color) << " | "
               << "yaw: " << std::setw(7) << imu.data.yaw * RAD2DEG << "° | "
               << "pitch: " << std::setw(7) << imu.data.pitch * RAD2DEG << "° | "
               << "roll: " << std::setw(7) << imu.data.roll * RAD2DEG << "° | "
@@ -82,3 +76,18 @@ inline void print_imu(const ReceiveImuData& imu) {
 }
 
 } // namespace talos_gimbal
+
+// ============================================================================
+// fmt::formatter specializations
+// ============================================================================
+
+namespace fmt {
+
+template <>
+struct formatter<talos_gimbal::Color> : formatter<std::string_view> {
+    auto format(talos_gimbal::Color c, format_context& ctx) const {
+        return formatter<std::string_view>::format(magic_enum::enum_name(c), ctx);
+    }
+};
+
+} // namespace fmt

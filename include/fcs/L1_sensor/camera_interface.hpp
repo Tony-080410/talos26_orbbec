@@ -23,26 +23,6 @@ struct ProducerNotAvailable {};
 
 using InputError = std::variant<
     Timeout, Disconnected, ProducerNotAvailable, hikcamera::CameraError, ipc::ShmError>;
-constexpr std::string to_string(InputError error) {
-    return std::visit(
-        [](auto&& err) -> std::string {
-            using T = std::decay_t<decltype(err)>;
-            if constexpr (std::is_same_v<T, Timeout>) {
-                return "timeout";
-            } else if constexpr (std::is_same_v<T, Disconnected>) {
-                return "disconnected";
-            } else if constexpr (std::is_same_v<T, ProducerNotAvailable>) {
-                return "producer_not_available";
-            } else if constexpr (std::is_same_v<T, hikcamera::CameraError>) {
-                return err.what();
-            } else if constexpr (std::is_same_v<T, ipc::ShmError>) {
-                return ipc::to_string(err);
-            } else {
-                return "unknown_error";
-            }
-        },
-        error);
-}
 
 class IpcInput {
 public:

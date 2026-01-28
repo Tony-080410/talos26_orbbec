@@ -61,7 +61,7 @@ void register_at_legacy_detection_systems(talos::Scheduler& scheduler, AtLegacyC
             if (!tf_odom_camera) {
                 SPDLOG_ERROR(
                     "TF lookup failed for timestamp {}: {}", frame->timestamp_ns,
-                    fast_tf::to_string(tf_odom_camera.error()));
+                    tf_odom_camera.error());
                 return;
             }
 

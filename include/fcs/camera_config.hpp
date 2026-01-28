@@ -3,7 +3,10 @@
 #include <Eigen/Core>
 #include <cstdint>
 #include <expected>
+#include <fmt/core.h>
 #include <string>
+
+#include "magic_enum.hpp"
 
 // Forward declaration to avoid including toml++
 namespace toml {
@@ -42,3 +45,18 @@ struct CameraConfig {
 };
 
 } // namespace fcs
+
+// ============================================================================
+// fmt::formatter specializations
+// ============================================================================
+
+namespace fmt {
+
+template <>
+struct formatter<fcs::RotateType> : formatter<std::string_view> {
+    auto format(fcs::RotateType type, format_context& ctx) const {
+        return formatter<std::string_view>::format(magic_enum::enum_name(type), ctx);
+    }
+};
+
+} // namespace fmt

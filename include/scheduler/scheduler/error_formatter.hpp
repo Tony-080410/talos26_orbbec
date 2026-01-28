@@ -15,6 +15,7 @@
 
 #include <fmt/format.h>
 #include <fmt/std.h> // For std::variant, std::vector, etc.
+#include <magic_enum.hpp>
 
 // ============================================================================
 // Helper: join strings with separator
@@ -44,7 +45,7 @@ namespace fmt {
 template <>
 struct formatter<talos::SchedulerError> : formatter<std::string_view> {
     auto format(const talos::SchedulerError e, format_context& ctx) const {
-        return formatter<std::string_view>::format(talos::to_string(e), ctx);
+        return formatter<std::string_view>::format(magic_enum::enum_name(e), ctx);
     }
 };
 

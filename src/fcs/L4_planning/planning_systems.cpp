@@ -49,11 +49,11 @@ void register_mpc_planning_systems(talos::Scheduler& scheduler, MpcPlannerConfig
                     **tf_buffer, fast_tf::FuckTransform<fast_tf::gimbal_link_fuxk_frame>{},
                     current_time_ns);
             if (!muzzle_tf) {
-                SPDLOG_WARN("muzzle_tf not found for {}", fast_tf::to_string(muzzle_tf.error()));
+                SPDLOG_WARN("muzzle_tf not found for {}", muzzle_tf.error());
                 return;
             }
             if (!gimbal_tf) {
-                SPDLOG_WARN("gimbal_tf not found for {}", fast_tf::to_string(gimbal_tf.error()));
+                SPDLOG_WARN("gimbal_tf not found for {}", gimbal_tf.error());
                 return;
             }
 

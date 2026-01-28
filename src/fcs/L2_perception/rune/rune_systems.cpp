@@ -130,7 +130,7 @@ void register_rune_detection_systems(talos::Scheduler& scheduler, RuneDetectorCo
             if (!tf_odom_camera) {
                 SPDLOG_DEBUG(
                     "rune: TF lookup failed at {}: {}", frame->timestamp_ns,
-                    fast_tf::to_string(tf_odom_camera.error()));
+                    tf_odom_camera.error());
                 dbg.tf_ok = false;
                 debug_out.write(std::move(dbg));
                 obs_out.write(out);

@@ -303,6 +303,7 @@ target_include_directories(fast_tf PUBLIC
 
 target_include_directories(fast_tf SYSTEM PUBLIC
         3dparty/lieplusplus
+        3dparty/magic_enum
 )
 
 target_link_libraries(fast_tf PUBLIC

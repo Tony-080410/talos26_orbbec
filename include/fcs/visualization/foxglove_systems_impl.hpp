@@ -24,6 +24,7 @@
 #include <Eigen/Geometry>
 #include <cmath>
 #include <fmt/format.h>
+#include <magic_enum.hpp>
 #include <nlohmann/json.hpp>
 #include <opencv2/core/types.hpp>
 #include <opencv2/imgcodecs.hpp>
@@ -268,9 +269,9 @@ void register_foxglove_systems(App& app, talos::Scheduler* scheduler_ptr_ = null
                     obj["corners"].push_back({pt.x, pt.y});
                 }
                 obj["confidence"] = det.confidence;
-                obj["color"]      = to_string(det.color);
-                obj["type"]       = to_string(det.type);
-                obj["name"]       = to_string(det.name);
+                obj["color"]      = magic_enum::enum_name(det.color);
+                obj["type"]       = magic_enum::enum_name(det.type);
+                obj["name"]       = magic_enum::enum_name(det.name);
                 armors_json["armors"].push_back(obj);
             }
 
@@ -429,10 +430,12 @@ void register_foxglove_systems(App& app, talos::Scheduler* scheduler_ptr_ = null
                             tac::Geometry::ARMOR_WIDTH)
                         .color(tac::L2::MEASUREMENT_GHOST)
                         .text_with_offset(
-                            fmt::format("{} {}", to_string(m.name), to_string(m.type)), 0,
-                            -tac::Text::SIZE_MEDIUM, 0, tac::L2::LABEL_FONT_SIZE)
+                            fmt::format(
+                                "{} {}", magic_enum::enum_name(m.name),
+                                magic_enum::enum_name(m.type)),
+                            0, -tac::Text::SIZE_MEDIUM, 0, tac::L2::LABEL_FONT_SIZE)
                         .metadata("confidence", fmt::format("{:.3f}", m.confidence))
-                        .metadata("color", std::string(to_string(m.color)))
+                        .metadata("color", std::string(magic_enum::enum_name(m.color)))
                         .timestamp(m.timestamp_ns)
                         .build();
 
@@ -483,9 +486,9 @@ void register_foxglove_systems(App& app, talos::Scheduler* scheduler_ptr_ = null
                 nlohmann::json obj;
                 obj["position"] = {translation.x(), translation.y(), translation.z()};
                 obj["rpy"]      = m.transform->euler_rot().rpy();
-                obj["color"]    = to_string(m.color);
-                obj["type"]     = to_string(m.type);
-                obj["name"]     = to_string(m.name);
+                obj["color"]    = magic_enum::enum_name(m.color);
+                obj["type"]     = magic_enum::enum_name(m.type);
+                obj["name"]     = magic_enum::enum_name(m.name);
                 meas_json["measurements"].push_back(obj);
             }
 
@@ -566,7 +569,7 @@ void register_foxglove_systems(App& app, talos::Scheduler* scheduler_ptr_ = null
             // Publish target state JSON
             nlohmann::json target_json;
             target_json["timestamp_ns"] = output->timestamp_ns;
-            target_json["status"]       = to_string(output->status);
+            target_json["status"]       = magic_enum::enum_name(output->status);
             target_json["tracking"]     = output->is_tracking();
 
             if (output->is_robot()) {
@@ -902,7 +905,7 @@ void register_foxglove_systems(App& app, talos::Scheduler* scheduler_ptr_ = null
                 const auto& m = batch->measurements[i];
                 nlohmann::json obj;
                 obj["index"]      = i;
-                obj["name"]       = to_string(m.name);
+                obj["name"]       = magic_enum::enum_name(m.name);
                 const auto t      = m.transform->translation();
                 obj["position"]   = {t.x(), t.y(), t.z()};
                 const auto rpy    = m.transform->euler_rot().rpy();
@@ -940,9 +943,9 @@ void register_foxglove_systems(App& app, talos::Scheduler* scheduler_ptr_ = null
                 nlohmann::json obj;
                 obj["index"]      = i;
                 obj["confidence"] = det.confidence;
-                obj["color"]      = to_string(det.color);
-                obj["type"]       = to_string(det.type);
-                obj["name"]       = to_string(det.name);
+                obj["color"]      = magic_enum::enum_name(det.color);
+                obj["type"]       = magic_enum::enum_name(det.type);
+                obj["name"]       = magic_enum::enum_name(det.name);
                 nn_json["detections"].push_back(obj);
             }
 
@@ -969,7 +972,7 @@ void register_foxglove_systems(App& app, talos::Scheduler* scheduler_ptr_ = null
             const auto& debug = *output->association_debug;
             nlohmann::json phase_json;
             phase_json["timestamp_ns"] = output->timestamp_ns;
-            phase_json["target_name"]  = to_string(output->target_name);
+            phase_json["target_name"]  = magic_enum::enum_name(output->target_name);
             phase_json["phase_probs"]  = debug.phase_probs;
             phase_json["map_phase"]    = debug.map_phase;
             phase_json["is_ambiguous"] = debug.is_ambiguous;
@@ -1160,9 +1163,9 @@ void register_foxglove_systems(App& app, talos::Scheduler* scheduler_ptr_ = null
             const auto& debug = *output->state_machine_debug;
             nlohmann::json sm_json;
             sm_json["timestamp_ns"]        = output->timestamp_ns;
-            sm_json["status"]              = to_string(output->status);
+            sm_json["status"]              = magic_enum::enum_name(output->status);
             sm_json["is_tracking"]         = output->is_tracking();
-            sm_json["target_name"]         = to_string(output->target_name);
+            sm_json["target_name"]         = magic_enum::enum_name(output->target_name);
             sm_json["time_in_state"]       = debug.time_in_state;
             sm_json["detecting_count"]     = debug.detecting_count;
             sm_json["lost_time"]           = debug.lost_time;

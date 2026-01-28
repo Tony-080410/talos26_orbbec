@@ -107,15 +107,14 @@ std::expected<L1L2SetupResult, std::string> setup_l1_l2(
         SPDLOG_INFO("connecting to daedalus ipc...");
         auto ipc_ = ipc::ShmClient::connect();
         if (!ipc_) {
-            return std::unexpected(fmt::format("connect ipc: {}", ipc::to_string(ipc_.error())));
+            return std::unexpected(fmt::format("connect ipc: {}", ipc_.error()));
         }
         auto ipc_device = std::make_shared<ipc::ShmClient>(std::move(*ipc_));
 
         SPDLOG_INFO("initializing daedalus input interface...");
         auto input_result = fcs::L1::CameraInterface::create_ipc(ipc_device);
         if (!input_result) {
-            return std::unexpected(
-                fmt::format("init daedalus input: {}", fcs::L1::to_string(input_result.error())));
+            return std::unexpected(fmt::format("init daedalus input: {}", input_result.error()));
         }
 
         SPDLOG_INFO("initializing daedalus output interface...");
@@ -147,17 +146,14 @@ std::expected<L1L2SetupResult, std::string> setup_l1_l2(
         SPDLOG_INFO("initializing hik input interface...");
         auto input_result = fcs::L1::CameraInterface::create_hik(config.camera);
         if (!input_result) {
-            return std::unexpected(
-                fmt::format("init hik input: {}", fcs::L1::to_string(input_result.error())));
+            return std::unexpected(fmt::format("init hik input: {}", input_result.error()));
         }
 
         SPDLOG_INFO("connecting to USB device...");
         auto connect_result =
             usb_device->connect(config.imu_vendor_id, config.imu_product_id_opt());
         if (!connect_result) {
-            return std::unexpected(
-                fmt::format(
-                    "connect USB device: {}", talos_gimbal::to_string(connect_result.error())));
+            return std::unexpected(fmt::format("connect USB device: {}", connect_result.error()));
         }
 
         camera    = std::make_shared<fcs::L1::CameraInterface>(std::move(*input_result));
@@ -175,7 +171,7 @@ std::expected<L1L2SetupResult, std::string> setup_l1_l2(
     }
     SPDLOG_INFO(
         "detector backend: {} (color={})", backend_handle_result->name,
-        fcs::to_string(vision.at_legacy.detector.detect_color));
+        vision.at_legacy.detector.detect_color);
 
     world.insert_resource(std::move(backend_handle_result->backend));
     world.insert_resource(fcs::L2::create_pnp_solver(cam_info));

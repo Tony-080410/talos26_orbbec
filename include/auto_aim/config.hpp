@@ -3,9 +3,12 @@
 #include <atomic>
 #include <cstdint>
 #include <expected>
+#include <fmt/core.h>
 #include <memory>
 #include <optional>
 #include <string>
+
+#include "magic_enum.hpp"
 
 #include "fcs/L2_perception/at_legacy_config.hpp"
 #include "fcs/L2_perception/rune/rune_config.hpp"
@@ -35,6 +38,7 @@ struct FoxgloveConfig {
 };
 
 enum class RobotType { Infantry, Hero, Sentry };
+
 struct HardwareConfig {
     CameraConfig camera{};
     bool untrust_roll{true};
@@ -121,3 +125,18 @@ private:
 using AtomicVisionConfig = AtomicConfig<VisionConfig>;
 
 } // namespace fcs
+
+// ============================================================================
+// fmt::formatter specializations
+// ============================================================================
+
+namespace fmt {
+
+template <>
+struct formatter<fcs::RobotType> : formatter<std::string_view> {
+    auto format(fcs::RobotType type, format_context& ctx) const {
+        return formatter<std::string_view>::format(magic_enum::enum_name(type), ctx);
+    }
+};
+
+} // namespace fmt

@@ -4,15 +4,13 @@
 #include <expected>
 #include <fcntl.h>
 #include <filesystem>
-#include <fstream>
-#include <memory>
-#include <string>
 #include <string_view>
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
 #include <fmt/core.h>
+#include <magic_enum.hpp>
 
 namespace ipc {
 
@@ -25,19 +23,6 @@ enum class ShmError {
     PermissionDenied,
     InvalidSize,
 };
-
-inline std::string to_string(const ShmError e) {
-    switch (e) {
-    case ShmError::OpenFailed: return "file open failed";
-    case ShmError::TruncateFailed: return "ftruncate failed";
-    case ShmError::MapFailed: return "mmap failed";
-    case ShmError::AlreadyExists: return "file already exists";
-    case ShmError::NotFound: return "file not found";
-    case ShmError::PermissionDenied: return "permission denied";
-    case ShmError::InvalidSize: return "invalid size";
-    }
-    return "unknown error";
-}
 
 /**
  * @brief 获取共享内存文件路径
@@ -241,7 +226,7 @@ namespace fmt {
 template <>
 struct formatter<ipc::ShmError> : formatter<std::string_view> {
     auto format(const ipc::ShmError e, format_context& ctx) const {
-        return formatter<std::string_view>::format(ipc::to_string(e), ctx);
+        return formatter<std::string_view>::format(magic_enum::enum_name(e), ctx);
     }
 };
 

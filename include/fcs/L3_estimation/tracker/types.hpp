@@ -10,6 +10,7 @@
 #include "fcs/core/channel_topics.hpp"
 #include "fcs/core/types.hpp"
 #include <fmt/core.h>
+#include <magic_enum.hpp>
 #include <numbers>
 
 namespace fcs::L3 {
@@ -25,16 +26,8 @@ enum class TrackerStatus : uint8_t {
     TempLost  = 3, // Temporarily lost, using prediction
 };
 
-[[nodiscard]] constexpr std::string_view to_string(TrackerStatus s) noexcept {
-    switch (s) {
-    case TrackerStatus::Idle: return "IDLE";
-    case TrackerStatus::Detecting: return "DETECTING";
-    case TrackerStatus::Tracking: return "TRACKING";
-    case TrackerStatus::TempLost: return "TEMP_LOST";
-    }
-    return "UNKNOWN";
-}
-
+// ============================================================================
+// Robot Target State (11-dim model output)
 // ============================================================================
 // Robot Target State (11-dim model output)
 // ============================================================================
@@ -223,7 +216,7 @@ namespace fmt {
 template <>
 struct formatter<fcs::L3::TrackerStatus> : formatter<std::string_view> {
     auto format(const fcs::L3::TrackerStatus s, format_context& ctx) const {
-        return formatter<std::string_view>::format(fcs::L3::to_string(s), ctx);
+        return formatter<std::string_view>::format(magic_enum::enum_name(s), ctx);
     }
 };
 

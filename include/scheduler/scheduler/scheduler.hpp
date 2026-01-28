@@ -66,22 +66,6 @@ enum class SchedulerError {
     NotBuilt,       ///< Scheduler was not built before run
 };
 
-/**
- * @brief Convert SchedulerError to human-readable string
- *
- * ## Returns
- *
- * C-string describing the error
- */
-[[nodiscard]] constexpr std::string_view to_string(const SchedulerError e) noexcept {
-    switch (e) {
-    case SchedulerError::AlreadyBuilt: return "Scheduler already built";
-    case SchedulerError::AlreadyRunning: return "Scheduler already running";
-    case SchedulerError::NotBuilt: return "Scheduler not built";
-    }
-    return "Unknown error";
-}
-
 // ============================================================================
 // Build Errors (detailed variant for dependency analysis)
 // ============================================================================
