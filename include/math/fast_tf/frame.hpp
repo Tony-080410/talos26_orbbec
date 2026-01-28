@@ -78,37 +78,77 @@ struct [[nodiscard]] Fuck {
         : val(std::move(t)) {}
     explicit Fuck() = default;
 
-    [[nodiscard]] const T& operator*() const noexcept { return val; }
-    [[nodiscard]] T& operator*() noexcept { return val; }
+    // ========================================================================
+    // Transparent Dereference Operators (C++23 Deducing This)
+    // ========================================================================
+    // Single implementation handles all value categories:
+    // - Fuck&         → T&
+    // - const Fuck&   → const T&
+    // - Fuck&&        → T&&
+    // - const Fuck&&  → const T&
 
-    [[nodiscard]] const T* operator->() const noexcept { return &val; }
-    [[nodiscard]] T* operator->() noexcept { return &val; }
-
-    [[nodiscard]] auto operator*(const T& other) const noexcept { return this * *other; }
-
-    template <frame OtherCoord>
-    auto operator*(const Fuck<OtherCoord, T>& other) const {
-        auto prod = val * (*other);
-        return Fuck<Coordinate, decltype(prod)>(prod);
+    template <typename Self>
+    [[nodiscard]] constexpr auto operator*(this Self&& self) noexcept -> decltype(auto) {
+        // std::forward_like preserves the value category:
+        // If self is an lvalue reference, returns lvalue reference to val
+        // If self is an rvalue reference, returns rvalue reference to val
+        return std::forward_like<Self>(self.val);
     }
 
-    template <frame OtherCoord>
-    auto operator+(const Fuck<OtherCoord, T>& other) const {
-        auto prod = val + (*other);
-        return Fuck<Coordinate, decltype(prod)>(prod);
+    template <typename Self>
+    [[nodiscard]] constexpr auto operator->(this Self&& self) noexcept -> decltype(auto) {
+        // std::addressof works for both const and non-const
+        // Return type is automatically deduced as pointer-to-T
+        // (with const-ness matching Self's const-ness)
+        return std::addressof(self.val);
     }
 
-    template <frame OtherCoord>
-    auto operator-(const Fuck<OtherCoord, T>& other) const {
-        auto prod = val - (*other);
-        return Fuck<Coordinate, decltype(prod)>(prod);
+    // ========================================================================
+    // Coordinate-Preserving Binary Operators
+    // ========================================================================
+    // Result retains the left-hand side's coordinate system
+
+    template <typename Self>
+    [[nodiscard]] constexpr auto operator*(this Self&& self, const T& other) noexcept
+        -> Fuck<Coordinate, decltype(std::forward_like<Self>(self.val) * other)> {
+        return Fuck<Coordinate, decltype(std::forward_like<Self>(self.val) * other)>(
+            std::forward_like<Self>(self.val) * other);
     }
 
-    template <typename... Args>
-    constexpr auto operator()(Args&&... args) const
-        noexcept(noexcept(val(std::forward<Args>(args)...)))
-            -> decltype(val(std::forward<Args>(args)...)) {
-        return val(std::forward<Args>(args)...);
+    template <typename Self, frame OtherCoord>
+    [[nodiscard]] constexpr auto
+        operator*(this Self&& self, const Fuck<OtherCoord, T>& other) noexcept
+        -> Fuck<Coordinate, decltype(std::forward_like<Self>(self.val) * (*other))> {
+        return Fuck<Coordinate, decltype(std::forward_like<Self>(self.val) * (*other))>(
+            std::forward_like<Self>(self.val) * (*other));
+    }
+
+    template <typename Self, frame OtherCoord>
+    [[nodiscard]] constexpr auto
+        operator+(this Self&& self, const Fuck<OtherCoord, T>& other) noexcept
+        -> Fuck<Coordinate, decltype(std::forward_like<Self>(self.val) + (*other))> {
+        return Fuck<Coordinate, decltype(std::forward_like<Self>(self.val) + (*other))>(
+            std::forward_like<Self>(self.val) + (*other));
+    }
+
+    template <typename Self, frame OtherCoord>
+    [[nodiscard]] constexpr auto
+        operator-(this Self&& self, const Fuck<OtherCoord, T>& other) noexcept
+        -> Fuck<Coordinate, decltype(std::forward_like<Self>(self.val) - (*other))> {
+        return Fuck<Coordinate, decltype(std::forward_like<Self>(self.val) - (*other))>(
+            std::forward_like<Self>(self.val) - (*other));
+    }
+
+    // ========================================================================
+    // Transparent Function Call Operator
+    // ========================================================================
+    // Perfectly forwards arguments to the wrapped callable
+
+    template <typename Self, typename... Args>
+    [[nodiscard]] constexpr auto operator()(this Self&& self, Args&&... args) noexcept(
+        noexcept(std::forward_like<Self>(self.val)(std::forward<Args>(args)...)))
+        -> decltype(std::forward_like<Self>(self.val)(std::forward<Args>(args)...)) {
+        return std::forward_like<Self>(self.val)(std::forward<Args>(args)...);
     }
 
 private:
