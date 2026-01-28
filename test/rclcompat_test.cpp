@@ -4,7 +4,8 @@
 #include "rclcompat/timer_constants.hpp"
 #include "scheduler/rclcompat/registry.hpp"
 #include "scheduler/rclcompat/system.hpp"
-#include "scheduler/scheduler.hpp"
+#include "scheduler/scheduler/error_formatter.hpp"
+#include "scheduler/scheduler/scheduler.hpp"
 
 #include <functional>
 #include <gtest/gtest.h>
@@ -105,7 +106,7 @@ TEST(SystemMetaBuilderTest, BasicConstruction) {
     // KEY ASSERTIONS:
     //   - EXPECT_EQ(meta.name, "test_system")
     //   - EXPECT_EQ(meta.policy.kind, PolicyKind::PoolCompute)
-    //   - EXPECT_FALSE(meta.spmc_channels[0].is_reader)
+    //   - EXPECT_EQ(meta.spmc_channels[0].kind, talos::channel_kind::spmc_writer)
 
     auto meta = rclcompat::SystemMetaBuilder("test_system")
                     .policy(make_policy_info<pool_compute>())
@@ -117,7 +118,7 @@ TEST(SystemMetaBuilderTest, BasicConstruction) {
     EXPECT_EQ(meta.spmc_channels.size(), 1);
     EXPECT_EQ(meta.spmc_channels[0].type, typeid(TestMessage));
     EXPECT_EQ(meta.spmc_channels[0].topic, typeid(TestTag1));
-    EXPECT_FALSE(meta.spmc_channels[0].is_reader);
+    EXPECT_EQ(meta.spmc_channels[0].kind, talos::channel_kind::spmc_writer);
 }
 
 TEST(SystemMetaBuilderTest, MultipleChannels) {
@@ -131,8 +132,8 @@ TEST(SystemMetaBuilderTest, MultipleChannels) {
     //
     // KEY ASSERTIONS:
     //   - EXPECT_EQ(meta.spmc_channels.size(), 2)
-    //   - EXPECT_TRUE(meta.spmc_channels[0].is_reader)
-    //   - EXPECT_FALSE(meta.spmc_channels[1].is_reader)
+    //   - EXPECT_EQ(meta.spmc_channels[0].kind, talos::channel_kind::spmc_reader)
+    //   - EXPECT_EQ(meta.spmc_channels[1].kind, talos::channel_kind::spmc_writer)
 
     auto meta = rclcompat::SystemMetaBuilder("multi_channel")
                     .policy(make_policy_info<pool_compute>())
@@ -141,8 +142,8 @@ TEST(SystemMetaBuilderTest, MultipleChannels) {
                     .build();
 
     EXPECT_EQ(meta.spmc_channels.size(), 2);
-    EXPECT_TRUE(meta.spmc_channels[0].is_reader);
-    EXPECT_FALSE(meta.spmc_channels[1].is_reader);
+    EXPECT_EQ(meta.spmc_channels[0].kind, talos::channel_kind::spmc_reader);
+    EXPECT_EQ(meta.spmc_channels[1].kind, talos::channel_kind::spmc_writer);
 }
 
 // ============================================================================

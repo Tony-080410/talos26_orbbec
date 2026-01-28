@@ -8,6 +8,9 @@
 
 #include "packet.hpp"
 
+#include <fmt/core.h>
+#include <fmt/std.h>
+
 namespace talos_gimbal {
 enum class usb_open_error : std::uint8_t { DetachDriver };
 using UsbInitError = std::variant<libusb_error, usb_open_error>;
@@ -44,4 +47,27 @@ template <typename T>
 concept Parser = requires(const std::span<std::byte> data) {
     { T::parse(data) } -> std::same_as<void>;
 };
+
 } // namespace talos_gimbal
+
+// ============================================================================
+// fmt::formatter specializations
+// ============================================================================
+
+namespace fmt {
+
+template <>
+struct formatter<talos_gimbal::usb_open_error> : formatter<std::string_view> {
+    auto format(const talos_gimbal::usb_open_error e, format_context& ctx) const {
+        return formatter<std::string_view>::format(talos_gimbal::to_string(e), ctx);
+    }
+};
+
+template <>
+struct formatter<talos_gimbal::UsbInitError> : formatter<std::string_view> {
+    auto format(const talos_gimbal::UsbInitError& err, format_context& ctx) const {
+        return formatter<std::string_view>::format(talos_gimbal::to_string(err), ctx);
+    }
+};
+
+} // namespace fmt

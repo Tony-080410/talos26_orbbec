@@ -37,21 +37,12 @@ struct DetectorPipe {};
 void test_type_traits() {
     printf("=== Test: Type Traits ===\n");
 
-    static_assert(talos::spsc<Frame>::is_spsc);
-    static_assert(talos::spsc<Frame>::is_reader);
-    static_assert(!talos::spsc<Frame>::is_spmc);
-
-    static_assert(talos::spsc_mut<Frame>::is_spsc);
-    static_assert(!talos::spsc_mut<Frame>::is_reader);
-
-    static_assert(talos::spmc<Frame>::is_spmc);
-    static_assert(talos::spmc<Frame>::is_reader);
-
-    static_assert(talos::spmc_mut<Frame>::is_spmc);
-    static_assert(!talos::spmc_mut<Frame>::is_reader);
-
-    static_assert(talos::res<Config>::is_res);
-    static_assert(talos::res_mut<TrackerState>::is_res_mut);
+    static_assert(talos::spsc<Frame>::kind == talos::channel_kind::spsc_reader);
+    static_assert(talos::spsc_mut<Frame>::kind == talos::channel_kind::spsc_writer);
+    static_assert(talos::spmc<Frame>::kind == talos::channel_kind::spmc_reader);
+    static_assert(talos::spmc_mut<Frame>::kind == talos::channel_kind::spmc_writer);
+    static_assert(talos::res<Config>::kind == talos::channel_kind::res);
+    static_assert(talos::res_mut<TrackerState>::kind == talos::channel_kind::res_mut);
 
     printf("  All static assertions passed!\n\n");
 }
@@ -261,11 +252,7 @@ void test_local_variables() {
     printf("=== Test: Local Variables ===\n");
 
     // 1. Type trait verification
-    static_assert(talos::local<int>::is_local);
-    static_assert(!talos::local<int>::is_spsc);
-    static_assert(!talos::local<int>::is_spmc);
-    static_assert(!talos::local<int>::is_res);
-    static_assert(!talos::local<int>::is_res_mut);
+    static_assert(talos::local<int>::kind == talos::channel_kind::local);
     printf("  [PASS] Type trait checks for local<T>\n");
 
     // 2. Basic counter that persists across runs

@@ -12,6 +12,8 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+#include <fmt/core.h>
+
 namespace ipc {
 
 enum class ShmError {
@@ -229,3 +231,18 @@ private:
 };
 
 } // namespace ipc
+
+// ============================================================================
+// fmt::formatter specializations
+// ============================================================================
+
+namespace fmt {
+
+template <>
+struct formatter<ipc::ShmError> : formatter<std::string_view> {
+    auto format(const ipc::ShmError e, format_context& ctx) const {
+        return formatter<std::string_view>::format(ipc::to_string(e), ctx);
+    }
+};
+
+} // namespace fmt

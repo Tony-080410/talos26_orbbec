@@ -39,12 +39,7 @@ public:
         std::atomic<bool>* write_flag, std::type_index type, std::type_index topic) noexcept {
         tracked_write_flags_.push_back(write_flag);
         meta_.spmc_channels.push_back(
-            ChannelMeta{
-                .type      = type,
-                .topic     = topic,
-                .is_reader = false,
-                .is_spsc   = false,
-                .is_spmc   = true});
+            ChannelMeta{.type = type, .topic = topic, .kind = channel_kind::spmc_writer});
     }
 
     void bind([[maybe_unused]] World& world) noexcept override {

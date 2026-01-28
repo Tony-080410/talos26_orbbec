@@ -389,11 +389,9 @@ public:
         // Update meta to include this writer channel
         meta_.spmc_channels.push_back(
             ChannelMeta{
-                .type      = type,
-                .topic     = topic,
-                .is_reader = false,
-                .is_spsc   = false,
-                .is_spmc   = true,
+                .type  = type,
+                .topic = topic,
+                .kind  = channel_kind::spmc_writer,
             });
     }
 

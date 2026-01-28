@@ -3,6 +3,8 @@
 #include <cstdint>
 #include <string_view>
 
+#include <fmt/core.h>
+
 namespace fast_tf {
 
 // ============================================================================
@@ -33,3 +35,18 @@ constexpr std::string_view to_string(TransformError e) noexcept {
 }
 
 } // namespace fast_tf
+
+// ============================================================================
+// fmt::formatter specializations
+// ============================================================================
+
+namespace fmt {
+
+template <>
+struct formatter<fast_tf::TransformError> : formatter<std::string_view> {
+    auto format(const fast_tf::TransformError e, format_context& ctx) const {
+        return formatter<std::string_view>::format(fast_tf::to_string(e), ctx);
+    }
+};
+
+} // namespace fmt

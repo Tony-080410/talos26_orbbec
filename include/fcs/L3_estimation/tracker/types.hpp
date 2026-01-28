@@ -9,6 +9,7 @@
 
 #include "fcs/core/channel_topics.hpp"
 #include "fcs/core/types.hpp"
+#include <fmt/core.h>
 #include <numbers>
 
 namespace fcs::L3 {
@@ -212,3 +213,18 @@ inline std::array<Eigen::Vector4d, 3> OutpostTargetState::armor_poses() const no
 }
 
 } // namespace fcs::L3
+
+// ============================================================================
+// fmt::formatter specializations
+// ============================================================================
+
+namespace fmt {
+
+template <>
+struct formatter<fcs::L3::TrackerStatus> : formatter<std::string_view> {
+    auto format(const fcs::L3::TrackerStatus s, format_context& ctx) const {
+        return formatter<std::string_view>::format(fcs::L3::to_string(s), ctx);
+    }
+};
+
+} // namespace fmt

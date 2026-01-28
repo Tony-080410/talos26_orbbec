@@ -11,12 +11,15 @@
 #include "fcs/visualization/foxglove_systems.hpp"
 #include "magic_enum.hpp"
 #include "math/fast_tf/robot_factory.hpp"
-#include "scheduler/scheduler.hpp"
+#include "scheduler/scheduler/error_formatter.hpp"
+#include "scheduler/scheduler/scheduler.hpp"
 #include "spdlog_hook.hpp"
 #include "toml_helper.hpp"
 
 #include <chrono>
 #include <expected>
+#include <fmt/core.h>
+#include <fmt/std.h>
 #include <memory>
 #include <optional>
 #include <toml++/impl/parse_error.hpp>
@@ -215,8 +218,7 @@ int main() {
 
     // Build
     if (auto build_result = scheduler.build(); !build_result) {
-        SPDLOG_CRITICAL(
-            "build scheduler: {}", talos::format_build_error(build_result.error()).c_str());
+        SPDLOG_CRITICAL("build scheduler: {}", fmt::format("{}", build_result.error()));
         return 1;
     }
 

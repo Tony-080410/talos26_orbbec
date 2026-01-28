@@ -1,8 +1,11 @@
+#include "scheduler/scheduler/error_formatter.hpp"
 #include "scheduler/scheduler/scheduler.hpp"
 
 #include <atomic>
 #include <chrono>
 #include <cstdio>
+#include <fmt/core.h>
+#include <fmt/std.h>
 #include <thread>
 
 // ============================================================================
@@ -87,8 +90,7 @@ void test_scheduler_fixed_rate_and_pool() {
     // Build
     auto build_result = scheduler.build();
     if (!build_result) {
-        printf(
-            "  ERROR: Build failed: %s\n", talos::format_build_error(build_result.error()).c_str());
+        printf("  ERROR: Build failed: %s\n", fmt::format("{}", build_result.error()).c_str());
         return;
     }
 
@@ -206,13 +208,12 @@ void test_multiple_writers_error() {
 
     // Check error type
     if (!std::holds_alternative<talos::MultipleWritersError>(result.error())) {
-        printf(
-            "  ERROR: Wrong error type: %s\n", talos::format_build_error(result.error()).c_str());
+        printf("  ERROR: Wrong error type: %s\n", fmt::format("{}", result.error()).c_str());
         return;
     }
 
     auto& err = std::get<talos::MultipleWritersError>(result.error());
-    printf("  Got expected error: %s\n", talos::format_build_error(result.error()).c_str());
+    printf("  Got expected error: %s\n", fmt::format("{}", result.error()).c_str());
     printf("  Writers: ");
     for (const auto& w : err.writers) {
         printf("'%s' ", w.c_str());
@@ -250,13 +251,12 @@ void test_multiple_readers_error() {
     }
 
     if (!std::holds_alternative<talos::MultipleReadersError>(result.error())) {
-        printf(
-            "  ERROR: Wrong error type: %s\n", talos::format_build_error(result.error()).c_str());
+        printf("  ERROR: Wrong error type: %s\n", fmt::format("{}", result.error()).c_str());
         return;
     }
 
     auto& err = std::get<talos::MultipleReadersError>(result.error());
-    printf("  Got expected error: %s\n", talos::format_build_error(result.error()).c_str());
+    printf("  Got expected error: %s\n", fmt::format("{}", result.error()).c_str());
     printf("  Readers: ");
     for (const auto& r : err.readers) {
         printf("'%s' ", r.c_str());
@@ -292,7 +292,7 @@ void test_spmc_multiple_readers_ok() {
 
     auto result = scheduler.build();
     if (!result) {
-        printf("  ERROR: Build failed: %s\n", talos::format_build_error(result.error()).c_str());
+        printf("  ERROR: Build failed: %s\n", fmt::format("{}", result.error()).c_str());
         return;
     }
 
@@ -323,12 +323,11 @@ void test_orphaned_reader_error() {
     }
 
     if (!std::holds_alternative<talos::OrphanedReaderError>(result.error())) {
-        printf(
-            "  ERROR: Wrong error type: %s\n", talos::format_build_error(result.error()).c_str());
+        printf("  ERROR: Wrong error type: %s\n", fmt::format("{}", result.error()).c_str());
         return;
     }
 
-    printf("  Got expected error: %s\n", talos::format_build_error(result.error()).c_str());
+    printf("  Got expected error: %s\n", fmt::format("{}", result.error()).c_str());
     printf("  Orphaned Reader Error test passed!\n\n");
 }
 
@@ -359,12 +358,11 @@ void test_channel_kind_conflict() {
     }
 
     if (!std::holds_alternative<talos::ChannelKindConflict>(result.error())) {
-        printf(
-            "  ERROR: Wrong error type: %s\n", talos::format_build_error(result.error()).c_str());
+        printf("  ERROR: Wrong error type: %s\n", fmt::format("{}", result.error()).c_str());
         return;
     }
 
-    printf("  Got expected error: %s\n", talos::format_build_error(result.error()).c_str());
+    printf("  Got expected error: %s\n", fmt::format("{}", result.error()).c_str());
     printf("  Channel Kind Conflict test passed!\n\n");
 }
 
@@ -408,13 +406,12 @@ void test_dependency_cycle_error() {
     }
 
     if (!std::holds_alternative<talos::DependencyCycleError>(result.error())) {
-        printf(
-            "  ERROR: Wrong error type: %s\n", talos::format_build_error(result.error()).c_str());
+        printf("  ERROR: Wrong error type: %s\n", fmt::format("{}", result.error()).c_str());
         return;
     }
 
     auto& err = std::get<talos::DependencyCycleError>(result.error());
-    printf("  Got expected error: %s\n", talos::format_build_error(result.error()).c_str());
+    printf("  Got expected error: %s\n", fmt::format("{}", result.error()).c_str());
     printf("  Cycle involves %zu systems\n", err.cycle.size());
     printf("  Dependency Cycle Error test passed!\n\n");
 }
@@ -451,7 +448,7 @@ void test_valid_dependency_chain() {
 
     auto result = scheduler.build();
     if (!result) {
-        printf("  ERROR: Build failed: %s\n", talos::format_build_error(result.error()).c_str());
+        printf("  ERROR: Build failed: %s\n", fmt::format("{}", result.error()).c_str());
         return;
     }
 
@@ -477,19 +474,15 @@ public:
 
         meta_.spmc_channels.push_back(
             talos::ChannelMeta{
-                .type      = typeid(CameraFrame),
-                .topic     = typeid(CameraChannel),
-                .is_reader = true,
-                .is_spsc   = false,
-                .is_spmc   = true,
+                .type  = typeid(CameraFrame),
+                .topic = typeid(CameraChannel),
+                .kind  = talos::channel_kind::spmc_reader,
             });
         meta_.spsc_channels.push_back(
             talos::ChannelMeta{
-                .type      = typeid(FusionResult),
-                .topic     = typeid(CustomFusionOut),
-                .is_reader = false,
-                .is_spsc   = true,
-                .is_spmc   = false,
+                .type  = typeid(FusionResult),
+                .topic = typeid(CustomFusionOut),
+                .kind  = talos::channel_kind::spsc_writer,
             });
     }
 
@@ -534,12 +527,12 @@ void test_custom_system_injection() {
             cam_out.write(CameraFrame{.frame_id = frame});
         });
 
-    scheduler.add_system(std::make_unique<CustomFusionSystem>(custom_runs));
+    [[maybe_unused]] auto idx =
+        scheduler.add_system(std::make_unique<CustomFusionSystem>(custom_runs));
 
     auto build_result = scheduler.build();
     if (!build_result) {
-        printf(
-            "  ERROR: Build failed: %s\n", talos::format_build_error(build_result.error()).c_str());
+        printf("  ERROR: Build failed: %s\n", fmt::format("{}", build_result.error()).c_str());
         return;
     }
 

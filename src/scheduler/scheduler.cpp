@@ -1,6 +1,7 @@
 #include "scheduler/scheduler/scheduler.hpp"
 #include "performance_probe.hpp"
 #include "scheduler/primitives/thread_affinity.hpp"
+#include "scheduler/scheduler/error_formatter.hpp"
 
 #include "scheduler/spin.hpp"
 #include <algorithm>
@@ -817,12 +818,22 @@ auto Scheduler::compute_levels() -> BuildResult {
     // Phase 1: Collect channel usage information
     // ========================================================================
 
+    // Helper: check if channel kind is a writer
+    const auto is_writer = [](channel_kind k) {
+        return k == channel_kind::spsc_writer || k == channel_kind::spmc_writer;
+    };
+
+    // Helper: check if channel kind is SPSC
+    const auto is_spsc = [](channel_kind k) {
+        return k == channel_kind::spsc_reader || k == channel_kind::spsc_writer;
+    };
+
     struct ChannelUsage {
-        bool is_spsc = false;
-        std::vector<std::size_t> writers;   // Compute system indices
-        std::vector<std::size_t> readers;   // Compute system indices
-        bool has_fixed_rate_writer = false; // Written by fixed_rate system
-        std::string first_system;           // For kind conflict reporting
+        channel_kind kind = channel_kind::local; // Will be set on first use
+        std::vector<std::size_t> writers;        // Compute system indices
+        std::vector<std::size_t> readers;        // Compute system indices
+        bool has_fixed_rate_writer = false;      // Written by fixed_rate system
+        std::string first_system;                // For kind conflict reporting
     };
 
     std::unordered_map<ChannelKey, ChannelUsage, ChannelKeyHash> channels;
@@ -832,20 +843,20 @@ auto Scheduler::compute_levels() -> BuildResult {
         const auto& meta = entry.system->meta();
 
         for (const auto& ch : meta.spsc_channels) {
-            if (!ch.is_reader) {
+            if (is_writer(ch.kind)) {
                 ChannelKey key{ch.type, ch.topic};
                 auto& usage                 = channels[key];
-                usage.is_spsc               = true;
+                usage.kind                  = ch.kind;
                 usage.has_fixed_rate_writer = true;
                 usage.first_system          = meta.name;
             }
         }
 
         for (const auto& ch : meta.spmc_channels) {
-            if (!ch.is_reader) {
+            if (is_writer(ch.kind)) {
                 ChannelKey key{ch.type, ch.topic};
                 auto& usage                 = channels[key];
-                usage.is_spsc               = false;
+                usage.kind                  = ch.kind;
                 usage.has_fixed_rate_writer = true;
                 usage.first_system          = meta.name;
             }
@@ -856,58 +867,44 @@ auto Scheduler::compute_levels() -> BuildResult {
     for (std::size_t i = 0; i < n; ++i) {
         const auto& meta = compute_systems_[i].system->meta();
 
-        // Process SPSC channels
-        for (const auto& ch : meta.spsc_channels) {
+        // Process channels using lambda to avoid duplication
+        auto process_channel = [&](const ChannelMeta& ch, bool expect_spc) -> BuildResult {
             ChannelKey key{ch.type, ch.topic};
             auto& usage = channels[key];
 
             // Check for kind conflict (same key used as both SPSC and SPMC)
             if (!usage.writers.empty() || !usage.readers.empty()) {
-                if (!usage.is_spsc) {
+                const auto is_expected_kind =
+                    expect_spc ? is_spsc(usage.kind) : !is_spsc(usage.kind);
+                if (!is_expected_kind) {
                     return std::unexpected(
                         ChannelKindConflict{
-                            .key           = ChannelKeyInfo(ch.type, ch.topic, true),
+                            .key           = ChannelKeyInfo(ch.type, ch.topic, expect_spc),
                             .first_system  = usage.first_system,
                             .second_system = meta.name,
                         });
                 }
             } else {
-                usage.is_spsc      = true;
+                usage.kind         = ch.kind;
                 usage.first_system = meta.name;
             }
 
-            if (ch.is_reader) {
-                usage.readers.push_back(i);
-            } else {
+            if (is_writer(ch.kind)) {
                 usage.writers.push_back(i);
+            } else {
+                usage.readers.push_back(i);
             }
+            return {};
+        };
+
+        for (const auto& ch : meta.spsc_channels) {
+            if (auto result = process_channel(ch, true); !result)
+                return result;
         }
 
-        // Process SPMC channels
         for (const auto& ch : meta.spmc_channels) {
-            ChannelKey key{ch.type, ch.topic};
-            auto& usage = channels[key];
-
-            // Check for kind conflict
-            if (!usage.writers.empty() || !usage.readers.empty()) {
-                if (usage.is_spsc) {
-                    return std::unexpected(
-                        ChannelKindConflict{
-                            .key           = ChannelKeyInfo(ch.type, ch.topic, false),
-                            .first_system  = usage.first_system,
-                            .second_system = meta.name,
-                        });
-                }
-            } else {
-                usage.is_spsc      = false;
-                usage.first_system = meta.name;
-            }
-
-            if (ch.is_reader) {
-                usage.readers.push_back(i);
-            } else {
-                usage.writers.push_back(i);
-            }
+            if (auto result = process_channel(ch, false); !result)
+                return result;
         }
     }
 
@@ -930,13 +927,13 @@ auto Scheduler::compute_levels() -> BuildResult {
             }
             return std::unexpected(
                 MultipleWritersError{
-                    .key     = ChannelKeyInfo(key.type, key.topic, usage.is_spsc),
+                    .key     = ChannelKeyInfo(key.type, key.topic, is_spsc(usage.kind)),
                     .writers = std::move(writer_names),
                 });
         }
 
         // SPSC with multiple readers is an error
-        if (usage.is_spsc && usage.readers.size() > 1) {
+        if (is_spsc(usage.kind) && usage.readers.size() > 1) {
             std::vector<std::string> reader_names;
             reader_names.reserve(usage.readers.size());
             for (auto idx : usage.readers) {
@@ -958,7 +955,7 @@ auto Scheduler::compute_levels() -> BuildResult {
             }
             return std::unexpected(
                 OrphanedReaderError{
-                    .key     = ChannelKeyInfo(key.type, key.topic, usage.is_spsc),
+                    .key     = ChannelKeyInfo(key.type, key.topic, is_spsc(usage.kind)),
                     .readers = std::move(reader_names),
                 });
         }
@@ -1118,7 +1115,7 @@ auto Scheduler::compute_levels() -> BuildResult {
         const auto& meta      = fixed_rate_systems_[i].system->meta();
         // Find compute systems that directly read from this fixed_rate's channels
         for (const auto& ch : meta.spsc_channels) {
-            if (!ch.is_reader) {
+            if (is_writer(ch.kind)) {
                 ChannelKey key{ch.type, ch.topic};
                 if (auto it = channels.find(key); it != channels.end()) {
                     for (auto reader : it->second.readers) {
@@ -1130,7 +1127,7 @@ auto Scheduler::compute_levels() -> BuildResult {
         }
 
         for (const auto& ch : meta.spmc_channels) {
-            if (!ch.is_reader) {
+            if (is_writer(ch.kind)) {
                 ChannelKey key{ch.type, ch.topic};
                 if (auto it = channels.find(key); it != channels.end()) {
                     for (auto reader : it->second.readers) {

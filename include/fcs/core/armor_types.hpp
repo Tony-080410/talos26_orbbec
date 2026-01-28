@@ -6,6 +6,8 @@
 #include <string_view>
 #include <type_traits>
 
+#include <fmt/core.h>
+
 namespace fcs {
 
 // ============================================================================
@@ -88,4 +90,40 @@ inline constexpr double AT_LEGACY_LARGE_ARMOR_HEIGHT = 55.0 / 1000.0;
 }
 
 } // namespace fcs
+
+// ============================================================================
+// fmt::formatter specializations
+// ============================================================================
+
+namespace fmt {
+
+template <>
+struct formatter<fcs::ArmorType> : formatter<std::string_view> {
+    auto format(const fcs::ArmorType c, format_context& ctx) const {
+        return formatter<std::string_view>::format(fcs::to_string(c), ctx);
+    }
+};
+
+template <>
+struct formatter<fcs::ArmorColor> : formatter<std::string_view> {
+    auto format(const fcs::ArmorColor c, format_context& ctx) const {
+        return formatter<std::string_view>::format(fcs::to_string(c), ctx);
+    }
+};
+
+template <>
+struct formatter<fcs::ArmorName> : formatter<std::string_view> {
+    auto format(const fcs::ArmorName c, format_context& ctx) const {
+        return formatter<std::string_view>::format(fcs::to_string(c), ctx);
+    }
+};
+
+template <>
+struct formatter<fcs::TrackStatus> : formatter<std::string_view> {
+    auto format(const fcs::TrackStatus c, format_context& ctx) const {
+        return formatter<std::string_view>::format(fcs::to_string(c), ctx);
+    }
+};
+
+} // namespace fmt
 

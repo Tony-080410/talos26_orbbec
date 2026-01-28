@@ -67,11 +67,9 @@ public:
     SystemMetaBuilder& add_spmc_writer(std::type_index type, std::type_index topic) noexcept {
         meta_.spmc_channels.push_back(
             ChannelMeta{
-                .type      = type,
-                .topic     = topic,
-                .is_reader = false,
-                .is_spsc   = false,
-                .is_spmc   = true,
+                .type  = type,
+                .topic = topic,
+                .kind  = channel_kind::spmc_writer,
             });
         return *this;
     }
@@ -91,11 +89,9 @@ public:
     SystemMetaBuilder& add_spmc_reader(std::type_index type, std::type_index topic) noexcept {
         meta_.spmc_channels.push_back(
             ChannelMeta{
-                .type      = type,
-                .topic     = topic,
-                .is_reader = true,
-                .is_spsc   = false,
-                .is_spmc   = true,
+                .type  = type,
+                .topic = topic,
+                .kind  = channel_kind::spmc_reader,
             });
         return *this;
     }
@@ -115,11 +111,9 @@ public:
     SystemMetaBuilder& add_spsc_writer(std::type_index type, std::type_index topic) noexcept {
         meta_.spsc_channels.push_back(
             ChannelMeta{
-                .type      = type,
-                .topic     = topic,
-                .is_reader = false,
-                .is_spsc   = true,
-                .is_spmc   = false,
+                .type  = type,
+                .topic = topic,
+                .kind  = channel_kind::spsc_writer,
             });
         return *this;
     }
@@ -139,11 +133,9 @@ public:
     SystemMetaBuilder& add_spsc_reader(std::type_index type, std::type_index topic) noexcept {
         meta_.spsc_channels.push_back(
             ChannelMeta{
-                .type      = type,
-                .topic     = topic,
-                .is_reader = true,
-                .is_spsc   = true,
-                .is_spmc   = false,
+                .type  = type,
+                .topic = topic,
+                .kind  = channel_kind::spsc_reader,
             });
         return *this;
     }

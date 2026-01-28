@@ -13,21 +13,32 @@ namespace talos {
 struct DefaultTopic {};
 
 // ============================================================================
+// Channel Kind: Single enum for type identification
+// ============================================================================
+
+enum class channel_kind {
+    spsc_reader, // SPSC reader
+    spsc_writer, // SPSC writer
+    spmc_reader, // SPMC reader
+    spmc_writer, // SPMC writer
+    res,         // Read-only resource
+    res_mut,     // Mutable resource
+    atomic,      // Atomic variable
+    local,       // System-local variable
+};
+
+// ============================================================================
 // Channel Wrappers: Hold pointers to channel components
 // ============================================================================
 
 /// SPSC Reader wrapper
 template <typename T, typename Topic = DefaultTopic>
 struct spsc {
-    using value_type                 = T;
-    using topic_type                 = Topic;
-    using ReaderType                 = primitive::SpscChannel<T>::Reader;
-    static constexpr bool is_spsc    = true;
-    static constexpr bool is_spmc    = false;
-    static constexpr bool is_reader  = true;
-    static constexpr bool is_res     = false;
-    static constexpr bool is_res_mut = false;
-    static constexpr bool is_atomic  = false;
+    using value_type = T;
+    using topic_type = Topic;
+    using ReaderType = primitive::SpscChannel<T>::Reader;
+
+    static constexpr channel_kind kind = channel_kind::spsc_reader;
 
     ReaderType* ptr_ = nullptr;
 
@@ -43,15 +54,11 @@ struct spsc {
 /// SPSC Writer wrapper
 template <typename T, typename Topic = DefaultTopic>
 struct spsc_mut {
-    using value_type                 = T;
-    using topic_type                 = Topic;
-    using WriterType                 = primitive::SpscChannel<T>::Writer;
-    static constexpr bool is_spsc    = true;
-    static constexpr bool is_spmc    = false;
-    static constexpr bool is_reader  = false;
-    static constexpr bool is_res     = false;
-    static constexpr bool is_res_mut = false;
-    static constexpr bool is_atomic  = false;
+    using value_type = T;
+    using topic_type = Topic;
+    using WriterType = primitive::SpscChannel<T>::Writer;
+
+    static constexpr channel_kind kind = channel_kind::spsc_writer;
 
     WriterType* ptr_    = nullptr;
     bool* written_flag_ = nullptr; // Set by scheduler before system runs
@@ -69,15 +76,11 @@ struct spsc_mut {
 /// SPMC Reader wrapper
 template <typename T, typename Topic = DefaultTopic>
 struct spmc {
-    using value_type                 = T;
-    using topic_type                 = Topic;
-    using ReaderType                 = primitive::SpmcChannel<T>::Reader;
-    static constexpr bool is_spsc    = false;
-    static constexpr bool is_spmc    = true;
-    static constexpr bool is_reader  = true;
-    static constexpr bool is_res     = false;
-    static constexpr bool is_res_mut = false;
-    static constexpr bool is_atomic  = false;
+    using value_type = T;
+    using topic_type = Topic;
+    using ReaderType = primitive::SpmcChannel<T>::Reader;
+
+    static constexpr channel_kind kind = channel_kind::spmc_reader;
 
     ReaderType* ptr_ = nullptr;
 
@@ -102,15 +105,11 @@ struct spmc {
 /// SPMC Writer wrapper (uses channel's write directly)
 template <typename T, typename Topic = DefaultTopic>
 struct spmc_mut {
-    using value_type                 = T;
-    using topic_type                 = Topic;
-    using ChannelType                = primitive::SpmcChannel<T>;
-    static constexpr bool is_spsc    = false;
-    static constexpr bool is_spmc    = true;
-    static constexpr bool is_reader  = false;
-    static constexpr bool is_res     = false;
-    static constexpr bool is_res_mut = false;
-    static constexpr bool is_atomic  = false;
+    using value_type  = T;
+    using topic_type  = Topic;
+    using ChannelType = primitive::SpmcChannel<T>;
+
+    static constexpr channel_kind kind = channel_kind::spmc_writer;
 
     ChannelType* ptr_   = nullptr;
     bool* written_flag_ = nullptr; // Set by scheduler before system runs
@@ -126,17 +125,12 @@ struct spmc_mut {
 };
 
 /// Atomic reference wrapper
-/// Atomic reference wrapper
 template <typename T, typename Topic = DefaultTopic>
 struct atomic_ref {
-    using value_type                 = T;
-    using topic_type                 = Topic;
-    static constexpr bool is_spsc    = false;
-    static constexpr bool is_spmc    = false;
-    static constexpr bool is_reader  = true;
-    static constexpr bool is_res     = false;
-    static constexpr bool is_res_mut = false;
-    static constexpr bool is_atomic  = true;
+    using value_type = T;
+    using topic_type = Topic;
+
+    static constexpr channel_kind kind = channel_kind::atomic;
 
     std::atomic<T>* ptr_ = nullptr;
 
@@ -160,15 +154,10 @@ struct atomic_ref {
 /// and does NOT participate in dependency analysis.
 template <typename T>
 struct local {
-    using value_type                 = T;
-    using topic_type                 = void;
-    static constexpr bool is_spsc    = false;
-    static constexpr bool is_spmc    = false;
-    static constexpr bool is_reader  = false;
-    static constexpr bool is_res     = false;
-    static constexpr bool is_res_mut = false;
-    static constexpr bool is_atomic  = false;
-    static constexpr bool is_local   = true;
+    using value_type = T;
+    using topic_type = void;
+
+    static constexpr channel_kind kind = channel_kind::local;
 
     T* ptr_ = nullptr;
 
@@ -186,14 +175,10 @@ struct local {
 /// Read-only resource
 template <typename T>
 struct res {
-    using value_type                 = T;
-    using topic_type                 = void;
-    static constexpr bool is_spsc    = false;
-    static constexpr bool is_spmc    = false;
-    static constexpr bool is_reader  = false;
-    static constexpr bool is_res     = true;
-    static constexpr bool is_res_mut = false;
-    static constexpr bool is_atomic  = false;
+    using value_type = T;
+    using topic_type = void;
+
+    static constexpr channel_kind kind = channel_kind::res;
 
     const T* ptr_                         = nullptr;
     const std::atomic<uint64_t>* version_ = nullptr;
@@ -226,14 +211,10 @@ struct res {
 /// Mutable resource
 template <typename T>
 struct res_mut {
-    using value_type                 = T;
-    using topic_type                 = void;
-    static constexpr bool is_spsc    = false;
-    static constexpr bool is_spmc    = false;
-    static constexpr bool is_reader  = false;
-    static constexpr bool is_res     = false;
-    static constexpr bool is_res_mut = true;
-    static constexpr bool is_atomic  = false;
+    using value_type = T;
+    using topic_type = void;
+
+    static constexpr channel_kind kind = channel_kind::res_mut;
 
     T* ptr_                             = nullptr;
     std::atomic<uint64_t>* version_     = nullptr;

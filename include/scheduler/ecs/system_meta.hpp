@@ -179,56 +179,37 @@ using inner_topic_t = inner_type<T>::topic;
 // Type Predicates
 // ============================================================================
 
-/**
- * @brief Check if type is an SPSC reader
- */
+/// Check if type is an SPSC reader
 template <typename T>
-struct is_spsc_reader : std::bool_constant<T::is_spsc && T::is_reader> {};
+struct is_spsc_reader : std::bool_constant<T::kind == channel_kind::spsc_reader> {};
 
-/**
- * @brief Check if type is an SPSC writer
- */
+/// Check if type is an SPSC writer
 template <typename T>
-struct is_spsc_writer : std::bool_constant<T::is_spsc && !T::is_reader> {};
+struct is_spsc_writer : std::bool_constant<T::kind == channel_kind::spsc_writer> {};
 
-/**
- * @brief Check if type is an SPMC reader
- */
+/// Check if type is an SPMC reader
 template <typename T>
-struct is_spmc_reader : std::bool_constant<T::is_spmc && T::is_reader> {};
+struct is_spmc_reader : std::bool_constant<T::kind == channel_kind::spmc_reader> {};
 
-/**
- * @brief Check if type is an SPMC writer
- */
+/// Check if type is an SPMC writer
 template <typename T>
-struct is_spmc_writer : std::bool_constant<T::is_spmc && !T::is_reader> {};
+struct is_spmc_writer : std::bool_constant<T::kind == channel_kind::spmc_writer> {};
 
-/**
- * @brief Check if type is an atomic reference
- */
+/// Check if type is an atomic reference
 template <typename T>
-struct is_atomic_type : std::bool_constant<T::is_atomic> {};
+struct is_atomic_type : std::bool_constant<T::kind == channel_kind::atomic> {};
 
-/**
- * @brief Check if type is a resource (immutable read)
- */
+/// Check if type is a resource (immutable read)
 template <typename T>
-struct is_res_type : std::bool_constant<T::is_res> {};
+struct is_res_type : std::bool_constant<T::kind == channel_kind::res> {};
 
-/**
- * @brief Check if type is a mutable resource
- */
+/// Check if type is a mutable resource
 template <typename T>
-struct is_res_mut_type : std::bool_constant<T::is_res_mut> {};
+struct is_res_mut_type : std::bool_constant<T::kind == channel_kind::res_mut> {};
 
-/**
- * @brief Check if type is a local variable (defaults to false if is_local not defined)
- */
-template <typename T, typename = void>
-struct is_local_type : std::false_type {};
-
+/// Check if type is a local variable
 template <typename T>
-struct is_local_type<T, std::void_t<decltype(T::is_local)>> : std::bool_constant<T::is_local> {};
+struct is_local_type : std::bool_constant<T::kind == channel_kind::local> {};
 
 } // namespace detail
 
@@ -236,15 +217,11 @@ struct is_local_type<T, std::void_t<decltype(T::is_local)>> : std::bool_constant
 // System Metadata
 // ============================================================================
 
-/**
- * @brief Metadata for a single channel used by a system
- */
+/// Metadata for a single channel used by a system
 struct ChannelMeta {
     std::type_index type;
     std::type_index topic;
-    bool is_reader;
-    bool is_spsc;
-    bool is_spmc;
+    channel_kind kind;
 };
 
 /**
@@ -264,20 +241,16 @@ struct SystemMeta {
 
 namespace detail {
 
-/**
- * @brief Extract channel/resource metadata from a single parameter
- */
+/// Extract channel/resource metadata from a single parameter
 template <typename T>
 constexpr void extract_one_param(SystemMeta& meta) noexcept {
     using Inner = inner_type_t<T>;
     using Topic = inner_topic_t<T>;
 
     if constexpr (is_spsc_reader<T>::value || is_spsc_writer<T>::value) {
-        meta.spsc_channels.emplace_back(
-            ChannelMeta{typeid(Inner), typeid(Topic), T::is_reader, true, false});
+        meta.spsc_channels.emplace_back(ChannelMeta{typeid(Inner), typeid(Topic), T::kind});
     } else if constexpr (is_spmc_reader<T>::value || is_spmc_writer<T>::value) {
-        meta.spmc_channels.emplace_back(
-            ChannelMeta{typeid(Inner), typeid(Topic), T::is_reader, false, true});
+        meta.spmc_channels.emplace_back(ChannelMeta{typeid(Inner), typeid(Topic), T::kind});
     } else if constexpr (is_atomic_type<T>::value) {
         meta.atomics.emplace_back(typeid(Inner));
     } else if constexpr (is_res_type<T>::value) {

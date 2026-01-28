@@ -8,6 +8,7 @@
 #include "fcs/camera_config.hpp"
 #include <chrono>
 #include <expected>
+#include <fmt/core.h>
 #include <memory>
 #include <opencv2/core/mat.hpp>
 #include <ratio>
@@ -85,3 +86,18 @@ private:
 };
 
 } // namespace hikcamera
+
+// ============================================================================
+// fmt::formatter specializations
+// ============================================================================
+
+namespace fmt {
+
+template <>
+struct formatter<hikcamera::CameraError> : formatter<std::string_view> {
+    auto format(const hikcamera::CameraError& e, format_context& ctx) const {
+        return formatter<std::string_view>::format(e.what(), ctx);
+    }
+};
+
+} // namespace fmt

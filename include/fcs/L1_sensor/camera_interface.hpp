@@ -7,6 +7,8 @@
 #include "ipc/shm_client.hpp"
 #include <chrono>
 #include <expected>
+#include <fmt/core.h>
+#include <fmt/std.h>
 #include <opencv2/core/mat.hpp>
 #include <opencv2/imgproc.hpp>
 #include <optional>
@@ -199,3 +201,42 @@ private:
 };
 
 } // namespace fcs::L1
+
+// ============================================================================
+// fmt::formatter specializations
+// ============================================================================
+
+namespace fmt {
+
+template <>
+struct formatter<fcs::L1::Timeout> : formatter<std::string_view> {
+    auto format(const fcs::L1::Timeout, format_context& ctx) const {
+        return formatter<std::string_view>::format("timeout", ctx);
+    }
+};
+
+template <>
+struct formatter<fcs::L1::Disconnected> : formatter<std::string_view> {
+    auto format(const fcs::L1::Disconnected, format_context& ctx) const {
+        return formatter<std::string_view>::format("disconnected", ctx);
+    }
+};
+
+template <>
+struct formatter<fcs::L1::ProducerNotAvailable> : formatter<std::string_view> {
+    auto format(const fcs::L1::ProducerNotAvailable, format_context& ctx) const {
+        return formatter<std::string_view>::format("producer_not_available", ctx);
+    }
+};
+
+template <>
+struct formatter<fcs::L1::InputError> {
+    constexpr auto parse(format_parse_context& ctx) { return ctx.begin(); }
+
+    auto format(const fcs::L1::InputError& err, format_context& ctx) const {
+        return std::visit(
+            [&ctx](const auto& e) { return fmt::format_to(ctx.out(), "{}", e); }, err);
+    }
+};
+
+} // namespace fmt
