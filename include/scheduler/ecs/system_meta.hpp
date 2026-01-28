@@ -34,6 +34,14 @@ struct ChannelKey {
     std::type_index topic;
 
     constexpr bool operator==(const ChannelKey&) const noexcept = default;
+
+    // Lexicographic comparison for std::flat_map (C++23)
+    constexpr bool operator<(const ChannelKey& other) const noexcept {
+        if (type != other.type) {
+            return type < other.type;
+        }
+        return topic < other.topic;
+    }
 };
 
 /**

@@ -334,25 +334,22 @@ template <typename T>
 
 template <typename T>
 [[nodiscard]] std::expected<T, std::string> take(const toml::table& table, std::string_view key) {
-    auto v = read<T>(table, key);
-    if (!v) {
-        return std::unexpected(v.error());
-    }
-    (void)const_cast<toml::table&>(table).erase(key);
-    return std::move(*v);
+    return read<T>(table, key).transform([&](T&& val) {
+        (void)const_cast<toml::table&>(table).erase(key);
+        return std::move(val);
+    });
 }
 
 template <typename T>
 [[nodiscard]] std::expected<std::optional<T>, std::string>
     take_optional(const toml::table& table, std::string_view key) {
-    auto v = read_optional<T>(table, key);
-    if (!v) {
-        return std::unexpected(v.error());
-    }
-    if (*v) {
-        (void)const_cast<toml::table&>(table).erase(key);
-    }
-    return std::move(*v);
+    return read_optional<T>(table, key)
+        .and_then([&](std::optional<T>&& opt_val) -> std::expected<std::optional<T>, std::string> {
+            if (opt_val) {
+                (void)const_cast<toml::table&>(table).erase(key);
+            }
+            return std::move(opt_val);
+        });
 }
 
 // Read a nested `ReadFrom` object from the *current* table instead of a subtable.

@@ -40,3 +40,4 @@ rateui/target
 rateui/.rateui/
 $(ALLUSERSPROFILE)
 old/
+build_agent/

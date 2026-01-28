@@ -114,12 +114,12 @@ public:
     }
 
     template <typename T>
-    [[nodiscard]] bool has_resource() const {
+    [[nodiscard]] bool has_resource() const noexcept {
         return resources_.contains(typeid(T));
     }
 
     template <typename T>
-    [[nodiscard]] res<T> get_res() const {
+    [[nodiscard]] res<T> get_res() const noexcept {
         const auto it = resources_.find(typeid(T));
         if (it == resources_.end())
             return res<T>{nullptr, nullptr, 0};
@@ -139,7 +139,7 @@ public:
     }
 
     template <typename T>
-    std::expected<uint64_t, std::string> update_resource(T new_value) {
+    [[nodiscard]] std::expected<uint64_t, std::string> update_resource(T new_value) {
         auto it = resources_.find(typeid(T));
         if (it == resources_.end()) {
             return std::unexpected("Resource not found: " + std::string(typeid(T).name()));

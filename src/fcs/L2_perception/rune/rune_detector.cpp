@@ -6,6 +6,7 @@
 #include <cmath>
 #include <fstream>
 #include <numeric>
+#include <ranges>
 #include <unordered_map>
 #include <vector>
 
@@ -88,19 +89,23 @@ bool Arrow::set(const std::vector<Light>& lights, const cv::Point2f& roi, const 
     std::vector<cv::Point2f> arrowPoints;
     double fillArea        = 0.0;
     double pointLineThresh = 0.0;
-    std::for_each(lights.begin(), lights.end(), [&](const Light& l) {
+
+    for (const Light& l : lights) {
         arrowPoints.insert(arrowPoints.end(), l.contour.begin(), l.contour.end());
         fillArea += l.contourArea;
-        pointLineThresh += l.size.height / lights.size();
-    });
+        pointLineThresh += l.size.height / static_cast<double>(lights.size());
+    }
+
     // 滤除距离较大的点
     contour.clear();
     cv::Vec4f line;
     cv::fitLine(arrowPoints, line, cv::DIST_L2, 0, 0.01, 0.01);
-    for (const auto& point : arrowPoints) {
-        if (pointLineDistance(point, line) < pointLineThresh) {
-            contour.push_back(point);
-        }
+
+    // Use ranges filter to collect points within threshold
+    for (const auto& point : arrowPoints | std::views::filter([&](const cv::Point2f& p) {
+                                 return pointLineDistance(p, line) < pointLineThresh;
+                             })) {
+        contour.push_back(point);
     }
 
     if (contour.size() < 5) {
@@ -507,33 +512,27 @@ bool RuneDetector::detectAllArrows() {
 }
 
 bool findCenterR(CenterR& center, const std::vector<Light>& lights, const Arrow& arrow) {
-
-    std::vector<Light> filteredLights;
-    for (auto iter = lights.begin(); iter != lights.end(); ++iter) {
-
-        if (!arrow.contour.empty()) {
-            if (cv::pointPolygonTest(arrow.contour, iter->center, false) >= 0) {
-                continue; // 在箭头内部，跳过
+    // Use ranges::filter to exclude lights inside the arrow
+    auto filteredLights =
+        lights | std::views::filter([&](const Light& l) {
+            if (!arrow.contour.empty()) {
+                return cv::pointPolygonTest(arrow.contour, l.center, false) < 0; // 在箭头外部
+            } else {
+                return !arrow.rotated.boundingRect().contains(l.center);
             }
-        } else {
-            // 如果箭头只有 RotatedRect，使用矩形判断
-            if (arrow.rotated.boundingRect().contains(iter->center)) {
-                continue;
-            }
-        }
+        });
 
-        filteredLights.push_back(*iter);
-    }
-    if (filteredLights.empty()) {
+    // Convert to vector for max_element (need multiple passes)
+    std::vector<Light> filteredVec(filteredLights.begin(), filteredLights.end());
+
+    if (filteredVec.empty()) {
         std::cerr << "[ERROR] findCenterR: No filtered lights found" << std::endl;
         return false;
     }
-    // 取所有符合要求的灯条中面积最大的为中心 R 灯条并设置中心 R
 
-    Light rcenter{*std::max_element(
-        filteredLights.begin(), filteredLights.end(),
-        [](const Light& l1, const Light& l2) { return l1.area < l2.area; })};
-    center.set(rcenter);
+    // Use ranges::max_element to find largest light by area
+    auto max_it = std::ranges::max_element(filteredVec, {}, &Light::area);
+    center.set(*max_it);
     return true;
 }
 
@@ -989,12 +988,9 @@ bool findTarget(Target& target, const std::vector<Light>& frames) {
         std::cerr << "[ERROR] findTarget: No targets passed roundness check" << std::endl;
         return false;
     }
-    Light light{
-        *std::max_element(targets.begin(), targets.end(), [](const Light& l1, const Light& l2) {
-            return l1.roundness < l2.roundness;
-        })};
-
-    target.set(light);
+    // Use ranges::max_element to find target with highest roundness
+    auto max_it = std::ranges::max_element(targets, {}, &Light::roundness);
+    target.set(*max_it);
 
     return true;
 }

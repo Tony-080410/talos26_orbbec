@@ -31,7 +31,7 @@ struct CameraProfileConfig {
     double gain{16.7};
     RotateType rotate_angle{RotateType::None};
 
-    std::expected<void, std::string> read_from(const toml::table& tbl) noexcept;
+    [[nodiscard]] std::expected<void, std::string> read_from(const toml::table& tbl) noexcept;
 };
 
 struct CameraConfig {
@@ -41,7 +41,7 @@ struct CameraConfig {
     uint32_t height{1080};
     CameraProfileConfig profile{};
 
-    std::expected<void, std::string> read_from(const toml::table& tbl) noexcept;
+    [[nodiscard]] std::expected<void, std::string> read_from(const toml::table& tbl) noexcept;
 };
 
 } // namespace fcs

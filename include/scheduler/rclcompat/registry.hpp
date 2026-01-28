@@ -5,12 +5,12 @@
 #include "demangle.hpp"
 #include <cstdlib>
 #include <cxxabi.h>
+#include <flat_map>
 #include <mutex>
+#include <set>
 #include <spdlog/spdlog.h>
 #include <string>
 #include <string_view>
-#include <unordered_map>
-#include <unordered_set>
 #include <utility>
 
 namespace talos::rclcompat {
@@ -120,8 +120,8 @@ public:
 
 private:
     mutable std::mutex lock_;
-    std::unordered_map<ChannelKey, std::string, ChannelKeyHash> owners_;
-    std::unordered_set<ChannelKey, ChannelKeyHash> claimed_;
+    std::flat_map<ChannelKey, std::string> owners_;
+    std::set<ChannelKey> claimed_;
 };
 
 // ============================================================================

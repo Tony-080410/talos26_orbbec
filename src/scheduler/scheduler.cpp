@@ -7,11 +7,11 @@
 #include <algorithm>
 #include <cinttypes>
 #include <cstdio>
+#include <flat_map>
 #include <functional>
 #include <nlohmann/json.hpp>
 #include <set>
 #include <spdlog/spdlog.h>
-#include <unordered_map>
 
 namespace talos {
 
@@ -630,6 +630,8 @@ void Scheduler::run_fixed_rate_thread(FixedRateContext ctx) {
     }
 
     // Fixed frequency mode
+    // Assume frequency > 0 to help optimizer eliminate division-by-zero checks
+    [[assume(frequency > 0)]];
     const auto period =
         std::chrono::nanoseconds(1'000'000'000ULL / static_cast<std::uint64_t>(frequency));
     auto next_tick = Clock::now();
@@ -836,7 +838,7 @@ auto Scheduler::compute_levels() -> BuildResult {
         std::string first_system;                // For kind conflict reporting
     };
 
-    std::unordered_map<ChannelKey, ChannelUsage, ChannelKeyHash> channels;
+    std::flat_map<ChannelKey, ChannelUsage> channels;
 
     // First, collect fixed_rate systems' outputs as external sources
     for (const auto& entry : fixed_rate_systems_) {

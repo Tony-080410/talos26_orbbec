@@ -84,53 +84,67 @@ std::expected<
         fcs::VisionConfig>,
     read_config_error>
     read_config() {
+    // Parse entry config
     auto entry_tbl = toml::parse_file("at_vision.toml");
     if (entry_tbl.failed()) {
         return std::unexpected(entry_tbl.error());
     }
+
     LaunchConfig launch_config;
     if (auto result = launch_config.read_from(entry_tbl.table()); !result) {
         return std::unexpected(fmt::format("entry config: {}", result.error()));
     }
+
+    const auto robot_name            = strtolower(magic_enum::enum_name(launch_config.robot));
+    std::string vision_override_path = fmt::format("config/vision/{}.toml", launch_config.vision);
+
+    // Parse base and override configs
     auto base_tbl = toml::parse_file("config/vision_base.toml");
     if (base_tbl.failed()) {
         return std::unexpected(
             fmt::format("config/vision_base.toml: {}", to_string(base_tbl.error())));
     }
-    const auto robot_name            = strtolower(magic_enum::enum_name(launch_config.robot));
-    std::string vision_override_path = fmt::format("config/vision/{}.toml", launch_config.vision);
-    auto vision_override_tbl         = toml::parse_file(vision_override_path);
-    if (vision_override_tbl.failed()) {
+
+    auto override_tbl = toml::parse_file(vision_override_path);
+    if (override_tbl.failed()) {
         return std::unexpected(
-            fmt::format("{}: {}", vision_override_path, to_string(vision_override_tbl.error())));
+            fmt::format("{}: {}", vision_override_path, to_string(override_tbl.error())));
     }
 
-    auto merged_vision = toml_helper::merge_configs(base_tbl.table(), vision_override_tbl.table());
+    // Merge configs using monadic operations
+    auto merged_vision = toml_helper::merge_configs(base_tbl.table(), override_tbl.table())
+                             .transform_error([](const auto& err) {
+                                 return fmt::format("merge vision config: {}", err);
+                             });
     if (!merged_vision) {
-        return std::unexpected(fmt::format("merge vision config: {}", merged_vision.error()));
+        return std::unexpected(merged_vision.error());
     }
 
     fcs::VisionConfig vision_config;
     if (auto result = vision_config.read_from(*merged_vision); !result) {
         return std::unexpected(fmt::format("vision config: {}", result.error()));
     }
+
+    // Early return for daedalus mode
     if (launch_config.daedalus) {
         return std::tuple(
             launch_config.robot, true, std::optional<fcs::HardwareConfig>{},
             std::move(launch_config.foxglove), std::move(vision_config));
     }
 
-    // Step 3: Load robot config
+    // Load hardware config
     std::string hardware_path = fmt::format("config/robot/{}.toml", robot_name);
     auto hardware_tbl         = toml::parse_file(hardware_path);
     if (hardware_tbl.failed()) {
         return std::unexpected(
             fmt::format("{}: {}", hardware_path, to_string(hardware_tbl.error())));
     }
+
     fcs::HardwareConfig hardware_config;
     if (auto result = hardware_config.read_from(hardware_tbl.table()); !result) {
         return std::unexpected(fmt::format("hardware config: {}", result.error()));
     }
+
     return std::tuple(
         launch_config.robot, false, std::optional<fcs::HardwareConfig>{std::move(hardware_config)},
         std::move(launch_config.foxglove), std::move(vision_config));

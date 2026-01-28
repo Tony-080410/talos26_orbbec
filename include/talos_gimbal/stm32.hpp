@@ -86,7 +86,7 @@ struct Stm32Impl {
     // 公共接口
     // ─────────────────────────────────────────────
 
-    std::expected<void, UsbInitError> connect(
+    [[nodiscard]] std::expected<void, UsbInitError> connect(
         const uint16_t vendor_id           = VID,
         std::optional<uint16_t> product_id = std::nullopt) noexcept {
         if (!ctx_ && libusb_init(&ctx_) != LIBUSB_SUCCESS) {

@@ -23,12 +23,12 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <flat_map>
 #include <functional>
 #include <optional>
 #include <span>
 #include <string>
 #include <string_view>
-#include <unordered_map>
 #include <vector>
 
 namespace primitive {
@@ -64,6 +64,14 @@ struct NodeId {
         if (file == other.file)
             return true;
         return std::string_view{file} == std::string_view{other.file};
+    }
+
+    // Lexicographic comparison for std::flat_map (C++23)
+    [[nodiscard]] constexpr bool operator<(const NodeId& other) const noexcept {
+        if (file != other.file) {
+            return std::string_view{file} < std::string_view{other.file};
+        }
+        return line < other.line;
     }
 };
 
@@ -479,7 +487,7 @@ private:
 
     std::vector<Node> nodes_;
     std::vector<Edge> edges_;
-    std::unordered_map<NodeId, std::size_t, NodeIdHash> node_map_;
+    std::flat_map<NodeId, std::size_t> node_map_;
 };
 
 // ============================================================================

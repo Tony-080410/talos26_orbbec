@@ -16,6 +16,8 @@
 #include <fmt/format.h>
 #include <fmt/std.h> // For std::variant, std::vector, etc.
 #include <magic_enum.hpp>
+#include <span>
+#include <string>
 
 // ============================================================================
 // Helper: join strings with separator
@@ -23,7 +25,7 @@
 
 namespace talos::detail {
 
-inline std::string join_strings(const std::vector<std::string>& strs, std::string_view sep) {
+inline std::string join_strings(std::span<const std::string> strs, std::string_view sep) {
     if (strs.empty())
         return "";
     std::string result = strs[0];

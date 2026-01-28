@@ -1,8 +1,10 @@
 # 项目编译
 
+> if sandboxed, append `-DENABLE_SCCACHE=OFF`
+
 ```bash
-cmake -G Ninja -B build -S .
-cmake --build build -- talos -j64
+cmake -G Ninja -B build_agent -S .
+cmake --build build_agent -- talos -j64
 ```
 
 # 运行测试
