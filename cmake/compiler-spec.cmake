@@ -19,3 +19,54 @@ else ()
 endif ()
 
 add_compile_options(-fPIC)
+
+add_compile_options(
+    -march=native
+    -mtune=native
+    -funroll-loops
+    -fvectorize
+    -fslp-vectorize
+)
+
+add_compile_options(
+    -Wall
+    -Wextra
+    -Wpedantic
+    -Werror=pedantic
+
+    # Type safety
+    -Werror=bool-conversion
+    -Wenum-conversion
+
+    -Werror=string-plus-int
+    -Werror=switch-enum
+    -Wswitch-default
+    -Werror=implicit-fallthrough
+
+    -Werror=misleading-indentation
+    -Werror=non-virtual-dtor
+    -Werror=overloaded-virtual
+    -Werror=suggest-override
+
+    -Werror=null-dereference
+    -Werror=array-bounds
+    -Werror=vla
+    -Werror=alloca
+    -Werror=pointer-arith
+    -Werror=format=2
+    -Werror=format-security
+    -Werror=cast-align
+    -Werror=cast-qual
+    -Werror=redundant-decls
+    -Werror=undef
+    -Werror=header-hygiene
+    -Werror=move
+    -Wrange-loop-analysis
+    -Wthread-safety
+    -Wthread-safety-analysis
+
+    -Werror=return-type
+    -Werror=uninitialized
+    -Werror=assign-enum
+    -Werror=bad-function-cast
+)

@@ -89,6 +89,8 @@ add_library(foxglove_cpp SHARED
         ${FOXGLOVE_SOURCES}
 )
 
+silence_target_warnings(foxglove_cpp)
+
 target_include_directories(foxglove_cpp SYSTEM PUBLIC
         ${foxglove_SOURCE_DIR}/include
         ${foxglove_SOURCE_DIR}/include/foxglove
