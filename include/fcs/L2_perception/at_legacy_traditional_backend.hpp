@@ -30,6 +30,7 @@ public:
     [[nodiscard]] DetectionResult detect_impl(const cv::Mat& input);
 
     [[nodiscard]] bool is_initialized_impl() const noexcept { return config_ != nullptr; }
+
     [[nodiscard]] std::string_view name_impl() const noexcept { return "traditional"; }
 
     void set_detect_color(ArmorColor color) noexcept { detect_color_ = color; }

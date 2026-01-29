@@ -30,8 +30,8 @@ struct AtLegacyNNConfig;
 /// Uses atomic shared_ptr for config hot-reload
 class AtLegacyNNBackend : public AtLegacyDetectorBackendBase<AtLegacyNNBackend> {
 public:
-    static constexpr int INPUT_W     = 416;
-    static constexpr int INPUT_H     = 416;
+    static constexpr int INPUT_W     = 640;
+    static constexpr int INPUT_H     = 640;
     static constexpr int NUM_COLORS  = 4;
     static constexpr int NUM_SIZES   = 2;
     static constexpr int NUM_CLASSES = 8; // G, 1, 2, 3, 4, 5, O, B

@@ -225,47 +225,40 @@ std::vector<AtLegacyArmorDetection>
 
     const auto& shape = out.get_shape();
 
-    // ArmorPoseHead export output: [1, C+NK, N] or [1, N, C+NK]
+    // YOLO26 end-to-end output: [1, max_det, 6 + nk]
+    // Format per detection: [x, y, w, h, conf, class_id, kpts...]
     if (shape.size() != 3 || shape[0] != 1) {
         SPDLOG_WARN("[AtLegacyNNBackend] Unexpected output shape");
         return detections;
     }
 
-    const int dim1    = static_cast<int>(shape[1]);
-    const int dim2    = static_cast<int>(shape[2]);
-    const int dims    = std::min(dim1, dim2); // per-anchor dimension
-    const int anchors = std::max(dim1, dim2); // number of anchors
+    const int max_det    = static_cast<int>(shape[1]);
+    const int output_dim = static_cast<int>(shape[2]);
 
-    constexpr int nkpt    = NUM_KPTS;         // 4 keypoints
-    constexpr int kpt_dim = 2;                // x, y per keypoint
-    constexpr int nk      = nkpt * kpt_dim;
+    constexpr int nkpt     = NUM_KPTS;       // 4 keypoints
+    constexpr int kpt_dim  = 2;              // x, y per keypoint
+    constexpr int nk       = nkpt * kpt_dim; // 8
+    constexpr int bbox_dim = 6;              // x, y, w, h, conf, class_id
 
-    // dims = C (joint classes) + nk (keypoints)
-    const int num_joint = dims - nk;
-    if (num_joint <= 0) {
-        SPDLOG_ERROR("[AtLegacyNNBackend] Invalid output dimensions");
+    SPDLOG_DEBUG(
+        "[AtLegacyNNBackend] Output shape: [{}, {}, {}], max_det={}, output_dim={}", shape[0],
+        shape[1], shape[2], max_det, output_dim);
+
+    if (output_dim < bbox_dim + nk) {
+        SPDLOG_ERROR(
+            "[AtLegacyNNBackend] Output dim {} < bbox_dim({}) + nkpts({})", output_dim, bbox_dim,
+            nk);
         return detections;
     }
-    if (constexpr int expected = NUM_COLORS * NUM_SIZES * NUM_CLASSES; expected != num_joint) {
-        SPDLOG_WARN(
-            "[AtLegacyNNBackend] Model nc ({}) != NUM_COLORS*NUM_SIZES*NUM_CLASSES ({}); "
-            "continuing with model nc.",
-            num_joint, expected);
-    }
-    const bool channel_first = (dim1 < dim2);
-
-    auto get = [&](int anchor, int d) -> float {
-        if (channel_first) {
-            return p[static_cast<size_t>(d) * anchors + anchor];
-        }
-        return p[static_cast<size_t>(anchor) * dims + d];
-    };
 
     auto clampf = [](float v, float lo, float hi) -> float {
         return std::max(lo, std::min(v, hi));
     };
 
-    auto undo_letterbox = [&](float x, float y) -> cv::Point2f {
+    // Scale coordinate from model input (letterboxed) to original image
+    // Following ops.scale_coords from Ultralytics
+    auto scale_coords = [&](float x, float y) -> cv::Point2f {
+        // Inverse letterbox: (coord - pad) * scale
         float px = (x - ctx.pad_x) * ctx.scale_x;
         float py = (y - ctx.pad_y) * ctx.scale_y;
         if (ctx.orig_w > 0 && ctx.orig_h > 0) {
@@ -273,14 +266,6 @@ std::vector<AtLegacyArmorDetection>
             py = clampf(py, 0.0f, static_cast<float>(ctx.orig_h - 1));
         }
         return cv::Point2f(px, py);
-    };
-
-    auto decode_joint_id = [](int cls_id, int nc_num, int nc_size, int& color, int& size,
-                              int& num) {
-        num     = cls_id % nc_num;
-        int tmp = cls_id / nc_num;
-        size    = tmp % nc_size;
-        color   = tmp / nc_size;
     };
 
     auto num_id_to_name = [](int num_id) -> ArmorName {
@@ -297,31 +282,41 @@ std::vector<AtLegacyArmorDetection>
         }
     };
 
+    // Decode YOLO26 class_id (0-63) to (color, size, num)
+    // Format: {color}{size}{num} - Bs0, Bb0, Rs0, Rb0, ...
+    // 64 classes = 4 colors * 2 sizes * 8 numbers
+    auto decode_yolo26_class = [](int cls_id, int& color_id, int& size_id, int& num_id) {
+        num_id   = cls_id % 8;
+        int tmp  = cls_id / 8;
+        size_id  = tmp % 2; // 0=small, 1=big
+        color_id = tmp / 2; // 0=Blue, 1=Red, 2=Gray, 3=Purple
+    };
+
     detections.reserve(128);
     const float conf_thresh = static_cast<float>(cfg.confidence_threshold);
 
-    for (int i = 0; i < anchors; ++i) {
-        // 1) Find best joint class
-        float best_score = 0.0f;
-        int best_idx     = -1;
-        for (int c = 0; c < num_joint; ++c) {
-            const float sc = get(i, c);
-            if (sc > best_score) {
-                best_score = sc;
-                best_idx   = c;
-            }
-        }
+    for (int i = 0; i < max_det; ++i) {
+        const size_t row_offset = static_cast<size_t>(i) * output_dim;
 
-        if (best_idx < 0 || best_score < conf_thresh) {
+        // Extract bbox: [x, y, w, h] - center format in model input space
+        const float cx = p[row_offset + 0];
+        const float cy = p[row_offset + 1];
+        const float w  = p[row_offset + 2];
+        const float h  = p[row_offset + 3];
+
+        // Extract confidence and class_id
+        const float conf = p[row_offset + 4];
+        const int cls_id = static_cast<int>(p[row_offset + 5]);
+
+        if (conf < conf_thresh) {
             continue;
         }
 
-        int color_id = -1;
-        int size_id  = -1;
-        int num_id   = -1;
-        decode_joint_id(best_idx, NUM_CLASSES, NUM_SIZES, color_id, size_id, num_id);
+        // Decode class
+        int color_id = -1, size_id = -1, num_id = -1;
+        decode_yolo26_class(cls_id, color_id, size_id, num_id);
 
-        if (color_id < 0 || color_id >= NUM_COLORS || size_id < 0 || size_id >= NUM_SIZES) {
+        if (color_id < 0 || color_id >= 4 || size_id < 0 || size_id >= 2) {
             continue;
         }
 
@@ -334,34 +329,64 @@ std::vector<AtLegacyArmorDetection>
         }
         const auto color = static_cast<ArmorColor>(color_id);
 
-        // 2) Get keypoints (model outputs: TL, BL, BR, TR)
-        // Remap to expected order: TL, TR, BR, BL
+        // Extract keypoints (flattened: kx1, ky1, kx2, ky2, ...)
+        // YOLO26 outputs keypoints in order: TL, BL, BR, TR (or similar)
+        // We need to reorder to: TL, TR, BR, BL to match model_points in PnP solver
         std::array<cv::Point2f, 4> corners;
         bool kp_valid = true;
-        std::array<cv::Point2f, 4> raw_kpts;
+
+        // YOLO26 keypoint order to desired order (TL, TR, BR, BL)
+        // Based on YOLO pose convention: 0=TL, 1=BL, 2=BR, 3=TR
+        // We want: 0=TL, 1=TR, 2=BR, 3=BL
+        constexpr int yolo_to_model[4] = {0, 3, 2, 1};
+
         for (int k = 0; k < nkpt; ++k) {
-            const float kx = get(i, num_joint + 2 * k);
-            const float ky = get(i, num_joint + 2 * k + 1);
+            const int yolo_idx     = yolo_to_model[k];
+            const size_t kx_offset = row_offset + bbox_dim + 2 * yolo_idx;
+            const size_t ky_offset = row_offset + bbox_dim + 2 * yolo_idx + 1;
+
+            // Bounds check
+            const size_t total_elements =
+                static_cast<size_t>(max_det) * static_cast<size_t>(output_dim);
+            if (ky_offset >= total_elements) {
+                SPDLOG_ERROR(
+                    "[AtLegacyNNBackend] Keypoint access out of bounds: "
+                    "ky_offset={} >= total_elements={}, i={}, k={}, yolo_idx={}, "
+                    "row_offset={}, bbox_dim={}, output_dim={}",
+                    ky_offset, total_elements, i, k, yolo_idx, row_offset, bbox_dim, output_dim);
+                kp_valid = false;
+                break;
+            }
+
+            const float kx = p[kx_offset];
+            const float ky = p[ky_offset];
+
             if (!std::isfinite(kx) || !std::isfinite(ky)) {
                 kp_valid = false;
                 break;
             }
-            raw_kpts[k] = undo_letterbox(kx, ky);
-        }
-        // Remap: TL, BL, BR, TR -> TL, TR, BR, BL
-        if (kp_valid) {
-            corners[0] = raw_kpts[0]; // TL
-            corners[1] = raw_kpts[3]; // TR
-            corners[2] = raw_kpts[2]; // BR
-            corners[3] = raw_kpts[1]; // BL
+
+            corners[k] = scale_coords(kx, ky);
         }
 
         if (!kp_valid) {
             continue;
         }
 
+        // Optional: verify keypoints are within image bounds
+        bool all_in_bounds = true;
+        for (const auto& pt : corners) {
+            if (pt.x < 0 || pt.x >= ctx.orig_w || pt.y < 0 || pt.y >= ctx.orig_h) {
+                all_in_bounds = false;
+                break;
+            }
+        }
+        if (!all_in_bounds) {
+            continue;
+        }
+
         // Create detection
-        AtLegacyArmorDetection det(corners, cls, color, best_score);
+        AtLegacyArmorDetection det(corners, cls, color, conf);
         if (det.area > 0) {
             detections.push_back(det);
         }

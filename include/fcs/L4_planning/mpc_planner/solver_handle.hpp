@@ -67,7 +67,12 @@ public:
 private:
     void cleanup() noexcept {
         if (solver_) {
-            tiny_cleanup(solver_);
+            // FUCK YOU TINYMPC
+            delete solver_->solution;
+            delete solver_->cache;
+            delete solver_->settings;
+            delete solver_->work;
+            delete solver_;
             solver_ = nullptr;
         }
     }

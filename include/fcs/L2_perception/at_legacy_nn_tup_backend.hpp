@@ -114,7 +114,7 @@ private:
         nms(std::vector<AtLegacyArmorDetection>& detections, const AtLegacyNNTupConfig& cfg);
 
 private:
-    ConfigPtr config_;
+    ConfigPtr config_; // Atomic shared_ptr for thread-safe config access
     ArmorColor detect_color_ = ArmorColor::Blue;
     bool initialized_        = false;
 

@@ -1,5 +1,5 @@
 [detector]
-backend_type = "Traditional"  # Options: "Traditional", "NeuralNetwork", "NeuralNetworkTup"
+backend_type = "NeuralNetwork"  # Options: "Traditional", "NeuralNetwork", "NeuralNetworkTup"
 detect_color = "Blue"
 
 # Required if backend_type = "traditional"
@@ -27,8 +27,8 @@ classifier_use_softmax = true
 # Required if backend_type = "nn"
 [nn]
 model_path = "best.onnx"
-device = "AUTO"
-device_priorities = "GPU,CPU"
+device = "CPU"
+device_priorities = ""
 enable_profiling = false
 enable_multi_thread = false
 confidence_threshold = 0.75
@@ -37,8 +37,8 @@ top_k = 128
 
 [nn_tup]
 model_path = "opt-1208-001.onnx"
-device = "AUTO"
-device_priorities = "GPU,CPU"
+device = "CPU"
+device_priorities = ""
 enable_profiling = false
 enable_multi_thread = false
 confidence_threshold = 0.75
@@ -192,7 +192,7 @@ rk4_min_steps = 500
 rk4_max_steps = 2000
 
 [rune_detector]
-enabled = true
+enabled = false
 detect_color = "Red"
 arrow_threshold = 170
 target_threshold = 130
@@ -202,7 +202,7 @@ rcenter_threshold = 120
 enabled = true
 
 [plan_mux]
-mode = "Rune"
+mode = "Armor"
 
 [energy_meter]
 # Rune type: true for big rune (sinusoidal model), false for small rune (linear)
