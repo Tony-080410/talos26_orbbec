@@ -57,7 +57,7 @@ ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 FILES=()
 while IFS= read -r -d '' file; do
     FILES+=("$file")
-done < <(find "$ROOT_DIR/src" "$ROOT_DIR/include" "$ROOT_DIR/test" -type f \( \
+done < <(find "$ROOT_DIR/src" "$ROOT_DIR/include" "$ROOT_DIR/test" "$ROOT_DIR/tools" -type f \( \
     -name '*.c' -o -name '*.cc' -o -name '*.cpp' -o -name '*.cxx' -o \
     -name '*.h' -o -name '*.hpp' \) -print0)
 

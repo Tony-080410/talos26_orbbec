@@ -1,6 +1,6 @@
 #pragma once
 #include "covariance.hpp"
-#include "space.hpp"
+#include "lie_ops.hpp"
 #include <concepts>
 #include <expected>
 #include <type_traits>
@@ -25,13 +25,31 @@ enum class PerceptError {
 ///
 /// A Perception defines how measurements are related to state and provides
 /// the Kalman gain for updating the state estimate.
+///
+/// Now requires lieplusplus native operators instead of Space concept.
 template <typename T, typename Cov>
 concept Perception =
     requires(T& t, typename T::Belief::Flux x, typename T::Measurement::Flux z, Cov& P) {
         typename T::Belief;
         typename T::Measurement;
-        requires Space<typename T::Belief>;
-        requires Space<typename T::Measurement>;
+
+        // Require LieGroup-like operators on Belief::Flux and Measurement::Flux
+        requires requires(
+            const typename T::Belief::Flux& a, const typename T::Belief::Flux& b,
+            const typename T::Belief::Drift& xi) {
+            { a * b } -> std::convertible_to<typename T::Belief::Flux>;
+            { a.inv() } -> std::convertible_to<typename T::Belief::Flux>;
+            { T::Belief::Flux::log(a) } -> std::convertible_to<typename T::Belief::Drift>;
+            { T::Belief::Flux::exp(xi) } -> std::convertible_to<typename T::Belief::Flux>;
+        };
+        requires requires(
+            const typename T::Measurement::Flux& a, const typename T::Measurement::Flux& b,
+            const typename T::Measurement::Drift& xi) {
+            { a * b } -> std::convertible_to<typename T::Measurement::Flux>;
+            { a.inv() } -> std::convertible_to<typename T::Measurement::Flux>;
+            { T::Measurement::Flux::log(a) } -> std::convertible_to<typename T::Measurement::Drift>;
+            { T::Measurement::Flux::exp(xi) } -> std::convertible_to<typename T::Measurement::Flux>;
+        };
 
         /// Observation: z_pred = h(x)
         { t.assume(x) } -> std::same_as<typename T::Measurement::Flux>;
@@ -66,8 +84,93 @@ concept Assumption = requires(T& t, typename T::Perception::Belief::Flux x, doub
     { t.maneuver(P, x, dt) } -> std::same_as<typename T::Perception::Belief::Flux>;
 
     /// Get process noise covariance Q
-    { t.process_noise_covariance() } -> std::convertible_to<Eigen::MatrixXd>;
+    { t.process_noise_covariance(dt) } -> std::convertible_to<Eigen::MatrixXd>;
 };
+
+namespace detail {
+
+template <typename A, typename Flux>
+concept HasMemberDiscreteDynamicsJacobian = requires(const A& a, const Flux& x, double dt) {
+    { a.dynamics_jacobian_discrete(x, dt) } -> std::convertible_to<Eigen::MatrixXd>;
+};
+
+template <typename A, typename Flux>
+concept HasStaticDiscreteDynamicsJacobian = requires(const Flux& x, double dt) {
+    { A::dynamics_jacobian_discrete(x, dt) } -> std::convertible_to<Eigen::MatrixXd>;
+};
+
+template <typename A, typename Flux>
+concept HasMemberContinuousDynamicsJacobian = requires(const A& a, const Flux& x) {
+    { a.dynamics_jacobian_continuous(x) } -> std::convertible_to<Eigen::MatrixXd>;
+};
+
+template <typename A, typename Flux>
+concept HasStaticContinuousDynamicsJacobian = requires(const Flux& x) {
+    { A::dynamics_jacobian_continuous(x) } -> std::convertible_to<Eigen::MatrixXd>;
+};
+
+// Back-compat: legacy ambiguous API. If you still use this, it is interpreted as DISCRETE Φ.
+template <typename A, typename Flux>
+concept HasMemberLegacyDynamicsJacobian = requires(const A& a, const Flux& x, double dt) {
+    { a.dynamics_jacobian(x, dt) } -> std::convertible_to<Eigen::MatrixXd>;
+};
+
+template <typename A, typename Flux>
+concept HasStaticLegacyDynamicsJacobian = requires(const Flux& x, double dt) {
+    { A::dynamics_jacobian(x, dt) } -> std::convertible_to<Eigen::MatrixXd>;
+};
+
+// Convenience: accept `jacobian(...)` as a synonym for discrete Φ (common in existing codebases).
+template <typename A, typename Flux>
+concept HasMemberJacobian = requires(const A& a, const Flux& x, double dt) {
+    { a.jacobian(x, dt) } -> std::convertible_to<Eigen::MatrixXd>;
+};
+
+template <typename A, typename Flux>
+concept HasStaticJacobian = requires(const Flux& x, double dt) {
+    { A::jacobian(x, dt) } -> std::convertible_to<Eigen::MatrixXd>;
+};
+
+template <typename A, typename Flux>
+[[nodiscard]] inline Eigen::MatrixXd
+    discrete_transition_jacobian(const A& assumption, const Flux& x, double dt, int dim) {
+    if constexpr (HasMemberDiscreteDynamicsJacobian<A, Flux>) {
+        return assumption.dynamics_jacobian_discrete(x, dt);
+    } else if constexpr (HasStaticDiscreteDynamicsJacobian<A, Flux>) {
+        return A::dynamics_jacobian_discrete(x, dt);
+    } else if constexpr (HasMemberContinuousDynamicsJacobian<A, Flux>) {
+        const Eigen::MatrixXd A_ct = assumption.dynamics_jacobian_continuous(x);
+        if (dt == 0.0) {
+            return Eigen::MatrixXd::Identity(dim, dim);
+        }
+        return (A_ct * dt).exp();
+    } else if constexpr (HasStaticContinuousDynamicsJacobian<A, Flux>) {
+        const Eigen::MatrixXd A_ct = A::dynamics_jacobian_continuous(x);
+        if (dt == 0.0) {
+            return Eigen::MatrixXd::Identity(dim, dim);
+        }
+        return (A_ct * dt).exp();
+    } else if constexpr (HasMemberLegacyDynamicsJacobian<A, Flux>) {
+        return assumption.dynamics_jacobian(x, dt);
+    } else if constexpr (HasStaticLegacyDynamicsJacobian<A, Flux>) {
+        return A::dynamics_jacobian(x, dt);
+    } else if constexpr (HasMemberJacobian<A, Flux>) {
+        return assumption.jacobian(x, dt);
+    } else if constexpr (HasStaticJacobian<A, Flux>) {
+        return A::jacobian(x, dt);
+    } else {
+        static_assert(
+            kAlwaysFalseV<A>,
+            "Linearized covariance propagation requires a transition Jacobian Φ. Provide one of:\n"
+            "  - assumption.dynamics_jacobian_discrete(x, dt)\n"
+            "  - assumption.dynamics_jacobian_continuous(x)  (we discretize with Φ=expm(A·dt))\n"
+            "  - assumption.dynamics_jacobian(x, dt)         (legacy, interpreted as Φ)\n"
+            "  - assumption.jacobian(x, dt)                  (synonym for Φ)\n");
+        return Eigen::MatrixXd::Identity(dim, dim);
+    }
+}
+
+} // namespace detail
 
 // ============================================================================
 // KalmanFilter
@@ -88,17 +191,20 @@ public:
     using Belief      = typename P::Belief;
     using Measurement = typename P::Measurement;
     using MatrixDD    = Eigen::MatrixXd;
+    using Flux        = typename Belief::Flux;
+    using Storage     = typename Covariance::Storage;
+    using Strategy    = typename Covariance::StrategyType;
 
     static constexpr bool kSigmaPointStrategy =
-        std::is_same_v<
-            typename Covariance::StrategyType,
-            UnscentedStrategy<Belief, typename Covariance::Storage>>
-        || std::is_same_v<
-            typename Covariance::StrategyType,
-            CubatureStrategy<Belief, typename Covariance::Storage>>;
+        std::is_same_v<Strategy, UnscentedStrategy<Flux, Storage>>
+        || std::is_same_v<Strategy, CubatureStrategy<Flux, Storage>>;
 
-    static constexpr bool kCubatureStrategy = std::is_same_v<
-        typename Covariance::StrategyType, CubatureStrategy<Belief, typename Covariance::Storage>>;
+    static constexpr bool kCubatureStrategy =
+        std::is_same_v<Strategy, CubatureStrategy<Flux, Storage>>;
+
+    static constexpr bool kLinearizedPropagation =
+        std::is_same_v<Strategy, LinearizedStrategy<Flux, Storage>>
+        || std::is_same_v<Strategy, InvariantLinearizedStrategy<Flux, Storage>>;
 
     /// @brief Default constructor
     KalmanFilter() = default;
@@ -106,20 +212,16 @@ public:
     /// @brief Constructor with initial belief
     explicit KalmanFilter(
         typename Belief::Flux initial_belief, P perception = P{}, A assumption = A{})
-        : belief(std::move(initial_belief))
+        : belief_(std::move(initial_belief))
         , unc()
         , perception(std::move(perception))
-        , assumption(std::move(assumption)) {
-        // Trigger covariance initialization by calling a dummy predict
-        // This ensures the internal storage is properly sized
-        [[maybe_unused]] auto dummy = predict(0.001);
-    }
+        , assumption(std::move(assumption)) {}
 
     /// @brief Constructor with initial belief and initial covariance
     explicit KalmanFilter(
         typename Belief::Flux initial_belief, MatrixDD initial_covariance, P perception = P{},
         A assumption = A{})
-        : belief(std::move(initial_belief))
+        : belief_(std::move(initial_belief))
         , unc(Covariance(initial_covariance))
         , perception(std::move(perception))
         , assumption(std::move(assumption)) {}
@@ -127,7 +229,7 @@ public:
     /// @brief Prediction step: x' = f(x, dt), P' = propagate(P, x, Q, dt)
     [[nodiscard]] typename Belief::Flux predict(double dt) noexcept {
         // Save old state before update (needed for adjoint transformation on SE(3))
-        const typename Belief::Flux old_belief = belief;
+        const typename Belief::Flux old_belief = belief_;
 
         // Create dynamics lambda that captures assumption
         // This allows UKF/CKF to propagate sigma points through the dynamics model
@@ -136,13 +238,19 @@ public:
         };
 
         // State prediction: x' = f(x, dt)
-        belief = assumption.maneuver(unc, belief, dt);
+        belief_ = assumption.maneuver(unc, belief_, dt);
 
         // Covariance propagation: P' = propagate(P, x_old, x_new, dynamics, Q, dt)
-        const MatrixDD Q = assumption.process_noise_covariance();
-        unc.propagate(old_belief, belief, dynamics_lambda, Q, dt);
+        const MatrixDD Q = assumption.process_noise_covariance(dt);
+        if constexpr (kLinearizedPropagation) {
+            const MatrixDD Phi =
+                detail::discrete_transition_jacobian(assumption, old_belief, dt, unc.dimension());
+            unc.propagate(old_belief, belief_, dynamics_lambda, Phi, Q, dt);
+        } else {
+            unc.propagate(old_belief, belief_, dynamics_lambda, Q, dt);
+        }
 
-        return belief;
+        return belief_;
     }
 
     /// @brief Measurement update step
@@ -151,19 +259,12 @@ public:
     /// @return std::expected<void, PerceptError> success if update succeeded
     std::expected<void, PerceptError> percept(typename Measurement::Flux meas, double dt) {
         // Compute innovation: Δz = z - h(x)
-        // diff(x, y) = y - x, so diff(predicted, meas) gives meas - predicted.
-        const auto predicted_measurement = perception.assume(belief);
-        const auto innovation            = Measurement::diff(predicted_measurement, meas);
+        const auto predicted_measurement = perception.assume(belief_);
+        const auto innovation            = lie_ops::diff(predicted_measurement, meas);
 
-        Eigen::VectorXd innovation_vec;
-        if constexpr (requires { innovation.data; }) {
-            innovation_vec = innovation.data;
-        } else {
-            innovation_vec = innovation;
-        }
-
-        const MatrixDD H = perception.measurement_jacobian(belief);
-        const MatrixDD R = perception.measurement_noise_covariance();
+        Eigen::VectorXd innovation_vec = innovation;
+        const MatrixDD H               = perception.measurement_jacobian(belief_);
+        const MatrixDD R               = perception.measurement_noise_covariance();
 
         // --------------------------------------------------------------------
         // Compile-time dispatch by filter variant
@@ -171,17 +272,18 @@ public:
         if constexpr (kSigmaPointStrategy) {
             // Sigma-point filters (UKF/CKF): use sigma-point measurement transform.
             MatrixDD innovation_cov;
-            const MatrixDD K =
-                compute_sigma_point_kalman_gain(belief, predicted_measurement, R, &innovation_cov);
+            typename Measurement::Flux meas_mean;
+            const MatrixDD K = compute_sigma_point_kalman_gain(
+                belief_, predicted_measurement, R, &innovation_cov, &meas_mean);
 
-            typename Belief::Drift correction;
-            if constexpr (requires { correction.data; }) {
-                correction.data = K * innovation_vec;
-            } else {
-                correction = K * innovation_vec;
-            }
+            // For sigma-point filters, the innovation must be computed w.r.t. the sigma-point
+            // measurement mean (not necessarily h(mean)).
+            const auto innovation_sp          = lie_ops::diff(meas_mean, meas);
+            Eigen::VectorXd innovation_sp_vec = innovation_sp;
 
-            belief = Belief::compose(belief, correction);
+            typename Belief::Drift correction = K * innovation_sp_vec;
+
+            belief_ = lie_ops::compose(belief_, correction);
             unc.stiffen_innovation(K, innovation_cov);
             return std::expected<void, PerceptError>{};
         } else if constexpr (
@@ -241,25 +343,15 @@ public:
                 }
 
                 // Apply the total correction once (consistent with EKF linearization).
-                typename Belief::Drift dx;
-                if constexpr (requires { dx.data; }) {
-                    dx.data = drift_total;
-                } else {
-                    dx = drift_total;
-                }
-                belief = Belief::compose(belief, dx);
+                typename Belief::Drift dx = drift_total;
+                belief_                   = lie_ops::compose(belief_, dx);
                 return std::expected<void, PerceptError>{};
             }
         } else {
             // Standard KF/EKF path (Direct storage, updater-controlled)
             const MatrixDD K = unc.compute_kalman_gain(H, R);
 
-            typename Belief::Drift correction;
-            if constexpr (requires { correction.data; }) {
-                correction.data = K * innovation_vec;
-            } else {
-                correction = K * innovation_vec;
-            }
+            typename Belief::Drift correction = K * innovation_vec;
 
             // For right-invariant error on Lie groups, the state update changes the
             // tangent space at which the covariance is defined.
@@ -267,22 +359,23 @@ public:
             // So we use standard EKF update which assumes the tangent space doesn't change
             // significantly
             unc.stiffen(K, H, R, dt);
-            belief = Belief::compose(belief, correction);
+            belief_ = lie_ops::compose(belief_, correction);
             return std::expected<void, PerceptError>{};
         }
     }
 
+    auto& belief() { return belief_; }
+
 private:
-    /// @brief Compute Kalman gain with sigma-point measurement transform for Sampleable spaces
+    /// @brief Compute Kalman gain with sigma-point measurement transform for Lie groups
     ///
-    /// For UKF/CKF with Sampleable Belief, uses sigma-point transform in measurement space:
+    /// For UKF/CKF with Lie group Belief, uses sigma-point transform in measurement space:
     /// - Transform state sigma points to measurement space
     /// - Compute measurement mean and covariance from transformed points
     /// - Compute cross-covariance between state and measurement
     ///
     /// @param state Current state estimate
     /// @param predicted_measurement Predicted measurement z_pred = h(x)
-    /// @param H Measurement Jacobian (for non-sampleable fallback)
     /// @param R Measurement noise covariance
     /// @return Kalman gain K
     [[nodiscard]] MatrixDD compute_kalman_gain_impl(
@@ -331,7 +424,8 @@ private:
     ///   - Iteration: μ_{k+1} = μ_k · Exp(Σ w_i * Log(μ_k⁻¹ · z_i))
     [[nodiscard]] MatrixDD compute_sigma_point_kalman_gain(
         const typename Belief::Flux& state, const typename Measurement::Flux& predicted_measurement,
-        const MatrixDD& R, MatrixDD* innovation_cov_out = nullptr) const noexcept {
+        const MatrixDD& R, MatrixDD* innovation_cov_out = nullptr,
+        typename Measurement::Flux* measurement_mean_out = nullptr) const noexcept {
 
         // Get dimensions from covariance matrix
         const MatrixDD current_cov = unc.mat();
@@ -353,7 +447,8 @@ private:
         }
         const double lambda = alpha * alpha * (n + kappa) - n;
 
-        const double scale = kCubatureStrategy ? 1.0 : (n + lambda);
+        // CKF uses points at ±sqrt(n) from the mean, which is equivalent to Cholesky(n * P).
+        const double scale = kCubatureStrategy ? static_cast<double>(n) : (n + lambda);
         Eigen::LLT<MatrixDD> llt(scale * current_cov);
         if (llt.info() != Eigen::Success) {
             // Compute standard K = P * H' * (H * P * H' + R)^-1
@@ -361,6 +456,13 @@ private:
             const MatrixDD innovation_cov = H * current_cov * H.transpose() + R;
             const MatrixDD PHt            = current_cov * H.transpose();
             const auto ldlt               = innovation_cov.ldlt();
+            if (measurement_mean_out) {
+                *measurement_mean_out = predicted_measurement;
+            }
+            // Also set innovation_cov_out in fallback path
+            if (innovation_cov_out) {
+                *innovation_cov_out = innovation_cov;
+            }
             if (ldlt.info() == Eigen::Success) {
                 return ldlt.solve(PHt.transpose()).transpose();
             }
@@ -377,24 +479,14 @@ private:
 
         if constexpr (kCubatureStrategy) {
             const double w = 1.0 / (2.0 * static_cast<double>(n));
-            const double s = std::sqrt(static_cast<double>(n));
             for (int i = 0; i < n; ++i) {
-                typename Belief::Drift xi = Belief::zero_drift();
-                if constexpr (requires { xi.data; }) {
-                    xi.data = s * S.col(i);
-                } else {
-                    xi = s * S.col(i);
-                }
-                state_points.push_back(Belief::compose(state, xi));
+                typename Belief::Drift xi = S.col(i);
+                state_points.push_back(lie_ops::compose(state, xi));
                 weights_mean.push_back(w);
                 weights_cov.push_back(w);
 
-                if constexpr (requires { xi.data; }) {
-                    xi.data = -xi.data;
-                } else {
-                    xi = -xi;
-                }
-                state_points.push_back(Belief::compose(state, xi));
+                xi = -xi;
+                state_points.push_back(lie_ops::compose(state, xi));
                 weights_mean.push_back(w);
                 weights_cov.push_back(w);
             }
@@ -411,23 +503,14 @@ private:
 
             // Points ± columns of S
             for (int i = 0; i < n; ++i) {
-                typename Belief::Drift xi = Belief::zero_drift();
-                if constexpr (requires { xi.data; }) {
-                    xi.data = S.col(i);
-                } else {
-                    xi = S.col(i);
-                }
+                typename Belief::Drift xi = S.col(i);
 
-                state_points.push_back(Belief::compose(state, xi));
+                state_points.push_back(lie_ops::compose(state, xi));
                 weights_mean.push_back(wi);
                 weights_cov.push_back(wi);
 
-                if constexpr (requires { xi.data; }) {
-                    xi.data = -S.col(i);
-                } else {
-                    xi = -S.col(i);
-                }
-                state_points.push_back(Belief::compose(state, xi));
+                xi = -S.col(i);
+                state_points.push_back(lie_ops::compose(state, xi));
                 weights_mean.push_back(wi);
                 weights_cov.push_back(wi);
             }
@@ -443,50 +526,43 @@ private:
         // Compute measurement mean from transformed sigma points
         typename Measurement::Flux y_pred;
 
-        // Constraint: measurement must be either Euclidean or Lie-group-like
+        // Constraint: measurement must be LieGroup-like (identity, compose, diff)
         static_assert(
-            requires { y_pred.data; } ||
-            (requires { Measurement::identity(); } &&
-             requires { Measurement::compose(y_pred, Measurement::zero_drift()); }),
-            "Sigma-point measurement mean requires either Euclidean space (Flux has .data) "
-            "or Lie-group space (supports identity, compose, zero_drift, and diff).");
+            requires(
+                const typename Measurement::Flux& a, const typename Measurement::Flux& b,
+                const typename Measurement::Drift& xi) {
+                { a * b } -> std::convertible_to<typename Measurement::Flux>;
+                { a.inv() } -> std::convertible_to<typename Measurement::Flux>;
+                { Measurement::Flux::log(a) } -> std::convertible_to<typename Measurement::Drift>;
+                { Measurement::Flux::exp(xi) } -> std::convertible_to<typename Measurement::Flux>;
+            },
+            "Sigma-point measurement mean requires LieGroup-like Measurement::Flux with {*, inv, "
+            "static log(), static exp()}.");
 
-        if constexpr (requires { y_pred.data; }) {
-            // Measurement space is Euclidean: use closed-form weighted average
-            y_pred.data = weights_mean[0] * meas_points[0].data;
-            for (size_t i = 1; i < meas_points.size(); ++i) {
-                y_pred.data += weights_mean[i] * meas_points[i].data;
+        // Measurement space is LieGroup: use iterative logarithmic averaging (Karcher mean)
+        // This is the proper Riemannian mean on manifolds
+        //
+        // Reference:
+        // - Lou, Y., et al. (2020). "Differentiating through the Fréchet Mean."
+        //   *ICML 2020*. [PDF](http://proceedings.mlr.press/v119/lou20a/lou20a-supp.pdf)
+        // - Tron, R., et al. (2011). "Fast and scalable Karcher means."
+        //   *EUSIPCO 2011*.
+        // Iteration: μ_{k+1} = μ_k · Exp(Σ w_i · Log(μ_k⁻¹ · z_i))
+        // 2-3 iterations sufficient for most applications
+        y_pred = predicted_measurement;
+
+        for (size_t iter = 0; iter < 3; ++iter) {
+            // Compute weighted average of logarithms in tangent space
+            typename Measurement::Drift step = Measurement::Drift::Zero();
+            for (size_t i = 0; i < meas_points.size(); ++i) {
+                const auto delta = lie_ops::diff(y_pred, meas_points[i]);
+                step += static_cast<double>(weights_mean[i]) * delta;
             }
-        } else if constexpr (
-            requires { Measurement::identity(); }
-            && requires { Measurement::compose(y_pred, Measurement::zero_drift()); }) {
-            // Measurement space is LieGroup: use iterative logarithmic averaging (Karcher mean)
-            // This is the proper Riemannian mean on manifolds
-            //
-            // Reference:
-            // - Lou, Y., et al. (2020). "Differentiating through the Fréchet Mean."
-            //   *ICML 2020*. [PDF](http://proceedings.mlr.press/v119/lou20a/lou20a-supp.pdf)
-            // - Tron, R., et al. (2011). "Fast and scalable Karcher means."
-            //   *EUSIPCO 2011*.
-            // Iteration: μ_{k+1} = μ_k · Exp(Σ w_i · Log(μ_k⁻¹ · z_i))
-            // 2-3 iterations sufficient for most applications
-            y_pred = meas_points[0];
 
-            for (size_t iter = 0; iter < 3; ++iter) {
-                // Compute weighted average of logarithms in tangent space
-                typename Measurement::Drift step = Measurement::zero_drift();
-                for (size_t i = 0; i < meas_points.size(); ++i) {
-                    const auto delta = Measurement::diff(y_pred, meas_points[i]);
-                    if constexpr (requires { step.data; }) {
-                        step.data += static_cast<double>(weights_mean[i]) * delta.data;
-                    } else {
-                        step += static_cast<double>(weights_mean[i]) * delta;
-                    }
-                }
-
-                // Update: mu <- mu ⊕ step
-                y_pred = Measurement::compose(y_pred, step);
-            }
+            y_pred = lie_ops::compose(y_pred, step);
+        }
+        if (measurement_mean_out) {
+            *measurement_mean_out = y_pred;
         }
 
         // Compute measurement covariance P_yy and cross-covariance P_xy
@@ -495,28 +571,13 @@ private:
 
         for (size_t i = 0; i < state_points.size(); ++i) {
             // Measurement deviation: z_i - ẑ
-            typename Measurement::Drift z_diff = Measurement::diff(y_pred, meas_points[i]);
+            typename Measurement::Drift z_diff = lie_ops::diff(y_pred, meas_points[i]);
 
             // State deviation: x_i - x̂ (in tangent space)
-            typename Belief::Drift x_diff = Belief::diff(state, state_points[i]);
+            typename Belief::Drift x_diff = lie_ops::diff(state, state_points[i]);
 
-            // Extract vectors from Drift types
-            Eigen::VectorXd z_vec;
-            if constexpr (requires { z_diff.data; }) {
-                z_vec = z_diff.data;
-            } else {
-                z_vec = z_diff;
-            }
-
-            Eigen::VectorXd x_vec;
-            if constexpr (requires { x_diff.data; }) {
-                x_vec = x_diff.data;
-            } else {
-                x_vec = x_diff;
-            }
-
-            P_yy += weights_cov[i] * (z_vec * z_vec.transpose());
-            P_xy += weights_cov[i] * (x_vec * z_vec.transpose());
+            P_yy += weights_cov[i] * (z_diff * z_diff.transpose());
+            P_xy += weights_cov[i] * (x_diff * z_diff.transpose());
         }
 
         // Add measurement noise
@@ -537,7 +598,8 @@ private:
 
 public:
     /// @brief Get current belief (state estimate)
-    [[nodiscard]] const typename Belief::Flux& state() const noexcept { return belief; }
+    [[nodiscard]] const typename Belief::Flux& state() const noexcept { return belief_; }
+    [[nodiscard]] typename Belief::Flux& state_mut() noexcept { return belief_; }
 
     /// @brief Get current covariance matrix
     [[nodiscard]] MatrixDD covariance() const noexcept { return unc.mat(); }
@@ -555,7 +617,7 @@ public:
     [[nodiscard]] A& get_assumption() noexcept { return assumption; }
 
 private:
-    typename Belief::Flux belief;
+    typename Belief::Flux belief_;
     Covariance unc;
     P perception;
     A assumption;

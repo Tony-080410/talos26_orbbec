@@ -1,8 +1,8 @@
 #pragma once
 
 #include "covariance.hpp"
-#include "space.hpp"
-#include <Eigen/Core>
+#include "lie_ops.hpp"
+#include <Eigen/Dense>
 #include <cmath>
 #include <expected>
 
@@ -12,7 +12,7 @@ namespace uni_kf::redact {
 /// @brief State belief with uncertainty on manifolds
 ///
 /// Belief represents a state estimate (mean) with uncertainty (covariance)
-/// on a manifold Space. Supports operations like:
+/// on a Lie Group. Supports operations like:
 /// - Manifold composition with covariance propagation
 /// - Mahalanobis distance computation
 /// - Log-determinant for numerical stability
@@ -25,26 +25,26 @@ namespace uni_kf::redact {
 /// Belief represents a state estimate with uncertainty.
 /// Combines a mean state (Flux) with a covariance matrix representation.
 ///
-/// @tparam S The Space type (must satisfy Space concept)
+/// @tparam LieGroup The lieplusplus Lie group type (e.g., group::SO3<double>, group::SE3<double>)
 /// @tparam Repr The covariance representation (Direct, Joseph, Sr, Udu)
-template <Space S, Representation Repr = Representation::Direct>
+template <typename LieGroup, Representation Repr = Representation::Direct>
 class Belief {
 public:
-    using Flux               = typename S::Flux;
-    using Drift              = typename S::Drift;
+    using Flux               = LieGroup;                      // 直接使用 lieplusplus Lie group
+    using Drift              = typename LieGroup::VectorType; // lieplusplus 切空间类型
     using Scalar             = double;
-    static constexpr int Dim = S::Dim;
+    static constexpr int Dim = LieGroup::Dim;
 
-    using CovarianceType = Covariance<S, Repr, LinearStrategy>;
+    using CovarianceType = Covariance<LieGroup, Repr, InvariantLinearStrategy>;
     using MatrixDD       = Eigen::MatrixXd;
 
     // ========================================================================
     // Constructors
     // ========================================================================
 
-    /// Default constructor: initializes to zero state with zero uncertainty
+    /// Default constructor: initializes to identity (zero state) with zero uncertainty
     Belief()
-        : mean_(S::zero_flux())
+        : mean_(LieGroup()) // lieplusplus 默认构造为单位元
         , cov_() {}
 
     /// Construct from mean and covariance
@@ -71,12 +71,14 @@ public:
     static Belief WithScaledIdentity(const Flux& mean, Scalar scale) {
         int dim = Dim;
         if constexpr (Dim == Eigen::Dynamic) {
-            if constexpr (requires { mean.data.size(); }) {
-                dim = static_cast<int>(mean.data.size());
+            // For dynamic dimension, infer from Drift type
+            Drift tmp;
+            if constexpr (requires { tmp.size(); }) {
+                dim = static_cast<int>(tmp.size());
             } else {
                 static_assert(
                     Dim != Eigen::Dynamic,
-                    "Dynamic-dimension Belief requires Flux::data to infer size");
+                    "Dynamic-dimension Belief requires Drift::size() or explicit dim parameter");
             }
         }
         return Belief(mean, MatrixDD::Identity(dim, dim) * scale);
@@ -119,11 +121,13 @@ public:
 
     /// Retract: apply drift correction to mean (x ← x ⊕ δ)
     [[nodiscard]] Belief retract(const Drift& delta) const {
-        return Belief(S::compose(mean_, delta), cov_);
+        return Belief(lie_ops::compose(mean_, delta), cov_);
     }
 
     /// Difference: compute drift from this to other (η = x⁻¹ ⊗ y)
-    [[nodiscard]] Drift diff_mean(const Belief& other) const { return S::diff(mean_, other.mean_); }
+    [[nodiscard]] Drift diff_mean(const Belief& other) const {
+        return lie_ops::diff<LieGroup>(mean_, other.mean_);
+    }
 
     /// Compose two beliefs (manifold composition with combined covariance)
     ///
@@ -135,37 +139,66 @@ public:
     ///   η_R = Ad_{X2⁻¹} · η_R1 + η_R2
     ///
     /// Reference: Barfoot 2024, Section 11.3.2; Bonnabel 2017, Appendix A
-    [[nodiscard]] Belief compose(const Belief& other) const
-        requires(
-            requires(const Flux& a, const Flux& b) { a * b; }
-            || requires(const Flux& a, const Flux& b) {
-                   a.data;
-                   b.data;
-               }) {
-        Flux new_mean;
-        if constexpr (requires(const Flux& a, const Flux& b) {
-                          a.data;
-                          b.data;
-                      }) {
-            new_mean = Flux{mean_.data + other.mean_.data};
-        } else {
-            new_mean = mean_ * other.mean_;
-        }
+    [[nodiscard]] Belief compose(const Belief& other) const {
+        Flux new_mean = mean_ * other.mean_;
 
         const MatrixDD P1 = cov_.mat();
         const MatrixDD P2 = other.cov_.mat();
 
         MatrixDD P_new;
-        if constexpr (requires(const Flux& x) { S::inv_adjoint_matrix(x); }) {
-            // Right-invariant composition: X = X1 * X2, delta = Ad_{X2⁻¹}*delta1 + delta2
-            // Reference: Barfoot 2024, Eq. (11.62); Bonnabel 2017, Eq. (A.1)
-            const MatrixDD Ad_X2_inv = S::inv_adjoint_matrix(other.mean_);
+        if constexpr (requires(const Flux& x) { x.Adjoint(); }) {
+            // Right-invariant composition: P' = Ad_{X2⁻¹} · P1 · Ad_{X2⁻¹}^T + P2
+            const MatrixDD Ad_X2_inv = lie_ops::inv_adjoint(other.mean_);
             P_new                    = Ad_X2_inv * P1 * Ad_X2_inv.transpose() + P2;
         } else {
             P_new = P1 + P2;
         }
 
         return Belief(new_mean, P_new);
+    }
+
+    /// Bias belief to new coordinate frame (SE(3) or similar Lie groups)
+    ///
+    /// Bias both mean and covariance to a new coordinate system:
+    ///   - mean: x' = T * x
+    ///   - covariance: P' = Ad_T * P * Ad_T^T
+    ///
+    /// This is a **deterministic coordinate bias**, NOT a composition
+    /// of random variables. Use compose() when combining two beliefs with
+    /// independent uncertainties.
+    ///
+    /// Example: When gimbal moves, bias belief to new gimbal frame
+    ///   SE3 gimbal_pose(R, t);
+    ///   belief = belief.biased(gimbal_pose);
+    ///
+    template <typename Group>
+    [[nodiscard]] Belief biased(const Group& T) const noexcept
+        requires(
+            requires(const Flux& x, const Group& g) {
+                // Requires group multiplication: x * g
+                x * g;
+            }
+            && requires(const Group& g) {
+                // Requires adjoint matrix for covariance bias
+                g.Adjoint();
+            }) {
+        // Biased mean: x' = T * x
+        const Flux new_mean = mean_ * T;
+
+        // Biased covariance: P' = Ad_T * P * Ad_T^T
+        const MatrixDD P     = cov_.mat();
+        const MatrixDD Ad_T  = T.Adjoint();
+        const MatrixDD P_new = Ad_T * P * Ad_T.transpose();
+
+        return Belief(new_mean, P_new);
+    }
+
+    /// In-place bias to new coordinate frame
+    ///
+    /// Equivalent to: *this = this->biased(T);
+    template <typename Group>
+    void biased_in_place(const Group& T) noexcept {
+        *this = biased(T);
     }
 
     // ========================================================================
@@ -224,19 +257,13 @@ public:
     /// - Barfoot 2024, Section 4.2.2: Uncertainty on manifolds
     [[nodiscard]] Scalar std_dev(const Drift& direction) const noexcept {
         const MatrixDD P      = cov_.mat();
-        const Scalar norm_dir = S::norm(direction);
+        const Scalar norm_dir = direction.norm();
         if (norm_dir < 1e-10) {
             return 0.0;
         }
         // σ = sqrt(d^T * P * d) / ||d|| (directional variance formula)
-        Scalar dir_dot = 0.0;
-        if constexpr (requires { direction.data; }) {
-            dir_dot = (direction.data.transpose() * P * direction.data)(0, 0);
-        } else {
-            // Fallback: assume Drift has vector-like interface
-            dir_dot = direction.transpose() * P * direction;
-        }
-        return std::sqrt(dir_dot) / norm_dir;
+        const Scalar dir_sq = (direction.transpose() * P * direction)(0, 0);
+        return std::sqrt(dir_sq) / norm_dir;
     }
 
     /// Mahalanobis distance to another belief
@@ -261,14 +288,8 @@ public:
 
         // Compute Mahalanobis distance: sqrt(eta^T * P^(-1) * eta)
         // Numerically stable: solve L * L^T * x = eta via Cholesky
-        Scalar dist_sq = 0.0;
-        if constexpr (requires { eta.data; }) {
-            const Eigen::VectorXd L_eta = llt.matrixL().solve(eta.data);
-            dist_sq                     = L_eta.squaredNorm();
-        } else {
-            // Fallback
-            dist_sq = eta.transpose() * llt.solve(eta);
-        }
+        const Eigen::VectorXd L_eta = llt.matrixL().solve(eta);
+        const Scalar dist_sq        = L_eta.squaredNorm();
 
         return std::sqrt(dist_sq);
     }
@@ -285,8 +306,8 @@ public:
 
     /// Check if all values in belief are finite
     [[nodiscard]] bool is_finite() const noexcept {
-        if constexpr (requires { mean_.data; }) {
-            if (!mean_.data.allFinite()) {
+        if constexpr (requires { mean_.matrix(); }) {
+            if (!mean_.matrix().allFinite()) {
                 return false;
             }
         }
@@ -300,8 +321,8 @@ public:
     /// Equality check (approximate for floating point)
     [[nodiscard]] bool is_approx(const Belief& other, Scalar tol = 1e-6) const noexcept {
         // Check mean
-        const Drift diff = S::diff(mean_, other.mean_);
-        if (S::norm(diff) > tol) {
+        const Drift diff = lie_ops::diff<LieGroup>(mean_, other.mean_);
+        if (diff.norm() > tol) {
             return false;
         }
 

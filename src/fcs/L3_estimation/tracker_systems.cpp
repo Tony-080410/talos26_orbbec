@@ -4,6 +4,7 @@
 #include "fcs/L3_estimation/tracker/tracker.hpp"
 #include "fcs/L3_estimation/tracker/types.hpp"
 #include "fcs/core/channel_topics.hpp"
+#include "math/fast_tf/frame.hpp"
 #include "scheduler/ecs/channel_types.hpp"
 #include "scheduler/ecs/execution_policy.hpp"
 #include "scheduler/scheduler/scheduler.hpp"
@@ -23,8 +24,8 @@ void register_tracker_systems(talos::Scheduler& scheduler, TrackerConfig&& confi
         [last_timestamp_ns = uint64_t{0}](
             talos::spmc<AtLegacyArmorMeasurementBatch, AtLegacyMeasurementChannelTopic> meas_in,
             talos::spmc_mut<TrackerOutput, TrackerOutputChannelTopic> tracker_out,
-            talos::res<TrackerConfig> config,
-            talos::res_mut<std::shared_ptr<Tracker>> tracker) mutable {
+            talos::res<TrackerConfig> config, talos::res_mut<std::shared_ptr<Tracker>> tracker,
+            talos::res<std::shared_ptr<fast_tf::CoordinateSystem<1024>>> tf_system) mutable {
             // Reactively update tracker config when changed
             if (config.is_changed()) {
                 (*tracker)->set_config(*config);
@@ -48,12 +49,29 @@ void register_tracker_systems(talos::Scheduler& scheduler, TrackerConfig&& confi
             last_timestamp_ns = batch->timestamp_ns;
 
             if ((*tracker)->status() == TrackerStatus::Idle) {
-                auto result = (*tracker)->first_meet(*batch);
-                if (!result) {
-                    return;
+                const auto tf_odom_gimbal = fast_tf::lookup_clamped<fast_tf::odom_fuxk_frame>(
+                    **tf_system, fast_tf::FuckTransform<fast_tf::gimbal_link_fuxk_frame>(),
+                    batch->timestamp_ns);
+                if (tf_odom_gimbal) {
+                    auto result = (*tracker)->first_meet(*batch, tf_odom_gimbal.value());
+                    if (!result) {
+                        return;
+                    }
+                } else {
+                    auto result = (*tracker)->first_meet(*batch);
+                    if (!result) {
+                        return;
+                    }
                 }
             } else {
-                (*tracker)->step(dt, *batch);
+                const auto tf_odom_gimbal = fast_tf::lookup_clamped<fast_tf::odom_fuxk_frame>(
+                    **tf_system, fast_tf::FuckTransform<fast_tf::gimbal_link_fuxk_frame>(),
+                    batch->timestamp_ns);
+                if (tf_odom_gimbal) {
+                    (*tracker)->step(dt, *batch, tf_odom_gimbal.value());
+                } else {
+                    (*tracker)->step(dt, *batch);
+                }
             }
 
             auto output         = (*tracker)->get_output();

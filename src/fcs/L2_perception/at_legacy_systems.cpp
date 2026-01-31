@@ -54,7 +54,7 @@ void register_at_legacy_detection_systems(talos::Scheduler& scheduler, AtLegacyC
                 return;
             }
 
-            auto tf_odom_camera = fast_tf::lookup<fast_tf::odom_fuxk_frame>(
+            auto tf_odom_camera = fast_tf::lookup_clamped<fast_tf::odom_fuxk_frame>(
                 **tf_system, fast_tf::FuckTransform<fast_tf::camera_optical_fuxk_frame>(),
                 frame->timestamp_ns);
 

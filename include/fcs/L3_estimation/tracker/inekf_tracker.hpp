@@ -1,330 +1,282 @@
 /// @file inekf_tracker.hpp
-/// @brief InEKF tracker implementation for armor tracking
+/// @brief InEKF-style tracker implementation for armor tracking (redact backend)
 ///
-/// FCS-specific InEKF tracker using uni_kf framework.
-/// Contains observation models, process models, and tracker classes for
-/// robot (4-armor) and outpost (3-armor) targets.
+/// This header provides `uni_kf::TrackerInEKF_Robot` and `uni_kf::TrackerInEKF_Outpost`,
+/// which are used by `fcs::L3::Tracker` when `inekf_enabled` is true.
+///
+/// This version uses `uni_kf::redact` as the filtering backend:
+/// - Prediction and update are performed via a Cubature Kalman Filter (CKF) on a Lie group state.
+/// - The state is SE_2(3) × R^k implemented as a product Lie group so sigma-point propagation
+/// works.
+/// - This tracker runs in the odom frame (no reference-frame adjustment).
 
 #pragma once
 
-#include <uni_kf/uni_kf.hpp>
+#include <uni_kf/redact/covariance.hpp>
+#include <uni_kf/redact/filter.hpp>
+#include <uni_kf/redact/lie_ops.hpp>
 
 // Local fcs::L3 types
 #include "inekf_config.hpp"
 #include "types.hpp"
 #include "util.hpp"
 
-#include <Eigen/Cholesky>
 #include <Eigen/Core>
+#include <Eigen/Dense>
 #include <algorithm>
-#include <array>
 #include <cmath>
 #include <groups/SEn3.hpp>
+#include <math/fast_tf/frame.hpp>
 #include <numbers>
+#include <optional>
 
 namespace uni_kf {
 
-// Use fcs::L3 types directly
 using RobotInEKFConfig   = fcs::L3::RobotInEKFConfig;
 using OutpostInEKFConfig = fcs::L3::OutpostInEKFConfig;
 using RobotTargetState   = fcs::L3::RobotTargetState;
 using OutpostTargetState = fcs::L3::OutpostTargetState;
 
-// ============================================================================
-// Helper functions
-// ============================================================================
-
 namespace detail {
 
-// Constants for regularization and constraints
 inline constexpr double kCovarianceRegularization     = 1e-12;
 inline constexpr double kCoordinatedTurnOmegaEpsilon  = 1e-3;
-inline constexpr double kSlipGatingSigmaRad           = 0.35;
-inline constexpr double kSlipGatingMinSpeed           = 0.3;
 inline constexpr double kAdaptiveProcessNoiseMaxScale = 6.0;
 inline constexpr double kAdaptiveProcessNoiseDecayTau = 0.25;
 inline constexpr double kRobustMaxRScale              = 100.0;
 inline constexpr double kPseudoVelocityMinInterval    = 0.03;
 inline constexpr double kPseudoVelocityMaxInterval    = 0.25;
 
-// ============================================================================
-// Anisotropic Measurement Noise (ported from motion_model.hpp insights)
-// ============================================================================
+[[nodiscard]] inline bool all_finite(const Eigen::Vector3d& v) noexcept { return v.allFinite(); }
 
-/// @brief Compute dynamic measurement noise covariance in body frame
-///
-/// === Problem ===
-/// Isotropic noise R = σ²I ignores the anisotropic nature of visual measurements:
-/// - Depth (radial) uncertainty dominates when viewing armor from the side
-/// - Angular (tangential) uncertainty grows with distance due to PnP instability
-///
-/// === Intuition ===
-/// Visual measurement uncertainty has a "cone" shape along the sight line:
-/// - Radial (depth): unreliable when armor surface is nearly parallel to sight line
-/// - Tangential (angular): unreliable when target is far (small pixels → large position error)
-///
-/// === Analogy ===
-/// Like estimating the distance to a wall by looking at it:
-/// - Looking straight at the wall: depth is clear from texture/stereo
-/// - Looking at grazing angle: depth becomes ambiguous
-///
-/// === Precise (from motion_model.hpp) ===
-/// Constructs anisotropic covariance R in body frame:
-///
-///   R = U × Λ × U^T
-///
-/// where U = [e_r, e_h, e_v] (radial/tangential basis in body frame)
-///       Λ = diag(σ_r², σ_t², σ_t²)
-///
-/// Radial variance (depth uncertainty):
-///   σ_r² = σ_base² × (1 + k_r × log(sin(view_angle) + 1))
-///   - view_angle: angle between sight line and armor normal
-///   - k_r: radial sensitivity coefficient
-///
-/// Tangential variance (angular uncertainty):
-///   σ_t² = σ_base² × (1 + k_t × log(distance + 1))
-///   - k_t: tangential sensitivity coefficient
-///
-/// @param y_body Observation in body frame: R^T(y - p)
-/// @param armor_normal_body Armor plate outward normal in body frame (unit vector)
-/// @param sigma_base Base measurement noise std-dev (m)
-/// @param k_radial Radial noise sensitivity to view angle (default 1.0)
-/// @param k_tangent Tangential noise sensitivity to distance (default 0.1)
-/// @return 3×3 SPD covariance matrix in body frame
-[[nodiscard]] inline Eigen::Matrix3d compute_anisotropic_R_body(
-    const Eigen::Vector3d& y_body, const Eigen::Vector3d& armor_normal_body, double sigma_base,
-    double k_radial = 1.0, double k_tangent = 0.1) noexcept {
-    const double sigma_base2 = sigma_base * sigma_base;
-    const double distance    = y_body.norm();
-
-    // Degenerate case: very close observation
-    if (distance < 1e-6) {
-        return Eigen::Matrix3d::Identity() * sigma_base2;
-    }
-
-    // === Step 1: Compute sight-line direction in body frame ===
-    const Eigen::Vector3d e_r = y_body / distance; // radial (sight line)
-
-    // === Step 2: Compute view angle (angle between sight line and armor normal) ===
-    // armor_normal points outward from robot center
-    // When viewing head-on: e_r ≈ -armor_normal → cos ≈ -1 → |cos| ≈ 1
-    // When viewing from side: e_r ⊥ armor_normal → cos ≈ 0
-    const double cos_view = std::abs(armor_normal_body.dot(e_r));
-    const double sin_view = std::sqrt(1.0 - cos_view * cos_view);
-
-    // === Step 3: Dynamic variance scaling (configurable) ===
-    // Radial: depth uncertainty increases when viewing from side
-    const double radial_scale = 1.0 + k_radial * std::log(sin_view + 1.0);
-    const double sigma_r2     = sigma_base2 * radial_scale;
-
-    // Tangential: angular uncertainty increases with distance
-    const double tangent_scale = 1.0 + k_tangent * std::log(distance + 1.0);
-    const double sigma_t2      = sigma_base2 * tangent_scale;
-
-    // === Step 4: Build orthonormal basis {e_r, e_h, e_v} in body frame ===
-    // e_h: horizontal tangent (perpendicular to e_r, in horizontal plane)
-    Eigen::Vector3d e_h = Eigen::Vector3d::UnitZ().cross(e_r);
-    double e_h_norm     = e_h.norm();
-    if (e_h_norm < 1e-6) {
-        // Looking straight up/down: use x-axis as fallback
-        e_h = Eigen::Vector3d::UnitX();
-    } else {
-        e_h /= e_h_norm;
-    }
-
-    // e_v: vertical tangent (perpendicular to both e_r and e_h)
-    const Eigen::Vector3d e_v = e_r.cross(e_h);
-
-    // === Step 5: Assemble anisotropic covariance ===
-    // R = U × diag(σ_r², σ_t², σ_t²) × U^T
-    Eigen::Matrix3d U;
-    U.col(0) = e_r;
-    U.col(1) = e_h;
-    U.col(2) = e_v;
-
-    const Eigen::Vector3d sigma_diag(sigma_r2, sigma_t2, sigma_t2);
-    return U * sigma_diag.asDiagonal() * U.transpose();
+[[nodiscard]] inline double sanitize_finite(double x, double fallback) noexcept {
+    return std::isfinite(x) ? x : fallback;
 }
 
-/// @brief Compute armor normal direction in body frame
-/// @param armor_id Armor index (0, 1, 2, 3 for robot; 0, 1, 2 for outpost)
-/// @param armors_num Total number of armors
-/// @return Unit normal vector pointing outward from robot center
-[[nodiscard]] inline Eigen::Vector3d armor_normal_body(int armor_id, int armors_num) noexcept {
-    const double angle_step  = 2.0 * std::numbers::pi / static_cast<double>(armors_num);
-    const double armor_angle = static_cast<double>(armor_id) * angle_step;
-    // Normal points outward: opposite to the direction from center to armor
-    return Eigen::Vector3d{-std::cos(armor_angle), -std::sin(armor_angle), 0.0};
-}
-
-[[nodiscard]] inline double wrap_pi(double a) noexcept {
-    if (!std::isfinite(a)) {
-        return a;
-    }
-    return std::remainder(a, 2.0 * std::numbers::pi);
-}
-
-[[nodiscard]] inline Eigen::Matrix3d rotz(double yaw) noexcept {
-    const double c = std::cos(yaw);
-    const double s = std::sin(yaw);
-    Eigen::Matrix3d R;
-    R << c, -s, 0.0, s, c, 0.0, 0.0, 0.0, 1.0;
-    return R;
-}
-
-[[nodiscard]] inline bool all_finite(const Eigen::Vector3d& v) noexcept {
-    return std::isfinite(v.x()) && std::isfinite(v.y()) && std::isfinite(v.z());
-}
-
-[[nodiscard]] inline Eigen::Matrix3d skew(const Eigen::Vector3d& v) noexcept {
-    Eigen::Matrix3d s;
-    s << 0, -v(2), v(1), v(2), 0, -v(0), -v(1), v(0), 0;
-    return s;
-}
-
-[[nodiscard]] inline double sanitize_finite(double value, double fallback) noexcept {
-    return std::isfinite(value) ? value : fallback;
+[[nodiscard]] inline double chi2_gate_approx(int dof) noexcept {
+    // Very small helper for robust scaling heuristics; not a strict chi2 quantile.
+    // 1σ-ish: ~dof
+    return static_cast<double>(dof);
 }
 
 [[nodiscard]] inline double
     adaptive_scale_from_maha(double maha, int dof, double max_scale) noexcept {
-    if (!(max_scale >= 1.0) || !std::isfinite(maha)) {
+    if (!(maha > 0.0) || !std::isfinite(maha) || dof <= 0) {
         return 1.0;
     }
-    dof                     = std::max(dof, 1);
-    const double normalized = maha / static_cast<double>(dof);
-    if (!(normalized > 1.0)) {
+    const double gate = chi2_gate_approx(dof);
+    if (!(maha > gate)) {
         return 1.0;
     }
-    return std::clamp(normalized, 1.0, max_scale);
+    const double s = std::sqrt(maha / gate);
+    return std::clamp(s, 1.0, max_scale);
 }
 
-[[nodiscard]] inline double decay_to_one(double value, double dt, double tau) noexcept {
-    if (!std::isfinite(value)) {
+[[nodiscard]] inline double decay_to_one(double x, double dt, double tau) noexcept {
+    if (!std::isfinite(x)) {
         return 1.0;
     }
-    if (!(tau > 0.0) || !(dt > 0.0) || !std::isfinite(dt) || !std::isfinite(tau)) {
-        return 1.0;
+    if (!(dt > 0.0) || !std::isfinite(dt) || !(tau > 0.0) || !std::isfinite(tau)) {
+        return std::max(1.0, x);
     }
     const double a = std::exp(-dt / tau);
-    return 1.0 + (value - 1.0) * a;
-}
-
-[[nodiscard]] inline double gaussian_slip_weight(double slip, double speed_xy) noexcept {
-    if (!(speed_xy > kSlipGatingMinSpeed)) {
-        return 0.0;
-    }
-    const double sigma = kSlipGatingSigmaRad;
-    slip               = wrap_pi(slip);
-    const double r     = slip / sigma;
-    return std::exp(-0.5 * r * r);
-}
-
-[[nodiscard]] inline double chi2_99(int dof) noexcept {
-    switch (dof) {
-    case 1: return 6.635;
-    case 2: return 9.210;
-    case 3: return 11.345;
-    case 4: return 13.277;
-    default:
-        // Wilson-Hilferty approximation for 99% quantile (z≈2.326).
-        // q ≈ k*(1 - 2/(9k) + z*sqrt(2/(9k)))^3
-        if (dof <= 0)
-            return 1.0;
-        const double k = static_cast<double>(dof);
-        const double z = 2.326347874; // Phi^-1(0.99)
-        const double t = 1.0 - 2.0 / (9.0 * k) + z * std::sqrt(2.0 / (9.0 * k));
-        return k * t * t * t;
-    }
+    return 1.0 + (x - 1.0) * a;
 }
 
 [[nodiscard]] inline double
     robust_R_scale_from_maha(double maha, int dof, double max_scale) noexcept {
-    if (!(max_scale >= 1.0) || !std::isfinite(maha)) {
+    if (!(maha > 0.0) || !std::isfinite(maha) || dof <= 0) {
         return 1.0;
     }
-    dof            = std::max(dof, 1);
-    const double q = chi2_99(dof);
-    if (!(q > 0.0) || !(maha > q)) {
+    const double gate = chi2_gate_approx(dof);
+    if (!(maha > gate)) {
         return 1.0;
     }
-    const double scale = maha / q;
-    return std::clamp(scale, 1.0, max_scale);
+    const double s = maha / gate;
+    return std::clamp(s, 1.0, max_scale);
 }
 
 } // namespace detail
 
 // ============================================================================
-// RobotProcessModel - Satisfies ProcessModel concept
+// Product Lie group: SE_2(3) × R^N
 // ============================================================================
 
-/// @brief Process model for robot tracking on SE₂(3) × ℝ⁴
-///
-/// State: SE₂(3) × [v_yaw, r0, r1, h]
-/// Dynamics: CV for position/velocity, constant yaw-rate, random walk for geometry
+template <int ExtraDim>
+struct SE23xRn {
+    using SE23d              = group::SEn3<double, 2>;
+    using ExtraType          = Eigen::Matrix<double, ExtraDim, 1>;
+    using VectorType         = Eigen::Matrix<double, 9 + ExtraDim, 1>;
+    static constexpr int Dim = 9 + ExtraDim;
+
+    SE23d first{};
+    ExtraType second = Eigen::Matrix<double, ExtraDim, 1>::Zero();
+
+    SE23xRn() = default;
+    SE23xRn(const SE23d& g, const ExtraType& e)
+        : first(g)
+        , second(e) {}
+
+    [[nodiscard]] SE23xRn inv() const noexcept {
+        const auto first_inv = first.inv();
+        return SE23xRn(first_inv, (-second).eval());
+    }
+
+    [[nodiscard]] Eigen::MatrixXd Adjoint() const noexcept {
+        Eigen::Matrix<double, Dim, Dim> Ad = Eigen::Matrix<double, Dim, Dim>::Zero();
+        Ad.template block<9, 9>(0, 0)      = first.Adjoint();
+        Ad.template block<ExtraDim, ExtraDim>(9, 9).setIdentity();
+        return Ad;
+    }
+
+    [[nodiscard]] const Eigen::Matrix3d& R() const noexcept { return first.R(); }
+    [[nodiscard]] const Eigen::Vector3d& v() const noexcept { return first.v(); }
+    [[nodiscard]] const Eigen::Vector3d& p() const noexcept { return first.p(); }
+
+    friend SE23xRn operator*(const SE23xRn& a, const SE23xRn& b) noexcept {
+        return SE23xRn(a.first * b.first, (a.second + b.second).eval());
+    }
+
+    [[nodiscard]] static SE23xRn exp(const VectorType& xi) noexcept {
+        const auto xi_g = xi.template head<9>().eval();
+        const auto xi_e = xi.template tail<ExtraDim>().eval();
+        return SE23xRn(SE23d::exp(xi_g), xi_e);
+    }
+
+    [[nodiscard]] static VectorType log(const SE23xRn& x) noexcept {
+        VectorType xi;
+        xi.template head<9>()        = SE23d::log(x.first);
+        xi.template tail<ExtraDim>() = x.second;
+        return xi;
+    }
+};
+
+// ============================================================================
+// Measurement Lie group: SO(2) × SO(2) × R × SO(2)
+// (yaw, pitch, distance, armor_yaw)
+// ============================================================================
+
+struct SO2d {
+    using Scalar             = double;
+    using VectorType         = Eigen::Matrix<double, 1, 1>;
+    static constexpr int Dim = 1;
+
+    double angle_rad{0.0};
+
+    SO2d() = default;
+    explicit SO2d(double a)
+        : angle_rad(fcs::L3::normalize_rad(a)) {}
+
+    [[nodiscard]] SO2d inv() const noexcept { return SO2d(-angle_rad); }
+    friend SO2d operator*(const SO2d& a, const SO2d& b) noexcept {
+        return SO2d(a.angle_rad + b.angle_rad);
+    }
+
+    [[nodiscard]] static SO2d exp(const VectorType& v) noexcept { return SO2d(v(0)); }
+    [[nodiscard]] static VectorType log(const SO2d& x) noexcept { return VectorType(x.angle_rad); }
+
+    [[nodiscard]] Eigen::MatrixXd Adjoint() const noexcept {
+        return Eigen::Matrix<double, 1, 1>::Identity();
+    }
+};
+
+struct YpdAy {
+    using VectorType         = Eigen::Matrix<double, 4, 1>;
+    static constexpr int Dim = 4;
+
+    SO2d yaw{};
+    SO2d pitch{};
+    double dist{0.0};
+    SO2d armor_yaw{};
+
+    YpdAy() = default;
+    YpdAy(double yaw_rad, double pitch_rad, double distance, double armor_yaw_rad)
+        : yaw(yaw_rad)
+        , pitch(pitch_rad)
+        , dist(distance)
+        , armor_yaw(armor_yaw_rad) {}
+
+    [[nodiscard]] YpdAy inv() const noexcept {
+        return YpdAy(
+            (yaw.inv()).angle_rad, (pitch.inv()).angle_rad, -dist, (armor_yaw.inv()).angle_rad);
+    }
+
+    friend YpdAy operator*(const YpdAy& a, const YpdAy& b) noexcept {
+        return YpdAy(
+            (a.yaw * b.yaw).angle_rad, (a.pitch * b.pitch).angle_rad, a.dist + b.dist,
+            (a.armor_yaw * b.armor_yaw).angle_rad);
+    }
+
+    [[nodiscard]] static YpdAy exp(const VectorType& v) noexcept {
+        return YpdAy(v(0), v(1), v(2), v(3));
+    }
+
+    [[nodiscard]] static VectorType log(const YpdAy& x) noexcept {
+        VectorType v;
+        v(0) = SO2d::log(x.yaw)(0);
+        v(1) = SO2d::log(x.pitch)(0);
+        v(2) = x.dist;
+        v(3) = SO2d::log(x.armor_yaw)(0);
+        return v;
+    }
+
+    [[nodiscard]] Eigen::MatrixXd Adjoint() const noexcept {
+        return Eigen::Matrix<double, 4, 4>::Identity();
+    }
+};
+
+// ============================================================================
+// Process models (prediction): reuse existing FCS logic
+// ============================================================================
+
 class RobotProcessModel {
 public:
     static constexpr int kExtraDim = 4;
     static constexpr int kGroupDim = 9;
     static constexpr int kStateDim = kGroupDim + kExtraDim;
 
-    // Extra state indices
     static constexpr int kIdxVYaw = 0;
     static constexpr int kIdxR0   = 1;
     static constexpr int kIdxR1   = 2;
     static constexpr int kIdxH    = 3;
 
-    using Space      = SE23_Rn<kExtraDim>;
-    using Point      = typename Space::Point;
-    using Covariance = SymmetricMatrix<kStateDim, double>;
-    using SE23d      = group::SEn3<double, 2>;
-    using Vec3       = Eigen::Vector3d;
-    using Mat3       = Eigen::Matrix3d;
-    using MatX       = Eigen::Matrix<double, kStateDim, kStateDim>;
+    static constexpr int kHighArmorIdA = 1;
+    static constexpr int kHighArmorIdB = 3;
 
-private:
-    const RobotInEKFConfig& config_;
-    double q_scale_;
+    using SE23d = group::SEn3<double, 2>;
+    using Point = SE23xRn<kExtraDim>;
+    using MatX  = Eigen::Matrix<double, kStateDim, kStateDim>;
+    using VecX  = Eigen::Matrix<double, kStateDim, 1>;
+    using Mat3  = Eigen::Matrix3d;
+    using Vec3  = Eigen::Vector3d;
 
-public:
     explicit RobotProcessModel(const RobotInEKFConfig& config, double q_scale = 1.0) noexcept
         : config_(config)
-        , q_scale_(std::clamp(detail::sanitize_finite(q_scale, 1.0), 1.0, 1e6)) {}
+        , q_scale_(q_scale) {}
 
-    /// State transition: CV dynamics with yaw-rate coupling
-    [[nodiscard]] Point predict(const Point& x, double dt) const noexcept {
+    [[nodiscard]] static Eigen::Vector3d armor_position(const Point& x, int armor_id) noexcept;
+
+    [[nodiscard]] Point operator()(const Point& x, double dt) const noexcept {
         const double v_yaw = detail::sanitize_finite(x.second(kIdxVYaw), 0.0);
+        const double yaw0  = std::atan2(x.first.R()(1, 0), x.first.R()(0, 0));
+        const double yaw1  = yaw0 + v_yaw * dt;
+        const Mat3 R1      = Eigen::AngleAxisd(yaw1, Vec3::UnitZ()).toRotationMatrix();
 
-        const double yaw0 = std::atan2(x.first.R()(1, 0), x.first.R()(0, 0));
-        const double yaw1 = detail::wrap_pi(yaw0 + v_yaw * dt);
-
-        const Mat3 Rn = detail::rotz(yaw1);
-
-        const Vec3 v0 = x.first.v();
-        Vec3 v1       = v0;
-        Vec3 p1       = x.first.p();
+        Vec3 v0 = x.first.v();
+        Vec3 v1 = v0;
+        Vec3 p1 = x.first.p();
 
         if (config_.use_coordinated_turn) {
-            double omega = v_yaw;
-            if (config_.enable_slip_gated_turn) {
-                const double speed_xy = std::hypot(v0.x(), v0.y());
-                const double heading  = std::atan2(v0.y(), v0.x());
-                const double slip     = detail::wrap_pi(heading - yaw0);
-                const double w        = detail::gaussian_slip_weight(slip, speed_xy);
-                omega *= w;
-            }
+            double omega       = v_yaw;
             const double eps   = detail::kCoordinatedTurnOmegaEpsilon;
             const double theta = omega * dt;
+            const double c     = std::cos(theta);
+            const double s     = std::sin(theta);
 
-            const double c = std::cos(theta);
-            const double s = std::sin(theta);
-
-            // Rotate velocity direction with yaw-rate (coordinated turn)
             v1.x() = c * v0.x() - s * v0.y();
             v1.y() = s * v0.x() + c * v0.y();
             v1.z() = v0.z();
 
-            // Integrate position along arc (xy), straight-line (z).
             if (std::abs(omega) > eps) {
                 const double inv_omega = 1.0 / omega;
                 p1.x() += inv_omega * (s * v0.x() - (1.0 - c) * v0.y());
@@ -338,15 +290,17 @@ public:
             p1 = (p1 + v0 * dt).eval();
         }
 
-        typename SE23d::IsometriesType t;
+        SE23d::IsometriesType t;
         t[0] = v1;
         t[1] = p1;
 
-        return {SE23d(Rn, t), x.second};
+        Point out;
+        out.first  = SE23d(R1, t);
+        out.second = x.second;
+        return out;
     }
 
-    /// Process noise covariance
-    [[nodiscard]] Covariance process_noise(double dt) const noexcept {
+    [[nodiscard]] MatX process_noise(double dt) const noexcept {
         MatX Q = MatX::Zero();
 
         const double sigma_a_xy2  = config_.sigma_a_xy * config_.sigma_a_xy;
@@ -380,8 +334,7 @@ public:
         Q(kGroupDim + kIdxH, kGroupDim + kIdxH) += sigma_h2 * dt;
 
         if (q_scale_ != 1.0) {
-            // Only scale maneuver-related blocks (v/p and yaw/v_yaw), keep geometry stable.
-            Q.template block<6, 6>(3, 3) *= q_scale_; // v(3..5), p(6..8)
+            Q.template block<6, 6>(3, 3) *= q_scale_;
             const int iy = 2;
             const int iw = kGroupDim + kIdxVYaw;
             Q(iy, iy) *= q_scale_;
@@ -391,10 +344,9 @@ public:
         }
 
         Q.diagonal().array() += detail::kCovarianceRegularization;
-        return Covariance(Q);
+        return Q;
     }
 
-    /// Analytical Jacobian (transition matrix Φ)
     [[nodiscard]] static MatX jacobian(const Point& x, double dt) noexcept {
         const double v_yaw      = detail::sanitize_finite(x.second(kIdxVYaw), 0.0);
         const double omega_z_dt = v_yaw * dt;
@@ -413,109 +365,67 @@ public:
 
         return Phi;
     }
+
+private:
+    const RobotInEKFConfig& config_;
+    double q_scale_{1.0};
 };
 
-// ============================================================================
-// OutpostProcessModel - Satisfies ProcessModel concept
-// ============================================================================
-
-/// @brief Process model for outpost tracking on SE₂(3) × ℝ³
-///
-/// State: SE₂(3) × [v_yaw, dz1, dz2]
-/// Dynamics: CV for position/velocity, constant yaw-rate, random walk for z-offsets
 class OutpostProcessModel {
 public:
     static constexpr int kExtraDim = 3;
     static constexpr int kGroupDim = 9;
     static constexpr int kStateDim = kGroupDim + kExtraDim;
 
-    // Extra state indices
     static constexpr int kIdxVYaw = 0;
     static constexpr int kIdxDz1  = 1;
     static constexpr int kIdxDz2  = 2;
 
-    using Space      = SE23_Rn<kExtraDim>;
-    using Point      = typename Space::Point;
-    using Covariance = SymmetricMatrix<kStateDim, double>;
-    using SE23d      = group::SEn3<double, 2>;
-    using Vec3       = Eigen::Vector3d;
-    using Mat3       = Eigen::Matrix3d;
-    using MatX       = Eigen::Matrix<double, kStateDim, kStateDim>;
+    using SE23d = group::SEn3<double, 2>;
+    using Point = SE23xRn<kExtraDim>;
+    using MatX  = Eigen::Matrix<double, kStateDim, kStateDim>;
+    using VecX  = Eigen::Matrix<double, kStateDim, 1>;
+    using Mat3  = Eigen::Matrix3d;
+    using Vec3  = Eigen::Vector3d;
 
-private:
-    const OutpostInEKFConfig& config_;
-    double q_scale_;
-
-public:
     explicit OutpostProcessModel(const OutpostInEKFConfig& config, double q_scale = 1.0) noexcept
         : config_(config)
-        , q_scale_(std::clamp(detail::sanitize_finite(q_scale, 1.0), 1.0, 1e6)) {}
+        , q_scale_(q_scale) {}
 
-    /// State transition: CV dynamics with yaw-rate coupling
-    [[nodiscard]] Point predict(const Point& x, double dt) const noexcept {
+    [[nodiscard]] static Eigen::Vector3d armor_position(const Point& x, int armor_id) noexcept;
+
+    [[nodiscard]] Point operator()(const Point& x, double dt) const noexcept {
         const double v_yaw = detail::sanitize_finite(x.second(kIdxVYaw), 0.0);
+        const double yaw0  = std::atan2(x.first.R()(1, 0), x.first.R()(0, 0));
+        const double yaw1  = yaw0 + v_yaw * dt;
+        const Mat3 R1      = Eigen::AngleAxisd(yaw1, Vec3::UnitZ()).toRotationMatrix();
 
-        const double yaw0 = std::atan2(x.first.R()(1, 0), x.first.R()(0, 0));
-        const double yaw1 = detail::wrap_pi(yaw0 + v_yaw * dt);
+        Vec3 v0 = x.first.v();
+        Vec3 v1 = v0;
+        Vec3 p1 = x.first.p();
+        p1      = (p1 + v0 * dt).eval();
 
-        const Mat3 Rn = detail::rotz(yaw1);
-
-        const Vec3 v0 = x.first.v();
-        Vec3 v1       = v0;
-        Vec3 p1       = x.first.p();
-
-        if (config_.use_coordinated_turn) {
-            double omega = v_yaw;
-            if (config_.enable_slip_gated_turn) {
-                const double speed_xy = std::hypot(v0.x(), v0.y());
-                const double heading  = std::atan2(v0.y(), v0.x());
-                const double slip     = detail::wrap_pi(heading - yaw0);
-                const double w        = detail::gaussian_slip_weight(slip, speed_xy);
-                omega *= w;
-            }
-            const double eps   = detail::kCoordinatedTurnOmegaEpsilon;
-            const double theta = omega * dt;
-
-            const double c = std::cos(theta);
-            const double s = std::sin(theta);
-
-            v1.x() = c * v0.x() - s * v0.y();
-            v1.y() = s * v0.x() + c * v0.y();
-            v1.z() = v0.z();
-
-            if (std::abs(omega) > eps) {
-                const double inv_omega = 1.0 / omega;
-                p1.x() += inv_omega * (s * v0.x() - (1.0 - c) * v0.y());
-                p1.y() += inv_omega * ((1.0 - c) * v0.x() + s * v0.y());
-            } else {
-                p1.x() += v0.x() * dt;
-                p1.y() += v0.y() * dt;
-            }
-            p1.z() += v0.z() * dt;
-        } else {
-            p1 = (p1 + v0 * dt).eval();
-        }
-
-        typename SE23d::IsometriesType t;
+        SE23d::IsometriesType t;
         t[0] = v1;
         t[1] = p1;
 
-        return {SE23d(Rn, t), x.second};
+        Point out;
+        out.first  = SE23d(R1, t);
+        out.second = x.second;
+        return out;
     }
 
-    /// Process noise covariance
-    [[nodiscard]] Covariance process_noise(double dt) const noexcept {
+    [[nodiscard]] MatX process_noise(double dt) const noexcept {
         MatX Q = MatX::Zero();
 
-        const double sigma_xy2  = config_.sigma_a_xy * config_.sigma_a_xy;
-        const double sigma_z2   = config_.sigma_a_z * config_.sigma_a_z;
-        const double sigma_yaw2 = config_.sigma_yaw * config_.sigma_yaw;
+        const double sigma_a_xy2  = config_.sigma_a_xy * config_.sigma_a_xy;
+        const double sigma_a_z2   = config_.sigma_a_z * config_.sigma_a_z;
+        const double sigma_a_yaw2 = config_.sigma_yaw * config_.sigma_yaw;
 
         const double dt2 = dt * dt;
         const double dt3 = dt2 * dt;
         const double dt4 = dt2 * dt2;
 
-        // CV model noise for [v, p] pairs (same as RobotProcessModel)
         auto fill_cv = [&](int idx_v, int idx_p, double q) {
             Q(idx_v, idx_v) += q * dt2;
             Q(idx_p, idx_v) += q * dt3 / 2.0;
@@ -523,20 +433,18 @@ public:
             Q(idx_p, idx_p) += q * dt4 / 4.0;
         };
 
-        fill_cv(3, 6, sigma_xy2); // x
-        fill_cv(4, 7, sigma_xy2); // y
-        fill_cv(5, 8, sigma_z2);  // z
+        fill_cv(3, 6, sigma_a_xy2);
+        fill_cv(4, 7, sigma_a_xy2);
+        fill_cv(5, 8, sigma_a_z2);
 
-        // Yaw/v_yaw CV noise
-        Q(2, 2) += sigma_yaw2 * dt4 / 4.0;
-        Q(2, kGroupDim + kIdxVYaw) += sigma_yaw2 * dt3 / 2.0;
-        Q(kGroupDim + kIdxVYaw, 2) += sigma_yaw2 * dt3 / 2.0;
-        Q(kGroupDim + kIdxVYaw, kGroupDim + kIdxVYaw) += sigma_yaw2 * dt2;
+        Q(2, 2) += sigma_a_yaw2 * dt4 / 4.0;
+        Q(2, kGroupDim + kIdxVYaw) += sigma_a_yaw2 * dt3 / 2.0;
+        Q(kGroupDim + kIdxVYaw, 2) += sigma_a_yaw2 * dt3 / 2.0;
+        Q(kGroupDim + kIdxVYaw, kGroupDim + kIdxVYaw) += sigma_a_yaw2 * dt2;
 
-        // dz1/dz2 drift
-        const double sigma_h2 = config_.sigma_h * config_.sigma_h;
-        Q(kGroupDim + kIdxDz1, kGroupDim + kIdxDz1) += sigma_h2 * dt;
-        Q(kGroupDim + kIdxDz2, kGroupDim + kIdxDz2) += sigma_h2 * dt;
+        const double sigma_dz2 = config_.sigma_h * config_.sigma_h;
+        Q(kGroupDim + kIdxDz1, kGroupDim + kIdxDz1) += sigma_dz2 * dt;
+        Q(kGroupDim + kIdxDz2, kGroupDim + kIdxDz2) += sigma_dz2 * dt;
 
         if (q_scale_ != 1.0) {
             Q.template block<6, 6>(3, 3) *= q_scale_;
@@ -549,16 +457,14 @@ public:
         }
 
         Q.diagonal().array() += detail::kCovarianceRegularization;
-        return Covariance(Q);
+        return Q;
     }
 
-    /// Analytical Jacobian (transition matrix Φ)
     [[nodiscard]] static MatX jacobian(const Point& x, double dt) noexcept {
         const double v_yaw      = detail::sanitize_finite(x.second(kIdxVYaw), 0.0);
         const double omega_z_dt = v_yaw * dt;
 
-        MatX Phi = MatX::Identity();
-
+        MatX Phi  = MatX::Identity();
         Phi(0, 1) = omega_z_dt;
         Phi(1, 0) = -omega_z_dt;
         Phi(3, 4) = omega_z_dt;
@@ -568,725 +474,253 @@ public:
 
         Phi.template block<3, 3>(6, 3) = Mat3::Identity() * dt;
         Phi(2, kGroupDim + kIdxVYaw)   = dt;
-
         return Phi;
     }
+
+private:
+    const OutpostInEKFConfig& config_;
+    double q_scale_{1.0};
 };
 
 // ============================================================================
-// Shared Yaw Measurement Model
+// Redact Perception/Assumption adapters
 // ============================================================================
 
-/// @brief Invariant measurement model for yaw angle observations
-///
-/// Simple scalar measurement: yaw error = yaw_meas - yaw_est
-/// Template parameter allows usage with both Robot and Outpost state dimensions
 template <int ExtraDim>
-class YawMeasurementModel {
+struct BeliefTag {
+    using Flux  = SE23xRn<ExtraDim>;
+    using Drift = typename Flux::VectorType;
+};
+
+struct MeasurementTag {
+    using Flux  = YpdAy;
+    using Drift = YpdAy::VectorType;
+};
+
+template <typename Config, typename ProcessModel, int ArmorsNum>
+class SphericalPerception {
 public:
-    static constexpr int kGroupDim = 9;
-    static constexpr int kStateDim = kGroupDim + ExtraDim;
+    using Belief      = BeliefTag<ProcessModel::kExtraDim>;
+    using Measurement = MeasurementTag;
+    using Flux        = typename Belief::Flux;
+    using MatrixDD    = Eigen::MatrixXd;
 
-    using Space            = SE23_Rn<ExtraDim>;
-    using Point            = typename Space::Point;
-    using MeasurementSpace = Euclidean<1, double>;
-    using MeasPoint        = typename MeasurementSpace::Point;
-    using MeasFiber        = typename MeasurementSpace::Fiber;
-    using Covariance       = SymmetricMatrix<1, double>;
+    enum class Mode {
+        ArmorSpherical, // [yaw, pitch, dist, armor_yaw]
+        ArmorYpdOnly,   // [yaw, pitch, dist] (armor_yaw ignored)
+        TargetYawOnly   // [target_yaw] packed into yaw component, others ignored
+    };
 
-    using Mat1xX = Eigen::Matrix<double, 1, kStateDim>;
-
-private:
-    double sigma_w_;
-
-public:
-    explicit YawMeasurementModel(double sigma_w) noexcept
-        : sigma_w_(sigma_w) {}
-
-    /// Compute yaw error (wrapped to [-π, π])
-    [[nodiscard]] static MeasFiber
-        invariant_error(const Point& x, const MeasPoint& yaw_meas) noexcept {
-        const double yaw_est = std::atan2(x.first.R()(1, 0), x.first.R()(0, 0));
-        const double r       = detail::wrap_pi(yaw_meas.data(0) - yaw_est);
-        return MeasFiber{Eigen::Matrix<double, 1, 1>{r}};
+    void configure_armor(int armor_id, bool include_armor_yaw, const Config& cfg) noexcept {
+        mode_     = include_armor_yaw ? Mode::ArmorSpherical : Mode::ArmorYpdOnly;
+        armor_id_ = armor_id;
+        cfg_      = &cfg;
+        sigma_w_  = 0.0;
+        R_.setIdentity();
     }
 
-    /// Error Jacobian H (yaw is index 2 in the error state)
-    [[nodiscard]] static Mat1xX error_jacobian(const Point& /*x*/) noexcept {
-        Mat1xX H = Mat1xX::Zero();
-        H(0, 2)  = 1.0;
+    void configure_target_yaw_only(double sigma_w, const Config& cfg) noexcept {
+        mode_     = Mode::TargetYawOnly;
+        armor_id_ = 0;
+        cfg_      = &cfg;
+        sigma_w_  = sigma_w;
+        R_.setIdentity();
+    }
+
+    void prepare(const Flux& mean_state, const Measurement::Flux& z_meas) noexcept {
+        (void)z_meas;
+        if (!cfg_) {
+            R_.setIdentity();
+            return;
+        }
+
+        // Base R (possibly later scaled by robust logic in the caller).
+        Eigen::Matrix<double, 4, 4> R = Eigen::Matrix<double, 4, 4>::Zero();
+
+        if (mode_ == Mode::TargetYawOnly) {
+            const double sw2 = sigma_w_ * sigma_w_;
+            R(0, 0)          = (sw2 > 0.0 && std::isfinite(sw2)) ? sw2 : 1.0;
+            R(1, 1)          = 1e12;
+            R(2, 2)          = 1e12;
+            R(3, 3)          = 1e12;
+            R_               = R;
+            return;
+        }
+
+        // For armor observations, compute view-angle dependent distance noise using prediction at
+        // mean.
+        const Eigen::Vector4d z_pred =
+            to_vec(predict_armor_measurement(mean_state, /*include_armor_yaw=*/true));
+
+        const double sigma_yaw   = cfg_->sigma_yaw_obs;
+        const double sigma_pitch = cfg_->sigma_pitch_obs;
+        const double sigma_ayaw  = cfg_->sigma_armor_yaw;
+
+        R(0, 0) = sigma_yaw * sigma_yaw;
+        R(1, 1) = sigma_pitch * sigma_pitch;
+
+        const double center_yaw = z_pred(0);
+        const double armor_yaw  = z_pred(3);
+        const double delta      = fcs::L3::shortest_rad(center_yaw, armor_yaw);
+        R(2, 2)                 = std::log(std::abs(delta) + 1.0) + 1.0;
+
+        if (mode_ == Mode::ArmorSpherical) {
+            const double d                = std::max(0.0, z_pred(2));
+            const double sigma_armor_yaw2 = std::pow(std::log(d + 1.0) / 200.0 + sigma_ayaw, 2);
+            R(3, 3)                       = sigma_armor_yaw2;
+        } else {
+            R(3, 3) = 1e12;
+        }
+
+        R.diagonal().array() += detail::kCovarianceRegularization;
+        R_ = R;
+    }
+
+    void apply_robust_scale(double maha, int dof) noexcept {
+        if (!cfg_ || !cfg_->enable_robust_update) {
+            return;
+        }
+        const double s = detail::robust_R_scale_from_maha(maha, dof, detail::kRobustMaxRScale);
+        if (s != 1.0) {
+            R_ *= s;
+        }
+    }
+
+    [[nodiscard]] Measurement::Flux assume(const Flux& x) const noexcept {
+        if (mode_ == Mode::TargetYawOnly) {
+            const double target_yaw = std::atan2(x.first.R()(1, 0), x.first.R()(0, 0));
+            return Measurement::Flux(target_yaw, 0.0, 0.0, 0.0);
+        }
+        const bool include_armor_yaw = (mode_ == Mode::ArmorSpherical);
+        return predict_armor_measurement(x, include_armor_yaw);
+    }
+
+    [[nodiscard]] typename Belief::Drift
+        extrude(auto& /*P*/, typename Measurement::Drift /*innovation*/) const noexcept {
+        return typename Belief::Drift::Zero();
+    }
+
+    [[nodiscard]] MatrixDD measurement_noise_covariance() const noexcept { return R_; }
+
+    [[nodiscard]] MatrixDD measurement_jacobian(const Flux& /*x*/) const noexcept {
+        // Sigma-point update does not require H. Provide a safe fallback.
+        MatrixDD H = MatrixDD::Zero(4, Flux::Dim);
         return H;
     }
 
-    /// Measurement noise covariance
-    [[nodiscard]] Covariance measurement_noise() const noexcept {
-        return Covariance::ScaledIdentity(sigma_w_ * sigma_w_);
-    }
-};
-
-// ============================================================================
-// RobotArmorMeasurementModel - Satisfies InvariantMeasurementModel concept
-// ============================================================================
-
-/// @brief Invariant measurement model for armor position observations
-///
-/// Computes body-frame invariant error: r = R^T (y - p) - b
-/// where b is the armor offset in body frame.
-///
-/// === Noise Modes ===
-/// - Static (default): R = σ²I - traditional InEKF
-/// - Dynamic: R = f(geometry) - anisotropic noise adapted from motion_model.hpp
-///
-/// === Dynamic Noise Rationale (from motion_model.hpp) ===
-/// Visual measurements have direction-dependent uncertainty:
-/// - Depth (radial): unreliable when viewing armor from the side
-/// - Angular (tangential): unreliable at long range due to PnP instability
-///
-/// The dynamic mode preserves InEKF's invariant error structure while
-/// incorporating geometry-aware noise modeling.
-class RobotArmorMeasurementModel {
-public:
-    static constexpr int kExtraDim  = RobotProcessModel::kExtraDim;
-    static constexpr int kGroupDim  = RobotProcessModel::kGroupDim;
-    static constexpr int kStateDim  = RobotProcessModel::kStateDim;
-    static constexpr int kArmorsNum = 4;
-
-    // High armor IDs
-    static constexpr int kHighArmorIdA = 1;
-    static constexpr int kHighArmorIdB = 3;
-
-    // Extra state indices
-    static constexpr int kIdxVYaw = RobotProcessModel::kIdxVYaw;
-    static constexpr int kIdxR0   = RobotProcessModel::kIdxR0;
-    static constexpr int kIdxR1   = RobotProcessModel::kIdxR1;
-    static constexpr int kIdxH    = RobotProcessModel::kIdxH;
-
-    using Space            = SE23_Rn<kExtraDim>;
-    using Point            = typename Space::Point;
-    using MeasurementSpace = Euclidean<3, double>;
-    using MeasPoint        = typename MeasurementSpace::Point;
-    using MeasFiber        = typename MeasurementSpace::Fiber;
-    using Covariance       = SymmetricMatrix<3, double>;
-
-    using SE23d  = group::SEn3<double, 2>;
-    using Vec3   = Eigen::Vector3d;
-    using Mat3   = Eigen::Matrix3d;
-    using Mat3xX = Eigen::Matrix<double, 3, kStateDim>;
-
 private:
-    int armor_id_;
-    double sigma_m_;
-    bool use_dynamic_noise_;
-    double k_radial_;
-    double k_tangent_;
-    mutable Vec3 cached_y_body_; // Cached from invariant_error for noise computation
+    Mode mode_{Mode::ArmorSpherical};
+    int armor_id_{0};
+    const Config* cfg_{nullptr};
+    double sigma_w_{0.0};
+    Eigen::Matrix<double, 4, 4> R_{Eigen::Matrix<double, 4, 4>::Identity()};
 
-public:
-    /// @brief Construct with static isotropic noise (default, backward compatible)
-    RobotArmorMeasurementModel(int armor_id, double sigma_m) noexcept
-        : armor_id_(armor_id)
-        , sigma_m_(sigma_m)
-        , use_dynamic_noise_(false)
-        , k_radial_(1.0)
-        , k_tangent_(0.1)
-        , cached_y_body_(Vec3::Zero()) {}
-
-    /// @brief Construct with configurable dynamic anisotropic noise
-    /// @param armor_id Armor index (0-3)
-    /// @param sigma_m Base measurement noise std-dev (m)
-    /// @param use_dynamic Enable dynamic noise based on viewing geometry
-    /// @param k_radial Radial noise sensitivity (default 1.0)
-    /// @param k_tangent Tangential noise sensitivity (default 0.1)
-    RobotArmorMeasurementModel(
-        int armor_id, double sigma_m, bool use_dynamic, double k_radial = 1.0,
-        double k_tangent = 0.1) noexcept
-        : armor_id_(armor_id)
-        , sigma_m_(sigma_m)
-        , use_dynamic_noise_(use_dynamic)
-        , k_radial_(k_radial)
-        , k_tangent_(k_tangent)
-        , cached_y_body_(Vec3::Zero()) {}
-
-    /// Compute body-frame invariant error: r = R^T (y - p) - b
-    /// Also caches y_body for dynamic noise computation
-    [[nodiscard]] MeasFiber invariant_error(const Point& x, const MeasPoint& y) const noexcept {
-        constexpr double kAngleStep = 2.0 * std::numbers::pi / static_cast<double>(kArmorsNum);
-        const double yaw_offset     = static_cast<double>(armor_id_) * kAngleStep;
-        const Mat3 R_id = Eigen::AngleAxisd(yaw_offset, Vec3::UnitZ()).toRotationMatrix();
-
-        const bool is_high    = (armor_id_ == kHighArmorIdA || armor_id_ == kHighArmorIdB);
-        const double radius   = is_high ? x.second(kIdxR1) : x.second(kIdxR0);
-        const double z_offset = is_high ? x.second(kIdxH) : 0.0;
-        const Vec3 b          = R_id * Vec3{-radius, 0.0, z_offset};
-
-        const Vec3 y_body = x.first.R().transpose() * (y.data - x.first.p());
-        const Vec3 r      = y_body - b;
-
-        // Cache y_body for dynamic noise computation (called after invariant_error)
-        cached_y_body_ = y_body;
-
-        return MeasFiber{r};
+    [[nodiscard]] static Eigen::Vector4d to_vec(const Measurement::Flux& z) noexcept {
+        return Measurement::Flux::log(z);
     }
 
-    /// Error Jacobian C (∂r/∂δ)
-    [[nodiscard]] Mat3xX error_jacobian(const Point& x) const noexcept {
-        constexpr double kAngleStep = 2.0 * std::numbers::pi / static_cast<double>(kArmorsNum);
-        const double yaw_offset     = static_cast<double>(armor_id_) * kAngleStep;
-        const Mat3 R_id = Eigen::AngleAxisd(yaw_offset, Vec3::UnitZ()).toRotationMatrix();
-
-        const bool is_high    = (armor_id_ == kHighArmorIdA || armor_id_ == kHighArmorIdB);
-        const double radius   = is_high ? x.second(kIdxR1) : x.second(kIdxR0);
-        const double z_offset = is_high ? x.second(kIdxH) : 0.0;
-        const Vec3 b          = R_id * Vec3{-radius, 0.0, z_offset};
-
-        Mat3xX C = Mat3xX::Zero();
-
-        C.template block<3, 3>(0, 0) = -detail::skew(b);
-        C.template block<3, 3>(0, 6) = Mat3::Identity();
-
-        const Vec3 db_dr = R_id * Vec3{-1.0, 0.0, 0.0};
-        const Vec3 db_dh = R_id * Vec3{0.0, 0.0, 1.0};
-        if (is_high) {
-            C.template block<3, 1>(0, kGroupDim + kIdxR1) = db_dr;
-            C.template block<3, 1>(0, kGroupDim + kIdxH)  = db_dh;
-        } else {
-            C.template block<3, 1>(0, kGroupDim + kIdxR0) = db_dr;
-        }
-
-        return C;
-    }
-
-    /// Measurement noise covariance
-    ///
-    /// Returns either:
-    /// - Static: R = σ²I (isotropic, traditional InEKF)
-    /// - Dynamic: R = f(y_body, armor_normal, k_r, k_t) (anisotropic, configurable)
-    [[nodiscard]] Covariance measurement_noise() const noexcept {
-        if (!use_dynamic_noise_) {
-            return Covariance::ScaledIdentity(sigma_m_ * sigma_m_);
-        }
-
-        // Dynamic mode: compute anisotropic noise based on viewing geometry
-        const Vec3 n_armor = detail::armor_normal_body(armor_id_, kArmorsNum);
-        const Mat3 R_mat   = detail::compute_anisotropic_R_body(
-            cached_y_body_, n_armor, sigma_m_, k_radial_, k_tangent_);
-        return Covariance(R_mat);
-    }
-};
-
-// ============================================================================
-// OutpostArmorMeasurementModel - Satisfies InvariantMeasurementModel concept
-// ============================================================================
-
-/// @brief Invariant measurement model for outpost armor position observations
-///
-/// Same dynamic noise capability as RobotArmorMeasurementModel.
-class OutpostArmorMeasurementModel {
-public:
-    static constexpr int kExtraDim         = OutpostProcessModel::kExtraDim;
-    static constexpr int kGroupDim         = OutpostProcessModel::kGroupDim;
-    static constexpr int kStateDim         = OutpostProcessModel::kStateDim;
-    static constexpr int kArmorsNum        = 3;
-    static constexpr double kOutpostRadius = 0.2765;
-
-    // Extra state indices
-    static constexpr int kIdxVYaw = OutpostProcessModel::kIdxVYaw;
-    static constexpr int kIdxDz1  = OutpostProcessModel::kIdxDz1;
-    static constexpr int kIdxDz2  = OutpostProcessModel::kIdxDz2;
-
-    using Space            = SE23_Rn<kExtraDim>;
-    using Point            = typename Space::Point;
-    using MeasurementSpace = Euclidean<3, double>;
-    using MeasPoint        = typename MeasurementSpace::Point;
-    using MeasFiber        = typename MeasurementSpace::Fiber;
-    using Covariance       = SymmetricMatrix<3, double>;
-
-    using SE23d  = group::SEn3<double, 2>;
-    using Vec3   = Eigen::Vector3d;
-    using Mat3   = Eigen::Matrix3d;
-    using Mat3xX = Eigen::Matrix<double, 3, kStateDim>;
-
-private:
-    int armor_id_;
-    double sigma_m_;
-    bool use_dynamic_noise_;
-    double k_radial_;
-    double k_tangent_;
-    mutable Vec3 cached_y_body_;
-
-public:
-    /// @brief Construct with static isotropic noise (default)
-    OutpostArmorMeasurementModel(int armor_id, double sigma_m) noexcept
-        : armor_id_(armor_id)
-        , sigma_m_(sigma_m)
-        , use_dynamic_noise_(false)
-        , k_radial_(1.0)
-        , k_tangent_(0.1)
-        , cached_y_body_(Vec3::Zero()) {}
-
-    /// @brief Construct with configurable dynamic anisotropic noise
-    OutpostArmorMeasurementModel(
-        int armor_id, double sigma_m, bool use_dynamic, double k_radial = 1.0,
-        double k_tangent = 0.1) noexcept
-        : armor_id_(armor_id)
-        , sigma_m_(sigma_m)
-        , use_dynamic_noise_(use_dynamic)
-        , k_radial_(k_radial)
-        , k_tangent_(k_tangent)
-        , cached_y_body_(Vec3::Zero()) {}
-
-    /// Compute body-frame invariant error: r = R^T (y - p) - b
-    [[nodiscard]] MeasFiber invariant_error(const Point& x, const MeasPoint& y) const noexcept {
-        constexpr double kAngleStep = 2.0 * std::numbers::pi / static_cast<double>(kArmorsNum);
-        const double yaw_offset     = static_cast<double>(armor_id_) * kAngleStep;
-        const Mat3 R_id = Eigen::AngleAxisd(yaw_offset, Vec3::UnitZ()).toRotationMatrix();
-
-        double z_offset = 0.0;
-        if (armor_id_ == 1) {
-            z_offset = x.second(kIdxDz1);
-        } else if (armor_id_ == 2) {
-            z_offset = x.second(kIdxDz2);
-        }
-
-        const Vec3 b      = R_id * Vec3{-kOutpostRadius, 0.0, z_offset};
-        const Vec3 y_body = x.first.R().transpose() * (y.data - x.first.p());
-        const Vec3 r      = y_body - b;
-
-        // Cache y_body for dynamic noise computation
-        cached_y_body_ = y_body;
-
-        return MeasFiber{r};
-    }
-
-    /// Error Jacobian C (∂r/∂δ)
-    [[nodiscard]] Mat3xX error_jacobian(const Point& x) const noexcept {
-        constexpr double kAngleStep = 2.0 * std::numbers::pi / static_cast<double>(kArmorsNum);
-        const double yaw_offset     = static_cast<double>(armor_id_) * kAngleStep;
-        const Mat3 R_id = Eigen::AngleAxisd(yaw_offset, Vec3::UnitZ()).toRotationMatrix();
-
-        double z_offset = 0.0;
-        if (armor_id_ == 1) {
-            z_offset = x.second(kIdxDz1);
-        } else if (armor_id_ == 2) {
-            z_offset = x.second(kIdxDz2);
-        }
-
-        const Vec3 b = R_id * Vec3{-kOutpostRadius, 0.0, z_offset};
-
-        Mat3xX C                     = Mat3xX::Zero();
-        C.template block<3, 3>(0, 0) = -detail::skew(b);
-        C.template block<3, 3>(0, 6) = Mat3::Identity();
-
-        const Vec3 db_dz = R_id * Vec3{0.0, 0.0, 1.0};
-        if (armor_id_ == 1) {
-            C.template block<3, 1>(0, kGroupDim + kIdxDz1) = db_dz;
-        } else if (armor_id_ == 2) {
-            C.template block<3, 1>(0, kGroupDim + kIdxDz2) = db_dz;
-        }
-
-        return C;
-    }
-
-    /// Measurement noise covariance (static or dynamic)
-    [[nodiscard]] Covariance measurement_noise() const noexcept {
-        if (!use_dynamic_noise_) {
-            return Covariance::ScaledIdentity(sigma_m_ * sigma_m_);
-        }
-
-        const Vec3 n_armor = detail::armor_normal_body(armor_id_, kArmorsNum);
-        const Mat3 R_mat   = detail::compute_anisotropic_R_body(
-            cached_y_body_, n_armor, sigma_m_, k_radial_, k_tangent_);
-        return Covariance(R_mat);
-    }
-};
-
-// ============================================================================
-// RobotSphericalMeasurementModel - Spherical coordinate observation model
-// ============================================================================
-
-/// @brief Spherical coordinate measurement model for robot armor tracking
-///
-/// Ported from sp_vision_25's approach: uses [yaw, pitch, distance, armor_yaw] observations
-/// instead of Cartesian [x, y, z]. This matches PnP output characteristics better:
-/// - Angles (yaw, pitch) have high accuracy → small noise
-/// - Distance has lower accuracy → larger noise (view-angle dependent)
-///
-/// === Why Spherical is Better for Translation Tracking ===
-/// - Target translation primarily changes yaw/pitch angles
-/// - Small angular noise (4e-3) means fast response to direction changes
-/// - Cartesian with large sigma_m (0.5) causes tracking lag
-///
-/// === Observation Model ===
-/// z = [yaw, pitch, distance, armor_yaw]
-/// where:
-///   yaw, pitch = spherical angles to armor plate center
-///   distance = range to armor plate center
-///   armor_yaw = armor plate orientation (facing direction)
-///
-/// === Noise Model (from sp_vision_25) ===
-/// R = diag(σ_yaw², σ_pitch², R_dist, R_armor_yaw)
-/// where:
-///   R_dist = log(|delta_angle| + 1) + 1  (view-angle dependent)
-///   R_armor_yaw = (log(distance + 1) / 200 + σ_armor_yaw)²
-class RobotSphericalMeasurementModel {
-public:
-    static constexpr int kMeasDim   = 4;
-    static constexpr int kExtraDim  = RobotProcessModel::kExtraDim;
-    static constexpr int kGroupDim  = RobotProcessModel::kGroupDim;
-    static constexpr int kStateDim  = RobotProcessModel::kStateDim;
-    static constexpr int kArmorsNum = 4;
-
-    static constexpr int kHighArmorIdA = 1;
-    static constexpr int kHighArmorIdB = 3;
-
-    static constexpr int kIdxVYaw = RobotProcessModel::kIdxVYaw;
-    static constexpr int kIdxR0   = RobotProcessModel::kIdxR0;
-    static constexpr int kIdxR1   = RobotProcessModel::kIdxR1;
-    static constexpr int kIdxH    = RobotProcessModel::kIdxH;
-
-    using Space      = SE23_Rn<kExtraDim>;
-    using Point      = typename Space::Point;
-    using Covariance = SymmetricMatrix<kMeasDim, double>;
-    using SE23d      = group::SEn3<double, 2>;
-    using Vec3       = Eigen::Vector3d;
-    using Vec4       = Eigen::Vector4d;
-    using Mat3       = Eigen::Matrix3d;
-    using Mat4xX     = Eigen::Matrix<double, kMeasDim, kStateDim>;
-
-private:
-    int armor_id_;
-    double sigma_yaw_;
-    double sigma_pitch_;
-    double sigma_armor_yaw_;
-    mutable double cached_distance_;
-    mutable double cached_delta_angle_;
-
-public:
-    RobotSphericalMeasurementModel(
-        int armor_id, double sigma_yaw, double sigma_pitch, double sigma_armor_yaw) noexcept
-        : armor_id_(armor_id)
-        , sigma_yaw_(sigma_yaw)
-        , sigma_pitch_(sigma_pitch)
-        , sigma_armor_yaw_(sigma_armor_yaw)
-        , cached_distance_(1.0)
-        , cached_delta_angle_(0.0) {}
-
-    /// Compute predicted observation h(x) -> [yaw, pitch, distance, armor_yaw]
-    [[nodiscard]] Vec4 predict(const Point& x) const noexcept {
-        // Compute armor position in world frame
-        const Vec3 armor_xyz = compute_armor_position(x);
-
-        // Convert to spherical coordinates
-        const Vec3 ypd = fcs::L3::xyz2ypd(armor_xyz);
-
-        // Armor orientation = target_yaw + armor_id * angle_step
-        constexpr double kAngleStep = 2.0 * std::numbers::pi / static_cast<double>(kArmorsNum);
-        const double target_yaw =
-            std::atan2(x.first.R()(1, 0), x.first.R()(0, 0)); // Extract yaw from rotation matrix
-        const double armor_yaw =
-            detail::wrap_pi(target_yaw + static_cast<double>(armor_id_) * kAngleStep);
-
-        // Cache for noise computation
-        cached_distance_ = ypd.z();
-        // delta_angle = armor_yaw - center_yaw (how much armor is facing away from us)
-        const double center_yaw = ypd.x();
-        cached_delta_angle_     = detail::wrap_pi(armor_yaw - center_yaw);
-
-        return Vec4{ypd.x(), ypd.y(), ypd.z(), armor_yaw};
-    }
-
-    /// Compute innovation (residual) with angle wrapping
-    [[nodiscard]] Vec4 innovation(const Point& x, const Vec4& z_meas) const noexcept {
-        const Vec4 z_pred = predict(x);
-        Vec4 nu           = z_meas - z_pred;
-
-        // Wrap angles to [-π, π]
-        nu(0) = detail::wrap_pi(nu(0)); // yaw
-        nu(1) = detail::wrap_pi(nu(1)); // pitch
-        nu(3) = detail::wrap_pi(nu(3)); // armor_yaw
-
-        return nu;
-    }
-
-    /// Compute observation Jacobian H = ∂h/∂δ (4x13)
-    ///
-    /// Uses chain rule: H = H_ypda_to_xyza * H_xyza_to_state
-    /// NOTE: Error state uses body frame (right-invariant), so position Jacobian is R, not I
-    [[nodiscard]] Mat4xX observation_jacobian(const Point& x) const noexcept {
-        constexpr double kAngleStep = 2.0 * std::numbers::pi / static_cast<double>(kArmorsNum);
-        const double yaw_offset     = static_cast<double>(armor_id_) * kAngleStep;
-
-        // Extract target yaw from rotation matrix
-        const double target_yaw  = std::atan2(x.first.R()(1, 0), x.first.R()(0, 0));
-        const double armor_angle = target_yaw + yaw_offset;
-
-        const bool is_high    = (armor_id_ == kHighArmorIdA || armor_id_ == kHighArmorIdB);
-        const double radius   = is_high ? x.second(kIdxR1) : x.second(kIdxR0);
-        const double z_offset = is_high ? x.second(kIdxH) : 0.0;
-
-        // Derivatives of armor position w.r.t. state
-        const double cos_a = std::cos(armor_angle);
-        const double sin_a = std::sin(armor_angle);
-
-        // d(armor_x)/d(yaw) = r * sin(armor_angle)
-        // d(armor_y)/d(yaw) = -r * cos(armor_angle)
-        const double dx_dyaw = radius * sin_a;
-        const double dy_dyaw = -radius * cos_a;
-
-        // d(armor_x)/d(r) = -cos(armor_angle)
-        // d(armor_y)/d(r) = -sin(armor_angle)
-        const double dx_dr = -cos_a;
-        const double dy_dr = -sin_a;
-
-        // H_xyza_to_state: (4 x 13) - derivatives of [armor_x, armor_y, armor_z, armor_yaw]
-        // w.r.t. error state [rot(3), vel(3), pos(3), extra(4)]
-        //
-        // IMPORTANT: Error state is body frame (right-invariant update: p_new = p + R * δp)
-        // So ∂armor_xyz/∂δp_body = R (rotation matrix)
-        Eigen::Matrix<double, 4, kStateDim> H_xyz_state =
-            Eigen::Matrix<double, 4, kStateDim>::Zero();
-
-        // Position derivatives: ∂armor_xyz/∂δp_body = R
-        const Mat3& R                          = x.first.R();
-        H_xyz_state.template block<3, 3>(0, 6) = R;
-
-        // Yaw derivatives (yaw error is still in world frame for our constraint)
-        H_xyz_state(0, 2) = dx_dyaw; // armor_x / yaw
-        H_xyz_state(1, 2) = dy_dyaw; // armor_y / yaw
-        H_xyz_state(3, 2) = 1.0;     // armor_yaw / yaw (direct)
-
-        // Geometry derivatives
-        if (is_high) {
-            H_xyz_state(0, kGroupDim + kIdxR1) = dx_dr;
-            H_xyz_state(1, kGroupDim + kIdxR1) = dy_dr;
-            H_xyz_state(2, kGroupDim + kIdxH)  = 1.0; // armor_z / h
-        } else {
-            H_xyz_state(0, kGroupDim + kIdxR0) = dx_dr;
-            H_xyz_state(1, kGroupDim + kIdxR0) = dy_dr;
-        }
-
-        // Compute armor position for Jacobian computation
-        const Vec3 armor_xyz = compute_armor_position(x);
-
-        // H_ypd_to_xyz: (3 x 3) - Jacobian of xyz2ypd
-        const Mat3 J_ypd_xyz = fcs::L3::xyz2ypd_jacobian(armor_xyz);
-
-        // H_ypda_to_xyza: (4 x 4) - expand to include armor_yaw
-        Eigen::Matrix4d H_ypda_xyza   = Eigen::Matrix4d::Zero();
-        H_ypda_xyza.block<3, 3>(0, 0) = J_ypd_xyz;
-        H_ypda_xyza(3, 3)             = 1.0; // armor_yaw passthrough
-
-        // Final Jacobian: H = H_ypda_to_xyza * H_xyza_to_state
-        return H_ypda_xyza * H_xyz_state;
-    }
-
-    /// Dynamic measurement noise (sp_vision_25 style)
-    [[nodiscard]] Covariance measurement_noise() const noexcept {
-        Vec4 R_diag;
-
-        // Yaw and pitch: fixed small noise (high confidence in angles)
-        R_diag(0) = sigma_yaw_ * sigma_yaw_;
-        R_diag(1) = sigma_pitch_ * sigma_pitch_;
-
-        // Distance: increases when viewing armor from the side
-        // (delta_angle is the angle between armor normal and sight line)
-        const double dist_noise = std::log(std::abs(cached_delta_angle_) + 1.0) + 1.0;
-        R_diag(2)               = dist_noise;
-
-        // Armor yaw: increases with distance (less reliable at range)
-        const double armor_yaw_noise = std::log(cached_distance_ + 1.0) / 200.0 + sigma_armor_yaw_;
-        R_diag(3)                    = armor_yaw_noise * armor_yaw_noise;
-
-        return Covariance(R_diag.asDiagonal());
-    }
-
-private:
-    [[nodiscard]] Vec3 compute_armor_position(const Point& x) const noexcept {
-        constexpr double kAngleStep = 2.0 * std::numbers::pi / static_cast<double>(kArmorsNum);
-        const double target_yaw     = std::atan2(x.first.R()(1, 0), x.first.R()(0, 0));
-        const double armor_angle    = target_yaw + static_cast<double>(armor_id_) * kAngleStep;
-
-        const bool is_high  = (armor_id_ == kHighArmorIdA || armor_id_ == kHighArmorIdB);
-        const double radius = is_high ? x.second(kIdxR1) : x.second(kIdxR0);
-
-        const double armor_x = x.first.p().x() - radius * std::cos(armor_angle);
-        const double armor_y = x.first.p().y() - radius * std::sin(armor_angle);
-        const double armor_z = x.first.p().z() + (is_high ? x.second(kIdxH) : 0.0);
-
-        return Vec3{armor_x, armor_y, armor_z};
-    }
-};
-
-// ============================================================================
-// OutpostSphericalMeasurementModel - Spherical coordinate observation model
-// ============================================================================
-
-/// @brief Spherical coordinate measurement model for outpost armor tracking
-///
-/// Same approach as RobotSphericalMeasurementModel but for 3-armor outpost targets.
-class OutpostSphericalMeasurementModel {
-public:
-    static constexpr int kMeasDim          = 4;
-    static constexpr int kExtraDim         = OutpostProcessModel::kExtraDim;
-    static constexpr int kGroupDim         = OutpostProcessModel::kGroupDim;
-    static constexpr int kStateDim         = OutpostProcessModel::kStateDim;
-    static constexpr int kArmorsNum        = 3;
-    static constexpr double kOutpostRadius = 0.2765;
-
-    static constexpr int kIdxVYaw = OutpostProcessModel::kIdxVYaw;
-    static constexpr int kIdxDz1  = OutpostProcessModel::kIdxDz1;
-    static constexpr int kIdxDz2  = OutpostProcessModel::kIdxDz2;
-
-    using Space      = SE23_Rn<kExtraDim>;
-    using Point      = typename Space::Point;
-    using Covariance = SymmetricMatrix<kMeasDim, double>;
-    using SE23d      = group::SEn3<double, 2>;
-    using Vec3       = Eigen::Vector3d;
-    using Vec4       = Eigen::Vector4d;
-    using Mat3       = Eigen::Matrix3d;
-    using Mat4xX     = Eigen::Matrix<double, kMeasDim, kStateDim>;
-
-private:
-    int armor_id_;
-    double sigma_yaw_;
-    double sigma_pitch_;
-    double sigma_armor_yaw_;
-    mutable double cached_distance_;
-    mutable double cached_delta_angle_;
-
-public:
-    OutpostSphericalMeasurementModel(
-        int armor_id, double sigma_yaw, double sigma_pitch, double sigma_armor_yaw) noexcept
-        : armor_id_(armor_id)
-        , sigma_yaw_(sigma_yaw)
-        , sigma_pitch_(sigma_pitch)
-        , sigma_armor_yaw_(sigma_armor_yaw)
-        , cached_distance_(1.0)
-        , cached_delta_angle_(0.0) {}
-
-    [[nodiscard]] Vec4 predict(const Point& x) const noexcept {
-        const Vec3 armor_xyz = compute_armor_position(x);
-        const Vec3 ypd       = fcs::L3::xyz2ypd(armor_xyz);
-
-        constexpr double kAngleStep = 2.0 * std::numbers::pi / static_cast<double>(kArmorsNum);
+    [[nodiscard]] Measurement::Flux
+        predict_armor_measurement(const Flux& x, bool include_armor_yaw) const noexcept {
+        // armor_xyz in world
+        const Eigen::Vector3d armor_xyz = ProcessModel::armor_position(x, armor_id_);
+        const Eigen::Vector3d ypd       = fcs::L3::xyz2ypd(armor_xyz);
+
+        constexpr double kAngleStep = 2.0 * std::numbers::pi / static_cast<double>(ArmorsNum);
         const double target_yaw     = std::atan2(x.first.R()(1, 0), x.first.R()(0, 0));
         const double armor_yaw =
-            detail::wrap_pi(target_yaw + static_cast<double>(armor_id_) * kAngleStep);
-
-        cached_distance_        = ypd.z();
-        const double center_yaw = ypd.x();
-        cached_delta_angle_     = detail::wrap_pi(armor_yaw - center_yaw);
-
-        return Vec4{ypd.x(), ypd.y(), ypd.z(), armor_yaw};
-    }
-
-    [[nodiscard]] Vec4 innovation(const Point& x, const Vec4& z_meas) const noexcept {
-        const Vec4 z_pred = predict(x);
-        Vec4 nu           = z_meas - z_pred;
-        nu(0)             = detail::wrap_pi(nu(0));
-        nu(1)             = detail::wrap_pi(nu(1));
-        nu(3)             = detail::wrap_pi(nu(3));
-        return nu;
-    }
-
-    [[nodiscard]] Mat4xX observation_jacobian(const Point& x) const noexcept {
-        constexpr double kAngleStep = 2.0 * std::numbers::pi / static_cast<double>(kArmorsNum);
-        const double target_yaw     = std::atan2(x.first.R()(1, 0), x.first.R()(0, 0));
-        const double armor_angle    = target_yaw + static_cast<double>(armor_id_) * kAngleStep;
-
-        const double cos_a = std::cos(armor_angle);
-        const double sin_a = std::sin(armor_angle);
-
-        const double dx_dyaw = kOutpostRadius * sin_a;
-        const double dy_dyaw = -kOutpostRadius * cos_a;
-
-        Eigen::Matrix<double, 4, kStateDim> H_xyz_state =
-            Eigen::Matrix<double, 4, kStateDim>::Zero();
-
-        // Position derivatives: ∂armor_xyz/∂δp_body = R (body frame error state)
-        const Mat3& R                          = x.first.R();
-        H_xyz_state.template block<3, 3>(0, 6) = R;
-
-        H_xyz_state(0, 2) = dx_dyaw;
-        H_xyz_state(1, 2) = dy_dyaw;
-        H_xyz_state(3, 2) = 1.0;
-
-        // dz geometry derivatives
-        if (armor_id_ == 1) {
-            H_xyz_state(2, kGroupDim + kIdxDz1) = 1.0;
-        } else if (armor_id_ == 2) {
-            H_xyz_state(2, kGroupDim + kIdxDz2) = 1.0;
-        }
-
-        const Vec3 armor_xyz          = compute_armor_position(x);
-        const Mat3 J_ypd_xyz          = fcs::L3::xyz2ypd_jacobian(armor_xyz);
-        Eigen::Matrix4d H_ypda_xyza   = Eigen::Matrix4d::Zero();
-        H_ypda_xyza.block<3, 3>(0, 0) = J_ypd_xyz;
-        H_ypda_xyza(3, 3)             = 1.0;
-
-        return H_ypda_xyza * H_xyz_state;
-    }
-
-    [[nodiscard]] Covariance measurement_noise() const noexcept {
-        Vec4 R_diag;
-        R_diag(0)                    = sigma_yaw_ * sigma_yaw_;
-        R_diag(1)                    = sigma_pitch_ * sigma_pitch_;
-        R_diag(2)                    = std::log(std::abs(cached_delta_angle_) + 1.0) + 1.0;
-        const double armor_yaw_noise = std::log(cached_distance_ + 1.0) / 200.0 + sigma_armor_yaw_;
-        R_diag(3)                    = armor_yaw_noise * armor_yaw_noise;
-        return Covariance(R_diag.asDiagonal());
-    }
-
-private:
-    [[nodiscard]] Vec3 compute_armor_position(const Point& x) const noexcept {
-        constexpr double kAngleStep = 2.0 * std::numbers::pi / static_cast<double>(kArmorsNum);
-        const double target_yaw     = std::atan2(x.first.R()(1, 0), x.first.R()(0, 0));
-        const double armor_angle    = target_yaw + static_cast<double>(armor_id_) * kAngleStep;
-
-        double z_offset = 0.0;
-        if (armor_id_ == 1) {
-            z_offset = x.second(kIdxDz1);
-        } else if (armor_id_ == 2) {
-            z_offset = x.second(kIdxDz2);
-        }
-
-        const double armor_x = x.first.p().x() - kOutpostRadius * std::cos(armor_angle);
-        const double armor_y = x.first.p().y() - kOutpostRadius * std::sin(armor_angle);
-        const double armor_z = x.first.p().z() + z_offset;
-
-        return Vec3{armor_x, armor_y, armor_z};
+            include_armor_yaw
+                ? fcs::L3::normalize_rad(target_yaw + static_cast<double>(armor_id_) * kAngleStep)
+                : 0.0;
+        return Measurement::Flux(ypd.x(), ypd.y(), ypd.z(), armor_yaw);
     }
 };
 
+struct RobotPerception : public SphericalPerception<RobotInEKFConfig, RobotProcessModel, 4> {};
+struct OutpostPerception
+    : public SphericalPerception<OutpostInEKFConfig, OutpostProcessModel, 3> {};
+
+struct RobotAssumption {
+    using Perception = RobotPerception;
+    using Flux       = typename Perception::Belief::Flux;
+
+    void configure(const RobotInEKFConfig& cfg, double q_scale) noexcept {
+        cfg_     = &cfg;
+        q_scale_ = q_scale;
+    }
+
+    [[nodiscard]] Flux maneuver(auto& /*P*/, const Flux& x, double dt) const noexcept {
+        if (!cfg_) {
+            return x;
+        }
+        return RobotProcessModel(*cfg_, q_scale_)(x, dt);
+    }
+
+    [[nodiscard]] Eigen::MatrixXd process_noise_covariance(double dt) const noexcept {
+        if (!cfg_) {
+            return Eigen::MatrixXd::Zero(Flux::Dim, Flux::Dim);
+        }
+        return RobotProcessModel(*cfg_, q_scale_).process_noise(dt);
+    }
+
+    [[nodiscard]] Eigen::MatrixXd jacobian(const Flux& x, double dt) const noexcept {
+        return RobotProcessModel::jacobian(x, dt);
+    }
+
+private:
+    const RobotInEKFConfig* cfg_{nullptr};
+    double q_scale_{1.0};
+};
+
+struct OutpostAssumption {
+    using Perception = OutpostPerception;
+    using Flux       = typename Perception::Belief::Flux;
+
+    void configure(const OutpostInEKFConfig& cfg, double q_scale) noexcept {
+        cfg_     = &cfg;
+        q_scale_ = q_scale;
+    }
+
+    [[nodiscard]] Flux maneuver(auto& /*P*/, const Flux& x, double dt) const noexcept {
+        if (!cfg_) {
+            return x;
+        }
+        return OutpostProcessModel(*cfg_, q_scale_)(x, dt);
+    }
+
+    [[nodiscard]] Eigen::MatrixXd process_noise_covariance(double dt) const noexcept {
+        if (!cfg_) {
+            return Eigen::MatrixXd::Zero(Flux::Dim, Flux::Dim);
+        }
+        return OutpostProcessModel(*cfg_, q_scale_).process_noise(dt);
+    }
+
+    [[nodiscard]] Eigen::MatrixXd jacobian(const Flux& x, double dt) const noexcept {
+        return OutpostProcessModel::jacobian(x, dt);
+    }
+
+private:
+    const OutpostInEKFConfig* cfg_{nullptr};
+    double q_scale_{1.0};
+};
+
 // ============================================================================
-// TrackerInEKF_Base - CRTP base for shared implementation
+// Common tracker utilities (shared between Robot/Outpost)
 // ============================================================================
 
-/// @brief Base template for TrackerInEKF using CRTP pattern
-///
-/// Extracts common implementation shared between Robot and Outpost variants.
-/// Template parameters allow compile-time polymorphism without runtime overhead.
-template <typename Derived, int ExtraDim, typename ExtraVec>
-class TrackerInEKF_Base {
+template <typename FilterT, int StateDim>
+class TrackerInEKF_Common {
+public:
+    std::optional<FilterT> filter_;
+
 protected:
-    using SE23d = group::SEn3<double, 2>;
-    using Vec3  = Eigen::Vector3d;
-    using Mat3  = Eigen::Matrix3d;
+    using Vec3 = Eigen::Vector3d;
+    using Mat3 = Eigen::Matrix3d;
+    using MatX = Eigen::Matrix<double, StateDim, StateDim>;
+    using VecX = Eigen::Matrix<double, StateDim, 1>;
 
-    static constexpr int kGroupDim = 9;
-    static constexpr int kStateDim = kGroupDim + ExtraDim;
-
-    using Space      = SE23_Rn<ExtraDim>;
-    using Point      = typename Space::Point;
-    using Covariance = SymmetricMatrix<kStateDim, double>;
-    using MatX       = Eigen::Matrix<double, kStateDim, kStateDim>;
-    using VecX       = Eigen::Matrix<double, kStateDim, 1>;
-
-    InCKF_SE23_Augmented<ExtraDim> filter_;
     double adaptive_process_noise_scale_{1.0};
     double time_since_last_predict_{0.0};
 
-    // Pseudo-velocity measurement bookkeeping (derived from center position observations)
     bool has_center_ref_{false};
     Vec3 center_ref_{Vec3::Zero()};
     Vec3 center_latest_{Vec3::Zero()};
@@ -1295,39 +729,17 @@ protected:
     Mat3 center_latest_cov_{Mat3::Identity()};
     double center_dt_acc_{0.0};
 
-public:
-    TrackerInEKF_Base() noexcept = default;
-
-    [[nodiscard]] bool is_initialized() const noexcept { return filter_.is_initialized(); }
-
-    [[nodiscard]] Vec3 get_position() const noexcept {
-        return filter_.is_initialized() ? filter_.mean().first.p() : Vec3::Zero();
-    }
-
-    [[nodiscard]] Vec3 get_velocity() const noexcept {
-        return filter_.is_initialized() ? filter_.mean().first.v() : Vec3::Zero();
-    }
-
-    [[nodiscard]] double get_yaw() const noexcept {
-        if (!filter_.is_initialized()) {
-            return 0.0;
+    void on_predict_dt(double dt) noexcept {
+        if (!(dt > 0.0) || !std::isfinite(dt)) {
+            return;
         }
-        const auto& R = filter_.mean().first.R();
-        return std::atan2(R(1, 0), R(0, 0));
-    }
-
-    [[nodiscard]] double get_v_yaw() const noexcept {
-        return filter_.is_initialized() ? filter_.mean().second(0) : 0.0;
-    }
-
-    [[nodiscard]] Mat3 get_position_covariance() const noexcept {
-        if (!filter_.is_initialized()) {
-            return Mat3::Zero();
+        time_since_last_predict_ = dt;
+        center_dt_acc_ += dt;
+        if (!std::isfinite(center_dt_acc_)) {
+            center_dt_acc_ = 0.0;
         }
-        return filter_.covariance().matrix().template block<3, 3>(6, 6);
     }
 
-protected:
     template <typename Config>
     void maybe_bump_adaptive_process_noise(double maha, int dof, const Config& config) noexcept {
         if (!config.enable_adaptive_process_noise) {
@@ -1348,17 +760,6 @@ protected:
         adaptive_process_noise_scale_ = detail::decay_to_one(
             adaptive_process_noise_scale_, dt, detail::kAdaptiveProcessNoiseDecayTau);
         adaptive_process_noise_scale_ = std::clamp(adaptive_process_noise_scale_, 1.0, 1e6);
-    }
-
-    void on_predict_dt(double dt) noexcept {
-        if (!(dt > 0.0) || !std::isfinite(dt)) {
-            return;
-        }
-        time_since_last_predict_ = dt;
-        center_dt_acc_ += dt;
-        if (!std::isfinite(center_dt_acc_)) {
-            center_dt_acc_ = 0.0;
-        }
     }
 
     void set_center_latest_measurement(const Vec3& p_meas, const Mat3& cov_meas) noexcept {
@@ -1389,36 +790,31 @@ protected:
         return true;
     }
 
-    template <typename Config>
-    void maybe_update_pseudo_velocity(const Config& config) noexcept {
-        if (!should_run_pseudo_velocity_update(config)) {
+    template <typename Config, typename Flux>
+    void maybe_update_pseudo_velocity(
+        const Config& config, const Flux& state, const Eigen::Matrix3d& R_world) noexcept {
+        if (!should_run_pseudo_velocity_update(config) || !filter_) {
             return;
         }
 
         const double dt = center_dt_acc_;
-
         if (dt > detail::kPseudoVelocityMaxInterval) {
-            // Too long since reference; reset to avoid stale diff.
             center_ref_        = center_latest_;
             center_ref_cov_    = center_latest_cov_;
             has_center_latest_ = false;
             center_dt_acc_     = 0.0;
             return;
         }
-
         if (dt < detail::kPseudoVelocityMinInterval) {
-            return; // accumulate more time
+            return;
         }
 
         const Vec3 v_meas = (center_latest_ - center_ref_) / dt;
+        const Vec3 v_est  = state.first.v();
+        const Vec3 nu     = v_meas - v_est;
 
-        // Linear update on velocity (world/camera frame): nu = v_meas - v_est, H = [0 R 0 ...]
-        const auto& x    = filter_.mean();
-        const Vec3 v_est = x.first.v();
-        const Vec3 nu    = v_meas - v_est;
-
-        Eigen::Matrix<double, 3, kStateDim> H = Eigen::Matrix<double, 3, kStateDim>::Zero();
-        H.template block<3, 3>(0, 3)          = x.first.R(); // map body-frame δv to world
+        Eigen::Matrix<double, 3, StateDim> H = Eigen::Matrix<double, 3, StateDim>::Zero();
+        H.template block<3, 3>(0, 3)         = R_world; // map body-frame δv to world
 
         Eigen::Matrix3d Rv = (center_latest_cov_ + center_ref_cov_) / (dt * dt);
         Rv.diagonal().array() += detail::kCovarianceRegularization;
@@ -1429,18 +825,30 @@ protected:
             Rv *= scale;
         }
 
-        auto velocity_only = [](auto& correction) noexcept {
-            // Keep only velocity correction (indices 3..5); zero everything else.
-            for (int i = 0; i < correction.size(); ++i) {
-                if (i < 3 || i > 5) {
-                    correction(i) = 0.0;
-                }
+        // Apply linearized update directly on the underlying filter (KF-style).
+        auto& kf = *filter_;
+        auto& P  = kf.get_unc();
+
+        const Eigen::MatrixXd K = P.compute_kalman_gain(H, Rv);
+        Eigen::VectorXd dx_vec  = K * nu;
+        if (dx_vec.size() != StateDim) {
+            return;
+        }
+
+        // Velocity-only correction (indices 3..5) in right-invariant coordinates.
+        for (int i = 0; i < dx_vec.size(); ++i) {
+            if (i < 3 || i > 5) {
+                dx_vec(i) = 0.0;
             }
-            correction(0) = 0.0; // roll
-            correction(1) = 0.0; // pitch
-        };
-        filter_.template update_linear<3>(H, nu, SymmetricMatrix<3, double>(Rv), velocity_only);
-        zero_out_roll_pitch_covariance();
+        }
+        dx_vec(0) = 0.0;
+        dx_vec(1) = 0.0;
+
+        VecX dx;
+        dx = dx_vec;
+
+        kf.state_mut() = uni_kf::redact::lie_ops::compose(kf.state(), dx);
+        P.stiffen(K, H, Rv, time_since_last_predict_);
 
         center_ref_        = center_latest_;
         center_ref_cov_    = center_latest_cov_;
@@ -1448,630 +856,574 @@ protected:
         center_dt_acc_     = 0.0;
     }
 
-    /// Update using InvariantMeasurementModel with roll/pitch constraint
-    template <typename Model>
-    requires InvariantMeasurementModel<Model, Space> void update_invariant_yaw_only(
-        const typename Model::MeasurementSpace::Point& z, const Model& model) noexcept {
-        auto yaw_only = [](typename Space::Fiber::EigenType& correction) noexcept {
-            correction(0) = 0.0; // roll
-            correction(1) = 0.0; // pitch
-        };
-
-        filter_.update_invariant(z, model, yaw_only);
-
-        auto& state = filter_.belief().mean;
-        derived().clamp_extra_in_place(state.second.data);
-        zero_out_roll_pitch_covariance();
-    }
-
     void zero_out_roll_pitch_covariance() noexcept {
-        filter_.belief().enforce_constraints(
-            std::array<int, 2>{0, 1}, detail::kCovarianceRegularization);
-        filter_.belief().symmetrize();
-        filter_.belief().regularize(detail::kCovarianceRegularization);
-    }
+        if (!filter_) {
+            return;
+        }
+        auto& P           = filter_->get_unc();
+        Eigen::MatrixXd M = P.mat();
 
-private:
-    Derived& derived() noexcept { return static_cast<Derived&>(*this); }
-    const Derived& derived() const noexcept { return static_cast<const Derived&>(*this); }
+        if (M.rows() >= 2) {
+            // CRITICAL FIX: Do NOT zero entire rows/cols - only diagonal elements
+            // Preserving cross-covariances maintains full-rank matrix for numerical stability
+            M(0, 0) = detail::kCovarianceRegularization;
+            M(1, 1) = detail::kCovarianceRegularization;
+            // Cross-covariances with roll/pitch (rows/cols 0,1) are preserved naturally
+        }
+
+        M = (M + M.transpose()) / 2.0;
+        M.diagonal().array() += detail::kCovarianceRegularization;
+        P.storage().update(M);
+    }
 };
 
 // ============================================================================
-// TrackerInEKF_Robot - Robot (4-armor) variant
+// Robot tracker (4 armors)
 // ============================================================================
 
-/// @brief InEKF for robot tracking using uni_kf framework
-///
-/// State: SE₂(3) × ℝ⁴ where extra = [v_yaw, r0, r1, h]
-/// Uses RobotProcessModel for prediction (via filter.predict with ProcessModel concept)
-/// Uses invariant error for measurement updates (custom implementation)
-///
-/// This is a drop-in replacement for fcs::L3::InEKF<RobotModel>
-class TrackerInEKF_Robot : public TrackerInEKF_Base<TrackerInEKF_Robot, 4, Eigen::Vector4d> {
-    using Base = TrackerInEKF_Base<TrackerInEKF_Robot, 4, Eigen::Vector4d>;
-    friend Base;
+class TrackerInEKF_Robot
+    : public TrackerInEKF_Common<
+          uni_kf::redact::KalmanFilter<
+              uni_kf::redact::Covariance<
+                  SE23xRn<RobotProcessModel::kExtraDim>, uni_kf::redact::Representation::Sr,
+                  uni_kf::redact::CubatureStrategy>,
+              RobotPerception, RobotAssumption>,
+          RobotProcessModel::kStateDim> {
+    using Base = TrackerInEKF_Common<
+        uni_kf::redact::KalmanFilter<
+            uni_kf::redact::Covariance<
+                SE23xRn<RobotProcessModel::kExtraDim>, uni_kf::redact::Representation::Sr,
+                uni_kf::redact::CubatureStrategy>,
+            RobotPerception, RobotAssumption>,
+        RobotProcessModel::kStateDim>;
 
 public:
-    using SE23d = group::SEn3<double, 2>;
-    using Vec3  = Eigen::Vector3d;
-    using Mat3  = Eigen::Matrix3d;
+    using SE23d          = group::SEn3<double, 2>;
+    using Vec3           = Eigen::Vector3d;
+    using Mat3           = Eigen::Matrix3d;
+    using ReferenceFrame = fast_tf::FuckTransform<fast_tf::odom_fuxk_frame>;
 
     static constexpr int kArmorsNum = 4;
     static constexpr int kExtraDim  = RobotProcessModel::kExtraDim;
     static constexpr int kGroupDim  = RobotProcessModel::kGroupDim;
     static constexpr int kStateDim  = RobotProcessModel::kStateDim;
 
-    // Extra state indices (forwarded from model)
     static constexpr int kIdxVYaw = RobotProcessModel::kIdxVYaw;
     static constexpr int kIdxR0   = RobotProcessModel::kIdxR0;
     static constexpr int kIdxR1   = RobotProcessModel::kIdxR1;
     static constexpr int kIdxH    = RobotProcessModel::kIdxH;
 
-    // Geometry constraints
     static constexpr double kMinRadius = 0.17;
     static constexpr double kMaxRadius = 0.27;
     static constexpr double kMinHeight = -0.2;
     static constexpr double kMaxHeight = 0.2;
 
-    // High armor IDs (same as RobotModel)
     static constexpr int kHighArmorIdA = 1;
     static constexpr int kHighArmorIdB = 3;
 
     TrackerInEKF_Robot() noexcept = default;
 
-    /// Initialize filter state
+    [[nodiscard]] bool is_initialized() const noexcept { return this->filter_.has_value(); }
+
     void init(const Vec3& p0, double yaw0, const RobotInEKFConfig& config) noexcept {
         if (!detail::all_finite(p0) || !std::isfinite(yaw0)) {
-            filter_.reset();
+            this->filter_.reset();
             return;
         }
 
         SE23d::IsometriesType t;
-        t[0] = Vec3::Zero();
-        t[1] = p0;
-
+        t[0]         = Vec3::Zero();
+        t[1]         = p0;
         const Mat3 R = Eigen::AngleAxisd(yaw0, Vec3::UnitZ()).toRotationMatrix();
         const SE23d se23(R, t);
 
-        VecN<kExtraDim> extra;
-        extra.data << 0.0, config.radius0, config.radius1, config.height;
-        clamp_extra_in_place(extra.data);
+        Eigen::Matrix<double, kExtraDim, 1> extra;
+        extra << 0.0, config.radius0, config.radius1, config.height;
+        clamp_extra_in_place(extra);
 
-        const Point state{se23, extra};
+        SE23xRn<kExtraDim> state(se23, extra);
 
-        Covariance P = Covariance::Zero();
+        Eigen::Matrix<double, kStateDim, kStateDim> P0 =
+            Eigen::Matrix<double, kStateDim, kStateDim>::Zero();
         for (int i = 0; i < kGroupDim; ++i) {
-            P(i, i) = 0.1;
+            P0(i, i) = 0.1;
         }
-        P(kGroupDim + kIdxVYaw, kGroupDim + kIdxVYaw) = 1.0;
-        P(kGroupDim + kIdxR0, kGroupDim + kIdxR0)     = 0.01;
-        P(kGroupDim + kIdxR1, kGroupDim + kIdxR1)     = 0.01;
-        P(kGroupDim + kIdxH, kGroupDim + kIdxH)       = 0.01;
+        P0(kGroupDim + kIdxVYaw, kGroupDim + kIdxVYaw) = 1.0;
+        P0(kGroupDim + kIdxR0, kGroupDim + kIdxR0)     = 0.01;
+        P0(kGroupDim + kIdxR1, kGroupDim + kIdxR1)     = 0.01;
+        P0(kGroupDim + kIdxH, kGroupDim + kIdxH)       = 0.01;
 
-        filter_.init(state, P);
+        RobotPerception perception;
+        RobotAssumption assumption;
+        assumption.configure(config, 1.0);
+
+        this->filter_.emplace(state, P0, perception, assumption);
+        this->adaptive_process_noise_scale_ = 1.0;
+        this->time_since_last_predict_      = 0.0;
+        this->has_center_ref_               = false;
+        this->has_center_latest_            = false;
+        this->center_dt_acc_                = 0.0;
     }
 
-    /// Predict step using ProcessModel concept
+    void init(
+        const Vec3& p0, double yaw0, const RobotInEKFConfig& config,
+        const ReferenceFrame& ref) noexcept {
+        (void)ref;
+        init(p0, yaw0, config);
+    }
+
     void predict(double dt, const RobotInEKFConfig& config) noexcept {
-        if (!filter_.is_initialized() || dt <= 0.0 || !std::isfinite(dt)) {
+        if (!this->filter_ || !(dt > 0.0) || !std::isfinite(dt)) {
             return;
         }
+        this->on_predict_dt(dt);
 
-        on_predict_dt(dt);
         const double q_scale =
-            config.enable_adaptive_process_noise ? adaptive_process_noise_scale_ : 1.0;
-        const RobotProcessModel model(config, q_scale);
-        filter_.predict(model, dt);
-        maybe_decay_adaptive_process_noise(dt, config);
+            config.enable_adaptive_process_noise ? this->adaptive_process_noise_scale_ : 1.0;
+        this->filter_->get_assumption().configure(config, q_scale);
+        (void)this->filter_->predict(dt);
+        this->maybe_decay_adaptive_process_noise(dt, config);
 
-        clamp_extra_in_place(filter_.belief().mean.second.data);
-        zero_out_roll_pitch_covariance();
+        clamp_extra_in_place(this->filter_->state_mut().second);
+        this->zero_out_roll_pitch_covariance();
     }
 
-    /// Update with armor observation using InvariantMeasurementModel
-    /// @param y Observed armor position in world frame
-    /// @param armor_id Armor index (0-3)
-    /// @param config Filter configuration (including use_dynamic_noise flag)
-    void update_armor(const Vec3& y, int armor_id, const RobotInEKFConfig& config) noexcept {
-        if (!filter_.is_initialized() || !detail::all_finite(y)) {
-            return;
-        }
-        if (armor_id < 0 || armor_id >= kArmorsNum) {
-            return;
-        }
-
-        const RobotArmorMeasurementModel meas_model(
-            armor_id, config.sigma_m, config.use_dynamic_noise, config.dynamic_noise_k_radial,
-            config.dynamic_noise_k_tangent);
-
-        // Innovation-driven maneuver detection for adaptive Q (optional).
-        if (config.enable_adaptive_process_noise) {
-            const auto& x     = filter_.mean();
-            const auto z      = RobotArmorMeasurementModel::MeasPoint{y};
-            const auto r      = meas_model.invariant_error(x, z).data;
-            const auto R      = meas_model.measurement_noise().matrix();
-            const double maha = r.dot(R.ldlt().solve(r));
-            maybe_bump_adaptive_process_noise(maha, 3, config);
-        }
-
-        update_invariant_yaw_only(RobotArmorMeasurementModel::MeasPoint{y}, meas_model);
+    void predict(double dt, const RobotInEKFConfig& config, const ReferenceFrame& ref) noexcept {
+        (void)ref;
+        predict(dt, config);
     }
 
-    /// Update yaw using InvariantMeasurementModel
     void update_yaw(double yaw_meas, const RobotInEKFConfig& config) noexcept {
-        if (!filter_.is_initialized() || !std::isfinite(yaw_meas)) {
-            return;
-        }
-        if (!(config.sigma_w > 0.0) || !std::isfinite(config.sigma_w)) {
+        if (!this->filter_ || !std::isfinite(yaw_meas) || !(config.sigma_w > 0.0)
+            || !std::isfinite(config.sigma_w)) {
             return;
         }
 
-        if (config.enable_adaptive_process_noise) {
-            const double yaw_est = get_yaw();
-            const double r       = detail::wrap_pi(yaw_meas - yaw_est);
-            const double maha    = (r * r) / (config.sigma_w * config.sigma_w);
-            maybe_bump_adaptive_process_noise(maha, 1, config);
-        }
+        auto& kf         = *this->filter_;
+        auto& perception = kf.get_perception();
 
-        const YawMeasurementModel<kExtraDim> meas_model(config.sigma_w);
-        using MeasPoint = typename YawMeasurementModel<kExtraDim>::MeasPoint;
-        update_invariant_yaw_only(MeasPoint{Eigen::Matrix<double, 1, 1>{yaw_meas}}, meas_model);
+        perception.configure_target_yaw_only(config.sigma_w, config);
+
+        const auto z_meas = YpdAy(yaw_meas, 0.0, 0.0, 0.0);
+        perception.prepare(kf.state(), z_meas);
+
+        // Adaptive Q bump based on yaw innovation
+        const auto z_pred       = perception.assume(kf.state());
+        const Eigen::Vector4d r = YpdAy::log(z_pred.inv() * z_meas);
+        const double maha       = (r(0) * r(0)) / (config.sigma_w * config.sigma_w);
+        this->maybe_bump_adaptive_process_noise(maha, 1, config);
+
+        perception.apply_robust_scale(maha, 1);
+        (void)this->filter_->percept(z_meas, this->time_since_last_predict_);
+
+        clamp_extra_in_place(kf.state_mut().second);
+        this->zero_out_roll_pitch_covariance();
     }
 
-    /// Update with spherical coordinate observation
-    /// @param armor_ypd Armor position in spherical coords [yaw, pitch, distance]
-    /// @param armor_yaw_meas Measured armor plate orientation (yaw angle)
-    /// @param armor_id Armor index (0-3)
-    /// @param config Filter configuration
+    void update_yaw(
+        double yaw_meas, const RobotInEKFConfig& config, const ReferenceFrame& ref) noexcept {
+        (void)ref;
+        update_yaw(yaw_meas, config);
+    }
+
+    void update_armor(const Vec3& y, int armor_id, const RobotInEKFConfig& config) noexcept {
+        if (!this->filter_ || !detail::all_finite(y) || armor_id < 0 || armor_id >= kArmorsNum) {
+            return;
+        }
+        const Eigen::Vector3d ypd = fcs::L3::xyz2ypd(y);
+
+        // Only update yaw/pitch/distance; ignore armor_yaw component.
+        update_armor_spherical_impl(
+            ypd, /*armor_yaw_meas=*/0.0, armor_id, config, /*include_armor_yaw=*/false);
+    }
+
+    void update_armor(
+        const Vec3& y, int armor_id, const RobotInEKFConfig& config,
+        const ReferenceFrame& ref) noexcept {
+        (void)ref;
+        update_armor(y, armor_id, config);
+    }
+
     void update_armor_spherical(
         const Vec3& armor_ypd, double armor_yaw_meas, int armor_id,
         const RobotInEKFConfig& config) noexcept {
-        if (!filter_.is_initialized()) {
-            return;
-        }
-        if (armor_id < 0 || armor_id >= kArmorsNum) {
+        if (!this->filter_ || armor_id < 0 || armor_id >= kArmorsNum) {
             return;
         }
         if (!std::isfinite(armor_ypd.x()) || !std::isfinite(armor_ypd.y())
             || !std::isfinite(armor_ypd.z()) || !std::isfinite(armor_yaw_meas)) {
             return;
         }
+        update_armor_spherical_impl(
+            armor_ypd, armor_yaw_meas, armor_id, config, /*include_armor_yaw=*/true);
+    }
 
-        const RobotSphericalMeasurementModel model(
-            armor_id, config.sigma_yaw_obs, config.sigma_pitch_obs, config.sigma_armor_yaw);
+    void update_armor_spherical(
+        const Vec3& armor_ypd, double armor_yaw_meas, int armor_id, const RobotInEKFConfig& config,
+        const ReferenceFrame& ref) noexcept {
+        (void)ref;
+        update_armor_spherical(armor_ypd, armor_yaw_meas, armor_id, config);
+    }
 
-        // Pseudo-velocity update: infer target center position measurement from armor observation.
+    [[nodiscard]] Vec3 get_position() const noexcept {
+        return this->filter_ ? this->filter_->state().first.p() : Vec3::Zero();
+    }
+
+    [[nodiscard]] Vec3 get_velocity() const noexcept {
+        return this->filter_ ? this->filter_->state().first.v() : Vec3::Zero();
+    }
+
+    [[nodiscard]] double get_yaw() const noexcept {
+        if (!this->filter_) {
+            return 0.0;
+        }
+        const auto& R = this->filter_->state().first.R();
+        return std::atan2(R(1, 0), R(0, 0));
+    }
+
+    [[nodiscard]] double get_v_yaw() const noexcept {
+        return this->filter_ ? this->filter_->state().second(kIdxVYaw) : 0.0;
+    }
+
+    [[nodiscard]] RobotTargetState get_robot_state() const noexcept {
+        RobotTargetState out;
+        if (!this->filter_) {
+            return out;
+        }
+        const auto& s  = this->filter_->state();
+        out.position   = s.first.p();
+        out.velocity   = s.first.v();
+        out.yaw        = std::atan2(s.first.R()(1, 0), s.first.R()(0, 0));
+        out.v_yaw      = s.second(kIdxVYaw);
+        out.radius0    = s.second(kIdxR0);
+        out.radius1    = s.second(kIdxR1);
+        out.z1         = out.position.z() + s.second(kIdxH);
+        out.armors_num = kArmorsNum;
+        return out;
+    }
+
+private:
+    static void clamp_extra_in_place(Eigen::Matrix<double, kExtraDim, 1>& e) noexcept {
+        e(kIdxR0) = std::clamp(e(kIdxR0), kMinRadius, kMaxRadius);
+        e(kIdxR1) = std::clamp(e(kIdxR1), kMinRadius, kMaxRadius);
+        e(kIdxH)  = std::clamp(e(kIdxH), kMinHeight, kMaxHeight);
+    }
+
+    void update_armor_spherical_impl(
+        const Vec3& armor_ypd, double armor_yaw_meas, int armor_id, const RobotInEKFConfig& config,
+        bool include_armor_yaw, const ReferenceFrame* ref = nullptr) noexcept {
+        auto& kf         = *this->filter_;
+        auto& perception = kf.get_perception();
+
+        perception.configure_armor(armor_id, include_armor_yaw, config);
+
+        const double armor_yaw_use = include_armor_yaw ? armor_yaw_meas : 0.0;
+        const YpdAy z_meas(armor_ypd.x(), armor_ypd.y(), armor_ypd.z(), armor_yaw_use);
+
+        perception.prepare(kf.state(), z_meas);
+
+        const auto z_pred       = perception.assume(kf.state());
+        const Eigen::Vector4d r = YpdAy::log(z_pred.inv() * z_meas);
+
+        Eigen::Matrix4d R = perception.measurement_noise_covariance();
+        const double maha = r.transpose() * R.ldlt().solve(r);
+        this->maybe_bump_adaptive_process_noise(maha, include_armor_yaw ? 4 : 3, config);
+        perception.apply_robust_scale(maha, include_armor_yaw ? 4 : 3);
+
+        // Optional pseudo-velocity update: infer center position measurement from armor
+        // observation.
         if (config.enable_pseudo_velocity_update) {
-            const auto& x         = filter_.mean();
-            const bool is_high    = (armor_id == kHighArmorIdA || armor_id == kHighArmorIdB);
+            const auto& x = kf.state();
+            const bool is_high =
+                (armor_id == RobotProcessModel::kHighArmorIdA
+                 || armor_id == RobotProcessModel::kHighArmorIdB);
             const double radius   = is_high ? x.second(kIdxR1) : x.second(kIdxR0);
             const double z_offset = is_high ? x.second(kIdxH) : 0.0;
 
-            const Vec3 armor_xyz_meas = fcs::L3::ypd2xyz(armor_ypd); // camera_optical
-            const double a            = armor_yaw_meas; // ~= target_yaw + armor_id * step
-            Vec3 center_meas          = armor_xyz_meas;
+            const Eigen::Vector3d armor_xyz_meas = fcs::L3::ypd2xyz(armor_ypd);
+            const double a                       = armor_yaw_meas;
+            Eigen::Vector3d center_meas          = armor_xyz_meas;
             center_meas.x() += radius * std::cos(a);
             center_meas.y() += radius * std::sin(a);
             center_meas.z() -= z_offset;
 
-            // Derive center measurement covariance from spherical noise (proper, parameter-free).
             const Eigen::Matrix3d J_xyz_ypd = fcs::L3::ypd2xyz_jacobian(armor_ypd);
-            const double delta_angle        = detail::wrap_pi(armor_yaw_meas - armor_ypd.x());
-            const double dist_var           = std::log(std::abs(delta_angle) + 1.0) + 1.0;
             Eigen::Matrix3d R_ypd           = Eigen::Matrix3d::Zero();
             R_ypd(0, 0)                     = config.sigma_yaw_obs * config.sigma_yaw_obs;
             R_ypd(1, 1)                     = config.sigma_pitch_obs * config.sigma_pitch_obs;
-            R_ypd(2, 2)                     = dist_var;
+            R_ypd(2, 2)                     = 1.0;
 
             Eigen::Matrix3d P_center = J_xyz_ypd * R_ypd * J_xyz_ypd.transpose();
-
-            const double sigma_a =
-                std::log(std::max(0.0, armor_ypd.z()) + 1.0) / 200.0 + config.sigma_armor_yaw;
-            const double var_a = sigma_a * sigma_a;
-            const Eigen::Vector3d d_center_da{-radius * std::sin(a), radius * std::cos(a), 0.0};
-            P_center += d_center_da * d_center_da.transpose() * var_a;
             P_center.diagonal().array() += detail::kCovarianceRegularization;
 
-            set_center_latest_measurement(center_meas, P_center);
-            maybe_update_pseudo_velocity(config);
+            this->set_center_latest_measurement(center_meas, P_center);
+            this->maybe_update_pseudo_velocity(config, kf.state(), kf.state().first.R());
         }
 
-        // Build measurement vector [yaw, pitch, distance, armor_yaw]
-        // Note: armor_ypd and armor_yaw_meas are already unwrapped (continuous) from caller
-        const Eigen::Vector4d z_meas{armor_ypd.x(), armor_ypd.y(), armor_ypd.z(), armor_yaw_meas};
-
-        const auto& state = filter_.mean();
-
-        // Get raw prediction (may be wrapped to [-π, π])
-        const Eigen::Vector4d z_pred_raw = model.predict(state);
-
-        // Unwrap prediction to be continuous with measurement
-        // This avoids large innovations when angles cross ±π boundary
-        Eigen::Vector4d z_pred;
-        z_pred(0) = fcs::L3::unwrap_rad(z_meas(0), z_pred_raw(0)); // yaw
-        z_pred(1) = fcs::L3::unwrap_rad(z_meas(1), z_pred_raw(1)); // pitch
-        z_pred(2) = z_pred_raw(2);                                 // distance (no wrap)
-        z_pred(3) = fcs::L3::unwrap_rad(z_meas(3), z_pred_raw(3)); // armor_yaw
-
-        // Compute innovation (now both are continuous, no wrap_pi needed)
-        const Eigen::Vector4d nu = z_meas - z_pred;
-
-        const double max_angle = config.max_angle_innovation;
-        const double max_dist  = config.max_dist_innovation;
-        const double ratio_angle =
-            (max_angle > 0.0)
-                ? std::max({std::abs(nu(0)), std::abs(nu(1)), std::abs(nu(3))}) / max_angle
-                : 0.0;
-        const double ratio_dist = (max_dist > 0.0) ? std::abs(nu(2)) / max_dist : 0.0;
-        const double ratio      = std::max(ratio_angle, ratio_dist);
-        if (!config.enable_robust_update && (ratio > 1.0) && std::isfinite(ratio)) {
-            return;
-        }
-
-        // Compute Jacobian and measurement noise
-        const auto H              = model.observation_jacobian(state);
-        auto R                    = model.measurement_noise();
-        const auto R_nominal      = R.matrix();
-        const double maha_nominal = nu.dot(R_nominal.ldlt().solve(nu));
-
-        if (config.enable_adaptive_process_noise) {
-            maybe_bump_adaptive_process_noise(maha_nominal, 4, config);
-        }
-
-        // Soft robust weighting: downweight large innovations instead of skipping immediately.
-        // Keep a hard cap for extreme cases (likely wrong association).
-        if (config.enable_robust_update && (ratio > 1.0) && std::isfinite(ratio)) {
-            if (ratio > 3.0) {
-                return;
-            }
-            const double scale = std::clamp(ratio * ratio, 1.0, detail::kRobustMaxRScale);
-            auto Rm            = R.matrix();
-            Rm *= scale;
-            R = decltype(R)(Rm);
-        }
-
-        // Additional robust weighting based on Mahalanobis distance (extreme outliers).
-        if (config.enable_robust_update) {
-            const double scale =
-                detail::robust_R_scale_from_maha(maha_nominal, 4, detail::kRobustMaxRScale);
-            if (scale != 1.0) {
-                auto Rm2 = R.matrix();
-                Rm2 *= scale;
-                R = decltype(R)(Rm2);
-            }
-        }
-
-        auto yaw_only = [](auto& correction) noexcept {
-            correction(0) = 0.0; // roll
-            correction(1) = 0.0; // pitch
-        };
-        filter_.update_linear<4>(H, nu, R, yaw_only);
-
-        auto& state_post = filter_.belief().mean;
-        clamp_extra_in_place(state_post.second.data);
-        zero_out_roll_pitch_covariance();
-    }
-
-    // ------------------------------------------------------------------------
-    // State accessors
-    // ------------------------------------------------------------------------
-
-    [[nodiscard]] RobotTargetState get_robot_state() const noexcept {
-        RobotTargetState state_out;
-        if (!filter_.is_initialized()) {
-            return state_out;
-        }
-
-        const auto& state    = filter_.mean();
-        state_out.position   = state.first.p();
-        state_out.velocity   = state.first.v();
-        state_out.yaw        = std::atan2(state.first.R()(1, 0), state.first.R()(0, 0));
-        state_out.v_yaw      = state.second(kIdxVYaw);
-        state_out.radius0    = state.second(kIdxR0);
-        state_out.radius1    = state.second(kIdxR1);
-        state_out.z1         = state_out.position.z() + state.second(kIdxH);
-        state_out.armors_num = kArmorsNum;
-        return state_out;
-    }
-
-    [[nodiscard]] double get_radius0() const noexcept {
-        return filter_.is_initialized() ? filter_.mean().second(kIdxR0) : 0.22;
-    }
-
-    [[nodiscard]] double get_radius1() const noexcept {
-        return filter_.is_initialized() ? filter_.mean().second(kIdxR1) : 0.22;
-    }
-
-    [[nodiscard]] double get_height() const noexcept {
-        return filter_.is_initialized() ? filter_.mean().second(kIdxH) : 0.0;
-    }
-
-private:
-    static void clamp_extra_in_place(Eigen::Vector4d& extra) noexcept {
-        extra(kIdxVYaw) = detail::sanitize_finite(extra(kIdxVYaw), 0.0);
-        extra(kIdxR0)   = detail::sanitize_finite(extra(kIdxR0), 0.23);
-        extra(kIdxR1)   = detail::sanitize_finite(extra(kIdxR1), 0.23);
-        extra(kIdxH)    = detail::sanitize_finite(extra(kIdxH), 0.0);
-
-        extra(kIdxR0) = std::clamp(extra(kIdxR0), kMinRadius, kMaxRadius);
-        extra(kIdxR1) = std::clamp(extra(kIdxR1), kMinRadius, kMaxRadius);
-        extra(kIdxH)  = std::clamp(extra(kIdxH), kMinHeight, kMaxHeight);
+        (void)ref;
+        (void)this->filter_->percept(z_meas, this->time_since_last_predict_);
+        clamp_extra_in_place(kf.state_mut().second);
+        this->zero_out_roll_pitch_covariance();
     }
 };
 
 // ============================================================================
-// TrackerInEKF_Outpost - Outpost (3-armor) variant
+// Outpost tracker (3 armors)
 // ============================================================================
 
-/// @brief InEKF for outpost tracking using uni_kf framework
-///
-/// State: SE₂(3) × ℝ³ where extra = [v_yaw, dz1, dz2]
-/// This is a drop-in replacement for fcs::L3::InEKF<OutpostModel>
-class TrackerInEKF_Outpost : public TrackerInEKF_Base<TrackerInEKF_Outpost, 3, Eigen::Vector3d> {
-    using Base = TrackerInEKF_Base<TrackerInEKF_Outpost, 3, Eigen::Vector3d>;
-    friend Base;
+class TrackerInEKF_Outpost
+    : public TrackerInEKF_Common<
+          uni_kf::redact::KalmanFilter<
+              uni_kf::redact::Covariance<
+                  SE23xRn<OutpostProcessModel::kExtraDim>, uni_kf::redact::Representation::Sr,
+                  uni_kf::redact::CubatureStrategy>,
+              OutpostPerception, OutpostAssumption>,
+          OutpostProcessModel::kStateDim> {
+    using Base = TrackerInEKF_Common<
+        uni_kf::redact::KalmanFilter<
+            uni_kf::redact::Covariance<
+                SE23xRn<OutpostProcessModel::kExtraDim>, uni_kf::redact::Representation::Sr,
+                uni_kf::redact::CubatureStrategy>,
+            OutpostPerception, OutpostAssumption>,
+        OutpostProcessModel::kStateDim>;
 
 public:
-    using SE23d = group::SEn3<double, 2>;
-    using Vec3  = Eigen::Vector3d;
-    using Mat3  = Eigen::Matrix3d;
+    using SE23d          = group::SEn3<double, 2>;
+    using Vec3           = Eigen::Vector3d;
+    using Mat3           = Eigen::Matrix3d;
+    using ReferenceFrame = fast_tf::FuckTransform<fast_tf::odom_fuxk_frame>;
 
     static constexpr int kArmorsNum = 3;
-    static constexpr int kExtraDim  = 3;
-    static constexpr int kGroupDim  = 9;
-    static constexpr int kStateDim  = kGroupDim + kExtraDim;
+    static constexpr int kExtraDim  = OutpostProcessModel::kExtraDim;
+    static constexpr int kGroupDim  = OutpostProcessModel::kGroupDim;
+    static constexpr int kStateDim  = OutpostProcessModel::kStateDim;
 
-    // Extra state indices
-    static constexpr int kIdxVYaw = 0;
-    static constexpr int kIdxDz1  = 1;
-    static constexpr int kIdxDz2  = 2;
-
-    static constexpr double kOutpostRadius = 0.2765;
+    static constexpr int kIdxVYaw = OutpostProcessModel::kIdxVYaw;
+    static constexpr int kIdxDz1  = OutpostProcessModel::kIdxDz1;
+    static constexpr int kIdxDz2  = OutpostProcessModel::kIdxDz2;
 
     TrackerInEKF_Outpost() noexcept = default;
 
+    [[nodiscard]] bool is_initialized() const noexcept { return this->filter_.has_value(); }
+
     void init(const Vec3& p0, double yaw0, const OutpostInEKFConfig& config) noexcept {
         if (!detail::all_finite(p0) || !std::isfinite(yaw0)) {
-            filter_.reset();
+            this->filter_.reset();
             return;
         }
 
         SE23d::IsometriesType t;
-        t[0] = Vec3::Zero();
-        t[1] = p0;
+        t[0]         = Vec3::Zero();
+        t[1]         = p0;
+        const Mat3 R = Eigen::AngleAxisd(yaw0, Vec3::UnitZ()).toRotationMatrix();
+        const SE23d se23(R, t);
 
-        Mat3 R = Eigen::AngleAxisd(yaw0, Vec3::UnitZ()).toRotationMatrix();
-        SE23d se23(R, t);
+        Eigen::Matrix<double, kExtraDim, 1> extra;
+        extra << 0.0, 0.0, 0.0;
+        SE23xRn<kExtraDim> state(se23, extra);
 
-        VecN<kExtraDim> extra;
-        extra.data << 0.0, 0.0, 0.0;
-
-        Point state{se23, extra};
-
-        Covariance P = Covariance::Zero();
+        Eigen::Matrix<double, kStateDim, kStateDim> P0 =
+            Eigen::Matrix<double, kStateDim, kStateDim>::Zero();
         for (int i = 0; i < kGroupDim; ++i) {
-            P(i, i) = 0.1;
+            P0(i, i) = 0.1;
         }
-        P(kGroupDim + kIdxVYaw, kGroupDim + kIdxVYaw) = 1.0;
-        P(kGroupDim + kIdxDz1, kGroupDim + kIdxDz1)   = 0.01;
-        P(kGroupDim + kIdxDz2, kGroupDim + kIdxDz2)   = 0.01;
+        P0(kGroupDim + kIdxVYaw, kGroupDim + kIdxVYaw) = 1.0;
+        P0(kGroupDim + kIdxDz1, kGroupDim + kIdxDz1)   = 0.01;
+        P0(kGroupDim + kIdxDz2, kGroupDim + kIdxDz2)   = 0.01;
 
-        filter_.init(state, P);
+        OutpostPerception perception;
+        OutpostAssumption assumption;
+        assumption.configure(config, 1.0);
+
+        this->filter_.emplace(state, P0, perception, assumption);
+        this->adaptive_process_noise_scale_ = 1.0;
+        this->time_since_last_predict_      = 0.0;
+        this->has_center_ref_               = false;
+        this->has_center_latest_            = false;
+        this->center_dt_acc_                = 0.0;
     }
 
-    /// Predict step using ProcessModel concept
+    void init(
+        const Vec3& p0, double yaw0, const OutpostInEKFConfig& config,
+        const ReferenceFrame& ref) noexcept {
+        (void)ref;
+        init(p0, yaw0, config);
+    }
+
     void predict(double dt, const OutpostInEKFConfig& config) noexcept {
-        if (!filter_.is_initialized() || dt <= 0.0 || !std::isfinite(dt)) {
+        if (!this->filter_ || !(dt > 0.0) || !std::isfinite(dt)) {
             return;
         }
-
-        on_predict_dt(dt);
+        this->on_predict_dt(dt);
         const double q_scale =
-            config.enable_adaptive_process_noise ? adaptive_process_noise_scale_ : 1.0;
-        const OutpostProcessModel model(config, q_scale);
-        filter_.predict(model, dt);
-        maybe_decay_adaptive_process_noise(dt, config);
-
-        clamp_extra_in_place(filter_.belief().mean.second.data);
-        zero_out_roll_pitch_covariance();
+            config.enable_adaptive_process_noise ? this->adaptive_process_noise_scale_ : 1.0;
+        this->filter_->get_assumption().configure(config, q_scale);
+        (void)this->filter_->predict(dt);
+        this->maybe_decay_adaptive_process_noise(dt, config);
+        this->zero_out_roll_pitch_covariance();
     }
 
-    void update_armor(const Vec3& y, int armor_id, const OutpostInEKFConfig& config) noexcept {
-        if (!filter_.is_initialized() || !detail::all_finite(y)) {
-            return;
-        }
-        if (armor_id < 0 || armor_id >= kArmorsNum) {
-            return;
-        }
-
-        const OutpostArmorMeasurementModel meas_model(
-            armor_id, config.sigma_m, config.use_dynamic_noise, config.dynamic_noise_k_radial,
-            config.dynamic_noise_k_tangent);
-
-        if (config.enable_adaptive_process_noise) {
-            const auto& x     = filter_.mean();
-            const auto z      = OutpostArmorMeasurementModel::MeasPoint{y};
-            const auto r      = meas_model.invariant_error(x, z).data;
-            const auto R      = meas_model.measurement_noise().matrix();
-            const double maha = r.dot(R.ldlt().solve(r));
-            maybe_bump_adaptive_process_noise(maha, 3, config);
-        }
-
-        update_invariant_yaw_only(OutpostArmorMeasurementModel::MeasPoint{y}, meas_model);
+    void predict(double dt, const OutpostInEKFConfig& config, const ReferenceFrame& ref) noexcept {
+        (void)ref;
+        predict(dt, config);
     }
 
     void update_yaw(double yaw_meas, const OutpostInEKFConfig& config) noexcept {
-        if (!filter_.is_initialized() || !std::isfinite(yaw_meas)) {
+        if (!this->filter_ || !std::isfinite(yaw_meas) || !(config.sigma_w > 0.0)
+            || !std::isfinite(config.sigma_w)) {
             return;
         }
-        if (!(config.sigma_w > 0.0) || !std::isfinite(config.sigma_w)) {
-            return;
-        }
+        auto& kf         = *this->filter_;
+        auto& perception = kf.get_perception();
 
-        if (config.enable_adaptive_process_noise) {
-            const double yaw_est = get_yaw();
-            const double r       = detail::wrap_pi(yaw_meas - yaw_est);
-            const double maha    = (r * r) / (config.sigma_w * config.sigma_w);
-            maybe_bump_adaptive_process_noise(maha, 1, config);
-        }
+        perception.configure_target_yaw_only(config.sigma_w, config);
+        const auto z_meas = YpdAy(yaw_meas, 0.0, 0.0, 0.0);
+        perception.prepare(kf.state(), z_meas);
 
-        const YawMeasurementModel<kExtraDim> meas_model(config.sigma_w);
-        using MeasPoint = typename YawMeasurementModel<kExtraDim>::MeasPoint;
-        update_invariant_yaw_only(MeasPoint{Eigen::Matrix<double, 1, 1>{yaw_meas}}, meas_model);
+        const auto z_pred       = perception.assume(kf.state());
+        const Eigen::Vector4d r = YpdAy::log(z_pred.inv() * z_meas);
+        const double maha       = (r(0) * r(0)) / (config.sigma_w * config.sigma_w);
+        this->maybe_bump_adaptive_process_noise(maha, 1, config);
+        perception.apply_robust_scale(maha, 1);
+
+        (void)this->filter_->percept(z_meas, this->time_since_last_predict_);
+        this->zero_out_roll_pitch_covariance();
     }
 
-    /// Update with spherical coordinate observation
-    /// @param armor_ypd Armor position in spherical coords [yaw, pitch, distance]
-    /// @param armor_yaw_meas Measured armor plate orientation (yaw angle)
-    /// @param armor_id Armor index (0-2)
-    /// @param config Filter configuration
+    void update_yaw(
+        double yaw_meas, const OutpostInEKFConfig& config, const ReferenceFrame& ref) noexcept {
+        (void)ref;
+        update_yaw(yaw_meas, config);
+    }
+
+    void update_armor(const Vec3& y, int armor_id, const OutpostInEKFConfig& config) noexcept {
+        if (!this->filter_ || !detail::all_finite(y) || armor_id < 0 || armor_id >= kArmorsNum) {
+            return;
+        }
+        const Eigen::Vector3d ypd = fcs::L3::xyz2ypd(y);
+        update_armor_spherical_impl(
+            ypd, /*armor_yaw_meas=*/0.0, armor_id, config, /*include_armor_yaw=*/false);
+    }
+
+    void update_armor(
+        const Vec3& y, int armor_id, const OutpostInEKFConfig& config,
+        const ReferenceFrame& ref) noexcept {
+        (void)ref;
+        update_armor(y, armor_id, config);
+    }
+
     void update_armor_spherical(
         const Vec3& armor_ypd, double armor_yaw_meas, int armor_id,
         const OutpostInEKFConfig& config) noexcept {
-        if (!filter_.is_initialized()) {
-            return;
-        }
-        if (armor_id < 0 || armor_id >= kArmorsNum) {
+        if (!this->filter_ || armor_id < 0 || armor_id >= kArmorsNum) {
             return;
         }
         if (!std::isfinite(armor_ypd.x()) || !std::isfinite(armor_ypd.y())
             || !std::isfinite(armor_ypd.z()) || !std::isfinite(armor_yaw_meas)) {
             return;
         }
+        update_armor_spherical_impl(
+            armor_ypd, armor_yaw_meas, armor_id, config, /*include_armor_yaw=*/true);
+    }
 
-        const OutpostSphericalMeasurementModel model(
-            armor_id, config.sigma_yaw_obs, config.sigma_pitch_obs, config.sigma_armor_yaw);
+    void update_armor_spherical(
+        const Vec3& armor_ypd, double armor_yaw_meas, int armor_id,
+        const OutpostInEKFConfig& config, const ReferenceFrame& ref) noexcept {
+        (void)ref;
+        update_armor_spherical(armor_ypd, armor_yaw_meas, armor_id, config);
+    }
 
-        if (config.enable_pseudo_velocity_update) {
-            const auto& x   = filter_.mean();
-            double z_offset = 0.0;
-            if (armor_id == 1) {
-                z_offset = x.second(kIdxDz1);
-            } else if (armor_id == 2) {
-                z_offset = x.second(kIdxDz2);
-            }
-
-            const Vec3 armor_xyz_meas = fcs::L3::ypd2xyz(armor_ypd); // camera_optical
-            const double a            = armor_yaw_meas;
-            Vec3 center_meas          = armor_xyz_meas;
-            center_meas.x() += OutpostSphericalMeasurementModel::kOutpostRadius * std::cos(a);
-            center_meas.y() += OutpostSphericalMeasurementModel::kOutpostRadius * std::sin(a);
-            center_meas.z() -= z_offset;
-
-            const Eigen::Matrix3d J_xyz_ypd = fcs::L3::ypd2xyz_jacobian(armor_ypd);
-            const double delta_angle        = detail::wrap_pi(armor_yaw_meas - armor_ypd.x());
-            const double dist_var           = std::log(std::abs(delta_angle) + 1.0) + 1.0;
-            Eigen::Matrix3d R_ypd           = Eigen::Matrix3d::Zero();
-            R_ypd(0, 0)                     = config.sigma_yaw_obs * config.sigma_yaw_obs;
-            R_ypd(1, 1)                     = config.sigma_pitch_obs * config.sigma_pitch_obs;
-            R_ypd(2, 2)                     = dist_var;
-
-            Eigen::Matrix3d P_center = J_xyz_ypd * R_ypd * J_xyz_ypd.transpose();
-
-            const double sigma_a =
-                std::log(std::max(0.0, armor_ypd.z()) + 1.0) / 200.0 + config.sigma_armor_yaw;
-            const double var_a = sigma_a * sigma_a;
-            const double r     = OutpostSphericalMeasurementModel::kOutpostRadius;
-            const Eigen::Vector3d d_center_da{-r * std::sin(a), r * std::cos(a), 0.0};
-            P_center += d_center_da * d_center_da.transpose() * var_a;
-            P_center.diagonal().array() += detail::kCovarianceRegularization;
-
-            set_center_latest_measurement(center_meas, P_center);
-            maybe_update_pseudo_velocity(config);
+    [[nodiscard]] double get_yaw() const noexcept {
+        if (!this->filter_) {
+            return 0.0;
         }
-
-        // Build measurement vector [yaw, pitch, distance, armor_yaw]
-        const Eigen::Vector4d z_meas{armor_ypd.x(), armor_ypd.y(), armor_ypd.z(), armor_yaw_meas};
-
-        const auto& state = filter_.mean();
-
-        // Get raw prediction and unwrap to be continuous with measurement
-        const Eigen::Vector4d z_pred_raw = model.predict(state);
-        Eigen::Vector4d z_pred;
-        z_pred(0) = fcs::L3::unwrap_rad(z_meas(0), z_pred_raw(0));
-        z_pred(1) = fcs::L3::unwrap_rad(z_meas(1), z_pred_raw(1));
-        z_pred(2) = z_pred_raw(2);
-        z_pred(3) = fcs::L3::unwrap_rad(z_meas(3), z_pred_raw(3));
-
-        // Compute innovation
-        const Eigen::Vector4d nu = z_meas - z_pred;
-
-        const double max_angle = config.max_angle_innovation;
-        const double max_dist  = config.max_dist_innovation;
-        const double ratio_angle =
-            (max_angle > 0.0)
-                ? std::max({std::abs(nu(0)), std::abs(nu(1)), std::abs(nu(3))}) / max_angle
-                : 0.0;
-        const double ratio_dist = (max_dist > 0.0) ? std::abs(nu(2)) / max_dist : 0.0;
-        const double ratio      = std::max(ratio_angle, ratio_dist);
-        if (!config.enable_robust_update && (ratio > 1.0) && std::isfinite(ratio)) {
-            return;
-        }
-
-        // Compute Jacobian and measurement noise
-        const auto H              = model.observation_jacobian(state);
-        auto R                    = model.measurement_noise();
-        const auto R_nominal      = R.matrix();
-        const double maha_nominal = nu.dot(R_nominal.ldlt().solve(nu));
-
-        if (config.enable_adaptive_process_noise) {
-            maybe_bump_adaptive_process_noise(maha_nominal, 4, config);
-        }
-
-        if (config.enable_robust_update && (ratio > 1.0) && std::isfinite(ratio)) {
-            if (ratio > 3.0) {
-                return;
-            }
-            const double scale = std::clamp(ratio * ratio, 1.0, detail::kRobustMaxRScale);
-            auto Rm            = R.matrix();
-            Rm *= scale;
-            R = decltype(R)(Rm);
-        }
-
-        if (config.enable_robust_update) {
-            const double scale =
-                detail::robust_R_scale_from_maha(maha_nominal, 4, detail::kRobustMaxRScale);
-            if (scale != 1.0) {
-                auto Rm2 = R.matrix();
-                Rm2 *= scale;
-                R = decltype(R)(Rm2);
-            }
-        }
-
-        auto yaw_only = [](auto& correction) noexcept {
-            correction(0) = 0.0; // roll
-            correction(1) = 0.0; // pitch
-        };
-        filter_.update_linear<4>(H, nu, R, yaw_only);
-
-        auto& state_post = filter_.belief().mean;
-        clamp_extra_in_place(state_post.second.data);
-        zero_out_roll_pitch_covariance();
+        const auto& R = this->filter_->state().first.R();
+        return std::atan2(R(1, 0), R(0, 0));
     }
 
     [[nodiscard]] OutpostTargetState get_outpost_state() const noexcept {
-        OutpostTargetState state_out;
-        if (!filter_.is_initialized()) {
-            return state_out;
+        OutpostTargetState out;
+        if (!this->filter_) {
+            return out;
         }
-
-        const auto& state  = filter_.mean();
-        state_out.position = {state.first.p().x(), state.first.p().y()};
-        state_out.velocity = state.first.v();
-        state_out.yaw      = std::atan2(state.first.R()(1, 0), state.first.R()(0, 0));
-        state_out.v_yaw    = state.second(kIdxVYaw);
-        state_out.z        = {
-            state.first.p().z(), state.first.p().z() + state.second(kIdxDz1),
-            state.first.p().z() + state.second(kIdxDz2)};
-        return state_out;
+        const auto& s = this->filter_->state();
+        out.position  = {s.first.p().x(), s.first.p().y()};
+        out.yaw       = std::atan2(s.first.R()(1, 0), s.first.R()(0, 0));
+        out.v_yaw     = s.second(kIdxVYaw);
+        out.z         = {
+            s.first.p().z(), s.first.p().z() + s.second(kIdxDz1),
+            s.first.p().z() + s.second(kIdxDz2)};
+        return out;
     }
 
 private:
-    static void clamp_extra_in_place(Eigen::Vector3d& extra) noexcept {
-        extra(kIdxVYaw) = detail::sanitize_finite(extra(kIdxVYaw), 0.0);
-        extra(kIdxDz1)  = detail::sanitize_finite(extra(kIdxDz1), 0.0);
-        extra(kIdxDz2)  = detail::sanitize_finite(extra(kIdxDz2), 0.0);
+    void update_armor_spherical_impl(
+        const Vec3& armor_ypd, double armor_yaw_meas, int armor_id,
+        const OutpostInEKFConfig& config, bool include_armor_yaw,
+        const ReferenceFrame* ref = nullptr) noexcept {
+        auto& kf         = *this->filter_;
+        auto& perception = kf.get_perception();
+
+        perception.configure_armor(armor_id, include_armor_yaw, config);
+        const double armor_yaw_use = include_armor_yaw ? armor_yaw_meas : 0.0;
+        const YpdAy z_meas(armor_ypd.x(), armor_ypd.y(), armor_ypd.z(), armor_yaw_use);
+        perception.prepare(kf.state(), z_meas);
+
+        const auto z_pred       = perception.assume(kf.state());
+        const Eigen::Vector4d r = YpdAy::log(z_pred.inv() * z_meas);
+        Eigen::Matrix4d R       = perception.measurement_noise_covariance();
+        const double maha       = r.transpose() * R.ldlt().solve(r);
+
+        this->maybe_bump_adaptive_process_noise(maha, include_armor_yaw ? 4 : 3, config);
+        perception.apply_robust_scale(maha, include_armor_yaw ? 4 : 3);
+
+        (void)ref;
+        (void)this->filter_->percept(z_meas, this->time_since_last_predict_);
+        this->zero_out_roll_pitch_covariance();
     }
 };
+
+// ============================================================================
+// Helper: armor position computation used by Perception
+// ============================================================================
+
+inline Eigen::Vector3d
+    RobotProcessModel::armor_position(const RobotProcessModel::Point& x, int armor_id) noexcept {
+    constexpr double kAngleStep = 2.0 * std::numbers::pi / 4.0;
+    const double target_yaw     = std::atan2(x.first.R()(1, 0), x.first.R()(0, 0));
+    const double armor_angle    = target_yaw + static_cast<double>(armor_id) * kAngleStep;
+
+    const bool is_high =
+        (armor_id == RobotProcessModel::kHighArmorIdA
+         || armor_id == RobotProcessModel::kHighArmorIdB);
+    const double radius =
+        is_high ? x.second(RobotProcessModel::kIdxR1) : x.second(RobotProcessModel::kIdxR0);
+    const double z_off = is_high ? x.second(RobotProcessModel::kIdxH) : 0.0;
+
+    const double armor_x = x.first.p().x() - radius * std::cos(armor_angle);
+    const double armor_y = x.first.p().y() - radius * std::sin(armor_angle);
+    const double armor_z = x.first.p().z() + z_off;
+    return Eigen::Vector3d{armor_x, armor_y, armor_z};
+}
+
+inline Eigen::Vector3d OutpostProcessModel::armor_position(
+    const OutpostProcessModel::Point& x, int armor_id) noexcept {
+    constexpr double kAngleStep     = 2.0 * std::numbers::pi / 3.0;
+    constexpr double kOutpostRadius = 0.2765;
+    const double target_yaw         = std::atan2(x.first.R()(1, 0), x.first.R()(0, 0));
+    const double armor_angle        = target_yaw + static_cast<double>(armor_id) * kAngleStep;
+
+    double z_offset = 0.0;
+    if (armor_id == 1) {
+        z_offset = x.second(OutpostProcessModel::kIdxDz1);
+    } else if (armor_id == 2) {
+        z_offset = x.second(OutpostProcessModel::kIdxDz2);
+    }
+
+    const double armor_x = x.first.p().x() - kOutpostRadius * std::cos(armor_angle);
+    const double armor_y = x.first.p().y() - kOutpostRadius * std::sin(armor_angle);
+    const double armor_z = x.first.p().z() + z_offset;
+    return Eigen::Vector3d{armor_x, armor_y, armor_z};
+}
 
 } // namespace uni_kf

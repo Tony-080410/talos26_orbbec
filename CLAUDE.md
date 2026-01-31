@@ -11,16 +11,16 @@ cmake --build build_agent -- talos -j64
 
 ```bash
 # 运行全部测试
-cd build && ctest -j11
+cd build_agent && ctest -j11
 
 # 运行单个测试
-cd build && ./bin/scheduler_ecs_test
-cd build && ./bin/fast_tf_test
-cd build && ./bin/triple_buffer_test
+cd build_agent && ./bin/scheduler_ecs_test
+cd build_agent && ./bin/fast_tf_test
+cd build_agent && ./bin/triple_buffer_test
 
 # 启用 AddressSanitizer
-cmake -G Ninja -B build -S . -DENABLE_ASAN=ON
-cmake --build build -- talos -j64
+cmake -G Ninja -B build_agent -S . -DENABLE_ASAN=ON
+cmake --build build_agent -- talos -j64
 ```
 
 # 项目架构

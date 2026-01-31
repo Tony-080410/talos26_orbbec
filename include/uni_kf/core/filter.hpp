@@ -592,7 +592,14 @@ using InEKF_SE23 =
 template <
     int ExtraDim, LieSide Side = LieSide::Right, typename ReprTag = CovarianceTag,
     typename Scalar = double>
-using InCKF_SE23_Augmented =
+using InUKF_SE23_Augmented =
     UnifiedKalmanFilter<SE23_Rn<ExtraDim, Scalar, Side>, SigmaPointsTag, ReprTag, Scalar>;
+
+/// @brief Invariant CKF on SE₂(3) × ℝⁿ (augmented with extra states)
+template <
+    int ExtraDim, LieSide Side = LieSide::Right, typename ReprTag = CovarianceTag,
+    typename Scalar = double>
+using InCKF_SE23_Augmented =
+    UnifiedKalmanFilter<SE23_Rn<ExtraDim, Scalar, Side>, CubaturePointsTag, ReprTag, Scalar>;
 
 } // namespace uni_kf

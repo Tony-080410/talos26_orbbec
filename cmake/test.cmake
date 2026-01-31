@@ -87,6 +87,27 @@ talos_add_test_scheduler(scheduler_ecs_test test/scheduler_ecs_test.cpp)
 # Jpda matcher tests - needs Eigen3 + OpenCV + lieplusplus
 talos_add_test_fast_tf(jpda_matcher_test test/jpda_matcher_test.cpp)
 
+# Tracker regression: compare redact InEKF vs ISRCKF on same stream
+add_executable(tracker_inekf_compare_test test/tracker_inekf_compare_test.cpp)
+target_include_directories(tracker_inekf_compare_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_include_directories(tracker_inekf_compare_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include/fcs)
+target_include_directories(tracker_inekf_compare_test SYSTEM PRIVATE 3dparty/lieplusplus)
+target_link_libraries(tracker_inekf_compare_test PRIVATE fast_tf GTest::gtest_main Eigen3::Eigen TBB::tbb ${OpenCV_LIBS})
+add_test(NAME tracker_inekf_compare_test COMMAND tracker_inekf_compare_test)
+
+# uni_kf tests - needs Eigen3 + lieplusplus
+add_executable(uni_kf_redact_test test/uni_kf_redact_test.cpp)
+target_include_directories(uni_kf_redact_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_include_directories(uni_kf_redact_test SYSTEM PRIVATE 3dparty/lieplusplus)
+target_link_libraries(uni_kf_redact_test PRIVATE GTest::gtest_main Eigen3::Eigen)
+add_test(NAME uni_kf_redact_test COMMAND uni_kf_redact_test)
+
+add_executable(uni_kf_adjoint_test test/uni_kf_adjoint_test.cpp)
+target_include_directories(uni_kf_adjoint_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_include_directories(uni_kf_adjoint_test SYSTEM PRIVATE 3dparty/lieplusplus)
+target_link_libraries(uni_kf_adjoint_test PRIVATE GTest::gtest_main Eigen3::Eigen)
+add_test(NAME uni_kf_adjoint_test COMMAND uni_kf_adjoint_test)
+
 # ROS2 compatibility layer tests - needs scheduler + special include paths
 add_executable(rclcompat_test test/rclcompat_test.cpp)
 target_include_directories(rclcompat_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include ${CMAKE_CURRENT_SOURCE_DIR}/include/scheduler)

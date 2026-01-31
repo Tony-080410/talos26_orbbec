@@ -18,6 +18,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <math/fast_tf/frame.hpp>
 #include <numbers>
 #include <optional>
 
@@ -53,6 +54,7 @@ namespace fcs::L3 {
 class Tracker {
 public:
     Tracker() noexcept = default;
+    using GimbalRef    = fast_tf::FuckTransform<fast_tf::odom_fuxk_frame>;
 
     explicit Tracker(const TrackerConfig& config) noexcept
         : config_(config)
@@ -82,8 +84,36 @@ public:
         (void)update(measurements);
     }
 
+    /// Combined predict + update step with gimbal reference
+    void step(
+        double dt, const AtLegacyArmorMeasurementBatch& measurements,
+        const GimbalRef& gimbal) noexcept {
+        predict(dt, gimbal);
+        (void)update(measurements, gimbal);
+    }
+
     /// Prediction step (time update)
-    void predict(double dt) noexcept {
+    void predict(double dt) noexcept { predict_impl(dt, nullptr); }
+
+    /// Prediction step (time update) with gimbal reference
+    void predict(double dt, const GimbalRef& gimbal) noexcept { predict_impl(dt, &gimbal); }
+
+    /// Update step (measurement update)
+    /// @return true if matched successfully
+    [[nodiscard]] bool update(const AtLegacyArmorMeasurementBatch& measurements) noexcept {
+        return update_impl(measurements, nullptr);
+    }
+
+    /// Update step (measurement update) with gimbal reference
+    /// @return true if matched successfully
+    [[nodiscard]] bool update(
+        const AtLegacyArmorMeasurementBatch& measurements, const GimbalRef& gimbal) noexcept {
+        return update_impl(measurements, &gimbal);
+    }
+
+private:
+    void predict_impl(double dt, const GimbalRef* gimbal) noexcept {
+        (void)gimbal; // InEKF runs in odom (no reference-frame adjustment).
         last_dt_ = std::max(0.0, dt);
 
         // Check if we've lost the target for too long
@@ -122,7 +152,8 @@ public:
 
     /// Update step (measurement update)
     /// @return true if matched successfully
-    [[nodiscard]] bool update(const AtLegacyArmorMeasurementBatch& measurements) noexcept {
+    [[nodiscard]] bool update_impl(
+        const AtLegacyArmorMeasurementBatch& measurements, const GimbalRef* gimbal) noexcept {
         // Only Outpost uses 3-armors model, all other targets use 4-armors model
         // This includes: Sentry, One, Two, Three, Four, Five, Base, BaseLarge, Invalid
         const bool is_outpost = (target_name_ == ArmorName::Outpost);
@@ -210,6 +241,8 @@ public:
         state_machine(true);
 
         // Process matched armors
+        (void)gimbal; // InEKF runs in odom (no reference-frame adjustment).
+
         for (size_t i = 0; i < match_result.armors.size(); ++i) {
             const auto& meas = match_result.armors[i];
 
@@ -278,10 +311,22 @@ public:
         return true;
     }
 
+public:
     /// Initialize tracking from first detection
     /// @return Target name if successfully initialized
     [[nodiscard]] std::optional<ArmorName>
         first_meet(const AtLegacyArmorMeasurementBatch& measurements) noexcept {
+        return first_meet_impl(measurements, nullptr);
+    }
+
+    [[nodiscard]] std::optional<ArmorName> first_meet(
+        const AtLegacyArmorMeasurementBatch& measurements, const GimbalRef& gimbal) noexcept {
+        return first_meet_impl(measurements, &gimbal);
+    }
+
+private:
+    [[nodiscard]] std::optional<ArmorName> first_meet_impl(
+        const AtLegacyArmorMeasurementBatch& measurements, const GimbalRef* gimbal) noexcept {
         if (measurements.empty()) {
             state_machine(false);
             return std::nullopt;
@@ -391,6 +436,7 @@ public:
         return target_name_;
     }
 
+public:
     /// Get current tracker output
     [[nodiscard]] TrackerOutput get_output() const noexcept {
         TrackerOutput output;

@@ -14,6 +14,9 @@
 #include "../concepts/differential_space.hpp"
 #include "../concepts/quadratic_form.hpp"
 #include "../concepts/representation.hpp"
+#include "../representations/covariance.hpp"
+#include "../representations/information.hpp"
+#include "../representations/square_root.hpp"
 
 #include <random>
 
