@@ -306,6 +306,56 @@ public:
     }
 
     // ========================================================================
+    // CLEAR & RETAIN
+    // ========================================================================
+
+    /// @brief Clear all accumulated primitives (spheres, cubes, texts, arrows, etc.)
+    /// @return Reference to this builder for chaining
+    ///
+    /// Use this to reuse a builder instance in a loop:
+    /// ```cpp
+    /// auto builder = EntityBuilder::create<Frame>("l1", "dynamic");
+    /// for (const auto& item : items) {
+    ///     builder.clear()
+    ///         .position(item.pos)
+    ///         .sphere()
+    ///         .publish();
+    /// }
+    /// ```
+    EntityBuilder& clear() noexcept {
+        entity_.spheres.clear();
+        entity_.cubes.clear();
+        entity_.texts.clear();
+        entity_.arrows.clear();
+        entity_.lines.clear();
+        entity_.triangles.clear();
+        entity_.cylinders.clear();
+        entity_.models.clear();
+        return *this;
+    }
+
+    /// @brief Clear primitives but retain metadata (timestamp, lifetime, custom metadata)
+    /// @return Reference to this builder for chaining
+    ///
+    /// Similar to clear(), but preserves metadata that was set up before the loop:
+    /// ```cpp
+    /// auto builder = EntityBuilder::create<Frame>("l1", "batch")
+    ///     .timestamp(now)
+    ///     .lifetime(100ms);
+    /// for (const auto& item : items) {
+    ///     builder.retain()
+    ///         .position(item.pos)
+    ///         .sphere()
+    ///         .publish();
+    /// }
+    /// ```
+    EntityBuilder& retain() noexcept {
+        // Clear only primitives, preserve metadata
+        clear();
+        return *this;
+    }
+
+    // ========================================================================
     // BUILD
     // ========================================================================
 
