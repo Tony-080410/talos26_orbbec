@@ -1104,9 +1104,9 @@ public:
 
 private:
     static void clamp_extra_in_place(Eigen::Matrix<double, kExtraDim, 1>& e) noexcept {
-        e(kIdxR0) = std::clamp(e(kIdxR0), kMinRadius, kMaxRadius);
-        e(kIdxR1) = std::clamp(e(kIdxR1), kMinRadius, kMaxRadius);
-        e(kIdxH)  = std::clamp(e(kIdxH), kMinHeight, kMaxHeight);
+        // e(kIdxR0) = std::clamp(e(kIdxR0), kMinRadius, kMaxRadius);
+        // e(kIdxR1) = std::clamp(e(kIdxR1), kMinRadius, kMaxRadius);
+        // e(kIdxH)  = std::clamp(e(kIdxH), kMinHeight, kMaxHeight);
     }
 
     void update_armor_spherical_impl(

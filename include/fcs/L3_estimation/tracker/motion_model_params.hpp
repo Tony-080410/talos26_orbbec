@@ -30,4 +30,3 @@ struct OutpostModelParams {
 };
 
 } // namespace fcs::L3
-

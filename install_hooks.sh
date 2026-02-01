@@ -7,7 +7,7 @@ cd "$REPO_ROOT"
 
 HOOK_SCRIPTS=(
     "scripts/pre-commit-clang-format.sh"
-#    "scripts/pre-commit-spdlog-check.sh"
+    "scripts/pre-commit-spdlog-check.sh"
 )
 HOOK_DST=".git/hooks/pre-commit"
 
@@ -34,6 +34,7 @@ done
 # 3. 创建 hooks 目录（极端情况下）
 mkdir -p .git/hooks
 
+touch "$HOOK_DST"
 rm "$HOOK_DST"
 # 4. 备份已有 hook（不覆盖用户已有逻辑）
 if [ -e "$HOOK_DST" ] && [ ! -L "$HOOK_DST" ]; then

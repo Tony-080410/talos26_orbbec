@@ -14,4 +14,3 @@ std::unique_ptr<TrajectoryCompensator> create_compensator(TrajectoryCompensatorT
 }
 
 } // namespace fcs::L4
-

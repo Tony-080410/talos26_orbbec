@@ -41,3 +41,4 @@ rateui/.rateui/
 $(ALLUSERSPROFILE)
 old/
 build_agent/
+.sisyphus

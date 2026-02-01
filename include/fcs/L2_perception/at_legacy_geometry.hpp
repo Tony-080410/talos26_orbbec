@@ -26,4 +26,3 @@ namespace fcs::at_legacy::detail {
 }
 
 } // namespace fcs::at_legacy::detail
-

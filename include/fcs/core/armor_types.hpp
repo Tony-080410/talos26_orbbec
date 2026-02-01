@@ -102,4 +102,3 @@ struct formatter<fcs::TrackStatus> : formatter<std::string_view> {
 };
 
 } // namespace fmt
-
