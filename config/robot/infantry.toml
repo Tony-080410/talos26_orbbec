@@ -14,5 +14,5 @@ height = 1080
 [camera.profile]
 trigger_mode = false
 invert_image = false
-exposure_time_us = 3000  # 3ms in microseconds
+exposure_time_us = 5000  # 3ms in microseconds
 gain = 16.7
