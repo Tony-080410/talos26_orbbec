@@ -115,19 +115,17 @@ public:
         }
 
         if (size_ == 1) {
-            return buffer_[(head_ + Capacity - 1) % Capacity];
-        }
-
-        // Clamp to bounds
-        if (ts <= oldest_ts_) {
-            return at_logical(0);
-        }
-        if (ts >= newest_ts_) {
-            return at_logical(size_ - 1);
+            const auto& entry = buffer_[(head_ + Capacity - 1) % Capacity];
+            if (entry.timestamp_ns == 0) {
+                // static transform
+                return TransformEntry{ts, entry.transform};
+            }
+            // Single data point: use it as-is (no extrapolation possible)
+            return TransformEntry{ts, entry.transform};
         }
 
         // Binary search for the first entry with timestamp > ts
-        // Result: upper points to entry just after ts
+        // Result: lo points to entry just after ts (or size_ if ts >= newest)
         std::size_t lo = 0;
         std::size_t hi = size_;
 
@@ -142,26 +140,37 @@ public:
             }
         }
 
-        // lo is now the index of first entry with timestamp > ts
-        // We interpolate between lo-1 and lo
-        assert(lo > 0 && lo < size_);
+        // Determine interpolation/extrapolation pair
+        const auto* prev = &at_logical(0);
+        const auto* next = &at_logical(1);
 
-        const auto& prev = at_logical(lo - 1);
-        const auto& next = at_logical(lo);
+        if (lo == 0) {
+            // Extrapolate backward: use first two points
+            prev = &at_logical(0);
+            next = &at_logical(1);
+        } else if (lo >= size_) {
+            // Extrapolate forward: use last two points
+            prev = &at_logical(size_ - 2);
+            next = &at_logical(size_ - 1);
+        } else {
+            // Interpolate: between lo-1 and lo
+            prev = &at_logical(lo - 1);
+            next = &at_logical(lo);
+        }
 
         // Exact match check
-        if (prev.timestamp_ns == ts) {
-            return prev;
+        if (prev->timestamp_ns == ts) {
+            return *prev;
         }
 
-        // Interpolate
-        const uint64_t dt = next.timestamp_ns - prev.timestamp_ns;
+        // Interpolate/extrapolate
+        const uint64_t dt = next->timestamp_ns - prev->timestamp_ns;
         if (dt == 0) {
-            return prev; // 防御性编程：除零保护
+            return *prev; // 防御性编程：除零保护
         }
-        const fp_t t = static_cast<fp_t>(ts - prev.timestamp_ns) / static_cast<fp_t>(dt);
+        const fp_t t = static_cast<fp_t>(ts - prev->timestamp_ns) / static_cast<fp_t>(dt);
 
-        return TransformEntry(ts, TransformMatrix4d::lerp(prev.transform, next.transform, t));
+        return TransformEntry(ts, TransformMatrix4d::lerp(prev->transform, next->transform, t));
     }
 
     [[nodiscard]] std::expected<TransformEntry, TransformError>

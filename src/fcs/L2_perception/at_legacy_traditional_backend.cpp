@@ -238,21 +238,17 @@ std::vector<AtLegacyArmorDetection> AtLegacyTraditionalBackend::match_lights(
     const cv::Mat gray_img) const {
     std::vector<AtLegacyArmorDetection> detections;
 
-    // Target color based on detect_color_
-    const ArmorColor target_color = detect_color_;
+    // NOTE: Color filtering removed - detect all colors (RBGP)
+    // Colors are still detected and preserved in the output for downstream use
 
     // Loop all pairs of lights
     for (auto it1 = lights.begin(); it1 != lights.end(); ++it1) {
-        // Filter by color (allow Neutral/WHITE to pass through, matching armor_detector_ov)
-        if (it1->color != target_color && it1->color != ArmorColor::Neutral)
-            continue;
+        // No color filtering - all colors allowed
 
         const double max_iter_width = it1->length * cfg.armor_max_large_center_distance;
 
         for (auto it2 = it1 + 1; it2 != lights.end(); ++it2) {
-            // Filter by color (allow Neutral/WHITE to pass through)
-            if (it2->color != target_color && it2->color != ArmorColor::Neutral)
-                continue;
+            // No color filtering - all colors allowed
 
             // Check if there's a light between them
             const auto i = static_cast<size_t>(std::distance(lights.begin(), it1));

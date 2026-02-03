@@ -82,13 +82,15 @@ public:
 
     [[nodiscard]] std::optional<Frame> try_recv() noexcept {
         using namespace std::chrono_literals;
+        // TODO properly pass timestamp in camera_->read()
+        auto now_   = now_ns();
         auto result = camera_->read(1ms);
         if (!result) {
             return std::nullopt;
         }
         return Frame{
             .seq          = seq_++,
-            .timestamp_ns = now_ns(),
+            .timestamp_ns = now_,
             .image        = std::move(*result),
         };
     }

@@ -57,7 +57,7 @@ void register_l1_sensor_systems(App& app) {
                     for (size_t j = 0; j < det.corners.size(); j++) {
                         auto pp1 = det.corners[j];
                         auto pp2 = det.corners[(j + 1) % 4];
-                        cv::line(img_bgr, pp1, pp2, cv::Scalar(0, 255, 0), 4);
+                        cv::line(img_bgr, pp1, pp2, cv::Scalar(0, 255, 0), 2);
                     }
                 }
             }

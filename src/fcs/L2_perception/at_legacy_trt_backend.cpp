@@ -680,13 +680,10 @@ AtLegacyTrtBackend::DetectionResult AtLegacyTrtBackend::detect_impl(const cv::Ma
             continue;
         }
 
-        // Filter by color
-        auto class_info  = g_class_mappings[cls_id];
-        int target_color = detect_color_; // 0=Blue, 1=Red
-        if ((target_color == 0 && class_info.color != ArmorColor::Blue)
-            || (target_color == 1 && class_info.color != ArmorColor::Red)) {
-            continue;
-        }
+        // NOTE: Color filtering removed - detect all colors (RBGP)
+        // Colors are still detected and preserved in the output for downstream use
+        auto class_info = g_class_mappings[cls_id];
+        // No color filtering - all colors allowed
 
         // Extract and reorder keypoints
         // YOLO outputs: TL, BL, BR, TR
