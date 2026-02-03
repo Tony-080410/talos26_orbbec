@@ -125,16 +125,6 @@ private:
         if (robot_ckf_.has_value()) {
             robot_ckf_->predict(dt);
             auto& e = robot_ckf_->x_mut().first.data;
-            // Clamp radius/height to keep geometry physically plausible and prevent divergence.
-            //
-            // Problem: wrong associations or spikes can drive geometry to absurd values and then
-            //          make association even worse (positive feedback).
-            // Intuition: hard bounds keep the filter "sane" even if process noise is large.
-            // Analogy: saturating a control signal / enforcing physical joint limits.
-            // Precise: these clamps are applied after every ISRCKF predict(), regardless of Q.
-            e(RobotModel::R_0) = std::clamp(e(RobotModel::R_0), 0.17, 0.27);
-            e(RobotModel::R_1) = std::clamp(e(RobotModel::R_1), 0.17, 0.27);
-            e(RobotModel::H)   = std::clamp(e(RobotModel::H), -0.2, 0.2);
         }
 
         if (outpost_ckf_.has_value()) {

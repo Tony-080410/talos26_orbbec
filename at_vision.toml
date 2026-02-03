@@ -1,4 +1,4 @@
-daedalus = true
+daedalus = false
 
 robot = 'infantry'          # any of: 'infantry', 'hero', 'sentry'
 vision = 'infantry_vision'

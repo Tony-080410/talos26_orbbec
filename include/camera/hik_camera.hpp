@@ -28,6 +28,8 @@ struct CameraError {
     unsigned int error_code = 0;
 
     std::string what() const { return message + " (code: " + std::to_string(error_code) + ")"; }
+
+    static std::string error_code_to_message(unsigned int code);
 };
 
 class ImageCapturer final {
@@ -69,17 +71,12 @@ public:
     [[nodiscard]] std::expected<void, CameraError>
         set_frame_rate_inner_trigger_mode(float frame_rate);
 
-    friend std::unique_ptr<ImageCapturer> std::make_unique<ImageCapturer>();
-
 private:
     // Default constructor for internal use by create()
     ImageCapturer();
 
     [[nodiscard]] std::expected<void, CameraError> init(
         const CameraProfile& profile, const char* user_defined_name, const SyncMode& sync_mode);
-
-    friend std::expected<std::unique_ptr<ImageCapturer>, CameraError>
-        ImageCapturer::create(const CameraProfile&, const char*, const SyncMode&);
 
     class Impl;
     std::unique_ptr<Impl> impl_;

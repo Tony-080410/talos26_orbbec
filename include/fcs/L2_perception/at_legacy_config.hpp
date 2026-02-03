@@ -19,6 +19,9 @@ enum class AtLegacyBackendTypeConfig : int {
     Traditional      = 0,
     NeuralNetwork    = 1, // AT model (YOLO11-pose)
     NeuralNetworkTup = 2, // TUP model (YOLOX multi-scale)
+#if TALOS_HAS_TENSORRT
+    TensorRT = 3,         // TensorRT backend (GPU-accelerated)
+#endif
 };
 
 // ============================================================================
@@ -89,6 +92,35 @@ struct AtLegacyNNTupConfig {
     std::expected<void, std::string> read_from(const toml::table& tbl) noexcept;
 };
 
+#if TALOS_HAS_TENSORRT
+// ============================================================================
+// AT Legacy TRT Backend Config (TensorRT)
+// ============================================================================
+
+struct AtLegacyTrtConfig {
+    std::string engine_path;
+    std::string model_path;
+    std::string engine_cache_dir;
+
+    // Device and concurrency
+    int device_id                  = 0;
+    int num_streams                = 2;
+    std::string compute_capability = "86";
+
+    // TensorRT options
+    bool enable_fp16 = true;
+    bool enable_dla  = false;
+    int dla_core     = 0;
+
+    // Detection parameters
+    double confidence_threshold = 0.75;
+    double nms_threshold        = 0.30;
+    int top_k                   = 128;
+
+    std::expected<void, std::string> read_from(const toml::table& tbl) noexcept;
+};
+#endif
+
 // ============================================================================
 // AT Legacy Detector Config (combines Traditional + NN)
 // ============================================================================
@@ -109,6 +141,9 @@ struct AtLegacyConfig {
     AtLegacyTraditionalConfig traditional{};
     AtLegacyNNConfig nn{};
     AtLegacyNNTupConfig nn_tup{};
+#if TALOS_HAS_TENSORRT
+    AtLegacyTrtConfig trt{};
+#endif
 
     /// Get shared_ptr for atomic config distribution
     [[nodiscard]] std::shared_ptr<const AtLegacyTraditionalConfig> traditional_ptr() const {
@@ -122,6 +157,12 @@ struct AtLegacyConfig {
     [[nodiscard]] std::shared_ptr<const AtLegacyNNTupConfig> nn_tup_ptr() const {
         return std::make_shared<const AtLegacyNNTupConfig>(nn_tup);
     }
+
+#if TALOS_HAS_TENSORRT
+    [[nodiscard]] std::shared_ptr<const AtLegacyTrtConfig> trt_ptr() const {
+        return std::make_shared<const AtLegacyTrtConfig>(trt);
+    }
+#endif
 
     std::expected<void, std::string> read_from(const toml::table& tbl) noexcept;
 };

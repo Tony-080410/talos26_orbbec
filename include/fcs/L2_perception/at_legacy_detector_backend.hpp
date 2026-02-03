@@ -12,64 +12,9 @@ namespace cv {
 class Mat;
 }
 
+#include "at_legacy_detector_backend_base.hpp"
+
 namespace fcs::L2 {
-
-// ============================================================================
-// Detector Backend Error Types
-// ============================================================================
-
-enum class DetectorError {
-    NotInitialized,
-    InvalidImage,
-    InferenceError,
-    InferenceFailed,
-    ModelLoadError,
-    InitFailed,
-    PreprocessFailed,
-};
-
-[[nodiscard]] constexpr std::string_view detector_error_str(DetectorError e) noexcept {
-    switch (e) {
-    case DetectorError::NotInitialized: return "Not initialized";
-    case DetectorError::InvalidImage: return "Invalid image";
-    case DetectorError::InferenceError: return "Inference error";
-    case DetectorError::InferenceFailed: return "Inference failed";
-    case DetectorError::ModelLoadError: return "Model load error";
-    case DetectorError::InitFailed: return "Initialization failed";
-    case DetectorError::PreprocessFailed: return "Preprocess failed";
-    }
-    return "Unknown error";
-}
-
-// ============================================================================
-// Detector Backend Interface (CRTP Base)
-// ============================================================================
-
-/// CRTP base for detector backends (zero-cost abstraction when type is known)
-template <typename Derived>
-class AtLegacyDetectorBackendBase {
-public:
-    using DetectionResult = std::expected<std::vector<AtLegacyArmorDetection>, DetectorError>;
-
-    /// Detect armors in image
-    [[nodiscard]] DetectionResult detect(const cv::Mat& image) {
-        return static_cast<Derived*>(this)->detect_impl(image);
-    }
-
-    /// Check if backend is initialized
-    [[nodiscard]] bool is_initialized() const noexcept {
-        return static_cast<const Derived*>(this)->is_initialized_impl();
-    }
-
-    /// Get backend name
-    [[nodiscard]] std::string_view name() const noexcept {
-        return static_cast<const Derived*>(this)->name_impl();
-    }
-
-protected:
-    AtLegacyDetectorBackendBase()  = default;
-    ~AtLegacyDetectorBackendBase() = default;
-};
 
 // ============================================================================
 // Forward Declarations for Concrete Backends
@@ -78,11 +23,17 @@ protected:
 class AtLegacyTraditionalBackend;
 class AtLegacyNNBackend;
 class AtLegacyNNTupBackend;
+#if TALOS_HAS_TENSORRT
+class AtLegacyTrtBackend;
+#endif
 
 // Forward declare config types (defined in at_legacy_config.hpp)
 struct AtLegacyConfig;
 struct AtLegacyNNConfig;
 struct AtLegacyNNTupConfig;
+#if TALOS_HAS_TENSORRT
+struct AtLegacyTrtConfig;
+#endif
 struct AtLegacyTraditionalConfig;
 
 // ============================================================================
@@ -90,9 +41,15 @@ struct AtLegacyTraditionalConfig;
 // ============================================================================
 
 /// Backend variant type for runtime switching
+#if TALOS_HAS_TENSORRT
+using AtLegacyDetectorBackendVariant = std::variant<
+    std::unique_ptr<AtLegacyTraditionalBackend>, std::unique_ptr<AtLegacyNNBackend>,
+    std::unique_ptr<AtLegacyNNTupBackend>, std::unique_ptr<AtLegacyTrtBackend>>;
+#else
 using AtLegacyDetectorBackendVariant = std::variant<
     std::unique_ptr<AtLegacyTraditionalBackend>, std::unique_ptr<AtLegacyNNBackend>,
     std::unique_ptr<AtLegacyNNTupBackend>>;
+#endif
 
 /// Runtime-configurable detector backend wrapper
 /// Implementation methods are in at_legacy_detector_backend.cpp to avoid
@@ -116,6 +73,9 @@ public:
     explicit AtLegacyDetectorBackend(std::unique_ptr<AtLegacyTraditionalBackend> backend);
     explicit AtLegacyDetectorBackend(std::unique_ptr<AtLegacyNNBackend> backend);
     explicit AtLegacyDetectorBackend(std::unique_ptr<AtLegacyNNTupBackend> backend);
+#if TALOS_HAS_TENSORRT
+    explicit AtLegacyDetectorBackend(std::unique_ptr<AtLegacyTrtBackend> backend);
+#endif
 
     /// Detect armors in image (dispatches to active backend)
     [[nodiscard]] DetectionResult detect(const cv::Mat& image);
@@ -133,6 +93,9 @@ public:
     void set_backend(std::unique_ptr<AtLegacyTraditionalBackend> backend);
     void set_backend(std::unique_ptr<AtLegacyNNBackend> backend);
     void set_backend(std::unique_ptr<AtLegacyNNTupBackend> backend);
+#if TALOS_HAS_TENSORRT
+    void set_backend(std::unique_ptr<AtLegacyTrtBackend> backend);
+#endif
 
     /// Update config for the active backend (forward declaration, implemented in .cpp)
     void update_config(const AtLegacyConfig& config) noexcept;

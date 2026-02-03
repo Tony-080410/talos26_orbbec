@@ -1,5 +1,5 @@
 [detector]
-backend_type = "NeuralNetwork"  # Options: "Traditional", "NeuralNetwork", "NeuralNetworkTup"
+backend_type = "TensorRT"  # Options: "Traditional", "NeuralNetwork", "NeuralNetworkTup", "TensorRT"
 detect_color = "Blue"
 
 # Required if backend_type = "traditional"
@@ -45,8 +45,23 @@ confidence_threshold = 0.75
 nms_threshold = 0.30
 top_k = 128
 
+# Required if backend_type = "TensorRT"
+[trt]
+model_path = "best_fp16.onnx"  # Path to ONNX model (will be compiled to TensorRT engine)
+engine_path = "best_fp16_sm87_fp16.engine"  # Optional: Path to pre-built TensorRT engine (.engine file)
+engine_cache_dir = "/tmp/tensorrt_cache"  # Directory for caching compiled engines
+device_id = 0  # CUDA device ID
+num_streams = 2  # Number of CUDA streams for concurrent inference
+compute_capability = "87"  # GPU compute capability (e.g., "87" for Jetson Orin, "86" for RTX 3090)
+enable_fp16 = true  # Enable FP16 precision (faster, slightly less accurate)
+enable_dla = true  # Enable DLA accelerator (if available)
+dla_core = 0  # DLA core to use (if enable_dla = true)
+confidence_threshold = 0.20
+nms_threshold = 0.30
+top_k = 128
+
 [tracker]
-inekf_enabled = true
+inekf_enabled = false
 
 [tracker.jpda_matcher]
 enable_jpda_matcher = true   # 启用JpdaMatcher
@@ -199,7 +214,7 @@ target_threshold = 130
 rcenter_threshold = 120
 
 [rune_planner]
-enabled = true
+enabled = false
 
 [plan_mux]
 mode = "Armor"

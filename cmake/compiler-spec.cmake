@@ -20,25 +20,29 @@ endif ()
 
 add_compile_options(-fPIC)
 
+# Common optimization options (work for both GCC and Clang)
 add_compile_options(
     -march=native
     -mtune=native
     -funroll-loops
-    -fvectorize
-    -fslp-vectorize
 )
 
+# Clang-specific optimization options
+if (CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    add_compile_options(
+        -fvectorize
+        -fslp-vectorize
+    )
+endif()
+
+# Common warning options (work for both GCC and Clang)
 add_compile_options(
     -Wall
     -Wextra
     -Wpedantic
     -Werror=pedantic
 
-    # Type safety
-    -Werror=bool-conversion
-    -Wenum-conversion
-
-    -Werror=string-plus-int
+    -Werror=enum-conversion
     -Werror=switch-enum
     -Wswitch-default
     -Werror=implicit-fallthrough
@@ -59,14 +63,25 @@ add_compile_options(
     -Werror=cast-qual
     -Werror=redundant-decls
     -Werror=undef
-    -Werror=header-hygiene
-    -Werror=move
-    -Wrange-loop-analysis
-    -Wthread-safety
-    -Wthread-safety-analysis
 
     -Werror=return-type
     -Werror=uninitialized
-    -Werror=assign-enum
-    -Werror=bad-function-cast
 )
+
+# Clang-specific warning options
+if (CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    add_compile_options(
+        # Type safety
+        -Werror=bool-conversion
+        -Werror=string-plus-int
+
+        -Werror=header-hygiene
+        -Werror=move
+        -Werror=assign-enum
+        -Werror=bad-function-cast
+
+        -Wrange-loop-analysis
+        -Wthread-safety
+        -Wthread-safety-analysis
+    )
+endif()

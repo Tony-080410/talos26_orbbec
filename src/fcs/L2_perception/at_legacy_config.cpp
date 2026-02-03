@@ -66,7 +66,54 @@ std::expected<void, std::string> AtLegacyConfig::read_from(const toml::table& tb
     READ(tbl, traditional);
     READ(tbl, nn);
     READ(tbl, nn_tup);
+#if TALOS_HAS_TENSORRT
+    READ(tbl, trt);
+#endif
     return {};
 }
+
+#if TALOS_HAS_TENSORRT
+std::expected<void, std::string> AtLegacyTrtConfig::read_from(const toml::table& tbl) noexcept {
+    READ(tbl, engine_path);
+    READ(tbl, model_path);
+    READ(tbl, engine_cache_dir);
+    READ(tbl, device_id);
+    READ(tbl, num_streams);
+    READ(tbl, compute_capability);
+    READ_OPT(tbl, enable_fp16);
+    READ_OPT(tbl, enable_dla);
+    READ(tbl, dla_core);
+    READ(tbl, confidence_threshold);
+    READ(tbl, nms_threshold);
+    READ(tbl, top_k);
+
+    // Validate compute_capability format (e.g., "86", "75", "89")
+    if (!compute_capability.empty()) {
+        bool valid = true;
+        for (char c : compute_capability) {
+            if (!std::isdigit(c)) {
+                valid = false;
+                break;
+            }
+        }
+        if (!valid) {
+            return std::unexpected(
+                "Invalid compute_capability: must be numeric string (e.g., '86', '75', '89')");
+        }
+    }
+
+    // Validate num_streams > 0
+    if (num_streams <= 0) {
+        return std::unexpected("num_streams must be greater than 0");
+    }
+
+    // Validate device_id >= 0
+    if (device_id < 0) {
+        return std::unexpected("device_id must be greater than or equal to 0");
+    }
+
+    return {};
+}
+#endif
 
 } // namespace fcs::L2

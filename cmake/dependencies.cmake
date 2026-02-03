@@ -26,6 +26,21 @@ else ()
     message(WARNING "OpenVINO not found - auto_aim features may be disabled")
 endif ()
 
+# TensorRT configuration with better error handling
+find_package(CUDA QUIET)
+if (CUDA_FOUND)
+    message(STATUS "CUDA found at: ${CUDA_TOOLKIT_ROOT_DIR}")
+else ()
+    message(WARNING "CUDA not found - TensorRT backend will be disabled")
+endif ()
+
+find_package(TensorRT QUIET MODULE)
+if (TensorRT_FOUND)
+    message(STATUS "TensorRT found at: ${TensorRT_DIR}")
+else ()
+    message(WARNING "TensorRT not found - TensorRT backend will be disabled")
+endif ()
+
 find_package(benchmark QUIET)
 
 find_package(PkgConfig REQUIRED)

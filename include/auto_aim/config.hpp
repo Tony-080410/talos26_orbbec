@@ -42,6 +42,7 @@ enum class RobotType { Infantry, Hero, Sentry };
 struct HardwareConfig {
     CameraConfig camera{};
     bool untrust_roll{true};
+    bool debug_usb_raw{false};
     uint16_t imu_vendor_id{0x0483};
     uint16_t imu_product_id{0};
 

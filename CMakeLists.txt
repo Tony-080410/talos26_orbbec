@@ -12,6 +12,9 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 
+# Add project cmake directory to module search path
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
+
 # RPATH configuration for micromamba environment
 # Ensure micromamba libraries are found before system libraries
 set(CMAKE_INSTALL_RPATH_USE_LINK_PATH TRUE)
@@ -143,8 +146,8 @@ target_link_libraries(talos_gimbal INTERFACE
         ${LIBUSB_LINK_LIBRARIES}
 )
 
-# FCS library (Fire Control System - refactored architecture)
-add_library(fcs SHARED
+# FCS library source files
+set(FCS_SOURCES
         src/auto_aim/config.cpp
         src/fcs/camera_config.cpp
         src/fcs/L1_sensor/camera_interface.cpp
@@ -180,12 +183,49 @@ add_library(fcs SHARED
         src/fcs/L5_weapon/enhanced/weapon_systems.cpp
 )
 
+# Conditionally add TensorRT backend source files if TensorRT is available
+if(TensorRT_FOUND)
+    list(APPEND FCS_SOURCES src/fcs/L2_perception/at_legacy_trt_backend.cpp)
+    message(STATUS "TensorRT backend enabled")
+else()
+    message(STATUS "TensorRT backend disabled (TensorRT not found)")
+endif()
+
+# Note: CUDA preprocessing kernels are disabled due to nvcc compiler compatibility
+# The CPU fallback path will be used instead
+# TODO: Re-enable CUDA when using a compatible CUDA/host compiler version
+
+# FCS library (Fire Control System - refactored architecture)
+add_library(fcs SHARED ${FCS_SOURCES})
+
 target_include_directories(fcs PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/include/fcs
         ${CMAKE_CURRENT_SOURCE_DIR}/include/auto_aim
+        $<$<TARGET_EXISTS:TensorRT::TensorRT>:${TensorRT_INCLUDE_DIRS}>
 )
 
-# message(STATUS "OpenCV libs: ${OpenCV_LIBS}")
+# Add CUDA runtime if available (for linking with pre-built TensorRT)
+if(CUDA_FOUND)
+    target_link_libraries(fcs PUBLIC ${CUDA_LIBRARIES})
+    target_include_directories(fcs SYSTEM PUBLIC ${CUDA_INCLUDE_DIRS})
+    # Disable CUDA runtime preprocessing due to nvcc compatibility issues
+    target_compile_definitions(fcs PUBLIC TALOS_HAS_CUDA_RUNTIME=0)
+    message(STATUS "Linking with CUDA runtime: ${CUDA_LIBRARIES}")
+    message(STATUS "CUDA preprocessing kernels DISABLED (using CPU fallback)")
+else()
+    target_compile_definitions(fcs PUBLIC TALOS_HAS_CUDA_RUNTIME=0)
+endif()
+
+# Add TensorRT support if available
+if(TensorRT_FOUND)
+    target_compile_definitions(fcs PUBLIC TALOS_HAS_TENSORRT=1)
+    message(STATUS "TensorRT support enabled")
+else()
+    target_compile_definitions(fcs PUBLIC TALOS_HAS_TENSORRT=0)
+endif()
+
+# Suppress Eigen/NEON false positive array-bounds warnings
+target_compile_options(fcs PRIVATE -Wno-error=array-bounds)
 
 target_link_libraries(fcs PUBLIC
         toml_impl
@@ -201,6 +241,8 @@ target_link_libraries(fcs PUBLIC
 
         ${OpenCV_LIBS}
         $<$<TARGET_EXISTS:openvino::runtime>:openvino::runtime>
+        $<$<TARGET_EXISTS:TensorRT::TensorRT>:TensorRT::TensorRT>
+        $<$<TARGET_EXISTS:TensorRT::nvonnxparser>:TensorRT::nvonnxparser>
 )
 
 # Use precompiled headers for fcs library (speeds up compilation by 50-70%)
@@ -233,37 +275,76 @@ target_precompile_headers(fcs_visualization PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/include/fcs_visualization/pch.hpp
 )
 
-# hikcamera library (HIK SDK only available on Linux x86_64)
-if (CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_SYSTEM_PROCESSOR STREQUAL "x86_64")
-    add_library(hikcamera SHARED
-            src/camera/hik_camera.cpp
-    )
+# hikcamera library - auto-detect architecture and link appropriate SDK
+if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    # Detect architecture and map to SDK directory
+    if (CMAKE_SYSTEM_PROCESSOR STREQUAL "x86_64")
+        set(HIK_SDK_ARCH_DIR "amd64")
+        set(HIK_SDK_ARCH_NAME "x86_64")
+    elseif (CMAKE_SYSTEM_PROCESSOR STREQUAL "aarch64")
+        set(HIK_SDK_ARCH_DIR "arm64")
+        set(HIK_SDK_ARCH_NAME "aarch64")
+    else ()
+        set(HIK_SDK_ARCH_DIR "")
+        set(HIK_SDK_ARCH_NAME "")
+    endif ()
 
-    target_include_directories(hikcamera PUBLIC
-            ${CMAKE_CURRENT_SOURCE_DIR}/include
-            ${HIK_SDK_ROOT}/include
-    )
+    # Check if SDK libraries exist for this architecture
+    set(HIK_SDK_LIB_DIR "${HIK_SDK_ROOT}/lib/${HIK_SDK_ARCH_DIR}")
+    if (HIK_SDK_ARCH_DIR AND EXISTS "${HIK_SDK_LIB_DIR}")
+        message(STATUS "Building hikcamera with HIK SDK for ${HIK_SDK_ARCH_NAME} (lib: ${HIK_SDK_LIB_DIR})")
+        add_library(hikcamera SHARED
+                src/camera/hik_camera.cpp
+        )
 
-    target_link_directories(hikcamera PRIVATE
-            ${HIK_SDK_ROOT}/lib
-    )
+        target_include_directories(hikcamera PUBLIC
+                ${CMAKE_CURRENT_SOURCE_DIR}/include
+                ${HIK_SDK_ROOT}/include
+        )
 
-    target_link_libraries(hikcamera PUBLIC
-            magic_enum
-            Eigen3::Eigen
-            spdlog::spdlog
-            ${OpenCV_LIBS}
-    )
+        target_link_directories(hikcamera PRIVATE
+                ${HIK_SDK_LIB_DIR}
+        )
 
-    target_link_libraries(hikcamera PRIVATE
-            MvCameraControl
-            FormatConversion
-    )
+        target_link_libraries(hikcamera PUBLIC
+                magic_enum
+                Eigen3::Eigen
+                spdlog::spdlog
+                ${OpenCV_LIBS}
+        )
 
-    # Suppress warnings from external SDK headers
-    target_compile_options(hikcamera PRIVATE -Wno-documentation -Wno-documentation-unknown-command -Wno-switch-enum)
+        target_link_libraries(hikcamera PRIVATE
+                MvCameraControl
+                FormatConversion
+        )
+
+        # Set rpath to find the SDK libraries at runtime
+        set_target_properties(hikcamera PROPERTIES
+            INSTALL_RPATH "${HIK_SDK_LIB_DIR}"
+            BUILD_WITH_INSTALL_RPATH TRUE
+        )
+
+        # Suppress warnings from external SDK headers
+        target_compile_options(hikcamera PRIVATE -Wno-documentation -Wno-documentation-unknown-command -Wno-switch-enum)
+    else ()
+        message(STATUS "Building hikcamera with stub (HIK SDK not available for ${CMAKE_SYSTEM_PROCESSOR} or lib directory not found)")
+        add_library(hikcamera SHARED
+                src/camera/hik_camera_stub.cpp
+        )
+
+        target_include_directories(hikcamera PUBLIC
+                ${CMAKE_CURRENT_SOURCE_DIR}/include
+        )
+
+        target_link_libraries(hikcamera PUBLIC
+                magic_enum
+                Eigen3::Eigen
+                spdlog::spdlog
+                ${OpenCV_LIBS}
+        )
+    endif ()
 else ()
-    message(STATUS "Building hikcamera with stub (HIK SDK only available on Linux x86_64)")
+    message(STATUS "Building hikcamera with stub (HIK SDK only available on Linux)")
     add_library(hikcamera SHARED
             src/camera/hik_camera_stub.cpp
     )

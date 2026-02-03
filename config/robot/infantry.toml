@@ -1,4 +1,5 @@
 untrust_roll = true
+debug_usb_raw = false  # 打印 USB 原始接收数据 (调试用)
 
 [camera]
 camera_matrix = [1804.9, 0, 700.121, 0, 1800.17, 635.201, 0, 0, 1]

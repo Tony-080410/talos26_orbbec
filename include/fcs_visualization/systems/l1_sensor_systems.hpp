@@ -30,7 +30,7 @@ void register_l1_sensor_systems(App& app) {
     // IMAGE PUBLISHER (Camera calibration + TF)
     // =========================================================================
 
-    app.template add_system<talos::fixed_rate<30>>(
+    app.template add_system<talos::pool_compute>(
         "foxglove_l1_image_pub",
         [](talos::spmc<AtLegacyImageFrame, AtLegacyImageChannelTopic> img_in,
            talos::res<std::shared_ptr<FoxgloveServer>> server, talos::res<CameraConfig> cam,

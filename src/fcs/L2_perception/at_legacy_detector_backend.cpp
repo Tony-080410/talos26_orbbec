@@ -2,6 +2,9 @@
 #include "fcs/L2_perception/at_legacy_nn_backend.hpp"
 #include "fcs/L2_perception/at_legacy_nn_tup_backend.hpp"
 #include "fcs/L2_perception/at_legacy_traditional_backend.hpp"
+#if TALOS_HAS_TENSORRT
+# include "fcs/L2_perception/at_legacy_trt_backend.hpp"
+#endif
 
 #include <type_traits>
 
@@ -27,6 +30,11 @@ AtLegacyDetectorBackend::AtLegacyDetectorBackend(std::unique_ptr<AtLegacyNNBacke
 
 AtLegacyDetectorBackend::AtLegacyDetectorBackend(std::unique_ptr<AtLegacyNNTupBackend> backend)
     : backend_(std::move(backend)) {}
+
+#if TALOS_HAS_TENSORRT
+AtLegacyDetectorBackend::AtLegacyDetectorBackend(std::unique_ptr<AtLegacyTrtBackend> backend)
+    : backend_(std::move(backend)) {}
+#endif
 
 AtLegacyDetectorBackend::DetectionResult AtLegacyDetectorBackend::detect(const cv::Mat& image) {
     return std::visit(
@@ -66,6 +74,12 @@ void AtLegacyDetectorBackend::set_backend(std::unique_ptr<AtLegacyNNTupBackend> 
     backend_ = std::move(backend);
 }
 
+#if TALOS_HAS_TENSORRT
+void AtLegacyDetectorBackend::set_backend(std::unique_ptr<AtLegacyTrtBackend> backend) {
+    backend_ = std::move(backend);
+}
+#endif
+
 void AtLegacyDetectorBackend::set_detect_color(ArmorColor color) noexcept {
     std::visit(
         [color](auto& backend) {
@@ -90,6 +104,11 @@ void AtLegacyDetectorBackend::update_config(const AtLegacyConfig& config) noexce
             } else if constexpr (std::is_same_v<BackendT, AtLegacyNNTupBackend>) {
                 backend->update_config(config.nn_tup_ptr());
             }
+#if TALOS_HAS_TENSORRT
+            else if constexpr (std::is_same_v<BackendT, AtLegacyTrtBackend>) {
+                backend->update_config(config.trt_ptr());
+            }
+#endif
         },
         backend_);
 }
@@ -125,8 +144,19 @@ void AtLegacyDetectorBackend::update_config(const AtLegacyConfig& config) noexce
         backend->set_detect_color(config.detector.detect_color);
         return AtLegacyDetectorBackend(std::move(backend));
     }
+#if TALOS_HAS_TENSORRT
+    case AtLegacyBackendTypeConfig::TensorRT: {
+        auto cfg_ptr = config.trt_ptr();
+        auto backend = std::make_unique<AtLegacyTrtBackend>(std::move(cfg_ptr));
+        if (!backend->is_initialized()) {
+            return std::unexpected(DetectorError::InitFailed);
+        }
+        backend->set_detect_color(config.detector.detect_color);
+        return AtLegacyDetectorBackend(std::move(backend));
     }
-    return std::unexpected(DetectorError::NotInitialized);
+#endif
+    default: return std::unexpected(DetectorError::NotInitialized);
+    }
 }
 
 } // namespace fcs::L2
