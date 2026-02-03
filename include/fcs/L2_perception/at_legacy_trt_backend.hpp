@@ -8,13 +8,13 @@
 #include <string>
 #include <string_view>
 
-struct AtLegacyTrtConfig;
-
 namespace cv {
 class Mat;
 }
 
 namespace fcs::L2 {
+
+struct AtLegacyTrtConfig;
 
 class AtLegacyTrtBackend : public AtLegacyDetectorBackendBase<AtLegacyTrtBackend> {
 public:

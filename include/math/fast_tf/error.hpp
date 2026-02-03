@@ -3,8 +3,8 @@
 #include <cstdint>
 #include <string_view>
 
-#include "magic_enum/magic_enum.hpp"
 #include <fmt/core.h>
+#include <magic_enum.hpp>
 
 namespace fast_tf {
 

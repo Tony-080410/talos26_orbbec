@@ -18,7 +18,9 @@
 #include <MvCameraControl.h>
 #include <opencv2/opencv.hpp>
 
-std::string hikcamera::CameraError::error_code_to_message(unsigned int code) {
+namespace hikcamera {
+
+std::string error_code_to_message(unsigned int code) {
     switch (code) {
     // Success
     case MV_OK: return "Success";
@@ -81,8 +83,6 @@ std::string hikcamera::CameraError::error_code_to_message(unsigned int code) {
     default: return fmt::format("Unknown error code: 0x{:08X}", code);
     }
 }
-
-namespace hikcamera {
 
 class ImageCapturer::Impl {
 public:

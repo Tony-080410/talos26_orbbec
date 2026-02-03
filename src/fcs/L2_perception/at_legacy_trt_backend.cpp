@@ -36,7 +36,8 @@ class TrtLogger : public nvinfer1::ILogger {
 public:
     void log(Severity severity, const char* msg) noexcept override {
         if (severity <= Severity::kWARNING) {
-            SPDLOG_LOG(spdlog::level::from_str(severity_to_str(severity)), "[TensorRT] {}", msg);
+            spdlog::default_logger()->log(
+                spdlog::level::from_str(severity_to_str(severity)), "[TensorRT] {}", msg);
         }
     }
 
