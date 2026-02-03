@@ -23,8 +23,8 @@
 
 #include <algorithm>
 #include <cstddef>
-#include <flat_map>
 #include <functional>
+#include <map>
 #include <optional>
 #include <span>
 #include <string>
@@ -66,7 +66,7 @@ struct NodeId {
         return std::string_view{file} == std::string_view{other.file};
     }
 
-    // Lexicographic comparison for std::flat_map (C++23)
+    // Lexicographic comparison for std::map
     [[nodiscard]] constexpr bool operator<(const NodeId& other) const noexcept {
         if (file != other.file) {
             return std::string_view{file} < std::string_view{other.file};
@@ -487,7 +487,7 @@ private:
 
     std::vector<Node> nodes_;
     std::vector<Edge> edges_;
-    std::flat_map<NodeId, std::size_t> node_map_;
+    std::map<NodeId, std::size_t> node_map_;
 };
 
 // ============================================================================

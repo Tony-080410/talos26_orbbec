@@ -5,7 +5,7 @@
 #include "demangle.hpp"
 #include <cstdlib>
 #include <cxxabi.h>
-#include <flat_map>
+#include <map>
 #include <mutex>
 #include <set>
 #include <spdlog/spdlog.h>
@@ -120,7 +120,7 @@ public:
 
 private:
     mutable std::mutex lock_;
-    std::flat_map<ChannelKey, std::string> owners_;
+    std::map<ChannelKey, std::string> owners_;
     std::set<ChannelKey> claimed_;
 };
 

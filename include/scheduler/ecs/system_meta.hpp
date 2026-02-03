@@ -35,7 +35,7 @@ struct ChannelKey {
 
     constexpr bool operator==(const ChannelKey&) const noexcept = default;
 
-    // Lexicographic comparison for std::flat_map (C++23)
+    // Lexicographic comparison for std::map
     constexpr bool operator<(const ChannelKey& other) const noexcept {
         if (type != other.type) {
             return type < other.type;

@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.14)
 
 include(cmake/compiler-spec.cmake)
 
-project(talos VERSION 0.1 LANGUAGES CXX)
+project(talos VERSION 0.1 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -11,6 +11,22 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
+
+# RPATH configuration for micromamba environment
+# Ensure micromamba libraries are found before system libraries
+set(CMAKE_INSTALL_RPATH_USE_LINK_PATH TRUE)
+set(CMAKE_BUILD_RPATH_USE_ORIGIN TRUE)
+
+# Get micromamba lib path from compiler location
+if(CMAKE_CXX_COMPILER MATCHES "micromamba")
+    get_filename_component(MICROMAMBA_LIB_DIR ${CMAKE_CXX_COMPILER} DIRECTORY)
+    get_filename_component(MICROMAMBA_LIB_DIR ${MICROMAMBA_LIB_DIR} DIRECTORY)
+    set(MICROMAMBA_LIB_DIR "${MICROMAMBA_LIB_DIR}/lib")
+
+    # Set RPATH to prioritize micromamba libraries
+    set(CMAKE_INSTALL_RPATH "${CMAKE_BINARY_DIR};${MICROMAMBA_LIB_DIR}")
+    set(CMAKE_BUILD_RPATH "${CMAKE_BINARY_DIR};${MICROMAMBA_LIB_DIR}")
+endif()
 
 include(cmake/dependencies.cmake)
 include(cmake/test.cmake)

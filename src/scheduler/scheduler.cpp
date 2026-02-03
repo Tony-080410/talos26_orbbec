@@ -7,8 +7,8 @@
 #include <algorithm>
 #include <cinttypes>
 #include <cstdio>
-#include <flat_map>
 #include <functional>
+#include <map>
 #include <nlohmann/json.hpp>
 #include <set>
 #include <spdlog/spdlog.h>
@@ -838,7 +838,7 @@ auto Scheduler::compute_levels() -> BuildResult {
         std::string first_system;                // For kind conflict reporting
     };
 
-    std::flat_map<ChannelKey, ChannelUsage> channels;
+    std::map<ChannelKey, ChannelUsage> channels;
 
     // First, collect fixed_rate systems' outputs as external sources
     for (const auto& entry : fixed_rate_systems_) {
