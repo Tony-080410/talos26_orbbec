@@ -111,6 +111,7 @@ add_library(foxglove_cpp SHARED
 silence_target_warnings(foxglove_cpp)
 
 target_include_directories(foxglove_cpp SYSTEM PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/include  # Override foxglove headers with local fixes
         ${foxglove_SOURCE_DIR}/include
         ${foxglove_SOURCE_DIR}/include/foxglove
 )
@@ -164,9 +165,6 @@ set(FCS_SOURCES
         src/fcs/L2_perception/at_legacy_traditional_backend.cpp
         src/fcs/L2_perception/at_legacy_traditional_classifier.cpp
         src/fcs/L2_perception/at_legacy_light_corner_corrector.cpp
-        src/fcs/L3_estimation/tracker/inekf_config.cpp
-        src/fcs/L3_estimation/tracker/motion_model_config.cpp
-        src/fcs/L3_estimation/tracker/config.cpp
         src/fcs/L3_estimation/tracker_systems.cpp
         src/fcs/L3_estimation/energy_meter_solver/angle_fitter.cpp
         src/fcs/L3_estimation/energy_meter_solver/energy_meter_tracker.cpp
@@ -229,6 +227,7 @@ target_compile_options(fcs PRIVATE -Wno-error=array-bounds)
 
 target_link_libraries(fcs PUBLIC
         toml_impl
+        fast_tf
         scheduler
         Eigen3::Eigen
         Ceres::ceres
@@ -253,6 +252,7 @@ target_precompile_headers(fcs PRIVATE
 add_library(fcs_visualization SHARED src/fcs_visualization/foxglove_systems.cpp)
 
 target_include_directories(fcs_visualization PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
         ${CMAKE_CURRENT_SOURCE_DIR}/include/fcs
         ${CMAKE_CURRENT_SOURCE_DIR}/include/auto_aim
 )
@@ -381,6 +381,7 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
 add_library(fast_tf SHARED
         src/math/fast_tf/infantry.cpp
         src/math/fast_tf/hero.cpp
+        src/math/fast_tf/validation.cpp
         src/math/fast_tf/sentry.cpp
         src/math/fast_tf/robot_factory.cpp
 )

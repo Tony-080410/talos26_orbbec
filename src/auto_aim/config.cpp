@@ -14,7 +14,6 @@ std::expected<void, std::string> FoxgloveConfig::read_from(const toml::table& tb
 std::expected<void, std::string> HardwareConfig::read_from(const toml::table& tbl) noexcept {
     READ(tbl, camera);
     READ(tbl, untrust_roll);
-    READ(tbl, debug_usb_raw);
     READ_OPT(tbl, imu_vendor_id);
     READ_OPT(tbl, imu_product_id);
     return {};

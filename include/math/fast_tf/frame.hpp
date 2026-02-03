@@ -240,4 +240,41 @@ constexpr auto lookup_clamped(
     }
 }
 
+// ============================================================================
+// Frame Metadata Accessors (for Foxglove export)
+// ============================================================================
+
+/**
+ * @brief 获取 frame_id by index（编译期优化为跳转表）
+ * @warning 添加新 frame 时需要在此函数中添加对应的 case
+ */
+constexpr std::string_view frame_id_by_index(std::size_t index) {
+    switch (index) {
+    case world_fuxk_frame::index: return world_fuxk_frame::frame_id;
+    case odom_fuxk_frame::index: return odom_fuxk_frame::frame_id;
+    case gimbal_link_fuxk_frame::index: return gimbal_link_fuxk_frame::frame_id;
+    case camera_link_fuxk_frame::index: return camera_link_fuxk_frame::frame_id;
+    case camera_optical_fuxk_frame::index: return camera_optical_fuxk_frame::frame_id;
+    case muzzle_link_fuxk_frame::index: return muzzle_link_fuxk_frame::frame_id;
+    default: return "unknown";
+    }
+}
+
+/**
+ * @brief 获取 parent_frame_id by index（编译期优化为跳转表）
+ * @warning 添加新 frame 时需要在此函数中添加对应的 case
+ * @return root frame 返回空字符串，非 root frame 返回其父节点的 frame_id
+ */
+constexpr std::string_view parent_frame_id_by_index(std::size_t index) {
+    switch (index) {
+    case world_fuxk_frame::index: return ""; // root 无父节点
+    case odom_fuxk_frame::index: return odom_fuxk_frame::ancestor::frame_id;
+    case gimbal_link_fuxk_frame::index: return gimbal_link_fuxk_frame::ancestor::frame_id;
+    case camera_link_fuxk_frame::index: return camera_link_fuxk_frame::ancestor::frame_id;
+    case camera_optical_fuxk_frame::index: return camera_optical_fuxk_frame::ancestor::frame_id;
+    case muzzle_link_fuxk_frame::index: return muzzle_link_fuxk_frame::ancestor::frame_id;
+    default: return "";
+    }
+}
+
 } // namespace fast_tf

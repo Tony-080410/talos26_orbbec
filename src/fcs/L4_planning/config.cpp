@@ -10,4 +10,3 @@ std::expected<void, std::string> L4Config::read_from(const toml::table& tbl) noe
 }
 
 } // namespace fcs::L4
-

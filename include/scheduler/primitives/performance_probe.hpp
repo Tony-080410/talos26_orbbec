@@ -115,9 +115,9 @@ public:
         std::vector sorted(samples_.begin(), samples_.begin() + count);
         std::ranges::sort(sorted);
 
-        // Compute statistics (count > 0 guaranteed above)
-        const auto min_val  = sorted[0];
-        const auto max_val  = sorted[count - 1];
+        // Compute statistics
+        const auto min_val  = sorted.front();
+        const auto max_val  = sorted.back();
         const auto sum      = std::accumulate(sorted.begin(), sorted.end(), 0UL);
         const auto mean_val = sum / count;
 

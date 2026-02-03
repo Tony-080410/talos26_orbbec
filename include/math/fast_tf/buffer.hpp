@@ -3,6 +3,7 @@
 #include "error.hpp"
 #include "matrix.hpp"
 #include "types.hpp"
+#include "validation.hpp"
 #include <array>
 #include <cassert>
 #include <cstdint>
@@ -57,6 +58,14 @@ public:
 
     void push(timestamp_ns_t timestamp_ns, const TransformMatrix4d& transform) {
         mutex_type::scoped_lock lock(mutex_);
+
+        // 数值验证（包括静态变换）
+        auto validation = validate_transform(transform);
+        if (!validation) {
+            // 验证失败，静默丢弃
+            // TODO: 可选的日志记录
+            return;
+        }
 
         // Debug: ensure timestamps are increasing
         if (newest_ts_ != 0 && timestamp_ns == newest_ts_) {
@@ -146,17 +155,13 @@ public:
         }
 
         // Interpolate
-        const uint64_t dt        = next.timestamp_ns - prev.timestamp_ns;
-        const uint64_t time_diff = ts - prev.timestamp_ns;
-
-        const fp_t t = static_cast<fp_t>(time_diff) / static_cast<fp_t>(dt);
-
-        // Defensive check for numerical stability
-        if (std::isnan(t) || std::isinf(t) || t < 0.0 || t > 1.0) {
-            return std::unexpected(TransformError::FutureExtrapolationRequired);
+        const uint64_t dt = next.timestamp_ns - prev.timestamp_ns;
+        if (dt == 0) {
+            return prev; // 防御性编程：除零保护
         }
+        const fp_t t = static_cast<fp_t>(ts - prev.timestamp_ns) / static_cast<fp_t>(dt);
 
-        return TransformEntry(ts, TransformMatrix4d::lerp_se3(prev.transform, next.transform, t));
+        return TransformEntry(ts, TransformMatrix4d::lerp(prev.transform, next.transform, t));
     }
 
     [[nodiscard]] std::expected<TransformEntry, TransformError>
@@ -172,6 +177,7 @@ public:
             if (entry.timestamp_ns == ts) {
                 return entry;
             }
+            // static transform
             if (entry.timestamp_ns == 0) {
                 return TransformEntry{ts, entry.transform};
             }
@@ -221,17 +227,13 @@ public:
         const auto& next = at_logical(lo);
 
         // Interpolate
-        const uint64_t dt        = next.timestamp_ns - prev.timestamp_ns;
-        const uint64_t time_diff = ts - prev.timestamp_ns;
-
-        const fp_t t = static_cast<fp_t>(time_diff) / static_cast<fp_t>(dt);
-
-        // Defensive check for numerical stability
-        if (std::isnan(t) || std::isinf(t) || t < 0.0 || t > 1.0) {
-            return std::unexpected(TransformError::FutureExtrapolationRequired);
+        const uint64_t dt = next.timestamp_ns - prev.timestamp_ns;
+        if (dt == 0) {
+            return prev; // 防御性编程：除零保护
         }
+        const fp_t t = static_cast<fp_t>(ts - prev.timestamp_ns) / static_cast<fp_t>(dt);
 
-        return TransformEntry(ts, TransformMatrix4d::lerp_se3(prev.transform, next.transform, t));
+        return TransformEntry(ts, TransformMatrix4d::lerp(prev.transform, next.transform, t));
     }
 
     // ========================================================================

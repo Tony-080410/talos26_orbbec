@@ -1,92 +1,153 @@
 #pragma once
 
-#include "motion_model_params.hpp"
-#include "uni_kf_spaces.hpp"
+#include "isrckf.hpp"
+#include "toml_helper.hpp"
 #include "util.hpp"
-
-#include <uni_kf/concepts/quadratic_form.hpp>
-#include <uni_kf/core/filter.hpp>
-
-#include <Eigen/Core>
+#include <Eigen/Dense>
 #include <cassert>
 #include <cmath>
+#include <concepts>
 #include <expected>
 #include <numbers>
-
-// Forward declaration to avoid including toml++ in algorithm headers.
-namespace toml {
-inline namespace v3 {
-class table;
-}
-} // namespace toml
 
 namespace fcs::L3 {
 
 // ============================================================================
-// RobotModel: 4-armor Robot Target (state on R^10 × SO3_z)
+// MotionModel Concept
 // ============================================================================
 
+/// Concept for motion models compatible with SRUKF/ISRCKF
+template <typename M>
+concept MotionModel = requires(M m, typename M::VecX x, typename M::Scalar dt, int id) {
+    typename M::Scalar;
+    typename M::VecX;
+    typename M::VecZ;
+    { M::NX } -> std::convertible_to<int>;
+    { M::NZ } -> std::convertible_to<int>;
+    { M::ARMORS_NUM } -> std::convertible_to<int>;
+    { m.f(x, dt) } -> std::same_as<typename M::VecX>;
+    { m.h(x) } -> std::same_as<typename M::VecZ>;
+    { m.h(x, id) } -> std::same_as<typename M::VecZ>;
+    { m.Q_sqrt(dt) } -> std::convertible_to<Eigen::Matrix<typename M::Scalar, M::NX, M::NX>>;
+    { m.R_sqrt(std::declval<typename M::VecZ>()) };
+    { m.R_diag(std::declval<typename M::VecZ>()) };
+};
+
+// ============================================================================
+// RobotModel: 4-armor Robot Target (11-state)
+// ============================================================================
+
+/// Motion model for tracking 4-armor robot targets
+/// State: [xc, vx, yc, vy, z0, vz, yaw, v_yaw, r0, r1, h]
+/// Measurement: [yaw, pitch, distance, armor_yaw] (spherical coordinates)
 struct RobotModel {
-    using Scalar = double;
+    using Scalar            = double;
+    static constexpr int NX = STATE_MAX;   // 11
+    static constexpr int NZ = MEASURE_MAX; // 4
 
-    static constexpr int ARMORS_NUM = 4;
+    using VecX = Eigen::Matrix<Scalar, NX, 1>;
+    using VecZ = Eigen::Matrix<Scalar, NZ, 1>;
 
-    // Euclidean component of the state: [xc, vx, yc, vy, z0, vz, v_yaw, r0, r1, h]
-    enum EuclidIndex : int {
-        XC         = 0,
-        VX         = 1,
-        YC         = 2,
-        VY         = 3,
-        Z0         = 4,
-        VZ         = 5,
-        V_YAW      = 6,
-        R_0        = 7,
-        R_1        = 8,
-        H          = 9,
-        EUCLID_DIM = 10,
-    };
+    // Measurement vector layout: [yaw, pitch, distance, armor_yaw]
+    // The underlying indices are defined in `util.hpp` (enum `Measure`), but the names there
+    // are historically confusing; use explicit aliases here for readability.
+    static constexpr int kMeasYaw      = ARMOR_YAW;
+    static constexpr int kMeasPitch    = ARMOR_PITCH;
+    static constexpr int kMeasDistance = ARMOR_DISTANCE;
+    static constexpr int kMeasArmorYaw = ARMOR_YAW_ARMOR;
 
-    using EuclidSpace = uni_kf::Euclidean<EUCLID_DIM, Scalar>;
-    using YawSpace    = ukf::YawSO3Z;
-    using StateSpace  = uni_kf::ProductSpace<EuclidSpace, YawSpace>;
-    using MeasSpace   = ukf::ArmorMeasSpace;
-
-    using StatePoint = StateSpace::Point;
-    using MeasPoint  = MeasSpace::Point;
-
-    static constexpr int NX = StateSpace::FiberDim; // 11
-    static constexpr int NZ = MeasSpace::FiberDim;  // 4
-
+    // For a 4-armor robot, armors 1 and 3 are mounted at z0 + h, while 0 and 2 are at z0.
     static constexpr int kHighArmorIdA = 1;
     static constexpr int kHighArmorIdB = 3;
 
-    RobotModelParams params;
+    /// Process noise parameters
+    struct Params {
+        Scalar sigma_a_xy  = 10.0; // XY acceleration noise (match reference)
+        Scalar sigma_a_z   = 1.0;  // Z acceleration noise
+        Scalar sigma_a_yaw = 1.0;  // Yaw acceleration noise
+        Scalar sigma_r0    = 1.0;  // Radius R0 drift noise
+        Scalar sigma_r1    = 1.0;  // Radius R1 drift noise (note: reference uses sigma_r0 for R_1)
+        Scalar sigma_h     = 0.5;  // Height H drift noise
+        std::expected<void, std::string> read_from(const toml::table& tbl) noexcept {
+            READ(tbl, sigma_a_xy);
+            READ(tbl, sigma_a_z);
+            READ(tbl, sigma_a_yaw);
+            READ(tbl, sigma_r0);
+            READ(tbl, sigma_r1);
+            READ(tbl, sigma_h);
+            return {};
+        }
+    };
 
-    [[nodiscard]] static auto make_state(
-        double xc, double vx, double yc, double vy, double z0, double vz, double yaw, double v_yaw,
-        double r0, double r1, double h) noexcept -> StatePoint {
-        typename EuclidSpace::Point::EigenType e;
-        e << xc, vx, yc, vy, z0, vz, v_yaw, r0, r1, h;
-        return {EuclidSpace::Point(e), YawSpace::from_angle(yaw)};
+    int armor_id                    = 0;
+    static constexpr int ARMORS_NUM = 4;
+
+    Params params;
+
+    RobotModel() noexcept = default;
+    explicit RobotModel(const Params& p) noexcept
+        : params(p) {}
+
+    /// State transition function (constant velocity model)
+    [[nodiscard]] VecX f(const VecX& x, Scalar dt) const noexcept {
+        VecX xn;
+        // clang-format off
+        xn << x(XC) + x(VX) * dt,
+              x(VX),
+              x(YC) + x(VY) * dt,
+              x(VY),
+              x(Z0) + x(VZ) * dt,
+              x(VZ),
+              x(YAW) + x(V_YAW) * dt,
+              x(V_YAW),
+              x(R_0),
+              x(R_1),
+              x(H);
+        // clang-format on
+        return xn;
     }
 
-    [[nodiscard]] auto predict(const StatePoint& x, double dt) const noexcept -> StatePoint {
-        auto e = x.first.data;
-        e(XC) += e(VX) * dt;
-        e(YC) += e(VY) * dt;
-        e(Z0) += e(VZ) * dt;
+    /// Measurement function (using current armor_id)
+    [[nodiscard]] VecZ h(const VecX& x) const noexcept { return h(x, armor_id); }
 
-        const double d_yaw = e(V_YAW) * dt;
-        const auto yaw_new = YawSpace::act(x.second, YawSpace::fiber_from_angle(d_yaw));
+    /// Measurement function for specific armor
+    [[nodiscard]] VecZ h(const VecX& x, int id) const noexcept {
+        VecZ z;
+        assert(id >= 0 && id <= ARMORS_NUM - 1);
 
-        return {EuclidSpace::Point(e), yaw_new};
+        constexpr Scalar angle_step = 2.0 * std::numbers::pi / static_cast<Scalar>(ARMORS_NUM);
+
+        const Scalar tmp_yaw = x(YAW) + static_cast<Scalar>(id) * angle_step;
+
+        Scalar radius;
+        Scalar armor_z;
+        if (id == kHighArmorIdA || id == kHighArmorIdB) {
+            armor_z = x(Z0) + x(H);
+            radius  = x(R_1);
+        } else {
+            armor_z = x(Z0);
+            radius  = x(R_0);
+        }
+
+        const Scalar armor_x = x(XC) - radius * std::cos(tmp_yaw);
+        const Scalar armor_y = x(YC) - radius * std::sin(tmp_yaw);
+
+        const auto ypd   = xyz2ypd({armor_x, armor_y, armor_z});
+        z[kMeasYaw]      = ypd.x();
+        z[kMeasPitch]    = ypd.y();
+        z[kMeasDistance] = ypd.z();
+        z[kMeasArmorYaw] = tmp_yaw;
+
+        return z;
     }
 
-    [[nodiscard]] auto process_noise(double dt) const noexcept
-        -> uni_kf::SymmetricMatrix<NX, Scalar> {
-        Eigen::Matrix<Scalar, NX, NX> Q = Eigen::Matrix<Scalar, NX, NX>::Zero();
+    /// Process noise covariance square root
+    [[nodiscard]] Eigen::Matrix<Scalar, NX, NX> Q_sqrt(Scalar dt) const noexcept {
+        using MatX = Eigen::Matrix<Scalar, NX, NX>;
+        MatX Q     = MatX::Zero();
+
         if (dt <= Scalar(0)) {
-            return uni_kf::SymmetricMatrix<NX, Scalar>(Q);
+            return Q;
         }
 
         const Scalar sigma_a_xy2  = params.sigma_a_xy * params.sigma_a_xy;
@@ -97,162 +158,148 @@ struct RobotModel {
         const Scalar dt3 = dt2 * dt;
         const Scalar dt4 = dt2 * dt2;
 
-        auto fill_cv = [&](int idx_p, int idx_v, Scalar q) {
-            Q(idx_p, idx_p) = q * dt4 / 4.0;
-            Q(idx_p, idx_v) = q * dt3 / 2.0;
-            Q(idx_v, idx_p) = Q(idx_p, idx_v);
-            Q(idx_v, idx_v) = q * dt2;
+        // CV model noise for position-velocity pairs
+        auto fill_block = [&](int idx_p, Scalar q) {
+            Q(idx_p, idx_p)         = q * dt4 / 4.0;
+            Q(idx_p, idx_p + 1)     = q * dt3 / 2.0;
+            Q(idx_p + 1, idx_p)     = q * dt3 / 2.0;
+            Q(idx_p + 1, idx_p + 1) = q * dt2;
         };
 
-        // CV blocks
-        fill_cv(XC, VX, sigma_a_xy2);
-        fill_cv(YC, VY, sigma_a_xy2);
-        fill_cv(Z0, VZ, sigma_a_z2);
-        // yaw is the last fiber component of StateSpace (Euclid first, then yaw)
-        constexpr int kYawFiber = EUCLID_DIM;
-        fill_cv(kYawFiber, V_YAW, sigma_a_yaw2);
+        fill_block(XC, sigma_a_xy2);
+        fill_block(YC, sigma_a_xy2);
+        fill_block(Z0, sigma_a_z2);
+        fill_block(YAW, sigma_a_yaw2);
 
         // Random walk noise for R0, R1, H
-        Q(R_0, R_0) += (params.sigma_r0 * params.sigma_r0) * dt;
-        Q(R_1, R_1) += (params.sigma_r1 * params.sigma_r1) * dt;
-        Q(H, H) += (params.sigma_h * params.sigma_h) * dt;
+        // NOTE: Using sigma_r0 for R_1 to match reference version behavior
+        const Scalar sigma_r0_2 = params.sigma_r0 * params.sigma_r0;
+        const Scalar sigma_r1_2 =
+            params.sigma_r0 * params.sigma_r0; // Reference uses sigma_r0 for R_1
+        const Scalar sigma_h_2 = params.sigma_h * params.sigma_h;
 
-        return uni_kf::SymmetricMatrix<NX, Scalar>(Q);
+        Q(R_0, R_0) += sigma_r0_2 * dt;
+        Q(R_1, R_1) += sigma_r1_2 * dt;
+        Q(H, H) += sigma_h_2 * dt;
+
+        Eigen::LLT<MatX> llt(Q);
+        return llt.matrixL();
     }
 
-    [[nodiscard]] auto measure(const StatePoint& x, int id) const noexcept -> MeasPoint {
-        assert(id >= 0 && id <= ARMORS_NUM - 1);
-
-        const auto& e = x.first.data;
-
-        constexpr Scalar angle_step = 2.0 * std::numbers::pi / static_cast<Scalar>(ARMORS_NUM);
-
-        const Scalar yaw0    = YawSpace::angle(x.second);
-        const Scalar tmp_yaw = yaw0 + static_cast<Scalar>(id) * angle_step;
-
-        Scalar radius;
-        Scalar armor_z;
-        if (id == kHighArmorIdA || id == kHighArmorIdB) {
-            armor_z = e(Z0) + e(H);
-            radius  = e(R_1);
-        } else {
-            armor_z = e(Z0);
-            radius  = e(R_0);
-        }
-
-        const Scalar armor_x = e(XC) - radius * std::cos(tmp_yaw);
-        const Scalar armor_y = e(YC) - radius * std::sin(tmp_yaw);
-        return ukf::ArmorMeas::make(Eigen::Vector3d{armor_x, armor_y, armor_z}, tmp_yaw);
+    /// Measurement noise diagonal (match reference: +0.3 not +1.0)
+    [[nodiscard]] Eigen::Matrix<Scalar, NZ, 1> R_diag(const VecZ& z) const noexcept {
+        const Scalar delta_angle = shortest_rad(z[kMeasYaw], z[kMeasArmorYaw]);
+        Eigen::Matrix<Scalar, NZ, 1> R_dig;
+        R_dig << 4e-3, 4e-3, std::log(std::abs(delta_angle) + 1.0) + 0.3,
+            std::log(std::abs(z[kMeasDistance]) + 1.0) / 200.0 + 9e-2;
+        return R_dig;
     }
 
-    [[nodiscard]] auto measurement_noise(const MeasPoint& z) const noexcept
-        -> uni_kf::SymmetricMatrix<NZ, Scalar> {
-        const Eigen::Vector3d dir = ukf::ArmorMeas::direction(z);
-        const Scalar bearing_yaw  = std::atan2(dir.y(), dir.x());
-        const auto delta =
-            ukf::YawSO3Z::diff(ukf::YawSO3Z::from_angle(bearing_yaw), z.second.second);
-        const Scalar delta_angle = std::abs(delta.data(0));
-        const Scalar distance    = ukf::ArmorMeas::distance(z);
-
-        Eigen::Matrix<Scalar, NZ, 1> diag;
-        diag << 4e-3, 4e-3, std::log(delta_angle + 1.0) + 1.0,
-            std::log(std::abs(distance) + 1.0) / 200.0 + 9e-2;
-        return uni_kf::SymmetricMatrix<NZ, Scalar>::Diagonal(diag);
-    }
-
-    /// Get the expected radius for a given armor ID.
-    ///
-    /// Problem:
-    ///   For geometric consistency constraints, we need to know the expected radius
-    ///   for each armor based on the current state estimate.
-    ///
-    /// Precise:
-    ///   Robot armors 0,2 use r0; armors 1,3 use r1.
-    [[nodiscard]] Scalar expected_radius(const StatePoint& x, int armor_id) const noexcept {
-        const auto& e = x.first.data;
-        if (armor_id == kHighArmorIdA || armor_id == kHighArmorIdB) {
-            return e(R_1);
-        }
-        return e(R_0);
-    }
-
-    /// Get the expected height (z-coordinate) for a given armor ID.
-    ///
-    /// Problem:
-    ///   For geometric consistency constraints, we need to know the expected height
-    ///   for each armor based on the current state estimate.
-    ///
-    /// Precise:
-    ///   Robot armors 0,2 use z0; armors 1,3 use z0 + h.
-    [[nodiscard]] Scalar expected_height(const StatePoint& x, int armor_id) const noexcept {
-        const auto& e = x.first.data;
-        if (armor_id == kHighArmorIdA || armor_id == kHighArmorIdB) {
-            return e(Z0) + e(H);
-        }
-        return e(Z0);
-    }
-
-    /// Get the center XY coordinates from state.
-    [[nodiscard]] Eigen::Vector2d center_xy(const StatePoint& x) const noexcept {
-        const auto& e = x.first.data;
-        return {e(XC), e(YC)};
+    /// Measurement noise covariance square root
+    [[nodiscard]] Eigen::Matrix<Scalar, NZ, Eigen::Dynamic> R_sqrt(const VecZ& z) const noexcept {
+        Eigen::Matrix<Scalar, NZ, NZ> Rs = Eigen::Matrix<Scalar, NZ, NZ>::Zero();
+        Rs.diagonal()                    = R_diag(z).cwiseSqrt();
+        return Rs;
     }
 };
 
+static_assert(MotionModel<RobotModel>);
+
 // ============================================================================
-// OutpostModel: 3-armor Outpost Target (state on R^6 × SO3_z)
+// OutpostModel: 3-armor Outpost Target (7-state)
 // ============================================================================
 
+/// Motion model for tracking 3-armor outpost targets
+/// State: [xc, yc, yaw, v_yaw, z0, z1, z2]
+/// Measurement: [yaw, pitch, distance, armor_yaw]
 struct OutpostModel {
-    using Scalar = double;
+    using Scalar            = double;
+    static constexpr int NX = O_STATE_MAX; // 7
+    static constexpr int NZ = MEASURE_MAX; // 4
 
-    static constexpr Scalar OUTPOST_RADIUS = 0.2765;
-    static constexpr int ARMORS_NUM        = 3;
+    using VecX = Eigen::Matrix<Scalar, NX, 1>;
+    using VecZ = Eigen::Matrix<Scalar, NZ, 1>;
 
-    // Euclidean component of the state: [xc, yc, v_yaw, z0, z1, z2]
-    enum EuclidIndex : int {
-        XC         = 0,
-        YC         = 1,
-        V_YAW      = 2,
-        Z0         = 3,
-        Z1         = 4,
-        Z2         = 5,
-        EUCLID_DIM = 6,
+    // Measurement vector layout: [yaw, pitch, distance, armor_yaw]
+    static constexpr int kMeasYaw      = ARMOR_YAW;
+    static constexpr int kMeasPitch    = ARMOR_PITCH;
+    static constexpr int kMeasDistance = ARMOR_DISTANCE;
+    static constexpr int kMeasArmorYaw = ARMOR_YAW_ARMOR;
+
+    // State layout: Z states are stored contiguously starting at O_Z0 (z0, z1, z2).
+    static constexpr int kFirstArmorZState = O_Z0;
+
+    /// Process noise parameters
+    struct Params {
+        Scalar sigma_q_xy  = 10.0;                   // XY position noise
+        Scalar sigma_q_z   = 1.0;                    // Z position noise
+        Scalar sigma_a_yaw = 1.0;                    // Yaw acceleration noise
+        std::expected<void, std::string> read_from(const toml::table& tbl) noexcept {
+            READ(tbl, sigma_q_xy);
+            READ(tbl, sigma_q_z);
+            READ(tbl, sigma_a_yaw);
+            return {};
+        }
     };
 
-    using EuclidSpace = uni_kf::Euclidean<EUCLID_DIM, Scalar>;
-    using YawSpace    = ukf::YawSO3Z;
-    using StateSpace  = uni_kf::ProductSpace<EuclidSpace, YawSpace>;
-    using MeasSpace   = ukf::ArmorMeasSpace;
+    int armor_id                           = 0;
+    static constexpr Scalar OUTPOST_RADIUS = 0.2765; // From mechanical drawing
+    static constexpr Scalar OUTPOST_DZ     = 0.1;    // Height difference between armors
+    static constexpr int ARMORS_NUM        = 3;
 
-    using StatePoint = StateSpace::Point;
-    using MeasPoint  = MeasSpace::Point;
+    Params params;
 
-    static constexpr int NX = StateSpace::FiberDim; // 7
-    static constexpr int NZ = MeasSpace::FiberDim;  // 4
+    OutpostModel() noexcept = default;
+    explicit OutpostModel(const Params& p) noexcept
+        : params(p) {}
 
-    OutpostModelParams params;
-
-    [[nodiscard]] static auto make_state(
-        double xc, double yc, double yaw, double v_yaw, double z0, double z1, double z2) noexcept
-        -> StatePoint {
-        typename EuclidSpace::Point::EigenType e;
-        e << xc, yc, v_yaw, z0, z1, z2;
-        return {EuclidSpace::Point(e), YawSpace::from_angle(yaw)};
+    /// State transition function
+    [[nodiscard]] VecX f(const VecX& x, Scalar dt) const noexcept {
+        VecX xn;
+        // clang-format off
+        xn << x[O_XC],
+              x[O_YC],
+              x[O_YAW] + x[O_VYAW] * dt,
+              x[O_VYAW],
+              x[O_Z0],
+              x[O_Z1],
+              x[O_Z2];
+        // clang-format on
+        return xn;
     }
 
-    [[nodiscard]] auto predict(const StatePoint& x, double dt) const noexcept -> StatePoint {
-        const auto& e      = x.first.data;
-        const double d_yaw = e(V_YAW) * dt;
-        const auto yaw_new = YawSpace::act(x.second, YawSpace::fiber_from_angle(d_yaw));
-        return {x.first, yaw_new};
+    /// Measurement function (using current armor_id)
+    [[nodiscard]] VecZ h(const VecX& x) const noexcept { return h(x, armor_id); }
+
+    /// Measurement function for specific armor
+    [[nodiscard]] VecZ h(const VecX& x, int id) const noexcept {
+        VecZ z;
+        assert(id >= 0 && id <= ARMORS_NUM - 1);
+
+        constexpr Scalar angle_step = 2.0 * std::numbers::pi / static_cast<Scalar>(ARMORS_NUM);
+
+        const Scalar tmp_yaw = x(O_YAW) + angle_step * static_cast<Scalar>(id);
+
+        const Scalar armor_x = x(O_XC) - OUTPOST_RADIUS * std::cos(tmp_yaw);
+        const Scalar armor_y = x(O_YC) - OUTPOST_RADIUS * std::sin(tmp_yaw);
+        const Scalar armor_z = x(kFirstArmorZState + id);
+
+        const auto ypd   = xyz2ypd({armor_x, armor_y, armor_z});
+        z[kMeasYaw]      = ypd.x();
+        z[kMeasPitch]    = ypd.y();
+        z[kMeasDistance] = ypd.z();
+        z[kMeasArmorYaw] = tmp_yaw;
+
+        return z;
     }
 
-    [[nodiscard]] auto process_noise(double dt) const noexcept
-        -> uni_kf::SymmetricMatrix<NX, Scalar> {
-        Eigen::Matrix<Scalar, NX, NX> Q = Eigen::Matrix<Scalar, NX, NX>::Zero();
+    /// Process noise covariance square root
+    [[nodiscard]] Eigen::Matrix<Scalar, NX, NX> Q_sqrt(Scalar dt) const noexcept {
+        using MatX = Eigen::Matrix<Scalar, NX, NX>;
+        MatX Q     = MatX::Zero();
+
         if (dt <= Scalar(0)) {
-            return uni_kf::SymmetricMatrix<NX, Scalar>(Q);
+            return Q;
         }
 
         const Scalar sigma_xy2  = params.sigma_q_xy * params.sigma_q_xy;
@@ -263,169 +310,49 @@ struct OutpostModel {
         const Scalar dt3 = dt2 * dt;
         const Scalar dt4 = dt2 * dt2;
 
-        // X, Y: drift-like random walk (Q ∝ dt^2)
-        Q(XC, XC) = sigma_xy2 * dt2;
-        Q(YC, YC) = sigma_xy2 * dt2;
+        // X, Y: random walk
+        Q(O_XC, O_XC) = sigma_xy2 * dt2;
+        Q(O_YC, O_YC) = sigma_xy2 * dt2;
 
-        // YAW/VYAW: CV model (yaw is last fiber component)
-        constexpr int kYawFiber = EUCLID_DIM;
-        Q(kYawFiber, kYawFiber) = sigma_yaw2 * dt4 / 4.0;
-        Q(kYawFiber, V_YAW)     = sigma_yaw2 * dt3 / 2.0;
-        Q(V_YAW, kYawFiber)     = Q(kYawFiber, V_YAW);
-        Q(V_YAW, V_YAW)         = sigma_yaw2 * dt2;
+        // YAW/VYAW: CV model
+        Q(O_YAW, O_YAW)   = sigma_yaw2 * dt4 / 4.0;
+        Q(O_YAW, O_VYAW)  = sigma_yaw2 * dt3 / 2.0;
+        Q(O_VYAW, O_YAW)  = Q(O_YAW, O_VYAW);
+        Q(O_VYAW, O_VYAW) = sigma_yaw2 * dt2;
 
-        // Z0, Z1, Z2: drift-like random walk (Q ∝ dt^2)
-        Q(Z0, Z0) = sigma_z2 * dt2;
-        Q(Z1, Z1) = sigma_z2 * dt2;
-        Q(Z2, Z2) = sigma_z2 * dt2;
+        // Z0, Z1, Z2: random walk
+        Q(O_Z0, O_Z0) = sigma_z2 * dt2;
+        Q(O_Z1, O_Z1) = sigma_z2 * dt2;
+        Q(O_Z2, O_Z2) = sigma_z2 * dt2;
 
-        return uni_kf::SymmetricMatrix<NX, Scalar>(Q);
+        Eigen::LLT<MatX> llt(Q);
+        return llt.matrixL();
     }
 
-    [[nodiscard]] auto measure(const StatePoint& x, int id) const noexcept -> MeasPoint {
-        assert(id >= 0 && id <= ARMORS_NUM - 1);
-
-        const auto& e = x.first.data;
-
-        constexpr Scalar angle_step = 2.0 * std::numbers::pi / static_cast<Scalar>(ARMORS_NUM);
-        const Scalar yaw0           = YawSpace::angle(x.second);
-        const Scalar tmp_yaw        = yaw0 + angle_step * static_cast<Scalar>(id);
-
-        const Scalar armor_x = e(XC) - OUTPOST_RADIUS * std::cos(tmp_yaw);
-        const Scalar armor_y = e(YC) - OUTPOST_RADIUS * std::sin(tmp_yaw);
-        const Scalar armor_z = (id == 0) ? e(Z0) : (id == 1 ? e(Z1) : e(Z2));
-        return ukf::ArmorMeas::make(Eigen::Vector3d{armor_x, armor_y, armor_z}, tmp_yaw);
+    /// Measurement noise diagonal
+    [[nodiscard]] Eigen::Matrix<Scalar, NZ, 1> R_diag(const VecZ& z) const noexcept {
+        const Scalar delta_angle = shortest_rad(z[kMeasYaw], z[kMeasArmorYaw]);
+        Eigen::Matrix<Scalar, NZ, 1> R_dig;
+        R_dig << 4e-3, 4e-3, std::log(std::abs(delta_angle) + 1.0) + 1.0,
+            std::log(std::abs(z[kMeasDistance]) + 1.0) / 200.0 + 9e-2;
+        return R_dig;
     }
 
-    [[nodiscard]] auto measurement_noise(const MeasPoint& z) const noexcept
-        -> uni_kf::SymmetricMatrix<NZ, Scalar> {
-        const Eigen::Vector3d dir = ukf::ArmorMeas::direction(z);
-        const Scalar bearing_yaw  = std::atan2(dir.y(), dir.x());
-        const auto delta =
-            ukf::YawSO3Z::diff(ukf::YawSO3Z::from_angle(bearing_yaw), z.second.second);
-        const Scalar delta_angle = std::abs(delta.data(0));
-        const Scalar distance    = ukf::ArmorMeas::distance(z);
-
-        Eigen::Matrix<Scalar, NZ, 1> diag;
-        diag << 4e-3, 4e-3, std::log(delta_angle + 1.0) + 1.0,
-            std::log(std::abs(distance) + 1.0) / 200.0 + 9e-2;
-        return uni_kf::SymmetricMatrix<NZ, Scalar>::Diagonal(diag);
-    }
-
-    /// Get the expected radius for a given armor ID.
-    ///
-    /// Problem:
-    ///   For geometric consistency constraints, we need to know the expected radius
-    ///   for each armor based on the current state estimate.
-    ///
-    /// Precise:
-    ///   Outpost has fixed radius for all armors.
-    [[nodiscard]] static constexpr Scalar expected_radius(
-        [[maybe_unused]] const StatePoint& x, [[maybe_unused]] int armor_id) noexcept {
-        return OUTPOST_RADIUS;
-    }
-
-    /// Get the expected height (z-coordinate) for a given armor ID.
-    ///
-    /// Problem:
-    ///   For geometric consistency constraints, we need to know the expected height
-    ///   for each armor based on the current state estimate.
-    ///
-    /// Precise:
-    ///   Outpost armors have independent heights: z0, z1, z2.
-    [[nodiscard]] Scalar expected_height(const StatePoint& x, int armor_id) const noexcept {
-        const auto& e = x.first.data;
-        switch (armor_id) {
-        case 0: return e(Z0);
-        case 1: return e(Z1);
-        case 2: return e(Z2);
-        default: return e(Z0);
-        }
-    }
-
-    /// Get the center XY coordinates from state.
-    [[nodiscard]] Eigen::Vector2d center_xy(const StatePoint& x) const noexcept {
-        const auto& e = x.first.data;
-        return {e(XC), e(YC)};
+    /// Measurement noise covariance square root
+    [[nodiscard]] Eigen::Matrix<Scalar, NZ, Eigen::Dynamic> R_sqrt(const VecZ& z) const noexcept {
+        Eigen::Matrix<Scalar, NZ, NZ> Rs = Eigen::Matrix<Scalar, NZ, NZ>::Zero();
+        Rs.diagonal()                    = R_diag(z).cwiseSqrt();
+        return Rs;
     }
 };
 
+static_assert(MotionModel<OutpostModel>);
+
 // ============================================================================
-// Unified tracker SRCKF wrapper (KF + motion/observation model)
+// Type Aliases
 // ============================================================================
 
-template <typename Model>
-class UniTrackerSRCKF {
-public:
-    using StateSpace        = typename Model::StateSpace;
-    using StatePoint        = typename Model::StatePoint;
-    using MeasSpace         = typename Model::MeasSpace;
-    using MeasPoint         = typename Model::MeasPoint;
-    static constexpr int NX = Model::NX;
-    static constexpr int NZ = Model::NZ;
-
-    using Filter = uni_kf::UnifiedKalmanFilter<
-        StateSpace, uni_kf::CubaturePointsTag, uni_kf::CovarianceTag, double>;
-    using CovX = uni_kf::SymmetricMatrix<NX, double>;
-    using CovZ = uni_kf::SymmetricMatrix<NZ, double>;
-
-    struct ArmorMeasurementModel {
-        using MeasurementSpace = MeasSpace;
-
-        const Model* motion_model{nullptr};
-        int armor_id{0};
-        MeasPoint z_meas{};
-
-        [[nodiscard]] MeasPoint predict(const StatePoint& x) const noexcept {
-            return motion_model->measure(x, armor_id);
-        }
-
-        [[nodiscard]] CovZ measurement_noise() const noexcept {
-            return motion_model->measurement_noise(z_meas);
-        }
-
-        [[nodiscard]] MeasPoint operator()(const StatePoint& x) const noexcept {
-            return predict(x);
-        }
-    };
-
-    UniTrackerSRCKF() noexcept = default;
-
-    UniTrackerSRCKF(Model& model, const StatePoint& x0, const CovX& P0) noexcept
-        : model_(&model) {
-        filter_.init(x0, P0);
-    }
-
-    [[nodiscard]] bool initialized() const noexcept { return filter_.is_initialized(); }
-
-    void predict(double dt) noexcept {
-        if (!model_) {
-            return;
-        }
-        filter_.predict(*model_, dt);
-    }
-
-    void update(const MeasPoint& z, int armor_id) noexcept {
-        if (!model_) {
-            return;
-        }
-        ArmorMeasurementModel meas_model{model_, armor_id, z};
-        filter_.update(z, meas_model);
-    }
-
-    [[nodiscard]] const StatePoint& x() const noexcept { return filter_.mean(); }
-    [[nodiscard]] StatePoint& x_mut() noexcept { return filter_.belief().mean; }
-
-    [[nodiscard]] auto Px() const noexcept { return filter_.belief().covariance(); }
-
-    [[nodiscard]] const Filter& filter() const noexcept { return filter_; }
-
-private:
-    Model* model_{nullptr};
-    Filter filter_;
-};
-
-using RoboCKF    = UniTrackerSRCKF<RobotModel>;
-using OutpostCKF = UniTrackerSRCKF<OutpostModel>;
+using RoboCKF    = ckf::ISRCKF<RobotModel, RobotModel::NX, RobotModel::NZ>;
+using OutpostCKF = ckf::ISRCKF<OutpostModel, OutpostModel::NX, OutpostModel::NZ>;
 
 } // namespace fcs::L3

@@ -33,15 +33,12 @@ struct DaedalusImu {
         talos::res_mut<std::shared_ptr<fast_tf::CoordinateSystem<1024>>> tf_buffer) noexcept {
         if (const auto pose = ipc_device->recv_pose(ipc::POSE_GIMBAL)) {
             const Eigen::Quaterniond q(pose->qw, pose->qx, pose->qy, pose->qz);
+            // const Eigen::Quaterniond q(1.0, 0, 0, 0);
             fast_tf::update(
                 *tf_buffer->get(),
                 fast_tf::FuckTransform<fast_tf::gimbal_link_fuxk_frame>(
                     fast_tf::TransformMatrix4d::from_quaternion_xyz(q, pose->x, pose->y, pose->z)),
                 pose->timestamp_ns);
-            SPDLOG_DEBUG(
-                "{} Daedalus IMU Gimbal Pose: pos=({}, {}, {}), quat=({}, {}, {}, {})",
-                pose->timestamp_ns, pose->x, pose->y, pose->z, pose->qw, pose->qx, pose->qy,
-                pose->qz);
         }
         if (const auto pose = ipc_device->recv_pose(ipc::POSE_ODOM)) {
             fast_tf::update(
@@ -49,9 +46,6 @@ struct DaedalusImu {
                 fast_tf::FuckTransform<fast_tf::odom_fuxk_frame>(
                     fast_tf::TransformMatrix4d::from_translation(pose->x, pose->y, pose->z)),
                 pose->timestamp_ns);
-            SPDLOG_DEBUG(
-                "{} Daedalus IMU Odom Pose: pos=({}, {}, {})", pose->timestamp_ns, pose->x, pose->y,
-                pose->z);
         }
         if (const auto pose = ipc_device->recv_pose(ipc::POSE_CAMERA)) {
             const Eigen::Quaterniond q(pose->qw, pose->qx, pose->qy, pose->qz);
@@ -60,10 +54,6 @@ struct DaedalusImu {
                 fast_tf::FuckTransform<fast_tf::camera_link_fuxk_frame>(
                     fast_tf::TransformMatrix4d::from_quaternion_xyz(q, pose->x, pose->y, pose->z)),
                 pose->timestamp_ns);
-            SPDLOG_DEBUG(
-                "{} Daedalus IMU Camera Pose: pos=({}, {}, {}), quat=({}, {}, {}, {})",
-                pose->timestamp_ns, pose->x, pose->y, pose->z, pose->qw, pose->qx, pose->qy,
-                pose->qz);
         }
         if (const auto pose = ipc_device->recv_pose(ipc::POSE_MUZZLE)) {
             const Eigen::Quaterniond q(pose->qw, pose->qx, pose->qy, pose->qz);
@@ -72,10 +62,6 @@ struct DaedalusImu {
                 fast_tf::FuckTransform<fast_tf::muzzle_link_fuxk_frame>(
                     fast_tf::TransformMatrix4d::from_quaternion_xyz(q, pose->x, pose->y, pose->z)),
                 pose->timestamp_ns);
-            SPDLOG_DEBUG(
-                "{} Daedalus IMU Muzzle Pose: pos=({}, {}, {}), quat=({}, {}, {}, {})",
-                pose->timestamp_ns, pose->x, pose->y, pose->z, pose->qw, pose->qx, pose->qy,
-                pose->qz);
         }
     }
 };
@@ -148,8 +134,7 @@ std::expected<L1L2SetupResult, std::string> setup_l1_l2(
 
         talos_gimbal::Stm32Parser::latest_imu = &g_imu_data;
 
-        const auto& config                   = *hardware;
-        talos_gimbal::Stm32Parser::debug_raw = config.debug_usb_raw;
+        const auto& config = *hardware;
 
         auto usb_device = std::make_shared<UsbDevice>();
         if (config.imu_product_id_opt()) {

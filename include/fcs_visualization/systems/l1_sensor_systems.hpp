@@ -30,7 +30,7 @@ void register_l1_sensor_systems(App& app) {
     // IMAGE PUBLISHER (Camera calibration + TF)
     // =========================================================================
 
-    app.template add_system<talos::pool_compute>(
+    app.template add_system<talos::fixed_rate<30>>(
         "foxglove_l1_image_pub",
         [](talos::spmc<AtLegacyImageFrame, AtLegacyImageChannelTopic> img_in,
            talos::res<std::shared_ptr<FoxgloveServer>> server, talos::res<CameraConfig> cam,
@@ -52,12 +52,11 @@ void register_l1_sensor_systems(App& app) {
             cv::Mat img_bgr = frame->image.clone();
             auto batch      = det_in.read_current();
             if (batch) {
-                for (size_t i = 0; i < batch->detections.size(); ++i) {
-                    const auto& det = batch->detections[i];
+                for (const auto& det : batch->detections) {
                     cv::circle(img_bgr, det.center(), 5, cv::Scalar(0, 0, 255), 5);
-                    for (auto i = 0; i < det.corners.size(); i++) {
-                        auto pp1 = det.corners[i];
-                        auto pp2 = det.corners[(i + 1) % 4];
+                    for (size_t j = 0; j < det.corners.size(); j++) {
+                        auto pp1 = det.corners[j];
+                        auto pp2 = det.corners[(j + 1) % 4];
                         cv::line(img_bgr, pp1, pp2, cv::Scalar(0, 255, 0), 4);
                     }
                 }

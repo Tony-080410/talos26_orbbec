@@ -1,0 +1,20 @@
+#!/bin/bash
+# Wrapper script to run talos with correct library paths
+# This overrides OpenVINO's LD_LIBRARY_PATH to avoid symbol conflicts
+
+# Save original LD_LIBRARY_PATH
+ORIGINAL_LD_LIBRARY_PATH="$LD_LIBRARY_PATH"
+
+# Remove OpenVINO paths and prepend /usr/lib to ensure system TBB is used first
+export LD_LIBRARY_PATH="/usr/lib:$CMAKE_BINARY_DIR/../3dparty/hik_sdk/lib/amd64"
+
+# Filter out OpenVINO paths from original LD_LIBRARY_PATH if present
+if [ -n "$ORIGINAL_LD_LIBRARY_PATH" ]; then
+    FILTERED=$(echo "$ORIGINAL_LD_LIBRARY_PATH" | tr ':' '\n' | grep -v openvino | tr '\n' ':' | sed 's/:$//')
+    if [ -n "$FILTERED" ]; then
+        export LD_LIBRARY_PATH="$LD_LIBRARY_PATH:$FILTERED"
+    fi
+fi
+
+# Run talos with all arguments
+exec "@CMAKE_BINARY_DIR@/bin/@PROJECT_NAME@" "$@"

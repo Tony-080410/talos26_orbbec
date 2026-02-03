@@ -13,13 +13,13 @@ find_package(Eigen3 REQUIRED)
 find_package(OpenCV REQUIRED)
 find_package(spdlog REQUIRED)
 find_package(fmt REQUIRED)
+
+# OpenVINO configuration with better error handling
+find_package(OpenVINO QUIET COMPONENTS Runtime)
 find_package(TBB REQUIRED)
 find_package(GTest REQUIRED)
 find_package(nlohmann_json REQUIRED)
 find_package(Ceres REQUIRED)
-
-# OpenVINO configuration with better error handling
-find_package(OpenVINO QUIET COMPONENTS Runtime)
 if (OpenVINO_FOUND)
     message(STATUS "OpenVINO found at: ${OpenVINO_DIR}")
 else ()
@@ -90,7 +90,7 @@ endif ()
 
 message(STATUS "Foxglove platform: ${FOXGLOVE_PLATFORM}")
 
-set(FOXGLOVE_VERSION "v0.16.5")
+set(FOXGLOVE_VERSION "v0.17.1")
 set(FOXGLOVE_SHA256_aarch64-apple-darwin "0799fcb999616fe25d16d7e4b2894adb6f7fa97ce9671bd908d8412505887bec")
 set(FOXGLOVE_SHA256_aarch64-unknown-linux-gnu "54cbc57c60a550473e0a75f8f360efb6fa245ebb7f582db5efa64f1c297e554f")
 set(FOXGLOVE_SHA256_x86_64-unknown-linux-gnu "54cbc57c60a550473e0a75f8f360efb6fa245ebb7f582db5efa64f1c297e554f")
@@ -127,7 +127,6 @@ FetchContent_MakeAvailable(foxglove)
 # This list is stable for the pinned SDK version above; update it only when bumping Foxglove.
 set(FOXGLOVE_SOURCES
     "${foxglove_SOURCE_DIR}/src/channel.cpp"
-    "${foxglove_SOURCE_DIR}/src/cloud_sink.cpp"
     "${foxglove_SOURCE_DIR}/src/context.cpp"
     "${foxglove_SOURCE_DIR}/src/error.cpp"
     "${foxglove_SOURCE_DIR}/src/foxglove.cpp"

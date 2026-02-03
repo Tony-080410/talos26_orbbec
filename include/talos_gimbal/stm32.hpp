@@ -42,22 +42,10 @@ class Stm32Parser {
 public:
     // 静态指针，指向外部的 IMU 数据存储 (由外部管理生命周期)
     static inline ReceiveImuData* latest_imu{nullptr};
-    // 调试开关：打印 USB 原始接收数据
-    static inline bool debug_raw{false};
 
     Stm32Parser(const Stm32Parser&)            = delete;
     Stm32Parser& operator=(const Stm32Parser&) = delete;
     static void parse(const std::span<const std::byte> data) noexcept {
-        if (debug_raw) {
-            std::string hex_str;
-            hex_str.reserve(data.size_bytes() * 3);
-            for (size_t i = 0; i < data.size_bytes(); ++i) {
-                fmt::format_to(
-                    std::back_inserter(hex_str), "{:02X} ", static_cast<uint8_t>(data[i]));
-            }
-            SPDLOG_INFO("[USB RX] len={}, data={}", data.size_bytes(), hex_str);
-        }
-        SPDLOG_DEBUG("Parsing STM32 data");
         if (const auto size = data.size_bytes(); size < sizeof(HeaderFrame)) [[unlikely]] {
             SPDLOG_WARN("Frame size too small, expected {}, got {}", sizeof(HeaderFrame), size);
             return;
