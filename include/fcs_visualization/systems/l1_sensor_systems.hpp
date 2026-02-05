@@ -22,43 +22,41 @@ namespace fcs::foxglove::systems {
 ///
 /// This includes:
 /// - foxglove_image_pub: Publishes camera images with detection boxes overlaid
-/// - Also publishes TF and camera calibration at 30Hz
+/// - Also publishes TF and camera calibration
 template <typename App>
 void register_l1_sensor_systems(App& app) {
 
     // =========================================================================
     // IMAGE PUBLISHER (Camera calibration + TF)
+    //
+    // Synchronized rendering: image is bundled with detection result
     // =========================================================================
 
-    app.template add_system<talos::fixed_rate<30>>(
+    app.template add_system<talos::pool_compute>(
         "foxglove_l1_image_pub",
-        [](talos::spmc<AtLegacyImageFrame, AtLegacyImageChannelTopic> img_in,
+        [](talos::spmc<AtLegacyArmorDetectionBatch, AtLegacyDetectionChannelTopic> det_in,
            talos::res<std::shared_ptr<FoxgloveServer>> server, talos::res<CameraConfig> cam,
-           talos::spmc<AtLegacyArmorDetectionBatch, AtLegacyDetectionChannelTopic> det_in,
            talos::res<std::shared_ptr<fast_tf::CoordinateSystem<1024>>> tf_buffer) {
-            if (!detail::foxglove_ready(*server, img_in)) {
+            if (!detail::foxglove_ready(*server, det_in)) {
                 return;
             }
 
-            auto frame = img_in.read();
-            if (!frame || frame->image.empty()) {
+            auto batch = det_in.read();
+            if (!batch || batch->image.empty()) {
                 return;
             }
 
             // Publish TF
-            (*server)->publish_tf(**tf_buffer, frame->timestamp_ns);
+            (*server)->publish_tf(**tf_buffer, batch->timestamp_ns);
 
             // Clone image and draw detection boxes
-            cv::Mat img_bgr = frame->image.clone();
-            auto batch      = det_in.read_current();
-            if (batch) {
-                for (const auto& det : batch->detections) {
-                    cv::circle(img_bgr, det.center(), 5, cv::Scalar(0, 0, 255), 5);
-                    for (size_t j = 0; j < det.corners.size(); j++) {
-                        auto pp1 = det.corners[j];
-                        auto pp2 = det.corners[(j + 1) % 4];
-                        cv::line(img_bgr, pp1, pp2, cv::Scalar(0, 255, 0), 2);
-                    }
+            cv::Mat img_bgr = batch->image.clone();
+            for (const auto& det : batch->detections) {
+                cv::circle(img_bgr, det.center(), 5, cv::Scalar(0, 0, 255), 5);
+                for (size_t j = 0; j < det.corners.size(); j++) {
+                    auto pp1 = det.corners[j];
+                    auto pp2 = det.corners[(j + 1) % 4];
+                    cv::line(img_bgr, pp1, pp2, cv::Scalar(0, 255, 0), 2);
                 }
             }
 
@@ -71,7 +69,7 @@ void register_l1_sensor_systems(App& app) {
 
             // Construct image message
             ImageMessage msg;
-            msg.img.timestamp = timestamp_from_ns(frame->timestamp_ns);
+            msg.img.timestamp = timestamp_from_ns(batch->timestamp_ns);
             msg.img.frame_id  = "camera_optical_frame";
             msg.img.format    = "jpeg";
             msg.img.data      = std::vector<std::byte>(
@@ -88,7 +86,7 @@ void register_l1_sensor_systems(App& app) {
                 cam->distort_coefficient.data() + cam->distort_coefficient.size());
 
             (*server)->publish_camera_calibration(
-                cam->width, cam->height, camera_matrix_arr, dist_coeffs, frame->timestamp_ns);
+                cam->width, cam->height, camera_matrix_arr, dist_coeffs, batch->timestamp_ns);
         });
 }
 

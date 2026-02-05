@@ -50,7 +50,8 @@ void register_at_legacy_detection_systems(talos::Scheduler& scheduler, AtLegacyC
             auto result = backend->detect(frame->image);
             if (!result) {
                 detection_out.write(
-                    AtLegacyArmorDetectionBatch{{}, frame->timestamp_ns, frame->frame_id});
+                    AtLegacyArmorDetectionBatch{
+                        {}, frame->image, frame->timestamp_ns, frame->frame_id});
                 return;
             }
 
@@ -68,7 +69,8 @@ void register_at_legacy_detection_systems(talos::Scheduler& scheduler, AtLegacyC
             auto detections = std::move(*result);
 
             detection_out.write(
-                AtLegacyArmorDetectionBatch{detections, frame->timestamp_ns, frame->frame_id});
+                AtLegacyArmorDetectionBatch{
+                    detections, frame->image, frame->timestamp_ns, frame->frame_id});
 
             auto measurements = (*solver_ptr)
                                     ->solve_batch_with_ba(

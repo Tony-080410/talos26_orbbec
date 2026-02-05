@@ -75,12 +75,15 @@ struct AtLegacyArmorDetection {
 /// Batch of detections from a single frame
 struct AtLegacyArmorDetectionBatch {
     std::vector<AtLegacyArmorDetection> detections;
+    cv::Mat image; ///< Source image (shared reference for visualization)
     uint64_t timestamp_ns = 0;
     uint64_t frame_id     = 0;
 
     AtLegacyArmorDetectionBatch() = default;
-    AtLegacyArmorDetectionBatch(std::vector<AtLegacyArmorDetection> dets, uint64_t ts, uint64_t fid)
+    AtLegacyArmorDetectionBatch(
+        std::vector<AtLegacyArmorDetection> dets, cv::Mat img, uint64_t ts, uint64_t fid)
         : detections(std::move(dets))
+        , image(std::move(img))
         , timestamp_ns(ts)
         , frame_id(fid) {}
 
