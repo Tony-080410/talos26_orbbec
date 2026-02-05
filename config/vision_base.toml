@@ -1,11 +1,11 @@
 [detector]
-backend_type = "TensorRT"  # Options: "Traditional", "NeuralNetwork", "NeuralNetworkTup", "TensorRT"
+backend_type = "Traditional"  # Options: "Traditional", "NeuralNetwork", "NeuralNetworkTup", "TensorRT"
 detect_color = "Blue"
 
 # Required if backend_type = "traditional"
 [traditional]
 advanced_binary = true
-dark_percentage = 0.9
+dark_percentage = 0.5
 binary_threshold = 85
 light_min_ratio = 0.0001
 light_max_ratio = 1.0
@@ -64,17 +64,17 @@ top_k = 128
 inekf_enabled = false
 
 [tracker.robot]
-matcher_gate = 5.0
-lost_threshold = 2.0
-tracking_threshold = 3
+matcher_gate = 10.0             # Aligned with at_vision rm_bringup config
+lost_threshold = 1.0            # Aligned with at_vision rm_bringup config
+tracking_threshold = 5          # Aligned with at_vision rm_bringup config
 
 [tracker.robot.model]
-sigma_a_xy = 10.0
-sigma_a_z = 1.0
-sigma_a_yaw = 20.0
+sigma_a_xy = 10.0               # Aligned with at_vision
+sigma_a_z = 2.0                 # Aligned with at_vision (was 1.0)
+sigma_a_yaw = 20.0              # Aligned with at_vision
 sigma_r0 = 1.0
 sigma_r1 = 1.0
-sigma_h = 0.5
+sigma_h = 0.8                   # Aligned with at_vision (was 0.5)
 
 [tracker.robot_inekf]
 sigma_a_xy = 10.0

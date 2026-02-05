@@ -39,20 +39,27 @@ void register_tracker_systems(talos::Scheduler& scheduler, TrackerConfig&& confi
             if (!batch) {
                 return;
             }
+            if (last_timestamp_ns == 0) {
+                last_timestamp_ns = batch->timestamp_ns;
+            }
 
             double dt = 0.0;
-            if (last_timestamp_ns > 0 && batch->timestamp_ns > last_timestamp_ns) {
+            if (batch->timestamp_ns > last_timestamp_ns) {
                 dt = static_cast<double>(batch->timestamp_ns - last_timestamp_ns) / 1e9;
             }
             last_timestamp_ns = batch->timestamp_ns;
 
+            // First read: check if we should predict (matches armor_solver line 307-309)
+            if ((*tracker)->status() != TrackerStatus::Idle) {
+                (*tracker)->predict(dt);
+            }
+
+            // Second read: state may have changed after first_meet (matches armor_solver line
+            // 310-313)
             if ((*tracker)->status() == TrackerStatus::Idle) {
-                auto result = (*tracker)->first_meet(*batch);
-                if (!result) {
-                    return;
-                }
+                (*tracker)->first_meet(*batch);
             } else {
-                (*tracker)->step(dt, *batch);
+                (*tracker)->update(*batch);
             }
 
             auto output         = (*tracker)->get_output();

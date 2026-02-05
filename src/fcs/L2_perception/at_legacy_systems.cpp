@@ -75,6 +75,8 @@ void register_at_legacy_detection_systems(talos::Scheduler& scheduler, AtLegacyC
                                         detections, tf_odom_camera.value()->rotation().matrix(),
                                         frame->timestamp_ns);
 
+            // Transform measurements from camera_optical frame to odom frame
+            // T_odom_armor = T_odom_camera * T_camera_optical_armor
             const auto& T_odom_camera = *tf_odom_camera.value();
             for (auto& meas : measurements) {
                 meas.transform = fast_tf::FuckTransform<fast_tf::odom_fuxk_frame>{

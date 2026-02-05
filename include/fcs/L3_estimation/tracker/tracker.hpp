@@ -28,12 +28,6 @@ public:
         outpost_model_.params = config_.outpost.model;
     }
 
-    /// Combined predict + update step
-    void step(double dt, const AtLegacyArmorMeasurementBatch& measurements) noexcept {
-        predict(dt);
-        (void)update(measurements);
-    }
-
     /// Prediction step (time update)
     void predict(double dt) noexcept {
         last_dt_ = std::max(0.0, dt);
@@ -104,7 +98,6 @@ public:
 
             const auto ypd             = xyz2ypd(meas.transform->translation());
             const double armor_yaw_raw = meas.yaw();
-            const auto& armor_pos_odom = meas.transform->translation();
 
             if (is_outpost) {
                 outpost_model_.armor_id = idx[i];
@@ -264,13 +257,10 @@ public:
         outpost_ckf_.reset();
         target_name_ = ArmorName::Invalid;
         measurement_.fill(0.0);
-        detecting_count_   = 0;
-        last_dt_           = 0.0;
-        lost_time_         = 0.0;
-        lost_threshold     = 0.0;
-        tracking_threshold = 0.0;
-        matcher_gate       = 0.0;
-        status_            = TrackerStatus::Idle;
+        detecting_count_ = 0;
+        last_dt_         = 0.0;
+        lost_time_       = 0.0;
+        status_          = TrackerStatus::Idle;
     }
 
     /// Get current status

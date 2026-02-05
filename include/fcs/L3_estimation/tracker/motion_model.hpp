@@ -120,6 +120,8 @@ struct RobotModel {
         const Scalar tmp_yaw = x(YAW) + static_cast<Scalar>(id) * angle_step;
 
         Scalar radius;
+        Scalar armor_x;
+        Scalar armor_y;
         Scalar armor_z;
         if (id == kHighArmorIdA || id == kHighArmorIdB) {
             armor_z = x(Z0) + x(H);
@@ -174,23 +176,23 @@ struct RobotModel {
         // Random walk noise for R0, R1, H
         // NOTE: Using sigma_r0 for R_1 to match reference version behavior
         const Scalar sigma_r0_2 = params.sigma_r0 * params.sigma_r0;
-        const Scalar sigma_r1_2 =
-            params.sigma_r0 * params.sigma_r0; // Reference uses sigma_r0 for R_1
-        const Scalar sigma_h_2 = params.sigma_h * params.sigma_h;
+        const Scalar sigma_r1_2 = params.sigma_r0 * params.sigma_r0;
+        const Scalar sigma_h_2  = params.sigma_h * params.sigma_h;
 
         Q(R_0, R_0) += sigma_r0_2 * dt;
         Q(R_1, R_1) += sigma_r1_2 * dt;
         Q(H, H) += sigma_h_2 * dt;
 
         Eigen::LLT<MatX> llt(Q);
-        return llt.matrixL();
+        MatX S = llt.matrixL();
+        return S;
     }
 
     /// Measurement noise diagonal (match reference: +0.3 not +1.0)
     [[nodiscard]] Eigen::Matrix<Scalar, NZ, 1> R_diag(const VecZ& z) const noexcept {
         const Scalar delta_angle = shortest_rad(z[kMeasYaw], z[kMeasArmorYaw]);
         Eigen::Matrix<Scalar, NZ, 1> R_dig;
-        R_dig << 4e-3, 4e-3, std::log(std::abs(delta_angle) + 1.0) + 0.3,
+        R_dig << 4e-3, 4e-3, std::log(std::abs(delta_angle) + 1.0) + 1.0,
             std::log(std::abs(z[kMeasDistance]) + 1.0) / 200.0 + 9e-2;
         return R_dig;
     }
@@ -231,20 +233,27 @@ struct OutpostModel {
 
     /// Process noise parameters
     struct Params {
-        Scalar sigma_q_xy  = 10.0;                   // XY position noise
-        Scalar sigma_q_z   = 1.0;                    // Z position noise
-        Scalar sigma_a_yaw = 1.0;                    // Yaw acceleration noise
+
+        Scalar sigma_q_xy  = 10.0;
+        Scalar sigma_q_z   = 1.0;
+        Scalar sigma_a_yaw = 1.0;
+
+        // 观测噪声（和距离、yaw 误差有关）
+        Scalar meas_dist_k = 0.43;  // 距离权重的系数 K
+        Scalar yaw_log_k   = 0.005; // yaw 噪声前的系数
         std::expected<void, std::string> read_from(const toml::table& tbl) noexcept {
             READ(tbl, sigma_q_xy);
             READ(tbl, sigma_q_z);
             READ(tbl, sigma_a_yaw);
+            READ_OPT(tbl, meas_dist_k);
+            READ_OPT(tbl, yaw_log_k);
             return {};
         }
     };
-
+    // todo
     int armor_id                           = 0;
-    static constexpr Scalar OUTPOST_RADIUS = 0.2765; // From mechanical drawing
-    static constexpr Scalar OUTPOST_DZ     = 0.1;    // Height difference between armors
+    static constexpr Scalar OUTPOST_RADIUS = 0.2765; // 详见机械图纸
+    static constexpr Scalar OUTPOST_DZ     = 0.1;    // 两个装甲板之间的铅锤高度差
     static constexpr int ARMORS_NUM        = 3;
 
     Params params;
@@ -310,28 +319,31 @@ struct OutpostModel {
         const Scalar dt3 = dt2 * dt;
         const Scalar dt4 = dt2 * dt2;
 
-        // X, Y: random walk
+        // 1）X、Y：只有位置，没有速度 “加性随机游走”
+        //    噪声大小与 dt^2 成正比即可
         Q(O_XC, O_XC) = sigma_xy2 * dt2;
         Q(O_YC, O_YC) = sigma_xy2 * dt2;
 
-        // YAW/VYAW: CV model
+        // 2）YAW / VYAW：是 位置+速度 对 CV模型
+        //    [ yaw, vyaw ] 的连续白噪声加速度模型
         Q(O_YAW, O_YAW)   = sigma_yaw2 * dt4 / 4.0;
         Q(O_YAW, O_VYAW)  = sigma_yaw2 * dt3 / 2.0;
         Q(O_VYAW, O_YAW)  = Q(O_YAW, O_VYAW);
         Q(O_VYAW, O_VYAW) = sigma_yaw2 * dt2;
 
-        // Z0, Z1, Z2: random walk
+        // 3）Z0, Z1, Z2：各自随机游走（整体高度可能缓慢漂移）
         Q(O_Z0, O_Z0) = sigma_z2 * dt2;
         Q(O_Z1, O_Z1) = sigma_z2 * dt2;
         Q(O_Z2, O_Z2) = sigma_z2 * dt2;
 
+        // 做 Cholesky 分解，返回 S，使得 S * S^T = Q
         Eigen::LLT<MatX> llt(Q);
-        return llt.matrixL();
+        MatX S = llt.matrixL();
+        return S;
     }
 
-    /// Measurement noise diagonal
-    [[nodiscard]] Eigen::Matrix<Scalar, NZ, 1> R_diag(const VecZ& z) const noexcept {
-        const Scalar delta_angle = shortest_rad(z[kMeasYaw], z[kMeasArmorYaw]);
+    Eigen::Matrix<Scalar, NZ, 1> R_diag(const VecZ& z) const {
+        const double delta_angle = shortest_rad(z[0], z[3]);
         Eigen::Matrix<Scalar, NZ, 1> R_dig;
         R_dig << 4e-3, 4e-3, std::log(std::abs(delta_angle) + 1.0) + 1.0,
             std::log(std::abs(z[kMeasDistance]) + 1.0) / 200.0 + 9e-2;

@@ -88,7 +88,7 @@ struct AtLegacyArmorDetectionBatch {
     [[nodiscard]] size_t size() const noexcept { return detections.size(); }
 };
 
-/// Single armor measurement (3D pose in camera_optical frame)
+/// Single armor measurement (3D pose in odom frame after TF transform)
 struct AtLegacyArmorMeasurement {
     fast_tf::FuckTransform<fast_tf::odom_fuxk_frame> transform;
     ArmorName name                 = ArmorName::Invalid;
@@ -101,6 +101,15 @@ struct AtLegacyArmorMeasurement {
     AtLegacyArmorMeasurement() = default;
 
     /// Construct from Detection + PnP result
+    ///
+    /// NOTE: from_pnp returns the pose in camera_optical frame (OpenCV convention):
+    /// - X axis: right
+    /// - Y axis: down
+    /// - Z axis: forward (pointing into the scene)
+    ///
+    /// The transform here is temporarily stored as odom frame for type consistency,
+    /// but the actual data is in camera_optical frame. It will be properly
+    /// transformed to odom frame by the detection system in at_legacy_systems.cpp.
     AtLegacyArmorMeasurement(
         const AtLegacyArmorDetection& det, const cv::Mat& rvec, const cv::Mat& tvec, uint64_t ts,
         float dist_to_center = 0.0f)
@@ -110,7 +119,8 @@ struct AtLegacyArmorMeasurement {
         , confidence(det.confidence)
         , distance_to_image_center(dist_to_center)
         , timestamp_ns(ts) {
-        // really? no, camera_optical!
+        // Store PnP result (camera_optical frame) in odom-typed transform.
+        // This will be corrected by the TF transform in at_legacy_systems.cpp.
         transform = fast_tf::FuckTransform<fast_tf::odom_fuxk_frame>(
             fast_tf::TransformMatrix4d::from_pnp(rvec, tvec));
     }
