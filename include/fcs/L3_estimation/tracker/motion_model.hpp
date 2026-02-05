@@ -120,8 +120,6 @@ struct RobotModel {
         const Scalar tmp_yaw = x(YAW) + static_cast<Scalar>(id) * angle_step;
 
         Scalar radius;
-        Scalar armor_x;
-        Scalar armor_y;
         Scalar armor_z;
         if (id == kHighArmorIdA || id == kHighArmorIdB) {
             armor_z = x(Z0) + x(H);
