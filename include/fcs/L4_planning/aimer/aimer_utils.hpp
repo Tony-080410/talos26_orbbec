@@ -2,53 +2,68 @@
 
 #include <Eigen/Core>
 
-#include "fcs/L4_planning/gimbal_planner/trajectory_compensator.hpp"
+#include "fcs/L4_planning/trajectory/solver_interfaces.hpp"
+
+#include <algorithm>
+#include <cmath>
 
 namespace fcs::L4 {
 
 /// Maximum iterations for ballistic flying time refinement
-inline constexpr int kMaxFlyingTimeRefineIter = 10;
+/// Increased from 10 to 20 to match legacy iteration_times behavior
+inline constexpr int kMaxFlyingTimeRefineIter = 20;
 
 /// Tolerance for flying time convergence (seconds)
+/// 1ms tolerance corresponds to ~1mm height error for 1m/s vertical target motion
 inline constexpr double kFlyingTimeRefineTolerance = 1e-3;
 
 /// Compute aim point (yaw, pitch) for given target position
 ///
-/// @param compensator Ballistic trajectory compensator
+/// @param solver Ballistic trajectory solver
 /// @param target_pos_muzzle Target position in muzzle frame
 /// @param bullet_speed Bullet speed (m/s)
 /// @return {yaw, pitch} in radians
 [[nodiscard]] inline Eigen::Vector2d compute_aim_point(
-    const std::unique_ptr<TrajectoryCompensator>& compensator,
-    const Eigen::Vector3d& target_pos_muzzle, double bullet_speed) noexcept {
-    const double yaw = std::atan2(target_pos_muzzle.y(), target_pos_muzzle.x());
-    double pitch     = 0.0;
-    double yaw_out   = yaw;
-    [[maybe_unused]] bool ok =
-        compensator->compensate(target_pos_muzzle, yaw_out, pitch, bullet_speed);
-    return {yaw, pitch};
+    const trajectory::IBallisticSolver& solver, const Eigen::Vector3d& target_pos_muzzle,
+    double bullet_speed) noexcept {
+    const auto solution = solver.solve(target_pos_muzzle, bullet_speed);
+    return Eigen::Vector2d{solution.yaw, solution.pitch};
 }
 
 /// Perform iterative flying time refinement
 ///
-/// @param compensator Ballistic trajectory compensator
+/// @param solver Ballistic trajectory solver
 /// @param predict_fn Function to predict position at given time (seconds)
 /// @param initial_delay Initial delay to start from (seconds)
+/// @param bullet_speed Bullet velocity (m/s)
 /// @return Refined total delay (initial_delay + flying_time)
 template <class PredictFn>
 [[nodiscard]] double refine_flying_time(
-    const std::unique_ptr<TrajectoryCompensator>& compensator, PredictFn&& predict_fn,
-    double initial_delay) noexcept {
-    double flying_time = 0.0;
+    const trajectory::IBallisticSolver& solver, PredictFn&& predict_fn, double initial_delay,
+    double bullet_speed) noexcept {
+    const Eigen::Vector3d current_pos = predict_fn(initial_delay);
+    const double distance             = current_pos.norm();
+    const double safe_bullet_speed    = std::max(1e-3, bullet_speed);
+    double flying_time                = distance / safe_bullet_speed;
+    double last_valid_flying_time     = flying_time;
+
     for (int i = 0; i < kMaxFlyingTimeRefineIter; ++i) {
         const Eigen::Vector3d predicted_pos = predict_fn(initial_delay + flying_time);
-        const double t_curr                 = compensator->get_flying_time(predicted_pos);
-        if (std::abs(t_curr - flying_time) < kFlyingTimeRefineTolerance) {
+        const auto solution                 = solver.solve(predicted_pos, bullet_speed);
+
+        if (!solution.converged || !std::isfinite(solution.time_of_flight)
+            || solution.time_of_flight <= 0.0) {
             break;
         }
-        flying_time = t_curr;
+
+        if (std::abs(solution.time_of_flight - flying_time) < kFlyingTimeRefineTolerance) {
+            last_valid_flying_time = solution.time_of_flight;
+            break;
+        }
+        flying_time            = solution.time_of_flight;
+        last_valid_flying_time = flying_time;
     }
-    return initial_delay + flying_time;
+    return initial_delay + last_valid_flying_time;
 }
 
 } // namespace fcs::L4

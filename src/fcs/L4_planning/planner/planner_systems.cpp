@@ -2,9 +2,9 @@
 
 #include "fcs/L4_planning/aimer/types.hpp"
 #include "fcs/L4_planning/common/transform_utils.hpp"
-#include "fcs/L4_planning/gimbal_planner/trajectory_compensator.hpp"
 #include "fcs/L4_planning/gimbal_planner/types.hpp"
 #include "fcs/L4_planning/planner/mpc_planner.hpp"
+#include "fcs/L4_planning/trajectory/solver_interfaces.hpp"
 #include "fcs/core/channel_topics.hpp"
 #include "scheduler/ecs/channel_types.hpp"
 #include "scheduler/ecs/execution_policy.hpp"
@@ -12,6 +12,7 @@
 
 #include <spdlog/spdlog.h>
 
+#include <functional>
 #include <memory>
 
 namespace fcs::L4 {
@@ -21,20 +22,32 @@ namespace {
 // Maximum visualization distance for trajectory (meters)
 constexpr double kMaxVisualizationDistance = 15.0;
 
-// Helper function to sync compensator parameters from trajectory config
-auto sync_compensator(TrajectoryCompensator& compensator, const TrajectoryConfig& traj_cfg) noexcept
-    -> void {
-    compensator.velocity        = traj_cfg.bullet_speed;
-    compensator.gravity         = traj_cfg.gravity;
-    compensator.iteration_times = traj_cfg.iteration_times;
-    compensator.cd              = traj_cfg.cd;
-    compensator.rho             = traj_cfg.rho;
-    compensator.diameter        = traj_cfg.diameter;
-    compensator.mass            = traj_cfg.mass;
-    compensator.rk4_dt          = traj_cfg.rk4_dt;
-    compensator.rk4_min_steps   = traj_cfg.rk4_min_steps;
-    compensator.rk4_max_steps   = traj_cfg.rk4_max_steps;
-    compensator.on_params_updated();
+[[nodiscard]] size_t solver_config_hash(const MpcPlannerConfig& cfg) noexcept {
+    size_t hash             = 0;
+    const auto hash_combine = [&hash](auto value) {
+        hash ^= std::hash<decltype(value)>{}(value) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
+    };
+
+    hash_combine(static_cast<int>(cfg.compensator_type));
+    const auto& traj = cfg.trajectory;
+    hash_combine(traj.iteration_times);
+    hash_combine(traj.bullet_speed);
+    hash_combine(traj.gravity);
+    hash_combine(traj.resistance);
+    hash_combine(traj.cd);
+    hash_combine(traj.rho);
+    hash_combine(traj.diameter);
+    hash_combine(traj.mass);
+    hash_combine(traj.rk4_dt);
+    hash_combine(traj.rk4_min_steps);
+    hash_combine(traj.rk4_max_steps);
+    hash_combine(traj.enable_lookup_table);
+    hash_combine(traj.table_range_max);
+    hash_combine(traj.table_range_step);
+    hash_combine(traj.table_pitch_min);
+    hash_combine(traj.table_pitch_max);
+    hash_combine(traj.table_pitch_step);
+    return hash;
 }
 
 } // namespace
@@ -48,9 +61,8 @@ void register_planner_systems(talos::Scheduler& scheduler) {
 
     scheduler.add_system<talos::pool_compute>(
         "l4_mpc_planner",
-        [planner               = std::make_shared<MpcPlanner>(MpcPlannerConfig{}),
-         compensator           = std::shared_ptr<TrajectoryCompensator>{},
-         last_compensator_type = TrajectoryCompensatorType{}](
+        [planner = std::make_shared<MpcPlanner>(MpcPlannerConfig{}),
+         solver = std::shared_ptr<trajectory::IBallisticSolver>{}, last_config_hash = size_t{0}](
             talos::res<L4Config> cfg,
             talos::spmc<TargetPrediction, AimerOutputChannelTopic> aimer_in,
             talos::res<std::shared_ptr<fast_tf::CoordinateSystem<1024>>> tf_buffer,
@@ -60,13 +72,14 @@ void register_planner_systems(talos::Scheduler& scheduler) {
                 return;
             }
 
-            // Update compensator when config changes or not initialized
-            if (!compensator || last_compensator_type != cfg->mpc_planner.compensator_type) {
-                compensator = std::shared_ptr<TrajectoryCompensator>(
-                    create_compensator(cfg->mpc_planner.compensator_type));
-                last_compensator_type = cfg->mpc_planner.compensator_type;
+            const size_t current_config_hash = solver_config_hash(cfg->mpc_planner);
+
+            // Recreate solver when type changes or config changes significantly
+            if (!solver || last_config_hash != current_config_hash) {
+                solver = std::shared_ptr<trajectory::IBallisticSolver>(trajectory::create_solver(
+                    cfg->mpc_planner.compensator_type, cfg->mpc_planner.trajectory));
+                last_config_hash = current_config_hash;
             }
-            sync_compensator(*compensator, cfg->mpc_planner.trajectory);
 
             // Check if MPC is enabled
             if (!cfg->mpc_planner.enabled) {
@@ -101,8 +114,9 @@ void register_planner_systems(talos::Scheduler& scheduler) {
                 VisualizationDebugData viz_debug;
                 // viz_debug.predicted_position left as std::nullopt (not set)
                 viz_debug.predicted_future = prediction->predicted_future_ns;
-                viz_debug.trajectory =
-                    compensator->get_trajectory(kMaxVisualizationDistance, plan.pitch);
+                viz_debug.trajectory       = solver->generate_trajectory(
+                    plan.pitch, cfg->mpc_planner.trajectory.bullet_speed,
+                    kMaxVisualizationDistance);
                 // Rotate trajectory points by pitch angle
                 for (auto& p : viz_debug.trajectory) {
                     const double x = p.first;

@@ -9,7 +9,7 @@
 #include "fcs/L4_planning/aimer/aimer_utils.hpp"
 #include "fcs/L4_planning/aimer/types.hpp"
 #include "fcs/L4_planning/config.hpp"
-#include "fcs/L4_planning/gimbal_planner/trajectory_compensator.hpp"
+#include "fcs/L4_planning/trajectory/solver_interfaces.hpp"
 
 namespace fcs::L4 {
 
@@ -21,9 +21,9 @@ class Aimer {
 public:
     /// Constructor
     explicit Aimer(
-        const AimerConfig& config, std::unique_ptr<TrajectoryCompensator> compensator) noexcept
+        const AimerConfig& config, std::unique_ptr<trajectory::IBallisticSolver> solver) noexcept
         : config_(config)
-        , compensator_(std::move(compensator)) {}
+        , solver_(std::move(solver)) {}
 
     /// Compute aim point for robot target (Infantry/Hero/Sentry)
     [[nodiscard]] std::expected<TargetPrediction, std::string>
@@ -57,9 +57,9 @@ private:
     /// Common gimbal-based aim angle computation for all target types
     [[nodiscard]] static std::pair<double, double> compute_gimbal_aim_angles(
         const Eigen::Vector3d& predicted_pos, fast_tf::FuckOdom gimbal, fast_tf::FuckOdom muzzle,
-        const std::unique_ptr<TrajectoryCompensator>& compensator, double bullet_speed) noexcept {
+        const trajectory::IBallisticSolver& solver, double bullet_speed) noexcept {
         const Eigen::Vector2d aim_angles =
-            compute_aim_point(compensator, predicted_pos - muzzle->translation(), bullet_speed);
+            compute_aim_point(solver, predicted_pos - muzzle->translation(), bullet_speed);
         const auto muzzle_des = math_fuxk::rpy(0.0, aim_angles.y(), aim_angles.x()).so3();
         const auto idk        = muzzle->so3().inv() * muzzle_des;
         const auto x          = gimbal->so3() * idk;
@@ -92,7 +92,7 @@ private:
         predict_position(const L3::OutpostTargetState& target, double dt) noexcept;
 
     AimerConfig config_;
-    std::unique_ptr<TrajectoryCompensator> compensator_;
+    std::unique_ptr<trajectory::IBallisticSolver> solver_;
 };
 
 // ========================================================================

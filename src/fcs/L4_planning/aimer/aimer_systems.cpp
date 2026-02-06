@@ -5,8 +5,8 @@
 #include "fcs/L4_planning/aimer/aimer.hpp"
 #include "fcs/L4_planning/aimer/types.hpp"
 #include "fcs/L4_planning/common/transform_utils.hpp"
-#include "fcs/L4_planning/gimbal_planner/trajectory_compensator.hpp"
 #include "fcs/L4_planning/planning/fire_decision.hpp"
+#include "fcs/L4_planning/trajectory/solver_interfaces.hpp"
 #include "fcs/core/channel_topics.hpp"
 #include "fcs/core/time.hpp"
 #include "math/euler.hpp"
@@ -23,24 +23,9 @@ namespace fcs::L4 {
 void register_aimer_systems(talos::Scheduler& scheduler, L4Config&& config) {
     // Store configuration in world
 
-    // Create shared trajectory compensator for all aimers
-    auto compensator = create_compensator(config.mpc_planner.compensator_type);
-
-    // Sync compensator parameters from trajectory config
-    auto sync_compensator = [&](decltype(compensator)& compensator_) {
-        compensator_->velocity        = config.mpc_planner.trajectory.bullet_speed;
-        compensator_->gravity         = config.mpc_planner.trajectory.gravity;
-        compensator_->iteration_times = config.mpc_planner.trajectory.iteration_times;
-        compensator_->cd              = config.mpc_planner.trajectory.cd;
-        compensator_->rho             = config.mpc_planner.trajectory.rho;
-        compensator_->diameter        = config.mpc_planner.trajectory.diameter;
-        compensator_->mass            = config.mpc_planner.trajectory.mass;
-        compensator_->rk4_dt          = config.mpc_planner.trajectory.rk4_dt;
-        compensator_->rk4_min_steps   = config.mpc_planner.trajectory.rk4_min_steps;
-        compensator_->rk4_max_steps   = config.mpc_planner.trajectory.rk4_max_steps;
-        compensator_->on_params_updated();
-    };
-    sync_compensator(compensator);
+    // Create shared ballistic solver for all aimers
+    auto solver = trajectory::create_solver(
+        config.mpc_planner.compensator_type, config.mpc_planner.trajectory);
     scheduler.world().insert_resource(config);
 
     // =========================================================================
@@ -51,7 +36,7 @@ void register_aimer_systems(talos::Scheduler& scheduler, L4Config&& config) {
 
     scheduler.add_system<talos::pool_compute>(
         "l4_aimer",
-        [aimer = std::make_shared<Aimer>(config.aimer, std::move(compensator))](
+        [aimer = std::make_shared<Aimer>(config.aimer, std::move(solver))](
             talos::res<L4Config> cfg,
             talos::spmc<L3::TrackerOutput, TrackerOutputChannelTopic> tracker_in,
             talos::spmc<energy_meter::EnergyMeterState, EnergyMeterStateChannelTopic> rune_in,

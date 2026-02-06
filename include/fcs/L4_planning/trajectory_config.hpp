@@ -60,6 +60,29 @@ struct TrajectoryConfig {
     /// Maximum RK4 steps per integration.
     int rk4_max_steps{2000};
 
+    // ========================================================================
+    // Lookup Table Configuration (for RK4 with table optimization)
+    // ========================================================================
+
+    /// Enable lookup table acceleration for RK4 model.
+    /// When true, precomputes (range, pitch) -> (z, tof) table for fast pitch solving.
+    bool enable_lookup_table{true};
+
+    /// Maximum range in lookup table (meters).
+    double table_range_max{20.0};
+
+    /// Range step size in lookup table (meters).
+    double table_range_step{0.01};
+
+    /// Minimum pitch in lookup table (radians).
+    double table_pitch_min{-0.6};
+
+    /// Maximum pitch in lookup table (radians).
+    double table_pitch_max{0.9};
+
+    /// Pitch step size in lookup table (radians).
+    double table_pitch_step{0.005};
+
     std::expected<void, std::string> read_from(const toml::table& tbl) noexcept;
 };
 

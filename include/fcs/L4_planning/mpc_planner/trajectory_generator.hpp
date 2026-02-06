@@ -6,8 +6,8 @@
 
 #include "fcs/L3_estimation/tracker/types.hpp"
 #include "fcs/L4_planning/angle_utils.hpp"
-#include "fcs/L4_planning/gimbal_planner/trajectory_compensator.hpp"
 #include "fcs/L4_planning/mpc_planner/config.hpp"
+#include "fcs/L4_planning/trajectory/solver_interfaces.hpp"
 
 namespace fcs::L4 {
 
@@ -48,20 +48,20 @@ public:
     /// @param measurement_ts Measurement timestamp (ns)
     /// @param current_time_ns Current time (ns)
     /// @param plan_to_muzzle_delay Additional delay (seconds)
-    /// @param compensator Ballistic compensator for pitch calculation
+    /// @param solver Ballistic solver for pitch calculation
     /// @param bullet_speed Bullet velocity (m/s)
     /// @param yaw0 Output: reference yaw at current time (for offset)
     /// @return Reference trajectory [yaw-yaw0, yaw_vel, pitch, pitch_vel] × horizon
     [[nodiscard]] Trajectory generate_robot(
         const L3::RobotTargetState& target, uint64_t measurement_ts, uint64_t current_time_ns,
-        double plan_to_muzzle_delay, const TrajectoryCompensator& compensator, double bullet_speed,
-        double& yaw0) const noexcept;
+        double plan_to_muzzle_delay, const trajectory::IBallisticSolver& solver,
+        double bullet_speed, double& yaw0) const noexcept;
 
     /// Generate reference trajectory for robot target with custom muzzle origin
     [[nodiscard]] Trajectory generate_robot(
         const L3::RobotTargetState& target, uint64_t measurement_ts, uint64_t current_time_ns,
-        double plan_to_muzzle_delay, const TrajectoryCompensator& compensator, double bullet_speed,
-        const Eigen::Vector3d& origin_odom, double& yaw0) const noexcept;
+        double plan_to_muzzle_delay, const trajectory::IBallisticSolver& solver,
+        double bullet_speed, const Eigen::Vector3d& origin_odom, double& yaw0) const noexcept;
 
     /// Generate reference trajectory for outpost target
     ///
@@ -69,20 +69,20 @@ public:
     /// @param measurement_ts Measurement timestamp (ns)
     /// @param current_time_ns Current time (ns)
     /// @param plan_to_muzzle_delay Additional delay (seconds)
-    /// @param compensator Ballistic compensator for pitch calculation
+    /// @param solver Ballistic solver for pitch calculation
     /// @param bullet_speed Bullet velocity (m/s)
     /// @param yaw0 Output: reference yaw at current time (for offset)
     /// @return Reference trajectory [yaw-yaw0, yaw_vel, pitch, pitch_vel] × horizon
     [[nodiscard]] Trajectory generate_outpost(
         const L3::OutpostTargetState& target, uint64_t measurement_ts, uint64_t current_time_ns,
-        double plan_to_muzzle_delay, const TrajectoryCompensator& compensator, double bullet_speed,
-        double& yaw0) const noexcept;
+        double plan_to_muzzle_delay, const trajectory::IBallisticSolver& solver,
+        double bullet_speed, double& yaw0) const noexcept;
 
     /// Generate reference trajectory for outpost target with custom muzzle origin
     [[nodiscard]] Trajectory generate_outpost(
         const L3::OutpostTargetState& target, uint64_t measurement_ts, uint64_t current_time_ns,
-        double plan_to_muzzle_delay, const TrajectoryCompensator& compensator, double bullet_speed,
-        const Eigen::Vector3d& origin_odom, double& yaw0) const noexcept;
+        double plan_to_muzzle_delay, const trajectory::IBallisticSolver& solver,
+        double bullet_speed, const Eigen::Vector3d& origin_odom, double& yaw0) const noexcept;
 
     /// Predict robot target position at future time dt
     ///
@@ -99,11 +99,11 @@ public:
     /// Compute aim point (yaw, pitch) for given target position
     ///
     /// @param target_pos Target position in odom frame
-    /// @param compensator Ballistic compensator
+    /// @param solver Ballistic solver
     /// @param bullet_speed Bullet velocity (m/s)
     /// @return (yaw, pitch) in radians
     [[nodiscard]] static Eigen::Vector2d compute_aim_point(
-        const Eigen::Vector3d& target_pos, const TrajectoryCompensator& compensator,
+        const Eigen::Vector3d& target_pos, const trajectory::IBallisticSolver& solver,
         double bullet_speed) noexcept;
 
 private:
@@ -114,7 +114,7 @@ private:
     template <class PredictFn>
     [[nodiscard]] Trajectory generate_trajectory(
         PredictFn&& predict, uint64_t measurement_ts, uint64_t current_time_ns,
-        double action_overhead, const TrajectoryCompensator& compensator, double bullet_speed,
+        double action_overhead, const trajectory::IBallisticSolver& solver, double bullet_speed,
         const Eigen::Vector3d& origin_odom, double& yaw0) const noexcept;
 
     double ponder_dt_{0.01};
@@ -129,7 +129,7 @@ private:
 template <class PredictFn>
 inline TrajectoryGenerator::Trajectory TrajectoryGenerator::generate_trajectory(
     PredictFn&& predict, uint64_t measurement_ts, uint64_t current_time_ns, double action_overhead,
-    const TrajectoryCompensator& compensator, double bullet_speed,
+    const trajectory::IBallisticSolver& solver, double bullet_speed,
     const Eigen::Vector3d& origin_odom, double& yaw0) const noexcept {
     TrajectoryMat traj(4, ponder_total);
 
@@ -142,33 +142,42 @@ inline TrajectoryGenerator::Trajectory TrajectoryGenerator::generate_trajectory(
         return predict(dt) - origin_odom;
     };
 
-    double flying_time = 0.0;
+    const Eigen::Vector3d initial_target = predict_muzzle(action_overhead);
+    const double safe_bullet_speed       = std::max(1e-3, bullet_speed);
+    double flying_time                   = initial_target.norm() / safe_bullet_speed;
+    double last_valid_flying_time        = flying_time;
     for (auto i = 0; i < refine_max_iter; ++i) {
         auto predicted_target = predict_muzzle(action_overhead + flying_time);
-        auto t_curr           = compensator.get_flying_time(predicted_target);
+        auto solution         = solver.solve(predicted_target, bullet_speed);
 
-        if (std::abs(t_curr - flying_time) < refine_tolerance) {
+        if (!solution.converged || !std::isfinite(solution.time_of_flight)
+            || solution.time_of_flight <= 0.0) {
             break;
         }
-        flying_time = t_curr;
+        if (std::abs(solution.time_of_flight - flying_time) < refine_tolerance) {
+            last_valid_flying_time = solution.time_of_flight;
+            break;
+        }
+        flying_time            = solution.time_of_flight;
+        last_valid_flying_time = flying_time;
     }
 
-    const double ideal_time = action_overhead + flying_time;
+    const double ideal_time = action_overhead + last_valid_flying_time;
 
     const double start_dt = ideal_time - ponder_back * ponder_dt_;
 
     const auto pos_now = predict_muzzle(ideal_time);
-    const auto aim_now = compute_aim_point(pos_now, compensator, bullet_speed);
+    const auto aim_now = compute_aim_point(pos_now, solver, bullet_speed);
     yaw0               = aim_now.x();
 
     Eigen::Vector2d aim_prev, aim_curr, aim_next;
     aim_prev =
-        compute_aim_point(predict(start_dt - ponder_dt_) - origin_odom, compensator, bullet_speed);
-    aim_curr = compute_aim_point(predict(start_dt) - origin_odom, compensator, bullet_speed);
+        compute_aim_point(predict(start_dt - ponder_dt_) - origin_odom, solver, bullet_speed);
+    aim_curr = compute_aim_point(predict(start_dt) - origin_odom, solver, bullet_speed);
 
     for (int i = 0; i < ponder_total; ++i) {
         const auto t = start_dt + (i + 1) * ponder_dt_;
-        aim_next     = compute_aim_point(predict_muzzle(t), compensator, bullet_speed);
+        aim_next     = compute_aim_point(predict_muzzle(t), solver, bullet_speed);
 
         const double yaw_vel   = normalize_rad(aim_next.x() - aim_prev.x()) / (2.0 * ponder_dt_);
         const double pitch_vel = (aim_next.y() - aim_prev.y()) / (2.0 * ponder_dt_);
@@ -196,38 +205,38 @@ inline TrajectoryGenerator::Trajectory TrajectoryGenerator::generate_trajectory(
 
 inline TrajectoryGenerator::Trajectory TrajectoryGenerator::generate_robot(
     const L3::RobotTargetState& target, uint64_t measurement_ts, uint64_t current_time_ns,
-    double plan_to_muzzle_delay, const TrajectoryCompensator& compensator, double bullet_speed,
+    double plan_to_muzzle_delay, const trajectory::IBallisticSolver& solver, double bullet_speed,
     double& yaw0) const noexcept {
     return generate_robot(
-        target, measurement_ts, current_time_ns, plan_to_muzzle_delay, compensator, bullet_speed,
+        target, measurement_ts, current_time_ns, plan_to_muzzle_delay, solver, bullet_speed,
         Eigen::Vector3d::Zero(), yaw0);
 }
 
 inline TrajectoryGenerator::Trajectory TrajectoryGenerator::generate_robot(
     const L3::RobotTargetState& target, uint64_t measurement_ts, uint64_t current_time_ns,
-    double plan_to_muzzle_delay, const TrajectoryCompensator& compensator, double bullet_speed,
+    double plan_to_muzzle_delay, const trajectory::IBallisticSolver& solver, double bullet_speed,
     const Eigen::Vector3d& origin_odom, double& yaw0) const noexcept {
     return generate_trajectory(
         [&](double dt) noexcept { return predict_robot_position(target, dt); }, measurement_ts,
-        current_time_ns, plan_to_muzzle_delay, compensator, bullet_speed, origin_odom, yaw0);
+        current_time_ns, plan_to_muzzle_delay, solver, bullet_speed, origin_odom, yaw0);
 }
 
 inline TrajectoryGenerator::Trajectory TrajectoryGenerator::generate_outpost(
     const L3::OutpostTargetState& target, uint64_t measurement_ts, uint64_t current_time_ns,
-    double plan_to_muzzle_delay, const TrajectoryCompensator& compensator, double bullet_speed,
+    double plan_to_muzzle_delay, const trajectory::IBallisticSolver& solver, double bullet_speed,
     double& yaw0) const noexcept {
     return generate_outpost(
-        target, measurement_ts, current_time_ns, plan_to_muzzle_delay, compensator, bullet_speed,
+        target, measurement_ts, current_time_ns, plan_to_muzzle_delay, solver, bullet_speed,
         Eigen::Vector3d::Zero(), yaw0);
 }
 
 inline TrajectoryGenerator::Trajectory TrajectoryGenerator::generate_outpost(
     const L3::OutpostTargetState& target, uint64_t measurement_ts, uint64_t current_time_ns,
-    double plan_to_muzzle_delay, const TrajectoryCompensator& compensator, double bullet_speed,
+    double plan_to_muzzle_delay, const trajectory::IBallisticSolver& solver, double bullet_speed,
     const Eigen::Vector3d& origin_odom, double& yaw0) const noexcept {
     return generate_trajectory(
         [&](double dt) noexcept { return predict_outpost_position(target, dt); }, measurement_ts,
-        current_time_ns, plan_to_muzzle_delay, compensator, bullet_speed, origin_odom, yaw0);
+        current_time_ns, plan_to_muzzle_delay, solver, bullet_speed, origin_odom, yaw0);
 }
 
 inline Eigen::Vector3d TrajectoryGenerator::predict_robot_position(
@@ -316,17 +325,15 @@ inline Eigen::Vector3d TrajectoryGenerator::predict_outpost_position(
 }
 
 inline Eigen::Vector2d TrajectoryGenerator::compute_aim_point(
-    const Eigen::Vector3d& target_pos, const TrajectoryCompensator& compensator,
+    const Eigen::Vector3d& target_pos, const trajectory::IBallisticSolver& solver,
     double bullet_speed) noexcept {
     // Compute yaw (azimuth angle)
     const double yaw = std::atan2(target_pos.y(), target_pos.x());
 
-    // Compute pitch with ballistic compensation (const-safe with bullet_speed param)
-    double pitch             = 0.0;
-    double yaw_out           = yaw;
-    [[maybe_unused]] bool ok = compensator.compensate(target_pos, yaw_out, pitch, bullet_speed);
+    // Compute pitch with ballistic compensation
+    const auto solution = solver.solve(target_pos, bullet_speed);
 
-    return {yaw, pitch};
+    return {yaw, solution.pitch};
 }
 
 } // namespace fcs::L4

@@ -95,8 +95,10 @@ std::expected<TargetPrediction, std::string> Aimer::aim_generic(
     const double age         = static_cast<double>(current_ns - measurement_ns) * 1e-9;
     const double total_delay = age + config_.delay;
 
+    const Eigen::Vector3d t            = muzzle->translation();
     const double total_prediction_time = refine_flying_time(
-        compensator_, [&](double dt) { return predict_position(target, dt); }, total_delay);
+        *solver_, [&](double dt) -> Eigen::Vector3d { return predict_position(target, dt) - t; },
+        total_delay, bullet_speed);
 
     output.predicted_position = predict_position(target, total_prediction_time);
     output.predicted_future_ns =
@@ -104,7 +106,7 @@ std::expected<TargetPrediction, std::string> Aimer::aim_generic(
     output.flying_time = total_prediction_time - total_delay;
 
     const auto [yaw, pitch] = compute_gimbal_aim_angles(
-        output.predicted_position, gimbal, muzzle, compensator_, bullet_speed);
+        output.predicted_position, gimbal, muzzle, *solver_, bullet_speed);
 
     output.aim_yaw   = yaw;
     output.aim_pitch = pitch;
@@ -130,10 +132,12 @@ std::expected<TargetPrediction, std::string> Aimer::aim_generic_no_prediction(
 
     output.predicted_position  = target.predicted_position_odom;
     output.predicted_future_ns = target.predicted_future_ns;
-    output.flying_time         = compensator_->get_flying_time(output.predicted_position);
+    const auto solution =
+        solver_->solve(output.predicted_position - muzzle->translation(), bullet_speed);
+    output.flying_time = solution.time_of_flight;
 
     const auto [yaw, pitch] = compute_gimbal_aim_angles(
-        output.predicted_position, gimbal, muzzle, compensator_, bullet_speed);
+        output.predicted_position, gimbal, muzzle, *solver_, bullet_speed);
 
     output.aim_yaw   = yaw;
     output.aim_pitch = pitch;

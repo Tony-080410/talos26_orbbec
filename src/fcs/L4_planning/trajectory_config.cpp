@@ -16,6 +16,12 @@ std::expected<void, std::string> TrajectoryConfig::read_from(const toml::table& 
     READ_OPT(tbl, rk4_dt);
     READ_OPT(tbl, rk4_min_steps);
     READ_OPT(tbl, rk4_max_steps);
+    READ_OPT(tbl, enable_lookup_table);
+    READ_OPT(tbl, table_range_max);
+    READ_OPT(tbl, table_range_step);
+    READ_OPT(tbl, table_pitch_min);
+    READ_OPT(tbl, table_pitch_max);
+    READ_OPT(tbl, table_pitch_step);
     return {};
 }
 

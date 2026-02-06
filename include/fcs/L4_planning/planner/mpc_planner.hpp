@@ -13,11 +13,11 @@
 #include "fcs/L4_planning/aimer/types.hpp"
 #include "fcs/L4_planning/angle_utils.hpp"
 #include "fcs/L4_planning/common/conversion.hpp"
-#include "fcs/L4_planning/gimbal_planner/trajectory_compensator.hpp"
 #include "fcs/L4_planning/gimbal_planner/types.hpp"
 #include "fcs/L4_planning/mpc_planner/config.hpp"
 #include "fcs/L4_planning/mpc_planner/solver_handle.hpp"
 #include "fcs/L4_planning/planning/fire_decision.hpp"
+#include "fcs/L4_planning/trajectory/solver_interfaces.hpp"
 #include <spdlog/spdlog.h>
 
 // Forward declaration to avoid including toml++ in config headers.
@@ -81,19 +81,9 @@ private:
         double max_acc; ///< Maximum acceleration constraint
     };
 
-    /// Update compensator parameters from config
-    void update_compensator_params() noexcept {
-        compensator_->velocity        = config_.trajectory.bullet_speed;
-        compensator_->gravity         = config_.trajectory.gravity;
-        compensator_->iteration_times = config_.trajectory.iteration_times;
-        compensator_->cd              = config_.trajectory.cd;
-        compensator_->rho             = config_.trajectory.rho;
-        compensator_->diameter        = config_.trajectory.diameter;
-        compensator_->mass            = config_.trajectory.mass;
-        compensator_->rk4_dt          = config_.trajectory.rk4_dt;
-        compensator_->rk4_min_steps   = config_.trajectory.rk4_min_steps;
-        compensator_->rk4_max_steps   = config_.trajectory.rk4_max_steps;
-        compensator_->on_params_updated();
+    /// Update compensator parameters from config (no-op for stateless solver)
+    void update_solver_params() noexcept {
+        // Stateless solver - no params to update
     }
 
     /// Initialize TinyMPC solvers
@@ -143,8 +133,8 @@ private:
     SolverHandle yaw_solver_;
     SolverHandle pitch_solver_;
 
-    // Ballistic compensator
-    std::unique_ptr<TrajectoryCompensator> compensator_;
+    // Ballistic solver (stateless)
+    std::unique_ptr<trajectory::IBallisticSolver> solver_;
 
     // Track current solver configuration for change detection
     int current_horizon_{0};
@@ -157,13 +147,13 @@ private:
 
 inline MpcPlanner::MpcPlanner(const MpcPlannerConfig& config)
     : config_(config) {
-    compensator_ = create_compensator(config.compensator_type);
-    update_compensator_params();
+    solver_ = trajectory::create_solver(config.compensator_type, config.trajectory);
+    update_solver_params();
     setup_solvers();
 }
 
 inline void MpcPlanner::sync_config() noexcept {
-    update_compensator_params();
+    update_solver_params();
 
     // Check if solver needs to be recreated (horizon or dt changed)
     const int new_horizon = config_.ponder_ahead + config_.ponder_back;
@@ -323,7 +313,8 @@ inline void MpcPlanner::fill_visualization_trajectory(GimbalPlan& output) const 
     // 4. The trajectory itself is sufficient for visualization
     // viz_debug.predicted_position left as std::nullopt (not set)
     viz_debug.predicted_future = output.predicted_future;
-    viz_debug.trajectory = compensator_->get_trajectory(kMaxVisualizationDistance, output.pitch);
+    viz_debug.trajectory       = solver_->generate_trajectory(
+        output.pitch, config_.trajectory.bullet_speed, kMaxVisualizationDistance);
     for (auto& p : viz_debug.trajectory) {
         const double x = p.first;
         const double z = p.second;

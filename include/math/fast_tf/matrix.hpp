@@ -100,7 +100,7 @@ public:
     [[nodiscard]] TransformMatrix4 inverse() const { return TransformMatrix4(pose_.inv()); }
 
     [[nodiscard]] const SE3& se3() const { return pose_; }
-    [[nodiscard]] const SO3& so3() const { return SO3(pose_.R()); }
+    [[nodiscard]] SO3 so3() const { return SO3(pose_.R()); }
     [[nodiscard]] Matrix matrix() const { return pose_.T(); }
 
     [[nodiscard]] Eigen::Matrix<T, 3, 1> translation() const { return pose_.x(); }

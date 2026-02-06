@@ -2,9 +2,9 @@
 
 #include "fcs/L3_estimation/energy_meter/types.hpp"
 #include "fcs/L4_planning/angle_utils.hpp"
-#include "fcs/L4_planning/gimbal_planner/trajectory_compensator.hpp"
 #include "fcs/L4_planning/gimbal_planner/types.hpp"
 #include "fcs/L4_planning/mpc_planner/config.hpp"
+#include "fcs/L4_planning/trajectory/solver_interfaces.hpp"
 #include "fcs/core/channel_topics.hpp"
 #include "fcs/core/time.hpp"
 #include "math/fast_tf/frame.hpp"
@@ -17,6 +17,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <functional>
 #include <memory>
 #include <utility>
 
@@ -25,19 +26,32 @@ namespace {
 
 constexpr double kMaxVisualizationDistance = 15.0;
 
-auto sync_compensator(TrajectoryCompensator& compensator, const TrajectoryConfig& traj_cfg) noexcept
-    -> void {
-    compensator.velocity        = traj_cfg.bullet_speed;
-    compensator.gravity         = traj_cfg.gravity;
-    compensator.iteration_times = traj_cfg.iteration_times;
-    compensator.cd              = traj_cfg.cd;
-    compensator.rho             = traj_cfg.rho;
-    compensator.diameter        = traj_cfg.diameter;
-    compensator.mass            = traj_cfg.mass;
-    compensator.rk4_dt          = traj_cfg.rk4_dt;
-    compensator.rk4_min_steps   = traj_cfg.rk4_min_steps;
-    compensator.rk4_max_steps   = traj_cfg.rk4_max_steps;
-    compensator.on_params_updated();
+[[nodiscard]] size_t solver_config_hash(const MpcPlannerConfig& cfg) noexcept {
+    size_t hash             = 0;
+    const auto hash_combine = [&hash](auto value) {
+        hash ^= std::hash<decltype(value)>{}(value) + 0x9e3779b9 + (hash << 6) + (hash >> 2);
+    };
+
+    hash_combine(static_cast<int>(cfg.compensator_type));
+    const auto& traj = cfg.trajectory;
+    hash_combine(traj.iteration_times);
+    hash_combine(traj.bullet_speed);
+    hash_combine(traj.gravity);
+    hash_combine(traj.resistance);
+    hash_combine(traj.cd);
+    hash_combine(traj.rho);
+    hash_combine(traj.diameter);
+    hash_combine(traj.mass);
+    hash_combine(traj.rk4_dt);
+    hash_combine(traj.rk4_min_steps);
+    hash_combine(traj.rk4_max_steps);
+    hash_combine(traj.enable_lookup_table);
+    hash_combine(traj.table_range_max);
+    hash_combine(traj.table_range_step);
+    hash_combine(traj.table_pitch_min);
+    hash_combine(traj.table_pitch_max);
+    hash_combine(traj.table_pitch_step);
+    return hash;
 }
 
 auto is_on_target(
@@ -64,8 +78,8 @@ void register_rune_planning_systems(talos::Scheduler& scheduler, RunePlannerConf
 
     scheduler.add_system<talos::pool_compute>(
         "l4_rune_planner",
-        [compensator = std::shared_ptr<TrajectoryCompensator>{}, last_timestamp_ns = uint64_t{0},
-         last_yaw = 0.0, last_pitch = 0.0](
+        [solver = std::shared_ptr<trajectory::IBallisticSolver>{}, last_config_hash = size_t{0},
+         last_timestamp_ns = uint64_t{0}, last_yaw = 0.0, last_pitch = 0.0](
             talos::res<RunePlannerConfig> cfg, talos::res<MpcPlannerConfig> mpc_cfg,
             talos::subscribe<fcs::energy_meter::EnergyMeterState, EnergyMeterStateChannelTopic>
                 state_in,
@@ -75,10 +89,13 @@ void register_rune_planning_systems(talos::Scheduler& scheduler, RunePlannerConf
                 return;
             }
 
-            if (!compensator || mpc_cfg.is_changed()) {
-                compensator = std::shared_ptr<TrajectoryCompensator>(
-                    create_compensator(mpc_cfg->compensator_type));
-                sync_compensator(*compensator, mpc_cfg->trajectory);
+            const size_t current_config_hash = solver_config_hash(*mpc_cfg);
+
+            // Recreate solver when config changes
+            if (!solver || last_config_hash != current_config_hash) {
+                solver = std::shared_ptr<trajectory::IBallisticSolver>(
+                    trajectory::create_solver(mpc_cfg->compensator_type, mpc_cfg->trajectory));
+                last_config_hash = current_config_hash;
             }
 
             const auto state = state_in.read();
@@ -115,16 +132,16 @@ void register_rune_planning_systems(talos::Scheduler& scheduler, RunePlannerConf
                 return;
             }
 
-            double yaw   = 0.0;
-            double pitch = 0.0;
-            if (!compensator->compensate(rel, yaw, pitch, mpc_cfg->trajectory.bullet_speed)) {
+            // Use new solver API - solve returns AimSolution value object
+            const auto solution = solver->solve(rel, mpc_cfg->trajectory.bullet_speed);
+            if (!solution.is_valid()) {
                 return;
             }
-            pitch = std::clamp(pitch, mpc_cfg->pitch_min, mpc_cfg->pitch_max);
+            double pitch = std::clamp(solution.pitch, mpc_cfg->pitch_min, mpc_cfg->pitch_max);
 
             GimbalPlan plan;
             plan.timestamp_ns       = current_time_ns;
-            plan.yaw                = normalize_rad(yaw);
+            plan.yaw                = normalize_rad(solution.yaw);
             plan.pitch              = pitch;
             plan.distance           = distance;
             plan.predicted_future   = state->predicted_future_ns;
@@ -139,8 +156,8 @@ void register_rune_planning_systems(talos::Scheduler& scheduler, RunePlannerConf
             plan.viz_debug = VisualizationDebugData{};
             // viz_debug->predicted_position left as std::nullopt (not set)
             plan.viz_debug->predicted_future = state->predicted_future_ns;
-            plan.viz_debug->trajectory =
-                compensator->get_trajectory(kMaxVisualizationDistance, plan.pitch);
+            plan.viz_debug->trajectory       = solver->generate_trajectory(
+                plan.pitch, mpc_cfg->trajectory.bullet_speed, kMaxVisualizationDistance);
             for (auto& p : plan.viz_debug->trajectory) {
                 const double x = p.first;
                 const double z = p.second;
