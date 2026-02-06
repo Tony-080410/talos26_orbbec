@@ -16,16 +16,6 @@
 
 namespace fcs::L4 {
 
-// ============================================================================
-// Constants
-// ============================================================================
-
-namespace compensator_constants {
-constexpr double kDhThreshold    = 0.01; ///< Convergence threshold for height error (m)
-constexpr double kMaxAngle       = std::numbers::pi / 2.5; ///< Max valid pitch angle (rad)
-constexpr double kTrajectoryStep = 0.03;                   ///< Trajectory visualization step (m)
-} // namespace compensator_constants
-
 /// Abstract trajectory compensator for ballistic compensation
 class TrajectoryCompensator {
 public:
@@ -61,6 +51,9 @@ public:
     [[nodiscard]] virtual bool compensate_pitch(
         const Eigen::Vector3d& target_position, double& pitch,
         double bullet_velocity) const noexcept {
+        constexpr double kDhThreshold = 0.01;                   ///< Convergence threshold (m)
+        constexpr double kMaxAngle    = std::numbers::pi / 2.5; ///< Max valid pitch (rad)
+
         const double target_height = target_position.z();
         double iterative_height    = target_height;
         double impact_height       = 0.0;
@@ -70,20 +63,19 @@ public:
 
         for (int i = 0; i < iteration_times; ++i) {
             angle = std::atan2(iterative_height, distance);
-            if (std::abs(angle) > compensator_constants::kMaxAngle) {
+            if (std::abs(angle) > kMaxAngle) {
                 break;
             }
 
             impact_height = calculate_trajectory(distance, angle, bullet_velocity);
             dh            = target_height - impact_height;
-            if (std::abs(dh) < compensator_constants::kDhThreshold) {
+            if (std::abs(dh) < kDhThreshold) {
                 break;
             }
             iterative_height += dh;
         }
 
-        if (std::abs(dh) > compensator_constants::kDhThreshold
-            || std::abs(angle) > compensator_constants::kMaxAngle) {
+        if (std::abs(dh) > kDhThreshold || std::abs(angle) > kMaxAngle) {
             return false;
         }
 
@@ -98,16 +90,17 @@ public:
     /// Get trajectory points for visualization
     [[nodiscard]] virtual std::vector<std::pair<double, double>>
         get_trajectory(double max_distance, double pitch) const noexcept {
+        constexpr double kTrajectoryStep = 0.03; ///< Trajectory visualization step (m)
+
         if (max_distance < 0) {
             return {};
         }
 
-        const size_t num_points =
-            static_cast<size_t>(max_distance / compensator_constants::kTrajectoryStep) + 1;
+        const size_t num_points = static_cast<size_t>(max_distance / kTrajectoryStep) + 1;
         std::vector<std::pair<double, double>> trajectory;
         trajectory.reserve(num_points);
 
-        for (double x = 0; x < max_distance; x += compensator_constants::kTrajectoryStep) {
+        for (double x = 0; x < max_distance; x += kTrajectoryStep) {
             trajectory.emplace_back(x, calculate_trajectory(x, pitch));
         }
 

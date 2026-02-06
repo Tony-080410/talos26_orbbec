@@ -210,8 +210,8 @@ int main() {
     fcs::L3::register_tracker_systems(scheduler, std::move(vision.l3.tracker));
     fcs::energy_meter::register_energy_meter_systems(scheduler, std::move(vision.energy_meter));
 
-    auto mpc_cfg = vision.l4.mpc_planner;
-    fcs::L4::register_mpc_planning_systems(scheduler, std::move(mpc_cfg));
+    // Register L4 Planning pipeline (Aimer + Planner)
+    fcs::L4::register_l4_planning_systems(scheduler, std::move(vision.l4));
     fcs::L4::register_rune_planning_systems(scheduler, std::move(vision.rune_planner));
     fcs::L4::register_plan_mux_systems(scheduler, std::move(vision.plan_mux));
 

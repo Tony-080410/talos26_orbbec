@@ -95,9 +95,6 @@ private:
     /// Cleanup TinyMPC solvers
     void cleanup_solvers() noexcept;
 
-    /// Warm start: shift previous solution forward by one step
-    void warm_start_shift() noexcept;
-
     /// Solve both yaw and pitch MPC problems from a reference trajectory.
     void solve_from_reference(const Trajectory& traj) noexcept;
 
@@ -155,9 +152,6 @@ private:
             + flying_time;
         return {flying_time, predict_dt};
     }
-
-    /// Large initial distance for closest armor selection
-    static constexpr double kArmorSelectionMinDist = 1e10;
 
     /// Infinity bound for MPC constraints (effectively no constraint)
     static constexpr double kInfinityBound = 1e17;
@@ -266,30 +260,6 @@ inline void MpcGimbalPlanner::setup_solvers() noexcept {
     // Update tracked configuration
     current_horizon_ = config_.ponder_ahead + config_.ponder_back;
     current_dt_      = config_.ponder_dt;
-}
-
-inline void MpcGimbalPlanner::warm_start_shift() noexcept {
-    // Shift trajectory and control sequence forward by one step for warm start
-    // This provides a better initial guess for the solver
-    const auto N = config_.ponder_ahead + config_.ponder_back;
-
-    auto shift_solver = [N](const SolverHandle& handle) noexcept {
-        TinySolver* solver = handle.get();
-        if (!solver || !solver->work)
-            return;
-        // Shift state trajectory: x[:, 0:N-1] = x[:, 1:N]
-        solver->work->x.leftCols(N - 1) = solver->work->x.rightCols(N - 1).eval();
-        // Shift control sequence: u[:, 0:N-2] = u[:, 1:N-1]
-        if (N > 2) {
-            solver->work->u.leftCols(N - 2) = solver->work->u.rightCols(N - 2).eval();
-        }
-        // Reset dual variables for better convergence with new reference
-        solver->work->g.setZero();
-        solver->work->y.setZero();
-    };
-
-    shift_solver(yaw_solver_);
-    shift_solver(pitch_solver_);
 }
 
 inline void MpcGimbalPlanner::solve_from_reference(const Trajectory& traj) noexcept {
@@ -405,7 +375,7 @@ inline void MpcGimbalPlanner::fill_common_output(
         output.tracking_error = std::hypot(yaw_error, pitch_error);
     }
     auto [roll, pitch, yaw] = gimbal_tf->euler_rot().rpy();
-    // what the fuck negative
+    // Note: gimbal pitch sign is inverted for fire decision
     output.fire_advice = is_on_target(yaw, pitch, output.yaw, -output.pitch, output.distance);
 
     fill_visualization_trajectory(output);
@@ -424,7 +394,7 @@ inline void MpcGimbalPlanner::fill_common_output(
 }
 
 inline void MpcGimbalPlanner::compute_cost_breakdown(
-    const Trajectory& traj, double yaw0, std::vector<double>& cost_yaw_pos,
+    const Trajectory& traj, [[maybe_unused]] double yaw0, std::vector<double>& cost_yaw_pos,
     std::vector<double>& cost_yaw_vel, std::vector<double>& cost_pitch_pos,
     std::vector<double>& cost_pitch_vel, double& total_cost) const noexcept {
     const auto N = config_.ponder_ahead + config_.ponder_back;
@@ -485,10 +455,8 @@ inline std::expected<MpcPlannerOutput, std::string> MpcGimbalPlanner::plan(
         return std::unexpected("Target not tracking");
     }
 
-    // NOTE: warm_start disabled - causes tracking issues when target suddenly turns
-    // Each frame now solves independently from reference trajectory start point,
-    // matching sp_vision_25 behavior for better stability
-    // warm_start_shift();
+    // Note: warm_start disabled - causes tracking issues when target suddenly turns.
+    // Each frame solves independently from reference trajectory start point for stability.
 
     if (target.is_robot()) {
         return plan_robot(

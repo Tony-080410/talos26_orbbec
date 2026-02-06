@@ -343,29 +343,31 @@ void register_debug_systems(App& app, talos::Scheduler* scheduler_ptr = nullptr)
             }
 
             auto plan = plan_in.read();
-            if (!plan || plan->ref_yaw.empty()) {
+            if (!plan || !plan->mpc_debug || plan->mpc_debug->ref_yaw.empty()) {
                 return;
             }
 
+            const auto& debug = *plan->mpc_debug;
+
             nlohmann::json horizon_json;
             horizon_json["timestamp_ns"] = plan->timestamp_ns;
-            horizon_json["mpc_dt"]       = plan->mpc_dt;
-            horizon_json["current_idx"]  = plan->mpc_current_idx;
-            horizon_json["horizon"]      = plan->ref_yaw.size();
+            horizon_json["mpc_dt"]       = debug.mpc_dt;
+            horizon_json["current_idx"]  = debug.mpc_current_idx;
+            horizon_json["horizon"]      = debug.ref_yaw.size();
             horizon_json["time"]         = nlohmann::json::array();
 
-            for (size_t k = 0; k < plan->ref_yaw.size(); ++k) {
-                const double t = (static_cast<int>(k) - plan->mpc_current_idx) * plan->mpc_dt;
+            for (size_t k = 0; k < debug.ref_yaw.size(); ++k) {
+                const double t = (static_cast<int>(k) - debug.mpc_current_idx) * debug.mpc_dt;
                 horizon_json["time"].push_back(t);
             }
-            horizon_json["ref_yaw"]       = plan->ref_yaw;
-            horizon_json["ref_pitch"]     = plan->ref_pitch;
-            horizon_json["opt_yaw"]       = plan->opt_yaw;
-            horizon_json["opt_pitch"]     = plan->opt_pitch;
-            horizon_json["ref_yaw_vel"]   = plan->ref_yaw_vel;
-            horizon_json["ref_pitch_vel"] = plan->ref_pitch_vel;
-            horizon_json["opt_yaw_vel"]   = plan->opt_yaw_vel;
-            horizon_json["opt_pitch_vel"] = plan->opt_pitch_vel;
+            horizon_json["ref_yaw"]       = debug.ref_yaw;
+            horizon_json["ref_pitch"]     = debug.ref_pitch;
+            horizon_json["opt_yaw"]       = debug.opt_yaw;
+            horizon_json["opt_pitch"]     = debug.opt_pitch;
+            horizon_json["ref_yaw_vel"]   = debug.ref_yaw_vel;
+            horizon_json["ref_pitch_vel"] = debug.ref_pitch_vel;
+            horizon_json["opt_yaw_vel"]   = debug.opt_yaw_vel;
+            horizon_json["opt_pitch_vel"] = debug.opt_pitch_vel;
 
             detail::publish_json_message<MpcHorizonMessage>(*server, horizon_json);
         });
@@ -383,21 +385,23 @@ void register_debug_systems(App& app, talos::Scheduler* scheduler_ptr = nullptr)
             }
 
             auto plan = plan_in.read();
-            if (!plan || plan->ref_yaw.empty()) {
+            if (!plan || !plan->mpc_debug || plan->mpc_debug->ref_yaw.empty()) {
                 return;
             }
+
+            const auto& debug = *plan->mpc_debug;
 
             nlohmann::json cost_json;
             cost_json["timestamp_ns"]         = plan->timestamp_ns;
             cost_json["total_tracking_error"] = plan->tracking_error;
-            cost_json["total_cost"]           = plan->total_cost;
-            cost_json["mpc_iterations"]       = plan->mpc_iterations;
-            cost_json["mpc_solve_time_us"]    = plan->mpc_solve_time_us;
-            cost_json["mpc_converged"]        = plan->mpc_converged;
-            cost_json["cost_yaw_pos"]         = plan->cost_yaw_pos;
-            cost_json["cost_yaw_vel"]         = plan->cost_yaw_vel;
-            cost_json["cost_pitch_pos"]       = plan->cost_pitch_pos;
-            cost_json["cost_pitch_vel"]       = plan->cost_pitch_vel;
+            cost_json["total_cost"]           = debug.total_cost;
+            cost_json["mpc_iterations"]       = debug.mpc_iterations;
+            cost_json["mpc_solve_time_us"]    = debug.mpc_solve_time_us;
+            cost_json["mpc_converged"]        = debug.mpc_converged;
+            cost_json["cost_yaw_pos"]         = debug.cost_yaw_pos;
+            cost_json["cost_yaw_vel"]         = debug.cost_yaw_vel;
+            cost_json["cost_pitch_pos"]       = debug.cost_pitch_pos;
+            cost_json["cost_pitch_vel"]       = debug.cost_pitch_vel;
 
             detail::publish_json_message<MpcCostMessage>(*server, cost_json);
         });
@@ -415,14 +419,16 @@ void register_debug_systems(App& app, talos::Scheduler* scheduler_ptr = nullptr)
             }
 
             auto plan = plan_in.read();
-            if (!plan || plan->ref_yaw.empty()) {
+            if (!plan || !plan->mpc_debug || plan->mpc_debug->ref_yaw.empty()) {
                 return;
             }
 
+            const auto& debug = *plan->mpc_debug;
+
             nlohmann::json constraint_json;
             constraint_json["timestamp_ns"]     = plan->timestamp_ns;
-            constraint_json["yaw_acc_margin"]   = plan->constraint_yaw_acc_margin;
-            constraint_json["pitch_acc_margin"] = plan->constraint_pitch_acc_margin;
+            constraint_json["yaw_acc_margin"]   = debug.constraint_yaw_acc_margin;
+            constraint_json["pitch_acc_margin"] = debug.constraint_pitch_acc_margin;
 
             detail::publish_json_message<MpcConstraintMessage>(*server, constraint_json);
         });

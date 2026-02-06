@@ -1,4 +1,6 @@
 #pragma once
+#include "groups/SO3.hpp"
+
 #include <Eigen/Core>
 #include <Eigen/Geometry>
 #include <tuple>
@@ -27,6 +29,10 @@ struct Ros2EulerRot {
 
     [[nodiscard]] auto matrix() const noexcept -> Eigen::Matrix3<Value> {
         return quat().toRotationMatrix();
+    }
+
+    [[nodiscard]] auto so3() const noexcept -> group::SO3<Value> {
+        return group::SO3<Value>(quat().toRotationMatrix());
     }
 };
 
@@ -58,6 +64,11 @@ template <typename T>
 template <typename T>
 [[nodiscard]] auto rpy(const Eigen::Quaternion<T>& q) -> Ros2EulerRot<T> {
     return rpy(q.toRotationMatrix());
+}
+
+template <typename T>
+[[nodiscard]] auto rpy(const group::SO3<T>& q) -> Ros2EulerRot<T> {
+    return rpy(q.R());
 }
 
 } // namespace math_fuxk

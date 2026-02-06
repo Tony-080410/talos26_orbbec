@@ -39,6 +39,11 @@ struct EnergyMeterStateChannelTopic {};
 // L4 Planning Pipeline Channel Topics
 // ============================================================================
 
+/// @brief Aimer output channel (Aimer → Planner)
+/// Data type: fcs::L4::AimerOutput
+/// Mode: SPMC (single producer, multiple consumers)
+struct AimerOutputChannelTopic {};
+
 /// @brief Candidate gimbal plan from armor pipeline (Planner → PlanMux)
 /// Data type: fcs::L4::GimbalPlan
 /// Mode: SPMC (single producer, multiple consumers)
@@ -47,6 +52,7 @@ struct ArmorGimbalPlanChannelTopic {};
 /// @brief Candidate gimbal plan from rune pipeline (Planner → PlanMux)
 /// Data type: fcs::L4::GimbalPlan
 /// Mode: SPMC (single producer, multiple consumers)
+/// TODO: move to AimerOutputChannelTopic
 struct RuneGimbalPlanChannelTopic {};
 
 /// @brief Final gimbal plan channel (PlanMux → Weapon System)

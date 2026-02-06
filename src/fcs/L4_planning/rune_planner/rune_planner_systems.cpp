@@ -130,8 +130,18 @@ void register_rune_planning_systems(talos::Scheduler& scheduler, RunePlannerConf
             plan.predicted_future   = state->predicted_future_ns;
             plan.predicted_position = target_odom;
 
-            plan.trajectory = compensator->get_trajectory(kMaxVisualizationDistance, plan.pitch);
-            for (auto& p : plan.trajectory) {
+            // Initialize visualization debug data
+            // Note: Don't set viz_debug.predicted_position because:
+            // 1. It has timestamp = predicted_future_ns (future time)
+            // 2. TF interpolation uses current timestamp_ns
+            // 3. For moving targets, time mismatch causes visual misalignment
+            // 4. The trajectory itself is sufficient for visualization
+            plan.viz_debug = VisualizationDebugData{};
+            // viz_debug->predicted_position left as std::nullopt (not set)
+            plan.viz_debug->predicted_future = state->predicted_future_ns;
+            plan.viz_debug->trajectory =
+                compensator->get_trajectory(kMaxVisualizationDistance, plan.pitch);
+            for (auto& p : plan.viz_debug->trajectory) {
                 const double x = p.first;
                 const double z = p.second;
                 p.first        = x * std::cos(plan.pitch) + z * std::sin(plan.pitch);

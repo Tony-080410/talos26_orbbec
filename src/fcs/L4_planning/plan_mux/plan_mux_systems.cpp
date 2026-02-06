@@ -31,6 +31,7 @@ void register_plan_mux_systems(::talos::Scheduler& scheduler, PlanMuxConfig&& co
             case TargetMode::Armor: selected = armor_plan ? &*armor_plan : nullptr; break;
             case TargetMode::Rune: selected = rune_plan ? &*rune_plan : nullptr; break;
             case TargetMode::Auto:
+                // Select plan with latest timestamp, preferring rune if timestamps are equal
                 if (armor_plan && rune_plan) {
                     selected = (rune_plan->timestamp_ns >= armor_plan->timestamp_ns) ? &*rune_plan
                                                                                      : &*armor_plan;
@@ -40,6 +41,7 @@ void register_plan_mux_systems(::talos::Scheduler& scheduler, PlanMuxConfig&& co
                     selected = &*armor_plan;
                 }
                 break;
+            default: break; // Unknown mode, no plan selected
             }
 
             if (selected != nullptr) {

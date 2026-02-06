@@ -16,6 +16,7 @@ template <typename T>
 class TransformMatrix4 {
 public:
     using SE3     = group::SEn3<T, 1>;
+    using SO3     = group::SO3<T>;
     using Matrix  = typename SE3::MatrixType;
     using Tangent = typename SE3::VectorType;
 
@@ -99,6 +100,7 @@ public:
     [[nodiscard]] TransformMatrix4 inverse() const { return TransformMatrix4(pose_.inv()); }
 
     [[nodiscard]] const SE3& se3() const { return pose_; }
+    [[nodiscard]] const SO3& so3() const { return SO3(pose_.R()); }
     [[nodiscard]] Matrix matrix() const { return pose_.T(); }
 
     [[nodiscard]] Eigen::Matrix<T, 3, 1> translation() const { return pose_.x(); }

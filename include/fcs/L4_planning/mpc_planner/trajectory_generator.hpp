@@ -55,33 +55,30 @@ public:
     [[nodiscard]] Trajectory generate_robot(
         const L3::RobotTargetState& target, uint64_t measurement_ts, uint64_t current_time_ns,
         double plan_to_muzzle_delay, const TrajectoryCompensator& compensator, double bullet_speed,
-        double& yaw0) const noexcept {
-        return generate_robot(
-            target, measurement_ts, current_time_ns, plan_to_muzzle_delay, compensator,
-            bullet_speed, Eigen::Vector3d::Zero(), yaw0);
-    }
+        double& yaw0) const noexcept;
 
-    /// Generate reference trajectory for robot target, using a custom origin in odom frame.
-    ///
-    /// Ballistic compensation expects target position relative to the muzzle origin (or another
-    /// consistent firing origin). If tracker outputs are in odom/world coordinates, pass the
-    /// muzzle position in odom here to remove constant pitch bias from a non-zero origin height.
+    /// Generate reference trajectory for robot target with custom muzzle origin
     [[nodiscard]] Trajectory generate_robot(
         const L3::RobotTargetState& target, uint64_t measurement_ts, uint64_t current_time_ns,
         double plan_to_muzzle_delay, const TrajectoryCompensator& compensator, double bullet_speed,
         const Eigen::Vector3d& origin_odom, double& yaw0) const noexcept;
 
     /// Generate reference trajectory for outpost target
+    ///
+    /// @param target Tracker output with outpost state
+    /// @param measurement_ts Measurement timestamp (ns)
+    /// @param current_time_ns Current time (ns)
+    /// @param plan_to_muzzle_delay Additional delay (seconds)
+    /// @param compensator Ballistic compensator for pitch calculation
+    /// @param bullet_speed Bullet velocity (m/s)
+    /// @param yaw0 Output: reference yaw at current time (for offset)
+    /// @return Reference trajectory [yaw-yaw0, yaw_vel, pitch, pitch_vel] × horizon
     [[nodiscard]] Trajectory generate_outpost(
         const L3::OutpostTargetState& target, uint64_t measurement_ts, uint64_t current_time_ns,
         double plan_to_muzzle_delay, const TrajectoryCompensator& compensator, double bullet_speed,
-        double& yaw0) const noexcept {
-        return generate_outpost(
-            target, measurement_ts, current_time_ns, plan_to_muzzle_delay, compensator,
-            bullet_speed, Eigen::Vector3d::Zero(), yaw0);
-    }
+        double& yaw0) const noexcept;
 
-    /// Generate reference trajectory for outpost target, using a custom origin in odom frame.
+    /// Generate reference trajectory for outpost target with custom muzzle origin
     [[nodiscard]] Trajectory generate_outpost(
         const L3::OutpostTargetState& target, uint64_t measurement_ts, uint64_t current_time_ns,
         double plan_to_muzzle_delay, const TrajectoryCompensator& compensator, double bullet_speed,
@@ -139,9 +136,6 @@ inline TrajectoryGenerator::Trajectory TrajectoryGenerator::generate_trajectory(
     static constexpr int refine_max_iter     = 10;
     static constexpr double refine_tolerance = 1e-3;
 
-    // TODO: elimate current_time_ns, add perception_elapsed in caller
-    // compensate_overhead is included in action_overhead, ugly but simplified for now
-
     action_overhead += static_cast<double>(current_time_ns - measurement_ts) * 1e-9;
 
     const auto predict_muzzle = [&](double dt) -> Eigen::Vector3d {
@@ -160,7 +154,6 @@ inline TrajectoryGenerator::Trajectory TrajectoryGenerator::generate_trajectory(
     }
 
     const double ideal_time = action_overhead + flying_time;
-    const auto pred_dx      = predict_muzzle(ideal_time);
 
     const double start_dt = ideal_time - ponder_back * ponder_dt_;
 
@@ -204,10 +197,28 @@ inline TrajectoryGenerator::Trajectory TrajectoryGenerator::generate_trajectory(
 inline TrajectoryGenerator::Trajectory TrajectoryGenerator::generate_robot(
     const L3::RobotTargetState& target, uint64_t measurement_ts, uint64_t current_time_ns,
     double plan_to_muzzle_delay, const TrajectoryCompensator& compensator, double bullet_speed,
+    double& yaw0) const noexcept {
+    return generate_robot(
+        target, measurement_ts, current_time_ns, plan_to_muzzle_delay, compensator, bullet_speed,
+        Eigen::Vector3d::Zero(), yaw0);
+}
+
+inline TrajectoryGenerator::Trajectory TrajectoryGenerator::generate_robot(
+    const L3::RobotTargetState& target, uint64_t measurement_ts, uint64_t current_time_ns,
+    double plan_to_muzzle_delay, const TrajectoryCompensator& compensator, double bullet_speed,
     const Eigen::Vector3d& origin_odom, double& yaw0) const noexcept {
     return generate_trajectory(
         [&](double dt) noexcept { return predict_robot_position(target, dt); }, measurement_ts,
         current_time_ns, plan_to_muzzle_delay, compensator, bullet_speed, origin_odom, yaw0);
+}
+
+inline TrajectoryGenerator::Trajectory TrajectoryGenerator::generate_outpost(
+    const L3::OutpostTargetState& target, uint64_t measurement_ts, uint64_t current_time_ns,
+    double plan_to_muzzle_delay, const TrajectoryCompensator& compensator, double bullet_speed,
+    double& yaw0) const noexcept {
+    return generate_outpost(
+        target, measurement_ts, current_time_ns, plan_to_muzzle_delay, compensator, bullet_speed,
+        Eigen::Vector3d::Zero(), yaw0);
 }
 
 inline TrajectoryGenerator::Trajectory TrajectoryGenerator::generate_outpost(

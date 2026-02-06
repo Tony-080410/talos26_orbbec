@@ -5,6 +5,9 @@
 namespace fcs::L4 {
 
 std::expected<void, std::string> MpcPlannerConfig::read_from(const toml::table& tbl) noexcept {
+    // Operational parameters
+    READ(tbl, enabled);
+
     // MPC cost weights
     READ(tbl, q_yaw_position);
     READ(tbl, q_yaw_velocity);

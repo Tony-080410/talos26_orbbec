@@ -1,110 +1,21 @@
 #include "fcs/L4_planning/planning_systems.hpp"
 
-#include "fcs/L3_estimation/tracker/types.hpp"
-#include "fcs/L4_planning/gimbal_planner/types.hpp"
-#include "fcs/L4_planning/mpc_planner/config.hpp"
-#include "fcs/L4_planning/mpc_planner/mpc_planner.hpp"
-#include "fcs/core/channel_topics.hpp"
-#include "fcs/core/time.hpp"
-#include "math/fast_tf/error.hpp"
-#include "math/fast_tf/frame.hpp"
-#include "scheduler/ecs/channel_types.hpp"
-#include "scheduler/ecs/execution_policy.hpp"
-#include "scheduler/scheduler/scheduler.hpp"
+#include "fcs/L4_planning/aimer/aimer_systems.hpp"
+#include "fcs/L4_planning/planner/planner_systems.hpp"
 #include <spdlog/spdlog.h>
 
 namespace fcs::L4 {
 
-void register_mpc_planning_systems(talos::Scheduler& scheduler, MpcPlannerConfig&& config) {
-    scheduler.world().insert_resource(std::move(config));
-    scheduler.add_system<talos::pool_compute>(
-        "l4_mpc_planner",
-        [planner = std::shared_ptr<MpcGimbalPlanner>{}](
-            talos::res<MpcPlannerConfig> config,
-            talos::spmc<fcs::L3::TrackerOutput, TrackerOutputChannelTopic> tracker_in,
-            talos::res<std::shared_ptr<fast_tf::CoordinateSystem<1024>>> tf_buffer,
-            talos::spmc_mut<GimbalPlan, ArmorGimbalPlanChannelTopic> plan_out) mutable {
-            if (!planner) {
-                planner = std::make_shared<MpcGimbalPlanner>(*config);
-            }
+void register_l4_planning_systems(talos::Scheduler& scheduler, L4Config&& config) {
+    SPDLOG_INFO("Registering L4 Planning systems: Aimer + Planner architecture");
 
-            if (config.is_changed()) {
-                planner->set_config(*config);
-                planner->sync_config(); // Apply config changes (rebuild solvers if needed)
-            }
+    // Register Aimer systems (RobotAimer, OutpostAimer, RuneAimer)
+    // This inserts L4Config into world
+    register_aimer_systems(scheduler, std::move(config));
 
-            auto target = tracker_in.read();
-            if (!target || !target->is_tracking()) {
-                return;
-            }
-
-            const uint64_t current_time_ns = clock::now_ns();
-
-            // FIXME timestamp unaligned
-            auto muzzle_tf =
-                fast_tf::lookup_clamped<fast_tf::odom_fuxk_frame, fast_tf::muzzle_link_fuxk_frame>(
-                    **tf_buffer, fast_tf::FuckTransform<fast_tf::muzzle_link_fuxk_frame>{},
-                    current_time_ns);
-            auto gimbal_tf =
-                fast_tf::lookup_clamped<fast_tf::odom_fuxk_frame, fast_tf::gimbal_link_fuxk_frame>(
-                    **tf_buffer, fast_tf::FuckTransform<fast_tf::gimbal_link_fuxk_frame>{},
-                    current_time_ns);
-            if (!muzzle_tf) {
-                SPDLOG_WARN("muzzle_tf not found for {}", muzzle_tf.error());
-                return;
-            }
-            if (!gimbal_tf) {
-                SPDLOG_WARN("gimbal_tf not found for {}", gimbal_tf.error());
-                return;
-            }
-
-            if (auto result = planner->plan(
-                    *target, current_time_ns, config->trajectory.bullet_speed, *muzzle_tf,
-                    *gimbal_tf)) {
-                GimbalPlan plan;
-                plan.timestamp_ns       = result->timestamp_ns;
-                plan.yaw                = result->yaw;
-                plan.pitch              = result->pitch;
-                plan.yaw_vel            = result->yaw_vel;
-                plan.pitch_vel          = result->pitch_vel;
-                plan.yaw_acc            = result->yaw_acc;
-                plan.pitch_acc          = result->pitch_acc;
-                plan.distance           = result->distance;
-                plan.fire_advice        = result->fire_advice;
-                plan.tracking_error     = result->tracking_error;
-                plan.predicted_future   = result->predicted_future;
-                plan.predicted_position = result->predicted_position;
-                plan.trajectory         = std::move(result->planned_trajectory);
-
-                // Copy MPC debug data for Foxglove visualization
-                plan.mpc_dt          = result->mpc_dt;
-                plan.mpc_current_idx = result->mpc_current_idx;
-                plan.ref_yaw         = std::move(result->ref_yaw);
-                plan.ref_yaw_vel     = std::move(result->ref_yaw_vel);
-                plan.ref_pitch       = std::move(result->ref_pitch);
-                plan.ref_pitch_vel   = std::move(result->ref_pitch_vel);
-                plan.opt_yaw         = std::move(result->opt_yaw);
-                plan.opt_yaw_vel     = std::move(result->opt_yaw_vel);
-                plan.opt_pitch       = std::move(result->opt_pitch);
-                plan.opt_pitch_vel   = std::move(result->opt_pitch_vel);
-                plan.ctrl_yaw_acc    = std::move(result->ctrl_yaw_acc);
-                plan.ctrl_pitch_acc  = std::move(result->ctrl_pitch_acc);
-
-                // Copy extended MPC debug data
-                plan.mpc_iterations              = result->mpc_iterations;
-                plan.mpc_solve_time_us           = result->mpc_solve_time_us;
-                plan.mpc_converged               = result->mpc_converged;
-                plan.cost_yaw_pos                = std::move(result->cost_yaw_pos);
-                plan.cost_yaw_vel                = std::move(result->cost_yaw_vel);
-                plan.cost_pitch_pos              = std::move(result->cost_pitch_pos);
-                plan.cost_pitch_vel              = std::move(result->cost_pitch_vel);
-                plan.total_cost                  = result->total_cost;
-                plan.constraint_yaw_acc_margin   = std::move(result->constraint_yaw_acc_margin);
-                plan.constraint_pitch_acc_margin = std::move(result->constraint_pitch_acc_margin);
-
-                plan_out.write(plan);
-            }
-        });
+    // Register Planner system (MpcPlanner consuming AimerOutput)
+    // Note: L4Config is already in world from register_aimer_systems
+    register_planner_systems(scheduler);
 }
 
 } // namespace fcs::L4

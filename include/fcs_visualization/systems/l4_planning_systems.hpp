@@ -101,8 +101,10 @@ void register_l4_planning_systems(App& app) {
                 entities.push_back(entity);
             }
 
-            // Predicted position marker
+            // Predicted position marker (at bullet impact time for verification)
             if (plan->predicted_position) {
+                // Use predicted_future timestamp to show where target will be when bullet hits
+                // This allows verification by comparing with camera images at impact time
                 ::foxglove::schemas::SceneEntity entity =
                     viz::EntityBuilder::create<fast_tf::odom>("l3", "predicted")
                         .timestamp(plan->predicted_future)
@@ -123,9 +125,9 @@ void register_l4_planning_systems(App& app) {
             }
 
             // Bullet trajectory
-            if (!plan->trajectory.empty()) {
+            if (plan->viz_debug && !plan->viz_debug->trajectory.empty()) {
                 std::vector<Eigen::Vector3d> traj_points;
-                for (const auto& [x, z] : plan->trajectory) {
+                for (const auto& [x, z] : plan->viz_debug->trajectory) {
                     traj_points.emplace_back(x, 0, z);
                 }
                 auto traj_entities = viz::patterns::bullet_trajectory(
@@ -151,11 +153,12 @@ void register_l4_planning_systems(App& app) {
             }
 
             auto plan = plan_in.read();
-            if (!plan || plan->ref_yaw.empty()) {
+            if (!plan || !plan->mpc_debug || plan->mpc_debug->ref_yaw.empty()) {
                 return; // No MPC data available
             }
 
-            const int idx = plan->mpc_current_idx;
+            const auto& debug = *plan->mpc_debug;
+            const int idx     = debug.mpc_current_idx;
 
             // Build JSON with current values only
             nlohmann::json mpc_json;
@@ -164,10 +167,10 @@ void register_l4_planning_systems(App& app) {
             mpc_json["fire_advice"]    = plan->fire_advice;
 
             // Reference (input to MPC) at current time
-            mpc_json["ref_yaw"]       = plan->ref_yaw[idx];
-            mpc_json["ref_pitch"]     = plan->ref_pitch[idx];
-            mpc_json["ref_yaw_vel"]   = plan->ref_yaw_vel[idx];
-            mpc_json["ref_pitch_vel"] = plan->ref_pitch_vel[idx];
+            mpc_json["ref_yaw"]       = debug.ref_yaw[idx];
+            mpc_json["ref_pitch"]     = debug.ref_pitch[idx];
+            mpc_json["ref_yaw_vel"]   = debug.ref_yaw_vel[idx];
+            mpc_json["ref_pitch_vel"] = debug.ref_pitch_vel[idx];
 
             // Optimized (output from MPC) at current time
             mpc_json["opt_yaw"]       = plan->yaw;
@@ -195,24 +198,25 @@ void register_l4_planning_systems(App& app) {
                 return;
 
             auto plan = plan_in.read();
-            if (!plan || plan->ref_yaw.empty())
+            if (!plan || !plan->mpc_debug || plan->mpc_debug->ref_yaw.empty())
                 return;
 
             auto tracker_out = tracker_in.read_current();
             if (!tracker_out || !tracker_out->is_tracking())
                 return;
 
+            const auto& debug = *plan->mpc_debug;
             std::vector<::foxglove::schemas::SceneEntity> entities;
 
             // Reference trajectory
-            for (size_t k = 0; k < plan->ref_yaw.size(); ++k) {
-                const double t    = (static_cast<int>(k) - plan->mpc_current_idx) * plan->mpc_dt;
+            for (size_t k = 0; k < debug.ref_yaw.size(); ++k) {
+                const double t    = (static_cast<int>(k) - debug.mpc_current_idx) * debug.mpc_dt;
                 const double dist = plan->distance + t * tac::Temporal::MPC_EXTRAPOLATION_VEL;
-                const double x = dist * std::cos(plan->ref_pitch[k]) * std::cos(plan->ref_yaw[k]);
-                const double y = dist * std::cos(plan->ref_pitch[k]) * std::sin(plan->ref_yaw[k]);
-                const double z = dist * std::sin(plan->ref_pitch[k]);
+                const double x = dist * std::cos(debug.ref_pitch[k]) * std::cos(debug.ref_yaw[k]);
+                const double y = dist * std::cos(debug.ref_pitch[k]) * std::sin(debug.ref_yaw[k]);
+                const double z = dist * std::sin(debug.ref_pitch[k]);
 
-                int temporal_dist = std::abs(static_cast<int>(k) - plan->mpc_current_idx);
+                int temporal_dist = std::abs(static_cast<int>(k) - debug.mpc_current_idx);
                 entities.push_back(
                     viz::patterns::mpc_trajectory_point<fast_tf::odom>(
                         Eigen::Vector3d(x, y, z), temporal_dist,
@@ -221,14 +225,14 @@ void register_l4_planning_systems(App& app) {
             }
 
             // Optimized trajectory
-            for (size_t k = 0; k < plan->opt_yaw.size(); ++k) {
-                const double t    = (static_cast<int>(k) - plan->mpc_current_idx) * plan->mpc_dt;
+            for (size_t k = 0; k < debug.opt_yaw.size(); ++k) {
+                const double t    = (static_cast<int>(k) - debug.mpc_current_idx) * debug.mpc_dt;
                 const double dist = plan->distance + t * tac::Temporal::MPC_EXTRAPOLATION_VEL;
-                const double x = dist * std::cos(plan->opt_pitch[k]) * std::cos(plan->opt_yaw[k]);
-                const double y = dist * std::cos(plan->opt_pitch[k]) * std::sin(plan->opt_yaw[k]);
-                const double z = dist * std::sin(plan->opt_pitch[k]);
+                const double x = dist * std::cos(debug.opt_pitch[k]) * std::cos(debug.opt_yaw[k]);
+                const double y = dist * std::cos(debug.opt_pitch[k]) * std::sin(debug.opt_yaw[k]);
+                const double z = dist * std::sin(debug.opt_pitch[k]);
 
-                int temporal_dist = std::abs(static_cast<int>(k) - plan->mpc_current_idx);
+                int temporal_dist = std::abs(static_cast<int>(k) - debug.mpc_current_idx);
                 entities.push_back(
                     viz::patterns::mpc_trajectory_point<fast_tf::odom>(
                         Eigen::Vector3d(x, y, z), temporal_dist,
