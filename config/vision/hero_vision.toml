@@ -1,12 +1,9 @@
 # Hero Vision Configuration
 # extend from vision_base.toml
 
-[mpc_planner]
-high_speed_delay = 0.07
-low_speed_delay = 0.07
 compensator_type = "RK4"
 
-[mpc_planner.trajectory]
+[trajectory]
 bullet_speed = 11.0
 cd = 0.382987
 diameter = 0.041

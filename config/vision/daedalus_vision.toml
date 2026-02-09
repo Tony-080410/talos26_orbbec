@@ -1,29 +1,12 @@
 # Infantry Vision Configuration
 # extend from vision_base.toml
 
-# MPC-based gimbal trajectory planner (TinyMPC ADMM solver)
-[mpc_planner]
+# L4 trajectory compensation overrides
 compensator_type = "Ideal"
 
-# MPC cost weights (yaw)
-q_yaw_position = 9.0e7
-q_yaw_velocity = 0.0
-r_yaw = 0.1
-max_yaw_acc = 10.0
-
-# MPC cost weights (pitch)
-q_pitch_position = 9.0e7
-q_pitch_velocity = 0.0
-r_pitch = 1.0
-max_pitch_acc = 100.0
-
-decision_speed = 5.0
-high_speed_delay = 0.00
-low_speed_delay = 0.00
-
-trajectory.bullet_speed = 25.0
-trajectory.cd = 0.22516
-trajectory.diameter = 0.017
-trajectory.mass = 0.00312
-
-trajectory.gravity = 9.81
+[trajectory]
+bullet_speed = 25.0
+cd = 0.22516
+diameter = 0.017
+mass = 0.00312
+gravity = 9.81

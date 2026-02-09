@@ -1,10 +1,7 @@
 # Infantry Vision Configuration
 # extend from vision_base.toml
 
-mpc_planner.trajectory.cd = 0.22516
-mpc_planner.trajectory.diameter = 0.017
-mpc_planner.trajectory.mass = 0.00312
-mpc_planner.trajectory.bullet_speed = 22.0
-
-mpc_planner.low_speed_delay = 0.015
-mpc_planner.high_speed_delay = 0.015
+trajectory.cd = 0.22516
+trajectory.diameter = 0.017
+trajectory.mass = 0.00312
+trajectory.bullet_speed = 22.0

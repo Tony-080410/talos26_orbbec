@@ -1,13 +1,11 @@
 # Sentry Vision Configuration
 # extend from vision_base.toml
 
-mpc_planner.low_speed_delay = 0.026
-mpc_planner.high_speed_delay = 0.026
-mpc_planner.trajectory.bullet_speed = 21.0
+trajectory.bullet_speed = 21.0
 
-mpc_planner.trajectory.cd = 0.22516
-mpc_planner.trajectory.diameter = 0.017
-mpc_planner.trajectory.mass = 0.00312
+trajectory.cd = 0.22516
+trajectory.diameter = 0.017
+trajectory.mass = 0.00312
 
 [tracker.robot_inekf]
 sigma_a_xy = 30.0

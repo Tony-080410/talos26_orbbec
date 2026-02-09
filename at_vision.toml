@@ -1,7 +1,7 @@
-daedalus = false
+daedalus = true
 
 robot = 'infantry'          # any of: 'infantry', 'hero', 'sentry'
-vision = 'infantry_vision'
+vision = 'daedalus_vision'
 
 [foxglove]
 enabled = true

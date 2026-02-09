@@ -1,3 +1,6 @@
+# L4 root key (must be in TOML root, not inside any [table])
+compensator_type = "RK4"
+
 [detector]
 backend_type = "Traditional"  # Options: "Traditional", "NeuralNetwork", "NeuralNetworkTup", "TensorRT"
 detect_color = "Blue"
@@ -106,47 +109,26 @@ sigma_h = 0.5
 sigma_m = 0.25
 sigma_w = 0.5
 
-# MPC-based gimbal trajectory planner (TinyMPC ADMM solver)
-[mpc_planner]
-# MPC cost weights (yaw)
-q_yaw_position = 9.0e6
-q_yaw_velocity = 0.0
-r_yaw = 1.0
-max_yaw_acc = 50.0
+# ============================================================================
+# L4 Planning Configuration (Aimer + Planner Architecture)
+# ============================================================================
 
-# MPC cost weights (pitch)
-q_pitch_position = 9.0e6
-q_pitch_velocity = 0.0
-r_pitch = 1.0
-max_pitch_acc = 100.0
+# Fire decision configuration (shared by all aimers and planner)
+[fire_decision]
+# Minimum shooting threshold (radians), used for long distances
+# Default: ~0.17 degrees (180.0 / pi ≈ 0.003)
+fire_thresh = 0.01744444
+# Physical window dimensions (meters)
+shooting_range_h = 0.0135
+shooting_range_w = 0.0135
 
-# Fire decision parameters
-fire_thresh = 0.0005
-shooting_range_h = 0.07
-shooting_range_w = 0.075
-fire_lookahead = 4        # Steps ahead to check for fire decision
+# Aimer configuration (shared by all target types: Robot/Outpost/Rune)
+[aimer]
+# System delay compensation (seconds)
+# Includes: camera exposure, image processing, communication, gimbal response
+delay = 0.01
 
-# Solver parameters
-max_iterations = 10
-abs_tol = 1.0e-3
-rho = 5.0                 # ADMM penalty parameter
-
-ponder_dt = 0.004                 # 250Hz control rate (matching sp_vision_25)
-ponder_back = 20
-ponder_ahead = 40
-
-pitch_min = -0.69813169 # -40deg
-pitch_max = 0.69813169 # 40deg
-
-# Trajectory compensation
-compensator_type = "RK4"
-
-# Adaptive delay compensation (matching sp_vision_25)
-decision_speed = 8.0       # rad/s, threshold for high/low speed classification
-high_speed_delay = 0.015   # seconds, delay for fast-spinning targets
-low_speed_delay = 0.015    # seconds, delay for slow targets
-
-[mpc_planner.trajectory]
+[trajectory]
 iteration_times = 10
 bullet_speed = 25.0
 gravity = 9.7997
@@ -158,6 +140,58 @@ mass = 0.0032
 rk4_dt = 0.025
 rk4_min_steps = 500
 rk4_max_steps = 2000
+
+# Reference trajectory generator configuration (for L5 MPC)
+[ref_trajectory_generator]
+horizon = 200
+dt = 0.01
+max_yaw_acc = 10.0
+max_pitch_acc = 8.0
+prediction_horizon = 1.0
+
+# ============================================================================
+# L5 Weapon MPC Controller Configuration
+# ============================================================================
+
+[weapon]
+
+[mpc_weapon]
+enabled = true
+enable_debug = true
+
+# Fire decision parameters
+fire_thresh = 0.01744444
+shooting_range_h = 0.07
+shooting_range_w = 0.075
+fire_lookahead = 4
+
+# Pitch limits (radians)
+pitch_min = -0.69813169 # -40deg
+pitch_max = 0.69813169 # 40deg
+
+# MPC core parameters
+[mpc_weapon.mpc]
+horizon_ahead = 100
+horizon_back = 100
+dt = 0.01
+max_iterations = 100
+abs_tol = 0.001
+rho = 1.0
+control_delay = 0.05
+
+# MPC yaw axis configuration
+[mpc_weapon.mpc.yaw]
+q_pos = 10.0
+q_vel = 1.0
+r = 0.1
+max_acc = 10.0
+
+# MPC pitch axis configuration
+[mpc_weapon.mpc.pitch]
+q_pos = 10.0
+q_vel = 1.0
+r = 0.1
+max_acc = 8.0
 
 [rune_detector]
 enabled = false
@@ -176,7 +210,7 @@ mode = "Armor"
 # Rune type: true for big rune (sinusoidal model), false for small rune (linear)
 is_big_rune = true
 # Control delay for predictive shooting (seconds)
-control_delay_s = 0.05
+control_delay_s = 0.5
 
 # Angle fitter configuration (velocity-based LSQ model fitting)
 [energy_meter.angle_fitter]

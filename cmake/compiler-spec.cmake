@@ -44,7 +44,7 @@ add_compile_options(
 
     -Werror=enum-conversion
     -Werror=switch-enum
-    -Wswitch-default
+    # -Wswitch-default
     -Werror=implicit-fallthrough
 
     -Werror=misleading-indentation

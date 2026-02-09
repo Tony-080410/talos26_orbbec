@@ -59,6 +59,24 @@ function(talos_add_test_scheduler test_name source_file)
     add_test(NAME ${test_name} COMMAND ${test_name})
 endfunction()
 
+# Helper for FCS tests (needs fcs + fast_tf + tinympc + lieplusplus)
+function(talos_add_test_fcs test_name source_file)
+    add_executable(${test_name} ${source_file})
+    target_include_directories(${test_name} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+    target_include_directories(${test_name} SYSTEM PRIVATE 3dparty/lieplusplus)
+    target_link_libraries(${test_name} PRIVATE
+        fcs
+        fast_tf
+        tinympc
+        lieplusplus
+        GTest::gtest_main
+        Eigen3::Eigen
+        TBB::tbb
+        ${OpenCV_LIBS}
+    )
+    add_test(NAME ${test_name} COMMAND ${test_name})
+endfunction()
+
 # ============================================================================
 # Test Definitions
 # ============================================================================
@@ -89,6 +107,21 @@ add_executable(rclcompat_test test/rclcompat_test.cpp)
 target_include_directories(rclcompat_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include ${CMAKE_CURRENT_SOURCE_DIR}/include/scheduler)
 target_link_libraries(rclcompat_test PRIVATE scheduler GTest::gtest_main Threads::Threads)
 add_test(NAME RclCompatTest COMMAND rclcompat_test)
+
+# L4 Aimer consistency tests - needs fcs + fast_tf + tinympc + lieplusplus
+talos_add_test_fcs(l4_aimer_consistency_test test/l4_aimer_consistency_test.cpp)
+
+# L4 MPC Planner consistency tests - needs fcs + fast_tf + tinympc + lieplusplus
+talos_add_test_fcs(mpc_planner_consistency_test test/mpc_planner_consistency_test.cpp)
+
+# L4 Trajectory dynamic target tests - needs fcs + fast_tf + tinympc + lieplusplus
+talos_add_test_fcs(trajectory_dynamic_target_test test/trajectory_dynamic_target_test.cpp)
+
+# L4 Trajectory numerical precision tests - needs fcs + fast_tf + tinympc + lieplusplus
+talos_add_test_fcs(trajectory_numerical_precision_test test/trajectory_numerical_precision_test.cpp)
+
+# L4 Trajectory edge cases and stress tests - needs fcs + fast_tf + tinympc + lieplusplus
+talos_add_test_fcs(trajectory_edge_cases_test test/trajectory_edge_cases_test.cpp)
 
 if (ENABLE_COVERAGE)
     message(STATUS "Coverage enabled for FCS tests")
