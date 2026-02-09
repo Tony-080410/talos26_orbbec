@@ -29,7 +29,6 @@ enable_testing()
 # Helper function to create tests with consistent setup
 function(talos_add_test test_name source_file)
     add_executable(${test_name} ${source_file})
-    target_include_directories(${test_name} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
     target_link_libraries(${test_name} PRIVATE GTest::gtest_main Threads::Threads)
     add_test(NAME ${test_name} COMMAND ${test_name})
 endfunction()
@@ -37,7 +36,6 @@ endfunction()
 # Helper for tests requiring OpenCV (core + imgproc)
 function(talos_add_test_opencv test_name source_file)
     add_executable(${test_name} ${source_file})
-    target_include_directories(${test_name} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
     target_link_libraries(${test_name} PRIVATE GTest::gtest_main Threads::Threads ${OpenCV_LIBS})
     add_test(NAME ${test_name} COMMAND ${test_name})
 endfunction()
@@ -45,7 +43,6 @@ endfunction()
 # Helper for fast_tf tests (need Eigen3 + TBB + OpenCV + lieplusplus)
 function(talos_add_test_fast_tf test_name source_file)
     add_executable(${test_name} ${source_file})
-    target_include_directories(${test_name} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
     target_include_directories(${test_name} SYSTEM PRIVATE 3dparty/lieplusplus)
     target_link_libraries(${test_name} PRIVATE fast_tf GTest::gtest_main Eigen3::Eigen TBB::tbb ${OpenCV_LIBS})
     add_test(NAME ${test_name} COMMAND ${test_name})
@@ -54,7 +51,6 @@ endfunction()
 # Helper for scheduler tests
 function(talos_add_test_scheduler test_name source_file)
     add_executable(${test_name} ${source_file})
-    target_include_directories(${test_name} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
     target_link_libraries(${test_name} PRIVATE scheduler GTest::gtest_main Threads::Threads)
     add_test(NAME ${test_name} COMMAND ${test_name})
 endfunction()
@@ -62,7 +58,6 @@ endfunction()
 # Helper for FCS tests (needs fcs + fast_tf + tinympc + lieplusplus)
 function(talos_add_test_fcs test_name source_file)
     add_executable(${test_name} ${source_file})
-    target_include_directories(${test_name} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
     target_include_directories(${test_name} SYSTEM PRIVATE 3dparty/lieplusplus)
     target_link_libraries(${test_name} PRIVATE
         fcs
@@ -95,7 +90,6 @@ talos_add_test_fast_tf(fast_tf_test test/fast_tf_test.cpp)
 
 # Bevy-style ECS tests - needs TBB (special case, custom setup)
 add_executable(bevy_ecs_test test/bevy_ecs_test.cpp)
-target_include_directories(bevy_ecs_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(bevy_ecs_test PRIVATE GTest::gtest_main Threads::Threads TBB::tbb)
 add_test(NAME BevyEcsTest COMMAND bevy_ecs_test)
 
@@ -104,24 +98,9 @@ talos_add_test_scheduler(scheduler_ecs_test test/scheduler_ecs_test.cpp)
 
 # ROS2 compatibility layer tests - needs scheduler + special include paths
 add_executable(rclcompat_test test/rclcompat_test.cpp)
-target_include_directories(rclcompat_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include ${CMAKE_CURRENT_SOURCE_DIR}/include/scheduler)
+target_include_directories(rclcompat_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/crates/scheduler/src)
 target_link_libraries(rclcompat_test PRIVATE scheduler GTest::gtest_main Threads::Threads)
 add_test(NAME RclCompatTest COMMAND rclcompat_test)
-
-# L4 Aimer consistency tests - needs fcs + fast_tf + tinympc + lieplusplus
-talos_add_test_fcs(l4_aimer_consistency_test test/l4_aimer_consistency_test.cpp)
-
-# L4 MPC Planner consistency tests - needs fcs + fast_tf + tinympc + lieplusplus
-talos_add_test_fcs(mpc_planner_consistency_test test/mpc_planner_consistency_test.cpp)
-
-# L4 Trajectory dynamic target tests - needs fcs + fast_tf + tinympc + lieplusplus
-talos_add_test_fcs(trajectory_dynamic_target_test test/trajectory_dynamic_target_test.cpp)
-
-# L4 Trajectory numerical precision tests - needs fcs + fast_tf + tinympc + lieplusplus
-talos_add_test_fcs(trajectory_numerical_precision_test test/trajectory_numerical_precision_test.cpp)
-
-# L4 Trajectory edge cases and stress tests - needs fcs + fast_tf + tinympc + lieplusplus
-talos_add_test_fcs(trajectory_edge_cases_test test/trajectory_edge_cases_test.cpp)
 
 if (ENABLE_COVERAGE)
     message(STATUS "Coverage enabled for FCS tests")

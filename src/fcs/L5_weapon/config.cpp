@@ -1,4 +1,4 @@
-#include "fcs/L5_weapon/config.hpp"
+#include "L5_weapon/config.hpp"
 
 #include "toml_helper.hpp"
 

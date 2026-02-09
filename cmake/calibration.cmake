@@ -25,9 +25,7 @@ if (ENABLE_CALIBRATION)
     ${FOXGLOVE_SOURCES}
 )
 
-    target_include_directories(rm_calibration PRIVATE
-    ${CMAKE_SOURCE_DIR}/include
-)
+    # Include directories are automatically provided by linked libraries
 
     # Add foxglove headers
     target_include_directories(rm_calibration SYSTEM PRIVATE
@@ -37,7 +35,9 @@ if (ENABLE_CALIBRATION)
 
     target_link_libraries(rm_calibration PRIVATE
     fcs
+    fcs_visualization
     hikcamera
+    ipc
     talos_std
     scheduler
     ${OpenCV_LIBS}
@@ -45,8 +45,8 @@ if (ENABLE_CALIBRATION)
     spdlog::spdlog
     fast_tf
     ${LIBUSB_LINK_LIBRARIES}
+    foxglove_cpp
     ${foxglove_SOURCE_DIR}/lib/libfoxglove.a
-    fast_tf
     "$<$<PLATFORM_ID:Darwin>:-framework Security>"
     "$<$<PLATFORM_ID:Darwin>:-framework CoreFoundation>"
     "$<$<PLATFORM_ID:Darwin>:-framework SystemConfiguration>"

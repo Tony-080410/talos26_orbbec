@@ -71,7 +71,7 @@ ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 # 收集文件（只收集存在的目录，避免 find 失败）
 FILES=()
 SEARCH_DIRS=()
-for dir in src include test tools; do
+for dir in src include test tools crates; do
     if [[ -d "$ROOT_DIR/$dir" ]]; then
         SEARCH_DIRS+=("$ROOT_DIR/$dir")
     fi

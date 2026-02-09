@@ -1,4 +1,4 @@
-#include "fcs/calibration/intrinsic_calibrator.hpp"
+#include "calibration/intrinsic_calibrator.hpp"
 
 #include <cmath>
 #include <fstream>

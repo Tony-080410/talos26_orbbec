@@ -1,4 +1,4 @@
-#include "fcs/L1_sensor/camera_interface.hpp"
+#include "L1_sensor/camera_interface.hpp"
 
 namespace fcs::L1 {
 

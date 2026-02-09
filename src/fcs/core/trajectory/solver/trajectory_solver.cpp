@@ -1,4 +1,4 @@
-#include "fcs/core/trajectory/solver/trajectory_solver.hpp"
+#include "core/trajectory/solver/trajectory_solver.hpp"
 
 #include <algorithm>
 #include <cmath>

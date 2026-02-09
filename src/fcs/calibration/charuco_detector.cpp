@@ -1,5 +1,5 @@
-#include "fcs/calibration/charuco_detector.hpp"
-#include "fcs/calibration/chessboard_detector.hpp"
+#include "calibration/charuco_detector.hpp"
+#include "calibration/chessboard_detector.hpp"
 
 #ifdef HAVE_OPENCV_ARUCO
 # include <opencv2/aruco.hpp>

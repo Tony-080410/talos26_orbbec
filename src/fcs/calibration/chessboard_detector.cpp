@@ -1,4 +1,4 @@
-#include "fcs/calibration/chessboard_detector.hpp"
+#include "calibration/chessboard_detector.hpp"
 
 #include <opencv2/calib3d.hpp>
 #include <opencv2/imgproc.hpp>

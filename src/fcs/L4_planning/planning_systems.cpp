@@ -1,8 +1,8 @@
-#include "fcs/L4_planning/planning_systems.hpp"
+#include "L4_planning/planning_systems.hpp"
 
-#include "fcs/L4_planning/aimer/aimer_systems.hpp"
-#include "fcs/core/trajectory/resource.hpp"
-#include "scheduler/scheduler/scheduler.hpp"
+#include "L4_planning/aimer/aimer_systems.hpp"
+#include "core/trajectory/resource.hpp"
+#include "scheduler/scheduler.hpp"
 #include <spdlog/spdlog.h>
 
 namespace fcs::L4 {

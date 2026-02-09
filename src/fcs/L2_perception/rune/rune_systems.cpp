@@ -1,15 +1,15 @@
-#include "fcs/L2_perception/rune/rune_systems.hpp"
+#include "L2_perception/rune/rune_systems.hpp"
 
-#include "fcs/L2_perception/rune/rune_config.hpp"
-#include "fcs/L2_perception/rune/rune_detector.hpp"
-#include "fcs/L2_perception/rune/types.hpp"
-#include "fcs/camera_config.hpp"
-#include "fcs/core/channel_topics.hpp"
-#include "fcs/core/types.hpp"
-#include "math/fast_tf/frame.hpp"
-#include "scheduler/ecs/channel_types.hpp"
-#include "scheduler/ecs/execution_policy.hpp"
-#include "scheduler/scheduler/scheduler.hpp"
+#include "L2_perception/rune/rune_config.hpp"
+#include "L2_perception/rune/rune_detector.hpp"
+#include "L2_perception/rune/types.hpp"
+#include "camera_config.hpp"
+#include "core/channel_topics.hpp"
+#include "core/types.hpp"
+#include "ecs/channel_types.hpp"
+#include "ecs/execution_policy.hpp"
+#include "frame.hpp"
+#include "scheduler/scheduler.hpp"
 
 #include <spdlog/spdlog.h>
 

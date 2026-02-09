@@ -1,15 +1,15 @@
-#include "fcs_visualization/foxglove_systems.hpp"
+#include "foxglove_systems.hpp"
 
-#include "fcs_visualization/foxglove_server.hpp"
-#include "fcs_visualization/systems/base.hpp"
-#include "fcs_visualization/systems/debug_systems.hpp"
-#include "fcs_visualization/systems/l1_sensor_systems.hpp"
-#include "fcs_visualization/systems/l2_perception_systems.hpp"
-#include "fcs_visualization/systems/l3_estimation_systems.hpp"
-#include "fcs_visualization/systems/l4_planning_systems.hpp"
-#include "fcs_visualization/systems/rune_systems.hpp"
+#include "foxglove_server.hpp"
+#include "systems/base.hpp"
+#include "systems/debug_systems.hpp"
+#include "systems/l1_sensor_systems.hpp"
+#include "systems/l2_perception_systems.hpp"
+#include "systems/l3_estimation_systems.hpp"
+#include "systems/l4_planning_systems.hpp"
+#include "systems/rune_systems.hpp"
 
-#include "scheduler/scheduler/scheduler.hpp"
+#include "scheduler/scheduler.hpp"
 
 namespace fcs {
 

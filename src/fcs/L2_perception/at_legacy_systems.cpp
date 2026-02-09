@@ -1,13 +1,13 @@
-#include "fcs/L2_perception/at_legacy_systems.hpp"
+#include "L2_perception/at_legacy_systems.hpp"
 
-#include "fcs/L2_perception/at_legacy_config.hpp"
-#include "fcs/L2_perception/at_legacy_detector_backend.hpp"
-#include "fcs/L2_perception/at_legacy_pnp_solver.hpp"
-#include "fcs/core/channel_topics.hpp"
-#include "math/fast_tf/frame.hpp"
-#include "scheduler/ecs/channel_types.hpp"
-#include "scheduler/ecs/execution_policy.hpp"
-#include "scheduler/scheduler/scheduler.hpp"
+#include "L2_perception/at_legacy_config.hpp"
+#include "L2_perception/at_legacy_detector_backend.hpp"
+#include "L2_perception/at_legacy_pnp_solver.hpp"
+#include "core/channel_topics.hpp"
+#include "ecs/channel_types.hpp"
+#include "ecs/execution_policy.hpp"
+#include "frame.hpp"
+#include "scheduler/scheduler.hpp"
 
 #include <spdlog/spdlog.h>
 

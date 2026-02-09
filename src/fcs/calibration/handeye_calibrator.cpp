@@ -1,5 +1,5 @@
-#include "fcs/calibration/handeye_calibrator.hpp"
-#include "math/euler.hpp"
+#include "calibration/handeye_calibrator.hpp"
+#include "euler.hpp"
 
 #include <cmath>
 #include <fstream>

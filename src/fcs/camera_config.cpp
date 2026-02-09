@@ -1,4 +1,4 @@
-#include "fcs/camera_config.hpp"
+#include "camera_config.hpp"
 #include "toml_helper_eigen.hpp"
 
 namespace fcs {

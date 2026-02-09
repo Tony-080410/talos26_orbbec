@@ -1,5 +1,5 @@
+#include "ecs/channel_types.hpp"
 #include "scheduler/ecs/app.hpp"
-#include "scheduler/ecs/channel_types.hpp"
 #include "scheduler/ecs/system_meta.hpp"
 #include <cstdio>
 

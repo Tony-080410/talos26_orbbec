@@ -1,4 +1,4 @@
-#include "fcs/L4_planning/planning/fire_decision.hpp"
+#include "L4_planning/planning/fire_decision.hpp"
 
 #include "toml_helper.hpp"
 

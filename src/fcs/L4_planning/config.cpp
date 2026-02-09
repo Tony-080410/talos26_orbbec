@@ -1,4 +1,4 @@
-#include "fcs/L4_planning/config.hpp"
+#include "L4_planning/config.hpp"
 
 #include "toml_helper.hpp"
 

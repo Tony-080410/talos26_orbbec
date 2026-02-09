@@ -1,4 +1,4 @@
-#include "fcs/L2_perception/rune/rune_config.hpp"
+#include "L2_perception/rune/rune_config.hpp"
 
 #include "toml_helper.hpp"
 

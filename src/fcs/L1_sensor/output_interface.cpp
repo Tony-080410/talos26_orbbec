@@ -1,5 +1,5 @@
-#include "fcs/L1_sensor/output_interface.hpp"
-#include "ipc/shm_client.hpp"
+#include "L1_sensor/output_interface.hpp"
+#include "shm_client.hpp"
 #include "talos_gimbal/packet.hpp"
 #include "talos_gimbal/stm32.hpp"
 

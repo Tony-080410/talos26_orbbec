@@ -1,6 +1,6 @@
-#include "fcs/L2_perception/rune/rune_detector.hpp"
+#include "L2_perception/rune/rune_detector.hpp"
 
-#include "fcs/L2_perception/rune/rune_detector_types.hpp"
+#include "L2_perception/rune/rune_detector_types.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -555,7 +555,7 @@ bool findCenterLights(
     lights.clear();
 
     cv::Mat R_mat;
-    cv::FileStorage fs("assets/r_template0.yml", cv::FileStorage::READ);
+    cv::FileStorage fs("config/r_template0.yml", cv::FileStorage::READ);
     fs["R_contour"] >> R_mat;
     fs.release();
 

@@ -1,14 +1,14 @@
-#include "fcs/L5_weapon/enhanced/weapon_systems.hpp"
+#include "L5_weapon/enhanced/weapon_systems.hpp"
 
+#include "L4_planning/config.hpp"
+#include "L4_planning/gimbal_planner/types.hpp"
+#include "L5_weapon/config.hpp"
 #include "L5_weapon/fire_control.hpp"
+#include "core/channel_topics.hpp"
 #include "core/trajectory/resource.hpp"
-#include "fcs/L4_planning/config.hpp"
-#include "fcs/L4_planning/gimbal_planner/types.hpp"
-#include "fcs/L5_weapon/config.hpp"
-#include "fcs/core/channel_topics.hpp"
-#include "scheduler/ecs/channel_types.hpp"
-#include "scheduler/ecs/execution_policy.hpp"
-#include "scheduler/scheduler/scheduler.hpp"
+#include "ecs/channel_types.hpp"
+#include "ecs/execution_policy.hpp"
+#include "scheduler/scheduler.hpp"
 
 #include <functional>
 #include <memory>

@@ -1,4 +1,4 @@
-#include "fcs/core/trajectory/model/quadratic_drag.hpp"
+#include "core/trajectory/model/quadratic_drag.hpp"
 
 #include <algorithm>
 #include <cmath>
