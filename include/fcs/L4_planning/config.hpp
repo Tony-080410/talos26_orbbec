@@ -2,8 +2,8 @@
 
 #include <expected>
 
-#include "fcs/L4_planning/mpc_planner/config.hpp"
 #include "fcs/L4_planning/planning/fire_decision.hpp"
+#include "fcs/core/trajectory/config.hpp"
 
 // Forward declaration to avoid including toml++ in config headers.
 namespace toml::inline v3 {
@@ -21,16 +21,13 @@ struct AimerConfig {
     [[nodiscard]] std::expected<void, std::string> read_from(const toml::table& tbl) noexcept;
 };
 
-/// L4 planning configuration (Aimer + Planner architecture)
+/// L4 planning configuration (Aimer + plan adapter architecture)
 struct L4Config {
     // Fire decision configuration (shared by Aimer and Planner)
     FireDecisionConfig fire_decision{};
 
     // Shared aimer configuration (used for Robot/Outpost/Rune)
     AimerConfig aimer{};
-
-    // MPC planner configuration
-    MpcPlannerConfig mpc_planner{};
 
     std::expected<void, std::string> read_from(const toml::table& tbl) noexcept;
 };

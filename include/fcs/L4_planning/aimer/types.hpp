@@ -1,6 +1,7 @@
 #pragma once
 
 #include <Eigen/Dense>
+#include <cstdint>
 
 namespace fcs::L4 {
 
@@ -59,17 +60,5 @@ struct TargetPrediction {
     // ========================================================================
     AimerTargetType target_type; ///< Target type
 };
-
-// ============================================================================
-// Legacy Type Alias (for backward compatibility)
-// ============================================================================
-
-/// @deprecated Use TargetPrediction instead
-/// Aimer output - pure prediction result (no optimization)
-///
-/// This is the output of the Aimer layer, which performs pure prediction
-/// without any trajectory optimization. The Planner layer consumes this
-/// output to generate optimized trajectories.
-using AimerOutput = TargetPrediction;
 
 } // namespace fcs::L4

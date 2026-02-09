@@ -1,23 +1,24 @@
-#include "fcs/L4_planning/trajectory/ballistic_model.hpp"
+#include "fcs/core/trajectory/model/quadratic_drag.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <limits>
-#include <optional>
+#include <numbers>
 
-namespace fcs::L4::trajectory {
+namespace fcs::core::trajectory::model {
 
 // ============================================================================
-// RK4Model Implementation
+// QuadraticDragModel Implementation
 // ============================================================================
 
-double RK4Model::drag_k() const noexcept {
+double QuadraticDragModel::drag_k() const noexcept {
     const double d = std::max(1e-6, diameter_);
     const double A = std::numbers::pi * (d * 0.5) * (d * 0.5);
     const double m = std::max(1e-6, mass_);
     return 0.5 * cd_ * rho_ * A / m;
 }
 
-double RK4Model::select_dt(double range, double pitch, double v0) const noexcept {
+double QuadraticDragModel::select_dt(double range, double pitch, double v0) const noexcept {
     const double v0_clamped = std::max(1e-3, v0);
     const double c          = std::max(0.05, std::abs(std::cos(pitch)));
     const double t_est      = range / (v0_clamped * c);
@@ -31,7 +32,7 @@ double RK4Model::select_dt(double range, double pitch, double v0) const noexcept
 }
 
 std::optional<ImpactResult>
-    RK4Model::compute_impact(double range, double pitch, double v0) const noexcept {
+    QuadraticDragModel::compute_impact(double range, double pitch, double v0) const noexcept {
     const double k  = drag_k();
     const double dt = select_dt(range, pitch, v0);
     return detail::RK4Integrator::integrate_to_range(
@@ -226,4 +227,4 @@ std::vector<std::tuple<double, double, double>> RK4Integrator::integrate_full_tr
 
 } // namespace detail
 
-} // namespace fcs::L4::trajectory
+} // namespace fcs::core::trajectory::model

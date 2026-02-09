@@ -10,7 +10,6 @@
 #include "fcs/L2_perception/rune/types.hpp"
 #include "fcs/L3_estimation/energy_meter/types.hpp"
 #include "fcs/L4_planning/gimbal_planner/types.hpp"
-#include "fcs/L4_planning/mpc_planner/types.hpp"
 #include "fcs/L5_weapon/fire_control.hpp"
 #include "fcs/core/channel_topics.hpp"
 #include "fcs/core/types.hpp"
@@ -328,109 +327,6 @@ void register_debug_systems(App& app, talos::Scheduler* scheduler_ptr = nullptr)
             sm_json["consecutive_updates"] = debug.consecutive_updates;
 
             detail::publish_json_message<StateMachineMessage>(*server, sm_json);
-        });
-
-    // =========================================================================
-    // L4 DEBUG: Full MPC Prediction Horizon
-    // =========================================================================
-
-    app.template add_system<talos::pool_compute>(
-        "foxglove_debug_l4_mpc_horizon_pub",
-        [](talos::spmc<::fcs::L4::GimbalPlan, GimbalPlanChannelTopic> plan_in,
-           talos::res<std::shared_ptr<FoxgloveServer>> server) {
-            if (!detail::foxglove_ready(*server, plan_in)) {
-                return;
-            }
-
-            auto plan = plan_in.read();
-            if (!plan || !plan->mpc_debug || plan->mpc_debug->ref_yaw.empty()) {
-                return;
-            }
-
-            const auto& debug = *plan->mpc_debug;
-
-            nlohmann::json horizon_json;
-            horizon_json["timestamp_ns"] = plan->timestamp_ns;
-            horizon_json["mpc_dt"]       = debug.mpc_dt;
-            horizon_json["current_idx"]  = debug.mpc_current_idx;
-            horizon_json["horizon"]      = debug.ref_yaw.size();
-            horizon_json["time"]         = nlohmann::json::array();
-
-            for (size_t k = 0; k < debug.ref_yaw.size(); ++k) {
-                const double t = (static_cast<int>(k) - debug.mpc_current_idx) * debug.mpc_dt;
-                horizon_json["time"].push_back(t);
-            }
-            horizon_json["ref_yaw"]       = debug.ref_yaw;
-            horizon_json["ref_pitch"]     = debug.ref_pitch;
-            horizon_json["opt_yaw"]       = debug.opt_yaw;
-            horizon_json["opt_pitch"]     = debug.opt_pitch;
-            horizon_json["ref_yaw_vel"]   = debug.ref_yaw_vel;
-            horizon_json["ref_pitch_vel"] = debug.ref_pitch_vel;
-            horizon_json["opt_yaw_vel"]   = debug.opt_yaw_vel;
-            horizon_json["opt_pitch_vel"] = debug.opt_pitch_vel;
-
-            detail::publish_json_message<MpcHorizonMessage>(*server, horizon_json);
-        });
-
-    // =========================================================================
-    // L4 DEBUG: MPC Cost Evolution
-    // =========================================================================
-
-    app.template add_system<talos::pool_compute>(
-        "foxglove_debug_l4_mpc_cost_pub",
-        [](talos::spmc<::fcs::L4::GimbalPlan, GimbalPlanChannelTopic> plan_in,
-           talos::res<std::shared_ptr<FoxgloveServer>> server) {
-            if (!detail::foxglove_ready(*server, plan_in)) {
-                return;
-            }
-
-            auto plan = plan_in.read();
-            if (!plan || !plan->mpc_debug || plan->mpc_debug->ref_yaw.empty()) {
-                return;
-            }
-
-            const auto& debug = *plan->mpc_debug;
-
-            nlohmann::json cost_json;
-            cost_json["timestamp_ns"]         = plan->timestamp_ns;
-            cost_json["total_tracking_error"] = plan->tracking_error;
-            cost_json["total_cost"]           = debug.total_cost;
-            cost_json["mpc_iterations"]       = debug.mpc_iterations;
-            cost_json["mpc_solve_time_us"]    = debug.mpc_solve_time_us;
-            cost_json["mpc_converged"]        = debug.mpc_converged;
-            cost_json["cost_yaw_pos"]         = debug.cost_yaw_pos;
-            cost_json["cost_yaw_vel"]         = debug.cost_yaw_vel;
-            cost_json["cost_pitch_pos"]       = debug.cost_pitch_pos;
-            cost_json["cost_pitch_vel"]       = debug.cost_pitch_vel;
-
-            detail::publish_json_message<MpcCostMessage>(*server, cost_json);
-        });
-
-    // =========================================================================
-    // L4 DEBUG: MPC Constraint Margins
-    // =========================================================================
-
-    app.template add_system<talos::pool_compute>(
-        "foxglove_debug_l4_mpc_constraint_pub",
-        [](talos::spmc<::fcs::L4::GimbalPlan, GimbalPlanChannelTopic> plan_in,
-           talos::res<std::shared_ptr<FoxgloveServer>> server) {
-            if (!detail::foxglove_ready(*server, plan_in)) {
-                return;
-            }
-
-            auto plan = plan_in.read();
-            if (!plan || !plan->mpc_debug || plan->mpc_debug->ref_yaw.empty()) {
-                return;
-            }
-
-            const auto& debug = *plan->mpc_debug;
-
-            nlohmann::json constraint_json;
-            constraint_json["timestamp_ns"]     = plan->timestamp_ns;
-            constraint_json["yaw_acc_margin"]   = debug.constraint_yaw_acc_margin;
-            constraint_json["pitch_acc_margin"] = debug.constraint_pitch_acc_margin;
-
-            detail::publish_json_message<MpcConstraintMessage>(*server, constraint_json);
         });
 
     // =========================================================================

@@ -3,19 +3,17 @@
 #include "fcs/L2_perception/rune/rune_systems.hpp"
 #include "fcs/L3_estimation/energy_meter/energy_meter_systems.hpp"
 #include "fcs/L3_estimation/tracker_systems.hpp"
-#include "fcs/L4_planning/plan_mux/plan_mux_systems.hpp"
 #include "fcs/L4_planning/planning_systems.hpp"
-#include "fcs/L4_planning/rune_planner/rune_planner_systems.hpp"
 #include "fcs/L5_weapon/enhanced/weapon_systems.hpp"
+#include "fcs/core/trajectory/resource.hpp"
 #include "fcs/runtime/l1_l2_setup.hpp"
 #include "fcs_visualization/foxglove_systems.hpp"
 #include "magic_enum.hpp"
-#include "math/fast_tf/robot_factory.hpp"
+#include "robot_factory.hpp"
 #include "scheduler/scheduler/error_formatter.hpp"
 #include "scheduler/scheduler/scheduler.hpp"
 #include "spdlog_hook.hpp"
 #include "toml_helper.hpp"
-
 #include <chrono>
 #include <expected>
 #include <fmt/core.h>
@@ -183,9 +181,7 @@ int main() {
     world.insert_resource(std::make_shared<fcs::VisionConfig>(vision));
 
     // Save config values for logging before move
-    const double bullet_speed = vision.l4.mpc_planner.trajectory.bullet_speed;
-    const int ponder_back     = vision.l4.mpc_planner.ponder_back;
-    const int ponder_ahead    = vision.l4.mpc_planner.ponder_ahead;
+    const double bullet_speed = vision.trajectory.model.bullet_speed;
 
     auto setup_result = fcs::runtime::setup_l1_l2(
         world, scheduler, vision, daedalus, hardware ? &*hardware : nullptr);
@@ -198,9 +194,11 @@ int main() {
     world.insert_resource(fcs::L3::create_tracker(vision.l3.tracker));
     SPDLOG_INFO("Tracker initialized");
 
-    SPDLOG_INFO(
-        "MPC GimbalPlanner initialized (bullet_speed={:.1f}m/s, horizon={}:{})", bullet_speed,
-        ponder_back, ponder_ahead);
+    // Register trajectory solver resource (used by L4/L5)
+    fcs::core::trajectory::register_resource(scheduler, std::move(vision.trajectory));
+    SPDLOG_INFO("Trajectory solver registered");
+
+    SPDLOG_INFO("Trajectory resources configured (bullet_speed={:.1f}m/s)", bullet_speed);
 
     // Register AT Legacy detection pipeline systems
     fcs::L2::register_at_legacy_detection_systems(scheduler, std::move(vision.at_legacy));
@@ -210,11 +208,10 @@ int main() {
     fcs::L3::register_tracker_systems(scheduler, std::move(vision.l3.tracker));
     fcs::energy_meter::register_energy_meter_systems(scheduler, std::move(vision.energy_meter));
 
-    // Register L4 Planning pipeline (Aimer + Planner)
+    // Register L4 Planning pipeline (Aimer + Armor Plan Adapter)
     fcs::L4::register_l4_planning_systems(scheduler, std::move(vision.l4));
-    fcs::L4::register_rune_planning_systems(scheduler, std::move(vision.rune_planner));
-    fcs::L4::register_plan_mux_systems(scheduler, std::move(vision.plan_mux));
 
+    // Register L5 MPC Weapon system (consumes GimbalPlan from L4)
     fcs::L5::register_enhanced_weapon_system(scheduler, std::move(vision.l5.weapon));
 
     if (foxglove.enabled) {

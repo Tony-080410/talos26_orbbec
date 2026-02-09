@@ -1,14 +1,16 @@
 #include "fcs/L4_planning/aimer/aimer_systems.hpp"
+#include "fcs/L4_planning/aimer/aimer.hpp"
 
+#include "L4_planning/gimbal_planner/types.hpp"
 #include "fcs/L3_estimation/energy_meter/types.hpp"
 #include "fcs/L3_estimation/tracker/types.hpp"
-#include "fcs/L4_planning/aimer/aimer.hpp"
 #include "fcs/L4_planning/aimer/types.hpp"
 #include "fcs/L4_planning/common/transform_utils.hpp"
+#include "fcs/L4_planning/config.hpp"
 #include "fcs/L4_planning/planning/fire_decision.hpp"
-#include "fcs/L4_planning/trajectory/solver_interfaces.hpp"
 #include "fcs/core/channel_topics.hpp"
 #include "fcs/core/time.hpp"
+#include "fcs/core/trajectory/resource.hpp"
 #include "math/euler.hpp"
 #include "scheduler/ecs/channel_types.hpp"
 #include "scheduler/ecs/execution_policy.hpp"
@@ -16,59 +18,56 @@
 
 #include <spdlog/spdlog.h>
 
-#include <memory>
-
 namespace fcs::L4 {
 
 void register_aimer_systems(talos::Scheduler& scheduler, L4Config&& config) {
-    // Store configuration in world
-
-    // Create shared ballistic solver for all aimers
-    auto solver = trajectory::create_solver(
-        config.mpc_planner.compensator_type, config.mpc_planner.trajectory);
     scheduler.world().insert_resource(config);
 
-    // =========================================================================
-    // Unified Aimer System (Robot/Outpost/Rune)
-    // =========================================================================
-    // Single system to avoid MultipleWriters violation
-    // Processes all target types and outputs to single AimerOutputChannelTopic
+    // Create Aimer instance with config (does NOT own solver)
+    Aimer aimer(config.aimer);
 
     scheduler.add_system<talos::pool_compute>(
         "l4_aimer",
-        [aimer = std::make_shared<Aimer>(config.aimer, std::move(solver))](
-            talos::res<L4Config> cfg,
+        [aimer](
+            talos::res<L4Config> cfg, core::trajectory::trajectory_solver solver,
+            core::trajectory::trajectory_config traj_conf,
             talos::spmc<L3::TrackerOutput, TrackerOutputChannelTopic> tracker_in,
             talos::spmc<energy_meter::EnergyMeterState, EnergyMeterStateChannelTopic> rune_in,
             talos::res<std::shared_ptr<fast_tf::CoordinateSystem<1024>>> tf_buffer,
-            talos::spmc_mut<TargetPrediction, AimerOutputChannelTopic> aimer_out) mutable {
+            talos::spmc_mut<GimbalPlan, GimbalPlanChannelTopic> aimer_out) mutable {
             std::expected<TargetPrediction, std::string> aim_result = std::unexpected("none");
 
-            // FIXME timestamp unaligned
             const uint64_t current_ns = fcs::clock::now_ns();
 
-            // Use common transform lookup utility
             auto transforms = lookup_gimbal_muzzle_transforms(*tf_buffer, current_ns);
             if (!transforms) {
                 SPDLOG_WARN("Transform lookup failed: {}", transforms.error());
                 return;
             }
             const auto& [gimbal, muzzle, timestamp_ns] = *transforms;
+            (void)timestamp_ns;
+
+            if (!solver.valid() || !solver->get()) {
+                SPDLOG_ERROR("Aimer: trajectory solver not available");
+                return;
+            }
+            const auto& solver_ref    = **solver;
+            const double bullet_speed = traj_conf->bullet_speed;
 
             // Try Robot/Outpost from tracker
             const auto tracker_output = tracker_in.read();
             if (tracker_output && tracker_output->is_tracking()) {
                 if (tracker_output->is_robot()) {
                     if (const auto robot_state = tracker_output->robot_state()) {
-                        aim_result = aimer->aim(
+                        aim_result = aimer.aim(
                             *robot_state, gimbal, muzzle, tracker_output->timestamp_ns, current_ns,
-                            cfg->mpc_planner.trajectory.bullet_speed);
+                            bullet_speed, solver_ref);
                     }
                 } else if (tracker_output->is_outpost()) {
                     if (const auto outpost_state = tracker_output->outpost_state()) {
-                        aim_result = aimer->aim(
+                        aim_result = aimer.aim(
                             *outpost_state, gimbal, muzzle, tracker_output->timestamp_ns,
-                            current_ns, cfg->mpc_planner.trajectory.bullet_speed);
+                            current_ns, bullet_speed, solver_ref);
                     }
                 }
             }
@@ -77,27 +76,20 @@ void register_aimer_systems(talos::Scheduler& scheduler, L4Config&& config) {
             if (!aim_result) {
                 const auto rune_state = rune_in.read();
                 if (rune_state && rune_state->tracking_valid) {
-                    aim_result = aimer->aim(
-                        *rune_state, gimbal, muzzle, current_ns,
-                        cfg->mpc_planner.trajectory.bullet_speed);
+                    aim_result = aimer.aim(
+                        *rune_state, gimbal, muzzle, current_ns, bullet_speed, solver_ref);
                 }
             }
 
             if (aim_result) {
-                // Compute aimer_fire_advice using current gimbal attitude
-                // Use euler_rot() method which directly returns Ros2EulerRot
                 const auto euler     = gimbal->euler_rot();
-                const auto cur_roll  = euler.roll;
                 const auto cur_pitch = euler.pitch;
                 const auto cur_yaw   = euler.yaw;
 
-                // Note: aim_pitch uses opposite sign convention from gimbal pitch
-                // (rune_planner uses -plan.pitch for comparison, so we use -aim_pitch here)
                 aim_result->aimer_fire_advice = is_on_target(
                     cfg->fire_decision, cur_yaw, cur_pitch, aim_result->aim_yaw,
                     -aim_result->aim_pitch, aim_result->distance);
 
-                // Debug: print fire decision parameters
                 SPDLOG_INFO(
                     "[FireDecision] cur_yaw={:.6f}, cur_pitch={:.6f}, aim_yaw={:.6f}, "
                     "aim_pitch={:.6f}, "
@@ -115,7 +107,18 @@ void register_aimer_systems(talos::Scheduler& scheduler, L4Config&& config) {
                     std::abs(cur_yaw - aim_result->aim_yaw),
                     std::abs(cur_pitch - (-aim_result->aim_pitch)), aim_result->aimer_fire_advice);
 
-                aimer_out.write(*aim_result);
+                GimbalPlan plan;
+                plan.timestamp_ns       = aim_result->timestamp_ns;
+                plan.yaw                = aim_result->aim_yaw;
+                plan.pitch              = aim_result->aim_pitch;
+                plan.aim_yaw            = aim_result->aim_yaw;
+                plan.aim_pitch          = aim_result->aim_pitch;
+                plan.distance           = aim_result->distance;
+                plan.aimer_fire_advice  = aim_result->aimer_fire_advice;
+                plan.fire_advice        = aim_result->aimer_fire_advice;
+                plan.predicted_future   = aim_result->predicted_future_ns;
+                plan.predicted_position = aim_result->predicted_position;
+                aimer_out.write(std::move(plan));
             }
         });
 }

@@ -2,7 +2,7 @@
 
 #include <Eigen/Core>
 
-#include "fcs/L4_planning/trajectory/solver_interfaces.hpp"
+#include "fcs/core/trajectory/solver/solver_interfaces.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -24,8 +24,8 @@ inline constexpr double kFlyingTimeRefineTolerance = 1e-3;
 /// @param bullet_speed Bullet speed (m/s)
 /// @return {yaw, pitch} in radians
 [[nodiscard]] inline Eigen::Vector2d compute_aim_point(
-    const trajectory::IBallisticSolver& solver, const Eigen::Vector3d& target_pos_muzzle,
-    double bullet_speed) noexcept {
+    const core::trajectory::solver::TrajectorySolver& solver,
+    const Eigen::Vector3d& target_pos_muzzle, double bullet_speed) noexcept {
     const auto solution = solver.solve(target_pos_muzzle, bullet_speed);
     return Eigen::Vector2d{solution.yaw, solution.pitch};
 }
@@ -39,8 +39,8 @@ inline constexpr double kFlyingTimeRefineTolerance = 1e-3;
 /// @return Refined total delay (initial_delay + flying_time)
 template <class PredictFn>
 [[nodiscard]] double refine_flying_time(
-    const trajectory::IBallisticSolver& solver, PredictFn&& predict_fn, double initial_delay,
-    double bullet_speed) noexcept {
+    const core::trajectory::solver::TrajectorySolver& solver, PredictFn&& predict_fn,
+    double initial_delay, double bullet_speed) noexcept {
     const Eigen::Vector3d current_pos = predict_fn(initial_delay);
     const double distance             = current_pos.norm();
     const double safe_bullet_speed    = std::max(1e-3, bullet_speed);

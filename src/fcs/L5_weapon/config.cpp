@@ -10,7 +10,7 @@ std::expected<void, std::string>
 }
 
 std::expected<void, std::string> L5Config::read_from(const toml::table& tbl) noexcept {
-    READ_OPT(tbl, weapon);
+    READ(tbl, weapon);
     return {};
 }
 

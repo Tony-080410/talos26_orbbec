@@ -21,7 +21,6 @@ std::expected<void, std::string> AimerConfig::read_from(const toml::table& tbl) 
 std::expected<void, std::string> L4Config::read_from(const toml::table& tbl) noexcept {
     READ(tbl, fire_decision);
     READ(tbl, aimer);
-    READ(tbl, mpc_planner);
     return {};
 }
 

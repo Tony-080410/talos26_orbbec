@@ -12,7 +12,7 @@ struct L4Config;
 ///
 /// Unified architecture replacing the legacy monolithic planner:
 /// - Aimer layer: RobotAimer, OutpostAimer, RuneAimer (pure prediction)
-/// - Planner layer: MpcPlanner (trajectory optimization)
+/// - Plan adapter layer: wraps aimer prediction into armor GimbalPlan
 ///
 /// @param scheduler ECS scheduler
 /// @param config Complete L4 configuration (aimers + planner)

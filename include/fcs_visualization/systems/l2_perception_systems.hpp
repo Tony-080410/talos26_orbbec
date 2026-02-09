@@ -78,8 +78,9 @@ void register_l2_perception_systems(App& app) {
                 return;
 
             auto batch = meas_in.read();
-            if (!batch)
+            if (!batch) {
                 return;
+            }
 
             std::vector<::foxglove::schemas::SceneEntity> entities;
 

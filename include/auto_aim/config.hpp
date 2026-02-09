@@ -15,17 +15,13 @@
 #include "fcs/L3_estimation/energy_meter/energy_meter_systems.hpp"
 #include "fcs/L3_estimation/tracker/config.hpp"
 #include "fcs/L4_planning/config.hpp"
-#include "fcs/L4_planning/plan_mux/plan_mux_systems.hpp"
-#include "fcs/L4_planning/rune_planner/rune_planner_systems.hpp"
 #include "fcs/L5_weapon/config.hpp"
 #include "fcs/camera_config.hpp"
 
 // Forward declaration to avoid including toml++/toml_helper in public headers.
-namespace toml {
-inline namespace v3 {
+namespace toml::inline v3 {
 class table;
 }
-} // namespace toml
 
 namespace fcs {
 
@@ -56,6 +52,7 @@ struct HardwareConfig {
 };
 
 struct VisionConfig {
+    core::trajectory::TrajectoryConfig trajectory{};
     L2::AtLegacyConfig at_legacy{};
     rune::RuneDetectorConfig rune_detector{};
 
@@ -63,18 +60,12 @@ struct VisionConfig {
     energy_meter::EnergyMeterL3Config energy_meter{};
 
     L4::L4Config l4{};
-    L4::RunePlannerConfig rune_planner{};
-    L4::PlanMuxConfig plan_mux{};
 
     L5::L5Config l5{};
 
     [[nodiscard]] const L3::TrackerConfig& tracker() const noexcept { return l3.tracker; }
-    [[nodiscard]] const L4::MpcPlannerConfig& mpc_planner() const noexcept {
-        return l4.mpc_planner;
-    }
     [[nodiscard]] const L5::WeaponControllerConfig& weapon() const noexcept { return l5.weapon; }
     [[nodiscard]] L3::TrackerConfig& tracker() noexcept { return l3.tracker; }
-    [[nodiscard]] L4::MpcPlannerConfig& mpc_planner() noexcept { return l4.mpc_planner; }
     [[nodiscard]] L5::WeaponControllerConfig& weapon() noexcept { return l5.weapon; }
 
     std::expected<void, std::string> read_from(const toml::table& tbl) noexcept;

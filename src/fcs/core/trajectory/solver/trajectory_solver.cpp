@@ -1,27 +1,33 @@
-#include "fcs/L4_planning/trajectory/trajectory_solver.hpp"
+#include "fcs/core/trajectory/solver/trajectory_solver.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <limits>
-#include <optional>
 
-namespace fcs::L4::trajectory {
+namespace fcs::core::trajectory::solver {
 
 // ============================================================================
-// IterativeSolver Implementation
+// DirectSolver Implementation
 // ============================================================================
 
-namespace detail {
-
-PitchSolution iterative_solve_pitch(
-    const BallisticModel& model, const Eigen::Vector3d& target_pos, double v0, int max_iterations,
-    double height_tolerance, double max_pitch) noexcept {
-
+AimSolution DirectSolver::solve(const Eigen::Vector3d& target_pos, double v0) const noexcept {
     const double target_height = target_pos.z();
     const double distance      = std::hypot(target_pos.x(), target_pos.y());
 
     if (distance < 1e-6) {
-        return {.pitch = 0.0, .tof = 0.0, .converged = false, .iterations = 0};
+        return {
+            .yaw            = std::atan2(target_pos.y(), target_pos.x()),
+            .pitch          = 0.0,
+            .time_of_flight = 0.0,
+            .converged      = false,
+            .iterations     = 0};
     }
+
+    // For DirectSolver, we use iterative refinement with the model's compute_impact
+    // This works for IdealModel and LinearDragModel which have fast compute_impact
+    constexpr int kMaxIterations      = 20;
+    constexpr double kHeightTolerance = 0.01;
+    constexpr double kMaxPitch        = std::numbers::pi / 2.5;
 
     double iterative_height = target_height;
     double angle            = std::atan2(target_height, distance);
@@ -30,58 +36,86 @@ PitchSolution iterative_solve_pitch(
     double tof              = 0.0;
     int iterations          = 0;
 
-    for (int i = 0; i < max_iterations; ++i) {
+    for (int i = 0; i < kMaxIterations; ++i) {
         iterations = i + 1;
         angle      = std::atan2(iterative_height, distance);
 
-        if (std::abs(angle) > max_pitch) {
-            return {.pitch = angle, .tof = 0.0, .converged = false, .iterations = iterations};
+        if (std::abs(angle) > kMaxPitch) {
+            return {
+                .yaw            = std::atan2(target_pos.y(), target_pos.x()),
+                .pitch          = angle,
+                .time_of_flight = 0.0,
+                .converged      = false,
+                .iterations     = iterations};
         }
 
-        const auto impact = model.compute_impact(distance, angle, v0);
+        const auto impact = model_->compute_impact(distance, angle, v0);
         if (!impact) {
-            return {.pitch = angle, .tof = 0.0, .converged = false, .iterations = iterations};
+            return {
+                .yaw            = std::atan2(target_pos.y(), target_pos.x()),
+                .pitch          = angle,
+                .time_of_flight = 0.0,
+                .converged      = false,
+                .iterations     = iterations};
         }
 
         impact_height = impact->z;
         tof           = impact->tof;
         dh            = target_height - impact_height;
 
-        if (std::abs(dh) < height_tolerance) {
-            return {.pitch = angle, .tof = tof, .converged = true, .iterations = iterations};
+        if (std::abs(dh) < kHeightTolerance) {
+            return {
+                .yaw            = std::atan2(target_pos.y(), target_pos.x()),
+                .pitch          = angle,
+                .time_of_flight = tof,
+                .converged      = true,
+                .iterations     = iterations};
         }
 
         iterative_height += dh;
     }
 
     return {
-        .pitch      = angle,
-        .tof        = tof,
-        .converged  = std::abs(dh) < height_tolerance,
-        .iterations = iterations};
-}
-
-} // namespace detail
-
-PitchSolution IterativeSolver::solve(const Eigen::Vector3d& target_pos, double v0) const noexcept {
-    return detail::iterative_solve_pitch(
-        *model_, target_pos, v0, config_.max_iterations, config_.height_tolerance,
-        config_.max_pitch);
-}
-
-std::optional<double>
-    IterativeSolver::get_flying_time(const Eigen::Vector3d& target_pos, double v0) const noexcept {
-
-    const double distance = std::hypot(target_pos.x(), target_pos.y());
-    const double angle    = std::atan2(target_pos.z(), distance);
-
-    const auto impact = model_->compute_impact(distance, angle, v0);
-    return impact ? std::optional<double>{impact->tof} : std::nullopt;
+        .yaw            = std::atan2(target_pos.y(), target_pos.x()),
+        .pitch          = angle,
+        .time_of_flight = tof,
+        .converged      = std::abs(dh) < kHeightTolerance,
+        .iterations     = iterations};
 }
 
 std::vector<std::pair<double, double>>
-    IterativeSolver::get_trajectory(double max_distance, double pitch, double v0) const noexcept {
+    DirectSolver::generate_trajectory(double pitch, double v0, double max_distance) const noexcept {
+    constexpr double kTrajectoryStep = 0.03;
 
+    if (max_distance < 0.0) {
+        return {};
+    }
+
+    const size_t num_points = static_cast<size_t>(max_distance / kTrajectoryStep) + 1;
+    std::vector<std::pair<double, double>> trajectory;
+    trajectory.reserve(num_points);
+
+    for (double x = 0; x < max_distance; x += kTrajectoryStep) {
+        const auto impact = model_->compute_impact(x, pitch, v0);
+        const double z    = impact ? impact->z : 0.0;
+        trajectory.emplace_back(x, z);
+    }
+
+    return trajectory;
+}
+
+// ============================================================================
+// IterativeSolver Implementation
+// ============================================================================
+
+AimSolution IterativeSolver::solve(const Eigen::Vector3d& target_pos, double v0) const noexcept {
+    return detail::iterative_solve_pitch(
+        *model_, target_pos, v0, static_cast<int>(config_.max_iterations), config_.height_tolerance,
+        config_.max_pitch);
+}
+
+std::vector<std::pair<double, double>> IterativeSolver::generate_trajectory(
+    double pitch, double v0, double max_distance) const noexcept {
     constexpr double kTrajectoryStep = 0.03;
 
     if (max_distance < 0.0) {
@@ -105,16 +139,32 @@ std::vector<std::pair<double, double>>
 // TableLookupSolver Implementation
 // ============================================================================
 
-TableLookupSolver::TableLookupSolver(
-    std::shared_ptr<const BallisticModel> model, const TableConfig& config, double v0) noexcept
-    : model_(std::move(model))
-    , config_(config) {
-    rebuild_table(v0);
+namespace {
+
+/// Helper to cast base_solver to concrete type for model access
+const model::BallisticModel* get_model_from_solver(const TrajectorySolver* solver) noexcept {
+    // Try DirectSolver
+    if (const auto* direct = dynamic_cast<const DirectSolver*>(solver)) {
+        return direct->model().get();
+    }
+    // Try IterativeSolver
+    if (const auto* iterative = dynamic_cast<const IterativeSolver*>(solver)) {
+        return iterative->model().get();
+    }
+    // Recursively check nested TableLookupSolver
+    if (const auto* table = dynamic_cast<const TableLookupSolver*>(solver)) {
+        return get_model_from_solver(table->base_solver().get());
+    }
+    return nullptr;
 }
 
-TableLookupSolver
-    TableLookupSolver::create(std::shared_ptr<const BallisticModel> model, double v0) noexcept {
-    return TableLookupSolver{std::move(model), TableConfig{}, v0};
+} // anonymous namespace
+
+TableLookupSolver::TableLookupSolver(
+    std::unique_ptr<TrajectorySolver> base_solver, const TableConfig& config, double v0) noexcept
+    : base_solver_(std::move(base_solver))
+    , config_(config) {
+    rebuild_table(v0);
 }
 
 void TableLookupSolver::rebuild_table(double v0) noexcept {
@@ -142,7 +192,7 @@ void TableLookupSolver::rebuild_table(double v0) noexcept {
     const double pitch_max =
         std::max(pitch_min + pitch_step, std::max(raw_pitch_min, raw_pitch_max));
 
-    auto tbl        = std::make_shared<LookupTable>();
+    auto tbl        = std::make_unique<LookupTable>();
     tbl->range_max  = range_max;
     tbl->range_step = range_step;
     tbl->pitch_min  = pitch_min;
@@ -160,36 +210,23 @@ void TableLookupSolver::rebuild_table(double v0) noexcept {
 
     const auto idx = [&](size_t pi, size_t ri) { return pi * tbl->range_count + ri; };
 
+    // Get the underlying model for table building
+    const model::BallisticModel* model = get_model_from_solver(base_solver_.get());
+    if (!model) {
+        table_ = nullptr;
+        return;
+    }
+
     // Build table by iterating over all pitches and sampling at range intervals
     for (size_t pi = 0; pi < tbl->pitch_count; ++pi) {
         const double pitch = tbl->pitch_min + static_cast<double>(pi) * tbl->pitch_step;
 
-        // Use RK4Integrator's full trajectory method for RK4Model
-        // For other models, we'll use individual compute_impact calls
-        if (const auto* rk4_model = dynamic_cast<const RK4Model*>(model_.get())) {
-            const double k      = rk4_model->drag_k();
-            const double dt     = rk4_model->select_dt(tbl->range_max, pitch, v0);
-            const int max_steps = rk4_model->max_steps();
-
-            const auto samples = detail::RK4Integrator::integrate_full_trajectory(
-                v0, pitch, k, rk4_model->gravity(), dt, max_steps, tbl->range_step, tbl->range_max);
-
-            for (const auto& [range, z, tof] : samples) {
-                const size_t ri = static_cast<size_t>(std::round(range / tbl->range_step));
-                if (ri < tbl->range_count) {
-                    tbl->z[idx(pi, ri)]   = z;
-                    tbl->tof[idx(pi, ri)] = tof;
-                }
-            }
-        } else {
-            // For IdealModel and ResistanceModel, sample individually
-            for (size_t ri = 0; ri < tbl->range_count; ++ri) {
-                const double range = static_cast<double>(ri) * tbl->range_step;
-                const auto impact  = model_->compute_impact(range, pitch, v0);
-                if (impact) {
-                    tbl->z[idx(pi, ri)]   = impact->z;
-                    tbl->tof[idx(pi, ri)] = impact->tof;
-                }
+        for (size_t ri = 0; ri < tbl->range_count; ++ri) {
+            const double range = static_cast<double>(ri) * tbl->range_step;
+            const auto impact  = model->compute_impact(range, pitch, v0);
+            if (impact) {
+                tbl->z[idx(pi, ri)]   = impact->z;
+                tbl->tof[idx(pi, ri)] = impact->tof;
             }
         }
     }
@@ -197,25 +234,31 @@ void TableLookupSolver::rebuild_table(double v0) noexcept {
     table_ = std::move(tbl);
 }
 
-PitchSolution
-    TableLookupSolver::solve(const Eigen::Vector3d& target_pos, double v0) const noexcept {
+AimSolution TableLookupSolver::solve(const Eigen::Vector3d& target_pos, double v0) const noexcept {
     const double target_height = target_pos.z();
     const double range         = std::hypot(target_pos.x(), target_pos.y());
+    const double yaw           = std::atan2(target_pos.y(), target_pos.x());
 
     if (range < 1e-6) {
-        return {.pitch = 0.0, .tof = 0.0, .converged = false, .iterations = 0};
+        return {
+            .yaw = yaw, .pitch = 0.0, .time_of_flight = 0.0, .converged = false, .iterations = 0};
+    }
+
+    // Get the underlying model for fallback
+    const model::BallisticModel* model = get_model_from_solver(base_solver_.get());
+    if (!model) {
+        // Fallback to base solver
+        return base_solver_->solve(target_pos, v0);
     }
 
     if (!table_) {
-        // Fallback to iterative solving
-        return detail::iterative_solve_pitch(
-            *model_, target_pos, v0, 20, 0.01, std::numbers::pi / 2.5);
+        // Fallback to base solver
+        return base_solver_->solve(target_pos, v0);
     }
 
     if (range > table_->range_max) {
-        // Out of table range, use iterative fallback
-        return detail::iterative_solve_pitch(
-            *model_, target_pos, v0, 20, 0.01, std::numbers::pi / 2.5);
+        // Out of table range, use base solver
+        return base_solver_->solve(target_pos, v0);
     }
 
     constexpr double kDhThreshold = 0.01;
@@ -236,7 +279,7 @@ PitchSolution
     double last_dh   = std::numeric_limits<double>::infinity();
 
     for (int refine = 0; refine < 2; ++refine) {
-        const auto impact = model_->compute_impact(range, pitch_est, v0);
+        const auto impact = model->compute_impact(range, pitch_est, v0);
         if (!impact) {
             break;
         }
@@ -245,7 +288,12 @@ PitchSolution
         last_dh         = dh;
 
         if (std::abs(dh) < kDhThreshold) {
-            return {.pitch = pitch_est, .tof = impact->tof, .converged = true, .iterations = 1};
+            return {
+                .yaw            = yaw,
+                .pitch          = pitch_est,
+                .time_of_flight = impact->tof,
+                .converged      = true,
+                .iterations     = 1};
         }
 
         // Estimate dz/dp from table for Newton-like refinement
@@ -258,10 +306,15 @@ PitchSolution
     }
 
     if (!have_impact) {
-        return {.pitch = pitch_est, .tof = tof_est, .converged = false, .iterations = 2};
+        return {
+            .yaw            = yaw,
+            .pitch          = pitch_est,
+            .time_of_flight = tof_est,
+            .converged      = false,
+            .iterations     = 2};
     }
 
-    // If still not converged after table refinement, fall back to iterative
+    // If still not converged after table refinement, use iterative fallback
     if (std::abs(last_dh) > kDhThreshold) {
         double iterative_height = target_height;
         double dh               = last_dh;
@@ -272,7 +325,7 @@ PitchSolution
                 break;
             }
 
-            const auto impact = model_->compute_impact(range, pitch_est, v0);
+            const auto impact = model->compute_impact(range, pitch_est, v0);
             if (!impact) {
                 break;
             }
@@ -280,65 +333,38 @@ PitchSolution
             dh = target_height - impact->z;
             if (std::abs(dh) < kDhThreshold) {
                 return {
-                    .pitch      = pitch_est,
-                    .tof        = impact->tof,
-                    .converged  = true,
-                    .iterations = 2 + i + 1};
+                    .yaw            = yaw,
+                    .pitch          = pitch_est,
+                    .time_of_flight = impact->tof,
+                    .converged      = true,
+                    .iterations     = 2 + i + 1};
             }
 
             iterative_height += dh;
         }
 
         if (std::abs(dh) > kDhThreshold) {
-            return {.pitch = pitch_est, .tof = 0.0, .converged = false, .iterations = 8};
+            return {
+                .yaw            = yaw,
+                .pitch          = pitch_est,
+                .time_of_flight = 0.0,
+                .converged      = false,
+                .iterations     = 8};
         }
     }
 
     // Get final tof
-    const auto final_impact = model_->compute_impact(range, pitch_est, v0);
+    const auto final_impact = model->compute_impact(range, pitch_est, v0);
     return {
-        .pitch      = pitch_est,
-        .tof        = final_impact ? final_impact->tof : tof_est,
-        .converged  = true,
-        .iterations = 2};
+        .yaw            = yaw,
+        .pitch          = pitch_est,
+        .time_of_flight = final_impact ? final_impact->tof : tof_est,
+        .converged      = true,
+        .iterations     = 2};
 }
 
-std::optional<double> TableLookupSolver::get_flying_time(
-    const Eigen::Vector3d& target_pos, double v0) const noexcept {
-
-    const double range = std::hypot(target_pos.x(), target_pos.y());
-    if (range < 1e-6) {
-        return 0.0;
-    }
-
-    if (!table_) {
-        const double angle = std::atan2(target_pos.z(), range);
-        const auto impact  = model_->compute_impact(range, angle, v0);
-        return impact ? std::optional<double>{impact->tof} : std::nullopt;
-    }
-
-    if (range > table_->range_max) {
-        const double angle = std::atan2(target_pos.z(), range);
-        const auto impact  = model_->compute_impact(range, angle, v0);
-        return impact ? std::optional<double>{impact->tof} : std::nullopt;
-    }
-
-    double pitch_est = 0.0;
-    double tof_est   = 0.0;
-    if (lookup_pitch_tof(*table_, range, target_pos.z(), pitch_est, tof_est)) {
-        if (std::isfinite(tof_est) && tof_est >= 0.0) {
-            return tof_est;
-        }
-    }
-
-    const double angle = std::atan2(target_pos.z(), range);
-    const auto impact  = model_->compute_impact(range, angle, v0);
-    return impact ? std::optional<double>{impact->tof} : std::nullopt;
-}
-
-std::vector<std::pair<double, double>>
-    TableLookupSolver::get_trajectory(double max_distance, double pitch, double v0) const noexcept {
-
+std::vector<std::pair<double, double>> TableLookupSolver::generate_trajectory(
+    double pitch, double v0, double max_distance) const noexcept {
     if (max_distance <= 0.0) {
         return {};
     }
@@ -356,12 +382,8 @@ std::vector<std::pair<double, double>>
         return trajectory;
     }
 
-    for (double x = 0; x < max_distance; x += sample_step) {
-        const auto impact = model_->compute_impact(x, pitch, v0);
-        const double z    = impact ? impact->z : 0.0;
-        trajectory.emplace_back(x, z);
-    }
-    return trajectory;
+    // Fallback to base solver
+    return base_solver_->generate_trajectory(pitch, v0, max_distance);
 }
 
 double
@@ -517,4 +539,79 @@ bool TableLookupSolver::estimate_dzdp(
     return true;
 }
 
-} // namespace fcs::L4::trajectory
+// ============================================================================
+// Utility Functions
+// ============================================================================
+
+namespace detail {
+
+AimSolution iterative_solve_pitch(
+    const model::BallisticModel& model, const Eigen::Vector3d& target_pos, double v0,
+    int max_iterations, double height_tolerance, double max_pitch) noexcept {
+
+    const double target_height = target_pos.z();
+    const double distance      = std::hypot(target_pos.x(), target_pos.y());
+    const double yaw           = std::atan2(target_pos.y(), target_pos.x());
+
+    if (distance < 1e-6) {
+        return {
+            .yaw = yaw, .pitch = 0.0, .time_of_flight = 0.0, .converged = false, .iterations = 0};
+    }
+
+    double iterative_height = target_height;
+    double angle            = std::atan2(target_height, distance);
+    double impact_height    = 0.0;
+    double dh               = 0.0;
+    double tof              = 0.0;
+    int iterations          = 0;
+
+    for (int i = 0; i < max_iterations; ++i) {
+        iterations = i + 1;
+        angle      = std::atan2(iterative_height, distance);
+
+        if (std::abs(angle) > max_pitch) {
+            return {
+                .yaw            = yaw,
+                .pitch          = angle,
+                .time_of_flight = 0.0,
+                .converged      = false,
+                .iterations     = iterations};
+        }
+
+        const auto impact = model.compute_impact(distance, angle, v0);
+        if (!impact) {
+            return {
+                .yaw            = yaw,
+                .pitch          = angle,
+                .time_of_flight = 0.0,
+                .converged      = false,
+                .iterations     = iterations};
+        }
+
+        impact_height = impact->z;
+        tof           = impact->tof;
+        dh            = target_height - impact_height;
+
+        if (std::abs(dh) < height_tolerance) {
+            return {
+                .yaw            = yaw,
+                .pitch          = angle,
+                .time_of_flight = tof,
+                .converged      = true,
+                .iterations     = iterations};
+        }
+
+        iterative_height += dh;
+    }
+
+    return {
+        .yaw            = yaw,
+        .pitch          = angle,
+        .time_of_flight = tof,
+        .converged      = std::abs(dh) < height_tolerance,
+        .iterations     = iterations};
+}
+
+} // namespace detail
+
+} // namespace fcs::core::trajectory::solver

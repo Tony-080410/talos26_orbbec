@@ -1,5 +1,6 @@
 #include "fcs/runtime/l1_l2_setup.hpp"
 
+#include "L5_weapon/fire_control.hpp"
 #include "auto_aim/config.hpp"
 #include "fcs/L1_sensor/camera_interface.hpp"
 #include "fcs/L1_sensor/output_interface.hpp"

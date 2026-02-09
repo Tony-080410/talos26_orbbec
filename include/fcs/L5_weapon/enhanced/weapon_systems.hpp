@@ -1,7 +1,5 @@
 #pragma once
 
-#include "fcs/L4_planning/trajectory_config.hpp"
-
 namespace talos {
 class Scheduler;
 } // namespace talos

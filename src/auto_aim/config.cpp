@@ -27,8 +27,6 @@ std::expected<void, std::string> VisionConfig::read_from(const toml::table& tbl)
     READ(tbl, energy_meter);
 
     READ_FLATTEN(tbl, l4);
-    READ(tbl, rune_planner);
-    READ(tbl, plan_mux);
 
     READ_FLATTEN(tbl, l5);
     return {};
