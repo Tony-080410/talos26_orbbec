@@ -82,7 +82,8 @@ public:
 
     [[nodiscard]] std::optional<Frame> try_recv() noexcept {
         using namespace std::chrono_literals;
-        // TODO properly pass timestamp in camera_->read()
+        // NOTE: Using host timestamp (now_ns) instead of camera timestamp.
+        // Camera-host clock sync is complex and error only visible in high-dynamic scenarios.
         auto now_   = now_ns();
         auto result = camera_->read(1ms);
         if (!result) {
@@ -97,6 +98,8 @@ public:
 
     [[nodiscard]] std::expected<Frame, InputError>
         recv(const std::chrono::milliseconds timeout) noexcept {
+        // NOTE: Using host timestamp (now_ns) instead of camera timestamp.
+        // Camera-host clock sync is complex and error only visible in high-dynamic scenarios.
         auto result = camera_->read(
             std::chrono::duration_cast<std::chrono::duration<unsigned int, std::milli>>(timeout));
         if (!result) {
