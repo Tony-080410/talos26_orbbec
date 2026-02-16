@@ -58,11 +58,11 @@ static_assert(sizeof(ImageMeta) == 32, "ImageMeta must be 32 bytes");
  * 使用 float 以适配 64 字节对齐
  */
 struct alignas(64) PoseMeta {
-    uint64_t timestamp_ns;
+    uint64_t frame_seq;  // 帧序号，与 ImageMeta::seq 对齐
     float position[3];   // x, y, z (meters)
     float quaternion[4]; // w, x, y, z (normalized)
-    uint8_t frame_id;    // 0=map, 1=odom, 2=gimbal, 3=camera
-    uint8_t _pad[27];    // 填充到 64 字节
+    uint64_t timestamp_ns;
+    uint8_t _pad[16];    // 填充到 64 字节
 };
 static_assert(sizeof(PoseMeta) == 64, "PoseMeta must be 64 bytes");
 

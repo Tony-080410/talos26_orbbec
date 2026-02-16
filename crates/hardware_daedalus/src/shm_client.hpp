@@ -55,6 +55,7 @@ public:
     struct Pose {
         double x, y, z;        // 位置 (米)
         double qw, qx, qy, qz; // 四元数
+        uint64_t frame_seq;    // 对应图像帧序号
         uint64_t timestamp_ns;
     };
 
@@ -206,6 +207,7 @@ public:
             .qx           = pose.quaternion[1],
             .qy           = pose.quaternion[2],
             .qz           = pose.quaternion[3],
+            .frame_seq    = pose.frame_seq,
             .timestamp_ns = pose.timestamp_ns,
         };
     }
