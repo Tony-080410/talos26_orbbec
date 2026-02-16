@@ -1,6 +1,7 @@
 #pragma once
 
 #include <Eigen/Dense>
+#include <algorithm>
 #include <cassert>
 #include <cmath>
 
@@ -95,15 +96,34 @@ inline Eigen::Matrix<Scalar, N, N> chol_from_ldlt(
         }
         jitter *= Scalar(10);
     }
-    // 仍然失败：保底（会触发断言）
-    Eigen::LLT<Mat> llt(P);
-    assert(llt.info() == Eigen::Success && "P not SPD even after jitter");
-    Mat S = llt.matrixL();
-    for (int i = 0; i < N; ++i) {
-        if (S(i, i) < Scalar(0)) {
-            S.col(i) = -S.col(i);
+
+    // 3) 仍失败：特征值修复到 PSD，再做 LLT
+    const Scalar scale     = std::max(P.diagonal().cwiseAbs().maxCoeff(), Scalar(1));
+    const Scalar floor_eig = std::max(base_jitter * scale, Scalar(1e-12) * scale);
+    Eigen::SelfAdjointEigenSolver<Mat> es(P);
+    if (es.info() == Eigen::Success) {
+        auto eval = es.eigenvalues();
+        for (int i = 0; i < N; ++i) {
+            eval(i) = std::max(eval(i), floor_eig);
+        }
+        Mat P_psd = es.eigenvectors() * eval.asDiagonal() * es.eigenvectors().transpose();
+        P_psd     = (P_psd + P_psd.transpose()) * Scalar(0.5);
+
+        Eigen::LLT<Mat> llt(P_psd);
+        if (llt.info() == Eigen::Success) {
+            Mat S = llt.matrixL();
+            for (int i = 0; i < N; ++i) {
+                if (S(i, i) < Scalar(0)) {
+                    S.col(i) = -S.col(i);
+                }
+            }
+            return S;
         }
     }
+
+    // 4) 最后保底：返回一个很小的对角根，避免中断（优先保持滤波运行）
+    Mat S = Mat::Zero();
+    S.diagonal().setConstant(std::sqrt(std::max(base_jitter * scale, Scalar(1e-9) * scale)));
     return S;
 }
 
@@ -146,6 +166,88 @@ inline Eigen::Matrix<Scalar, D, C>
     return X;
 }
 
+template <int D, typename Scalar>
+inline Eigen::Matrix<Scalar, D, Eigen::Dynamic> solve_via_chol_dyn(
+    const Eigen::Matrix<Scalar, D, D>& S,
+    const Eigen::Ref<const Eigen::Matrix<Scalar, D, Eigen::Dynamic>>& B) {
+    Eigen::Matrix<Scalar, D, Eigen::Dynamic> Y = S.template triangularView<Eigen::Lower>().solve(B);
+    Eigen::Matrix<Scalar, D, Eigen::Dynamic> X =
+        S.transpose().template triangularView<Eigen::Upper>().solve(Y);
+    return X;
+}
+
+template <typename Scalar>
+inline Scalar wrap_angle(Scalar a) {
+    return std::atan2(std::sin(a), std::cos(a));
+}
+
+template <typename Scalar>
+inline Scalar shortest_angle(Scalar from, Scalar to) {
+    return wrap_angle(to - from);
+}
+
+template <typename Scalar>
+inline Scalar unwrap_angle(Scalar ref, Scalar raw) {
+    return ref + shortest_angle(ref, raw);
+}
+
+template <int NZ, typename Scalar>
+inline Eigen::Matrix<Scalar, NZ, 1> angle_aware_meas_residual(
+    const Eigen::Matrix<Scalar, NZ, 1>& a, const Eigen::Matrix<Scalar, NZ, 1>& b) {
+    Eigen::Matrix<Scalar, NZ, 1> r = a - b;
+    if constexpr (NZ > 0) {
+        r(0) = shortest_angle(b(0), a(0));   // yaw
+    }
+    if constexpr (NZ > 3) {
+        r(3) = shortest_angle(b(3), a(3));   // armor yaw
+    }
+    return r;
+}
+
+template <int NZ, typename Scalar>
+inline void
+    unwrap_meas_sigma(Eigen::Matrix<Scalar, NZ, 1>& z, const Eigen::Matrix<Scalar, NZ, 1>& z_ref) {
+    if constexpr (NZ > 0) {
+        z(0) = unwrap_angle(z_ref(0), z(0)); // yaw
+    }
+    if constexpr (NZ > 3) {
+        z(3) = unwrap_angle(z_ref(3), z(3)); // armor yaw
+    }
+}
+
+template <int NX, int NZ, typename Scalar>
+inline void build_observability_projection(
+    const Eigen::Matrix<Scalar, NZ, NX>& H, Scalar rel_tol, Scalar abs_tol,
+    Eigen::Matrix<Scalar, NX, NX>& P_obs) {
+    Eigen::Matrix<Scalar, Eigen::Dynamic, Eigen::Dynamic> H_dyn = H;
+    Eigen::JacobiSVD<Eigen::Matrix<Scalar, Eigen::Dynamic, Eigen::Dynamic>> svd(
+        H_dyn, Eigen::ComputeThinU | Eigen::ComputeThinV);
+    const auto& s = svd.singularValues();
+    if (s.size() == 0) {
+        P_obs.setZero();
+        return;
+    }
+
+    const Scalar s_max = s(0);
+    const Scalar cut   = std::max(abs_tol, rel_tol * s_max);
+
+    int rank         = 0;
+    const int s_size = static_cast<int>(s.size());
+    for (; rank < s_size; ++rank) {
+        if (!(s(rank) > cut)) {
+            break;
+        }
+    }
+    if (rank == 0) {
+        P_obs.setZero();
+        return;
+    }
+
+    const auto V_r                                                  = svd.matrixV().leftCols(rank);
+    Eigen::Matrix<Scalar, Eigen::Dynamic, Eigen::Dynamic> P_obs_dyn = V_r * V_r.transpose();
+    P_obs                                                           = P_obs_dyn;
+}
+
 } // namespace detail
 
 /**
@@ -168,6 +270,7 @@ public:
     using MatXX = Eigen::Matrix<Scalar, NX, NX>;
     using MatZZ = Eigen::Matrix<Scalar, NZ, NZ>;
     using MatXZ = Eigen::Matrix<Scalar, NX, NZ>;
+    using MatZX = Eigen::Matrix<Scalar, NZ, NX>;
     using DevX  = Eigen::Matrix<Scalar, NX, Eigen::Dynamic>;
     using DevZ  = Eigen::Matrix<Scalar, NZ, Eigen::Dynamic>;
 
@@ -187,6 +290,10 @@ public:
     // 可选：调迭代次数与收敛阈值（不影响旧代码编译）
     void set_max_iters(int iters) { max_iters_ = (iters < 1 ? 1 : iters); }
     void set_iter_tol(Scalar tol) { iter_tol_ = (tol <= Scalar(0) ? Scalar(1e-6) : tol); }
+    void set_observability_truncation(Scalar rel_tol, Scalar abs_tol = Scalar(1e-8)) {
+        obs_rel_tol_ = std::max(rel_tol, Scalar(0));
+        obs_abs_tol_ = std::max(abs_tol, Scalar(0));
+    }
 
     void predict(Scalar dt) {
         compute_cubature_points_(x_, Sx_, Xsig_);
@@ -206,7 +313,15 @@ public:
         for (int i = 0; i < Xsig_.rows(); ++i)
             dev_x.col(i) = w_sqrt_ * (Xsig_.row(i).transpose() - x_pred);
 
-        const auto Qs = model_.Q_sqrt(dt);
+        const auto Qs = [&]() {
+            if constexpr (requires(const Model& m, const VecX& x_cur, Scalar d) {
+                              m.Q_sqrt(x_cur, d);
+                          }) {
+                return model_.Q_sqrt(x_, dt);
+            } else {
+                return model_.Q_sqrt(dt);
+            }
+        }();
         assert(Qs.rows() == NX && "Q_sqrt rows must be NX");
         Sx_ = detail::qr_compose<NX, Scalar>(dev_x, Qs);
 
@@ -222,16 +337,46 @@ public:
         VecX x_it = x_prior;
 
         // 迭代中需要缓存最后一次的量测统计量，用于最终协方差更新
-        MatXZ Pxz_last  = MatXZ::Zero();
-        MatZZ Sz_last   = MatZZ::Zero();
-        VecZ zpred_last = VecZ::Zero();
+        MatXZ Pxz_last = MatXZ::Zero();
+        MatZZ Sz_last  = MatZZ::Zero();
 
         for (int it = 0; it < max_iters_; ++it) {
-            compute_cubature_points_(x_it, S_prior, Xsig_);
+            MatXX S_lin = S_prior;
+            Eigen::Matrix<Scalar, NX, Eigen::Dynamic> N_obs;
+            if constexpr (requires(const Model& m, const VecX& x_cur) {
+                              m.state_observability_nullspace(x_cur);
+                          }) {
+                N_obs                   = model_.state_observability_nullspace(x_it);
+                bool use_cov_projection = false;
+                if constexpr (requires(const Model& m) { m.use_observability_cov_projection(); }) {
+                    use_cov_projection = model_.use_observability_cov_projection();
+                }
+                if (use_cov_projection && N_obs.cols() > 0) {
+                    const auto Pinv_N = detail::solve_via_chol_dyn<NX, Scalar>(S_prior, N_obs);
+                    Eigen::Matrix<Scalar, Eigen::Dynamic, Eigen::Dynamic> M =
+                        N_obs.transpose() * Pinv_N;
+                    M = (M + M.transpose()) * Scalar(0.5);
+
+                    Eigen::LDLT<Eigen::Matrix<Scalar, Eigen::Dynamic, Eigen::Dynamic>> ldlt(M);
+                    if (ldlt.info() == Eigen::Success) {
+                        const Eigen::Matrix<Scalar, Eigen::Dynamic, Eigen::Dynamic> Y =
+                            ldlt.solve(N_obs.transpose());
+                        MatXX P_lin = P_prior - N_obs * Y;
+                        P_lin       = (P_lin + P_lin.transpose()) * Scalar(0.5);
+                        S_lin       = detail::chol_from_ldlt<NX, Scalar>(P_lin);
+                    }
+                }
+            }
+
+            compute_cubature_points_(x_it, S_lin, Xsig_);
 
             // 量测传播
-            for (int i = 0; i < Xsig_.rows(); ++i)
-                Zsig_.row(i) = model_.h(Xsig_.row(i).transpose()).transpose();
+            const VecZ z_ref = model_.h(x_it);
+            for (int i = 0; i < Xsig_.rows(); ++i) {
+                VecZ zi = model_.h(Xsig_.row(i).transpose());
+                detail::unwrap_meas_sigma<NZ, Scalar>(zi, z_ref);
+                Zsig_.row(i) = zi.transpose();
+            }
 
             // 量测均值
             VecZ z_pred = VecZ::Zero();
@@ -240,8 +385,11 @@ public:
 
             // dev_z（加 R_sqrt）
             DevZ dev_z(NZ, Zsig_.rows());
-            for (int i = 0; i < Zsig_.rows(); ++i)
-                dev_z.col(i) = w_sqrt_ * (Zsig_.row(i).transpose() - z_pred);
+            for (int i = 0; i < Zsig_.rows(); ++i) {
+                const VecZ dz =
+                    detail::angle_aware_meas_residual<NZ, Scalar>(Zsig_.row(i).transpose(), z_pred);
+                dev_z.col(i) = w_sqrt_ * dz;
+            }
 
             const auto Rs = model_.R_sqrt(z);
             assert(Rs.rows() == NZ && "R_sqrt rows must be NZ");
@@ -251,27 +399,50 @@ public:
             MatXZ Pxz = MatXZ::Zero();
             for (int i = 0; i < Xsig_.rows(); ++i) {
                 const VecX dx = Xsig_.row(i).transpose() - x_it;
-                const VecZ dz = Zsig_.row(i).transpose() - z_pred;
+                const VecZ dz =
+                    detail::angle_aware_meas_residual<NZ, Scalar>(Zsig_.row(i).transpose(), z_pred);
                 Pxz.noalias() += w_ * (dx * dz.transpose());
             }
 
-            // K = P_xz * P_zz^{-1}, P_zz = Sz Sz^T
-            MatXZ K = detail::solve_via_chol<NZ, NX, Scalar>(Sz, Pxz.transpose()).transpose();
+            const MatXZ Pinv_Pxz = detail::solve_via_chol<NX, NZ, Scalar>(S_lin, Pxz);
+            const MatZX H_lin    = Pinv_Pxz.transpose();
 
-            // Gauss-Newton / MAP 迭代项：z - h(x_it) + H(x_it)*(x_it - x_prior)
-            // 其中 H(x_it) ≈ P_xz^T * P_prior^{-1}
-            const VecX dxp = x_it - x_prior;
-            const VecX v   = detail::solve_via_chol<NX, 1, Scalar>(
-                S_prior, dxp);                  // v = P_prior^{-1} * (x_it-x_prior)
-            const VecZ Hdx = Pxz.transpose() * v; // ≈ H(x_it)*(x_it-x_prior)
+            MatXZ Pxz_obs = Pxz;
+            if constexpr (requires(const Model& m, const VecX& x_cur) {
+                              m.state_observability_nullspace(x_cur);
+                          }) {
+                if (N_obs.cols() > 0) {
+                    const auto Pinv_N = detail::solve_via_chol_dyn<NX, Scalar>(S_lin, N_obs);
+                    Eigen::Matrix<Scalar, Eigen::Dynamic, Eigen::Dynamic> M =
+                        N_obs.transpose() * Pinv_N;
+                    M = (M + M.transpose()) * Scalar(0.5);
 
-            const VecZ innov = (z - z_pred) + Hdx;
+                    Eigen::LDLT<Eigen::Matrix<Scalar, Eigen::Dynamic, Eigen::Dynamic>> ldlt(M);
+                    if (ldlt.info() == Eigen::Success) {
+                        const Eigen::Matrix<Scalar, Eigen::Dynamic, Eigen::Dynamic> C =
+                            N_obs.transpose() * Pinv_Pxz;
+                        const Eigen::Matrix<Scalar, Eigen::Dynamic, Eigen::Dynamic> Y =
+                            ldlt.solve(C);
+                        Pxz_obs.noalias() -= N_obs * Y;
+                    }
+                }
+            } else {
+                MatXX P_obs = MatXX::Identity();
+                detail::build_observability_projection<NX, NZ, Scalar>(
+                    H_lin, obs_rel_tol_, obs_abs_tol_, P_obs);
+                Pxz_obs = P_obs * Pxz;
+            }
+
+            // K = P_xz_obs * P_zz^{-1}, P_zz = Sz Sz^T
+            MatXZ K = detail::solve_via_chol<NZ, NX, Scalar>(Sz, Pxz_obs.transpose()).transpose();
+
+            const VecZ nu    = detail::angle_aware_meas_residual<NZ, Scalar>(z, z_pred);
+            const VecZ innov = nu;
             const VecX x_new = x_prior + K * innov;
 
             // 保存最后一次统计量
-            Pxz_last   = Pxz;
-            Sz_last    = Sz;
-            zpred_last = z_pred;
+            Pxz_last = Pxz_obs;
+            Sz_last  = Sz;
 
             const Scalar step_norm = (x_new - x_it).template lpNorm<Eigen::Infinity>();
             x_it                   = x_new;
@@ -283,12 +454,12 @@ public:
         x_ = x_it;
 
         // 协方差更新（仍在协方差域做一次，最后重分解回 SR）
-        const MatZZ Pzz = Sz_last * Sz_last.transpose();
         MatXZ K_last =
             detail::solve_via_chol<NZ, NX, Scalar>(Sz_last, Pxz_last.transpose()).transpose();
-
-        MatXX P_post = P_prior - K_last * Pzz * K_last.transpose();
-        Sx_          = detail::chol_from_ldlt<NX, Scalar>(P_post);
+        const MatZZ Pzz_last = Sz_last * Sz_last.transpose();
+        MatXX P_post         = P_prior - K_last * Pzz_last * K_last.transpose();
+        P_post               = (P_post + P_post.transpose()) * Scalar(0.5);
+        Sx_                  = detail::chol_from_ldlt<NX, Scalar>(P_post);
     }
 
     void step(const VecZ& z, Scalar dt) {
@@ -313,6 +484,8 @@ private:
 
     int max_iters_{3};                                           // 默认 3 次迭代
     Scalar iter_tol_{Scalar(1e-6)};                              // 默认无穷范数阈值
+    Scalar obs_rel_tol_{Scalar(1e-3)};                           // SVD 相对截断阈值
+    Scalar obs_abs_tol_{Scalar(1e-8)};                           // SVD 绝对截断阈值
 
     Eigen::Matrix<Scalar, Eigen::Dynamic, Eigen::Dynamic> Xsig_; // (2N x NX)
     Eigen::Matrix<Scalar, Eigen::Dynamic, Eigen::Dynamic> Zsig_; // (2N x NZ)

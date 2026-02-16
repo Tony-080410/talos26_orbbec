@@ -102,6 +102,9 @@ target_include_directories(rclcompat_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/cr
 target_link_libraries(rclcompat_test PRIVATE scheduler GTest::gtest_main Threads::Threads)
 add_test(NAME RclCompatTest COMMAND rclcompat_test)
 
+# FCS tracker observability regression tests
+talos_add_test_fcs(tracker_isrckf_observability_test test/tracker_isrckf_observability_test.cpp)
+
 if (ENABLE_COVERAGE)
     message(STATUS "Coverage enabled for FCS tests")
 endif ()

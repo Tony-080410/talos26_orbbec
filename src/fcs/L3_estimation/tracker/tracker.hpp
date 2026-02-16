@@ -13,6 +13,7 @@
 #include <cmath>
 #include <numbers>
 #include <optional>
+#include <vector>
 
 namespace fcs::L3 {
 
@@ -67,21 +68,35 @@ public:
         std::vector<int> idx;
 
         if (is_outpost) {
+            const double angle_step  = 2.0 * std::numbers::pi / static_cast<double>(armors_num);
+            const double phase_shift = outpost_ckf_->x()[O_VYAW] * last_dt_ / angle_step;
+            const double phase_std =
+                compute_phase_std_(outpost_ckf_->Sx(), O_YAW, O_VYAW, last_dt_, angle_step);
+            const auto prior =
+                build_mode_prior_(armors_num, outpost_last_armor_id_, phase_shift, phase_std);
             auto result = outpost_associator_.match(
                 measurements, outpost_ckf_->x(), outpost_ckf_->Sx(), outpost_model_, target_name_,
-                matcher_gate, armors_num);
+                matcher_gate, armors_num, &prior);
 
             for (size_t i = 0; i < result.armors.size(); ++i) {
                 match_result.armors.push_back(result.armors[i]);
                 idx.push_back(result.armor_ids[i]);
+                match_result.costs.push_back(result.costs[i]);
             }
         } else {
+            const double angle_step  = 2.0 * std::numbers::pi / static_cast<double>(armors_num);
+            const double phase_shift = robot_ckf_->x()[V_YAW] * last_dt_ / angle_step;
+            const double phase_std =
+                compute_phase_std_(robot_ckf_->Sx(), YAW, V_YAW, last_dt_, angle_step);
+            const auto prior =
+                build_mode_prior_(armors_num, robot_last_armor_id_, phase_shift, phase_std);
             auto result = robot_associator_.match(
                 measurements, robot_ckf_->x(), robot_ckf_->Sx(), robot_model_, target_name_,
-                matcher_gate, armors_num);
+                matcher_gate, armors_num, &prior);
 
             match_result.armors = result.armors;
             idx                 = result.armor_ids;
+            match_result.costs  = result.costs;
         }
 
         if (match_result.armors.empty()) {
@@ -90,6 +105,21 @@ public:
         }
 
         state_machine(true);
+
+        if (!idx.empty()) {
+            size_t best_i = 0;
+            if (match_result.costs.size() == idx.size()) {
+                best_i = static_cast<size_t>(std::distance(
+                    match_result.costs.begin(),
+                    std::min_element(match_result.costs.begin(), match_result.costs.end())));
+            }
+
+            if (is_outpost) {
+                outpost_last_armor_id_ = idx[best_i];
+            } else {
+                robot_last_armor_id_ = idx[best_i];
+            }
+        }
 
         // Process matched armors
         for (size_t i = 0; i < match_result.armors.size(); ++i) {
@@ -159,6 +189,8 @@ public:
         // Reset existing filters
         robot_ckf_.reset();
         outpost_ckf_.reset();
+        robot_last_armor_id_.reset();
+        outpost_last_armor_id_.reset();
 
         constexpr double v0 = 0.0;
 
@@ -255,6 +287,8 @@ public:
     void reset() noexcept {
         robot_ckf_.reset();
         outpost_ckf_.reset();
+        robot_last_armor_id_.reset();
+        outpost_last_armor_id_.reset();
         target_name_ = ArmorName::Invalid;
         measurement_.fill(0.0);
         detecting_count_ = 0;
@@ -305,6 +339,69 @@ private:
 
     // Debug measurement storage
     std::array<double, RobotModel::NZ * 2> measurement_{};
+    std::optional<int> robot_last_armor_id_{};
+    std::optional<int> outpost_last_armor_id_{};
+
+    template <typename Mat>
+    static double diag_var_from_sqrt_cov_(const Mat& Sx, int idx) noexcept {
+        if (idx < 0 || idx >= Sx.rows()) {
+            return 0.0;
+        }
+        return Sx.row(idx).squaredNorm();
+    }
+
+    template <typename Mat>
+    static double compute_phase_std_(
+        const Mat& Sx, int yaw_idx, int vyaw_idx, double dt, double angle_step) noexcept {
+        (void)yaw_idx;
+        if (angle_step <= 0.0) {
+            return 1.0;
+        }
+        const double var_vyaw = diag_var_from_sqrt_cov_(Sx, vyaw_idx);
+        // Use inter-frame phase uncertainty (Delta yaw) instead of absolute yaw variance.
+        // Absolute yaw carries gauge ambiguity with armor index and would over-weaken mode priors.
+        const double phase_var = std::max(0.0, (dt * dt * var_vyaw) / (angle_step * angle_step));
+        return std::sqrt(phase_var);
+    }
+
+    static double wrap_index_diff_(double d, int n) noexcept {
+        while (d > 0.5 * static_cast<double>(n)) {
+            d -= static_cast<double>(n);
+        }
+        while (d < -0.5 * static_cast<double>(n)) {
+            d += static_cast<double>(n);
+        }
+        return d;
+    }
+
+    static std::vector<double> build_mode_prior_(
+        int armors_num, std::optional<int> last_id, double phase_shift, double phase_std) {
+        std::vector<double> prior(armors_num, 1.0 / static_cast<double>(armors_num));
+        if (!last_id.has_value() || armors_num <= 1) {
+            return prior;
+        }
+
+        const double center  = static_cast<double>(*last_id) + phase_shift;
+        const double sigma   = std::clamp(0.45 + 1.10 * phase_std, 0.40, 2.20);
+        const double inv_var = 1.0 / (sigma * sigma);
+
+        // MAP prior confidence follows state uncertainty: uncertain -> closer to uniform.
+        const double uniform_mix = std::clamp(0.10 + 0.45 * phase_std, 0.10, 0.45);
+
+        double sum = 0.0;
+        for (int j = 0; j < armors_num; ++j) {
+            const double diff = wrap_index_diff_(static_cast<double>(j) - center, armors_num);
+            const double g    = std::exp(-0.5 * diff * diff * inv_var);
+            prior[j] = (1.0 - uniform_mix) * g + uniform_mix / static_cast<double>(armors_num);
+            sum += prior[j];
+        }
+        if (sum > 0.0) {
+            for (double& p : prior) {
+                p /= sum;
+            }
+        }
+        return prior;
+    }
 
     void state_machine(bool found) noexcept {
         switch (status_) {

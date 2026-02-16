@@ -4,6 +4,7 @@
 #include "toml_helper.hpp"
 #include "util.hpp"
 #include <Eigen/Dense>
+#include <algorithm>
 #include <cassert>
 #include <cmath>
 #include <concepts>
@@ -45,8 +46,9 @@ struct RobotModel {
     static constexpr int NX = STATE_MAX;   // 11
     static constexpr int NZ = MEASURE_MAX; // 4
 
-    using VecX = Eigen::Matrix<Scalar, NX, 1>;
-    using VecZ = Eigen::Matrix<Scalar, NZ, 1>;
+    using VecX  = Eigen::Matrix<Scalar, NX, 1>;
+    using VecZ  = Eigen::Matrix<Scalar, NZ, 1>;
+    using MatXX = Eigen::Matrix<Scalar, NX, NX>;
 
     // Measurement vector layout: [yaw, pitch, distance, armor_yaw]
     // The underlying indices are defined in `util.hpp` (enum `Measure`), but the names there
@@ -141,8 +143,42 @@ struct RobotModel {
         return z;
     }
 
-    /// Process noise covariance square root
-    [[nodiscard]] Eigen::Matrix<Scalar, NX, NX> Q_sqrt(Scalar dt) const noexcept {
+    /// Nullspace basis of one-armor instantaneous observability (dimension = 3).
+    [[nodiscard]] Eigen::Matrix<Scalar, NX, 3>
+        state_observability_nullspace(const VecX& x) const noexcept {
+        constexpr Scalar angle_step = 2.0 * std::numbers::pi / static_cast<Scalar>(ARMORS_NUM);
+        const int id                = std::clamp(armor_id, 0, ARMORS_NUM - 1);
+        const bool is_high          = (id == kHighArmorIdA || id == kHighArmorIdB);
+        const Scalar psi            = x(YAW) + static_cast<Scalar>(id) * angle_step;
+        const Scalar c              = std::cos(psi);
+        const Scalar s              = std::sin(psi);
+
+        Eigen::Matrix<Scalar, NX, 3> N = Eigen::Matrix<Scalar, NX, 3>::Zero();
+
+        // Gauge 1: radial center/radius trade-off of active armor pair.
+        N(XC, 0) = c;
+        N(YC, 0) = s;
+        N(is_high ? R_1 : R_0, 0) = Scalar(1);
+
+        // Gauge 2: opposite pair radius is unseen in current measurement.
+        N(is_high ? R_0 : R_1, 1) = Scalar(1);
+
+        // Gauge 3: vertical ambiguity.
+        if (is_high) {
+            // High armor sees z0 + h; null direction keeps the sum invariant.
+            N(Z0, 2) = Scalar(1);
+            N(H, 2)  = Scalar(-1);
+        } else {
+            // Low armor does not depend on h.
+            N(H, 2) = Scalar(1);
+        }
+        return N;
+    }
+
+    [[nodiscard]] constexpr bool use_observability_cov_projection() const noexcept { return true; }
+
+    /// Process noise covariance square root (state-aware signature for ISRCKF compatibility).
+    [[nodiscard]] Eigen::Matrix<Scalar, NX, NX> Q_sqrt(const VecX& x, Scalar dt) const noexcept {
         using MatX = Eigen::Matrix<Scalar, NX, NX>;
         MatX Q     = MatX::Zero();
 
@@ -150,9 +186,12 @@ struct RobotModel {
             return Q;
         }
 
-        const Scalar sigma_a_xy2  = params.sigma_a_xy * params.sigma_a_xy;
-        const Scalar sigma_a_z2   = params.sigma_a_z * params.sigma_a_z;
-        const Scalar sigma_a_yaw2 = params.sigma_a_yaw * params.sigma_a_yaw;
+        const Scalar sigma_a_xy2 = params.sigma_a_xy * params.sigma_a_xy;
+        const Scalar sigma_a_z2  = params.sigma_a_z * params.sigma_a_z;
+        // Use lower yaw acceleration noise near static and recover configured noise while spinning.
+        const Scalar sigma_a_yaw_eff =
+            std::min(params.sigma_a_yaw, Scalar(1.0) + Scalar(4.0) * std::abs(x(V_YAW)));
+        const Scalar sigma_a_yaw2 = sigma_a_yaw_eff * sigma_a_yaw_eff;
 
         const Scalar dt2 = dt * dt;
         const Scalar dt3 = dt2 * dt;
@@ -172,18 +211,20 @@ struct RobotModel {
         fill_block(YAW, sigma_a_yaw2);
 
         // Random walk noise for R0, R1, H
-        // NOTE: Using sigma_r0 for R_1 to match reference version behavior
         const Scalar sigma_r0_2 = params.sigma_r0 * params.sigma_r0;
-        const Scalar sigma_r1_2 = params.sigma_r0 * params.sigma_r0;
+        const Scalar sigma_r1_2 = params.sigma_r1 * params.sigma_r1;
         const Scalar sigma_h_2  = params.sigma_h * params.sigma_h;
 
-        Q(R_0, R_0) += sigma_r0_2 * dt;
-        Q(R_1, R_1) += sigma_r1_2 * dt;
-        Q(H, H) += sigma_h_2 * dt;
+        Q(R_0, R_0) += sigma_r0_2 * dt2;
+        Q(R_1, R_1) += sigma_r1_2 * dt2;
+        Q(H, H) += sigma_h_2 * dt2;
 
-        Eigen::LLT<MatX> llt(Q);
-        MatX S = llt.matrixL();
-        return S;
+        return ckf::detail::chol_from_ldlt<NX, Scalar>(Q);
+    }
+
+    /// Process noise covariance square root (legacy signature).
+    [[nodiscard]] Eigen::Matrix<Scalar, NX, NX> Q_sqrt(Scalar dt) const noexcept {
+        return Q_sqrt(VecX::Zero(), dt);
     }
 
     /// Measurement noise diagonal (match reference: +0.3 not +1.0)
@@ -300,6 +341,28 @@ struct OutpostModel {
         return z;
     }
 
+    /// Nullspace basis of one-armor instantaneous observability (dimension = 3):
+    /// [v_yaw, z_unseen_1, z_unseen_2].
+    [[nodiscard]] Eigen::Matrix<Scalar, NX, 3>
+        state_observability_nullspace(const VecX& x) const noexcept {
+        (void)x;
+        Eigen::Matrix<Scalar, NX, 3> N = Eigen::Matrix<Scalar, NX, 3>::Zero();
+        const int id                   = std::clamp(armor_id, 0, ARMORS_NUM - 1);
+
+        // Instantaneous single-frame measurement does not directly observe yaw rate.
+        N(O_VYAW, 0) = Scalar(1);
+
+        int col = 1;
+        for (int i = 0; i < ARMORS_NUM; ++i) {
+            if (i == id) {
+                continue;
+            }
+            N(kFirstArmorZState + i, col) = Scalar(1);
+            ++col;
+        }
+        return N;
+    }
+
     /// Process noise covariance square root
     [[nodiscard]] Eigen::Matrix<Scalar, NX, NX> Q_sqrt(Scalar dt) const noexcept {
         using MatX = Eigen::Matrix<Scalar, NX, NX>;
@@ -334,10 +397,7 @@ struct OutpostModel {
         Q(O_Z1, O_Z1) = sigma_z2 * dt2;
         Q(O_Z2, O_Z2) = sigma_z2 * dt2;
 
-        // 做 Cholesky 分解，返回 S，使得 S * S^T = Q
-        Eigen::LLT<MatX> llt(Q);
-        MatX S = llt.matrixL();
-        return S;
+        return ckf::detail::chol_from_ldlt<NX, Scalar>(Q);
     }
 
     Eigen::Matrix<Scalar, NZ, 1> R_diag(const VecZ& z) const {

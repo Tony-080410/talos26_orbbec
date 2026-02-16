@@ -7,6 +7,7 @@
 
 #include <Eigen/Dense>
 #include <array>
+#include <cmath>
 #include <limits>
 #include <queue>
 #include <vector>
@@ -29,6 +30,7 @@ public:
     struct MatchResult {
         std::vector<AtLegacyArmorMeasurement> armors;
         std::vector<int> armor_ids;
+        std::vector<double> costs;
     };
 
     /// Match observations to predicted armor positions
@@ -42,6 +44,14 @@ public:
     [[nodiscard]] MatchResult match(
         const AtLegacyArmorMeasurementBatch& observations, const VecX& x_pred, const MatXX& Sx_pred,
         Model& model, ArmorName target_name, double gate_threshold, int armors_num) const noexcept {
+        return match(
+            observations, x_pred, Sx_pred, model, target_name, gate_threshold, armors_num, nullptr);
+    }
+
+    [[nodiscard]] MatchResult match(
+        const AtLegacyArmorMeasurementBatch& observations, const VecX& x_pred, const MatXX& Sx_pred,
+        Model& model, ArmorName target_name, double gate_threshold, int armors_num,
+        const std::vector<double>* id_prior) const noexcept {
 
         MatchResult result;
 
@@ -153,7 +163,12 @@ public:
 
                 // Gating
                 if (std::isfinite(d2) && d2 < gate_threshold) {
-                    cost[j][id] = d2;
+                    double nll = d2;
+                    if (id_prior != nullptr && static_cast<int>(id_prior->size()) == armors_num) {
+                        const double p = std::clamp((*id_prior)[id], 1e-6, 1.0);
+                        nll += -2.0 * std::log(p);
+                    }
+                    cost[j][id] = nll;
                 }
             }
         }
@@ -190,6 +205,7 @@ public:
 
             result.armors.push_back(observations.measurements[best_j]);
             result.armor_ids.push_back(best_id);
+            result.costs.push_back(best);
         }
 
         return result;
