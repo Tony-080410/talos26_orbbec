@@ -1,6 +1,6 @@
-#include "L2_perception/at_legacy_traditional_backend.hpp"
+#include "L2_perception/armor/backends/at_legacy_traditional_backend.hpp"
 
-#include "L2_perception/at_legacy_config.hpp"
+#include "L2_perception/armor/at_legacy_config.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -33,9 +33,6 @@ AtLegacyTraditionalBackend::AtLegacyTraditionalBackend(ConfigPtr config)
         SPDLOG_CRITICAL("Classifier is enabled but model path is empty or config is null.");
         std::abort();
     }
-
-    // Always create corner corrector for optional sub-pixel accuracy improvement
-    corner_corrector_ = std::make_unique<AtLegacyLightCornerCorrector>();
 }
 
 // ============================================================================

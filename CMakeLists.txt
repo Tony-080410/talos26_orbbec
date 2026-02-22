@@ -132,17 +132,16 @@ set(FCS_SOURCES
         src/fcs/L1_sensor/camera_interface.cpp
         src/fcs/L1_sensor/output_interface.cpp
         src/fcs/runtime/l1_l2_setup.cpp
-        src/fcs/L2_perception/at_legacy_config.cpp
-        src/fcs/L2_perception/at_legacy_detector_backend.cpp
-        src/fcs/L2_perception/at_legacy_nn_backend.cpp
-        src/fcs/L2_perception/at_legacy_nn_tup_backend.cpp
-        src/fcs/L2_perception/at_legacy_systems.cpp
+        src/fcs/L2_perception/armor/at_legacy_config.cpp
+        src/fcs/L2_perception/armor/at_legacy_detector_backend.cpp
+        src/fcs/L2_perception/armor/backends/at_legacy_nn_backend.cpp
+        src/fcs/L2_perception/armor/backends/at_legacy_nn_tup_backend.cpp
+        src/fcs/L2_perception/armor/at_legacy_systems.cpp
         src/fcs/L2_perception/rune/rune_detector.cpp
         src/fcs/L2_perception/rune/rune_config.cpp
         src/fcs/L2_perception/rune/rune_systems.cpp
-        src/fcs/L2_perception/at_legacy_traditional_backend.cpp
-        src/fcs/L2_perception/at_legacy_traditional_classifier.cpp
-        src/fcs/L2_perception/at_legacy_light_corner_corrector.cpp
+        src/fcs/L2_perception/armor/backends/at_legacy_traditional_backend.cpp
+        src/fcs/L2_perception/armor/backends/at_legacy_traditional_classifier.cpp
         src/fcs/L3_estimation/tracker_systems.cpp
         src/fcs/L3_estimation/energy_meter_solver/angle_fitter.cpp
         src/fcs/L3_estimation/energy_meter_solver/energy_meter_tracker.cpp
@@ -157,7 +156,7 @@ set(FCS_SOURCES
 )
 
 if(TensorRT_FOUND)
-    list(APPEND FCS_SOURCES src/fcs/L2_perception/at_legacy_trt_backend.cpp)
+    list(APPEND FCS_SOURCES src/fcs/L2_perception/armor/backends/at_legacy_trt_backend.cpp)
     message(STATUS "TensorRT backend enabled")
 else()
     message(STATUS "TensorRT backend disabled (TensorRT not found)")

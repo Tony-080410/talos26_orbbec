@@ -38,22 +38,6 @@ enum class ArmorName : uint8_t {
     Invalid
 };
 
-enum class TrackStatus : uint8_t {
-    Invalid   = 0, // 无效
-    Tentative = 1, // 正在确认
-    Confirmed = 2, // 已确认
-    Coasting  = 3, // 暂时丢失量测， 使用预测值
-};
-
-// ============================================================================
-// AT Legacy Armor Constants (meters)
-// ============================================================================
-
-inline constexpr double AT_LEGACY_SMALL_ARMOR_WIDTH  = 135.0 / 1000.0;
-inline constexpr double AT_LEGACY_SMALL_ARMOR_HEIGHT = 55.0 / 1000.0;
-inline constexpr double AT_LEGACY_LARGE_ARMOR_WIDTH  = 230.0 / 1000.0;
-inline constexpr double AT_LEGACY_LARGE_ARMOR_HEIGHT = 55.0 / 1000.0;
-
 // ============================================================================
 // AT Legacy cls/color Mapping (from NN output)
 // ============================================================================
@@ -90,13 +74,6 @@ struct formatter<fcs::ArmorColor> : formatter<std::string_view> {
 template <>
 struct formatter<fcs::ArmorName> : formatter<std::string_view> {
     auto format(const fcs::ArmorName c, format_context& ctx) const {
-        return formatter<std::string_view>::format(magic_enum::enum_name(c), ctx);
-    }
-};
-
-template <>
-struct formatter<fcs::TrackStatus> : formatter<std::string_view> {
-    auto format(const fcs::TrackStatus c, format_context& ctx) const {
         return formatter<std::string_view>::format(magic_enum::enum_name(c), ctx);
     }
 };

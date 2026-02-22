@@ -322,6 +322,11 @@ private:
     }
 
     void build_model_points() {
+        constexpr double AT_LEGACY_SMALL_ARMOR_WIDTH  = 135.0 / 1000.0;
+        constexpr double AT_LEGACY_SMALL_ARMOR_HEIGHT = 55.0 / 1000.0;
+        constexpr double AT_LEGACY_LARGE_ARMOR_WIDTH  = 230.0 / 1000.0;
+        constexpr double AT_LEGACY_LARGE_ARMOR_HEIGHT = 55.0 / 1000.0;
+
         // Small armor: 135mm x 55mm
         const float sw      = static_cast<float>(AT_LEGACY_SMALL_ARMOR_WIDTH / 2.0);
         const float sh      = static_cast<float>(AT_LEGACY_SMALL_ARMOR_HEIGHT / 2.0);

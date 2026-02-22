@@ -1,7 +1,7 @@
-#include "L2_perception/at_legacy_nn_backend.hpp"
+#include "L2_perception/armor/backends/at_legacy_nn_backend.hpp"
 
-#include "L2_perception/at_legacy_config.hpp"
-#include "L2_perception/at_legacy_geometry.hpp"
+#include "L2_perception/armor/at_legacy_config.hpp"
+#include "L2_perception/common/at_legacy_geometry.hpp"
 #include "core/types.hpp"
 
 #include <algorithm>

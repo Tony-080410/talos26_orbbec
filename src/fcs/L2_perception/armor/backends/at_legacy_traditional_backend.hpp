@@ -1,7 +1,6 @@
 #pragma once
 
-#include "at_legacy_detector_backend.hpp"
-#include "at_legacy_light_corner_corrector.hpp"
+#include "../at_legacy_detector_backend.hpp"
 #include "at_legacy_traditional_classifier.hpp"
 #include "at_legacy_traditional_types.hpp"
 
@@ -48,7 +47,6 @@ private:
     ConfigPtr config_;
     ArmorColor detect_color_ = ArmorColor::Neutral;
     std::unique_ptr<AtLegacyTraditionalClassifier> classifier_;
-    std::unique_ptr<AtLegacyLightCornerCorrector> corner_corrector_;
 
     /// Preprocess image to binary
     [[nodiscard]] cv::Mat
