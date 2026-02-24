@@ -141,21 +141,9 @@ std::vector<std::pair<double, double>> IterativeSolver::generate_trajectory(
 
 namespace {
 
-/// Helper to cast base_solver to concrete type for model access
+/// Helper to get model from solver (now uses virtual dispatch instead of dynamic_cast)
 const model::BallisticModel* get_model_from_solver(const TrajectorySolver* solver) noexcept {
-    // Try DirectSolver
-    if (const auto* direct = dynamic_cast<const DirectSolver*>(solver)) {
-        return direct->model().get();
-    }
-    // Try IterativeSolver
-    if (const auto* iterative = dynamic_cast<const IterativeSolver*>(solver)) {
-        return iterative->model().get();
-    }
-    // Recursively check nested TableLookupSolver
-    if (const auto* table = dynamic_cast<const TableLookupSolver*>(solver)) {
-        return get_model_from_solver(table->base_solver().get());
-    }
-    return nullptr;
+    return solver->get_model();
 }
 
 } // anonymous namespace

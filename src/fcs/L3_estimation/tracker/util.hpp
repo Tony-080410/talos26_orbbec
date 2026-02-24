@@ -164,11 +164,8 @@ enum Measure : uint8_t {
 
 /// Normalize angle to [-PI, PI)
 [[nodiscard]] inline double normalize_rad(double a) noexcept {
-    a = std::fmod(a + std::numbers::pi, 2.0 * std::numbers::pi);
-    if (a < 0.0) {
-        a += 2.0 * std::numbers::pi;
-    }
-    return a - std::numbers::pi;
+    // Use std::remainder for FPU-friendly single-operation normalization
+    return std::remainder(a, 2.0 * std::numbers::pi);
 }
 
 /// Compute shortest angle difference: to - from, result in (-PI, PI]

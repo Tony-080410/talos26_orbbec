@@ -38,8 +38,8 @@ public:
         // v.image is &'recv ImageData,
         // but we need to pass a &'mission ImageData
         // apparently 'mission outlives 'recv s.t. we must copy the data.
-        auto copied = cv::Mat();
-        result->image.copyTo(copied);
+        // Use clone() to allocate once with correct size
+        cv::Mat copied = result->image.clone();
         cv::cvtColor(copied, copied, cv::COLOR_RGB2BGR);
         return Frame{
             .seq          = result->seq,

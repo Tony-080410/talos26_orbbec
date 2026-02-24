@@ -42,11 +42,16 @@ namespace detail {
 }
 
 [[nodiscard]] inline std::string join_unread_keys(const toml::table& table) {
+    // Pre-allocate to avoid repeated reallocations
     std::string out;
+    out.reserve(table.size() * 25); // Estimate: ~25 chars per key entry
+
+    bool first = true;
     for (const auto& [k, v] : table) {
-        if (!out.empty()) {
+        if (!first) {
             out += ", ";
         }
+        first = false;
         out += fmt::format("'{}'({})", std::string_view{k}, node_type_name(v.type()));
     }
     return out;

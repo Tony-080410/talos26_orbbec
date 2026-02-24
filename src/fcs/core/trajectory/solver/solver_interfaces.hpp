@@ -57,6 +57,10 @@ public:
 
     /// Get human-readable solver name for debugging
     [[nodiscard]] virtual std::string_view solver_name() const noexcept = 0;
+
+    /// Get the underlying ballistic model (for TableLookupSolver table building)
+    /// This replaces dynamic_cast usage with compile-time type-safe dispatch
+    [[nodiscard]] virtual const model::BallisticModel* get_model() const noexcept = 0;
 };
 
 } // namespace fcs::core::trajectory::solver

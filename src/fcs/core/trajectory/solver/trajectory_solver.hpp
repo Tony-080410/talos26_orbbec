@@ -56,6 +56,11 @@ public:
         return model_;
     }
 
+    /// Get model pointer (virtual override for RTTI-free type-safe dispatch)
+    [[nodiscard]] const model::BallisticModel* get_model() const noexcept override {
+        return model_.get();
+    }
+
 private:
     std::unique_ptr<model::BallisticModel> model_;
 };
@@ -111,6 +116,11 @@ public:
 
     /// Access solver configuration
     [[nodiscard]] const Config& config() const noexcept { return config_; }
+
+    /// Get model pointer (virtual override for RTTI-free type-safe dispatch)
+    [[nodiscard]] const model::BallisticModel* get_model() const noexcept override {
+        return model_.get();
+    }
 
 private:
     std::unique_ptr<model::BallisticModel> model_;
@@ -185,6 +195,11 @@ public:
     /// Access the decorated solver
     [[nodiscard]] const std::unique_ptr<TrajectorySolver>& base_solver() const noexcept {
         return base_solver_;
+    }
+
+    /// Get model pointer (delegates to base solver for recursive lookup)
+    [[nodiscard]] const model::BallisticModel* get_model() const noexcept override {
+        return base_solver_->get_model();
     }
 
 private:
