@@ -19,7 +19,7 @@ Eigen::Vector3d Aimer::predict_position(const L3::RobotTargetState& target, doub
     const double yaw_pred             = yaw + v_yaw * dt;
 
     const int n                   = target.armors_num;
-    double min_dist               = 1e10;
+    double min_dist_sq            = 1e20;
     Eigen::Vector3d closest_armor = center_pred;
 
     for (int i = 0; i < n; ++i) {
@@ -30,11 +30,11 @@ Eigen::Vector3d Aimer::predict_position(const L3::RobotTargetState& target, doub
         const double armor_y = center_pred.y() - r * std::sin(armor_yaw);
         const double armor_z = center_pred.z() + ((i % 2 == 0) ? 0.0 : h);
 
-        const Eigen::Vector3d armor_pos{armor_x, armor_y, armor_z};
-        const double dist = armor_pos.norm();
-        if (dist < min_dist) {
-            min_dist      = dist;
-            closest_armor = armor_pos;
+        // Use squared distance to avoid sqrt in comparison loop
+        const double dist_sq = armor_x * armor_x + armor_y * armor_y + armor_z * armor_z;
+        if (dist_sq < min_dist_sq) {
+            min_dist_sq   = dist_sq;
+            closest_armor = Eigen::Vector3d{armor_x, armor_y, armor_z};
         }
     }
 
@@ -58,19 +58,20 @@ Eigen::Vector3d Aimer::predict_position(const L3::OutpostTargetState& target, do
     const double center_y_pred = center_pred.y();
     const double yaw_pred      = yaw + v_yaw * dt;
 
-    double min_dist = 1e10;
+    double min_dist_sq = 1e20;
     Eigen::Vector3d closest_armor{center_x_pred, center_y_pred, target.z[0]};
 
     for (int i = 0; i < 3; ++i) {
         const double armor_yaw = yaw_pred + i * (2.0 * std::numbers::pi / 3.0);
         const double armor_x   = center_x_pred - r * std::cos(armor_yaw);
         const double armor_y   = center_y_pred - r * std::sin(armor_yaw);
-        const Eigen::Vector3d armor_pos{armor_x, armor_y, target.z[i]};
+        const double armor_z   = target.z[i];
 
-        const double dist = armor_pos.norm();
-        if (dist < min_dist) {
-            min_dist      = dist;
-            closest_armor = armor_pos;
+        // Use squared distance to avoid sqrt in comparison loop
+        const double dist_sq = armor_x * armor_x + armor_y * armor_y + armor_z * armor_z;
+        if (dist_sq < min_dist_sq) {
+            min_dist_sq   = dist_sq;
+            closest_armor = Eigen::Vector3d{armor_x, armor_y, armor_z};
         }
     }
 

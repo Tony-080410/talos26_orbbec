@@ -202,40 +202,11 @@ public:
             return std::move(state_->slots[state_->read_idx]);
         }
 
-        /**
-         * @brief Check if new data is available
-         *
-         * Returns true if the producer has published data since
-         * the last read.
-         *
-         * ## Thread safety
-         *
-         * Safe to call from the consumer thread.
-         *
-         * ## Returns
-         *
-         * `true` if new data is available, `false` otherwise.
-         */
-        [[nodiscard]] bool has_new() const noexcept {
-            return state_->shared.load(std::memory_order_acquire) & FLAG_NEW;
-        }
+        // has_new() removed - TOCTOU hazard makes it fundamentally unsafe.
+        // Use read() and check the return value instead.
 
-        /**
-         * @brief Get current data without consuming it
-         *
-         * Returns a reference to the current data without
-         * ownership transfer. The data may be stale if the
-         * producer has published new data.
-         *
-         * ## Thread safety
-         *
-         * Safe to call from the consumer thread.
-         *
-         * ## Returns
-         *
-         * Reference to the current data (may be stale).
-         */
-        [[nodiscard]] const U& current() const noexcept { return state_->slots[state_->read_idx]; }
+        // current() removed - UAB hazard (reference may point to slot being written).
+        // Use read() for ownership transfer instead.
 
         [[nodiscard]] bool valid() const noexcept { return state_ != nullptr; }
         explicit operator bool() const noexcept { return valid(); }

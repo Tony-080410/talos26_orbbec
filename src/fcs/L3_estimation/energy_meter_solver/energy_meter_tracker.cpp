@@ -39,9 +39,10 @@ bool Tracker::update(
         VecZ nu     = meas - z_pred;
         nu[3]       = normalize_rad(nu[3]);
 
-        const auto R = energy_model_.R_sqrt(z_pred);
-        const Eigen::Matrix<double, EnergyMeter::NZ, EnergyMeter::NZ> Rinv = R.inverse();
-        const double d2 = (nu.transpose() * Rinv * nu)(0, 0);
+        // R is diagonal, so Rinv * nu = nu[i] / R[i,i]
+        // d2 = nu' * Rinv * nu = sum(nu[i]^2 / R[i,i])
+        const auto R    = energy_model_.R_sqrt(z_pred);
+        const double d2 = (nu.array().square() / R.diagonal().array()).sum();
 
         if (std::isfinite(d2) && d2 < params.matcher_gate && d2 < best_cost) {
             best_cost = d2;

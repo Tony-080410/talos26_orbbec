@@ -6,7 +6,7 @@
 #include <string>
 
 namespace talos::rclcompat::detail {
-std::string demangle(const char* name) noexcept {
+inline std::string demangle(const char* name) noexcept {
     if (!name) {
         return "<null>";
     }

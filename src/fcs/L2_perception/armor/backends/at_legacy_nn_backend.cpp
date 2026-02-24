@@ -104,11 +104,16 @@ std::expected<void, DetectorError> AtLegacyNNBackend::init() {
         SPDLOG_INFO("[AtLegacyNNBackend] Model loaded: {}", cfg->model_path);
         const auto devices = execution_devices();
         if (!devices.empty()) {
+            // Reserve upfront to avoid reallocations (estimate: ~12 chars per device)
             std::string dev_str;
+            dev_str.reserve(devices.size() * 12);
+            bool first = true;
             for (const auto& d : devices) {
-                if (!dev_str.empty())
+                if (!first) {
                     dev_str += ", ";
+                }
                 dev_str += d;
+                first = false;
             }
             SPDLOG_INFO("[AtLegacyNNBackend] Execution devices: {}", dev_str);
         }

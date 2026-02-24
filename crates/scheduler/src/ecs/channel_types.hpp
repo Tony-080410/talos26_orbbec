@@ -46,8 +46,6 @@ struct spsc {
     [[nodiscard]] std::optional<T> read_current() noexcept {
         return ptr_ ? ptr_->read_current() : std::nullopt;
     }
-    [[nodiscard]] bool has_new() const noexcept { return ptr_ && ptr_->has_new(); }
-    [[nodiscard]] const T& current() const noexcept { return ptr_->current(); }
     [[nodiscard]] bool valid() const noexcept { return ptr_ != nullptr; }
 };
 
@@ -172,7 +170,7 @@ struct local {
 // Resource Types
 // ============================================================================
 
-/// Read-only resource
+/// Read-only resource wrapper
 template <typename T>
 struct res {
     using value_type = T;
@@ -208,7 +206,7 @@ struct res {
     }
 };
 
-/// Mutable resource
+/// Mutable resource wrapper
 template <typename T>
 struct res_mut {
     using value_type = T;

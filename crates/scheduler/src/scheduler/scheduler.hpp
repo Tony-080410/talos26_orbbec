@@ -463,7 +463,7 @@ private:
     /**
      * @brief Performance statistics for fixed_rate systems
      */
-    struct FixedRateStats {
+    struct alignas(std::hardware_destructive_interference_size) FixedRateStats {
         std::atomic<std::uint64_t> notify_count{0};
         LatencyHistogram latency_hist;
 

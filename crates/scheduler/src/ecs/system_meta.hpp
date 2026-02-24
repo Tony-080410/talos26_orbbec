@@ -46,10 +46,16 @@ struct ChannelKey {
 
 /**
  * @brief Hash function for ChannelKey
+ *
+ * Uses boost-style hash combine to reduce collisions compared to naive XOR.
+ * The magic constant 0x9e3779b9 is derived from 2^32 / φ (golden ratio).
  */
 struct ChannelKeyHash {
     constexpr std::size_t operator()(const ChannelKey& k) const noexcept {
-        return std::hash<std::type_index>{}(k.type) ^ std::hash<std::type_index>{}(k.topic) << 1;
+        std::size_t seed = std::hash<std::type_index>{}(k.type);
+        // Boost-style hash combine
+        seed ^= std::hash<std::type_index>{}(k.topic) + 0x9e3779b9 + (seed << 6) + (seed >> 2);
+        return seed;
     }
 };
 

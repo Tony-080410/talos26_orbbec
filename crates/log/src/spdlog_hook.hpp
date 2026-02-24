@@ -14,7 +14,10 @@ class spdlog_streambuf : public std::streambuf {
 public:
     spdlog_streambuf(std::shared_ptr<spdlog::logger> logger, const spdlog::level::level_enum lvl)
         : logger_(std::move(logger))
-        , level_(lvl) {}
+        , level_(lvl)
+        , buffer_() {
+        buffer_.reserve(512); // Pre-allocate for typical log line size
+    }
 
 protected:
     int_type overflow(const int_type ch) override {

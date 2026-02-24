@@ -47,7 +47,7 @@ template <typename T>
 }
 
 template <typename T>
-[[nodiscard]] auto rpy(const Eigen::Matrix3<T>& m) -> Ros2EulerRot<T> {
+[[nodiscard]] constexpr auto rpy(const Eigen::Matrix3<T>& m) -> Ros2EulerRot<T> {
     T sin_pitch = std::clamp(-m(2, 0), T(-1), T(1));
 
     if (std::abs(sin_pitch) < T(0.9999999)) {
@@ -62,7 +62,7 @@ template <typename T>
 }
 
 template <typename T>
-[[nodiscard]] auto rpy(const Eigen::Quaternion<T>& q) -> Ros2EulerRot<T> {
+[[nodiscard]] constexpr auto rpy(const Eigen::Quaternion<T>& q) -> Ros2EulerRot<T> {
     return rpy(q.toRotationMatrix());
 }
 

@@ -921,11 +921,12 @@ auto Scheduler::compute_levels() -> BuildResult {
         // Multiple writers is always an error
         if (total_writers > 1) {
             std::vector<std::string> writer_names;
+            writer_names.reserve(usage.writers.size() + (usage.has_fixed_rate_writer ? 1 : 0));
             if (usage.has_fixed_rate_writer) {
-                writer_names.push_back(usage.first_system + " (fixed_rate)");
+                writer_names.emplace_back(fmt::format("{} (fixed_rate)", usage.first_system));
             }
             for (auto idx : usage.writers) {
-                writer_names.push_back(compute_systems_[idx].system->meta().name);
+                writer_names.emplace_back(compute_systems_[idx].system->meta().name);
             }
             return std::unexpected(
                 MultipleWritersError{
@@ -1018,11 +1019,12 @@ auto Scheduler::compute_levels() -> BuildResult {
         processed += current_level.size();
 
         std::vector<std::size_t> next_level;
+        next_level.reserve(compute_systems_.size()); // Pre-allocate max possible
         for (std::size_t node : current_level) {
             std::uint64_t neighbors = adj_mask[node];
             while (neighbors) {
                 const std::size_t neighbor = __builtin_ctzll(neighbors);
-                neighbors &= neighbors - 1; // Clear lowest set bit
+                neighbors &= neighbors - 1;          // Clear lowest set bit
                 if (--in_degree[neighbor] == 0) {
                     next_level.push_back(neighbor);
                 }

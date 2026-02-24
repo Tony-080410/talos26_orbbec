@@ -1,12 +1,15 @@
 #pragma once
 
 #include "channel_types.hpp"
+#include "rclcompat/demangle.hpp"
 #include "system_meta.hpp"
 
 #include <any>
 #include <atomic>
+#include <cxxabi.h>
 #include <expected>
 #include <memory>
+#include <spdlog/spdlog.h>
 #include <string>
 #include <typeindex>
 #include <unordered_map>
@@ -20,7 +23,7 @@ namespace talos {
 template <typename T>
 struct VersionedResource {
     T value;
-    std::atomic<uint64_t> version{0};
+    alignas(std::hardware_destructive_interference_size) std::atomic<uint64_t> version{0};
 
     explicit VersionedResource(T val) noexcept
         : value(std::move(val)) {}
@@ -118,22 +121,28 @@ public:
         return resources_.contains(typeid(T));
     }
 
+    /// Get read-only resource. Panics if resource not found (bind-phase error).
     template <typename T>
     [[nodiscard]] res<T> get_res() const noexcept {
         const auto it = resources_.find(typeid(T));
-        if (it == resources_.end())
-            return res<T>{nullptr, nullptr, 0};
-
+        if (it == resources_.end()) [[unlikely]] {
+            SPDLOG_CRITICAL(
+                "Resource not found: {}", rclcompat::detail::demangle(typeid(T).name()));
+            std::abort();
+        }
         auto storage = std::any_cast<std::shared_ptr<VersionedResource<T>>>(it->second);
         return res<T>{&storage->value, &storage->version, 0};
     }
 
+    /// Get mutable resource. Panics if resource not found (bind-phase error).
     template <typename T>
-    [[nodiscard]] res_mut<T> get_res_mut() {
+    [[nodiscard]] res_mut<T> get_res_mut() noexcept {
         const auto it = resources_.find(typeid(T));
-        if (it == resources_.end())
-            return res_mut<T>{nullptr, nullptr, 0};
-
+        if (it == resources_.end()) [[unlikely]] {
+            SPDLOG_CRITICAL(
+                "Resource not found: {}", rclcompat::detail::demangle(typeid(T).name()));
+            std::abort();
+        }
         auto storage = std::any_cast<std::shared_ptr<VersionedResource<T>>>(it->second);
         return res_mut<T>{&storage->value, &storage->version, 0};
     }
@@ -159,7 +168,7 @@ public:
     }
 
     template <typename T, typename Topic = DefaultTopic>
-    [[nodiscard]] spsc<T, Topic> get_spsc_reader() {
+    [[nodiscard]] spsc<T, Topic> get_spsc_reader() noexcept {
         const ChannelKey key{typeid(T), typeid(Topic)};
         ensure_spsc<T, Topic>();
         auto storage_ptr = std::any_cast<std::shared_ptr<SpscStorage<T>>>(spsc_storage_.at(key));
@@ -167,7 +176,7 @@ public:
     }
 
     template <typename T, typename Topic = DefaultTopic>
-    [[nodiscard]] spsc_mut<T, Topic> get_spsc_writer() {
+    [[nodiscard]] spsc_mut<T, Topic> get_spsc_writer() noexcept {
         const ChannelKey key{typeid(T), typeid(Topic)};
         ensure_spsc<T, Topic>();
         auto storage_ptr = std::any_cast<std::shared_ptr<SpscStorage<T>>>(spsc_storage_.at(key));
@@ -184,7 +193,7 @@ public:
     }
 
     template <typename T, typename Topic = DefaultTopic>
-    [[nodiscard]] spmc<T, Topic> get_spmc_reader() {
+    [[nodiscard]] spmc<T, Topic> get_spmc_reader() noexcept {
         const ChannelKey key{typeid(T), typeid(Topic)};
         ensure_spmc<T, Topic>();
         auto storage_ptr = std::any_cast<std::shared_ptr<SpmcStorage<T>>>(spmc_storage_.at(key));
@@ -193,7 +202,7 @@ public:
     }
 
     template <typename T, typename Topic = DefaultTopic>
-    [[nodiscard]] spmc_mut<T, Topic> get_spmc_writer() {
+    [[nodiscard]] spmc_mut<T, Topic> get_spmc_writer() noexcept {
         const ChannelKey key{typeid(T), typeid(Topic)};
         ensure_spmc<T, Topic>();
         auto storage_ptr = std::any_cast<std::shared_ptr<SpmcStorage<T>>>(spmc_storage_.at(key));
@@ -208,10 +217,12 @@ public:
     }
 
     template <typename T, typename Topic = DefaultTopic>
-    [[nodiscard]] atomic_ref<T, Topic> get_atomic() {
+    [[nodiscard]] atomic_ref<T, Topic> get_atomic() noexcept {
         const auto it = atomics_.find(typeid(T));
-        if (it == atomics_.end())
-            return atomic_ref<T, Topic>{nullptr};
+        if (it == atomics_.end()) [[unlikely]] {
+            SPDLOG_CRITICAL("Atomic not found: {}", rclcompat::detail::demangle(typeid(T).name()));
+            std::abort();
+        }
         auto& ptr = std::any_cast<std::shared_ptr<std::atomic<T>>&>(it->second);
         return atomic_ref<T, Topic>{ptr.get()};
     }

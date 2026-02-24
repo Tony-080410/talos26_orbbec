@@ -233,7 +233,10 @@ bool AtLegacyTraditionalBackend::is_light(
 std::vector<AtLegacyArmorDetection> AtLegacyTraditionalBackend::match_lights(
     std::vector<AtLegacyLight>& lights, const AtLegacyTraditionalConfig& cfg,
     const cv::Mat gray_img) const {
+    // Pre-allocate to avoid repeated reallocation in nested loop
+    // Worst case: n*(n-1)/2 pairs where n = lights.size()
     std::vector<AtLegacyArmorDetection> detections;
+    detections.reserve(lights.size() * (lights.size() - 1) / 2 + 16);
 
     // NOTE: Color filtering removed - detect all colors (RBGP)
     // Colors are still detected and preserved in the output for downstream use
@@ -282,8 +285,8 @@ bool AtLegacyTraditionalBackend::contains_light(
     const auto& light_2 = lights[j];
 
     // Bounding rect of the two lights
-    std::vector<cv::Point2f> points = {light_1.top, light_1.bottom, light_2.top, light_2.bottom};
-    auto bounding_rect              = cv::boundingRect(points);
+    std::array<cv::Point2f, 4> points = {light_1.top, light_1.bottom, light_2.top, light_2.bottom};
+    auto bounding_rect                = cv::boundingRect(points);
 
     const double avg_length = (light_1.length + light_2.length) / 2.0;
     const double avg_width  = (light_1.width + light_2.width) / 2.0;

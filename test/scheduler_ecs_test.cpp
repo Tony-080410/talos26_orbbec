@@ -1,5 +1,5 @@
-#include "scheduler/scheduler/error_formatter.hpp"
-#include "scheduler/scheduler/scheduler.hpp"
+#include "scheduler/error_formatter.hpp"
+#include "scheduler/scheduler.hpp"
 
 #include <atomic>
 #include <chrono>
@@ -494,9 +494,6 @@ public:
 
     bool run(talos::World& /*world*/) noexcept override {
         written_ = false;
-        if (!cam_in_.has_new()) {
-            return false;
-        }
         if (const auto cam = cam_in_.read()) {
             runs_->fetch_add(1, std::memory_order_relaxed);
             out_.write(

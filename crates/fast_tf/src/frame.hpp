@@ -62,7 +62,7 @@ template <typename T>
 concept non_root_frame = frame<T> && !std::is_void_v<typename T::ancestor>;
 
 template <frame Child, frame Ancestor>
-constexpr bool is_descendant_of() {
+constexpr bool is_descendant_of() noexcept {
     if constexpr (std::is_same_v<Child, Ancestor>) {
         return true;
     } else if constexpr (std::is_void_v<typename Child::ancestor>) {
@@ -189,15 +189,15 @@ template <std::size_t N>
 using CoordinateSystem = std::array<CircularTransformBuffer<N>, frame_count>;
 
 template <non_root_frame Layer, std::size_t N>
-constexpr void
-    update(CoordinateSystem<N>& system, FuckTransform<Layer> transform, timestamp_ns_t ns) {
+constexpr void update(
+    CoordinateSystem<N>& system, FuckTransform<Layer> transform, timestamp_ns_t ns) noexcept {
     system[Layer::index].push(ns, *transform);
 }
 
 template <frame To, frame From, std::size_t N>
-constexpr auto
-    lookup(const CoordinateSystem<N>& system, FuckTransform<From> tf_source, timestamp_ns_t ns)
-        -> std::expected<FuckTransform<To>, TransformError> {
+constexpr auto lookup(
+    const CoordinateSystem<N>& system, FuckTransform<From> tf_source, timestamp_ns_t ns) noexcept
+    -> std::expected<FuckTransform<To>, TransformError> {
     static_assert(is_descendant_of<From, To>(), "From must be a descendant of To");
     if constexpr (std::is_same_v<From, To>) {
         return tf_source;
@@ -222,7 +222,7 @@ constexpr auto
 /// `TimePointZero` semantics for "latest available" when `ns` is newer than the newest sample).
 template <frame To, frame From, std::size_t N>
 constexpr auto lookup_clamped(
-    const CoordinateSystem<N>& system, FuckTransform<From> tf_source, timestamp_ns_t ns)
+    const CoordinateSystem<N>& system, FuckTransform<From> tf_source, timestamp_ns_t ns) noexcept
     -> std::expected<FuckTransform<To>, TransformError> {
     static_assert(is_descendant_of<From, To>(), "From must be a descendant of To");
     if constexpr (std::is_same_v<From, To>) {
@@ -248,7 +248,7 @@ constexpr auto lookup_clamped(
  * @brief 获取 frame_id by index（编译期优化为跳转表）
  * @warning 添加新 frame 时需要在此函数中添加对应的 case
  */
-constexpr std::string_view frame_id_by_index(std::size_t index) {
+constexpr std::string_view frame_id_by_index(std::size_t index) noexcept {
     switch (index) {
     case world_fuxk_frame::index: return world_fuxk_frame::frame_id;
     case odom_fuxk_frame::index: return odom_fuxk_frame::frame_id;
@@ -265,7 +265,7 @@ constexpr std::string_view frame_id_by_index(std::size_t index) {
  * @warning 添加新 frame 时需要在此函数中添加对应的 case
  * @return root frame 返回空字符串，非 root frame 返回其父节点的 frame_id
  */
-constexpr std::string_view parent_frame_id_by_index(std::size_t index) {
+constexpr std::string_view parent_frame_id_by_index(std::size_t index) noexcept {
     switch (index) {
     case world_fuxk_frame::index: return ""; // root 无父节点
     case odom_fuxk_frame::index: return odom_fuxk_frame::ancestor::frame_id;
