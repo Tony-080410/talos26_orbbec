@@ -4,8 +4,66 @@
 #include "matrix.hpp"
 #include "types.hpp"
 #include <string_view>
+#include <type_traits>
 #include <utility>
 
+namespace stdx {
+
+// ---------- copy const/volatile ----------
+template <class From, class To>
+struct copy_cv {
+    using type = To;
+};
+
+template <class From, class To>
+struct copy_cv<const From, To> {
+    using type = const To;
+};
+
+template <class From, class To>
+struct copy_cv<volatile From, To> {
+    using type = volatile To;
+};
+
+template <class From, class To>
+struct copy_cv<const volatile From, To> {
+    using type = const volatile To;
+};
+
+template <class From, class To>
+using copy_cv_t = typename copy_cv<From, To>::type;
+
+// ---------- copy reference ----------
+template <class From, class To>
+struct copy_ref {
+    using type = To;
+};
+
+template <class From, class To>
+struct copy_ref<From&, To> {
+    using type = To&;
+};
+
+template <class From, class To>
+struct copy_ref<From&&, To> {
+    using type = To&&;
+};
+
+template <class From, class To>
+using copy_ref_t = typename copy_ref<From, To>::type;
+
+// ---------- combine ----------
+template <class From, class To>
+using forward_like_t =
+    copy_ref_t<From, copy_cv_t<std::remove_reference_t<From>, std::remove_reference_t<To>>>;
+
+// ---------- forward_like ----------
+template <class Like, class T>
+constexpr forward_like_t<Like, T&&> forward_like(T&& x) noexcept {
+    return static_cast<forward_like_t<Like, T&&>>(x);
+}
+
+} // namespace stdx
 namespace fast_tf {
 
 constexpr size_t _base = __COUNTER__;
@@ -89,10 +147,10 @@ struct [[nodiscard]] Fuck {
 
     template <typename Self>
     [[nodiscard]] constexpr auto operator*(this Self&& self) noexcept -> decltype(auto) {
-        // std::forward_like preserves the value category:
+        // stdx::forward_like preserves the value category:
         // If self is an lvalue reference, returns lvalue reference to val
         // If self is an rvalue reference, returns rvalue reference to val
-        return std::forward_like<Self>(self.val);
+        return stdx::forward_like<Self>(self.val);
     }
 
     template <typename Self>
@@ -110,33 +168,33 @@ struct [[nodiscard]] Fuck {
 
     template <typename Self>
     [[nodiscard]] constexpr auto operator*(this Self&& self, const T& other) noexcept
-        -> Fuck<Coordinate, decltype(std::forward_like<Self>(self.val) * other)> {
-        return Fuck<Coordinate, decltype(std::forward_like<Self>(self.val) * other)>(
-            std::forward_like<Self>(self.val) * other);
+        -> Fuck<Coordinate, decltype(stdx::forward_like<Self>(self.val) * other)> {
+        return Fuck<Coordinate, decltype(stdx::forward_like<Self>(self.val) * other)>(
+            stdx::forward_like<Self>(self.val) * other);
     }
 
     template <typename Self, frame OtherCoord>
     [[nodiscard]] constexpr auto
         operator*(this Self&& self, const Fuck<OtherCoord, T>& other) noexcept
-        -> Fuck<Coordinate, decltype(std::forward_like<Self>(self.val) * (*other))> {
-        return Fuck<Coordinate, decltype(std::forward_like<Self>(self.val) * (*other))>(
-            std::forward_like<Self>(self.val) * (*other));
+        -> Fuck<Coordinate, decltype(stdx::forward_like<Self>(self.val) * (*other))> {
+        return Fuck<Coordinate, decltype(stdx::forward_like<Self>(self.val) * (*other))>(
+            stdx::forward_like<Self>(self.val) * (*other));
     }
 
     template <typename Self, frame OtherCoord>
     [[nodiscard]] constexpr auto
         operator+(this Self&& self, const Fuck<OtherCoord, T>& other) noexcept
-        -> Fuck<Coordinate, decltype(std::forward_like<Self>(self.val) + (*other))> {
-        return Fuck<Coordinate, decltype(std::forward_like<Self>(self.val) + (*other))>(
-            std::forward_like<Self>(self.val) + (*other));
+        -> Fuck<Coordinate, decltype(stdx::forward_like<Self>(self.val) + (*other))> {
+        return Fuck<Coordinate, decltype(stdx::forward_like<Self>(self.val) + (*other))>(
+            stdx::forward_like<Self>(self.val) + (*other));
     }
 
     template <typename Self, frame OtherCoord>
     [[nodiscard]] constexpr auto
         operator-(this Self&& self, const Fuck<OtherCoord, T>& other) noexcept
-        -> Fuck<Coordinate, decltype(std::forward_like<Self>(self.val) - (*other))> {
-        return Fuck<Coordinate, decltype(std::forward_like<Self>(self.val) - (*other))>(
-            std::forward_like<Self>(self.val) - (*other));
+        -> Fuck<Coordinate, decltype(stdx::forward_like<Self>(self.val) - (*other))> {
+        return Fuck<Coordinate, decltype(stdx::forward_like<Self>(self.val) - (*other))>(
+            stdx::forward_like<Self>(self.val) - (*other));
     }
 
     // ========================================================================
@@ -146,9 +204,9 @@ struct [[nodiscard]] Fuck {
 
     template <typename Self, typename... Args>
     [[nodiscard]] constexpr auto operator()(this Self&& self, Args&&... args) noexcept(
-        noexcept(std::forward_like<Self>(self.val)(std::forward<Args>(args)...)))
-        -> decltype(std::forward_like<Self>(self.val)(std::forward<Args>(args)...)) {
-        return std::forward_like<Self>(self.val)(std::forward<Args>(args)...);
+        noexcept(stdx::forward_like<Self>(self.val)(std::forward<Args>(args)...)))
+        -> decltype(stdx::forward_like<Self>(self.val)(std::forward<Args>(args)...)) {
+        return stdx::forward_like<Self>(self.val)(std::forward<Args>(args)...);
     }
 
 private:
