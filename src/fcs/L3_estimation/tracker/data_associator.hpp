@@ -163,12 +163,15 @@ public:
 
                 // Gating
                 if (std::isfinite(d2) && d2 < gate_threshold) {
-                    double nll = d2;
-                    if (id_prior != nullptr && static_cast<int>(id_prior->size()) == armors_num) {
-                        const double p = std::clamp((*id_prior)[id], 1e-6, 1.0);
-                        nll += -2.0 * std::log(p);
-                    }
-                    cost[j][id] = nll;
+                    cost[j][id] = d2;
+                    // TODO fix this
+                    // double nll = d2;
+                    // if (id_prior != nullptr && static_cast<int>(id_prior->size()) == armors_num)
+                    // {
+                    //     const double p = std::clamp((*id_prior)[id], 1e-6, 1.0);
+                    //     nll += -2.0 * std::log(p);
+                    // }
+                    // cost[j][id] = nll;
                 }
             }
         }

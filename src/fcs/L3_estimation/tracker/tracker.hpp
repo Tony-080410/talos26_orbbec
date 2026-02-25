@@ -11,7 +11,6 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
-#include <limits>
 #include <numbers>
 #include <optional>
 #include <vector>
@@ -62,12 +61,6 @@ public:
         }
         if (!is_outpost && !robot_ckf_) {
             return false;
-        }
-
-        if (!is_outpost) {
-            if (const auto handled = try_robot_single_armor_center_map_update_(measurements)) {
-                return *handled;
-            }
         }
 
         // Use template-based DataAssociator
@@ -135,9 +128,6 @@ public:
             }
         }
 
-        const bool use_robot_virtual_center_update =
-            (!is_outpost && should_use_robot_virtual_center_update_(match_result.armors.size()));
-
         // Process matched armors
         for (size_t i = 0; i < match_result.armors.size(); ++i) {
             RoboCKF::VecZ z;
@@ -164,16 +154,7 @@ public:
                 z[3]                  = unwrap_rad(z_pred[3], armor_yaw_raw);
                 bool is_another_pair  = (idx[i] == 1 || idx[i] == 3);
                 set_measurement(z, is_another_pair);
-                bool updated = false;
-                if (use_robot_virtual_center_update) {
-                    if (const auto virt = build_robot_virtual_center_measurement_(idx[i], z)) {
-                        updated = apply_robot_virtual_center_update_(virt->first, virt->second);
-                    }
-                }
-                if (!updated) {
-                    robot_ckf_->update(z);
-                }
-                apply_robot_known_geometry_constraint_();
+                robot_ckf_->update(z);
             }
         }
         return true;
@@ -254,11 +235,11 @@ public:
             // loose.
             P0(VX, VX)       = 9.0;
             P0(VY, VY)       = 9.0;
-            P0(VZ, VZ)       = 1.0;
-            P0(V_YAW, V_YAW) = 36.0;
-            P0(R_0, R_0)     = 1e-6;
-            P0(R_1, R_1)     = 1e-6;
-            P0(H, H)         = 1e-6;
+            P0(VZ, VZ)       = 16.0;
+            P0(V_YAW, V_YAW) = 1.0;
+            P0(R_0, R_0)     = 1e-2;
+            P0(R_1, R_1)     = 1e-2;
+            P0(H, H)         = 1e-2;
             robot_ckf_.emplace(robot_model_, xp0, P0);
             robot_ckf_->set_max_iters(5);
             robot_ckf_->set_iter_tol(1e-8);
@@ -474,319 +455,6 @@ private:
             }
         }
         return prior;
-    }
-
-    [[nodiscard]] bool
-        should_use_robot_virtual_center_update_(size_t matched_armors) const noexcept {
-        if (!robot_ckf_ || matched_armors != 1) {
-            return false;
-        }
-        const bool geometry_known = robot_geometry_is_known_();
-        if (!geometry_known) {
-            return false;
-        }
-        return std::isfinite(config_.robot_inekf.radius0)
-            && std::isfinite(config_.robot_inekf.radius1)
-            && std::isfinite(config_.robot_inekf.height);
-    }
-
-    [[nodiscard]] bool robot_geometry_is_known_() const noexcept {
-        return (config_.robot.model.sigma_r0 <= 1e-6) && (config_.robot.model.sigma_r1 <= 1e-6)
-            && (config_.robot.model.sigma_h <= 1e-6);
-    }
-
-    [[nodiscard]] std::optional<Eigen::Matrix<double, 4, 1>> robot_virtual_center_meas_from_raw_(
-        int armor_id, const RoboCKF::VecZ& z_raw) const noexcept {
-        if (armor_id < 0 || armor_id >= RobotModel::ARMORS_NUM) {
-            return std::nullopt;
-        }
-        const bool is_high =
-            (armor_id == RobotModel::kHighArmorIdA || armor_id == RobotModel::kHighArmorIdB);
-        const double r0 = std::clamp(config_.robot_inekf.radius0, 0.10, 0.50);
-        const double r1 = std::clamp(config_.robot_inekf.radius1, 0.10, 0.50);
-        const double h  = std::clamp(config_.robot_inekf.height, -0.20, 0.20);
-        const double r  = is_high ? r1 : r0;
-
-        Eigen::Matrix<double, 4, 1> zv;
-        const Eigen::Vector3d xyz   = ypd2xyz({z_raw[0], z_raw[1], std::max(0.05, z_raw[2])});
-        zv[0]                       = xyz.x() + r * std::cos(z_raw[3]);
-        zv[1]                       = xyz.y() + r * std::sin(z_raw[3]);
-        zv[2]                       = xyz.z() - (is_high ? h : 0.0);
-        constexpr double kAngleStep = 2.0 * std::numbers::pi / 4.0;
-        zv[3]                       = z_raw[3] - static_cast<double>(armor_id) * kAngleStep;
-        return zv;
-    }
-
-    [[nodiscard]] Eigen::Matrix<double, 4, 4>
-        robot_virtual_center_raw_cov_(const RoboCKF::VecZ& z_raw) const noexcept {
-        const auto& p                     = robot_model_.params;
-        Eigen::Matrix<double, 4, 4> R_raw = Eigen::Matrix<double, 4, 4>::Zero();
-        R_raw(0, 0)                       = std::max(1e-8, p.center_meas_yaw_var_floor);
-        R_raw(1, 1)                       = std::max(1e-8, p.center_meas_pitch_var_floor);
-        R_raw(2, 2)                       = std::max(1e-8, p.center_meas_dist_var_floor);
-        R_raw(3, 3)                       = std::max(
-            1e-8, p.center_meas_armor_yaw_var_floor
-                      + p.center_meas_armor_yaw_range_k * std::log(std::abs(z_raw[2]) + 1.0));
-        return R_raw;
-    }
-
-    [[nodiscard]] std::optional<std::pair<Eigen::Matrix<double, 4, 1>, Eigen::Matrix<double, 4, 4>>>
-        build_robot_virtual_center_measurement_from_raw_cov_(
-            int armor_id, const RoboCKF::VecZ& z_raw,
-            const Eigen::Matrix<double, 4, 4>& R_raw) const noexcept {
-        const auto zv0 = robot_virtual_center_meas_from_raw_(armor_id, z_raw);
-        if (!zv0.has_value()) {
-            return std::nullopt;
-        }
-
-        const bool is_high =
-            (armor_id == RobotModel::kHighArmorIdA || armor_id == RobotModel::kHighArmorIdB);
-        const double r0                = std::clamp(config_.robot_inekf.radius0, 0.10, 0.50);
-        const double r1                = std::clamp(config_.robot_inekf.radius1, 0.10, 0.50);
-        const double r                 = is_high ? r1 : r0;
-        const double yaw               = z_raw[0];
-        const double pitch             = z_raw[1];
-        const double dist_raw          = z_raw[2];
-        const double dist_eff          = std::max(0.05, dist_raw);
-        const double armor_yaw         = z_raw[3];
-        const double d_dist_eff_d_dist = (dist_raw >= 0.05) ? 1.0 : 0.0;
-
-        Eigen::Matrix<double, 4, 4> J = Eigen::Matrix<double, 4, 4>::Zero();
-        Eigen::Matrix3d J_xyz_ypd     = ypd2xyz_jacobian({yaw, pitch, dist_eff});
-        // The virtual center builder clamps distance at 5cm; linearization must match that
-        // piecewise model exactly.
-        J_xyz_ypd.col(2) *= d_dist_eff_d_dist;
-
-        J.block<3, 3>(0, 0) = J_xyz_ypd;
-        J(0, 3)             = -r * std::sin(armor_yaw);
-        J(1, 3)             = r * std::cos(armor_yaw);
-        J(3, 3)             = 1.0;
-
-        const double center_cov_inflation =
-            std::max(0.0, robot_model_.params.center_meas_cov_inflation);
-        Eigen::Matrix<double, 4, 4> Rv = J * R_raw * J.transpose();
-        Rv                             = (Rv + Rv.transpose()) * 0.5;
-        // Mild inflation keeps this center-space update conservative under nonlinear
-        // ypd->xyz propagation and unmodeled camera/PnP effects.
-        Rv *= center_cov_inflation;
-        Rv.diagonal().array() += 1e-8;
-        // Yaw0 from armor_yaw is typically accurate; keep a floor for numerical robustness.
-        Rv(3, 3) = std::max(Rv(3, 3), 1e-6);
-        return std::pair{*zv0, Rv};
-    }
-
-    [[nodiscard]] std::optional<std::pair<Eigen::Matrix<double, 4, 1>, Eigen::Matrix<double, 4, 4>>>
-        build_robot_virtual_center_measurement_(
-            int armor_id, const RoboCKF::VecZ& z_raw) const noexcept {
-        return build_robot_virtual_center_measurement_from_raw_cov_(
-            armor_id, z_raw, robot_virtual_center_raw_cov_(z_raw));
-    }
-
-    [[nodiscard]] bool apply_robot_virtual_center_update_(
-        const Eigen::Matrix<double, 4, 1>& z_v, const Eigen::Matrix<double, 4, 4>& R_v) noexcept {
-        if (!robot_ckf_) {
-            return false;
-        }
-        apply_robot_known_geometry_constraint_();
-        auto* x  = robot_ckf_->x_raw_ptr();
-        auto* Sx = robot_ckf_->Sx_raw_ptr();
-        if (x == nullptr || Sx == nullptr) {
-            return false;
-        }
-
-        using MatX  = RoboCKF::MatXX;
-        using Mat4  = Eigen::Matrix<double, 4, 4>;
-        using Mat4X = Eigen::Matrix<double, 4, RobotModel::NX>;
-        using MatX4 = Eigen::Matrix<double, RobotModel::NX, 4>;
-        using Vec4  = Eigen::Matrix<double, 4, 1>;
-
-        Mat4X H   = Mat4X::Zero();
-        H(0, XC)  = 1.0;
-        H(1, YC)  = 1.0;
-        H(2, Z0)  = 1.0;
-        H(3, YAW) = 1.0;
-
-        MatX P = (*Sx) * Sx->transpose();
-        Mat4 S = H * P * H.transpose() + R_v;
-        S      = (S + S.transpose()) * 0.5;
-        S.diagonal().array() += 1e-10;
-
-        const Eigen::LDLT<Mat4> ldlt(S);
-        if (ldlt.info() != Eigen::Success) {
-            return false;
-        }
-
-        Vec4 nu;
-        nu[0] = z_v[0] - (*x)[XC];
-        nu[1] = z_v[1] - (*x)[YC];
-        nu[2] = z_v[2] - (*x)[Z0];
-        nu[3] = shortest_rad((*x)[YAW], z_v[3]);
-
-        const MatX4 PHt = P * H.transpose();
-        const MatX4 K   = ldlt.solve(PHt.transpose()).transpose();
-
-        *x += K * nu;
-        (*x)[YAW] = unwrap_rad(z_v[3], (*x)[YAW]);
-
-        MatX P_post = P - K * S * K.transpose();
-        P_post      = (P_post + P_post.transpose()) * 0.5;
-        *Sx         = ckf::detail::chol_from_ldlt<RobotModel::NX, double>(P_post);
-        return true;
-    }
-
-    [[nodiscard]] std::optional<double> compute_robot_virtual_center_match_cost_(
-        const Eigen::Matrix<double, 4, 1>& z_v, const Eigen::Matrix<double, 4, 4>& R_v,
-        double prior_prob) const noexcept {
-        if (!robot_ckf_) {
-            return std::nullopt;
-        }
-
-        using Mat4  = Eigen::Matrix<double, 4, 4>;
-        using Mat4X = Eigen::Matrix<double, 4, RobotModel::NX>;
-        using Vec4  = Eigen::Matrix<double, 4, 1>;
-
-        Mat4X H   = Mat4X::Zero();
-        H(0, XC)  = 1.0;
-        H(1, YC)  = 1.0;
-        H(2, Z0)  = 1.0;
-        H(3, YAW) = 1.0;
-
-        const auto& x          = robot_ckf_->x();
-        const auto& Sx         = robot_ckf_->Sx();
-        const RoboCKF::MatXX P = Sx * Sx.transpose();
-        Mat4 S                 = H * P * H.transpose() + R_v;
-        S                      = (S + S.transpose()) * 0.5;
-        S.diagonal().array() += 1e-10;
-
-        const Eigen::LDLT<Mat4> ldlt(S);
-        if (ldlt.info() != Eigen::Success) {
-            return std::nullopt;
-        }
-
-        Vec4 nu;
-        nu[0] = z_v[0] - x[XC];
-        nu[1] = z_v[1] - x[YC];
-        nu[2] = z_v[2] - x[Z0];
-        nu[3] = shortest_rad(x[YAW], z_v[3]);
-
-        const double d2 = nu.transpose() * ldlt.solve(nu);
-        if (!std::isfinite(d2) || d2 >= matcher_gate) {
-            return std::nullopt;
-        }
-
-        const double p = std::clamp(prior_prob, 1e-6, 1.0);
-        return d2 + (-2.0 * std::log(p));
-    }
-
-    struct RobotSingleArmorCenterMapCandidate {
-        int armor_id{-1};
-        RoboCKF::VecZ z_raw{};
-        Eigen::Matrix<double, 4, 1> z_v{};
-        Eigen::Matrix<double, 4, 4> R_v{};
-        double cost{std::numeric_limits<double>::infinity()};
-    };
-
-    [[nodiscard]] std::optional<bool> try_robot_single_armor_center_map_update_(
-        const AtLegacyArmorMeasurementBatch& measurements) noexcept {
-        if (!robot_ckf_ || measurements.measurements.size() != 1
-            || !should_use_robot_virtual_center_update_(1)) {
-            return std::nullopt;
-        }
-
-        const auto& meas = measurements.measurements.front();
-        if (meas.name != target_name_) {
-            state_machine(false);
-            return false;
-        }
-
-        const auto ypd              = xyz2ypd(meas.transform->translation());
-        const double armor_yaw_raw  = meas.yaw();
-        constexpr int kArmorsNum    = RobotModel::ARMORS_NUM;
-        constexpr double kAngleStep = 2.0 * std::numbers::pi / static_cast<double>(kArmorsNum);
-
-        const double phase_shift = robot_ckf_->x()[V_YAW] * last_dt_ / kAngleStep;
-        const double phase_std =
-            compute_phase_std_(robot_ckf_->Sx(), YAW, V_YAW, last_dt_, kAngleStep);
-        const auto prior =
-            build_mode_prior_(kArmorsNum, robot_last_armor_id_, phase_shift, phase_std);
-
-        std::optional<RobotSingleArmorCenterMapCandidate> best;
-        for (int armor_id = 0; armor_id < kArmorsNum; ++armor_id) {
-            robot_model_.armor_id = armor_id;
-            const auto z_pred     = robot_model_.h(robot_ckf_->x(), armor_id);
-
-            RoboCKF::VecZ z;
-            z[0]            = unwrap_rad(z_pred[0], ypd[0]);
-            z[1]            = unwrap_rad(z_pred[1], ypd[1]);
-            z[2]            = ypd[2];
-            z[3]            = unwrap_rad(z_pred[3], armor_yaw_raw);
-            const auto virt = build_robot_virtual_center_measurement_(armor_id, z);
-            if (!virt.has_value()) {
-                continue;
-            }
-            const auto cost = compute_robot_virtual_center_match_cost_(
-                virt->first, virt->second,
-                (armor_id < static_cast<int>(prior.size()) ? prior[armor_id] : 1.0));
-            if (!cost.has_value()) {
-                continue;
-            }
-
-            if (!best.has_value() || *cost < best->cost) {
-                best = RobotSingleArmorCenterMapCandidate{
-                    .armor_id = armor_id,
-                    .z_raw    = z,
-                    .z_v      = virt->first,
-                    .R_v      = virt->second,
-                    .cost     = *cost,
-                };
-            }
-        }
-
-        if (!best.has_value()) {
-            state_machine(false);
-            return false;
-        }
-
-        state_machine(true);
-        robot_last_armor_id_  = best->armor_id;
-        robot_model_.armor_id = best->armor_id;
-        set_measurement(best->z_raw, (best->armor_id == 1 || best->armor_id == 3));
-
-        bool updated = apply_robot_virtual_center_update_(best->z_v, best->R_v);
-        if (!updated) {
-            robot_ckf_->update(best->z_raw);
-        }
-        apply_robot_known_geometry_constraint_();
-        return true;
-    }
-
-    void apply_robot_known_geometry_constraint_() noexcept {
-        if (!robot_ckf_ || !robot_geometry_is_known_()) {
-            return;
-        }
-        auto* x  = robot_ckf_->x_raw_ptr();
-        auto* Sx = robot_ckf_->Sx_raw_ptr();
-        if (x == nullptr || Sx == nullptr) {
-            return;
-        }
-
-        const double r0 = std::clamp(config_.robot_inekf.radius0, 0.10, 0.50);
-        const double r1 = std::clamp(config_.robot_inekf.radius1, 0.10, 0.50);
-        const double h  = std::clamp(config_.robot_inekf.height, -0.20, 0.20);
-        (*x)[R_0]       = r0;
-        (*x)[R_1]       = r1;
-        (*x)[H]         = h;
-
-        using MatX                = RoboCKF::MatXX;
-        MatX P                    = (*Sx) * Sx->transpose();
-        constexpr double kGeomVar = 1e-10;
-        for (const int idx : {R_0, R_1, H}) {
-            P.row(idx).setZero();
-            P.col(idx).setZero();
-            P(idx, idx) = kGeomVar;
-        }
-        P   = (P + P.transpose()) * 0.5;
-        *Sx = ckf::detail::chol_from_ldlt<RobotModel::NX, double>(P);
     }
 
     void state_machine(bool found) noexcept {
