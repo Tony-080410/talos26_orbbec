@@ -70,6 +70,21 @@ struct RobotModel {
         Scalar sigma_r0    = 1.0;  // Radius R0 drift noise
         Scalar sigma_r1    = 1.0;  // Radius R1 drift noise (note: reference uses sigma_r0 for R_1)
         Scalar sigma_h     = 0.5;  // Height H drift noise
+        // Measurement noise parameters (variance domain).
+        Scalar meas_yaw_var_floor       = 4e-3;
+        Scalar meas_pitch_var_floor     = 4e-3;
+        Scalar meas_dist_var_floor      = 0.3;
+        Scalar meas_dist_delta_angle_k  = 1.0;
+        Scalar meas_armor_yaw_var_floor = 9e-2;
+        Scalar meas_armor_yaw_range_k   = 1.0 / 200.0;
+        // Center-space virtual measurement noise parameters (variance domain).
+        // These are independent from armor-space association/update noise parameters.
+        Scalar center_meas_yaw_var_floor       = 4e-3;
+        Scalar center_meas_pitch_var_floor     = 4e-3;
+        Scalar center_meas_dist_var_floor      = 4e-4;
+        Scalar center_meas_armor_yaw_var_floor = 9e-2;
+        Scalar center_meas_armor_yaw_range_k   = 1.0 / 200.0;
+        Scalar center_meas_cov_inflation       = 1.2;
         std::expected<void, std::string> read_from(const toml::table& tbl) noexcept {
             READ(tbl, sigma_a_xy);
             READ(tbl, sigma_a_z);
@@ -77,6 +92,18 @@ struct RobotModel {
             READ(tbl, sigma_r0);
             READ(tbl, sigma_r1);
             READ(tbl, sigma_h);
+            READ_OPT(tbl, meas_yaw_var_floor);
+            READ_OPT(tbl, meas_pitch_var_floor);
+            READ_OPT(tbl, meas_dist_var_floor);
+            READ_OPT(tbl, meas_dist_delta_angle_k);
+            READ_OPT(tbl, meas_armor_yaw_var_floor);
+            READ_OPT(tbl, meas_armor_yaw_range_k);
+            READ_OPT(tbl, center_meas_yaw_var_floor);
+            READ_OPT(tbl, center_meas_pitch_var_floor);
+            READ_OPT(tbl, center_meas_dist_var_floor);
+            READ_OPT(tbl, center_meas_armor_yaw_var_floor);
+            READ_OPT(tbl, center_meas_armor_yaw_range_k);
+            READ_OPT(tbl, center_meas_cov_inflation);
             return {};
         }
     };
@@ -144,7 +171,7 @@ struct RobotModel {
     }
 
     /// Nullspace basis of one-armor instantaneous observability (dimension = 3).
-    [[nodiscard]] Eigen::Matrix<Scalar, NX, 3>
+    [[nodiscard]] Eigen::Matrix<Scalar, NX, Eigen::Dynamic>
         state_observability_nullspace(const VecX& x) const noexcept {
         constexpr Scalar angle_step = 2.0 * std::numbers::pi / static_cast<Scalar>(ARMORS_NUM);
         const int id                = std::clamp(armor_id, 0, ARMORS_NUM - 1);
@@ -153,24 +180,49 @@ struct RobotModel {
         const Scalar c              = std::cos(psi);
         const Scalar s              = std::sin(psi);
 
-        Eigen::Matrix<Scalar, NX, 3> N = Eigen::Matrix<Scalar, NX, 3>::Zero();
+        Eigen::Matrix<Scalar, NX, Eigen::Dynamic> N(NX, 0);
+
+        // If geometry process noises are effectively zero, geometry is treated as known and the
+        // classic single-armor center/radius/height gauge directions should not be projected out.
+        const bool active_radius_unknown =
+            (is_high ? params.sigma_r1 : params.sigma_r0) > Scalar(1e-6);
+        const bool opposite_radius_unknown =
+            (is_high ? params.sigma_r0 : params.sigma_r1) > Scalar(1e-6);
+        const bool h_unknown = params.sigma_h > Scalar(1e-6);
+
+        auto append_col = [&](auto fill_fn) {
+            const auto old_cols = N.cols();
+            N.conservativeResize(Eigen::NoChange, old_cols + 1);
+            N.col(old_cols).setZero();
+            fill_fn(N.col(old_cols));
+        };
 
         // Gauge 1: radial center/radius trade-off of active armor pair.
-        N(XC, 0) = c;
-        N(YC, 0) = s;
-        N(is_high ? R_1 : R_0, 0) = Scalar(1);
+        if (active_radius_unknown) {
+            append_col([&](auto col_vec) {
+                col_vec(XC)                  = c;
+                col_vec(YC)                  = s;
+                col_vec(is_high ? R_1 : R_0) = Scalar(1);
+            });
+        }
 
         // Gauge 2: opposite pair radius is unseen in current measurement.
-        N(is_high ? R_0 : R_1, 1) = Scalar(1);
+        if (opposite_radius_unknown) {
+            append_col([&](auto col_vec) { col_vec(is_high ? R_0 : R_1) = Scalar(1); });
+        }
 
         // Gauge 3: vertical ambiguity.
-        if (is_high) {
-            // High armor sees z0 + h; null direction keeps the sum invariant.
-            N(Z0, 2) = Scalar(1);
-            N(H, 2)  = Scalar(-1);
-        } else {
-            // Low armor does not depend on h.
-            N(H, 2) = Scalar(1);
+        if (h_unknown) {
+            if (is_high) {
+                // High armor sees z0 + h; null direction keeps the sum invariant.
+                append_col([&](auto col_vec) {
+                    col_vec(Z0) = Scalar(1);
+                    col_vec(H)  = Scalar(-1);
+                });
+            } else {
+                // Low armor does not depend on h.
+                append_col([&](auto col_vec) { col_vec(H) = Scalar(1); });
+            }
         }
         return N;
     }
@@ -211,9 +263,15 @@ struct RobotModel {
         fill_block(YAW, sigma_a_yaw2);
 
         // Random walk noise for R0, R1, H
-        const Scalar sigma_r0_2 = params.sigma_r0 * params.sigma_r0;
-        const Scalar sigma_r1_2 = params.sigma_r1 * params.sigma_r1;
-        const Scalar sigma_h_2  = params.sigma_h * params.sigma_h;
+        // Geometry is a quasi-static latent parameter; large drift noise injects XY jitter through
+        // the single-armor observability gauge. Keep an upper bound even if external config is
+        // large.
+        const Scalar sigma_r0_eff = std::min(params.sigma_r0, Scalar(0.10));
+        const Scalar sigma_r1_eff = std::min(params.sigma_r1, Scalar(0.10));
+        const Scalar sigma_h_eff  = std::min(params.sigma_h, Scalar(0.06));
+        const Scalar sigma_r0_2   = sigma_r0_eff * sigma_r0_eff;
+        const Scalar sigma_r1_2   = sigma_r1_eff * sigma_r1_eff;
+        const Scalar sigma_h_2    = sigma_h_eff * sigma_h_eff;
 
         Q(R_0, R_0) += sigma_r0_2 * dt2;
         Q(R_1, R_1) += sigma_r1_2 * dt2;
@@ -231,8 +289,11 @@ struct RobotModel {
     [[nodiscard]] Eigen::Matrix<Scalar, NZ, 1> R_diag(const VecZ& z) const noexcept {
         const Scalar delta_angle = shortest_rad(z[kMeasYaw], z[kMeasArmorYaw]);
         Eigen::Matrix<Scalar, NZ, 1> R_dig;
-        R_dig << 4e-3, 4e-3, std::log(std::abs(delta_angle) + 1.0) + 1.0,
-            std::log(std::abs(z[kMeasDistance]) + 1.0) / 200.0 + 9e-2;
+        R_dig << params.meas_yaw_var_floor, params.meas_pitch_var_floor,
+            params.meas_dist_var_floor
+                + params.meas_dist_delta_angle_k * std::log(std::abs(delta_angle) + 1.0),
+            params.meas_armor_yaw_var_floor
+                + params.meas_armor_yaw_range_k * std::log(std::abs(z[kMeasDistance]) + 1.0);
         return R_dig;
     }
 
@@ -403,7 +464,7 @@ struct OutpostModel {
     Eigen::Matrix<Scalar, NZ, 1> R_diag(const VecZ& z) const {
         const double delta_angle = shortest_rad(z[0], z[3]);
         Eigen::Matrix<Scalar, NZ, 1> R_dig;
-        R_dig << 4e-3, 4e-3, std::log(std::abs(delta_angle) + 1.0) + 1.0,
+        R_dig << 4e-3, 4e-3, std::log(std::abs(delta_angle) + 1.0) + 0.3,
             std::log(std::abs(z[kMeasDistance]) + 1.0) / 200.0 + 9e-2;
         return R_dig;
     }

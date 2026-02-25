@@ -104,6 +104,7 @@ add_test(NAME RclCompatTest COMMAND rclcompat_test)
 
 # FCS tracker observability regression tests
 talos_add_test_fcs(tracker_isrckf_observability_test test/tracker_isrckf_observability_test.cpp)
+talos_add_test_fcs(tracker_kf_accuracy_benchmark_test test/tracker_kf_accuracy_benchmark_test.cpp)
 
 if (ENABLE_COVERAGE)
     message(STATUS "Coverage enabled for FCS tests")

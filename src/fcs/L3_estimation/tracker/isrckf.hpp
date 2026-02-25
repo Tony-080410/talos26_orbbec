@@ -469,6 +469,7 @@ public:
 
     const VecX& x() const noexcept { return x_; }
     VecX* x_raw_ptr() noexcept { return &x_; }
+    MatXX* Sx_raw_ptr() noexcept { return &Sx_; }
     MatXX P() const { return Sx_ * Sx_.transpose(); }
     const MatXX& Sx() const noexcept { return Sx_; }
 
