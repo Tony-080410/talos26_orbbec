@@ -42,6 +42,9 @@ struct TargetConfig {
 };
 
 struct TrackerConfig {
+    /// Runtime switch for testing two tracker implementations
+    bool use_new_tracker{false};
+
     /// Robot target parameters
     TargetConfig<RobotModel::Params> robot;
     /// Outpost target parameters
@@ -53,6 +56,7 @@ struct TrackerConfig {
     OutpostInEKFConfig outpost_inekf;
 
     std::expected<void, std::string> read_from(const toml::table& tbl) noexcept {
+        READ_OPT(tbl, use_new_tracker);
         READ(tbl, robot);
         READ(tbl, outpost);
         READ(tbl, inekf_enabled);

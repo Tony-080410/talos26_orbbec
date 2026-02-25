@@ -65,6 +65,7 @@ top_k = 128
 
 [tracker]
 inekf_enabled = false
+use_new_tracker = true
 
 [tracker.robot]
 matcher_gate = 10.0             # Aligned with at_vision rm_bringup config

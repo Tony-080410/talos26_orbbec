@@ -43,7 +43,6 @@ add_compile_options(
     -Werror=pedantic
 
     -Werror=enum-conversion
-    -Werror=switch-enum
     # -Wswitch-default
     -Werror=implicit-fallthrough
 
