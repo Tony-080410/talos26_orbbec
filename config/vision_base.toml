@@ -64,9 +64,6 @@ nms_threshold = 0.30
 top_k = 128
 
 [tracker]
-inekf_enabled = false
-use_new_tracker = true
-
 [tracker.robot]
 matcher_gate = 10.0             # Aligned with at_vision rm_bringup config
 lost_threshold = 1.0            # Aligned with at_vision rm_bringup config
@@ -81,16 +78,9 @@ sigma_r1 = 1.0
 sigma_h = 0.8                   # Aligned with at_vision (was 0.5)
 
 [tracker.robot_inekf]
-sigma_a_xy = 10.0
-sigma_a_z = 1.0
-sigma_w = 1.75
-sigma_m = 1.5
-sigma_yaw = 6.28
 radius0 = 0.23
 radius1 = 0.23
 height = 0.1
-sigma_r = 1.5
-sigma_h = 0.5
 
 [tracker.outpost]
 matcher_gate = 4.0
@@ -101,14 +91,6 @@ tracking_threshold = 4
 sigma_q_xy = 10.0
 sigma_q_z = 2.0
 sigma_a_yaw = 8.0
-
-[tracker.outpost_inekf]
-sigma_a_xy = 1.0
-sigma_a_z = 2.0
-sigma_yaw = 3.14
-sigma_h = 0.5
-sigma_m = 0.25
-sigma_w = 0.5
 
 # ============================================================================
 # L4 Planning Configuration (Aimer + Planner Architecture)

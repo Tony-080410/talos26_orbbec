@@ -1,14 +1,31 @@
 #pragma once
 
-#include "motion_model.hpp"
 #include "util.hpp"
 
-#include <Eigen/Dense>
+#include "toml_helper.hpp"
+#include <Eigen/Core>
 #include <algorithm>
 #include <cmath>
 #include <numbers>
 
 namespace fcs::L3 {
+
+/// Concept for motion models compatible with SRUKF/ISRCKF
+template <typename M>
+concept MotionModel = requires(M m, typename M::VecX x, typename M::Scalar dt, int id) {
+    typename M::Scalar;
+    typename M::VecX;
+    typename M::VecZ;
+    { M::NX } -> std::convertible_to<int>;
+    { M::NZ } -> std::convertible_to<int>;
+    { M::ARMORS_NUM } -> std::convertible_to<int>;
+    { m.f(x, dt) } -> std::same_as<typename M::VecX>;
+    { m.h(x) } -> std::same_as<typename M::VecZ>;
+    { m.h(x, id) } -> std::same_as<typename M::VecZ>;
+    { m.Q_sqrt(dt) } -> std::convertible_to<Eigen::Matrix<typename M::Scalar, M::NX, M::NX>>;
+    { m.R_sqrt(std::declval<typename M::VecZ>()) };
+    { m.R_diag(std::declval<typename M::VecZ>()) };
+};
 
 struct RobotEkfMotionModel {
     using Scalar                       = double;
@@ -24,7 +41,50 @@ struct RobotEkfMotionModel {
     using MatXX = Eigen::Matrix<Scalar, NX, NX>;
     using MatZZ = Eigen::Matrix<Scalar, NZ, NZ>;
 
-    using Params = RobotModel::Params;
+    struct Params {
+        Scalar sigma_a_xy  = 10.0; // XY acceleration noise (match reference)
+        Scalar sigma_a_z   = 1.0;  // Z acceleration noise
+        Scalar sigma_a_yaw = 1.0;  // Yaw acceleration noise
+        Scalar sigma_r0    = 1.0;  // Radius R0 drift noise
+        Scalar sigma_r1    = 1.0;  // Radius R1 drift noise (note: reference uses sigma_r0 for R_1)
+        Scalar sigma_h     = 0.5;  // Height H drift noise
+        // Measurement noise parameters (variance domain).
+        Scalar meas_yaw_var_floor       = 4e-3;
+        Scalar meas_pitch_var_floor     = 4e-3;
+        Scalar meas_dist_var_floor      = 0.3;
+        Scalar meas_dist_delta_angle_k  = 1.0;
+        Scalar meas_armor_yaw_var_floor = 9e-2;
+        Scalar meas_armor_yaw_range_k   = 1.0 / 200.0;
+        // Center-space virtual measurement noise parameters (variance domain).
+        // These are independent from armor-space association/update noise parameters.
+        Scalar center_meas_yaw_var_floor       = 4e-3;
+        Scalar center_meas_pitch_var_floor     = 4e-3;
+        Scalar center_meas_dist_var_floor      = 4e-4;
+        Scalar center_meas_armor_yaw_var_floor = 9e-2;
+        Scalar center_meas_armor_yaw_range_k   = 1.0 / 200.0;
+        Scalar center_meas_cov_inflation       = 1.2;
+        std::expected<void, std::string> read_from(const toml::table& tbl) noexcept {
+            READ(tbl, sigma_a_xy);
+            READ(tbl, sigma_a_z);
+            READ(tbl, sigma_a_yaw);
+            READ(tbl, sigma_r0);
+            READ(tbl, sigma_r1);
+            READ(tbl, sigma_h);
+            READ_OPT(tbl, meas_yaw_var_floor);
+            READ_OPT(tbl, meas_pitch_var_floor);
+            READ_OPT(tbl, meas_dist_var_floor);
+            READ_OPT(tbl, meas_dist_delta_angle_k);
+            READ_OPT(tbl, meas_armor_yaw_var_floor);
+            READ_OPT(tbl, meas_armor_yaw_range_k);
+            READ_OPT(tbl, center_meas_yaw_var_floor);
+            READ_OPT(tbl, center_meas_pitch_var_floor);
+            READ_OPT(tbl, center_meas_dist_var_floor);
+            READ_OPT(tbl, center_meas_armor_yaw_var_floor);
+            READ_OPT(tbl, center_meas_armor_yaw_range_k);
+            READ_OPT(tbl, center_meas_cov_inflation);
+            return {};
+        }
+    };
     Params params{};
 
     [[nodiscard]] static int clamp_armor_id(int id) noexcept {
@@ -50,6 +110,7 @@ struct RobotEkfMotionModel {
     static void measure_state(const T* x, int armor_id, T* z) noexcept {
         using std::atan2;
         using std::cos;
+        using std::hypot;
         using std::sin;
         using std::sqrt;
 
@@ -63,8 +124,8 @@ struct RobotEkfMotionModel {
         const T armor_x = x[XC] - radius * cos(yaw);
         const T armor_y = x[YC] - radius * sin(yaw);
 
-        const T horizontal = sqrt(armor_x * armor_x + armor_y * armor_y);
-        const T distance   = sqrt(horizontal * horizontal + armor_z * armor_z);
+        const T horizontal = hypot(armor_x, armor_y);
+        const T distance   = hypot(horizontal, armor_z);
 
         z[ARMOR_YAW]       = atan2(armor_y, armor_x);
         z[ARMOR_PITCH]     = atan2(-armor_z, horizontal);
@@ -130,6 +191,18 @@ struct RobotEkfMotionModel {
                 + params.meas_armor_yaw_range_k * std::log(std::abs(z[ARMOR_DISTANCE]) + 1.0));
         return R;
     }
+
+    /// Measurement noise diagonal (match reference: +0.3 not +1.0)
+    [[nodiscard]] Eigen::Matrix<Scalar, NZ, 1> R_diag(const VecZ& z) const noexcept {
+        const Scalar delta_angle = shortest_rad(z[ARMOR_YAW], z[ARMOR_YAW_ARMOR]);
+        Eigen::Matrix<Scalar, NZ, 1> R_dig;
+        R_dig << params.meas_yaw_var_floor, params.meas_pitch_var_floor,
+            params.meas_dist_var_floor
+                + params.meas_dist_delta_angle_k * std::log(std::abs(delta_angle) + 1.0),
+            params.meas_armor_yaw_var_floor
+                + params.meas_armor_yaw_range_k * std::log(std::abs(z[ARMOR_DISTANCE]) + 1.0);
+        return R_dig;
+    }
 };
 
 struct OutpostEkfMotionModel {
@@ -144,8 +217,24 @@ struct OutpostEkfMotionModel {
     using MatXX = Eigen::Matrix<Scalar, NX, NX>;
     using MatZZ = Eigen::Matrix<Scalar, NZ, NZ>;
 
-    static constexpr double OUTPOST_RADIUS = OutpostModel::OUTPOST_RADIUS;
-    using Params                           = OutpostModel::Params;
+    static constexpr Scalar OUTPOST_RADIUS = 0.2765; // 详见机械图纸
+    struct Params {
+        Scalar sigma_q_xy  = 10.0;
+        Scalar sigma_q_z   = 1.0;
+        Scalar sigma_a_yaw = 1.0;
+
+        // 观测噪声（和距离、yaw 误差有关）
+        Scalar meas_dist_k = 0.43;  // 距离权重的系数 K
+        Scalar yaw_log_k   = 0.005; // yaw 噪声前的系数
+        std::expected<void, std::string> read_from(const toml::table& tbl) noexcept {
+            READ(tbl, sigma_q_xy);
+            READ(tbl, sigma_q_z);
+            READ(tbl, sigma_a_yaw);
+            READ_OPT(tbl, meas_dist_k);
+            READ_OPT(tbl, yaw_log_k);
+            return {};
+        }
+    };
     Params params{};
 
     [[nodiscard]] static int clamp_armor_id(int id) noexcept {
@@ -168,6 +257,7 @@ struct OutpostEkfMotionModel {
     static void measure_state(const T* x, int armor_id, T* z) noexcept {
         using std::atan2;
         using std::cos;
+        using std::hypot;
         using std::sin;
         using std::sqrt;
 
@@ -179,8 +269,8 @@ struct OutpostEkfMotionModel {
         const T armor_y = x[O_YC] - T(OUTPOST_RADIUS) * sin(yaw);
         const T armor_z = x[O_Z0 + id];
 
-        const T horizontal = sqrt(armor_x * armor_x + armor_y * armor_y);
-        const T distance   = sqrt(horizontal * horizontal + armor_z * armor_z);
+        const T horizontal = hypot(armor_x, armor_y);
+        const T distance   = hypot(horizontal, armor_z);
 
         z[ARMOR_YAW]       = atan2(armor_y, armor_x);
         z[ARMOR_PITCH]     = atan2(-armor_z, horizontal);
@@ -238,6 +328,14 @@ struct OutpostEkfMotionModel {
         R(2, 2) = std::log(std::abs(delta_angle) + 1.0) + 0.3;
         R(3, 3) = std::log(std::abs(z[ARMOR_DISTANCE]) + 1.0) / 200.0 + 9e-2;
         return R;
+    }
+
+    Eigen::Matrix<Scalar, NZ, 1> R_diag(const VecZ& z) const {
+        const double delta_angle = shortest_rad(z[0], z[3]);
+        Eigen::Matrix<Scalar, NZ, 1> R_dig;
+        R_dig << 4e-3, 4e-3, std::log(std::abs(delta_angle) + 1.0) + 0.3,
+            std::log(std::abs(z[ARMOR_DISTANCE]) + 1.0) / 200.0 + 9e-2;
+        return R_dig;
     }
 };
 

@@ -109,17 +109,11 @@ FOXGLOVE_JSON_MESSAGE(FilterInnovationMessage)
 // L3 Debug: Filter covariance trace
 FOXGLOVE_JSON_MESSAGE(FilterCovarianceMessage)
 
-// L3 Debug: Viterbi smoother trellis
-FOXGLOVE_JSON_MESSAGE(ViterbiTrellisMessage)
-
 // L3 Debug: State machine status
 FOXGLOVE_JSON_MESSAGE(StateMachineMessage)
 
 // L3 Debug: 3D scene for association visualization
 FOXGLOVE_SCENE_MESSAGE(AssociationSceneMessage)
-
-// L3 Debug: 3D scene for filter covariance visualization
-FOXGLOVE_SCENE_MESSAGE(FilterCovarianceSceneMessage)
 
 // L4 Debug: Full MPC prediction horizon
 FOXGLOVE_JSON_MESSAGE(MpcHorizonMessage)
@@ -150,9 +144,7 @@ using FoxgloveMessage = std::variant<
     // L2 Debug
     PnPSolverMessage, NNConfidenceMessage,
     // L3 Debug
-    AssociationPhaseMessage, AssociationPermutationMessage, FilterInnovationMessage,
-    FilterCovarianceMessage, ViterbiTrellisMessage, StateMachineMessage, AssociationSceneMessage,
-    FilterCovarianceSceneMessage,
+    AssociationSceneMessage,
     // L4 Debug
     MpcHorizonMessage, MpcCostMessage, MpcConstraintMessage, MpcPredictionSceneMessage,
     // Energy Meter

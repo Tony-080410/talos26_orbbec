@@ -253,26 +253,6 @@ public:
         return output;
     }
 
-    [[nodiscard]] TrackerComparison get_comparison_output() const noexcept {
-        TrackerComparison comparison;
-        if (robot_target_.has_value()) {
-            const auto& x              = robot_target_->x();
-            comparison.isrckf.active   = true;
-            comparison.isrckf.position = {x[XC], x[YC], x[Z0]};
-            comparison.isrckf.velocity = {x[VX], x[VY], x[VZ]};
-            comparison.isrckf.yaw      = x[YAW];
-            comparison.isrckf.v_yaw    = x[V_YAW];
-        } else if (outpost_target_.has_value()) {
-            const auto& x              = outpost_target_->x();
-            comparison.isrckf.active   = true;
-            comparison.isrckf.position = {x[O_XC], x[O_YC], 0.0};
-            comparison.isrckf.velocity = {0.0, 0.0, 0.0};
-            comparison.isrckf.yaw      = x[O_YAW];
-            comparison.isrckf.v_yaw    = x[O_VYAW];
-        }
-        return comparison;
-    }
-
     void reset() noexcept {
         robot_target_.reset();
         outpost_target_.reset();
@@ -400,13 +380,19 @@ private:
     }
 
     static double wrap_index_diff_(double d, int n) noexcept {
-        while (d > 0.5 * static_cast<double>(n)) {
-            d -= static_cast<double>(n);
+        if (n <= 0 || !std::isfinite(d)) {
+            return 0.0;
         }
-        while (d < -0.5 * static_cast<double>(n)) {
-            d += static_cast<double>(n);
+        const double period = static_cast<double>(n);
+        double wrapped      = std::remainder(d, period); // (-period/2, period/2]
+        if (!std::isfinite(wrapped)) {
+            return 0.0;
         }
-        return d;
+        // Keep historical tie behavior: map -n/2 to +n/2.
+        if (wrapped <= -0.5 * period) {
+            wrapped += period;
+        }
+        return wrapped;
     }
 
     static std::vector<double> build_mode_prior_(

@@ -69,13 +69,6 @@ struct FoxgloveChannels {
     FOXGLOVE_JSON_CHANNEL(pnp_solver_ch)
     FOXGLOVE_JSON_CHANNEL(nn_confidence_ch)
 
-    FOXGLOVE_JSON_CHANNEL(association_phase_ch)
-    FOXGLOVE_JSON_CHANNEL(association_permutation_ch)
-    FOXGLOVE_JSON_CHANNEL(filter_innovation_ch)
-    FOXGLOVE_JSON_CHANNEL(filter_covariance_ch)
-    FOXGLOVE_JSON_CHANNEL(viterbi_trellis_ch)
-    FOXGLOVE_JSON_CHANNEL(state_machine_ch)
-
     FOXGLOVE_JSON_CHANNEL(mpc_horizon_ch)
     FOXGLOVE_JSON_CHANNEL(mpc_cost_ch)
     FOXGLOVE_JSON_CHANNEL(mpc_constraint_ch)
@@ -127,12 +120,6 @@ FOXGLOVE_JSON_TRAIT(PerfStatsMessage, perf_stats_ch)
 FOXGLOVE_JSON_TRAIT(MpcTrajectoryMessage, mpc_traj_ch)
 FOXGLOVE_JSON_TRAIT(PnPSolverMessage, pnp_solver_ch)
 FOXGLOVE_JSON_TRAIT(NNConfidenceMessage, nn_confidence_ch)
-FOXGLOVE_JSON_TRAIT(AssociationPhaseMessage, association_phase_ch)
-FOXGLOVE_JSON_TRAIT(AssociationPermutationMessage, association_permutation_ch)
-FOXGLOVE_JSON_TRAIT(FilterInnovationMessage, filter_innovation_ch)
-FOXGLOVE_JSON_TRAIT(FilterCovarianceMessage, filter_covariance_ch)
-FOXGLOVE_JSON_TRAIT(ViterbiTrellisMessage, viterbi_trellis_ch)
-FOXGLOVE_JSON_TRAIT(StateMachineMessage, state_machine_ch)
 FOXGLOVE_JSON_TRAIT(MpcHorizonMessage, mpc_horizon_ch)
 FOXGLOVE_JSON_TRAIT(MpcCostMessage, mpc_cost_ch)
 FOXGLOVE_JSON_TRAIT(MpcConstraintMessage, mpc_constraint_ch)
@@ -153,7 +140,6 @@ FOXGLOVE_SCENE_TRAIT(TrackSceneMessage, track_scene_ch)
 FOXGLOVE_SCENE_TRAIT(GimbalSceneMessage, gimbal_scene_ch)
 FOXGLOVE_SCENE_TRAIT(RuneSceneMessage, rune_scene_ch)
 FOXGLOVE_SCENE_TRAIT(AssociationSceneMessage, association_scene_ch)
-FOXGLOVE_SCENE_TRAIT(FilterCovarianceSceneMessage, filter_covariance_scene_ch)
 FOXGLOVE_SCENE_TRAIT(MpcPredictionSceneMessage, mpc_prediction_scene_ch)
 #undef FOXGLOVE_SCENE_TRAIT
 
@@ -261,8 +247,8 @@ private:
 
     explicit FoxgloveServer(
         FoxgloveChannels channels, std::shared_ptr<foxglove::WebSocketServer> server) noexcept
-        : channels_(std::move(channels))
-        , server_(std::move(server)) {
+        : server_(std::move(server))
+        , channels_(std::move(channels)) {
         foxglove::setLogLevel(foxglove::LogLevel::Info);
         if (channels_.tf_ch) {
             tf_exporter_.emplace(std::move(*channels_.tf_ch));
@@ -422,13 +408,6 @@ std::expected<std::unique_ptr<FoxgloveServer>, std::string>
 
     TRY_CREATE_JSON_CHANNEL(pnp_solver_ch, "/debug/pnp_solver");
     TRY_CREATE_JSON_CHANNEL(nn_confidence_ch, "/debug/nn_confidence");
-
-    TRY_CREATE_JSON_CHANNEL(association_phase_ch, "/debug/association_phase");
-    TRY_CREATE_JSON_CHANNEL(association_permutation_ch, "/debug/association_permutation");
-    TRY_CREATE_JSON_CHANNEL(filter_innovation_ch, "/debug/filter_innovation");
-    TRY_CREATE_JSON_CHANNEL(filter_covariance_ch, "/debug/filter_covariance");
-    TRY_CREATE_JSON_CHANNEL(viterbi_trellis_ch, "/debug/viterbi_trellis");
-    TRY_CREATE_JSON_CHANNEL(state_machine_ch, "/debug/state_machine");
 
     TRY_CREATE_JSON_CHANNEL(mpc_horizon_ch, "/debug/mpc_horizon");
     TRY_CREATE_JSON_CHANNEL(mpc_cost_ch, "/debug/mpc_cost");

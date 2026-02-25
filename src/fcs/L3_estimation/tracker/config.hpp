@@ -1,19 +1,15 @@
 #pragma once
 
-#include "inekf_config.hpp"
-#include "motion_model.hpp"
+#include "new_motion_model.hpp"
 #include "toml_helper.hpp"
 #include <expected>
 #include <memory>
-#include <optional>
 #include <string>
 
 // Forward declaration to avoid including toml++ in config headers.
-namespace toml {
-inline namespace v3 {
+namespace toml::inline v3 {
 class table;
 }
-} // namespace toml
 
 namespace fcs::L3 {
 
@@ -41,27 +37,33 @@ struct TargetConfig {
     }
 };
 
-struct TrackerConfig {
-    /// Runtime switch for testing two tracker implementations
-    bool use_new_tracker{false};
-
-    /// Robot target parameters
-    TargetConfig<RobotModel::Params> robot;
-    /// Outpost target parameters
-    TargetConfig<OutpostModel::Params> outpost;
-
-    /// InEKF parameters
-    bool inekf_enabled{true};
-    RobotInEKFConfig robot_inekf;
-    OutpostInEKFConfig outpost_inekf;
+struct RobotInEKFConfig {
+    /// Target geometry (center -> armor offsets)
+    double radius0{0.23}; // Armor 0,2 radius
+    double radius1{0.23}; // Armor 1,3 radius
+    double height{0.0};   // z1 - z0 (armor 1,3 height offset)
 
     std::expected<void, std::string> read_from(const toml::table& tbl) noexcept {
-        READ_OPT(tbl, use_new_tracker);
+        READ(tbl, radius0);
+        READ(tbl, radius1);
+        READ(tbl, height);
+        return {};
+    }
+};
+
+struct TrackerConfig {
+    /// Robot target parameters
+    TargetConfig<RobotEkfMotionModel::Params> robot;
+    /// Outpost target parameters
+    TargetConfig<OutpostEkfMotionModel::Params> outpost;
+
+    /// InEKF parameters
+    RobotInEKFConfig robot_inekf;
+
+    std::expected<void, std::string> read_from(const toml::table& tbl) noexcept {
         READ(tbl, robot);
         READ(tbl, outpost);
-        READ(tbl, inekf_enabled);
         READ(tbl, robot_inekf);
-        READ(tbl, outpost_inekf);
         return {};
     }
 };

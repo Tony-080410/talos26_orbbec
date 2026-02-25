@@ -190,10 +190,6 @@ int main() {
         return 3;
     }
 
-    // Create Tracker using config from toml
-    world.insert_resource(fcs::L3::create_tracker(vision.l3.tracker));
-    SPDLOG_INFO("Tracker initialized");
-
     // Register trajectory solver resource (used by L4/L5)
     fcs::core::trajectory::register_resource(scheduler, std::move(vision.trajectory));
     SPDLOG_INFO("Trajectory solver registered");
