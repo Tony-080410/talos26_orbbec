@@ -14,6 +14,7 @@
 
 #include <fmt/format.h>
 #include <nlohmann/json.hpp>
+#include <tactical_palette.hpp>
 
 namespace fcs::foxglove::systems {
 
@@ -73,29 +74,6 @@ void register_l4_planning_systems(App& app) {
 
             std::vector<::foxglove::schemas::SceneEntity> entities;
 
-            // Selection marker (fire decision aware)
-            {
-                ::foxglove::schemas::SceneEntity entity =
-                    viz::EntityBuilder::create<fast_tf::gimbal>("l4", "selection")
-                        .timestamp(plan->timestamp_ns)
-                        .build();
-
-                const auto position =
-                    detail::spherical_to_cartesian(plan->distance, plan->yaw, plan->pitch);
-
-                const auto color =
-                    plan->fire_advice ? tac::L4::GIMBAL_AIM_FIRE : tac::L4::GIMBAL_AIM_HOLD;
-
-                ::foxglove::schemas::SpherePrimitive sphere;
-                sphere.pose = viz::make_pose(position);
-                sphere.size = {
-                    tac::L4::SELECTION_SIZE, tac::L4::SELECTION_SIZE, tac::L4::SELECTION_SIZE};
-                sphere.color = color;
-                entity.spheres.push_back(sphere);
-
-                entities.push_back(entity);
-            }
-
             // Predicted position marker (at bullet impact time for verification)
             if (plan->predicted_position) {
                 // Use predicted_future timestamp to show where target will be when bullet hits
@@ -113,7 +91,9 @@ void register_l4_planning_systems(App& app) {
                 sphere.pose = viz::make_pose(position);
                 sphere.size = {
                     tac::L4::PREDICTION_SIZE, tac::L4::PREDICTION_SIZE, tac::L4::PREDICTION_SIZE};
-                sphere.color = tac::L3::PREDICTION_AMBER;
+                sphere.color =
+                    plan->fire_advice ? tac::L4::GIMBAL_AIM_FIRE : tac::L3::PREDICTION_AMBER;
+
                 entity.spheres.push_back(sphere);
 
                 entities.push_back(entity);

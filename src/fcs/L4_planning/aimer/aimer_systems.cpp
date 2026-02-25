@@ -19,6 +19,7 @@
 #include <spdlog/spdlog.h>
 
 namespace fcs::L4 {
+static constexpr double kMaxVisualizationDistance = 15.0;
 
 void register_aimer_systems(talos::Scheduler& scheduler, L4Config&& config) {
     scheduler.world().insert_resource(config);
@@ -118,6 +119,16 @@ void register_aimer_systems(talos::Scheduler& scheduler, L4Config&& config) {
                 plan.fire_advice        = aim_result->aimer_fire_advice;
                 plan.predicted_future   = aim_result->predicted_future_ns;
                 plan.predicted_position = aim_result->predicted_position;
+                VisualizationDebugData viz_debug;
+                viz_debug.trajectory = solver->get()->generate_trajectory(
+                    aim_result->aim_pitch, bullet_speed, kMaxVisualizationDistance);
+                for (auto& p : viz_debug.trajectory) {
+                    const double x = p.first;
+                    const double z = p.second;
+                    p.first        = x * std::cos(plan.pitch) + z * std::sin(plan.pitch);
+                    p.second       = -x * std::sin(plan.pitch) + z * std::cos(plan.pitch);
+                }
+                plan.viz_debug = viz_debug;
                 aimer_out.write(std::move(plan));
             }
         });
