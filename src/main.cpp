@@ -160,12 +160,6 @@ int main() {
     }
 
     auto [robot, daedalus, hardware, foxglove, vision] = config_result.value();
-
-    SPDLOG_INFO(
-        "init done. ({}ms)", std::chrono::duration_cast<std::chrono::milliseconds>(
-                                 std::chrono::system_clock::now() - start)
-                                 .count());
-
     talos::World world;
     talos::Scheduler scheduler(world);
 
@@ -192,8 +186,6 @@ int main() {
 
     // Register trajectory solver resource (used by L4/L5)
     fcs::core::trajectory::register_resource(scheduler, std::move(vision.trajectory));
-    SPDLOG_INFO("Trajectory solver registered");
-
     SPDLOG_INFO("Trajectory resources configured (bullet_speed={:.1f}m/s)", bullet_speed);
 
     // Register AT Legacy detection pipeline systems
@@ -228,6 +220,11 @@ int main() {
         SPDLOG_CRITICAL("build scheduler: {}", build_result.error());
         return 1;
     }
+
+    SPDLOG_INFO(
+        "init done. ({}ms)", std::chrono::duration_cast<std::chrono::milliseconds>(
+                                 std::chrono::system_clock::now() - start)
+                                 .count());
 
     if (const auto result = scheduler.run(); !result) {
         SPDLOG_CRITICAL("run scheduler: {}", result.error());
