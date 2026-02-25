@@ -535,7 +535,11 @@ std::vector<std::string> AtLegacyNNBackend::execution_devices() const {
     }
     try {
         return impl_->compiled.get_property(ov::execution_devices);
+    } catch (const std::exception& e) {
+        SPDLOG_WARN("[NNBackend] Failed to get execution devices: {}", e.what());
+        return {};
     } catch (...) {
+        SPDLOG_WARN("[NNBackend] Failed to get execution devices: unknown error");
         return {};
     }
 }

@@ -188,12 +188,6 @@ public:
         return inner_.last_generation();
     }
 
-    // SPSC only: current (const ref, no ownership transfer)
-    [[nodiscard]] const T& current() const noexcept
-        requires requires(const Inner& r) { r.current(); } {
-        return inner_.current();
-    }
-
     [[nodiscard]] bool valid() const noexcept { return inner_.valid(); }
     explicit operator bool() const noexcept { return valid(); }
 

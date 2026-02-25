@@ -110,9 +110,16 @@ public:
                 uninit_camera();
                 return std::unexpected(read_result.error());
             }
-        } catch (...) {
+        } catch (const std::exception& e) {
+            SPDLOG_ERROR("[HIK] Failed to read initial frame: {}", e.what());
             uninit_camera();
-            return std::unexpected(CameraError{"Failed to read initial frame", 0});
+            return std::unexpected(
+                CameraError{std::string("Read initial frame failed: ") + e.what(), 0});
+        } catch (...) {
+            SPDLOG_ERROR("[HIK] Failed to read initial frame: unknown error");
+            uninit_camera();
+            return std::unexpected(
+                CameraError{"Read initial frame failed: unknown non-std exception", 0});
         }
         return {};
     }

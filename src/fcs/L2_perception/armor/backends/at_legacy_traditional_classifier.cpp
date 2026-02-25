@@ -32,9 +32,10 @@ std::expected<void, DetectorError> AtLegacyTraditionalClassifier::init() noexcep
         initialized_ = true;
         return {};
     } catch (const std::exception& e) {
-        // This can happen if ONNX model format is invalid or has incompatible layers
+        SPDLOG_ERROR("[TraditionalClassifier] Model load failed: {}", e.what());
         return std::unexpected(DetectorError::ModelLoadError);
     } catch (...) {
+        SPDLOG_ERROR("[TraditionalClassifier] Model load failed: unknown error");
         return std::unexpected(DetectorError::ModelLoadError);
     }
 }
@@ -69,7 +70,11 @@ AtLegacyTraditionalClassifier::ClassifyResult AtLegacyTraditionalClassifier::cla
 
         // Post-process and return result
         return post_process_output(output, confidence_out);
+    } catch (const std::exception& e) {
+        SPDLOG_ERROR("[TraditionalClassifier] Inference failed: {}", e.what());
+        return std::unexpected(DetectorError::InferenceError);
     } catch (...) {
+        SPDLOG_ERROR("[TraditionalClassifier] Inference failed: unknown error");
         return std::unexpected(DetectorError::InferenceError);
     }
 }

@@ -2,6 +2,7 @@
 
 #include "../primitives/channel.hpp"
 #include <atomic>
+#include <cassert>
 #include <optional>
 
 namespace talos {
@@ -123,6 +124,7 @@ struct spmc_mut {
 };
 
 /// Atomic reference wrapper
+/// Precondition: valid() must be true before load/store/operator*/operator->
 template <typename T, typename Topic = DefaultTopic>
 struct atomic_ref {
     using value_type = T;
@@ -132,15 +134,33 @@ struct atomic_ref {
 
     std::atomic<T>* ptr_ = nullptr;
 
-    [[nodiscard]] T load() const noexcept { return ptr_->load(std::memory_order_acquire); }
-    void store(T value) noexcept { ptr_->store(value, std::memory_order_release); }
+    [[nodiscard]] T load() const noexcept {
+        assert(ptr_ != nullptr && "atomic_ref: valid() must be true before load()");
+        return ptr_->load(std::memory_order_acquire);
+    }
+    void store(T value) noexcept {
+        assert(ptr_ != nullptr && "atomic_ref: valid() must be true before store()");
+        ptr_->store(value, std::memory_order_release);
+    }
     [[nodiscard]] bool valid() const noexcept { return ptr_ != nullptr; }
 
     // Transparent access: forward . and -> to std::atomic<T>
-    [[nodiscard]] std::atomic<T>* operator->() noexcept { return ptr_; }
-    [[nodiscard]] const std::atomic<T>* operator->() const noexcept { return ptr_; }
-    [[nodiscard]] std::atomic<T>& operator*() noexcept { return *ptr_; }
-    [[nodiscard]] const std::atomic<T>& operator*() const noexcept { return *ptr_; }
+    [[nodiscard]] std::atomic<T>* operator->() noexcept {
+        assert(ptr_ != nullptr && "atomic_ref: valid() must be true before operator->()");
+        return ptr_;
+    }
+    [[nodiscard]] const std::atomic<T>* operator->() const noexcept {
+        assert(ptr_ != nullptr && "atomic_ref: valid() must be true before operator->()");
+        return ptr_;
+    }
+    [[nodiscard]] std::atomic<T>& operator*() noexcept {
+        assert(ptr_ != nullptr && "atomic_ref: valid() must be true before operator*()");
+        return *ptr_;
+    }
+    [[nodiscard]] const std::atomic<T>& operator*() const noexcept {
+        assert(ptr_ != nullptr && "atomic_ref: valid() must be true before operator*()");
+        return *ptr_;
+    }
 };
 
 // ============================================================================
@@ -207,6 +227,7 @@ struct res {
 };
 
 /// Mutable resource wrapper
+/// Bumps version on every non-const access so res holders see is_changed().
 template <typename T>
 struct res_mut {
     using value_type = T;
@@ -230,6 +251,7 @@ struct res_mut {
     }
     [[nodiscard]] const T& operator*() const noexcept { return *ptr_; }
     [[nodiscard]] const T* operator->() const noexcept { return ptr_; }
+
     [[nodiscard]] bool valid() const noexcept { return ptr_ != nullptr; }
 
     [[nodiscard]] bool is_changed() const noexcept {

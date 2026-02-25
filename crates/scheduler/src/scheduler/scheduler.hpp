@@ -266,7 +266,8 @@ public:
      * - `func`: the system function to execute
      */
     template <typename Policy = default_policy, typename F>
-    auto add_system(std::string name, F&& func) -> void;
+    [[nodiscard]] auto add_system(std::string name, F&& func)
+        -> std::expected<void, SchedulerError>;
 
     /**
      * @brief Add a pre-built custom system to the scheduler
@@ -281,7 +282,8 @@ public:
      * - Registration is only valid before `build()`.
      * - The scheduler's dependency analysis and validation still uses SystemMeta.
      */
-    auto add_system(std::unique_ptr<SystemBase> system) -> uint64_t;
+    [[nodiscard]] auto add_system(std::unique_ptr<SystemBase> system)
+        -> std::expected<uint64_t, SchedulerError>;
 
     /**
      * @brief Get the ECS world
@@ -554,13 +556,11 @@ private:
 // ============================================================================
 
 template <typename Policy, typename F>
-auto Scheduler::add_system(std::string name, F&& func) -> void {
-    // If already running, must use hot_add_system instead
+auto Scheduler::add_system(std::string name, F&& func) -> std::expected<void, SchedulerError> {
     if (running_.load(std::memory_order_acquire)) {
-        std::abort();
+        return std::unexpected(SchedulerError::AlreadyRunning);
     }
 
-    // Allow adding systems after build (will require re-build)
     if (built_.load(std::memory_order_acquire)) {
         built_.store(false, std::memory_order_release);
     }
@@ -575,11 +575,11 @@ auto Scheduler::add_system(std::string name, F&& func) -> void {
 
     if constexpr (is_fixed_rate_policy_v<Policy>) {
         fixed_rate_systems_.push_back(std::move(entry));
-        return;
+        return {};
     }
     if constexpr (is_pool_policy_v<Policy> || is_visualization_policy_v<Policy>) {
         compute_systems_.push_back(std::move(entry));
-        return;
+        return {};
     }
     std::unreachable();
 }

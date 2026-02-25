@@ -5,6 +5,7 @@
 
 #include "scheduler/spin.hpp"
 #include <algorithm>
+#include <bit>
 #include <cinttypes>
 #include <cstdio>
 #include <functional>
@@ -38,18 +39,15 @@ Scheduler::~Scheduler() {
 // Lifecycle
 // ============================================================================
 
-uint64_t Scheduler::add_system(std::unique_ptr<SystemBase> system) {
+auto Scheduler::add_system(std::unique_ptr<SystemBase> system)
+    -> std::expected<uint64_t, SchedulerError> {
     if (!system) {
         std::abort();
     }
-    // If already running, must use hot_add_system instead
     if (running_.load(std::memory_order_acquire)) {
-        SPDLOG_CRITICAL("Cannot call add_system while scheduler is running. Use hot_add_system.");
-        std::abort();
+        return std::unexpected(SchedulerError::AlreadyRunning);
     }
 
-    // Allow adding systems after build (will require re-build)
-    // Mark as not-built so build() can be called again
     if (built_.load(std::memory_order_acquire)) {
         built_.store(false, std::memory_order_release);
     }
@@ -62,11 +60,11 @@ uint64_t Scheduler::add_system(std::unique_ptr<SystemBase> system) {
 
     if (policy.is_fixed_rate()) {
         fixed_rate_systems_.push_back(std::move(entry));
-        return fixed_rate_systems_.size() - 1;
+        return static_cast<uint64_t>(fixed_rate_systems_.size() - 1);
     }
     if (policy.is_pool() || policy.is_visualization()) {
         compute_systems_.push_back(std::move(entry));
-        return compute_systems_.size() - 1;
+        return static_cast<uint64_t>(compute_systems_.size() - 1);
     }
     std::unreachable();
 }
@@ -1023,7 +1021,7 @@ auto Scheduler::compute_levels() -> BuildResult {
         for (std::size_t node : current_level) {
             std::uint64_t neighbors = adj_mask[node];
             while (neighbors) {
-                const std::size_t neighbor = __builtin_ctzll(neighbors);
+                const std::size_t neighbor = std::countr_zero(neighbors);
                 neighbors &= neighbors - 1;          // Clear lowest set bit
                 if (--in_degree[neighbor] == 0) {
                     next_level.push_back(neighbor);
@@ -1062,7 +1060,7 @@ auto Scheduler::compute_levels() -> BuildResult {
 
             std::uint64_t neighbors = adj_mask[node];
             while (neighbors) {
-                const std::size_t neighbor = __builtin_ctzll(neighbors);
+                const std::size_t neighbor = std::countr_zero(neighbors);
                 neighbors &= neighbors - 1; // Clear lowest set bit
 
                 if (!visited[neighbor]) {

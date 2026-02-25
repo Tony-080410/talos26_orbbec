@@ -296,8 +296,9 @@ public:
                     return result;
                 }
             } else {
-                // Cold-add: scheduler not running, just add normally
-                scheduler_.add_system(std::move(sys));
+                if (auto result = scheduler_.add_system(std::move(sys)); !result) {
+                    return std::unexpected(BuildError{result.error()});
+                }
             }
         }
         pending_systems_.clear();

@@ -524,8 +524,11 @@ void test_custom_system_injection() {
             cam_out.write(CameraFrame{.frame_id = frame});
         });
 
-    [[maybe_unused]] auto idx =
-        scheduler.add_system(std::make_unique<CustomFusionSystem>(custom_runs));
+    auto idx_result = scheduler.add_system(std::make_unique<CustomFusionSystem>(custom_runs));
+    if (!idx_result) {
+        printf("  ERROR: add_system failed\n");
+        return;
+    }
 
     auto build_result = scheduler.build();
     if (!build_result) {
