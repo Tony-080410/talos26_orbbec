@@ -32,8 +32,8 @@ void register_tracker_systems(talos::Scheduler& scheduler, TrackerConfig&& confi
 
             // Reactively update tracker config when changed
             if (config.is_changed()) {
-                *tracker = std::make_shared<Tracker>(*config);
-                tracker_new = std::make_shared<TrackerNew>(*config);
+                *tracker          = std::make_shared<Tracker>(*config);
+                tracker_new       = std::make_shared<TrackerNew>(*config);
                 last_timestamp_ns = 0;
             }
 

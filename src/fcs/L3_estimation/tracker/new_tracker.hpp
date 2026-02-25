@@ -25,27 +25,27 @@ namespace fcs::L3 {
 template <typename ModelT>
 class EkfTargetInfo {
 public:
-    using Model = ModelT;
+    using Model             = ModelT;
     static constexpr int NX = Model::NX;
     static constexpr int NZ = Model::NZ;
 
-    using VecX  = typename Model::VecX;
-    using VecZ  = typename Model::VecZ;
-    using MatXX = typename Model::MatXX;
-    using MatZZ = typename Model::MatZZ;
+    using VecX   = typename Model::VecX;
+    using VecZ   = typename Model::VecZ;
+    using MatXX  = typename Model::MatXX;
+    using MatZZ  = typename Model::MatZZ;
     using Params = typename Model::Params;
 
-    using JetX = ceres::Jet<double, NX>;
+    using JetX        = ceres::Jet<double, NX>;
     using PredictFunc = std::function<void(const JetX*, JetX*)>;
     using MeasureFunc = std::function<void(const JetX*, JetX*)>;
-    using EKF = ExtendedKalmanFilter<NX, NZ, PredictFunc, MeasureFunc>;
+    using EKF         = ExtendedKalmanFilter<NX, NZ, PredictFunc, MeasureFunc>;
 
     EkfTargetInfo() = default;
 
     void initialize(const Params& params, const VecX& x0, const MatXX& P0) noexcept {
         model_.params = params;
-        dt_ = 0.0;
-        armor_id_ = 0;
+        dt_           = 0.0;
+        armor_id_     = 0;
 
         auto f = [this](const JetX* x, JetX* xp) {
             Model::template predict_state<JetX>(x, JetX(dt_), xp);
@@ -58,7 +58,7 @@ public:
 
         ekf_ = EKF(f, h, q, r, P0);
         ekf_.setState(x0);
-        x_ = x0;
+        x_      = x0;
         active_ = true;
     }
 
@@ -126,8 +126,9 @@ public:
             if (!outpost_target_.has_value()) {
                 return false;
             }
-            return update_target_(*outpost_target_, measurements, OutpostEkfMotionModel::ARMORS_NUM,
-                                  outpost_last_armor_id_, false);
+            return update_target_(
+                *outpost_target_, measurements, OutpostEkfMotionModel::ARMORS_NUM,
+                outpost_last_armor_id_, false);
         }
 
         if (!robot_target_.has_value()) {
@@ -145,13 +146,13 @@ public:
             return std::nullopt;
         }
 
-        int min_idx = -1;
+        int min_idx        = -1;
         float min_distance = std::numeric_limits<float>::max();
         for (int i = 0; i < static_cast<int>(measurements.measurements.size()); ++i) {
             const float dist = measurements.measurements[i].distance_to_image_center;
             if (dist < min_distance) {
                 min_distance = dist;
-                min_idx = i;
+                min_idx      = i;
             }
         }
 
@@ -160,12 +161,12 @@ public:
             return std::nullopt;
         }
 
-        const auto& target = measurements.measurements[static_cast<size_t>(min_idx)];
-        const auto& pos = target.transform->translation();
+        const auto& target     = measurements.measurements[static_cast<size_t>(min_idx)];
+        const auto& pos        = target.transform->translation();
         const double armor_yaw = target.yaw();
-        constexpr double v0 = 0.0;
+        constexpr double v0    = 0.0;
 
-        target_name_ = target.name;
+        target_name_          = target.name;
         const bool is_outpost = (target_name_ == ArmorName::Outpost);
 
         robot_target_.reset();
@@ -186,36 +187,36 @@ public:
             outpost_target_->initialize(config_.outpost.model, xp0, P0);
             outpost_last_armor_id_ = 0;
 
-            lost_threshold_ = config_.outpost.lost_threshold;
+            lost_threshold_     = config_.outpost.lost_threshold;
             tracking_threshold_ = config_.outpost.tracking_threshold;
-            matcher_gate_ = config_.outpost.matcher_gate;
+            matcher_gate_       = config_.outpost.matcher_gate;
         } else {
             const double r0_prior = std::clamp(config_.robot_inekf.radius0, 0.10, 0.50);
             const double r1_prior = std::clamp(config_.robot_inekf.radius1, 0.10, 0.50);
-            const double h_prior = std::clamp(config_.robot_inekf.height, -0.20, 0.20);
-            const double r_init = 0.5 * (r0_prior + r1_prior);
-            const double x0 = pos.x() + r_init * std::cos(armor_yaw);
-            const double y0 = pos.y() + r_init * std::sin(armor_yaw);
-            const double z0 = pos.z() - 0.5 * h_prior;
+            const double h_prior  = std::clamp(config_.robot_inekf.height, -0.20, 0.20);
+            const double r_init   = 0.5 * (r0_prior + r1_prior);
+            const double x0       = pos.x() + r_init * std::cos(armor_yaw);
+            const double y0       = pos.y() + r_init * std::sin(armor_yaw);
+            const double z0       = pos.z() - 0.5 * h_prior;
 
             RobotEkfMotionModel::VecX xp0;
             xp0 << x0, v0, y0, v0, z0, v0, armor_yaw, v0, r0_prior, r1_prior, h_prior;
             RobotEkfMotionModel::MatXX P0 = RobotEkfMotionModel::MatXX::Identity();
-            P0(VX, VX) = 9.0;
-            P0(VY, VY) = 9.0;
-            P0(VZ, VZ) = 1.0;
-            P0(V_YAW, V_YAW) = 36.0;
-            P0(R_0, R_0) = 1e-6;
-            P0(R_1, R_1) = 1e-6;
-            P0(H, H) = 1e-6;
+            P0(VX, VX)                    = 9.0;
+            P0(VY, VY)                    = 9.0;
+            P0(VZ, VZ)                    = 1.0;
+            P0(V_YAW, V_YAW)              = 36.0;
+            P0(R_0, R_0)                  = 1e-6;
+            P0(R_1, R_1)                  = 1e-6;
+            P0(H, H)                      = 1e-6;
 
             robot_target_.emplace();
             robot_target_->initialize(config_.robot.model, xp0, P0);
             robot_last_armor_id_.reset();
 
-            lost_threshold_ = config_.robot.lost_threshold;
+            lost_threshold_     = config_.robot.lost_threshold;
             tracking_threshold_ = config_.robot.tracking_threshold;
-            matcher_gate_ = config_.robot.matcher_gate;
+            matcher_gate_       = config_.robot.matcher_gate;
         }
 
         state_machine(true);
@@ -224,29 +225,29 @@ public:
 
     [[nodiscard]] TrackerOutput get_output() const noexcept {
         TrackerOutput output;
-        output.status = status_;
+        output.status      = status_;
         output.target_name = target_name_;
 
         if (robot_target_.has_value()) {
             const auto& x = robot_target_->x();
             RobotTargetState state;
-            state.position = {x[XC], x[YC], x[Z0]};
-            state.velocity = {x[VX], x[VY], x[VZ]};
-            state.yaw = x[YAW];
-            state.v_yaw = x[V_YAW];
-            state.radius0 = x[R_0];
-            state.radius1 = x[R_1];
-            state.z1 = x[Z0] + x[H];
+            state.position   = {x[XC], x[YC], x[Z0]};
+            state.velocity   = {x[VX], x[VY], x[VZ]};
+            state.yaw        = x[YAW];
+            state.v_yaw      = x[V_YAW];
+            state.radius0    = x[R_0];
+            state.radius1    = x[R_1];
+            state.z1         = x[Z0] + x[H];
             state.armors_num = RobotEkfMotionModel::ARMORS_NUM;
-            output.state = state;
+            output.state     = state;
         } else if (outpost_target_.has_value()) {
             const auto& x = outpost_target_->x();
             OutpostTargetState state;
             state.position = {x[O_XC], x[O_YC]};
-            state.yaw = x[O_YAW];
-            state.v_yaw = x[O_VYAW];
-            state.z = {x[O_Z0], x[O_Z1], x[O_Z2]};
-            output.state = state;
+            state.yaw      = x[O_YAW];
+            state.v_yaw    = x[O_VYAW];
+            state.z        = {x[O_Z0], x[O_Z1], x[O_Z2]};
+            output.state   = state;
         }
 
         return output;
@@ -255,19 +256,19 @@ public:
     [[nodiscard]] TrackerComparison get_comparison_output() const noexcept {
         TrackerComparison comparison;
         if (robot_target_.has_value()) {
-            const auto& x = robot_target_->x();
-            comparison.isrckf.active = true;
+            const auto& x              = robot_target_->x();
+            comparison.isrckf.active   = true;
             comparison.isrckf.position = {x[XC], x[YC], x[Z0]};
             comparison.isrckf.velocity = {x[VX], x[VY], x[VZ]};
-            comparison.isrckf.yaw = x[YAW];
-            comparison.isrckf.v_yaw = x[V_YAW];
+            comparison.isrckf.yaw      = x[YAW];
+            comparison.isrckf.v_yaw    = x[V_YAW];
         } else if (outpost_target_.has_value()) {
-            const auto& x = outpost_target_->x();
-            comparison.isrckf.active = true;
+            const auto& x              = outpost_target_->x();
+            comparison.isrckf.active   = true;
             comparison.isrckf.position = {x[O_XC], x[O_YC], 0.0};
             comparison.isrckf.velocity = {0.0, 0.0, 0.0};
-            comparison.isrckf.yaw = x[O_YAW];
-            comparison.isrckf.v_yaw = x[O_VYAW];
+            comparison.isrckf.yaw      = x[O_YAW];
+            comparison.isrckf.v_yaw    = x[O_VYAW];
         }
         return comparison;
     }
@@ -280,9 +281,9 @@ public:
         target_name_ = ArmorName::Invalid;
         measurement_.fill(0.0);
         detecting_count_ = 0;
-        last_dt_ = 0.0;
-        lost_time_ = 0.0;
-        status_ = TrackerStatus::Idle;
+        last_dt_         = 0.0;
+        lost_time_       = 0.0;
+        status_          = TrackerStatus::Idle;
     }
 
     [[nodiscard]] TrackerStatus status() const noexcept { return status_; }
@@ -324,7 +325,8 @@ private:
         }
 
         const double angle_step = 2.0 * std::numbers::pi / static_cast<double>(armors_num);
-        const double phase_shift = target.x()[TargetInfo::Model::kVyawIndex] * last_dt_ / angle_step;
+        const double phase_shift =
+            target.x()[TargetInfo::Model::kVyawIndex] * last_dt_ / angle_step;
         const double phase_std = std::clamp(std::abs(last_dt_) * 0.5, 0.05, 1.0);
         const auto prior = build_mode_prior_(armors_num, last_armor_id, phase_shift, phase_std);
 
@@ -336,9 +338,9 @@ private:
             const VecZ z_raw = measurement_to_z_(meas);
             for (int id = 0; id < armors_num; ++id) {
                 const VecZ z_pred = target.model().h(target.x(), id);
-                const VecZ nu = innovation_(z_pred, z_raw);
-                const MatZZ R = target.model().R(z_raw);
-                const double d2 = mahalanobis_diag_(nu, R);
+                const VecZ nu     = innovation_(z_pred, z_raw);
+                const MatZZ R     = target.model().R(z_raw);
+                const double d2   = mahalanobis_diag_(nu, R);
                 if (!std::isfinite(d2) || d2 >= matcher_gate_) {
                     continue;
                 }
@@ -350,9 +352,9 @@ private:
 
                 MatchCandidate<TargetInfo> candidate;
                 candidate.obs_index = obs_index;
-                candidate.armor_id = id;
-                candidate.cost = cost;
-                candidate.z_update = wrap_measurement_(z_pred, z_raw);
+                candidate.armor_id  = id;
+                candidate.cost      = cost;
+                candidate.z_update  = wrap_measurement_(z_pred, z_raw);
                 candidates.push_back(candidate);
             }
         }
@@ -362,9 +364,9 @@ private:
             return false;
         }
 
-        std::sort(
-            candidates.begin(), candidates.end(),
-            [](const auto& a, const auto& b) { return a.cost < b.cost; });
+        std::sort(candidates.begin(), candidates.end(), [](const auto& a, const auto& b) {
+            return a.cost < b.cost;
+        });
 
         std::vector<bool> used_obs(measurements.measurements.size(), false);
         std::vector<bool> used_id(static_cast<size_t>(armors_num), false);
@@ -375,7 +377,7 @@ private:
             if (used_obs[candidate.obs_index] || used_id[static_cast<size_t>(candidate.armor_id)]) {
                 continue;
             }
-            used_obs[candidate.obs_index] = true;
+            used_obs[candidate.obs_index]                    = true;
             used_id[static_cast<size_t>(candidate.armor_id)] = true;
             selected.push_back(candidate);
         }
@@ -409,14 +411,15 @@ private:
 
     static std::vector<double> build_mode_prior_(
         int armors_num, std::optional<int> last_id, double phase_shift, double phase_std) {
-        std::vector<double> prior(static_cast<size_t>(armors_num), 1.0 / static_cast<double>(armors_num));
+        std::vector<double> prior(
+            static_cast<size_t>(armors_num), 1.0 / static_cast<double>(armors_num));
         if (!last_id.has_value() || armors_num <= 1) {
             return prior;
         }
 
-        const double center = static_cast<double>(*last_id) + phase_shift;
-        const double sigma = std::clamp(0.28 + 0.95 * phase_std, 0.25, 2.20);
-        const double inv_var = 1.0 / (sigma * sigma);
+        const double center      = static_cast<double>(*last_id) + phase_shift;
+        const double sigma       = std::clamp(0.28 + 0.95 * phase_std, 0.25, 2.20);
+        const double inv_var     = 1.0 / (sigma * sigma);
         const double uniform_mix = std::clamp(0.02 + 0.30 * phase_std, 0.02, 0.35);
         const int max_index_step = std::clamp(
             static_cast<int>(std::ceil(std::abs(phase_shift) + 3.0 * phase_std + 0.25)), 1,
@@ -444,12 +447,13 @@ private:
         return prior;
     }
 
-    static RobotEkfMotionModel::VecZ measurement_to_z_(const AtLegacyArmorMeasurement& meas) noexcept {
+    static RobotEkfMotionModel::VecZ
+        measurement_to_z_(const AtLegacyArmorMeasurement& meas) noexcept {
         const auto ypd = xyz2ypd(meas.transform->translation());
         RobotEkfMotionModel::VecZ z;
-        z[ARMOR_YAW] = ypd[0];
-        z[ARMOR_PITCH] = ypd[1];
-        z[ARMOR_DISTANCE] = ypd[2];
+        z[ARMOR_YAW]       = ypd[0];
+        z[ARMOR_PITCH]     = ypd[1];
+        z[ARMOR_DISTANCE]  = ypd[2];
         z[ARMOR_YAW_ARMOR] = meas.yaw();
         return z;
     }
@@ -457,9 +461,9 @@ private:
     template <typename VecZ>
     static VecZ innovation_(const VecZ& z_pred, const VecZ& z_raw) noexcept {
         VecZ nu;
-        nu[ARMOR_YAW] = shortest_rad(z_pred[ARMOR_YAW], z_raw[ARMOR_YAW]);
-        nu[ARMOR_PITCH] = shortest_rad(z_pred[ARMOR_PITCH], z_raw[ARMOR_PITCH]);
-        nu[ARMOR_DISTANCE] = z_raw[ARMOR_DISTANCE] - z_pred[ARMOR_DISTANCE];
+        nu[ARMOR_YAW]       = shortest_rad(z_pred[ARMOR_YAW], z_raw[ARMOR_YAW]);
+        nu[ARMOR_PITCH]     = shortest_rad(z_pred[ARMOR_PITCH], z_raw[ARMOR_PITCH]);
+        nu[ARMOR_DISTANCE]  = z_raw[ARMOR_DISTANCE] - z_pred[ARMOR_DISTANCE];
         nu[ARMOR_YAW_ARMOR] = shortest_rad(z_pred[ARMOR_YAW_ARMOR], z_raw[ARMOR_YAW_ARMOR]);
         return nu;
     }
@@ -467,9 +471,9 @@ private:
     template <typename VecZ>
     static VecZ wrap_measurement_(const VecZ& z_pred, const VecZ& z_raw) noexcept {
         VecZ z;
-        z[ARMOR_YAW] = unwrap_rad(z_pred[ARMOR_YAW], z_raw[ARMOR_YAW]);
-        z[ARMOR_PITCH] = unwrap_rad(z_pred[ARMOR_PITCH], z_raw[ARMOR_PITCH]);
-        z[ARMOR_DISTANCE] = z_raw[ARMOR_DISTANCE];
+        z[ARMOR_YAW]       = unwrap_rad(z_pred[ARMOR_YAW], z_raw[ARMOR_YAW]);
+        z[ARMOR_PITCH]     = unwrap_rad(z_pred[ARMOR_PITCH], z_raw[ARMOR_PITCH]);
+        z[ARMOR_DISTANCE]  = z_raw[ARMOR_DISTANCE];
         z[ARMOR_YAW_ARMOR] = unwrap_rad(z_pred[ARMOR_YAW_ARMOR], z_raw[ARMOR_YAW_ARMOR]);
         return z;
     }
@@ -501,7 +505,7 @@ private:
             if (found) {
                 detecting_count_++;
                 if (detecting_count_ > static_cast<int>(tracking_threshold_)) {
-                    status_ = TrackerStatus::Tracking;
+                    status_          = TrackerStatus::Tracking;
                     detecting_count_ = 0;
                 }
             } else {
@@ -511,7 +515,7 @@ private:
 
         case TrackerStatus::Tracking:
             if (!found) {
-                status_ = TrackerStatus::TempLost;
+                status_    = TrackerStatus::TempLost;
                 lost_time_ = last_dt_;
             }
             break;
@@ -519,7 +523,7 @@ private:
         case TrackerStatus::TempLost:
             if (found) {
                 lost_time_ = 0.0;
-                status_ = TrackerStatus::Tracking;
+                status_    = TrackerStatus::Tracking;
             } else {
                 lost_time_ += last_dt_;
                 if (lost_time_ >= lost_threshold_) {
