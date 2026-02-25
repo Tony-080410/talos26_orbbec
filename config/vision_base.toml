@@ -7,7 +7,7 @@ detect_color = "Blue"
 
 # Required if backend_type = "traditional"
 [traditional]
-advanced_binary = true
+advanced_binary = false
 dark_percentage = 0.5
 binary_threshold = 85
 light_min_ratio = 0.0001
