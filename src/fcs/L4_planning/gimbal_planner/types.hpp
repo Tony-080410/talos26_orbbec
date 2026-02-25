@@ -20,8 +20,6 @@ namespace fcs::L4 {
 /// This data is optional and should only be populated when visualization
 /// is enabled.
 struct VisualizationDebugData {
-    std::optional<Eigen::Vector3d> predicted_position; ///< For visualization
-    uint64_t predicted_future{0};                      ///< Predicted arrival time
     std::vector<std::pair<double, double>> trajectory; ///< Ballistic trajectory (x, z)
 };
 

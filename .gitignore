@@ -34,6 +34,7 @@ camera_intrinsic.toml
 CRIT.md
 camera_extrinsic.toml
 3dparty/foxglove-*.zip
+3dparty/*.zip
 3dparty/tomlplusplus
 target/
 rateui/target
@@ -46,5 +47,3 @@ wust
 wust_vision
 build_test
 build_test_trt
-
-

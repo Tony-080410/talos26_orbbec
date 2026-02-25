@@ -11,10 +11,22 @@ endif ()
 
 find_package(Eigen3 REQUIRED)
 find_package(OpenCV REQUIRED)
-find_package(spdlog REQUIRED)
-find_package(fmt REQUIRED)
 
-# OpenVINO configuration with better error handling
+# Include FetchContent helper
+include(${CMAKE_CURRENT_LIST_DIR}/FetchContentHelper.cmake)
+
+# Fetch fmt (must come before spdlog)
+fetch_dependency(NAME fmt
+                 REPO fmtlib/fmt
+                 VERSION 12.1.0)
+
+# Tell spdlog to use our external fmt
+set(SPDLOG_FMT_EXTERNAL ON CACHE BOOL "" FORCE)
+
+fetch_dependency(NAME spdlog
+                 REPO gabime/spdlog
+                 VERSION 1.17.0)
+
 find_package(OpenVINO QUIET COMPONENTS Runtime)
 find_package(TBB REQUIRED)
 find_package(GTest REQUIRED)
@@ -55,27 +67,12 @@ else ()
     message(WARNING "HIK SDK not found at: ${HIK_SDK_ROOT}")
 endif ()
 
-include(FetchContent)
+# Fetch tomlplusplus
+fetch_dependency(NAME tomlplusplus
+                 REPO marzer/tomlplusplus
+                 VERSION 3.4.0)
 
-# Check for local tomlplusplus cache
-set(TOMLPLUSPLUS_LOCAL_DIR "${CMAKE_CURRENT_SOURCE_DIR}/3dparty/tomlplusplus")
-if (EXISTS "${TOMLPLUSPLUS_LOCAL_DIR}")
-    message(STATUS "Using local tomlplusplus at: ${TOMLPLUSPLUS_LOCAL_DIR}")
-    FetchContent_Declare(
-            tomlplusplus
-            SOURCE_DIR ${TOMLPLUSPLUS_LOCAL_DIR}
-    )
-else ()
-    message(STATUS "Fetching tomlplusplus from remote repository")
-    FetchContent_Declare(
-            tomlplusplus
-            GIT_REPOSITORY https://github.com/marzer/tomlplusplus.git
-            GIT_TAG v3.4.0
-    )
-endif ()
-
-FetchContent_MakeAvailable(tomlplusplus)
-
+# Foxglove platform detection
 if (APPLE AND CMAKE_SYSTEM_PROCESSOR MATCHES "arm64|aarch64")
     set(FOXGLOVE_PLATFORM "aarch64-apple-darwin")
 elseif (UNIX AND NOT APPLE)
@@ -91,33 +88,14 @@ endif ()
 message(STATUS "Foxglove platform: ${FOXGLOVE_PLATFORM}")
 
 set(FOXGLOVE_VERSION "v0.17.1")
-set(FOXGLOVE_SHA256_aarch64-apple-darwin "0799fcb999616fe25d16d7e4b2894adb6f7fa97ce9671bd908d8412505887bec")
-set(FOXGLOVE_SHA256_aarch64-unknown-linux-gnu "54cbc57c60a550473e0a75f8f360efb6fa245ebb7f582db5efa64f1c297e554f")
-set(FOXGLOVE_SHA256_x86_64-unknown-linux-gnu "54cbc57c60a550473e0a75f8f360efb6fa245ebb7f582db5efa64f1c297e554f")
 
-# Check for local Foxglove cache
-set(FOXGLOVE_LOCAL_ZIP "${CMAKE_CURRENT_SOURCE_DIR}/3dparty/foxglove-${FOXGLOVE_VERSION}-cpp-${FOXGLOVE_PLATFORM}.zip")
-set(FOXGLOVE_SHA ${FOXGLOVE_SHA256_${FOXGLOVE_PLATFORM}})
+# Fetch foxglove (custom URL + ZIP_NAME)
+fetch_dependency(NAME foxglove
+                 ZIP_URL "https://github.com/foxglove/foxglove-sdk/releases/download/sdk%2F${FOXGLOVE_VERSION}/foxglove-${FOXGLOVE_VERSION}-cpp-${FOXGLOVE_PLATFORM}.zip"
+                 ZIP_NAME "foxglove-${FOXGLOVE_VERSION}-cpp-${FOXGLOVE_PLATFORM}.zip")
 
-if (EXISTS "${FOXGLOVE_LOCAL_ZIP}")
-    message(STATUS "Using local Foxglove at: ${FOXGLOVE_LOCAL_ZIP}")
-    FetchContent_Declare(
-            foxglove
-            URL ${FOXGLOVE_LOCAL_ZIP}
-            # URL_HASH SHA256=${FOXGLOVE_SHA}
-    )
-else ()
-    set(FOXGLOVE_URL "https://github.com/foxglove/foxglove-sdk/releases/download/sdk%2F${FOXGLOVE_VERSION}/foxglove-${FOXGLOVE_VERSION}-cpp-${FOXGLOVE_PLATFORM}.zip")
-    message(STATUS "Downloading Foxglove from: ${FOXGLOVE_URL}")
-    FetchContent_Declare(
-            foxglove
-            URL ${FOXGLOVE_URL}
-            # URL_HASH SHA256=${FOXGLOVE_SHA}
-            # DOWNLOAD_EXTRACT_TIMESTAMP TRUE
-    )
-endif ()
-
-FetchContent_MakeAvailable(foxglove)
+# Get foxglove source directory (FetchContent variable may not be set yet)
+FetchContent_GetProperties(foxglove SOURCE_DIR foxglove_SOURCE_DIR)
 
 # Foxglove SDK sources
 #
