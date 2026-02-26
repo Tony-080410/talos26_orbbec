@@ -14,7 +14,6 @@
  * - `Channel<T>`: Alias for `SpmcChannel<T>` (backward compatibility)
  */
 
-#include "flow_graph.hpp"
 #include "spmc_triple_buffer.hpp"
 #include "spsc_triple_buffer.hpp"
 
@@ -75,7 +74,7 @@ concept SpscLike = !HasClone<Buffer, T>;
  * - `Buffer`: underlying buffer implementation (SpscTripleBuffer or SpmcTripleBuffer)
  */
 template <typename T, typename Buffer>
-class TrackedWriter : detail::LocStorage {
+class TrackedWriter {
     using Inner = Buffer::template Write<T>;
     Inner inner_;
 
@@ -83,9 +82,8 @@ public:
     using value_type  = T;
     using buffer_type = Buffer;
 
-    TrackedWriter(Inner w, const std::string_view file, const int line) noexcept
-        : LocStorage(file, line)
-        , inner_(std::move(w)) {}
+    TrackedWriter(Inner w) noexcept
+        : inner_(std::move(w)) {}
 
     TrackedWriter(const TrackedWriter&)            = delete;
     TrackedWriter& operator=(const TrackedWriter&) = delete;
@@ -109,8 +107,6 @@ public:
 
     [[nodiscard]] bool valid() const noexcept { return inner_.valid(); }
     explicit operator bool() const noexcept { return valid(); }
-
-    [[nodiscard]] NodeId location() const noexcept { return this->loc(); }
 
     // Access inner (for advanced use)
     [[nodiscard]] Inner& inner() noexcept { return inner_; }
@@ -142,7 +138,7 @@ public:
  * - `Buffer`: underlying buffer implementation (SpscTripleBuffer or SpmcTripleBuffer)
  */
 template <typename T, typename Buffer>
-class TrackedReader : detail::LocStorage {
+class TrackedReader {
     using Inner = Buffer::template Read<T>;
     Inner inner_;
 
@@ -150,19 +146,16 @@ public:
     using value_type  = T;
     using buffer_type = Buffer;
 
-    TrackedReader(Inner r, const std::string_view file, const int line) noexcept
-        : LocStorage(file, line)
-        , inner_(std::move(r)) {}
+    TrackedReader(Inner r) noexcept
+        : inner_(std::move(r)) {}
 
     // SPMC: copyable
     TrackedReader(const TrackedReader& other) requires detail::SpmcLike<Buffer, T>
-        : LocStorage(other.loc().file, other.loc().line)
-        , inner_(other.inner_) {}
+        : inner_(other.inner_) {}
 
     TrackedReader& operator=(const TrackedReader& other) requires detail::SpmcLike<Buffer, T> {
         if (this != &other) {
-            static_cast<LocStorage&>(*this) = LocStorage(other.loc().file, other.loc().line);
-            inner_                          = other.inner_;
+            inner_ = other.inner_;
         }
         return *this;
     }
@@ -190,8 +183,6 @@ public:
 
     [[nodiscard]] bool valid() const noexcept { return inner_.valid(); }
     explicit operator bool() const noexcept { return valid(); }
-
-    [[nodiscard]] NodeId location() const noexcept { return this->loc(); }
 
     // Access inner
     [[nodiscard]] Inner& inner() noexcept { return inner_; }
@@ -236,7 +227,7 @@ public:
  * - `Buffer`: underlying buffer implementation (SpscTripleBuffer or SpmcTripleBuffer)
  */
 template <typename T, typename Buffer>
-class TrackedChannel : detail::LocStorage {
+class TrackedChannel {
     using WriteInner = Buffer::template Write<T>;
     using ReadInner  = Buffer::template Read<T>;
 
@@ -252,9 +243,8 @@ public:
     static constexpr bool is_spmc = detail::SpmcLike<Buffer, T>;
     static constexpr bool is_spsc = detail::SpscLike<Buffer, T>;
 
-    TrackedChannel(WriteInner w, ReadInner r, const std::string_view file, const int line) noexcept
-        : LocStorage(file, line)
-        , writer_(std::move(w))
+    TrackedChannel(WriteInner w, ReadInner r) noexcept
+        : writer_(std::move(w))
         , reader_(std::move(r)) {}
 
     TrackedChannel(const TrackedChannel&)            = delete;
@@ -278,22 +268,13 @@ public:
     // Clone reader (SPMC only): records edge
     // ========================================================================
 
-    [[nodiscard]] Reader
-        clone_reader(std::string_view file = __builtin_FILE(), int line = __builtin_LINE()) const
-        requires is_spmc {
-        register_flow_edge(this->loc(), NodeId{file, line}, typeid(T).name());
-        return Reader(reader_.clone(), file, line);
-    }
+    [[nodiscard]] Reader clone_reader() const requires is_spmc { return Reader(reader_.clone()); }
 
     // ========================================================================
     // Take reader (both): consumes the internal reader, records edge
     // ========================================================================
 
-    [[nodiscard]] Reader
-        take_reader(std::string_view file = __builtin_FILE(), int line = __builtin_LINE()) {
-        register_flow_edge(this->loc(), NodeId{file, line}, typeid(T).name());
-        return Reader(std::move(reader_), file, line);
-    }
+    [[nodiscard]] Reader take_reader() { return Reader(std::move(reader_)); }
 
     // ========================================================================
     // Split: returns (Writer, Reader), records edge
@@ -304,19 +285,9 @@ public:
         Reader reader;
     };
 
-    [[nodiscard]] SplitResult
-        split(std::string_view file = __builtin_FILE(), int line = __builtin_LINE()) {
-        register_flow_edge(this->loc(), NodeId{file, line}, typeid(T).name());
-        return SplitResult{
-            Writer(std::move(writer_), this->loc().file, this->loc().line),
-            Reader(std::move(reader_), file, line)};
+    [[nodiscard]] SplitResult split() {
+        return SplitResult{Writer(std::move(writer_)), Reader(std::move(reader_))};
     }
-
-    // ========================================================================
-    // Location info
-    // ========================================================================
-
-    [[nodiscard]] NodeId producer_location() const noexcept { return this->loc(); }
 };
 
 // ============================================================================
@@ -325,11 +296,9 @@ public:
 // ============================================================================
 
 template <template <typename> class Buffer, typename T>
-[[nodiscard]] auto
-    tracked_create(std::string_view file = __builtin_FILE(), int line = __builtin_LINE())
-        -> TrackedChannel<T, Buffer<T>> {
+[[nodiscard]] auto tracked_create() -> TrackedChannel<T, Buffer<T>> {
     auto [w, r] = Buffer<T>::create();
-    return TrackedChannel<T, Buffer<T>>(std::move(w), std::move(r), file, line);
+    return TrackedChannel<T, Buffer<T>>(std::move(w), std::move(r));
 }
 
 // ============================================================================
@@ -344,17 +313,13 @@ using SpscChannel = TrackedChannel<T, SpscTripleBuffer<T>>;
 
 // Convenience factory functions
 template <typename T>
-[[nodiscard]] auto make_spmc_channel(
-    const std::string_view file = __builtin_FILE(), const int line = __builtin_LINE())
-    -> SpmcChannel<T> {
-    return tracked_create<SpmcTripleBuffer, T>(file, line);
+[[nodiscard]] auto make_spmc_channel() -> SpmcChannel<T> {
+    return tracked_create<SpmcTripleBuffer, T>();
 }
 
 template <typename T>
-[[nodiscard]] auto make_spsc_channel(
-    const std::string_view file = __builtin_FILE(), const int line = __builtin_LINE())
-    -> SpscChannel<T> {
-    return tracked_create<SpscTripleBuffer, T>(file, line);
+[[nodiscard]] auto make_spsc_channel() -> SpscChannel<T> {
+    return tracked_create<SpscTripleBuffer, T>();
 }
 
 // ============================================================================

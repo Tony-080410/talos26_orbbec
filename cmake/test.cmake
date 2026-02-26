@@ -82,9 +82,6 @@ talos_add_test(triple_buffer_test test/triple_buffer_test.cpp)
 # Scheduler primitives tests - needs OpenCV
 talos_add_test_opencv(primitives_test test/primitives_test.cpp)
 
-# Flow graph tests
-talos_add_test(flow_graph_test test/flow_graph_test.cpp)
-
 # Fast TF tests - needs Eigen3 + TBB + OpenCV + lieplusplus
 talos_add_test_fast_tf(fast_tf_test test/fast_tf_test.cpp)
 
