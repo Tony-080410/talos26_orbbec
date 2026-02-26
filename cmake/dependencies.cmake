@@ -28,15 +28,15 @@ fetch_dependency(NAME spdlog
                  VERSION 1.17.0)
 
 find_package(OpenVINO QUIET COMPONENTS Runtime)
+if (OpenVINO_FOUND)
+    message(STATUS "OpenVINO found at: ${OpenVINO_DIR}")
+else ()
+    message(WARNING "OpenVINO not found - OpenVINO backends will be disabled")
+endif ()
 find_package(TBB REQUIRED)
 find_package(GTest REQUIRED)
 find_package(nlohmann_json REQUIRED)
 find_package(Ceres REQUIRED)
-if (OpenVINO_FOUND)
-    message(STATUS "OpenVINO found at: ${OpenVINO_DIR}")
-else ()
-    message(WARNING "OpenVINO not found - auto_aim features may be disabled")
-endif ()
 
 # TensorRT configuration with better error handling
 find_package(CUDA QUIET)

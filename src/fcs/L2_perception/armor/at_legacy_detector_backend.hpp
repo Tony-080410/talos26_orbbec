@@ -21,16 +21,20 @@ namespace fcs::L2 {
 // ============================================================================
 
 class AtLegacyTraditionalBackend;
+#if TALOS_HAS_OPENVINO
 class AtLegacyNNBackend;
 class AtLegacyNNTupBackend;
+#endif
 #if TALOS_HAS_TENSORRT
 class AtLegacyTrtBackend;
 #endif
 
 // Forward declare config types (defined in at_legacy_config.hpp)
 struct AtLegacyConfig;
+#if TALOS_HAS_OPENVINO
 struct AtLegacyNNConfig;
 struct AtLegacyNNTupConfig;
+#endif
 #if TALOS_HAS_TENSORRT
 struct AtLegacyTrtConfig;
 #endif
@@ -45,10 +49,12 @@ struct AtLegacyTraditionalConfig;
 using AtLegacyDetectorBackendVariant = std::variant<
     std::unique_ptr<AtLegacyTraditionalBackend>, std::unique_ptr<AtLegacyNNBackend>,
     std::unique_ptr<AtLegacyNNTupBackend>, std::unique_ptr<AtLegacyTrtBackend>>;
-#else
+#elif TALOS_HAS_OPENVINO
 using AtLegacyDetectorBackendVariant = std::variant<
     std::unique_ptr<AtLegacyTraditionalBackend>, std::unique_ptr<AtLegacyNNBackend>,
     std::unique_ptr<AtLegacyNNTupBackend>>;
+#else
+using AtLegacyDetectorBackendVariant = std::variant<std::unique_ptr<AtLegacyTraditionalBackend>>;
 #endif
 
 /// Runtime-configurable detector backend wrapper
@@ -71,8 +77,10 @@ public:
 
     /// Construct with a specific backend
     explicit AtLegacyDetectorBackend(std::unique_ptr<AtLegacyTraditionalBackend> backend);
+#if TALOS_HAS_OPENVINO
     explicit AtLegacyDetectorBackend(std::unique_ptr<AtLegacyNNBackend> backend);
     explicit AtLegacyDetectorBackend(std::unique_ptr<AtLegacyNNTupBackend> backend);
+#endif
 #if TALOS_HAS_TENSORRT
     explicit AtLegacyDetectorBackend(std::unique_ptr<AtLegacyTrtBackend> backend);
 #endif
@@ -91,8 +99,10 @@ public:
 
     /// Switch to a different backend
     void set_backend(std::unique_ptr<AtLegacyTraditionalBackend> backend);
+#if TALOS_HAS_OPENVINO
     void set_backend(std::unique_ptr<AtLegacyNNBackend> backend);
     void set_backend(std::unique_ptr<AtLegacyNNTupBackend> backend);
+#endif
 #if TALOS_HAS_TENSORRT
     void set_backend(std::unique_ptr<AtLegacyTrtBackend> backend);
 #endif

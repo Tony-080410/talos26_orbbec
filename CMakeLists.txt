@@ -134,8 +134,6 @@ set(FCS_SOURCES
         src/fcs/runtime/l1_l2_setup.cpp
         src/fcs/L2_perception/armor/at_legacy_config.cpp
         src/fcs/L2_perception/armor/at_legacy_detector_backend.cpp
-        src/fcs/L2_perception/armor/backends/at_legacy_nn_backend.cpp
-        src/fcs/L2_perception/armor/backends/at_legacy_nn_tup_backend.cpp
         src/fcs/L2_perception/armor/at_legacy_systems.cpp
         src/fcs/L2_perception/rune/rune_detector.cpp
         src/fcs/L2_perception/rune/rune_config.cpp
@@ -155,6 +153,15 @@ set(FCS_SOURCES
         src/fcs/L5_weapon/config.cpp
         src/fcs/L5_weapon/enhanced/weapon_systems.cpp
 )
+
+if(OpenVINO_FOUND)
+    list(APPEND FCS_SOURCES
+        src/fcs/L2_perception/armor/backends/at_legacy_nn_backend.cpp
+        src/fcs/L2_perception/armor/backends/at_legacy_nn_tup_backend.cpp)
+    message(STATUS "OpenVINO backends enabled")
+else()
+    message(STATUS "OpenVINO backends disabled (OpenVINO not found)")
+endif()
 
 if(TensorRT_FOUND)
     list(APPEND FCS_SOURCES src/fcs/L2_perception/armor/backends/at_legacy_trt_backend.cpp)
@@ -185,6 +192,13 @@ if(TensorRT_FOUND)
     message(STATUS "TensorRT support enabled")
 else()
     target_compile_definitions(fcs PUBLIC TALOS_HAS_TENSORRT=0)
+endif()
+
+if(OpenVINO_FOUND)
+    target_compile_definitions(fcs PUBLIC TALOS_HAS_OPENVINO=1)
+    message(STATUS "OpenVINO support enabled")
+else()
+    target_compile_definitions(fcs PUBLIC TALOS_HAS_OPENVINO=0)
 endif()
 
 target_compile_options(fcs PRIVATE -Wno-error=array-bounds)

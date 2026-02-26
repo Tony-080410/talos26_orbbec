@@ -1,7 +1,9 @@
 #include "L2_perception/armor/at_legacy_config.hpp"
-#include "L2_perception/armor/backends/at_legacy_nn_backend.hpp"
-#include "L2_perception/armor/backends/at_legacy_nn_tup_backend.hpp"
 #include "L2_perception/armor/backends/at_legacy_traditional_backend.hpp"
+#if TALOS_HAS_OPENVINO
+# include "L2_perception/armor/backends/at_legacy_nn_backend.hpp"
+# include "L2_perception/armor/backends/at_legacy_nn_tup_backend.hpp"
+#endif
 #if TALOS_HAS_TENSORRT
 # include "L2_perception/armor/backends/at_legacy_trt_backend.hpp"
 #endif
@@ -25,11 +27,13 @@ AtLegacyDetectorBackend::AtLegacyDetectorBackend(
     std::unique_ptr<AtLegacyTraditionalBackend> backend)
     : backend_(std::move(backend)) {}
 
+#if TALOS_HAS_OPENVINO
 AtLegacyDetectorBackend::AtLegacyDetectorBackend(std::unique_ptr<AtLegacyNNBackend> backend)
     : backend_(std::move(backend)) {}
 
 AtLegacyDetectorBackend::AtLegacyDetectorBackend(std::unique_ptr<AtLegacyNNTupBackend> backend)
     : backend_(std::move(backend)) {}
+#endif
 
 #if TALOS_HAS_TENSORRT
 AtLegacyDetectorBackend::AtLegacyDetectorBackend(std::unique_ptr<AtLegacyTrtBackend> backend)
@@ -66,6 +70,7 @@ void AtLegacyDetectorBackend::set_backend(std::unique_ptr<AtLegacyTraditionalBac
     backend_ = std::move(backend);
 }
 
+#if TALOS_HAS_OPENVINO
 void AtLegacyDetectorBackend::set_backend(std::unique_ptr<AtLegacyNNBackend> backend) {
     backend_ = std::move(backend);
 }
@@ -73,6 +78,7 @@ void AtLegacyDetectorBackend::set_backend(std::unique_ptr<AtLegacyNNBackend> bac
 void AtLegacyDetectorBackend::set_backend(std::unique_ptr<AtLegacyNNTupBackend> backend) {
     backend_ = std::move(backend);
 }
+#endif
 
 #if TALOS_HAS_TENSORRT
 void AtLegacyDetectorBackend::set_backend(std::unique_ptr<AtLegacyTrtBackend> backend) {
@@ -99,11 +105,14 @@ void AtLegacyDetectorBackend::update_config(const AtLegacyConfig& config) noexce
             using BackendT = std::decay_t<decltype(*backend)>;
             if constexpr (std::is_same_v<BackendT, AtLegacyTraditionalBackend>) {
                 backend->update_config(config.traditional_ptr());
-            } else if constexpr (std::is_same_v<BackendT, AtLegacyNNBackend>) {
+            }
+#if TALOS_HAS_OPENVINO
+            else if constexpr (std::is_same_v<BackendT, AtLegacyNNBackend>) {
                 backend->update_config(config.nn_ptr());
             } else if constexpr (std::is_same_v<BackendT, AtLegacyNNTupBackend>) {
                 backend->update_config(config.nn_tup_ptr());
             }
+#endif
 #if TALOS_HAS_TENSORRT
             else if constexpr (std::is_same_v<BackendT, AtLegacyTrtBackend>) {
                 backend->update_config(config.trt_ptr());
@@ -126,6 +135,7 @@ void AtLegacyDetectorBackend::update_config(const AtLegacyConfig& config) noexce
         backend->set_detect_color(config.detector.detect_color);
         return AtLegacyDetectorBackend(std::move(backend));
     }
+#if TALOS_HAS_OPENVINO
     case AtLegacyBackendTypeConfig::NeuralNetwork: {
         auto cfg_ptr = config.nn_ptr();
         auto backend = std::make_unique<AtLegacyNNBackend>(std::move(cfg_ptr));
@@ -144,6 +154,7 @@ void AtLegacyDetectorBackend::update_config(const AtLegacyConfig& config) noexce
         backend->set_detect_color(config.detector.detect_color);
         return AtLegacyDetectorBackend(std::move(backend));
     }
+#endif
 #if TALOS_HAS_TENSORRT
     case AtLegacyBackendTypeConfig::TensorRT: {
         auto cfg_ptr = config.trt_ptr();
