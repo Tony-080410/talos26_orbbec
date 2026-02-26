@@ -5,6 +5,15 @@
 
 namespace hikcamera {
 
+// SDK 全局初始化/清理（stub 版本）
+std::expected<void, CameraError> initialize_sdk() {
+    return std::unexpected(CameraError{"HIK SDK not available (stub build)", 0});
+}
+
+void finalize_sdk() {
+    // Stub 版本无需清理
+}
+
 class ImageCapturer::Impl {};
 
 ImageCapturer::ImageCapturer()

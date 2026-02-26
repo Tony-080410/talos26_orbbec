@@ -1,3 +1,6 @@
+# 选项：即使在 SDK 可用时也强制使用 stub（用于测试编译）
+option(HIK_TEST_NO_STUB "Test building hikcamera without stub (requires HIK SDK)" OFF)
+
 # Detect architecture and map to SDK directory
 if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
     if (CMAKE_SYSTEM_PROCESSOR STREQUAL "x86_64")
@@ -14,14 +17,25 @@ if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
     # Check if SDK libraries exist for this architecture
     set(HIK_SDK_LIB_DIR "${HIK_SDK_ROOT}/lib/${HIK_SDK_ARCH_DIR}")
     if (HIK_SDK_ARCH_DIR AND EXISTS "${HIK_SDK_LIB_DIR}")
-        message(STATUS "Building hikcamera with HIK SDK for ${HIK_SDK_ARCH_NAME} (lib: ${HIK_SDK_LIB_DIR})")
-        set(HIK_USE_SDK TRUE)
+        set(HIK_SDK_FOUND TRUE)
     else ()
-        message(STATUS "Building hikcamera with stub (HIK SDK not available for ${CMAKE_SYSTEM_PROCESSOR} or lib directory not found)")
-        set(HIK_USE_SDK FALSE)
+        set(HIK_SDK_FOUND FALSE)
     endif ()
 else ()
-    message(STATUS "Building hikcamera with stub (HIK SDK only available on Linux)")
+    # 非 Linux 平台（如 macOS）
+    set(HIK_SDK_FOUND FALSE)
+endif ()
+
+# 决定是否使用 SDK
+if (HIK_SDK_FOUND OR HIK_TEST_NO_STUB)
+    message(STATUS "Building hikcamera with HIK SDK for ${HIK_SDK_ARCH_NAME} (lib: ${HIK_SDK_LIB_DIR})")
+    set(HIK_USE_SDK TRUE)
+else ()
+    if (HIK_FORCE_STUB)
+        message(STATUS "Building hikcamera with stub (forced by HIK_FORCE_STUB)")
+    elseif (NOT HIK_SDK_FOUND)
+        message(STATUS "Building hikcamera with stub (HIK SDK not available for ${CMAKE_SYSTEM_PROCESSOR} or lib directory not found)")
+    endif ()
     set(HIK_USE_SDK FALSE)
 endif ()
 
@@ -34,6 +48,7 @@ if (HIK_USE_SDK)
         DEPS
             magic_enum
             talos_math
+            fmt::fmt
             talos_log
             ${OpenCV_LIBS}
     )
@@ -65,6 +80,7 @@ else ()
             magic_enum
             talos_math
             talos_log
+            fmt::fmt
             ${OpenCV_LIBS}
     )
 endif ()

@@ -4,6 +4,7 @@
 
 #include <cstdlib>
 #include <cstring>
+#include <mutex>
 
 #include <chrono>
 #include <memory>
@@ -83,6 +84,55 @@ std::string error_code_to_message(unsigned int code) {
     }
 }
 
+// SDK 全局初始化/清理实现
+// 使用 Meyer's Singleton 确保线程安全和正确的初始化顺序
+namespace {
+class SDKInitializer {
+public:
+    static SDKInitializer& instance() {
+        static SDKInitializer init;
+        return init;
+    }
+
+    std::expected<void, CameraError> initialize() {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (initialized_) {
+            return {}; // 已经初始化，直接返回成功
+        }
+
+        unsigned int ret = MV_CC_Initialize();
+        if (ret != MV_OK) {
+            return std::unexpected(
+                CameraError{"Failed to initialize HIK SDK: " + error_code_to_message(ret), ret});
+        }
+
+        initialized_ = true;
+        return {};
+    }
+
+    void finalize() {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (initialized_) {
+            MV_CC_Finalize();
+            initialized_ = false;
+        }
+    }
+
+private:
+    SDKInitializer() = default;
+    ~SDKInitializer() { finalize(); }
+
+    std::mutex mutex_;
+    bool initialized_ = false;
+};
+} // namespace
+
+std::expected<void, CameraError> initialize_sdk() {
+    return SDKInitializer::instance().initialize();
+}
+
+void finalize_sdk() { SDKInitializer::instance().finalize(); }
+
 class ImageCapturer::Impl {
 public:
     std::expected<void, CameraError> init(
@@ -134,18 +184,36 @@ public:
         read(std::chrono::duration<unsigned int, std::milli> timeout) {
         MV_FRAME_OUT stImageInfo;
 
-        unsigned int ret =
-            MV_CC_GetImageBuffer(camera_handle_, &stImageInfo, timeout.count() * 1000000);
+        // MV_CC_GetImageBuffer timeout 单位是毫秒（nMsec）
+        // 注意：不要乘以 1000000，timeout.count() 已经是毫秒数
+        unsigned int ret = MV_CC_GetImageBuffer(camera_handle_, &stImageInfo, timeout.count());
         if (ret != MV_OK) {
             logger_->error("Image getting timeout. nRet [{}]", ret);
             return std::unexpected(CameraError{"Image getting timeout", ret});
         }
-        cv::Mat img{stImageInfo.stFrameInfo.nHeight, stImageInfo.stFrameInfo.nWidth, CV_8UC3};
-        // Only consider the situation where the size and format of each frame of image passed in by
-        // the camera remain unchanged.
 
+        // RAII 包装器确保 MV_CC_FreeImageBuffer 被调用一次
+        struct ImageBufferGuard {
+            void* handle;
+            MV_FRAME_OUT* frame;
+            bool released = false;
+
+            ~ImageBufferGuard() {
+                if (!released && frame != nullptr && handle != nullptr) {
+                    MV_CC_FreeImageBuffer(handle, frame);
+                }
+            }
+
+            void release() { released = true; }
+        };
+
+        ImageBufferGuard buffer_guard{camera_handle_, &stImageInfo};
+
+        // 先检查像素类型，避免不必要的内存分配
         if (!is_rgb_pixel_type(stImageInfo.stFrameInfo.enPixelType))
             return std::unexpected(CameraError{"RGB camera needed", 0});
+
+        cv::Mat img{stImageInfo.stFrameInfo.nHeight, stImageInfo.stFrameInfo.nWidth, CV_8UC3};
 
         convert_parameter_.nWidth      = stImageInfo.stFrameInfo.nWidth;    // image width
         convert_parameter_.nHeight     = stImageInfo.stFrameInfo.nHeight;   // image height
@@ -157,10 +225,14 @@ public:
         convert_parameter_.nDstBufferSize = stImageInfo.stFrameInfo.nWidth
                                           * stImageInfo.stFrameInfo.nHeight
                                           * 3;                              // output buffer size
-
         convert_parameter_.pSrcData = stImageInfo.pBufAddr;                 // input data buffer
 
         ret = MV_CC_ConvertPixelType(camera_handle_, &convert_parameter_);
+
+        if (ret != MV_OK) {
+            logger_->error("Failed to convert pixel type. nRet [{}]", ret);
+            return std::unexpected(CameraError{"Failed to convert pixel type", ret});
+        }
 
         if (rotate_type_ != RotateType::None) {
             try {
@@ -173,24 +245,15 @@ public:
                     break;
                 default:
                     logger_->error("Unsupported rotate type for Hikvision camera.");
-                    MV_CC_FreeImageBuffer(camera_handle_, &stImageInfo);
                     return std::unexpected(CameraError{"Unsupported rotate type", 0});
                 }
             } catch (const cv::Exception& e) {
                 logger_->error("OpenCV rotation failed: {}", e.what());
-                MV_CC_FreeImageBuffer(camera_handle_, &stImageInfo);
                 return std::unexpected(CameraError{"OpenCV rotation failed"});
             }
         }
-        if (ret != MV_OK) {
-            logger_->error("Failed to convert pixel type. nRet [{}]", ret);
-            MV_CC_FreeImageBuffer(camera_handle_, &stImageInfo);
-            return std::unexpected(CameraError{"Failed to convert pixel type", ret});
-        }
 
-        // Double buffer swapness
-        MV_CC_FreeImageBuffer(camera_handle_, &stImageInfo);
-
+        // buffer_guard 析构时会自动调用 MV_CC_FreeImageBuffer
         return img;
     }
 
@@ -223,6 +286,10 @@ public:
 
 private:
     RotateType rotate_type_ = RotateType::None;
+
+    // 初始化 convert_parameter_ 为零
+    MV_CC_PIXEL_CONVERT_PARAM convert_parameter_ = {};
+
 #define SDK_RET_ASSERT(ret, message, error_code)                                          \
     do {                                                                                  \
         if ((ret) != MV_OK) {                                                             \
@@ -319,7 +386,9 @@ private:
 
         unsigned int ret;
 
-        ret = MV_CC_CreateHandleWithoutLog(&camera_handle_, pDeviceInfo);
+        // 使用 MV_CC_CreateHandle 而非已废弃的 MV_CC_CreateHandleWithoutLog
+        // 参考文档：Deprecated camera initialization related APIs: MV_CC_CreateHandleWithoutLog()
+        ret = MV_CC_CreateHandle(&camera_handle_, pDeviceInfo);
         SDK_RET_ASSERT(ret, "Failed to create handle.", ret);
         FinalAction destroy_handle{[this]() { MV_CC_DestroyHandle(camera_handle_); }};
 
@@ -334,7 +403,8 @@ private:
                 return std::unexpected(CameraError{"Invalid packet size", 0});
             }
 
-            ret = MV_CC_SetIntValue(camera_handle_, "GevSCPSPacketSize", nPacketSize);
+            // 使用 MV_CC_SetIntValueEx 而非 MV_CC_SetIntValue（与官方示例保持一致）
+            ret = MV_CC_SetIntValueEx(camera_handle_, "GevSCPSPacketSize", nPacketSize);
             SDK_RET_ASSERT(ret, "Failed to set packet Size.", ret);
         }
 
@@ -342,9 +412,10 @@ private:
         ret = MV_CC_SetEnumValue(camera_handle_, "PixelFormat", PixelType_Gvsp_BayerRG8);
         SDK_RET_ASSERT(ret, "Failed to set pixel format to BayerRG8.", ret);
 
-        ret = MV_CC_SetEnumValue(
-            camera_handle_, "TriggerMode",
-            profile.trigger_mode ? MV_TRIGGER_MODE_ON : MV_TRIGGER_MODE_OFF);
+        // 根据 profile 和 sync_mode 统一设置 TriggerMode，避免重复设置
+        bool trigger_on = profile.trigger_mode || (sync_mode == SyncMode::SOFTWARE);
+        ret             = MV_CC_SetEnumValue(
+            camera_handle_, "TriggerMode", trigger_on ? MV_TRIGGER_MODE_ON : MV_TRIGGER_MODE_OFF);
         SDK_RET_ASSERT(ret, "Failed to set trigger Mode.", ret);
 
         ret = MV_CC_SetBoolValue(camera_handle_, "ReverseX", profile.invert_image);
@@ -367,13 +438,17 @@ private:
         ret = MV_CC_SetBayerCvtQuality(camera_handle_, 1);
         SDK_RET_ASSERT(ret, "Failed to set bayer cvt quality.", ret);
 
+        // 文档建议：在 MV_CC_StartGrabbing() 之前调用 MV_CC_SetImageNodeNum()
+        // 设置合适的缓冲节点数量，影响因子包括：相机帧率、图像分辨率、计算机性能
+        // 注意：此处使用默认值，如需优化可根据实际情况调整
+        ret = MV_CC_SetImageNodeNum(camera_handle_, 5);
+        SDK_RET_ASSERT(ret, "Failed to set image node num.", ret);
+
         ret = MV_CC_StartGrabbing(camera_handle_);
         SDK_RET_ASSERT(ret, "Failed to start grabbing.", ret);
 
+        // SOFTWARE 模式下设置 TriggerSource 为 SOFTWARE
         if (sync_mode == SyncMode::SOFTWARE) {
-            ret = MV_CC_SetEnumValue(camera_handle_, "TriggerMode", MV_TRIGGER_MODE_ON);
-            SDK_RET_ASSERT(ret, "Failed to start TriggerMode. : soft trigger", ret);
-
             ret = MV_CC_SetEnumValue(camera_handle_, "TriggerSource", MV_TRIGGER_SOURCE_SOFTWARE);
             SDK_RET_ASSERT(ret, "Failed to set trigger source. : soft trigger", ret);
         }
@@ -413,18 +488,28 @@ private:
     }
 
     void uninit_camera() {
-        unsigned int nRet;
-        nRet = MV_CC_StopGrabbing(camera_handle_);
-        if (MV_OK != nRet)
+        // 按照官方文档的顺序清理资源
+        // StopGrabbing → CloseDevice → DestroyHandle
+
+        unsigned int nRet = MV_CC_StopGrabbing(camera_handle_);
+        if (MV_OK != nRet) {
             logger_->error("Failed to stop grabbing. nRet [{}]", nRet);
+            // 即使失败也继续尝试清理，确保尽可能释放资源
+        }
 
         nRet = MV_CC_CloseDevice(camera_handle_);
-        if (MV_OK != nRet)
+        if (MV_OK != nRet) {
             logger_->error("Failed to close device. nRet [{}]", nRet);
+            // 即使失败也继续尝试销毁句柄
+        }
 
         nRet = MV_CC_DestroyHandle(camera_handle_);
-        if (MV_OK != nRet)
+        if (MV_OK != nRet) {
             logger_->error("Failed to destroy handle. nRet [{}]", nRet);
+            // 句柄销毁失败是最严重的情况，但我们已经尽力了
+        }
+
+        camera_handle_ = nullptr;
     }
 
     template <typename Func>
@@ -451,7 +536,7 @@ private:
     };
 
     void* camera_handle_ = nullptr;
-    MV_CC_PIXEL_CONVERT_PARAM convert_parameter_;
+    // convert_parameter_ 已在前面声明并初始化
 
     std::shared_ptr<spdlog::logger> logger_ = []() {
         auto logger = spdlog::get("hikcamera");

@@ -36,6 +36,12 @@ struct CameraError {
     std::string what() const { return message + " (code: " + std::to_string(error_code) + ")"; }
 };
 
+// SDK 全局初始化/清理
+// 文档要求：在单个进程中，MV_CC_Initialize() 和 MV_CC_Finalize() 只能调用一次
+// 建议在程序启动时调用 initialize_sdk()，退出时调用 finalize_sdk()
+[[nodiscard]] std::expected<void, CameraError> initialize_sdk();
+void finalize_sdk();
+
 class ImageCapturer final {
 public:
     struct CameraProfile {

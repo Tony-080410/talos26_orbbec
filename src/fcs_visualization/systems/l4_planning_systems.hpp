@@ -1,5 +1,6 @@
 #pragma once
 
+#include "L5_weapon/fire_control.hpp"
 #include "base.hpp"
 #include "foxglove_types.hpp"
 #include "scene_builder.hpp"
