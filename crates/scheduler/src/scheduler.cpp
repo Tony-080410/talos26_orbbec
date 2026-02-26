@@ -45,7 +45,8 @@ auto Scheduler::add_system(std::unique_ptr<SystemBase> system)
         std::abort();
     }
     if (running_.load(std::memory_order_acquire)) {
-        return std::unexpected(SchedulerError::AlreadyRunning);
+        SPDLOG_CRITICAL("add_system: system already running!");
+        std::abort();
     }
 
     if (built_.load(std::memory_order_acquire)) {
@@ -119,7 +120,8 @@ auto Scheduler::run() -> std::expected<void, SchedulerError> {
     }
 
     if (running_.exchange(true, std::memory_order_acq_rel)) {
-        return std::unexpected(SchedulerError::AlreadyRunning);
+        SPDLOG_CRITICAL("add_system: system already running!");
+        std::abort();
     }
 
     // Start fixed_rate threads

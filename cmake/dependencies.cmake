@@ -1,31 +1,40 @@
-option(TALOS_OFFLINE "Build without network" ON)
-
 set(CMAKE_WARN_DEPRECATED OFF)
 if(POLICY CMP0135)
     cmake_policy(SET CMP0135 OLD)
 endif()
 
-if (TALOS_OFFLINE)
-    set(FETCHCONTENT_UPDATES_DISCONNECTED ON)
-endif ()
+if(POLICY CMP0146)
+    cmake_policy(SET CMP0146 NEW)  # Use CUDAToolkit instead of FindCUDA
+endif()
 
-find_package(Eigen3 REQUIRED)
 find_package(OpenCV REQUIRED)
 
 # Include FetchContent helper
-include(${CMAKE_CURRENT_LIST_DIR}/FetchContentHelper.cmake)
+include(${CMAKE_CURRENT_LIST_DIR}/fetch-content-helper.cmake)
 
-# Fetch fmt (must come before spdlog)
+fetch_dependency(NAME Eigen3
+                 REPO gitlab.com/libeigen/eigen
+                 VERSION 5.0.1)
+
 fetch_dependency(NAME fmt
                  REPO fmtlib/fmt
                  VERSION 12.1.0)
 
-# Tell spdlog to use our external fmt
 set(SPDLOG_FMT_EXTERNAL ON CACHE BOOL "" FORCE)
+set(SPDLOG_ENABLE_PCH ON CACHE BOOL "" FORCE)
+set(SPDLOG_BUILD_PIC ON CACHE BOOL "" FORCE)
 
 fetch_dependency(NAME spdlog
                  REPO gabime/spdlog
-                 VERSION 1.17.0)
+                 VERSION v1.17.0)
+
+fetch_dependency(NAME nlohmann_json
+                 REPO nlohmann/json
+                 VERSION v3.12.0)
+
+fetch_dependency(NAME tomlplusplus
+                 REPO marzer/tomlplusplus
+                 VERSION v3.4.0)
 
 find_package(OpenVINO QUIET COMPONENTS Runtime)
 if (OpenVINO_FOUND)
@@ -35,13 +44,17 @@ else ()
 endif ()
 find_package(TBB REQUIRED)
 find_package(GTest REQUIRED)
-find_package(nlohmann_json REQUIRED)
 find_package(Ceres REQUIRED)
 
 # TensorRT configuration with better error handling
-find_package(CUDA QUIET)
-if (CUDA_FOUND)
-    message(STATUS "CUDA found at: ${CUDA_TOOLKIT_ROOT_DIR}")
+find_package(CUDAToolkit QUIET)
+if (CUDAToolkit_FOUND)
+    message(STATUS "CUDA found at: ${CMAKE_CUDA_TOOLKIT_ROOT_DIR}")
+    # Create compatibility variables for existing code
+    set(CUDA_FOUND TRUE)
+    set(CUDA_TOOLKIT_ROOT_DIR ${CMAKE_CUDA_TOOLKIT_ROOT_DIR})
+    set(CUDA_LIBRARIES CUDA::cuda_driver CUDA::cudart)
+    set(CUDA_INCLUDE_DIRS ${CMAKE_CUDA_INCLUDE_DIRS})
 else ()
     message(WARNING "CUDA not found - TensorRT backend will be disabled")
 endif ()
@@ -66,11 +79,6 @@ if (EXISTS "${HIK_SDK_ROOT}")
 else ()
     message(WARNING "HIK SDK not found at: ${HIK_SDK_ROOT}")
 endif ()
-
-# Fetch tomlplusplus
-fetch_dependency(NAME tomlplusplus
-                 REPO marzer/tomlplusplus
-                 VERSION 3.4.0)
 
 # Foxglove platform detection
 if (APPLE AND CMAKE_SYSTEM_PROCESSOR MATCHES "arm64|aarch64")

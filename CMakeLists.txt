@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.14)
 
 include(cmake/compiler-spec.cmake)
-include(cmake/crate_utils.cmake)
+include(cmake/crate-utils.cmake)
 
 project(talos VERSION 0.1 LANGUAGES C CXX)
 
@@ -178,10 +178,11 @@ target_include_directories(fcs PUBLIC
 )
 
 if(CUDA_FOUND)
-    target_link_libraries(fcs PUBLIC ${CUDA_LIBRARIES})
-    target_include_directories(fcs SYSTEM PUBLIC ${CUDA_INCLUDE_DIRS})
+    # Modern CMake: use imported targets instead of variables
+    target_link_libraries(fcs PUBLIC CUDA::cuda_driver CUDA::cudart)
+    target_include_directories(fcs SYSTEM PUBLIC ${CMAKE_CUDA_INCLUDE_DIRS})
     target_compile_definitions(fcs PUBLIC TALOS_HAS_CUDA_RUNTIME=0)
-    message(STATUS "Linking with CUDA runtime: ${CUDA_LIBRARIES}")
+    message(STATUS "Linking with CUDA runtime: CUDA::cuda_driver CUDA::cudart")
     message(STATUS "CUDA preprocessing kernels DISABLED (using CPU fallback)")
 else()
     target_compile_definitions(fcs PUBLIC TALOS_HAS_CUDA_RUNTIME=0)

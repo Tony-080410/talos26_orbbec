@@ -33,8 +33,8 @@
 #include "ecs/system.hpp"
 #include "ecs/world.hpp"
 #include "primitives/performance_probe.hpp"
-
 #include <cstdint>
+#include <spdlog/spdlog.h>
 #include <tbb/task_arena.h>
 #include <tbb/task_group.h>
 
@@ -61,9 +61,8 @@ namespace talos {
  * @brief Scheduler lifecycle errors
  */
 enum class SchedulerError {
-    AlreadyBuilt,   ///< Scheduler was already built
-    AlreadyRunning, ///< Scheduler is already running
-    NotBuilt,       ///< Scheduler was not built before run
+    AlreadyBuilt, ///< Scheduler was already built
+    NotBuilt,     ///< Scheduler was not built before run
 };
 
 // ============================================================================
@@ -266,8 +265,7 @@ public:
      * - `func`: the system function to execute
      */
     template <typename Policy = default_policy, typename F>
-    [[nodiscard]] auto add_system(std::string name, F&& func)
-        -> std::expected<void, SchedulerError>;
+    auto add_system(std::string name, F&& func) -> void;
 
     /**
      * @brief Add a pre-built custom system to the scheduler
@@ -556,9 +554,10 @@ private:
 // ============================================================================
 
 template <typename Policy, typename F>
-auto Scheduler::add_system(std::string name, F&& func) -> std::expected<void, SchedulerError> {
+auto Scheduler::add_system(std::string name, F&& func) -> void {
     if (running_.load(std::memory_order_acquire)) {
-        return std::unexpected(SchedulerError::AlreadyRunning);
+        SPDLOG_CRITICAL("add_system: system already running!");
+        std::abort();
     }
 
     if (built_.load(std::memory_order_acquire)) {
@@ -575,11 +574,11 @@ auto Scheduler::add_system(std::string name, F&& func) -> std::expected<void, Sc
 
     if constexpr (is_fixed_rate_policy_v<Policy>) {
         fixed_rate_systems_.push_back(std::move(entry));
-        return {};
+        return;
     }
     if constexpr (is_pool_policy_v<Policy> || is_visualization_policy_v<Policy>) {
         compute_systems_.push_back(std::move(entry));
-        return {};
+        return;
     }
     std::unreachable();
 }
