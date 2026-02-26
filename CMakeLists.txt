@@ -179,11 +179,10 @@ target_include_directories(fcs PUBLIC
 
 if(CUDA_FOUND)
     # Modern CMake: use imported targets instead of variables
-    target_link_libraries(fcs PUBLIC CUDA::cuda_driver CUDA::cudart)
-    target_include_directories(fcs SYSTEM PUBLIC ${CMAKE_CUDA_INCLUDE_DIRS})
+    target_link_libraries(fcs PUBLIC ${CUDA_LIBRARIES})
+    target_include_directories(fcs SYSTEM PUBLIC ${CUDA_INCLUDE_DIRS})
     target_compile_definitions(fcs PUBLIC TALOS_HAS_CUDA_RUNTIME=0)
-    message(STATUS "Linking with CUDA runtime: CUDA::cuda_driver CUDA::cudart")
-    message(STATUS "CUDA preprocessing kernels DISABLED (using CPU fallback)")
+    message(STATUS "Linking with CUDA runtime: ${CUDA_LIBRARIES}")
 else()
     target_compile_definitions(fcs PUBLIC TALOS_HAS_CUDA_RUNTIME=0)
 endif()

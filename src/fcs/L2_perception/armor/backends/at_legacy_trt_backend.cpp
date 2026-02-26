@@ -1,5 +1,6 @@
 #include "L2_perception/armor/backends/at_legacy_trt_backend.hpp"
 #include "L2_perception/armor/at_legacy_config.hpp"
+#include "L2_perception/armor/backends/letterbox.cuh"
 #include "core/types.hpp"
 
 #include <algorithm>

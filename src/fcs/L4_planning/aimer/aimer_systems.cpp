@@ -91,22 +91,23 @@ void register_aimer_systems(talos::Scheduler& scheduler, L4Config&& config) {
                     cfg->fire_decision, cur_yaw, cur_pitch, aim_result->aim_yaw,
                     -aim_result->aim_pitch, aim_result->distance);
 
-                SPDLOG_INFO(
-                    "[FireDecision] cur_yaw={:.6f}, cur_pitch={:.6f}, aim_yaw={:.6f}, "
-                    "aim_pitch={:.6f}, "
-                    "distance={:.3f}, fire_thresh={:.6f}, shooting_range_yaw={:.6f}, "
-                    "shooting_range_pitch={:.6f}, "
-                    "yaw_diff={:.6f}, pitch_diff={:.6f}, on_target={}",
-                    cur_yaw, cur_pitch, aim_result->aim_yaw, aim_result->aim_pitch,
-                    aim_result->distance, cfg->fire_decision.fire_thresh,
-                    std::abs(
-                        std::atan2(
-                            cfg->fire_decision.shooting_range_w / 2.0, aim_result->distance)),
-                    std::abs(
-                        std::atan2(
-                            cfg->fire_decision.shooting_range_h / 2.0, aim_result->distance)),
-                    std::abs(cur_yaw - aim_result->aim_yaw),
-                    std::abs(cur_pitch - (-aim_result->aim_pitch)), aim_result->aimer_fire_advice);
+                // SPDLOG_INFO(
+                //     "[FireDecision] cur_yaw={:.6f}, cur_pitch={:.6f}, aim_yaw={:.6f}, "
+                //     "aim_pitch={:.6f}, "
+                //     "distance={:.3f}, fire_thresh={:.6f}, shooting_range_yaw={:.6f}, "
+                //     "shooting_range_pitch={:.6f}, "
+                //     "yaw_diff={:.6f}, pitch_diff={:.6f}, on_target={}",
+                //     cur_yaw, cur_pitch, aim_result->aim_yaw, aim_result->aim_pitch,
+                //     aim_result->distance, cfg->fire_decision.fire_thresh,
+                //     std::abs(
+                //         std::atan2(
+                //             cfg->fire_decision.shooting_range_w / 2.0, aim_result->distance)),
+                //     std::abs(
+                //         std::atan2(
+                //             cfg->fire_decision.shooting_range_h / 2.0, aim_result->distance)),
+                //     std::abs(cur_yaw - aim_result->aim_yaw),
+                //     std::abs(cur_pitch - (-aim_result->aim_pitch)),
+                //     aim_result->aimer_fire_advice);
 
                 GimbalPlan plan;
                 plan.timestamp_ns       = aim_result->timestamp_ns;

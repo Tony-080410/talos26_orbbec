@@ -1,4 +1,4 @@
-#include "L2_perception/cuda/letterbox.cuh"
+#include "L2_perception/armor/backends/letterbox.cuh"
 
 /// Letterbox preprocessing kernel with shared memory optimization
 /// Uses shared memory to cache input tiles for better memory coalescing

@@ -186,7 +186,8 @@ public:
 
         // MV_CC_GetImageBuffer timeout 单位是毫秒（nMsec）
         // 注意：不要乘以 1000000，timeout.count() 已经是毫秒数
-        unsigned int ret = MV_CC_GetImageBuffer(camera_handle_, &stImageInfo, timeout.count());
+        unsigned int ret =
+            MV_CC_GetImageBuffer(camera_handle_, &stImageInfo, timeout.count() * 100000);
         if (ret != MV_OK) {
             logger_->error("Image getting timeout. nRet [{}]", ret);
             return std::unexpected(CameraError{"Image getting timeout", ret});

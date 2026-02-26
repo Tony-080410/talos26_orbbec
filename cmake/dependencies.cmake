@@ -3,10 +3,6 @@ if(POLICY CMP0135)
     cmake_policy(SET CMP0135 OLD)
 endif()
 
-if(POLICY CMP0146)
-    cmake_policy(SET CMP0146 NEW)  # Use CUDAToolkit instead of FindCUDA
-endif()
-
 find_package(OpenCV REQUIRED)
 
 # Include FetchContent helper
@@ -47,14 +43,9 @@ find_package(GTest REQUIRED)
 find_package(Ceres REQUIRED)
 
 # TensorRT configuration with better error handling
-find_package(CUDAToolkit QUIET)
-if (CUDAToolkit_FOUND)
-    message(STATUS "CUDA found at: ${CMAKE_CUDA_TOOLKIT_ROOT_DIR}")
-    # Create compatibility variables for existing code
-    set(CUDA_FOUND TRUE)
-    set(CUDA_TOOLKIT_ROOT_DIR ${CMAKE_CUDA_TOOLKIT_ROOT_DIR})
-    set(CUDA_LIBRARIES CUDA::cuda_driver CUDA::cudart)
-    set(CUDA_INCLUDE_DIRS ${CMAKE_CUDA_INCLUDE_DIRS})
+find_package(CUDA QUIET)
+if (CUDA_FOUND)
+    message(STATUS "CUDA found at: ${CUDA_TOOLKIT_ROOT_DIR}")
 else ()
     message(WARNING "CUDA not found - TensorRT backend will be disabled")
 endif ()
