@@ -101,7 +101,7 @@ struct PubSlot {
      *
      * ## Parameters
      *
-     * - `world`: the ECS world
+     * - `world`: the world
      */
     void bind(World& world) noexcept {
         writer = world.get_spmc_writer<T, Topic>();
@@ -476,7 +476,7 @@ public:
      *
      * ## Parameters
      *
-     * - `world`: pointer to the ECS world (non-owning)
+     * - `world`: pointer to the world (non-owning)
      */
     explicit ResourceAccessor(World* world) noexcept
         : world_(world) {}

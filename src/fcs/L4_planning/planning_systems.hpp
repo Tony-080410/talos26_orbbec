@@ -12,7 +12,7 @@ struct L4Config;
 /// - Aimer layer: RobotAimer, OutpostAimer, RuneAimer (pure prediction)
 /// - Plan adapter layer: wraps aimer prediction into armor GimbalPlan
 ///
-/// @param scheduler ECS scheduler
+/// @param scheduler The scheduler
 /// @param config Complete L4 configuration (aimers + planner)
 void register_l4_planning_systems(::talos::Scheduler& scheduler, L4Config&& config);
 

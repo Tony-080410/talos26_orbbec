@@ -15,7 +15,7 @@ namespace fcs::L4 {
 /// All aimers consume tracker/energy meter outputs and produce pure prediction
 /// results (AimerOutput) that are consumed by the planner layer.
 ///
-/// @param scheduler ECS scheduler
+/// @param scheduler The scheduler
 /// @param config L4 planning configuration
 void register_aimer_systems(talos::Scheduler& scheduler, L4Config&& config);
 

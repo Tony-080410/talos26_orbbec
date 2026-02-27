@@ -101,7 +101,7 @@ struct TrackerOutput {
 };
 
 // ============================================================================
-// Channel Topics (for ECS)
+// Channel Topics
 // ============================================================================
 
 // Channel topics are defined in fcs/core/channel_topics.hpp:

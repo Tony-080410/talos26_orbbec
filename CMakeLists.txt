@@ -112,7 +112,7 @@ add_subdirectory(crates/math)
 # Math and geometry
 add_subdirectory(crates/fast_tf)
 
-# Scheduler / ECS framework
+# Scheduler framework
 add_subdirectory(crates/primitive)
 add_subdirectory(crates/scheduler)
 

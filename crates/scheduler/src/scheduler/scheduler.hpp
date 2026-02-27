@@ -134,7 +134,7 @@ public:
      *
      * ## Parameters
      *
-     * - `world`: the ECS world containing resources and channels
+     * - `world`: the world containing resources and channels
      * - `config`: optional scheduler configuration
      */
     explicit Scheduler(World& world, SchedulerConfig config = {});
@@ -185,7 +185,7 @@ public:
         -> std::expected<uint64_t, SchedulerError>;
 
     /**
-     * @brief Get the ECS world
+     * @brief Get the world
      *
      * ## Returns
      *

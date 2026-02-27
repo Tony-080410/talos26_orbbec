@@ -1,268 +1,279 @@
-# 项目编译
+# Talos C++ 项目代码指南
 
-> if sandboxed, append `-DENABLE_SCCACHE=OFF`
+> **代码定位**: 基于自定义调度器的机器人视觉框架，采用 5 级流水线（FCS - Fire Control System）架构
+>
+> **核心设计**: 零 ROS 依赖、类型安全数据流、DAG 依赖分析杜绝数据竞争
 
-```bash
-cmake -G Ninja -B build_agent -S .
-cmake --build build_agent -- talos -j64
+---
+
+## 代码目录结构
+
+```
+talos-cpp/
+├── crates/                      # 核心库
+│   ├── primitive/               # 原语库（通道、lazy、spin）
+│   │   └── src/primitive/
+│   │       ├── channel.hpp              # 统一通道抽象
+│   │       ├── spsc_triple_buffer.hpp   # SPSC 三重缓冲
+│   │       ├── spmc_triple_buffer.hpp   # SPMC 三重缓冲
+│   │       ├── lazy.hpp                 # 延迟构造
+│   │       ├── spin.hpp                 # 自旋等待原语
+│   │       └── performance_probe.hpp    # 性能探针
+│   ├── scheduler/               # 调度器
+│   │   └── src/scheduler/
+│   │       ├── world.hpp                # World: 资源和通道容器
+│   │       ├── scheduler.hpp/.cpp       # Scheduler: 调度器核心
+│   │       ├── system/
+│   │       │   ├── components.hpp       # 通道类型定义
+│   │       │   ├── system.hpp           # System: 系统执行模型
+│   │       │   └── execution_policy.hpp # 执行策略
+│   │       └── rclcompat/               # ROS2 兼容层
+│   ├── fast_tf/                 # 类型安全坐标变换
+│   ├── math/                    # 数学工具（SO2、Euler）
+│   ├── toml/                    # TOML 配置解析
+│   ├── log/                     # 日志工具
+│   └── hardware/                # 硬件驱动
+│       ├── at_gimbal/           # 云台控制
+│       └── hik_camera_driver/   # HIK 相机驱动（x86_64）
+├── src/
+│   ├── fcs/                     # 火控系统（5 级流水线）
+│   │   ├── core/                # 共享类型、通道 topics
+│   │   │   └── trajectory/      # 弹道模型
+│   │   ├── L1_sensor/           # 采集
+│   │   ├── L2_perception/       # 检测
+│   │   ├── L3_estimation/       # 追踪
+│   │   ├── L4_planning/         # 规划
+│   │   ├── L5_weapon/           # 控制
+│   │   └── runtime/             # 系统注册函数
+│   ├── fcs_visualization/       # Foxglove 可视化
+│   └── main.cpp
+├── config/                      # 配置文件
+├── 3dparty/                     # 第三方库
+└── cmake/                       # CMake 模块
 ```
 
-# 运行测试
+---
 
-```bash
-# 运行全部测试
-cd build_agent && ctest -j11
+## 库结构
 
-# 运行单个测试
-cd build_agent && ./bin/scheduler_ecs_test
-cd build_agent && ./bin/fast_tf_test
-cd build_agent && ./bin/triple_buffer_test
+| 库名              | 类型      | 说明                                 |
+| ----------------- | --------- | ------------------------------------ |
+| toml              | INTERFACE | TOML 配置解析辅助                    |
+| log               | INTERFACE | 日志工具封装                         |
+| math              | INTERFACE | 数学工具（SO2、Euler）               |
+| primitive         | SHARED    | 原语库（通道、lazy、spin、性能探针） |
+| scheduler         | SHARED    | 调度器                               |
+| fast_tf           | SHARED    | 类型安全坐标变换                     |
+| at_gimbal         | INTERFACE | 云台控制                             |
+| hik_camera_driver | SHARED    | HIK 相机驱动（仅 Linux x86_64）      |
+| hardware_daedalus | SHARED    | 硬件抽象层（共享内存）               |
+| fcs               | SHARED    | 火控系统（使用 PCH 加速 50-70%）     |
+| fcs_visualization | SHARED    | Foxglove 可视化                      |
 
-# 启用 AddressSanitizer
-cmake -G Ninja -B build_agent -S . -DENABLE_ASAN=ON
-cmake --build build_agent -- talos -j64
-```
+---
 
-# 项目架构
+## 调度器编程模型
 
-## 概览
-
-Talos 是一个基于自定义 ECS 调度器的机器人视觉框架，采用 5 级流水线（FCS - Fire Control System）架构。
-
-**核心设计理念：**
-- 零 ROS 依赖，单二进制部署
-- 类型安全的数据流（编译期 tag 类型）
-- 锁无关的三重缓冲通道（SPSC/SPMC）
-- 基于 Intel TBB 的多线程调度
-
-## ECS 调度器框架
-
-### 核心组件
-
-1. **World** (`include/scheduler/ecs/world.hpp`)
-   - 资源和通道的中心容器
-   - 类型擦除存储（`std::any`）+ 调用点编译期类型检查
-   - 版本化资源追踪
-
-2. **通道类型** (`include/scheduler/ecs/channel_types.hpp`)
-   ```cpp
-   spsc<T, Tag>       // SPSC 读取端
-   spsc_mut<T, Tag>   // SPSC 写入端
-   spmc<T, Tag>       // SPMC 读取端
-   spmc_mut<T, Tag>   // SPMC 写入端
-   res<T>             // 不可变资源引用
-   res_mut<T>         // 可变资源引用（写后版本号自增）
-   atomic_ref<T, Tag> // 原子变量引用
-   ```
-
-3. **System 执行模型** (`include/scheduler/ecs/system.hpp`)
-   - `bind()`: 单线程预创建所有通道/资源
-   - `run()`: 执行系统，返回是否写入数据
-
-4. **调度器** (`include/scheduler/scheduler/scheduler.hpp`)
-   - **fixed_rate<FreqHz, Affinity, Priority>**: 独占线程，定频触发
-   - **pool_compute**: TBB 线程池，依赖触发
-   - 编译期验证：单写入者、无循环依赖、孤儿检测
-
-### 创建新系统
+### System 定义
 
 ```cpp
-// 1. 在 fcs/core/channel_tags.hpp 定义通道 tag
-struct MyInputChannelTag {};
-struct MyOutputChannelTag {};
+// System 通过通道 (Channel) 和资源 (Resource) 访问数据
+struct MySystem {
+  // 通道访问
+  spsc<Input, TagInput> reader;       // SPSC 只读
+  spmc_mut<Output, TagOutput> writer; // SPMC 只写
 
-// 2. 在 fcs/LX_XXX_systems.hpp 声明注册函数
-namespace fcs::LX {
-void register_my_systems(talos::Scheduler& scheduler, MyConfig&& config);
-}
+  // 资源访问
+  res<Config> config;                 // 只读资源（版本追踪）
+  res_mut<State> state;               // 可写资源（写后版本号自增）
+  local<Temp> temp;                   // 系统本地变量（不参与依赖分析）
 
-// 3. 在 .cpp 实现
-void register_my_systems(talos::Scheduler& scheduler, MyConfig&& config) {
-    scheduler.add_system<talos::pool_compute>(
-        "my_system",
-        [config = std::move(config)](
-            spmc<InputType, MyInputChannelTag> input,
-            spsc_mut<OutputType, MyOutputChannelTag> output) {
-            if (auto data = input.read()) {
-                output.write(process(*data));
-            }
-        });
-}
+  // bind(): 预创建通道（初始化期调用）
+  void bind(World& world);
 
-// 4. 在 main.cpp 调用
-fcs::LX::register_my_systems(scheduler, config);
+  // run(): 执行系统逻辑
+  void run(World& world);
+};
 ```
 
-## FCS 流水线架构
+### 执行策略
+
+| 策略                                     | 说明                         | 用途                   |
+| ---------------------------------------- | ---------------------------- | ---------------------- |
+| `fixed_rate<Freq, CPU, Priority>`        | 独占线程，定频触发，通知下游 | 数据源（如相机）       |
+| `fixed_rate_silent<Freq, CPU, Priority>` | 独占线程，定频触发，不通知   | 高频静默更新（如 IMU） |
+| `pool_compute`                           | TBB 线程池，依赖触发（默认） | 数据处理系统           |
+| `pool_visualization`                     | 可视化系统专用               | TODO                   |
+
+### 通道组件
+
+| 组件               | 说明                           |
+| ------------------ | ------------------------------ |
+| `spsc<T, Tag>`     | SPSC 只读（点对点通信）        |
+| `spsc_mut<T, Tag>` | SPSC 只写                      |
+| `spmc<T, Tag>`     | SPMC 只读（可拷贝）            |
+| `spmc_mut<T, Tag>` | SPMC 只写                      |
+| `res<T>`           | 只读资源（版本追踪）           |
+| `res_mut<T>`       | 可写资源（写后版本号自增）     |
+| `local<T>`         | 系统本地变量（不参与依赖分析） |
+
+### 自适应 Backoff
+
+Compute loop 空闲时使用三阶段 backoff 策略：
+
+| 阶段    | 次数     | 延迟       | 方法                        |
+| ------- | -------- | ---------- | --------------------------- |
+| Phase 1 | 0-100    | ~10 cycles | `SPIN_HINT()`               |
+| Phase 2 | 100-1000 | ~1-10μs    | `std::this_thread::yield()` |
+| Phase 3 | 1000+    | 10μs       | `sleep`                     |
+
+---
+
+## ROS2 兼容层 (rclcompat)
+
+```cpp
+// ROS2 风格 Node API
+node.create_publisher<Message>("topic", qos);
+node.create_subscription<Message>("topic", qos, callback);
+node.create_wall_timer(period, callback);
+node.create_resource<Type>();
+node.finalize(); // 完成注册
+```
+
+---
+
+## FCS 流水线代码组织
+
+### 5 级流水线数据流
 
 ```
 L1 (Sensor)     → AtLegacyImageFrame [SPMC]
+                     ↓
 L2 (Perception) → AtLegacyArmorDetectionBatch [SPMC]
                  → AtLegacyArmorMeasurementBatch [SPMC]
+                     ↓
 L3 (Estimation) → TrackerOutput [SPMC]
+                     ↓
 L4 (Planning)   → GimbalPlan [SPMC]
+                     ↓
 L5 (Weapon)     → WeaponCommand [SPMC]
-                → Hardware
+                     ↓
+                 Hardware
 ```
 
 ### 目录结构
 
 ```
-include/fcs/
-├── core/              # 共享类型、通道 tag
+src/fcs/
+├── core/              # 共享类型、通道 topics
+│   └── trajectory/    # 弹道模型（ideal、linear_drag、quadratic_drag）
 ├── L1_sensor/         # 相机接口、输出
-├── L2_perception/     # 装甲板检测（NN/传统/TUP）
-├── L3_estimation/     # 追踪（JPDA/InEKF）
-├── L4_planning/       # MPC 规划、轨迹补偿
+├── L2_perception/     # 装甲板检测
+│   ├── armor/         # 装甲检测系统
+│   └── rune/          # 能量机关检测
+├── L3_estimation/     # 追踪、能量机关
+│   ├── tracker/       # EKF + Ceres 自动微分、马氏距离门控
+│   └── energy_meter/  # ISRCKF 能量机关追踪
+├── L4_planning/       # 规划、瞄准器
+│   ├── aimer/         # RobotAimer、OutpostAimer、RuneAimer
+│   └── gimbal_planner/ # 云台规划器
 ├── L5_weapon/         # 武器控制
-├── visualization/     # Foxglove 集成
 ├── calibration/       # 标定
 └── runtime/           # 系统注册函数
 ```
 
+---
+
 ## Fast_TF 坐标系
 
-**类型安全的坐标变换**（替代 tf2）：
-
-```cpp
-// 声明坐标系（include/math/fast_tf/frames.hpp）
-DECL_ROOT(world);
-DECL(odom, world);
-DECL(gimbal_link, odom);
-DECL(camera_link, gimbal_link);
-
-// 使用类型包装防止误用
-struct Pose {
-    fast_tf::FuckTransform<fast_tf::odom_fuxk_frame> transform;
-    double timestamp;
-};
-```
-
-## 配置系统
-
-**TOML 配置合并**：
+类型安全的坐标变换（替代 tf2），使用类型包装防止误用：
 
 ```
-at_vision.toml              # 入口配置
-config/vision_base.toml     # 基础配置
-config/vision/<name>.toml   # 算法特定配置
-config/robot/<name>.toml    # 硬件配置
+crates/fast_tf/src/
+├── frame.hpp           # 坐标系定义
+├── types.hpp           # 类型包装
+├── hero.hpp/.cpp       # 英雄机器人坐标系
+├── infantry.hpp/.cpp   # 步兵机器人坐标系
+├── sentry.hpp/.cpp     # 哨兵机器人坐标系
+├── robot_factory.hpp   # 机器人工厂
+├── validation.hpp      # 验证工具
+├── matrix.hpp          # 矩阵运算
+└── buffer.hpp          # 变换缓冲
 ```
 
-使用 `toml_helper::merge_configs()` 合并，覆盖语义。
+---
 
-**READ 宏**（`include/toml_helper.hpp`）提供声明式配置解析。
+## C++ 开发规范
 
-## 库结构
+### 元原则
 
-| 库名 | 类型 | 说明 |
-|------|------|------|
-| talos_std | INTERFACE | 性能探针、TOML 辅助 |
-| scheduler | SHARED | ECS 调度器 |
-| fcs | SHARED | 火控系统（使用 PCH 加速 50-70%） |
-| fast_tf | SHARED | 类型安全坐标变换 |
-| foxglove_cpp | SHARED | Foxglove WebSocket 服务器 |
-| hikcamera | SHARED | HIK 相机驱动（仅 Linux x86_64） |
-| talos_gimbal | INTERFACE | 云台控制 |
+1. **RAII 是信仰**，禁止手动 new/delete
+2. **类型安全 > 灵活性**，用类型系统防止误用
+3. **编译期检查 > 运行时检查**
+4. **错误必须显式处理**，禁止吞掉异常
+5. **Parse, Don't Validate**，边界数据进入核心域前必须解析为强类型
 
-# C++ 开发规范
+### DO / DON'T
 
-## 元原则
+| DO                          | DON'T               |
+| --------------------------- | ------------------- |
+| 智能指针表达所有权          | 裸指针表达所有权    |
+| `std::optional` 表达值缺失  | `cstring`/`carray`  |
+| `std::span` 代替裸指针+大小 | exception 传递错误  |
+| `std::expected` 表达错误    | bool 表达多义性错误 |
+| `enum class` 穷尽状态       | 嵌套 `bool`         |
 
-1. 能用 RAII 的，绝不手动管理资源
-2. 能用类型系统的，绝不用运行时检查
-3. 能用编译时检查的，绝不用文档约定
-4. 能用成熟库的，绝不自造轮子
+### 错误处理
 
-## 类型与内存
+- 使用 `std::expected` 表达错误，禁止吞掉异常
+- 错误消息必须包含完整上下文，避免歧义
+- 使用 `magic_enum` 统一转换枚举为小写
 
-1. 禁止运行时 RTTI（dynamic_cast、typeid），允许编译期类型检查（if constexpr、concepts）
-2. 禁止 NULL，优先 std::optional 表达值缺失，智能指针表达所有权
-3. 禁止裸 new/delete，使用 std::make_unique / std::make_shared
-4. 指针语义：
-    - 拥有：unique_ptr（独占）、shared_ptr（共享）
-    - 非拥有：引用（保证有效）、weak_ptr（需检测失效）、裸指针（生命周期明确时，需注释说明）
-5. 禁止 cstring / carray，使用 std::string / std::array
-6. 禁止 T* + size_t，使用 std::span<T>
+### 控制流
 
-## 错误处理
+- 枚举 switch 开启 `-Wswitch-enum`，禁止 `default` 兜底
+- 类型分发使用 `std::variant` + `std::visit` 穷尽匹配
 
-1. 禁止 exception，使用 std::expected
-2. 构造函数必须 noexcept，复杂构造使用工厂函数
-3. 第三方库异常在模块边界 try-catch 转换为 expected
-4. 禁止 bool 表达多义性错误
+### 类型安全
 
-## 错误消息规范
+- 单参数构造函数强制 `explicit`
+- 使用强类型包装业务概念
+- 优先使用模板，而非 `std::function`
+- 禁止使用 `std::any`（除 World 内部实现外）
 
-**核心原则：错误消息必须包含足够的诊断信息，避免歧义。**
+### 其他规范
 
-### 详细错误消息要求
+1. **禁止运行时 RTTI**（`dynamic_cast`、`typeid`），允许编译期类型检查（`if constexpr`、`concepts`）
+2. **全局可变状态谨慎使用**，需注释说明必要性
+3. **递归必须满足**之一：编译期深度限制、运行时深度参数 + 超限处理、可证明深度有界
 
-1. **禁止模糊错误** ❌
-   ```cpp
-   // 错误：不知道具体哪个字段有问题
-   return std::unexpected("Invalid transform: NaN or Inf detected");
+---
 
-   // 错误：知道是 RPY 但不知道具体哪个值
-   return std::unexpected("RPY is NaN");
-   ```
+## 常见模式和反模式
 
-2. **必须包含完整上下文** ✅
-   ```cpp
-   // 正确：明确指出哪个字段有问题、具体值是什么
-   return std::unexpected(fmt::format(
-       "StaticTransformDesc validation failed: [pitch is Inf]. "
-       "Full values: roll=0°, pitch=inf°, yaw=1.35°, x=0.044m, y=0.010m, z=-0.053m"));
-   ```
+| 模式            | 正确                   | 错误                   |
+| --------------- | ---------------------- | ---------------------- |
+| 传递非拷贝组件  | `std::move(component)` | `my_system(component)` |
+| Lambda 捕获组件 | `[&reader] mutable`    | `[reader]`             |
 
-### 错误消息模板
+---
 
-| 场景 | 格式 | 示例 |
-|------|------|------|
-| **数值验证失败** | `"[字段名 is 错误类型]. Full values: 完整值列表"` | `"pitch is NaN. Full values: r=0, p=nan, y=1.35"` |
-| **文件/资源错误** | `"操作 failed on 资源: 具体原因 (路径: xxx)"` | `"Failed to open config: Permission denied (path: /etc/robot.toml)"` |
-| **类型转换错误** | `"类型转换失败: FromType → ToType, 值=xxx"` | `"Enum conversion failed: 5 → RobotType, value=5 is not valid"` |
-| **约束违反** | `"约束违反: 约束名称 (期望值 vs 实际值)"` | `"Buffer overflow: capacity=1024 (attempted to write 1025)"` |
-| **依赖缺失** | `"缺失依赖: dependency_name (需要版本)"` | `"Missing library: libtorch (required >= 2.0)"` |
+## 依赖库版本
 
-### 枚举到字符串转换
+| 库名     | 版本     | 说明                   |
+| -------- | -------- | ---------------------- |
+| CMake    | >= 3.14  | 构建系统               |
+| TBB      | 2021.9+  | 线程池                 |
+| Eigen3   | 3.4+     | 线性代数               |
+| OpenCV   | 4.x      | 图像处理               |
+| Ceres    | 2.x      | 非线性优化（自动微分） |
+| OpenVINO | optional | 推理后端               |
+| TensorRT | optional | 推理后端               |
 
-使用 **magic_enum** 进行枚举到字符串转换，然后统一转换为小写：
+---
 
-```cpp
-#include <magic_enum.hpp>
-#include <algorithm>
-#include <string>
+## C++ 标准使用
 
-enum class RobotType { Infantry, Hero, Sentry };
-
-std::string robot_type_to_string(RobotType type) {
-    std::string_view sv = magic_enum::enum_name(type);
-    std::string result(sv);
-    // 转换为小写
-    std::transform(result.begin(), result.end(), result.begin(),
-                   [](unsigned char c) { return std::tolower(c); });
-    return result;
-}
-// RobotType::Hero → "hero"
-```
-
-## 控制流
-
-1. 枚举 switch：开启 -Wswitch-enum，禁止 default 兜底
-2. 类型分发：强制 std::variant + std::visit 穷尽匹配
-3. 递归必须满足之一：
-    - 编译期深度限制
-    - 运行时深度参数 + 超限处理
-    - 可证明深度有界
-
-## 类型安全
-
-1. 单参数构造函数强制 explicit
-2. 强类型参数优于弱类型（Position 而非 double x, y, z）
-3. 限制 std::function，优先模板；必须使用时注释说明原因
-4. 禁止 std::any
-
-## 其他
-
-1. 全局可变状态谨慎使用，需注释说明必要性
+- **C++23**: 主要代码
+- **C++20**: fast_tf, 部分算法
+- **C++17**: 依赖库兼容层

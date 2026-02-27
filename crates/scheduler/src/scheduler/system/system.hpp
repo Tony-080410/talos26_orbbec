@@ -179,12 +179,6 @@ public:
     const SystemMeta& meta() const noexcept override { return meta_; }
 };
 
-// ============================================================================
-// Type-erased System Runner (for scheduler)
-// ============================================================================
-
-using SystemRunner = std::function<void(World&)>;
-
 template <typename F, typename Policy = default_policy>
 [[nodiscard]] std::unique_ptr<SystemBase> make_system(std::string name, F&& func) noexcept {
     return std::make_unique<System<std::decay_t<F>, Policy>>(

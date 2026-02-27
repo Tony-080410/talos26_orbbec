@@ -662,12 +662,21 @@ void Scheduler::run_fixed_rate_thread(FixedRateContext ctx) {
 // ============================================================================
 
 void Scheduler::run_compute_loop() {
-    const auto print_interval = std::chrono::seconds(5);
-    auto last_print           = Clock::now();
+    // Adaptive backoff: spin -> yield -> short sleep
+    // This reduces CPU usage during idle while maintaining low latency
+    constexpr std::size_t SPIN_LIMIT  = 100;  // Spin iterations before yield
+    constexpr std::size_t YIELD_LIMIT = 1000; // Yield iterations before sleep
+    constexpr auto SLEEP_DURATION     = std::chrono::microseconds(10); // Short sleep
+    std::size_t idle_count            = 0;
+    const auto print_interval         = std::chrono::seconds(5);
+    auto last_print                   = Clock::now();
 
     while (running_.load(std::memory_order_acquire)) [[likely]] {
         // Check for pause request (hot-add in progress)
         if (pause_requested_.load(std::memory_order_acquire)) [[unlikely]] {
+            // Reset idle counter on resume
+            idle_count = 0;
+
             // Signal that we've paused
             {
                 std::lock_guard lock(pause_mutex_);
@@ -696,6 +705,9 @@ void Scheduler::run_compute_loop() {
         const auto ready = ready_systems_.exchange(0, std::memory_order_acq_rel);
 
         if (ready != 0) [[likely]] {
+            // Reset idle counter when work is available
+            idle_count = 0;
+
             primitive::LatencyProbe probe;
             const auto written = run_compute_selective(ready);
             const auto elapsed = probe.elapsed_ns();
@@ -724,11 +736,22 @@ void Scheduler::run_compute_loop() {
             }
             // */
         } else {
-            // Low-latency spin: use CPU hint instead of yield()
-            // - _mm_pause (x86): ~10 cycles, no context switch
-            // - yield (ARM): hint to switch to another hyperthread
-            // Much faster than std::this_thread::yield() which causes ~100μs delay
-            SPIN_HINT();
+            // Adaptive backoff strategy:
+            // - Spin first (lowest latency, ~10 cycles per SPIN_HINT)
+            // - Then yield (medium latency, ~1-10μs)
+            // - Finally short sleep (higher latency but saves CPU)
+            ++idle_count;
+
+            if (idle_count <= SPIN_LIMIT) {
+                // Phase 1: Spin (lowest latency)
+                SPIN_HINT();
+            } else if (idle_count <= YIELD_LIMIT) {
+                // Phase 2: Yield (let other threads run)
+                std::this_thread::yield();
+            } else {
+                // Phase 3: Short sleep (save CPU during extended idle)
+                std::this_thread::sleep_for(SLEEP_DURATION);
+            }
         }
     }
 }
