@@ -6,8 +6,6 @@
 #include "camera_config.hpp"
 #include "core/channel_topics.hpp"
 #include "core/types.hpp"
-#include "ecs/channel_types.hpp"
-#include "ecs/execution_policy.hpp"
 #include "frame.hpp"
 #include "scheduler/scheduler.hpp"
 

@@ -8,7 +8,6 @@
 #include "tactical_palette.hpp"
 
 #include "core/channel_topics.hpp"
-#include "ecs/channel_types.hpp"
 #include "frame.hpp"
 
 #include <memory>

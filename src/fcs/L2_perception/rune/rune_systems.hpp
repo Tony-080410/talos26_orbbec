@@ -1,8 +1,6 @@
 #pragma once
 
-namespace talos {
-class Scheduler;
-}
+#include "scheduler/thin.hpp"
 
 namespace fcs::rune {
 

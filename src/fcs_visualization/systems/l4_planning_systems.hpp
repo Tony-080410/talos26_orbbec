@@ -9,8 +9,6 @@
 #include "L4_planning/gimbal_planner/types.hpp"
 #include "core/channel_topics.hpp"
 #include "core/types.hpp"
-#include "ecs/channel_types.hpp"
-#include "ecs/execution_policy.hpp"
 #include "frame.hpp"
 
 #include <fmt/format.h>

@@ -11,7 +11,7 @@
  *   SPDLOG_ERROR("Build failed: {}", error);
  */
 
-#include "scheduler/scheduler.hpp"
+#include "scheduler.hpp"
 
 #include <fmt/format.h>
 #include <fmt/std.h> // For std::variant, std::vector, etc.
@@ -23,7 +23,7 @@
 // Helper: join strings with separator
 // ============================================================================
 
-namespace talos::detail {
+namespace talos::scheduler::detail {
 
 inline std::string join_strings(std::span<const std::string> strs, std::string_view sep) {
     if (strs.empty())
@@ -36,26 +36,27 @@ inline std::string join_strings(std::span<const std::string> strs, std::string_v
     return result;
 }
 
-} // namespace talos::detail
+} // namespace talos::scheduler::detail
 
 // ============================================================================
 // fmt::formatter specializations - must be in fmt namespace
 // ============================================================================
 
 namespace fmt {
-
+using namespace talos::scheduler;
+using namespace talos::scheduler::detail;
 template <>
-struct formatter<talos::SchedulerError> : formatter<std::string_view> {
-    auto format(const talos::SchedulerError e, format_context& ctx) const {
+struct formatter<SchedulerError> : formatter<std::string_view> {
+    auto format(const SchedulerError e, format_context& ctx) const {
         return formatter<std::string_view>::format(magic_enum::enum_name(e), ctx);
     }
 };
 
 template <>
-struct formatter<talos::ChannelKindConflict> {
+struct formatter<ChannelKindConflict> {
     constexpr auto parse(format_parse_context& ctx) { return ctx.begin(); }
 
-    auto format(const talos::ChannelKindConflict& e, format_context& ctx) const {
+    auto format(const ChannelKindConflict& e, format_context& ctx) const {
         return fmt::format_to(
             ctx.out(), "ChannelKindConflict: channel used as both SPSC and SPMC by '{}' and '{}'",
             e.first_system, e.second_system);
@@ -63,63 +64,61 @@ struct formatter<talos::ChannelKindConflict> {
 };
 
 template <>
-struct formatter<talos::MultipleWritersError> {
+struct formatter<MultipleWritersError> {
     constexpr auto parse(format_parse_context& ctx) { return ctx.begin(); }
 
-    auto format(const talos::MultipleWritersError& e, format_context& ctx) const {
+    auto format(const MultipleWritersError& e, format_context& ctx) const {
         return fmt::format_to(
             ctx.out(), "MultipleWriters: channel has multiple writers: {}",
-            talos::detail::join_strings(e.writers, ", "));
+            join_strings(e.writers, ", "));
     }
 };
 
 template <>
-struct formatter<talos::MultipleReadersError> {
+struct formatter<MultipleReadersError> {
     constexpr auto parse(format_parse_context& ctx) { return ctx.begin(); }
 
-    auto format(const talos::MultipleReadersError& e, format_context& ctx) const {
+    auto format(const MultipleReadersError& e, format_context& ctx) const {
         return fmt::format_to(
             ctx.out(), "MultipleReaders: SPSC channel has multiple readers: {}",
-            talos::detail::join_strings(e.readers, ", "));
+            join_strings(e.readers, ", "));
     }
 };
 
 template <>
-struct formatter<talos::OrphanedReaderError> {
+struct formatter<OrphanedReaderError> {
     constexpr auto parse(format_parse_context& ctx) { return ctx.begin(); }
 
-    auto format(const talos::OrphanedReaderError& e, format_context& ctx) const {
+    auto format(const OrphanedReaderError& e, format_context& ctx) const {
         return fmt::format_to(
             ctx.out(), "OrphanedReader: reader(s) without writer: {}",
-            talos::detail::join_strings(e.readers, ", "));
+            join_strings(e.readers, ", "));
     }
 };
 
 template <>
-struct formatter<talos::DependencyCycleError> {
+struct formatter<DependencyCycleError> {
     constexpr auto parse(format_parse_context& ctx) { return ctx.begin(); }
 
-    auto format(const talos::DependencyCycleError& e, format_context& ctx) const {
-        return fmt::format_to(
-            ctx.out(), "DependencyCycle: {}", talos::detail::join_strings(e.cycle, " -> "));
+    auto format(const DependencyCycleError& e, format_context& ctx) const {
+        return fmt::format_to(ctx.out(), "DependencyCycle: {}", join_strings(e.cycle, " -> "));
     }
 };
 
 template <>
-struct formatter<talos::TooManyComputeSystemsError> {
+struct formatter<TooManyComputeSystemsError> {
     constexpr auto parse(format_parse_context& ctx) { return ctx.begin(); }
 
-    auto format(const talos::TooManyComputeSystemsError& e, format_context& ctx) const {
-        return fmt::format_to(
-            ctx.out(), "TooManyComputeSystems: {} (max {})", e.count, e.max_count);
+    auto format(const TooManyComputeSystemsError& e, format_context& ctx) const {
+        return format_to(ctx.out(), "TooManyComputeSystems: {} (max {})", e.count, e.max_count);
     }
 };
 
 template <>
-struct formatter<talos::BuildError> {
+struct formatter<BuildError> {
     constexpr auto parse(format_parse_context& ctx) { return ctx.begin(); }
 
-    auto format(const talos::BuildError& err, format_context& ctx) const {
+    auto format(const BuildError& err, format_context& ctx) const {
         return std::visit(
             [&ctx](const auto& e) { return fmt::format_to(ctx.out(), "{}", e); }, err);
     }

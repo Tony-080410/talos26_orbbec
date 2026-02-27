@@ -3,13 +3,11 @@
 // Keep this header as a thin API surface.
 // The implementation lives in `src/fcs/L2_perception/at_legacy_systems.cpp`.
 
+#include "scheduler/thin.hpp"
 #include <expected>
 #include <memory>
 #include <string>
 
-namespace talos {
-class Scheduler;
-} // namespace talos
 namespace fcs {
 struct CameraConfig;
 };

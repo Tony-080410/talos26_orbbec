@@ -2,13 +2,10 @@
 
 #include "L3_estimation/energy_meter/types.hpp"
 #include "L3_estimation/energy_meter_solver/energy_meter_tracker.hpp"
+#include "scheduler/thin.hpp"
 
 namespace toml::inline v3 {
 class table;
-}
-
-namespace talos {
-class Scheduler;
 }
 
 namespace fcs::energy_meter {
@@ -127,6 +124,6 @@ struct EnergyMeterL3Config {
 /// This creates:
 /// - l3_energy_meter system (pool_compute): processes RuneObservation → EnergyMeterState
 /// - Tracker and AngleFitter as shared resources
-void register_energy_meter_systems(::talos::Scheduler& scheduler, EnergyMeterL3Config&& config);
+void register_energy_meter_systems(talos::Scheduler& scheduler, EnergyMeterL3Config&& config);
 
 } // namespace fcs::energy_meter

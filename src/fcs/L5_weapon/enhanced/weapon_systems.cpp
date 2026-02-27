@@ -6,8 +6,6 @@
 #include "L5_weapon/fire_control.hpp"
 #include "core/channel_topics.hpp"
 #include "core/trajectory/resource.hpp"
-#include "ecs/channel_types.hpp"
-#include "ecs/execution_policy.hpp"
 #include "scheduler/scheduler.hpp"
 
 #include <functional>

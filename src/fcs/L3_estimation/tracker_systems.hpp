@@ -3,11 +3,7 @@
 // Keep this header as a thin API surface.
 // The implementation lives in `src/fcs/L3_estimation/tracker_systems.cpp`.
 
-#include <memory>
-
-namespace talos {
-class Scheduler;
-} // namespace talos
+#include "scheduler/thin.hpp"
 
 namespace fcs::L3 {
 

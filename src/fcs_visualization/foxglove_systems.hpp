@@ -4,9 +4,7 @@
 #include <memory>
 #include <string>
 
-namespace talos {
-class Scheduler;
-} // namespace talos
+#include "scheduler/thin.hpp"
 
 namespace fcs {
 

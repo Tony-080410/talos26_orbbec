@@ -9,5 +9,3 @@ crate(
         ${OpenCV_LIBS}
         lieplusplus
 )
-
-crate_add_pch(fast_tf)

@@ -10,7 +10,6 @@
 
 #include "L1_sensor/parcel.hpp"
 #include "core/channel_topics.hpp"
-#include "ecs/channel_types.hpp"
 #include "frame.hpp"
 #include "scheduler/scheduler.hpp"
 #include "visualization/foxglove_server.hpp"

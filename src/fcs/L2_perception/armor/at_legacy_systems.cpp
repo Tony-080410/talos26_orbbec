@@ -4,8 +4,6 @@
 #include "L2_perception/armor/at_legacy_detector_backend.hpp"
 #include "L2_perception/armor/at_legacy_pnp_solver.hpp"
 #include "core/channel_topics.hpp"
-#include "ecs/channel_types.hpp"
-#include "ecs/execution_policy.hpp"
 #include "frame.hpp"
 #include "scheduler/scheduler.hpp"
 

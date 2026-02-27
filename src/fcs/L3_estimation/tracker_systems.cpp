@@ -4,8 +4,6 @@
 #include "L3_estimation/tracker/new_tracker.hpp"
 #include "L3_estimation/tracker/types.hpp"
 #include "core/channel_topics.hpp"
-#include "ecs/channel_types.hpp"
-#include "ecs/execution_policy.hpp"
 #include "scheduler/scheduler.hpp"
 
 #include <memory>

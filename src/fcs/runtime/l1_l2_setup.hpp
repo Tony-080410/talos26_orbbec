@@ -3,10 +3,7 @@
 #include <expected>
 #include <string>
 
-namespace talos {
-class World;
-class Scheduler;
-} // namespace talos
+#include "scheduler/thin.hpp"
 
 namespace fcs {
 struct HardwareConfig;

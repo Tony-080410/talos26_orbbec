@@ -29,11 +29,12 @@
  * - Max 64 compute systems for bitmask scheduling
  */
 
-#include "ecs/execution_policy.hpp"
-#include "ecs/system.hpp"
-#include "ecs/world.hpp"
-#include "primitives/performance_probe.hpp"
-#include <cstdint>
+#include "primitive/performance_probe.hpp"
+#include "scheduler/error.hpp"
+#include "scheduler/system/execution_policy.hpp"
+#include "scheduler/system/system.hpp"
+#include "scheduler/world.hpp"
+
 #include <spdlog/spdlog.h>
 #include <tbb/task_arena.h>
 #include <tbb/task_group.h>
@@ -51,109 +52,7 @@
 #include <variant>
 #include <vector>
 
-namespace talos {
-
-// ============================================================================
-// Runtime Errors (simple enum for lifecycle operations)
-// ============================================================================
-
-/**
- * @brief Scheduler lifecycle errors
- */
-enum class SchedulerError {
-    AlreadyBuilt, ///< Scheduler was already built
-    NotBuilt,     ///< Scheduler was not built before run
-};
-
-// ============================================================================
-// Build Errors (detailed variant for dependency analysis)
-// ============================================================================
-
-/**
- * @brief Channel identifier for error reporting
- *
- * Combines data type and tag to uniquely identify a channel.
- */
-struct ChannelKeyInfo {
-    std::type_index type;
-    std::type_index tag;
-    bool is_spsc;
-
-    /**
-     * @brief Construct a ChannelKeyInfo
-     *
-     * ## Parameters
-     *
-     * - `t`: data type index
-     * - `tg`: tag type index
-     * - `spsc`: true if SPSC channel, false if SPMC
-     */
-    ChannelKeyInfo(const std::type_index t, const std::type_index tg, const bool spsc)
-        : type(t)
-        , tag(tg)
-        , is_spsc(spsc) {}
-};
-
-/**
- * @brief Same channel key used for both SPSC and SPMC
- */
-struct ChannelKindConflict {
-    ChannelKeyInfo key;
-    std::string first_system;
-    std::string second_system;
-};
-
-/**
- * @brief SPSC or SPMC channel has multiple writers
- */
-struct MultipleWritersError {
-    ChannelKeyInfo key;
-    std::vector<std::string> writers;
-};
-
-/**
- * @brief SPSC channel has multiple readers
- */
-struct MultipleReadersError {
-    ChannelKeyInfo key;
-    std::vector<std::string> readers;
-};
-
-/**
- * @brief Reader without a corresponding writer
- */
-struct OrphanedReaderError {
-    ChannelKeyInfo key;
-    std::vector<std::string> readers;
-};
-
-/**
- * @brief Dependency cycle detected in the graph
- */
-struct DependencyCycleError {
-    std::vector<std::string> cycle;
-};
-
-/**
- * @brief Too many compute systems (max 64 for efficient bitmask scheduling)
- */
-struct TooManyComputeSystemsError {
-    std::size_t count;
-    static constexpr std::size_t max_count = 64;
-};
-
-/**
- * @brief All possible build errors
- */
-using BuildError = std::variant<
-    SchedulerError, // Runtime/lifecycle errors (AlreadyBuilt, etc.)
-    ChannelKindConflict, MultipleWritersError, MultipleReadersError, OrphanedReaderError,
-    DependencyCycleError, TooManyComputeSystemsError>;
-
-/**
- * @brief Build result type
- */
-using BuildResult = std::expected<void, BuildError>;
+namespace talos::scheduler {
 
 // ============================================================================
 // Configuration
@@ -186,6 +85,8 @@ struct SystemEntry {
     std::unique_ptr<SystemBase> system;
     PolicyInfo policy;
 };
+
+using namespace system;
 
 // ============================================================================
 // Scheduler
@@ -265,7 +166,7 @@ public:
      * - `func`: the system function to execute
      */
     template <typename Policy = default_policy, typename F>
-    auto add_system(std::string name, F&& func) -> void;
+    auto add_system(std::string&& name, F&& func) -> void;
 
     /**
      * @brief Add a pre-built custom system to the scheduler
@@ -465,7 +366,7 @@ private:
      */
     struct alignas(std::hardware_destructive_interference_size) FixedRateStats {
         std::atomic<std::uint64_t> notify_count{0};
-        LatencyHistogram latency_hist;
+        primitive::LatencyHistogram latency_hist;
 
         FixedRateStats() = default;
 
@@ -483,7 +384,7 @@ private:
      * @brief Performance statistics for compute systems
      */
     struct ComputeStats {
-        LatencyHistogram latency_hist;
+        primitive::LatencyHistogram latency_hist;
 
         ComputeStats()                               = default;
         ComputeStats(ComputeStats&&)                 = default;
@@ -554,7 +455,7 @@ private:
 // ============================================================================
 
 template <typename Policy, typename F>
-auto Scheduler::add_system(std::string name, F&& func) -> void {
+auto Scheduler::add_system(std::string&& name, F&& func) -> void {
     if (running_.load(std::memory_order_acquire)) {
         SPDLOG_CRITICAL("add_system: system already running!");
         std::abort();
@@ -583,4 +484,14 @@ auto Scheduler::add_system(std::string name, F&& func) -> void {
     std::unreachable();
 }
 
+} // namespace talos::scheduler
+
+// ============================================================================
+// Convenience namespace aliases for talos::
+// ============================================================================
+
+namespace talos {
+using namespace talos::scheduler::system;
+using talos::scheduler::Scheduler;
+using talos::scheduler::World;
 } // namespace talos

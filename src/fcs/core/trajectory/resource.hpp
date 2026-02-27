@@ -1,7 +1,6 @@
 #pragma once
 
 #include "config.hpp"
-#include "ecs/channel_types.hpp"
 #include "scheduler/scheduler.hpp"
 #include "solver/config.hpp"
 #include "solver/solver_interfaces.hpp"

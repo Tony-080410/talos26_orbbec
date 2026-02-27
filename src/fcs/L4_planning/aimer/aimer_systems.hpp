@@ -1,10 +1,7 @@
 #pragma once
 
 #include "L4_planning/config.hpp"
-
-namespace talos {
-class Scheduler;
-}
+#include "scheduler/thin.hpp"
 
 namespace fcs::L4 {
 

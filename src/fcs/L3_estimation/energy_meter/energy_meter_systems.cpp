@@ -6,8 +6,6 @@
 #include "L3_estimation/energy_meter_solver/types.hpp"
 #include "core/channel_topics.hpp"
 #include "core/time.hpp"
-#include "ecs/channel_types.hpp"
-#include "ecs/execution_policy.hpp"
 #include "scheduler/scheduler.hpp"
 #include "toml_helper.hpp"
 
@@ -87,7 +85,7 @@ void resetVelocityStats() {
     velocity_min_         = std::numeric_limits<double>::max();
 }
 
-void register_energy_meter_systems(::talos::Scheduler& scheduler, EnergyMeterL3Config&& config) {
+void register_energy_meter_systems(talos::Scheduler& scheduler, EnergyMeterL3Config&& config) {
     scheduler.world().insert_resource(std::move(config));
 
     scheduler.world().insert_resource(std::make_shared<::energy_meter::Tracker>());

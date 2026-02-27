@@ -5,19 +5,23 @@
 #       NAME <name>
 #       TYPE <SHARED|STATIC|INTERFACE|EXECUTABLE>
 #       [DEPS <dep1> <dep2> ...]
-#       [PRIVATE_HEADERS <header1> <header2> ...]
+#       [TESTS test1.cpp test2.cpp ...]  # 可选：手动指定测试，否则自动发现 tests/*.cpp
 #       [DEFINES <def1> <def2> ...]
 #       [OPTIONS <opt1> <opt2> ...]
 #       [LINK_OPTIONS <opt1> <opt2> ...]
 #       [FEATURES <feature1> <feature2> ...]
 #   )
+#
+# 测试自动发现：
+#   - 如果未指定 TESTS，自动查找 crate_dir/tests/*_test.cpp
+#   - 测试自动链接 GTest::gtest_main + Threads::Threads + crate_name
 
 function(crate)
     cmake_parse_arguments(
         ARG
         ""                           # 选项
         "NAME;TYPE"                  # 单值参数
-        "DEPS;SOURCES;PRIVATE_HEADERS;DEFINES;OPTIONS;LINK_OPTIONS;FEATURES"  # 多值参数
+        "DEPS;SOURCES;PRIVATE_HEADERS;DEFINES;OPTIONS;LINK_OPTIONS;FEATURES;TESTS"  # 多值参数
         ${ARGN}
     )
 
@@ -49,8 +53,6 @@ function(crate)
         set(CRATE_SOURCES ${CRATE_CPP_SOURCES} ${CRATE_C_SOURCES} ${CRATE_CU_SOURCES})
     endif()
 
-    file(GLOB_RECURSE CRATE_HEADERS "${CRATE_SRC_DIR}/*.hpp" "${CRATE_SRC_DIR}/*.h" "${CRATE_SRC_DIR}/*.cuh")
-
     # INTERFACE 库特殊处理
     if(ARG_TYPE STREQUAL "INTERFACE")
         add_library(${ARG_NAME} INTERFACE)
@@ -71,8 +73,8 @@ function(crate)
         endif()
         add_executable(${ARG_NAME} ${CRATE_SOURCES})
     else()
-        # SHARED/STATIC 库: 包含源文件和头文件
-        add_library(${ARG_NAME} ${ARG_TYPE} ${CRATE_SOURCES} ${CRATE_HEADERS})
+        # SHARED/STATIC 库: 只包含源文件（头文件通过 include 目录暴露）
+        add_library(${ARG_NAME} ${ARG_TYPE} ${CRATE_SOURCES})
     endif()
 
     # include 目录（自身）
@@ -132,6 +134,51 @@ function(crate)
             message(STATUS "Generated ${EXPORT_HPP_FILE}")
         endif()
     endif()
+
+    # 自动检测并添加 PCH
+    if(NOT ARG_TYPE STREQUAL "INTERFACE")
+        set(PCH_FILE "${CRATE_SRC_DIR}/pch.hpp")
+        if(EXISTS "${PCH_FILE}")
+            target_precompile_headers(${ARG_NAME} PRIVATE "${PCH_FILE}")
+        endif()
+    endif()
+
+    # 处理测试（自动发现 tests/ 目录或使用 TESTS 参数）
+    _crate_add_tests(${ARG_NAME} "${CRATE_SRC_DIR}" "${ARG_TESTS}")
+endfunction()
+
+# =============================================================================
+# 私有辅助函数: 处理测试
+# =============================================================================
+function(_crate_add_tests crate_name src_dir test_list)
+    # 如果提供了 TESTS 参数，使用它
+    if(test_list)
+        foreach(test_file ${test_list})
+            get_filename_component(test_name ${test_file} NAME_WE)
+            _crate_create_test(${test_name} ${test_file} ${crate_name})
+        endforeach()
+        return()
+    endif()
+
+    # 否则自动发现 tests/ 目录
+    set(tests_dir "${CMAKE_CURRENT_SOURCE_DIR}/tests")
+    if(EXISTS "${tests_dir}")
+        file(GLOB test_files "${tests_dir}/*_test.cpp")
+        foreach(test_file ${test_files})
+            get_filename_component(test_name ${test_file} NAME_WE)
+            _crate_create_test(${test_name} ${test_file} ${crate_name})
+        endforeach()
+    endif()
+endfunction()
+
+function(_crate_create_test test_name test_file crate_name)
+    add_executable(${test_name} ${test_file})
+    target_link_libraries(${test_name} PRIVATE
+        GTest::gtest_main
+        Threads::Threads
+        ${crate_name}
+    )
+    add_test(NAME ${test_name} COMMAND ${test_name})
 endfunction()
 
 # 辅助函数: 添加 PCH（预编译头）

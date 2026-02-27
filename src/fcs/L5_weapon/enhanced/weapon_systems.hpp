@@ -1,8 +1,6 @@
 #pragma once
 
-namespace talos {
-class Scheduler;
-} // namespace talos
+#include "scheduler/thin.hpp"
 
 namespace fcs::L5 {
 
