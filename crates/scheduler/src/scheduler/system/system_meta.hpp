@@ -103,33 +103,38 @@ using inner_topic_t = T::topic_type;
 // Type Predicates
 // ============================================================================
 
-/// Check if type is an SPSC reader
-template <typename T>
-struct is_spsc_reader : std::bool_constant<T::kind == channel_kind::spsc_reader> {};
+/// Helper: unified type kind checker (eliminates 7 duplicate struct definitions)
+template <channel_kind Kind>
+struct is_channel_kind {
+    template <typename T>
+    struct trait : std::bool_constant<T::kind == Kind> {};
+};
 
-/// Check if type is an SPSC writer
+/// Type predicate aliases (1-liners instead of 7 separate structs)
 template <typename T>
-struct is_spsc_writer : std::bool_constant<T::kind == channel_kind::spsc_writer> {};
+struct is_spsc_reader : is_channel_kind<channel_kind::spsc_reader>::trait<T> {};
 
-/// Check if type is an SPMC reader
 template <typename T>
-struct is_spmc_reader : std::bool_constant<T::kind == channel_kind::spmc_reader> {};
+struct is_spsc_writer : is_channel_kind<channel_kind::spsc_writer>::trait<T> {};
 
-/// Check if type is an SPMC writer
 template <typename T>
-struct is_spmc_writer : std::bool_constant<T::kind == channel_kind::spmc_writer> {};
+struct is_spmc_reader : is_channel_kind<channel_kind::spmc_reader>::trait<T> {};
 
-/// Check if type is a resource (immutable read)
 template <typename T>
-struct is_res_type : std::bool_constant<T::kind == channel_kind::res> {};
+struct is_spmc_writer : is_channel_kind<channel_kind::spmc_writer>::trait<T> {};
 
-/// Check if type is a mutable resource
 template <typename T>
-struct is_res_mut_type : std::bool_constant<T::kind == channel_kind::res_mut> {};
+struct is_res_type : is_channel_kind<channel_kind::res>::trait<T> {};
 
-/// Check if type is a local variable
 template <typename T>
-struct is_local_type : std::bool_constant<T::kind == channel_kind::local> {};
+struct is_res_mut_type : is_channel_kind<channel_kind::res_mut>::trait<T> {};
+
+template <typename T>
+struct is_local_type : is_channel_kind<channel_kind::local>::trait<T> {};
+
+/// Unified writer checker (eliminates: is_spsc_writer || is_spmc_writer pattern)
+template <typename T>
+struct is_writer : std::bool_constant<is_spsc_writer<T>::value || is_spmc_writer<T>::value> {};
 
 } // namespace detail
 

@@ -45,6 +45,8 @@ inline std::string join_strings(std::span<const std::string> strs, std::string_v
 namespace fmt {
 using namespace talos::scheduler;
 using namespace talos::scheduler::detail;
+
+// Formatter for simple enum types
 template <>
 struct formatter<SchedulerError> : formatter<std::string_view> {
     auto format(const SchedulerError e, format_context& ctx) const {
@@ -52,10 +54,15 @@ struct formatter<SchedulerError> : formatter<std::string_view> {
     }
 };
 
-template <>
-struct formatter<ChannelKindConflict> {
+// Formatter base class (eliminates duplicate parse methods)
+template <typename T>
+struct error_formatter_base {
     constexpr auto parse(format_parse_context& ctx) { return ctx.begin(); }
+};
 
+// Formatter for errors with two system names
+template <>
+struct formatter<ChannelKindConflict> : error_formatter_base<ChannelKindConflict> {
     auto format(const ChannelKindConflict& e, format_context& ctx) const {
         return fmt::format_to(
             ctx.out(), "ChannelKindConflict: channel used as both SPSC and SPMC by '{}' and '{}'",
@@ -63,10 +70,9 @@ struct formatter<ChannelKindConflict> {
     }
 };
 
+// Formatter for errors with string lists
 template <>
-struct formatter<MultipleWritersError> {
-    constexpr auto parse(format_parse_context& ctx) { return ctx.begin(); }
-
+struct formatter<MultipleWritersError> : error_formatter_base<MultipleWritersError> {
     auto format(const MultipleWritersError& e, format_context& ctx) const {
         return fmt::format_to(
             ctx.out(), "MultipleWriters: channel has multiple writers: {}",
@@ -75,9 +81,7 @@ struct formatter<MultipleWritersError> {
 };
 
 template <>
-struct formatter<MultipleReadersError> {
-    constexpr auto parse(format_parse_context& ctx) { return ctx.begin(); }
-
+struct formatter<MultipleReadersError> : error_formatter_base<MultipleReadersError> {
     auto format(const MultipleReadersError& e, format_context& ctx) const {
         return fmt::format_to(
             ctx.out(), "MultipleReaders: SPSC channel has multiple readers: {}",
@@ -86,9 +90,7 @@ struct formatter<MultipleReadersError> {
 };
 
 template <>
-struct formatter<OrphanedReaderError> {
-    constexpr auto parse(format_parse_context& ctx) { return ctx.begin(); }
-
+struct formatter<OrphanedReaderError> : error_formatter_base<OrphanedReaderError> {
     auto format(const OrphanedReaderError& e, format_context& ctx) const {
         return fmt::format_to(
             ctx.out(), "OrphanedReader: reader(s) without writer: {}",
@@ -97,27 +99,21 @@ struct formatter<OrphanedReaderError> {
 };
 
 template <>
-struct formatter<DependencyCycleError> {
-    constexpr auto parse(format_parse_context& ctx) { return ctx.begin(); }
-
+struct formatter<DependencyCycleError> : error_formatter_base<DependencyCycleError> {
     auto format(const DependencyCycleError& e, format_context& ctx) const {
         return fmt::format_to(ctx.out(), "DependencyCycle: {}", join_strings(e.cycle, " -> "));
     }
 };
 
 template <>
-struct formatter<TooManyComputeSystemsError> {
-    constexpr auto parse(format_parse_context& ctx) { return ctx.begin(); }
-
+struct formatter<TooManyComputeSystemsError> : error_formatter_base<TooManyComputeSystemsError> {
     auto format(const TooManyComputeSystemsError& e, format_context& ctx) const {
         return format_to(ctx.out(), "TooManyComputeSystems: {} (max {})", e.count, e.max_count);
     }
 };
 
 template <>
-struct formatter<BuildError> {
-    constexpr auto parse(format_parse_context& ctx) { return ctx.begin(); }
-
+struct formatter<BuildError> : error_formatter_base<BuildError> {
     auto format(const BuildError& err, format_context& ctx) const {
         return std::visit(
             [&ctx](const auto& e) { return fmt::format_to(ctx.out(), "{}", e); }, err);

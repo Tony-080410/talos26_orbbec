@@ -46,7 +46,7 @@ void register_aimer_systems(talos::Scheduler& scheduler, L4Config&& config) {
             const auto& [gimbal, muzzle, timestamp_ns] = *transforms;
             (void)timestamp_ns;
 
-            if (!solver.valid() || !solver->get()) {
+            if (!solver->get()) {
                 SPDLOG_ERROR("Aimer: trajectory solver not available");
                 return;
             }

@@ -47,13 +47,17 @@ public:
      *
      * Reference to this builder for chaining
      */
-    SystemMetaBuilder& policy(PolicyInfo p) noexcept {
+    SystemMetaBuilder& policy(system::PolicyInfo p) noexcept {
         meta_.policy = p;
         return *this;
     }
 
     /**
-     * @brief Add an SPMC writer channel
+     * @brief Add a channel to the metadata (unified helper)
+     *
+     * ## Template parameters
+     *
+     * - `Kind`: channel kind enum value
      *
      * ## Parameters
      *
@@ -64,84 +68,40 @@ public:
      *
      * Reference to this builder for chaining
      */
+    template <system::channel_kind Kind>
+    SystemMetaBuilder&
+        add_channel(const std::type_index type, const std::type_index topic) noexcept {
+        if constexpr (
+            Kind == system::channel_kind::spmc_writer
+            || Kind == system::channel_kind::spmc_reader) {
+            meta_.spmc_channels.push_back(
+                system::ChannelMeta{.type = type, .topic = topic, .kind = Kind});
+        } else {
+            meta_.spsc_channels.push_back(
+                system::ChannelMeta{.type = type, .topic = topic, .kind = Kind});
+        }
+        return *this;
+    }
+
+    // Convenience wrappers using the unified template
     SystemMetaBuilder&
         add_spmc_writer(const std::type_index type, const std::type_index topic) noexcept {
-        meta_.spmc_channels.push_back(
-            ChannelMeta{
-                .type  = type,
-                .topic = topic,
-                .kind  = channel_kind::spmc_writer,
-            });
-        return *this;
+        return add_channel<system::channel_kind::spmc_writer>(type, topic);
     }
 
-    /**
-     * @brief Add an SPMC reader channel
-     *
-     * ## Parameters
-     *
-     * - `type`: data type index
-     * - `topic`: topic type index
-     *
-     * ## Returns
-     *
-     * Reference to this builder for chaining
-     */
     SystemMetaBuilder&
         add_spmc_reader(const std::type_index type, const std::type_index topic) noexcept {
-        meta_.spmc_channels.push_back(
-            ChannelMeta{
-                .type  = type,
-                .topic = topic,
-                .kind  = channel_kind::spmc_reader,
-            });
-        return *this;
+        return add_channel<system::channel_kind::spmc_reader>(type, topic);
     }
 
-    /**
-     * @brief Add an SPSC writer channel
-     *
-     * ## Parameters
-     *
-     * - `type`: data type index
-     * - `topic`: topic type index
-     *
-     * ## Returns
-     *
-     * Reference to this builder for chaining
-     */
     SystemMetaBuilder&
         add_spsc_writer(const std::type_index type, const std::type_index topic) noexcept {
-        meta_.spsc_channels.push_back(
-            ChannelMeta{
-                .type  = type,
-                .topic = topic,
-                .kind  = channel_kind::spsc_writer,
-            });
-        return *this;
+        return add_channel<system::channel_kind::spsc_writer>(type, topic);
     }
 
-    /**
-     * @brief Add an SPSC reader channel
-     *
-     * ## Parameters
-     *
-     * - `type`: data type index
-     * - `topic`: topic type index
-     *
-     * ## Returns
-     *
-     * Reference to this builder for chaining
-     */
     SystemMetaBuilder&
         add_spsc_reader(const std::type_index type, const std::type_index topic) noexcept {
-        meta_.spsc_channels.push_back(
-            ChannelMeta{
-                .type  = type,
-                .topic = topic,
-                .kind  = channel_kind::spsc_reader,
-            });
-        return *this;
+        return add_channel<system::channel_kind::spsc_reader>(type, topic);
     }
 
     /**
@@ -151,7 +111,7 @@ public:
      *
      * The constructed SystemMeta
      */
-    [[nodiscard]] SystemMeta build() && noexcept { return std::move(meta_); }
+    [[nodiscard]] system::SystemMeta build() && noexcept { return std::move(meta_); }
 
     /**
      * @brief Build the SystemMeta (lvalue version)
@@ -160,10 +120,10 @@ public:
      *
      * Copy of the constructed SystemMeta
      */
-    [[nodiscard]] SystemMeta build() const& noexcept { return meta_; }
+    [[nodiscard]] system::SystemMeta build() const& noexcept { return meta_; }
 
 private:
-    SystemMeta meta_;
+    system::SystemMeta meta_;
 };
 
 } // namespace talos::scheduler::rclcompat

@@ -62,12 +62,95 @@ struct CallbackContextScope {
 /**
  * @brief Base class for RclSubSystem
  *
- * Provides access to SystemMeta for callback ownership tracking.
+ * Provides SystemMeta storage, publisher tracking, and callback ownership tracking.
  */
 class RclSubSystemBase : public SystemBase {
 public:
     ~RclSubSystemBase() override = default;
+
+    const SystemMeta& meta() const noexcept override { return meta_; }
+
+protected:
+    /**
+     * @brief Track a publisher that the callback may write to
+     *
+     * This updates the SystemMeta to include the publisher's channel as a writer,
+     * enabling proper wake chain computation.
+     *
+     * ## Parameters
+     *
+     * - `write_flag`: pointer to the PubSlot's pending_write flag
+     * - `type`: data type of the publisher
+     * - `topic`: topic type of the publisher
+     */
+    void track_publisher(
+        std::atomic<bool>* write_flag, const std::type_index type,
+        const std::type_index topic) noexcept {
+        tracked_write_flags_.push_back(write_flag);
+
+        meta_.spmc_channels.push_back(
+            ChannelMeta{.type = type, .topic = topic, .kind = channel_kind::spmc_writer});
+    }
+
+    /**
+     * @brief Build system metadata with policy and channel configuration
+     *
+     * Unified helper for RclPubSystem and RclSubSystem constructors.
+     * Eliminates duplicate SystemMetaBuilder pattern.
+     *
+     * ## Template parameters
+     *
+     * - `Policy`: execution policy type
+     *
+     * ## Parameters
+     *
+     * - `name`: system name
+     * - `config_fn`: function to configure channels (e.g., add_spmc_writer)
+     *
+     * ## Returns
+     *
+     * Configured SystemMeta
+     */
+    template <typename Policy = pool_compute>
+    [[nodiscard]] static auto build_meta(std::string name, auto&& config_fn) noexcept
+        -> SystemMeta {
+        SystemMetaBuilder builder(std::move(name));
+        builder.policy(system::make_policy_info<Policy>());
+        config_fn(builder);
+        return builder.build();
+    }
+
+    SystemMeta meta_;
+    std::vector<std::atomic<bool>*> tracked_write_flags_;
 };
+
+namespace detail {
+
+/**
+ * @brief Check tracked write flags with OR-combine pattern
+ *
+ * Atomically exchanges each flag to false and ORs all results together.
+ * This prevents lost-write bug by reading AND clearing atomically,
+ * then combining all results.
+ *
+ * ## Parameters
+ *
+ * - `flags`: vector of atomic boolean flags to check
+ *
+ * ## Returns
+ *
+ * `true` if any flag was set
+ */
+inline bool check_tracked_write_flags(const std::vector<std::atomic<bool>*>& flags) noexcept {
+    bool any_written = false;
+    for (auto* flag : flags) {
+        const auto had_write = flag->exchange(false, std::memory_order_acq_rel);
+        any_written          = any_written || had_write;
+    }
+    return any_written;
+}
+
+} // namespace detail
 
 // ============================================================================
 // PubSlot: Publisher state (owned by Node)
@@ -104,7 +187,7 @@ struct PubSlot {
      * - `world`: the world
      */
     void bind(World& world) noexcept {
-        writer = world.get_spmc_writer<T, Topic>();
+        writer = world.get<spmc_mut<T, Topic>>();
         bound.store(true, std::memory_order_release);
     }
 
@@ -236,6 +319,16 @@ public:
         // This prevents multiple different callbacks from sharing the same Publisher instance
         auto* current_callback = g_callback_context.current_system;
 
+        // Helper lambda: log ownership error
+        auto log_ownership_error = [&](RclSubSystemBase* owner, RclSubSystemBase* used_by) {
+            SPDLOG_CRITICAL(
+                "Publisher {}@{} owned by callback '{}', used by '{}'",
+                scheduler::detail::demangle(typeid(T).name()),
+                scheduler::detail::demangle(typeid(Topic).name()),
+                owner ? owner->meta().name.c_str() : "<unknown>",
+                used_by ? used_by->meta().name.c_str() : "<unknown>");
+        };
+
         if (current_callback && !slot_->auto_bound.load(std::memory_order_acquire)) {
             // First use: attempt to bind to the current callback
             RclSubSystemBase* expected = nullptr;
@@ -246,23 +339,14 @@ public:
                 slot_->auto_bound.store(true, std::memory_order_release);
             } else if (expected != current_callback) {
                 // Another callback already owns this publisher
-                SPDLOG_CRITICAL(
-                    "Publisher {}@{} owned by callback '{}', used by '{}'",
-                    scheduler::detail::demangle(typeid(T).name()),
-                    scheduler::detail::demangle(typeid(Topic).name()),
-                    expected ? expected->meta().name.c_str() : "<unknown>",
-                    current_callback ? current_callback->meta().name.c_str() : "<unknown>");
+                log_ownership_error(expected, current_callback);
                 std::abort();
             }
         } else if (current_callback) {
             // Already bound: verify the current callback is the owner
             auto* owner = slot_->owner_callback.load(std::memory_order_acquire);
             if (owner && owner != current_callback) {
-                SPDLOG_CRITICAL(
-                    "Publisher {}@{} owned by callback '{}', used by '{}'",
-                    scheduler::detail::demangle(typeid(T).name()),
-                    scheduler::detail::demangle(typeid(Topic).name()), owner->meta().name.c_str(),
-                    current_callback->meta().name.c_str());
+                log_ownership_error(owner, current_callback);
                 std::abort();
             }
         }
@@ -307,7 +391,7 @@ private:
  * - `Policy`: execution policy (default: pool_compute)
  */
 template <typename T, typename Topic = DefaultTopic, typename Policy = pool_compute>
-class RclPubSystem : public SystemBase {
+class RclPubSystem : public RclSubSystemBase {
 public:
     /**
      * @brief Construct a publisher system
@@ -319,10 +403,9 @@ public:
      */
     explicit RclPubSystem(std::string name, PubSlot<T, Topic>* slot) noexcept
         : slot_(slot) {
-        meta_ = SystemMetaBuilder(std::move(name))
-                    .policy(system::make_policy_info<Policy>())
-                    .add_spmc_writer(typeid(T), typeid(Topic))
-                    .build();
+        meta_ = build_meta<Policy>(std::move(name), [](auto& builder) {
+            builder.add_spmc_writer(typeid(T), typeid(Topic));
+        });
     }
 
     void bind(World& world) noexcept override { slot_->bind(world); }
@@ -332,10 +415,7 @@ public:
         return slot_->pending_write.exchange(false, std::memory_order_acq_rel);
     }
 
-    const SystemMeta& meta() const noexcept override { return meta_; }
-
 private:
-    SystemMeta meta_;
     PubSlot<T, Topic>* slot_;
 };
 
@@ -356,49 +436,14 @@ class RclSubSystem : public RclSubSystemBase {
 public:
     using Callback = std::function<void(const T&)>;
 
-    /**
-     * @brief Construct a subscription system
-     *
-     * ## Parameters
-     *
-     * - `name`: system name
-     * - `callback`: function to call when a message is received
-     */
     explicit RclSubSystem(std::string name, Callback callback) noexcept
         : callback_(std::move(callback)) {
-        meta_ = SystemMetaBuilder(std::move(name))
-                    .policy(system::make_policy_info<Policy>())
-                    .add_spmc_reader(typeid(T), typeid(Topic))
-                    .build();
+        meta_ = build_meta<Policy>(std::move(name), [](auto& builder) {
+            builder.add_spmc_reader(typeid(T), typeid(Topic));
+        });
     }
 
-    /**
-     * @brief Track a publisher that the callback may write to
-     *
-     * This updates the SystemMeta to include the publisher's channel as a writer,
-     * enabling proper wake chain computation.
-     *
-     * ## Parameters
-     *
-     * - `write_flag`: pointer to the PubSlot's pending_write flag
-     * - `type`: data type of the publisher
-     * - `topic`: topic type of the publisher
-     */
-    void track_publisher(
-        std::atomic<bool>* write_flag, const std::type_index type,
-        const std::type_index topic) noexcept {
-        tracked_write_flags_.push_back(write_flag);
-
-        // Update meta to include this writer channel
-        meta_.spmc_channels.push_back(
-            ChannelMeta{
-                .type  = type,
-                .topic = topic,
-                .kind  = channel_kind::spmc_writer,
-            });
-    }
-
-    void bind(World& world) noexcept override { reader_ = world.get_spmc_reader<T, Topic>(); }
+    void bind(World& world) noexcept override { reader_ = world.get<spmc<T, Topic>>(); }
 
     bool run([[maybe_unused]] World& world) noexcept override {
         if (!reader_.has_new()) {
@@ -413,23 +458,12 @@ public:
             callback_(*msg);
         }
 
-        // Check if any tracked publishers wrote data
-        bool any_written = false;
-        for (auto* flag : tracked_write_flags_) {
-            if (flag->exchange(false, std::memory_order_acq_rel)) {
-                any_written = true;
-            }
-        }
-        return any_written;
+        return detail::check_tracked_write_flags(tracked_write_flags_);
     }
 
-    const SystemMeta& meta() const noexcept override { return meta_; }
-
 private:
-    SystemMeta meta_;
     Callback callback_;
     spmc<T, Topic> reader_;
-    std::vector<std::atomic<bool>*> tracked_write_flags_;
 };
 
 // ============================================================================
@@ -492,13 +526,7 @@ public:
      *
      * Multiple threads can call get() concurrently.
      */
-    [[nodiscard]] res<T> get() const noexcept {
-        if (!world_) [[unlikely]] {
-            SPDLOG_CRITICAL("ResourceAccessor::get() called on invalid accessor");
-            std::abort();
-        }
-        return world_->get_res<T>();
-    }
+    [[nodiscard]] res<T> get() const noexcept { return validate_world()->template get_res<T>(); }
 
     /**
      * @brief Get mutable access to the resource
@@ -514,11 +542,7 @@ public:
      * incremented on write.
      */
     [[nodiscard]] res_mut<T> get_mut() const noexcept {
-        if (!world_) [[unlikely]] {
-            SPDLOG_CRITICAL("ResourceAccessor::get_mut() called on invalid accessor");
-            std::abort();
-        }
-        return world_->get_res_mut<T>();
+        return validate_world()->template get_res_mut<T>();
     }
 
     /**
@@ -536,6 +560,14 @@ public:
 
 private:
     World* world_ = nullptr;
+
+    [[nodiscard]] World* validate_world() const noexcept {
+        if (!world_) [[unlikely]] {
+            SPDLOG_CRITICAL("ResourceAccessor::get() called on invalid accessor");
+            std::abort();
+        }
+        return world_;
+    }
 };
 
 } // namespace talos::scheduler::rclcompat

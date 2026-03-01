@@ -1,5 +1,4 @@
 #include "scheduler.hpp"
-#include "error_formatter.hpp"
 #include "primitive/performance_probe.hpp"
 #include "primitive/spin.hpp"
 #include "primitive/thread_affinity.hpp"
@@ -11,10 +10,46 @@
 #include <functional>
 #include <map>
 #include <nlohmann/json.hpp>
-#include <set>
 #include <spdlog/spdlog.h>
 
 namespace talos::scheduler {
+
+// ============================================================================
+// Internal Helpers
+// ============================================================================
+
+/// Helper: Print wake chains for a given set of systems
+/// @param title Section title to print
+/// @param source_systems Vector of source systems to iterate
+/// @param affects_mask Vector of bitmasks indicating which target systems are affected
+/// @param target_systems Vector of target systems for name lookup
+template <typename SourceSystemEntry>
+static void print_wake_chains(
+    const char* title, const std::vector<SourceSystemEntry>& source_systems,
+    const std::vector<std::uint64_t>& affects_mask,
+    const std::vector<SystemEntry>& target_systems) {
+    printf("%s\n", title);
+    for (std::size_t i = 0; i < source_systems.size(); ++i) {
+        const auto& src_name = source_systems[i].system->meta().name;
+        const auto affects   = i < affects_mask.size() ? affects_mask[i] : 0U;
+
+        printf("  [%s] -> ", src_name.c_str());
+        if (affects == 0) {
+            printf("(none)");
+        } else {
+            bool first = true;
+            for (std::size_t j = 0; j < target_systems.size(); ++j) {
+                if (affects & (1UL << j)) {
+                    if (!first)
+                        printf(", ");
+                    printf("[%s]", target_systems[j].system->meta().name.c_str());
+                    first = false;
+                }
+            }
+        }
+        printf("\n");
+    }
+}
 
 // ============================================================================
 // Constructor / Destructor
@@ -44,10 +79,7 @@ auto Scheduler::add_system(std::unique_ptr<SystemBase> system)
     if (!system) {
         std::abort();
     }
-    if (running_.load(std::memory_order_acquire)) {
-        SPDLOG_CRITICAL("add_system: system already running!");
-        std::abort();
-    }
+    ensure_not_running();
 
     if (built_.load(std::memory_order_acquire)) {
         built_.store(false, std::memory_order_release);
@@ -88,27 +120,17 @@ auto Scheduler::build() -> BuildResult {
     }
 
     // Ensure stats capacity matches system count
-    if (fixed_rate_stats_.size() < fixed_rate_systems_.size()) {
-        fixed_rate_stats_.reserve(fixed_rate_systems_.size());
-        for (std::size_t i = fixed_rate_stats_.size(); i < fixed_rate_systems_.size(); ++i) {
-            fixed_rate_stats_.emplace_back();
-        }
-    }
-
-    if (compute_stats_.size() < compute_systems_.size()) {
-        compute_stats_.reserve(compute_systems_.size());
-        for (std::size_t i = compute_stats_.size(); i < compute_systems_.size(); ++i) {
-            compute_stats_.emplace_back();
-        }
-    }
+    fixed_rate_stats_.resize(fixed_rate_systems_.size());
+    compute_stats_.resize(compute_systems_.size());
 
     // Bind all systems (pre-create channel readers/writers, single-threaded)
-    for (auto& entry : fixed_rate_systems_) {
-        entry.system->bind(world_);
-    }
-    for (auto& entry : compute_systems_) {
-        entry.system->bind(world_);
-    }
+    auto bind_all_systems = [&](auto& systems) {
+        for (auto& entry : systems) {
+            entry.system->bind(world_);
+        }
+    };
+    bind_all_systems(fixed_rate_systems_);
+    bind_all_systems(compute_systems_);
 
     built_.store(true, std::memory_order_release);
     return {};
@@ -120,7 +142,7 @@ auto Scheduler::run() -> std::expected<void, SchedulerError> {
     }
 
     if (running_.exchange(true, std::memory_order_acq_rel)) {
-        SPDLOG_CRITICAL("add_system: system already running!");
+        SPDLOG_CRITICAL("run(): scheduler is already running!");
         std::abort();
     }
 
@@ -189,16 +211,7 @@ auto Scheduler::hot_add_system(std::unique_ptr<SystemBase> system) -> BuildResul
     }
 
     // Hot-add: request pause
-    {
-        std::lock_guard lock(pause_mutex_);
-        pause_requested_.store(true, std::memory_order_release);
-    }
-
-    // Wait for compute loop to pause
-    {
-        std::unique_lock lock(pause_mutex_);
-        pause_cv_.wait(lock, [this] { return paused_.load(std::memory_order_acquire); });
-    }
+    request_compute_loop_pause();
 
     // Now safely add the system
     const auto policy = system->meta().policy;
@@ -227,29 +240,14 @@ auto Scheduler::hot_add_system(std::unique_ptr<SystemBase> system) -> BuildResul
         }
 
         // Resume compute loop
-        {
-            std::lock_guard lock(pause_mutex_);
-            pause_requested_.store(false, std::memory_order_release);
-        }
-        pause_cv_.notify_all();
+        resume_compute_loop();
 
         return result;
     }
 
     // Update stats capacity
-    if (fixed_rate_stats_.size() < fixed_rate_systems_.size()) {
-        fixed_rate_stats_.reserve(fixed_rate_systems_.size());
-        for (std::size_t i = fixed_rate_stats_.size(); i < fixed_rate_systems_.size(); ++i) {
-            fixed_rate_stats_.emplace_back();
-        }
-    }
-
-    if (compute_stats_.size() < compute_systems_.size()) {
-        compute_stats_.reserve(compute_systems_.size());
-        for (std::size_t i = compute_stats_.size(); i < compute_systems_.size(); ++i) {
-            compute_stats_.emplace_back();
-        }
-    }
+    fixed_rate_stats_.resize(fixed_rate_systems_.size());
+    compute_stats_.resize(compute_systems_.size());
 
     // Bind the new system
     if (is_fixed_rate) {
@@ -272,17 +270,46 @@ auto Scheduler::hot_add_system(std::unique_ptr<SystemBase> system) -> BuildResul
     }
 
     // Resume compute loop
-    {
-        std::lock_guard lock(pause_mutex_);
-        pause_requested_.store(false, std::memory_order_release);
-    }
-    pause_cv_.notify_all();
+    resume_compute_loop();
 
     return {};
 }
 
 auto Scheduler::is_running() const noexcept -> bool {
     return running_.load(std::memory_order_acquire);
+}
+
+// ============================================================================
+// Pause/Resume Helpers (for hot-add)
+// ============================================================================
+
+void Scheduler::request_compute_loop_pause() noexcept {
+    // Request pause
+    {
+        std::lock_guard lock(pause_mutex_);
+        pause_requested_.store(true, std::memory_order_release);
+    }
+    // Wait for compute loop to pause
+    {
+        std::unique_lock lock(pause_mutex_);
+        pause_cv_.wait(lock, [this] { return paused_.load(std::memory_order_acquire); });
+    }
+}
+
+void Scheduler::resume_compute_loop() noexcept {
+    {
+        std::lock_guard lock(pause_mutex_);
+        pause_requested_.store(false, std::memory_order_release);
+    }
+    pause_cv_.notify_all();
+}
+
+std::uint64_t Scheduler::sum_notify_counts() const noexcept {
+    std::uint64_t total = 0;
+    for (const auto& s : fixed_rate_stats_) {
+        total += s.notify_count.load(std::memory_order_relaxed);
+    }
+    return total;
 }
 
 // ============================================================================
@@ -304,35 +331,36 @@ void Scheduler::notify(const std::size_t system_index) noexcept {
 // ============================================================================
 
 auto Scheduler::stats() const noexcept -> Stats {
-    // Sum notify counts from all fixed_rate systems
-    std::uint64_t total_notifies = 0;
-    for (const auto& s : fixed_rate_stats_) {
-        total_notifies += s.notify_count.load(std::memory_order_relaxed);
-    }
     return Stats{
-        .notify_count        = total_notifies,
+        .notify_count        = sum_notify_counts(),
         .compute_cycle_count = compute_cycles_.load(std::memory_order_relaxed),
     };
 }
 
 void Scheduler::print_systems() const {
-    printf("FixedRate systems (%zu):\n", fixed_rate_systems_.size());
-    for (const auto& entry : fixed_rate_systems_) {
-        const auto& m = entry.system->meta();
+    // Unified printer for systems with metadata (eliminates duplicate loop structure)
+    auto print_systems = [](const auto& systems, const char* type_name, auto print_fn) {
+        printf("%s systems (%zu):\n", type_name, systems.size());
+        for (const auto& entry : systems) {
+            const auto& m = entry.system->meta();
+            print_fn(entry, m);
+        }
+    };
+
+    print_systems(fixed_rate_systems_, "FixedRate", [](const auto& entry, const auto& m) {
         printf(
             "  [%s] freq:%uHz affinity:%d priority:%d notify:%s spsc:%zu spmc:%zu\n",
             m.name.c_str(), entry.policy.frequency_hz, entry.policy.cpu_affinity,
             entry.policy.thread_priority, entry.policy.notifies ? "yes" : "no",
             m.spsc_channels.size(), m.spmc_channels.size());
-    }
+    });
 
-    printf("Compute systems (%zu):\n", compute_systems_.size());
-    for (const auto& entry : compute_systems_) {
-        const auto& m = entry.system->meta();
-        printf(
-            "  [%s] spsc:%zu spmc:%zu res:%zu res_mut:%zu\n", m.name.c_str(),
-            m.spsc_channels.size(), m.spmc_channels.size(), m.reads.size(), m.writes.size());
-    }
+    print_systems(
+        compute_systems_, "Compute", [](const auto& entry [[maybe_unused]], const auto& m) {
+            printf(
+                "  [%s] spsc:%zu spmc:%zu res:%zu res_mut:%zu\n", m.name.c_str(),
+                m.spsc_channels.size(), m.spmc_channels.size(), m.reads.size(), m.writes.size());
+        });
 
     printf("Execution levels: %zu\n", levels_.size());
     for (std::size_t i = 0; i < levels_.size(); ++i) {
@@ -343,67 +371,28 @@ void Scheduler::print_systems() const {
         printf("\n");
     }
 
-    // Print wake chains (which systems trigger which compute systems)
-    printf("Wake chains (fixed_rate -> compute):\n");
-    for (std::size_t i = 0; i < fixed_rate_systems_.size(); ++i) {
-        const auto& excl_name = fixed_rate_systems_[i].system->meta().name;
-        const auto affects    = i < fixed_rate_affects_.size() ? fixed_rate_affects_[i] : 0U;
-
-        printf("  [%s] -> ", excl_name.c_str());
-        if (affects == 0) {
-            printf("(none)");
-        } else {
-            bool first = true;
-            for (std::size_t j = 0; j < compute_systems_.size(); ++j) {
-                if (affects & (1UL << j)) {
-                    if (!first)
-                        printf(", ");
-                    printf("[%s]", compute_systems_[j].system->meta().name.c_str());
-                    first = false;
-                }
-            }
-        }
-        printf("\n");
-    }
-
-    printf("Wake chains (compute -> compute):\n");
-    for (std::size_t i = 0; i < compute_systems_.size(); ++i) {
-        const auto& comp_name = compute_systems_[i].system->meta().name;
-        const auto affects    = i < compute_affects_.size() ? compute_affects_[i] : 0U;
-
-        printf("  [%s] -> ", comp_name.c_str());
-        if (affects == 0) {
-            printf("(none)");
-        } else {
-            bool first = true;
-            for (std::size_t j = 0; j < compute_systems_.size(); ++j) {
-                if (affects & (1UL << j)) {
-                    if (!first)
-                        printf(", ");
-                    printf("[%s]", compute_systems_[j].system->meta().name.c_str());
-                    first = false;
-                }
-            }
-        }
-        printf("\n");
-    }
+    // Print wake chains using unified helper
+    print_wake_chains(
+        "Wake chains (fixed_rate -> compute):", fixed_rate_systems_, fixed_rate_affects_,
+        compute_systems_);
+    print_wake_chains(
+        "Wake chains (compute -> compute):", compute_systems_, compute_affects_, compute_systems_);
 }
 
 void Scheduler::print_mermaid_wake_chains() const {
     printf("```mermaid\n");
     printf("flowchart LR\n\n");
 
-    // FixedRate nodes
-    for (std::size_t i = 0; i < fixed_rate_systems_.size(); ++i) {
-        const auto& name = fixed_rate_systems_[i].system->meta().name;
-        printf("    E%d[%s]\n", (int)i, name.c_str());
-    }
+    // Unified node printer (eliminates duplicate loops)
+    auto print_nodes = [](const auto& systems, const char* prefix) {
+        for (std::size_t i = 0; i < systems.size(); ++i) {
+            const auto& name = systems[i].system->meta().name;
+            printf("    %s%d[%s]\n", prefix, (int)i, name.c_str());
+        }
+    };
 
-    // Compute nodes
-    for (std::size_t i = 0; i < compute_systems_.size(); ++i) {
-        const auto& name = compute_systems_[i].system->meta().name;
-        printf("    C%d[%s]\n", (int)i, name.c_str());
-    }
+    print_nodes(fixed_rate_systems_, "E");
+    print_nodes(compute_systems_, "C");
 
     printf("\n");
 
@@ -436,11 +425,7 @@ void Scheduler::print_stats() const {
     const auto compute_cycles = compute_cycles_.load(std::memory_order_relaxed);
     const auto compute_total  = compute_total_time_ns_.load(std::memory_order_relaxed);
     const auto compute_last   = compute_last_time_ns_.load(std::memory_order_relaxed);
-
-    std::uint64_t notify_total = 0;
-    for (const auto& s : fixed_rate_stats_) {
-        notify_total += s.notify_count.load(std::memory_order_relaxed);
-    }
+    const auto notify_total   = sum_notify_counts();
 
     printf("\n");
     printf("=== Scheduler Performance (%.1fs) ===\n", elapsed_sec);
@@ -453,48 +438,58 @@ void Scheduler::print_stats() const {
             compute_last / 1e6);
     }
     printf(" | notifies: %-4" PRIu64 " (%.1f Hz)\n", notify_total, notify_total / elapsed_sec);
-    // FixedRate systems - system name on one line, stats on the next
-    for (std::size_t i = 0; i < fixed_rate_systems_.size(); ++i) {
-        const auto& entry     = fixed_rate_systems_[i];
-        const auto& sys_stats = fixed_rate_stats_[i];
-        const auto notify_cnt = sys_stats.notify_count.load(std::memory_order_relaxed);
-        const auto latency    = sys_stats.latency_hist.compute();
-        const auto actual_hz  = latency.count / elapsed_sec;
 
-        printf(
-            "  %-30s@%.1fHz(%uHz) runs:%zu", entry.system->meta().name.c_str(), actual_hz,
-            entry.policy.frequency_hz, latency.count);
-        if (notify_cnt > 0) {
-            printf(" notif:%" PRIu64, notify_cnt);
-        }
-        printf("\n");
-
+    // Helper lambda: print latency statistics
+    auto print_latency_stats = [](const auto& latency) {
         if (latency.count > 0) {
             printf(
                 "   min:%.2f p50:%.2f p95:%.2f max:%.2f ms", latency.min_ns / 1e6,
                 latency.p50_ns / 1e6, latency.p95_ns / 1e6, latency.max_ns / 1e6);
             printf("\n");
         }
-    }
+    };
+
+    // Unified stats printer (eliminates duplicate loop structure)
+    auto print_system_stats = [&](const auto& systems, const auto& stats, auto print_fn) {
+        for (std::size_t i = 0; i < systems.size(); ++i) {
+            const auto& entry     = systems[i];
+            const auto& sys_stats = stats[i];
+            print_fn(entry, sys_stats, elapsed_sec);
+        }
+    };
+
+    // FixedRate systems - system name on one line, stats on the next
+    print_system_stats(
+        fixed_rate_systems_, fixed_rate_stats_,
+        [&](const auto& entry, const auto& sys_stats, double) {
+            const auto notify_cnt = sys_stats.notify_count.load(std::memory_order_relaxed);
+            const auto latency    = sys_stats.latency_hist.compute();
+            const auto actual_hz  = latency.count / elapsed_sec;
+
+            printf(
+                "  %-30s@%.1fHz(%uHz) runs:%zu", entry.system->meta().name.c_str(), actual_hz,
+                entry.policy.frequency_hz, latency.count);
+            if (notify_cnt > 0) {
+                printf(" notif:%" PRIu64, notify_cnt);
+            }
+            printf("\n");
+
+            print_latency_stats(latency);
+        });
 
     // Compute systems - system name on one line, stats on the next
-    for (std::size_t i = 0; i < compute_systems_.size(); ++i) {
-        const auto& entry     = compute_systems_[i];
-        const auto& sys_stats = compute_stats_[i];
-        const auto latency    = sys_stats.latency_hist.compute();
-        const auto actual_hz  = latency.count / elapsed_sec;
+    print_system_stats(
+        compute_systems_, compute_stats_, [&](const auto& entry, const auto& sys_stats, double) {
+            const auto latency   = sys_stats.latency_hist.compute();
+            const auto actual_hz = latency.count / elapsed_sec;
 
-        printf(
-            "  %-30s@%.1fHz runs:%zu", entry.system->meta().name.c_str(), actual_hz, latency.count);
-        printf("\n");
-
-        if (latency.count > 0) {
             printf(
-                "   min:%.2f p50:%.2f p95:%.2f max:%.2f ms", latency.min_ns / 1e6,
-                latency.p50_ns / 1e6, latency.p95_ns / 1e6, latency.max_ns / 1e6);
+                "  %-30s@%.1fHz runs:%zu", entry.system->meta().name.c_str(), actual_hz,
+                latency.count);
             printf("\n");
-        }
-    }
+
+            print_latency_stats(latency);
+        });
     printf("======================================\n");
     printf("\n");
 }
@@ -507,15 +502,10 @@ auto Scheduler::get_stats_json() const -> std::string {
     const double elapsed_sec = elapsed.count();
 
     // Compute loop stats
-    const auto cycles     = compute_cycles_.load(std::memory_order_relaxed);
-    const auto total_time = compute_total_time_ns_.load(std::memory_order_relaxed);
-    const auto last_time  = compute_last_time_ns_.load(std::memory_order_relaxed);
-
-    // Sum notify counts from all fixed_rate systems
-    std::uint64_t notify_total = 0;
-    for (const auto& s : fixed_rate_stats_) {
-        notify_total += s.notify_count.load(std::memory_order_relaxed);
-    }
+    const auto cycles       = compute_cycles_.load(std::memory_order_relaxed);
+    const auto total_time   = compute_total_time_ns_.load(std::memory_order_relaxed);
+    const auto last_time    = compute_last_time_ns_.load(std::memory_order_relaxed);
+    const auto notify_total = sum_notify_counts();
 
     json root;
     root["runtime_seconds"] = elapsed_sec;
@@ -528,20 +518,10 @@ auto Scheduler::get_stats_json() const -> std::string {
     compute_json["last_time_ms"]   = last_time / 1e6;
     compute_json["total_notifies"] = notify_total;
 
-    // FixedRate systems
-    json& fixed_rate_arr = root["fixed_rate_systems"] = json::array();
-    for (std::size_t i = 0; i < fixed_rate_systems_.size(); ++i) {
-        const auto& entry     = fixed_rate_systems_[i];
-        const auto& sys_stats = fixed_rate_stats_[i];
-        const auto notify_cnt = sys_stats.notify_count.load(std::memory_order_relaxed);
-        const auto latency    = sys_stats.latency_hist.compute();
-
-        json sys;
-        sys["name"]      = entry.system->meta().name;
-        sys["target_hz"] = entry.policy.frequency_hz;
+    // Helper lambda: add latency statistics to JSON object
+    auto add_latency_stats = [](json& sys, const auto& latency, double elapsed_sec) {
         sys["runs"]      = latency.count;
         sys["actual_hz"] = latency.count / elapsed_sec;
-        sys["notifies"]  = notify_cnt;
         sys["min_ms"]    = latency.min_ns / 1e6;
         sys["p50_ms"]    = latency.p50_ns / 1e6;
         sys["p95_ms"]    = latency.p95_ns / 1e6;
@@ -550,32 +530,40 @@ auto Scheduler::get_stats_json() const -> std::string {
         sys["mean_ms"]   = latency.mean_ns / 1e6;
         sys["max_ms"]    = latency.max_ns / 1e6;
         sys["stddev_ms"] = latency.stddev_ns / 1e6;
+    };
 
-        fixed_rate_arr.push_back(sys);
-    }
+    // Unified JSON stats generator (eliminates duplicate loop structure)
+    auto generate_system_stats = [&](const auto& systems, const auto& stats, json& arr,
+                                     auto add_extra_fn) {
+        for (std::size_t i = 0; i < systems.size(); ++i) {
+            const auto& entry     = systems[i];
+            const auto& sys_stats = stats[i];
+            const auto latency    = sys_stats.latency_hist.compute();
+
+            json sys;
+            sys["name"] = entry.system->meta().name;
+            add_latency_stats(sys, latency, elapsed_sec);
+            add_extra_fn(sys, entry, sys_stats);
+            arr.push_back(sys);
+        }
+    };
+
+    // FixedRate systems
+    json& fixed_rate_arr = root["fixed_rate_systems"] = json::array();
+    generate_system_stats(
+        fixed_rate_systems_, fixed_rate_stats_, fixed_rate_arr,
+        [](json& sys, const auto& entry, const auto& stats) {
+            const auto notify_cnt = stats.notify_count.load(std::memory_order_relaxed);
+            sys["target_hz"]      = entry.policy.frequency_hz;
+            sys["notifies"]       = notify_cnt;
+        });
 
     // Compute systems
     json& compute_arr = root["compute_systems"] = json::array();
-    for (std::size_t i = 0; i < compute_systems_.size(); ++i) {
-        const auto& entry     = compute_systems_[i];
-        const auto& sys_stats = compute_stats_[i];
-        const auto latency    = sys_stats.latency_hist.compute();
-
-        json sys;
-        sys["name"]      = entry.system->meta().name;
-        sys["runs"]      = latency.count;
-        sys["actual_hz"] = latency.count / elapsed_sec;
-        sys["min_ms"]    = latency.min_ns / 1e6;
-        sys["p50_ms"]    = latency.p50_ns / 1e6;
-        sys["p95_ms"]    = latency.p95_ns / 1e6;
-        sys["p99_ms"]    = latency.p99_ns / 1e6;
-        sys["p999_ms"]   = latency.p999_ns / 1e6;
-        sys["mean_ms"]   = latency.mean_ns / 1e6;
-        sys["max_ms"]    = latency.max_ns / 1e6;
-        sys["stddev_ms"] = latency.stddev_ns / 1e6;
-
-        compute_arr.push_back(sys);
-    }
+    generate_system_stats(
+        compute_systems_, compute_stats_, compute_arr, [](json&, const auto&, const auto&) {
+            // Compute systems have no extra fields
+        });
 
     return root.dump();
 }
@@ -867,7 +855,8 @@ auto Scheduler::compute_levels() -> BuildResult {
     for (const auto& entry : fixed_rate_systems_) {
         const auto& meta = entry.system->meta();
 
-        for (const auto& ch : meta.spsc_channels) {
+        // Helper lambda to process writer channels (unified for spsc/spmc)
+        auto collect_writer = [&](const ChannelMeta& ch) {
             if (is_writer(ch.kind)) {
                 ChannelKey key{ch.type, ch.topic};
                 auto& usage                 = channels[key];
@@ -875,16 +864,13 @@ auto Scheduler::compute_levels() -> BuildResult {
                 usage.has_fixed_rate_writer = true;
                 usage.first_system          = meta.name;
             }
-        }
+        };
 
+        for (const auto& ch : meta.spsc_channels) {
+            collect_writer(ch);
+        }
         for (const auto& ch : meta.spmc_channels) {
-            if (is_writer(ch.kind)) {
-                ChannelKey key{ch.type, ch.topic};
-                auto& usage                 = channels[key];
-                usage.kind                  = ch.kind;
-                usage.has_fixed_rate_writer = true;
-                usage.first_system          = meta.name;
-            }
+            collect_writer(ch);
         }
     }
 
@@ -937,6 +923,16 @@ auto Scheduler::compute_levels() -> BuildResult {
     // Phase 2: Validate channel constraints
     // ========================================================================
 
+    // Helper: collect reader names from indices
+    auto collect_reader_names = [&](const std::vector<std::size_t>& reader_indices) {
+        std::vector<std::string> reader_names;
+        reader_names.reserve(reader_indices.size());
+        for (auto idx : reader_indices) {
+            reader_names.push_back(compute_systems_[idx].system->meta().name);
+        }
+        return reader_names;
+    };
+
     for (const auto& [key, usage] : channels) {
         // Count total writers (fixed_rate + compute)
         std::size_t total_writers = usage.writers.size() + (usage.has_fixed_rate_writer ? 1 : 0);
@@ -960,29 +956,19 @@ auto Scheduler::compute_levels() -> BuildResult {
 
         // SPSC with multiple readers is an error
         if (is_spsc(usage.kind) && usage.readers.size() > 1) {
-            std::vector<std::string> reader_names;
-            reader_names.reserve(usage.readers.size());
-            for (auto idx : usage.readers) {
-                reader_names.push_back(compute_systems_[idx].system->meta().name);
-            }
             return std::unexpected(
                 MultipleReadersError{
                     .key     = ChannelKeyInfo(key.type, key.topic, true),
-                    .readers = std::move(reader_names),
+                    .readers = collect_reader_names(usage.readers),
                 });
         }
 
         // Reader without writer is an error (neither fixed_rate nor compute writer)
         if (total_writers == 0 && !usage.readers.empty()) {
-            std::vector<std::string> reader_names;
-            reader_names.reserve(usage.readers.size());
-            for (auto idx : usage.readers) {
-                reader_names.push_back(compute_systems_[idx].system->meta().name);
-            }
             return std::unexpected(
                 OrphanedReaderError{
                     .key     = ChannelKeyInfo(key.type, key.topic, is_spsc(usage.kind)),
-                    .readers = std::move(reader_names),
+                    .readers = collect_reader_names(usage.readers),
                 });
         }
 
@@ -1064,15 +1050,6 @@ auto Scheduler::compute_levels() -> BuildResult {
         // There's a cycle - find it using DFS
         std::vector<std::string> cycle;
 
-        // Find a node still in the cycle (in_degree > 0)
-        std::size_t start = 0;
-        for (std::size_t i = 0; i < n; ++i) {
-            if (in_degree[i] > 0) {
-                start = i;
-                break;
-            }
-        }
-
         // Simple cycle detection: follow edges until we revisit a node
         std::vector visited(n, false);
         std::vector in_stack(n, false);
@@ -1137,11 +1114,9 @@ auto Scheduler::compute_levels() -> BuildResult {
     // For each fixed_rate system, compute which compute systems it affects
     fixed_rate_affects_.resize(fixed_rate_systems_.size(), 0);
 
-    for (std::size_t i = 0; i < fixed_rate_systems_.size(); ++i) {
-        std::uint64_t affects = 0;
-        const auto& meta      = fixed_rate_systems_[i].system->meta();
-        // Find compute systems that directly read from this fixed_rate's channels
-        for (const auto& ch : meta.spsc_channels) {
+    // Helper lambda: process writer channels and accumulate affected systems
+    auto process_writer_channels = [&](const auto& meta_channels, std::uint64_t& affects) {
+        for (const auto& ch : meta_channels) {
             if (is_writer(ch.kind)) {
                 ChannelKey key{ch.type, ch.topic};
                 if (auto it = channels.find(key); it != channels.end()) {
@@ -1152,18 +1127,15 @@ auto Scheduler::compute_levels() -> BuildResult {
                 }
             }
         }
+    };
 
-        for (const auto& ch : meta.spmc_channels) {
-            if (is_writer(ch.kind)) {
-                ChannelKey key{ch.type, ch.topic};
-                if (auto it = channels.find(key); it != channels.end()) {
-                    for (auto reader : it->second.readers) {
-                        affects |= (1UL << reader);
-                        affects |= dependents[reader];
-                    }
-                }
-            }
-        }
+    for (std::size_t i = 0; i < fixed_rate_systems_.size(); ++i) {
+        std::uint64_t affects = 0;
+        const auto& meta      = fixed_rate_systems_[i].system->meta();
+
+        // Find compute systems that directly read from this fixed_rate's channels
+        process_writer_channels(meta.spsc_channels, affects);
+        process_writer_channels(meta.spmc_channels, affects);
 
         fixed_rate_affects_[i] = affects;
     }

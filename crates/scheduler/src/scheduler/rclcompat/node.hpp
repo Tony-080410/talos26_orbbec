@@ -5,6 +5,8 @@
 #include "../scheduler.hpp"
 #include "../system/components.hpp"
 #include "../system/system.hpp"
+#include "registry.hpp"
+#include "system.hpp"
 #include "timer_factory.hpp"
 
 namespace talos::scheduler::rclcompat {
@@ -75,38 +77,36 @@ public:
     template <typename T, typename Topic = DefaultTopic>
     [[nodiscard]] Publisher<T, Topic> create_publisher([[maybe_unused]] Qos qos = Qos::Volatile) {
         const ChannelKey key{typeid(T), typeid(Topic)};
-        const std::string system_name =
-            name_ + "/pub/" + demangle(typeid(Topic).name()) + "/" + demangle(typeid(T).name());
+        const std::string system_name = make_system_name<T, Topic>("pub");
 
         // Check if this channel is already owned
         if (pub_slots_.contains(key)) {
-            SPDLOG_CRITICAL(
+            using namespace talos::scheduler;
+            panic(
                 "Node '{}': Publisher for channel {}@{} already exists", name_,
                 demangle(key.type.name()), demangle(key.topic.name()));
-            std::abort();
         }
 
         // Create PubSlot using shared_ptr (std::any requires copy-constructibility)
-        auto slot           = std::make_shared<PubSlot<T, Topic>>();
-        auto* slot_ptr      = slot.get();
-        pub_slots_[key]     = slot; // Store as std::any (shared_ptr is copyable)
-        pub_slot_ptrs_[key] = slot_ptr;
+        auto slot       = std::make_shared<PubSlot<T, Topic>>();
+        pub_slots_[key] = slot;
 
         // Register ownership
         registry_.register_owner(key, system_name);
 
         // Claim the publisher handle
         if (!registry_.try_claim(key)) {
-            SPDLOG_CRITICAL(
+            using namespace talos::scheduler;
+            panic(
                 "Node '{}': Failed to claim publisher for channel {}@{}", name_,
                 demangle(key.type.name()), demangle(key.topic.name()));
-            std::abort();
         }
 
         // Create the system (deferred registration until finalize())
-        pending_systems_.push_back(std::make_unique<RclPubSystem<T, Topic>>(system_name, slot_ptr));
+        pending_systems_.push_back(
+            std::make_unique<RclPubSystem<T, Topic>>(system_name, slot.get()));
 
-        return Publisher<T, Topic>(slot_ptr, &registry_, key);
+        return Publisher<T, Topic>(slot.get(), &registry_, key);
     }
 
     /**
@@ -127,8 +127,7 @@ public:
     template <typename T, typename Topic = DefaultTopic>
     void create_subscription(
         std::function<void(const T&)> callback, [[maybe_unused]] Qos qos = Qos::Volatile) {
-        const std::string system_name =
-            name_ + "/sub/" + demangle(typeid(Topic).name()) + "/" + demangle(typeid(T).name());
+        const std::string system_name = make_system_name<T, Topic>("sub");
 
         pending_systems_.push_back(
             std::make_unique<RclSubSystem<T, Topic>>(system_name, std::move(callback)));
@@ -143,7 +142,7 @@ public:
      * ## Parameters
      *
      * - `frequency`: Timer frequency from the Frequency enum (Hz_1 to Hz_1000)
-     * - `callback`: function to call at each timer tick
+     * - `callback`: function to call at each timer tick (taken by value to enable move semantics)
      *
      * ## Example
      *
@@ -165,6 +164,12 @@ public:
      *     auto transform = tf.get();
      * });
      * ```
+     *
+     * ## Note
+     *
+     * The callback is taken by value (not const reference) to enable efficient
+     * move semantics when forwarding to the underlying timer system. For large
+     * capture lists, consider capturing by reference in the lambda itself.
      */
     void create_wall_timer(const Frequency frequency, std::function<void()> callback) {
         const std::string system_name = name_ + "/timer/" + std::to_string(pending_systems_.size());
@@ -336,11 +341,11 @@ public:
     template <typename T, typename Topic = DefaultTopic>
     [[nodiscard]] PubSlot<T, Topic>* get_pub_slot() noexcept {
         const ChannelKey key{typeid(T), typeid(Topic)};
-        const auto it = pub_slot_ptrs_.find(key);
-        if (it == pub_slot_ptrs_.end()) {
+        const auto it = pub_slots_.find(key);
+        if (it == pub_slots_.end()) {
             return nullptr;
         }
-        return static_cast<PubSlot<T, Topic>*>(it->second);
+        return std::any_cast<std::shared_ptr<PubSlot<T, Topic>>>(it->second).get();
     }
 
 private:
@@ -348,12 +353,18 @@ private:
     Scheduler& scheduler_;
     OwnershipRegistry registry_;
 
-    // Type-erased storage for PubSlots using std::any
-    // We store the unique_ptr in std::any and keep raw pointers separately
+    // Type-erased storage for PubSlots using shared_ptr for ownership
     std::unordered_map<ChannelKey, std::any, ChannelKeyHash> pub_slots_;
-    std::unordered_map<ChannelKey, void*, ChannelKeyHash> pub_slot_ptrs_;
 
     std::vector<std::unique_ptr<SystemBase>> pending_systems_;
+
+    /// Helper: build system name from type, topic, and kind (eliminates duplicate string
+    /// construction)
+    template <typename T, typename Topic = DefaultTopic>
+    [[nodiscard]] std::string make_system_name(std::string_view kind) const {
+        return name_ + "/" + std::string(kind) + "/" + demangle(typeid(Topic).name()) + "/"
+             + demangle(typeid(T).name());
+    }
 };
 
 } // namespace talos::scheduler::rclcompat

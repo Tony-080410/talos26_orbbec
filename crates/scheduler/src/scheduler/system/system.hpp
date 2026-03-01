@@ -5,7 +5,6 @@
 #include "execution_policy.hpp"
 #include "system_meta.hpp"
 
-#include <functional>
 #include <memory>
 #include <utility>
 
@@ -79,29 +78,7 @@ struct extract_local_types<std::tuple<Ts...>> {
 template <typename Tuple>
 using extract_local_types_t = extract_local_types<Tuple>::type;
 
-template <typename T>
-auto make_arg(World& world) noexcept {
-    using Inner = inner_type_t<T>;
-    using Topic = inner_topic_t<T>;
-
-    if constexpr (is_res_type<T>::value) {
-        return world.get_res<Inner>();
-    } else if constexpr (is_res_mut_type<T>::value) {
-        return world.get_res_mut<Inner>();
-    } else if constexpr (is_spsc_reader<T>::value) {
-        return world.get_spsc_reader<Inner, Topic>();
-    } else if constexpr (is_spsc_writer<T>::value) {
-        return world.get_spsc_writer<Inner, Topic>();
-    } else if constexpr (is_spmc_reader<T>::value) {
-        return world.get_spmc_reader<Inner, Topic>();
-    } else if constexpr (is_spmc_writer<T>::value) {
-        return world.get_spmc_writer<Inner, Topic>();
-    } else {
-        static_assert(sizeof(T) == 0, "Unknown parameter type");
-    }
-}
-
-// Overload for local<T> and non-local types with storage - uses compile-time index
+// Overload for local<T> - uses compile-time index
 template <typename T, typename LocalStorage, std::size_t LocalIdx>
 auto make_arg(
     World& world, LocalStorage& local_storage,
@@ -111,7 +88,7 @@ auto make_arg(
         auto& storage = std::get<LocalIdx>(local_storage);
         return local<Inner>{&storage};
     } else {
-        return make_arg<T>(world);
+        return world.get<T>();
     }
 }
 
@@ -147,8 +124,7 @@ class System : public SystemBase {
     void bind_written_flags() noexcept {
         if constexpr (I < std::tuple_size_v<args_tuple>) {
             using ArgType = std::tuple_element_t<I, args_tuple>;
-            if constexpr (
-                detail::is_spsc_writer<ArgType>::value || detail::is_spmc_writer<ArgType>::value) {
+            if constexpr (detail::is_writer<ArgType>::value) {
                 std::get<I>(*cached_args_).written_flag_ = &written_;
             }
             bind_written_flags<I + 1>();

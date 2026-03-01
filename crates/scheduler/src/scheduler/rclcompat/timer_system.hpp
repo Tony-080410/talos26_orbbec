@@ -2,7 +2,6 @@
 
 #include "../system/execution_policy.hpp"
 #include "system.hpp"
-#include "system_builder.hpp"
 #include <spdlog/spdlog.h>
 
 namespace talos::scheduler::rclcompat {
@@ -27,21 +26,9 @@ public:
 
     explicit RclTimerSystem(std::string name, Callback callback) noexcept
         : callback_(std::move(callback)) {
-        meta_ =
-            SystemMetaBuilder(std::move(name)).policy(system::make_policy_info<Policy>()).build();
-    }
-
-    /**
-     * @brief Track a publisher that the callback may write to
-     *
-     * Used for wake chain computation.
-     */
-    void track_publisher(
-        std::atomic<bool>* write_flag, const std::type_index type,
-        const std::type_index topic) noexcept {
-        tracked_write_flags_.push_back(write_flag);
-        meta_.spmc_channels.push_back(
-            ChannelMeta{.type = type, .topic = topic, .kind = channel_kind::spmc_writer});
+        meta_ = build_meta<Policy>(std::move(name), [](auto&) {
+            // Timer systems don't add any channels
+        });
     }
 
     void bind([[maybe_unused]] World& world) noexcept override {
@@ -53,22 +40,11 @@ public:
         CallbackContextScope scope(this);
         callback_();
 
-        // Check if any publisher wrote data
-        bool any_written = false;
-        for (auto* flag : tracked_write_flags_) {
-            if (flag->exchange(false, std::memory_order_acq_rel)) {
-                any_written = true;
-            }
-        }
-        return any_written;
+        return detail::check_tracked_write_flags(tracked_write_flags_);
     }
 
-    const SystemMeta& meta() const noexcept override { return meta_; }
-
 private:
-    SystemMeta meta_;
     Callback callback_;
-    std::vector<std::atomic<bool>*> tracked_write_flags_;
 };
 
 } // namespace talos::scheduler::rclcompat

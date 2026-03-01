@@ -373,8 +373,9 @@ private:
         // Move constructor: atomics are not movable, so we load and store
         FixedRateStats(FixedRateStats&& other) noexcept
             : notify_count(other.notify_count.load(std::memory_order_relaxed))
-            , latency_hist(other.latency_hist) {}
+            , latency_hist(std::move(other.latency_hist)) {}
 
+        // Non-copyable, non-movable-assignable
         FixedRateStats(const FixedRateStats&)            = delete;
         FixedRateStats& operator=(const FixedRateStats&) = delete;
         FixedRateStats& operator=(FixedRateStats&&)      = delete;
@@ -387,7 +388,7 @@ private:
         primitive::LatencyHistogram latency_hist;
 
         ComputeStats()                               = default;
-        ComputeStats(ComputeStats&&)                 = default;
+        ComputeStats(ComputeStats&&) noexcept        = default;
         ComputeStats(const ComputeStats&)            = delete;
         ComputeStats& operator=(const ComputeStats&) = delete;
         ComputeStats& operator=(ComputeStats&&)      = delete;
@@ -403,6 +404,21 @@ private:
         run_compute_selective(std::uint64_t ready_mask); // Returns mask of systems that wrote
 
     [[nodiscard]] auto compute_levels() -> BuildResult;
+
+    // Pause/resume helpers for hot-add
+    void request_compute_loop_pause() noexcept;
+    void resume_compute_loop() noexcept;
+
+    // Helper: sum notify counts from all fixed_rate systems
+    [[nodiscard]] std::uint64_t sum_notify_counts() const noexcept;
+
+    // Helper: check if scheduler is running and abort if so (eliminates duplicate checks)
+    void ensure_not_running() const noexcept {
+        if (running_.load(std::memory_order_acquire)) {
+            SPDLOG_CRITICAL("add_system: system already running!");
+            std::abort();
+        }
+    }
 
     // ========================================================================
     // Members
@@ -456,10 +472,7 @@ private:
 
 template <typename Policy, typename F>
 auto Scheduler::add_system(std::string&& name, F&& func) -> void {
-    if (running_.load(std::memory_order_acquire)) {
-        SPDLOG_CRITICAL("add_system: system already running!");
-        std::abort();
-    }
+    ensure_not_running();
 
     if (built_.load(std::memory_order_acquire)) {
         built_.store(false, std::memory_order_release);

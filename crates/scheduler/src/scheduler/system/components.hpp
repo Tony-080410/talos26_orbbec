@@ -87,10 +87,6 @@ struct basic_channel {
     [[nodiscard]] auto read_current() noexcept { return ptr_->read_current(); }
 
     [[nodiscard]] bool has_new() const noexcept requires HasNew { return ptr_->has_new(); }
-
-    // Note: valid() always returns true as ptr_ lifetime is guaranteed by the framework.
-    // Kept for API compatibility.
-    [[nodiscard]] bool valid() const noexcept { return ptr_ != nullptr; }
 };
 
 /**
@@ -117,10 +113,6 @@ struct basic_writer {
         if (written_flag_) [[likely]]
             *written_flag_ = true;
     }
-
-    // Note: valid() always returns true as ptr_ lifetime is guaranteed by the framework.
-    // Kept for API compatibility.
-    [[nodiscard]] bool valid() const noexcept { return ptr_ != nullptr; }
 };
 
 /**
@@ -145,42 +137,38 @@ struct basic_resource {
     mutable uint64_t last_seen_version_ = 0;
 
     // Read-only access (for both const and mutable resources)
-    [[nodiscard]] const T& operator*() const noexcept requires(!IsMutable) {
-        if (version_) [[likely]]
-            last_seen_version_ = version_->load(std::memory_order_acquire);
-        return *ptr_;
-    }
+    [[nodiscard]] const T& operator*() const noexcept requires(!IsMutable) { return read_impl(); }
 
-    [[nodiscard]] const T* operator->() const noexcept requires(!IsMutable) {
-        if (version_) [[likely]]
-            last_seen_version_ = version_->load(std::memory_order_acquire);
-        return ptr_;
-    }
+    [[nodiscard]] const T* operator->() const noexcept requires(!IsMutable) { return &read_impl(); }
 
     // Mutable access (only for res_mut)
-    [[nodiscard]] T& operator*() noexcept requires IsMutable {
-        if (version_) [[likely]]
-            version_->fetch_add(1, std::memory_order_release);
-        return *ptr_;
-    }
+    [[nodiscard]] T& operator*() noexcept requires IsMutable { return write_impl(); }
 
-    [[nodiscard]] T* operator->() noexcept requires IsMutable {
-        if (version_) [[likely]]
-            version_->fetch_add(1, std::memory_order_release);
-        return ptr_;
-    }
+    [[nodiscard]] T* operator->() noexcept requires IsMutable { return &write_impl(); }
 
     // Const overloads for mutable resource
-    [[nodiscard]] const T& operator*() const noexcept { return *ptr_; }
-    [[nodiscard]] const T* operator->() const noexcept { return ptr_; }
+    [[nodiscard]] const T& operator*() const noexcept { return read_impl(); }
+    [[nodiscard]] const T* operator->() const noexcept { return &read_impl(); }
 
     [[nodiscard]] bool is_changed() const noexcept {
         return detail::check_version_changed(version_, last_seen_version_);
     }
 
-    // Note: valid() always returns true as ptr_ lifetime is guaranteed by the framework.
-    // Kept for API compatibility.
-    [[nodiscard]] bool valid() const noexcept { return ptr_ != nullptr; }
+private:
+    // Unified read implementation (eliminates duplication between read-only and mutable const
+    // access)
+    [[nodiscard]] const T& read_impl() const noexcept {
+        if (version_) [[likely]]
+            last_seen_version_ = version_->load(std::memory_order_acquire);
+        return *ptr_;
+    }
+
+    // Unified write implementation (eliminates duplication in mutable accessors)
+    [[nodiscard]] T& write_impl() noexcept {
+        if (version_) [[likely]]
+            version_->fetch_add(1, std::memory_order_release);
+        return *ptr_;
+    }
 };
 
 // ============================================================================
@@ -205,10 +193,6 @@ struct local {
     [[nodiscard]] T* operator->() noexcept { return ptr_; }
     [[nodiscard]] const T& operator*() const noexcept { return *ptr_; }
     [[nodiscard]] const T* operator->() const noexcept { return ptr_; }
-
-    // Note: valid() always returns true as ptr_ lifetime is guaranteed by the framework.
-    // Kept for API compatibility.
-    [[nodiscard]] bool valid() const noexcept { return ptr_ != nullptr; }
 };
 
 // ============================================================================

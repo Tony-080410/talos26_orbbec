@@ -125,27 +125,34 @@ using default_policy = pool_compute;
 
 namespace detail {
 
+/// Unified fixed_rate policy checker
 template <typename T>
-struct is_fixed_rate_policy : std::false_type {};
+struct is_fixed_rate_policy_base : std::false_type {};
 
-template <std::uint32_t F, std::int32_t A, std::int32_t P>
-struct is_fixed_rate_policy<fixed_rate<F, A, P>> : std::true_type {};
+// Both fixed_rate and fixed_rate_silent are fixed_rate policies (unified check)
+template <std::uint32_t F, std::int32_t A, std::int32_t P, typename Topic>
+struct is_fixed_rate_policy_base<fixed_rate_base<F, A, P, Topic>> : std::true_type {};
 
-template <std::uint32_t F, std::int32_t A, std::int32_t P>
-struct is_fixed_rate_policy<fixed_rate_silent<F, A, P>> : std::true_type {};
+/// Check if policy is fixed_rate (both notifying and silent)
+template <typename T>
+struct is_fixed_rate_policy : is_fixed_rate_policy_base<T> {};
 
+/// Check if policy is pool_compute
 template <typename T>
 struct is_pool_policy : std::is_same<T, pool_compute> {};
 
+/// Check if policy is pool_visualization
 template <typename T>
 struct is_visualization_policy : std::is_same<T, pool_visualization> {};
 
+/// Check if policy notifies (only fixed_rate, not fixed_rate_silent)
 template <typename T>
-struct is_notifying_policy : std::false_type {};
+struct is_notifying_policy : is_fixed_rate_policy_base<T> {};
 
 template <std::uint32_t F, std::int32_t A, std::int32_t P>
 struct is_notifying_policy<fixed_rate<F, A, P>> : std::true_type {};
 
+/// Check if policy is silent (only fixed_rate_silent)
 template <typename T>
 struct is_silent_policy : std::false_type {};
 
@@ -221,6 +228,21 @@ struct PolicyInfo {
     bool notifies                = false;
 
     /**
+     * @brief Unified policy kind checker
+     *
+     * ## Parameters
+     *
+     * - `kind`: the PolicyKind to check against
+     *
+     * ## Returns
+     *
+     * `true` if this policy matches the given kind
+     */
+    [[nodiscard]] constexpr bool is_kind(PolicyKind kind) const noexcept {
+        return this->kind == kind;
+    }
+
+    /**
      * @brief Check if this is an fixed_rate policy
      *
      * ## Returns
@@ -228,7 +250,7 @@ struct PolicyInfo {
      * `true` if fixed_rate, `false` if pool compute
      */
     [[nodiscard]] constexpr bool is_fixed_rate() const noexcept {
-        return kind == PolicyKind::FixedRate;
+        return is_kind(PolicyKind::FixedRate);
     }
 
     /**
@@ -239,11 +261,11 @@ struct PolicyInfo {
      * `true` if pool compute, `false` if fixed_rate
      */
     [[nodiscard]] constexpr bool is_pool() const noexcept {
-        return kind == PolicyKind::PoolCompute;
+        return is_kind(PolicyKind::PoolCompute);
     }
 
     [[nodiscard]] constexpr bool is_visualization() const noexcept {
-        return kind == PolicyKind::PoolVisualization;
+        return is_kind(PolicyKind::PoolVisualization);
     }
 };
 

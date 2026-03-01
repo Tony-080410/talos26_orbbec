@@ -2,8 +2,10 @@
 
 #include <cstdlib>
 #include <expected>
+#include <spdlog/spdlog.h>
 #include <string>
 #include <typeindex>
+#include <utility>
 #include <variant>
 #include <vector>
 
@@ -102,5 +104,43 @@ using BuildError = std::variant<
  * @brief Build result type
  */
 using BuildResult = std::expected<void, BuildError>;
+
+// ============================================================================
+// Panic Utility
+// ============================================================================
+
+/**
+ * @brief Log a critical error and abort (panic)
+ *
+ * Centralizes fatal error handling pattern (SPDLOG_CRITICAL + std::abort).
+ * Using this utility ensures consistent error reporting and makes it easier
+ * to modify fatal error behavior globally.
+ *
+ * ## Template parameters
+ *
+ * - `Args`: argument types (deduced)
+ *
+ * ## Parameters
+ *
+ * - `fmt`: format string for the error message
+ * - `args`: arguments to format into the message
+ *
+ * ## Behavior
+ *
+ * - Logs the formatted message at CRITICAL level
+ * - Calls std::abort() to terminate the program
+ * - Marked noexcept and [[noreturn]] for optimizer awareness
+ *
+ * ## Note
+ *
+ * Uses spdlog::critical() function (runtime format checking) instead of
+ * SPDLOG_CRITICAL macro (compile-time checking) to avoid issues with
+ * forwarding references and temporary objects.
+ */
+template <typename... Args>
+[[noreturn]] inline void panic(const char* fmt, const Args&... args) noexcept {
+    spdlog::critical(fmt, args...);
+    std::abort();
+}
 
 } // namespace talos::scheduler

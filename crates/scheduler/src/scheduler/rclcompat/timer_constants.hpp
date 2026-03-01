@@ -4,6 +4,31 @@
 
 namespace talos::scheduler::rclcompat {
 
+// ============================================================================
+// X-Macro: List of supported timer frequencies
+// ============================================================================
+// Used to generate:
+// - Frequency enum values
+// - Timer factory switch cases
+// ============================================================================
+#define TALOS_TIMER_FREQUENCIES       \
+    X(1, "Low frequency monitoring")  \
+    X(2, "Low frequency monitoring")  \
+    X(5, "Low frequency monitoring")  \
+    X(10, "Standard control")         \
+    X(20, "Standard control")         \
+    X(27, "Standard control (~37ms)") \
+    X(30, "Sensors/cameras")          \
+    X(50, "Sensors/cameras")          \
+    X(60, "Sensors/cameras")          \
+    X(100, "Sensors/cameras")         \
+    X(120, "High-frequency")          \
+    X(150, "High-frequency")          \
+    X(200, "High-frequency")          \
+    X(250, "High-frequency")          \
+    X(500, "High-frequency")          \
+    X(1000, "High-frequency")
+
 /**
  * @brief Supported timer frequencies
  *
@@ -11,22 +36,9 @@ namespace talos::scheduler::rclcompat {
  * Only these frequencies are allowed - no custom frequencies.
  */
 enum class Frequency : std::uint32_t {
-    Hz_1    = 1,   ///< Low frequency monitoring
-    Hz_2    = 2,   ///< Low frequency monitoring
-    Hz_5    = 5,   ///< Low frequency monitoring
-    Hz_10   = 10,  ///< Standard control
-    Hz_20   = 20,  ///< Standard control
-    Hz_27   = 27,  ///< Standard control (~37ms period)
-    Hz_30   = 30,  ///< Sensors/cameras
-    Hz_50   = 50,  ///< Sensors/cameras
-    Hz_60   = 60,  ///< Sensors/cameras
-    Hz_100  = 100, ///< Sensors/cameras
-    Hz_120  = 120, ///< High-frequency
-    Hz_150  = 150, ///< High-frequency
-    Hz_200  = 200, ///< High-frequency
-    Hz_250  = 250, ///< High-frequency
-    Hz_500  = 500, ///< High-frequency
-    Hz_1000 = 1000 ///< High-frequency
+#define X(freq, desc) Hz_##freq = (freq),
+    TALOS_TIMER_FREQUENCIES
+#undef X
 };
 
 [[nodiscard]] constexpr std::uint32_t to_uint32(Frequency freq) noexcept {

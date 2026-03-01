@@ -55,9 +55,10 @@ struct VersionedResource {
 
 template <typename T>
 struct SpscStorage {
-    using Channel = primitive::SpscChannel<T>;
-    using Writer  = Channel::Writer;
-    using Reader  = Channel::Reader;
+    using Channel    = primitive::SpscChannel<T>;
+    using Writer     = Channel::Writer;
+    using Reader     = Channel::Reader;
+    using value_type = T;
 
     std::shared_ptr<Writer> writer;
     std::shared_ptr<Reader> reader;
@@ -78,8 +79,9 @@ struct SpscStorage {
 
 template <typename T>
 struct SpmcStorage {
-    using Channel = primitive::SpmcChannel<T>;
-    using Reader  = Channel::Reader;
+    using Channel    = primitive::SpmcChannel<T>;
+    using Reader     = Channel::Reader;
+    using value_type = T;
 
     std::shared_ptr<Channel> channel;
     std::vector<std::shared_ptr<Reader>> readers;
@@ -102,12 +104,9 @@ struct SpmcStorage {
 // ============================================================================
 using namespace system;
 using namespace talos::scheduler::detail;
+
 class World {
 public:
-    std::unordered_map<std::type_index, std::any> resources_;
-    std::unordered_map<ChannelKey, std::any, ChannelKeyHash> spsc_storage_;
-    std::unordered_map<ChannelKey, std::any, ChannelKeyHash> spmc_storage_;
-
     // ==================== Resource API ====================
 
     template <typename T>
@@ -123,87 +122,119 @@ public:
     /// Get read-only resource. Panics if resource not found (bind-phase error).
     template <typename T>
     [[nodiscard]] res<T> get_res() const noexcept {
-        const auto it = resources_.find(typeid(T));
-        if (it == resources_.end()) [[unlikely]] {
-            SPDLOG_CRITICAL("Resource not found: {}", demangle(typeid(T).name()));
-            std::abort();
-        }
-        auto storage = std::any_cast<std::shared_ptr<VersionedResource<T>>>(it->second);
-        return res<T>{&storage->value, &storage->version, 0};
+        return get_resource_helper<T, res<T>>(
+            [](auto* storage) { return res<T>{&storage->value, &storage->version, 0}; });
     }
 
     /// Get mutable resource. Panics if resource not found (bind-phase error).
     template <typename T>
     [[nodiscard]] res_mut<T> get_res_mut() noexcept {
-        const auto it = resources_.find(typeid(T));
-        if (it == resources_.end()) [[unlikely]] {
-            SPDLOG_CRITICAL("Resource not found: {}", demangle(typeid(T).name()));
-            std::abort();
-        }
-        auto storage = std::any_cast<std::shared_ptr<VersionedResource<T>>>(it->second);
-        return res_mut<T>{&storage->value, &storage->version, 0};
+        return get_resource_helper<T, res_mut<T>>(
+            [](auto* storage) { return res_mut<T>{&storage->value, &storage->version, 0}; });
     }
 
     template <typename T>
     [[nodiscard]] std::expected<uint64_t, std::string> update_resource(T new_value) {
         auto it = resources_.find(typeid(T));
         if (it == resources_.end()) {
-            return std::unexpected("Resource not found: " + std::string(typeid(T).name()));
+            return std::unexpected("Resource not found: " + demangle(typeid(T).name()));
         }
-
         auto storage = std::any_cast<std::shared_ptr<VersionedResource<T>>>(it->second);
         return storage->update(std::move(new_value));
     }
 
-    // ==================== SPSC Channel API ====================
+    // ==================== Type-Dispatched Access ====================
+    //
+    // Unified get() that uses tag dispatch (zero if-constexpr, zero pasta)
+    //
+    // Usage: world.get<res<Config>>(); world.get<spsc<Image, Tag>>();
+
+    template <typename ComponentT>
+    [[nodiscard]] auto get() noexcept {
+        return get_impl(ComponentT{});
+    }
+
+private:
+private:
+    // Unified channel accessor: one template for all member-pointer-based access
+    template <typename Ret, typename Topic, typename Storage, auto MemberPtr>
+    [[nodiscard]] auto get_channel_member() noexcept {
+        auto* s = get_channel_storage<Storage, Topic>();
+        return Ret{(s->*MemberPtr).get()};
+    }
+
+    // Channel implementations (3 cases use unified get_channel_member, 1 special case)
+    template <typename T, typename Topic = DefaultTopic>
+    [[nodiscard]] auto get_impl(spsc<T, Topic>) noexcept {
+        return get_channel_member<spsc<T, Topic>, Topic, SpscStorage<T>, &SpscStorage<T>::reader>();
+    }
 
     template <typename T, typename Topic = DefaultTopic>
-    void ensure_spsc() {
-        if (const ChannelKey key{typeid(T), typeid(Topic)}; !spsc_storage_.contains(key)) {
-            spsc_storage_[key] = SpscStorage<T>::create();
+    [[nodiscard]] auto get_impl(spsc_mut<T, Topic>) noexcept {
+        return get_channel_member<
+            spsc_mut<T, Topic>, Topic, SpscStorage<T>, &SpscStorage<T>::writer>();
+    }
+
+    template <typename T, typename Topic = DefaultTopic>
+    [[nodiscard]] auto get_impl(spmc<T, Topic>) noexcept {
+        // Special case: spmc reader calls add_reader()
+        auto* s = get_channel_storage<SpmcStorage<T>, Topic>();
+        return spmc<T, Topic>{s->add_reader().get()};
+    }
+
+    template <typename T, typename Topic = DefaultTopic>
+    [[nodiscard]] auto get_impl(spmc_mut<T, Topic>) noexcept {
+        return get_channel_member<
+            spmc_mut<T, Topic>, Topic, SpmcStorage<T>, &SpmcStorage<T>::channel>();
+    }
+
+    template <typename T>
+    [[nodiscard]] auto get_impl(res<T>) noexcept {
+        return get_res<T>();
+    }
+
+    template <typename T>
+    [[nodiscard]] auto get_impl(res_mut<T>) noexcept {
+        return get_res_mut<T>();
+    }
+
+    // Original storage accessor (kept for get_channel_storage compatibility)
+    template <typename Storage, typename Topic = DefaultTopic>
+    [[nodiscard]] auto* get_channel_storage() noexcept {
+        using T = typename Storage::value_type;
+        const ChannelKey key{typeid(T), typeid(Topic)};
+        auto& storage_map = select_storage_map<Storage>();
+        if (!storage_map.contains(key)) {
+            storage_map[key] = Storage::create();
         }
+        return std::any_cast<std::shared_ptr<Storage>>(storage_map.at(key)).get();
     }
 
-    template <typename T, typename Topic = DefaultTopic>
-    [[nodiscard]] spsc<T, Topic> get_spsc_reader() noexcept {
-        const ChannelKey key{typeid(T), typeid(Topic)};
-        ensure_spsc<T, Topic>();
-        auto storage_ptr = std::any_cast<std::shared_ptr<SpscStorage<T>>>(spsc_storage_.at(key));
-        return spsc<T, Topic>{storage_ptr->reader.get()};
-    }
+private:
+    std::unordered_map<std::type_index, std::any> resources_;
+    std::unordered_map<ChannelKey, std::any, ChannelKeyHash> spsc_storage_;
+    std::unordered_map<ChannelKey, std::any, ChannelKeyHash> spmc_storage_;
 
-    template <typename T, typename Topic = DefaultTopic>
-    [[nodiscard]] spsc_mut<T, Topic> get_spsc_writer() noexcept {
-        const ChannelKey key{typeid(T), typeid(Topic)};
-        ensure_spsc<T, Topic>();
-        auto storage_ptr = std::any_cast<std::shared_ptr<SpscStorage<T>>>(spsc_storage_.at(key));
-        return spsc_mut<T, Topic>{storage_ptr->writer.get()};
-    }
-
-    // ==================== SPMC Channel API ====================
-
-    template <typename T, typename Topic = DefaultTopic>
-    void ensure_spmc() {
-        if (const ChannelKey key{typeid(T), typeid(Topic)}; !spmc_storage_.contains(key)) {
-            spmc_storage_[key] = SpmcStorage<T>::create();
+    /// Helper: Get resource storage with unified error handling
+    template <typename T, typename Return, typename MapFn>
+    [[nodiscard]] Return get_resource_helper(MapFn&& map_fn) const noexcept {
+        const auto it = resources_.find(typeid(T));
+        if (it == resources_.end()) [[unlikely]] {
+            SPDLOG_CRITICAL("Resource not found: {}", demangle(typeid(T).name()));
+            std::abort();
         }
+        auto storage = std::any_cast<std::shared_ptr<VersionedResource<T>>>(it->second);
+        return map_fn(storage.get());
     }
 
-    template <typename T, typename Topic = DefaultTopic>
-    [[nodiscard]] spmc<T, Topic> get_spmc_reader() noexcept {
-        const ChannelKey key{typeid(T), typeid(Topic)};
-        ensure_spmc<T, Topic>();
-        auto storage_ptr = std::any_cast<std::shared_ptr<SpmcStorage<T>>>(spmc_storage_.at(key));
-        auto reader      = storage_ptr->add_reader();
-        return spmc<T, Topic>{reader.get()};
-    }
-
-    template <typename T, typename Topic = DefaultTopic>
-    [[nodiscard]] spmc_mut<T, Topic> get_spmc_writer() noexcept {
-        const ChannelKey key{typeid(T), typeid(Topic)};
-        ensure_spmc<T, Topic>();
-        auto storage_ptr = std::any_cast<std::shared_ptr<SpmcStorage<T>>>(spmc_storage_.at(key));
-        return spmc_mut<T, Topic>{storage_ptr->channel.get()};
+    /// Helper: Select the right storage map based on storage type
+    template <typename Storage>
+    auto& select_storage_map() noexcept {
+        if constexpr (std::is_same_v<Storage, SpscStorage<typename Storage::value_type>>) {
+            return spsc_storage_;
+        } else {
+            return spmc_storage_;
+        }
     }
 };
 
