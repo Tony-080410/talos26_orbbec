@@ -111,7 +111,7 @@ for file in "${FILES[@]}"; do
             echo "${CHECK} Formatting: $rel_path"
             "$CLANG_FORMAT" -i "$file"
         fi
-        ((NEEDS_FORMAT++))
+        : $((NEEDS_FORMAT++))
     elif [ "$VERBOSE" = true ]; then
         echo "${SPARKLE} Already formatted: $rel_path"
     fi
