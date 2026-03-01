@@ -3,8 +3,14 @@
 #include "primitive/channel.hpp"
 #include <atomic>
 #include <optional>
+#include <type_traits>
 
 namespace talos::scheduler::system {
+
+// ============================================================================
+// Concepts
+// ============================================================================
+
 template <typename T>
 concept topic_type = std::is_same_v<T, void> || requires { sizeof(T) == 0; };
 
@@ -19,214 +25,235 @@ concept component_kind = requires {
 struct DefaultTopic {};
 
 // ============================================================================
-// Channel Kind: Single enum for type identification
+// Channel Kind Enum
 // ============================================================================
 
 enum class channel_kind {
-    spsc_reader, // SPSC reader
-    spsc_writer, // SPSC writer
-    spmc_reader, // SPMC reader
-    spmc_writer, // SPMC writer
-    res,         // Read-only resource
-    res_mut,     // Mutable resource
-    local,       // System-local variable
+    spsc_reader, ///< SPSC reader
+    spsc_writer, ///< SPSC writer
+    spmc_reader, ///< SPMC reader
+    spmc_writer, ///< SPMC writer
+    res,         ///< Read-only resource
+    res_mut,     ///< Mutable resource
+    local,       ///< System-local variable
 };
 
 // ============================================================================
-// Channel Wrappers: Hold pointers to channel components
+// Detail Helpers
 // ============================================================================
 
-/// SPSC Reader wrapper
-template <typename T, typename Topic = DefaultTopic>
-struct spsc {
-    using value_type = T;
-    using topic_type = Topic;
-    using ReaderType = primitive::SpscChannel<T>::Reader;
+namespace detail {
 
-    static constexpr auto kind = channel_kind::spsc_reader;
-
-    ReaderType* ptr_ = nullptr;
-
-    [[nodiscard]] std::optional<T> read() noexcept { return ptr_ ? ptr_->read() : std::nullopt; }
-    [[nodiscard]] std::optional<T> read_current() noexcept {
-        return ptr_ ? ptr_->read_current() : std::nullopt;
+/// Version checking helper: shared by res and res_mut
+[[nodiscard]] inline bool
+    check_version_changed(const std::atomic<uint64_t>* version, uint64_t& last_seen) noexcept {
+    if (!version)
+        return false;
+    const auto current = version->load(std::memory_order_acquire);
+    if (current != last_seen) {
+        last_seen = current;
+        return true;
     }
+    return false;
+}
+
+} // namespace detail
+
+// ============================================================================
+// Unified Channel Templates
+// ============================================================================
+
+/**
+ * @brief Unified reader template
+ *
+ * @tparam T Value type
+ * @tparam Topic Topic tag type
+ * @tparam UnderlyingChannel Underlying channel reader type
+ * @tparam Kind Channel kind enum value
+ * @tparam HasNew Whether the reader has has_new() method (SPMC only)
+ */
+template <
+    typename T, typename Topic = DefaultTopic, typename UnderlyingChannel = void,
+    channel_kind Kind = static_cast<channel_kind>(0), bool HasNew = false>
+struct basic_channel {
+    using value_type           = T;
+    using topic_type           = Topic;
+    static constexpr auto kind = Kind;
+
+    UnderlyingChannel* ptr_ = nullptr; // Framework guarantees validity
+
+    [[nodiscard]] auto read() noexcept { return ptr_->read(); }
+
+    [[nodiscard]] auto read_current() noexcept { return ptr_->read_current(); }
+
+    [[nodiscard]] bool has_new() const noexcept requires HasNew { return ptr_->has_new(); }
+
+    // Note: valid() always returns true as ptr_ lifetime is guaranteed by the framework.
+    // Kept for API compatibility.
     [[nodiscard]] bool valid() const noexcept { return ptr_ != nullptr; }
 };
 
-/// SPSC Writer wrapper
-template <typename T, typename Topic = DefaultTopic>
-struct spsc_mut {
-    using value_type = T;
-    using topic_type = Topic;
-    using WriterType = primitive::SpscChannel<T>::Writer;
+/**
+ * @brief Unified writer template
+ *
+ * @tparam T Value type
+ * @tparam Topic Topic tag type
+ * @tparam UnderlyingChannel Underlying channel writer type
+ * @tparam Kind Channel kind enum value
+ */
+template <
+    typename T, typename Topic = DefaultTopic, typename UnderlyingChannel = void,
+    channel_kind Kind = static_cast<channel_kind>(0)>
+struct basic_writer {
+    using value_type           = T;
+    using topic_type           = Topic;
+    static constexpr auto kind = Kind;
 
-    static constexpr auto kind = channel_kind::spsc_writer;
-
-    WriterType* ptr_    = nullptr;
-    bool* written_flag_ = nullptr; // Set by scheduler before system runs
+    UnderlyingChannel* ptr_ = nullptr;
+    bool* written_flag_     = nullptr; // Set by scheduler for selective wake-up
 
     void write(T value) noexcept {
-        if (ptr_) [[likely]] {
-            ptr_->write(std::move(value));
-            if (written_flag_)
-                *written_flag_ = true;
-        }
+        ptr_->write(std::move(value));
+        if (written_flag_) [[likely]]
+            *written_flag_ = true;
     }
+
+    // Note: valid() always returns true as ptr_ lifetime is guaranteed by the framework.
+    // Kept for API compatibility.
     [[nodiscard]] bool valid() const noexcept { return ptr_ != nullptr; }
 };
 
-/// SPMC Reader wrapper
-template <typename T, typename Topic = DefaultTopic>
-struct spmc {
-    using value_type = T;
-    using topic_type = Topic;
-    using ReaderType = primitive::SpmcChannel<T>::Reader;
+/**
+ * @brief Unified resource template
+ *
+ * @tparam T Value type
+ * @tparam IsMutable True for mutable resource, false for read-only
+ * @tparam Kind Channel kind enum value
+ */
+template <typename T, bool IsMutable, channel_kind Kind>
+struct basic_resource {
+    using value_type           = T;
+    using topic_type           = void; // Resources don't use topics
+    static constexpr auto kind = Kind;
 
-    static constexpr auto kind = channel_kind::spmc_reader;
+    using PtrType = std::conditional_t<IsMutable, T*, const T*>;
+    using VersionPtrType =
+        std::conditional_t<IsMutable, std::atomic<uint64_t>*, const std::atomic<uint64_t>*>;
 
-    ReaderType* ptr_ = nullptr;
+    PtrType ptr_                        = nullptr;
+    VersionPtrType version_             = nullptr;
+    mutable uint64_t last_seen_version_ = 0;
 
-    [[nodiscard]] std::optional<T> read() noexcept {
-        if (ptr_) [[likely]] {
-            return ptr_->read();
-        }
-        return std::nullopt;
+    // Read-only access (for both const and mutable resources)
+    [[nodiscard]] const T& operator*() const noexcept requires(!IsMutable) {
+        if (version_) [[likely]]
+            last_seen_version_ = version_->load(std::memory_order_acquire);
+        return *ptr_;
     }
-    [[nodiscard]] std::optional<T> read_current() noexcept {
-        if (ptr_) [[likely]] {
-            return ptr_->read_current();
-        }
-        return std::nullopt;
+
+    [[nodiscard]] const T* operator->() const noexcept requires(!IsMutable) {
+        if (version_) [[likely]]
+            last_seen_version_ = version_->load(std::memory_order_acquire);
+        return ptr_;
     }
-    [[nodiscard]] bool has_new() const noexcept { return ptr_ && ptr_->has_new(); }
-    [[nodiscard]] bool valid() const noexcept { return ptr_ != nullptr; }
-};
 
-/// SPMC Writer wrapper (uses channel's write directly)
-template <typename T, typename Topic = DefaultTopic>
-struct spmc_mut {
-    using value_type  = T;
-    using topic_type  = Topic;
-    using ChannelType = primitive::SpmcChannel<T>;
-
-    static constexpr auto kind = channel_kind::spmc_writer;
-
-    ChannelType* ptr_   = nullptr;
-    bool* written_flag_ = nullptr; // Set by scheduler before system runs
-
-    void write(T value) noexcept {
-        if (ptr_) [[likely]] {
-            ptr_->write(std::move(value));
-            if (written_flag_)
-                *written_flag_ = true;
-        }
+    // Mutable access (only for res_mut)
+    [[nodiscard]] T& operator*() noexcept requires IsMutable {
+        if (version_) [[likely]]
+            version_->fetch_add(1, std::memory_order_release);
+        return *ptr_;
     }
+
+    [[nodiscard]] T* operator->() noexcept requires IsMutable {
+        if (version_) [[likely]]
+            version_->fetch_add(1, std::memory_order_release);
+        return ptr_;
+    }
+
+    // Const overloads for mutable resource
+    [[nodiscard]] const T& operator*() const noexcept { return *ptr_; }
+    [[nodiscard]] const T* operator->() const noexcept { return ptr_; }
+
+    [[nodiscard]] bool is_changed() const noexcept {
+        return detail::check_version_changed(version_, last_seen_version_);
+    }
+
+    // Note: valid() always returns true as ptr_ lifetime is guaranteed by the framework.
+    // Kept for API compatibility.
     [[nodiscard]] bool valid() const noexcept { return ptr_ != nullptr; }
 };
 
 // ============================================================================
-// Local Variables (per-system storage)
+// System-Local Variable
 // ============================================================================
 
-/// System-local variable (mutable, per-system instance)
-/// Unlike channels and resources, local<T> is NOT shared across systems
-/// and does NOT participate in dependency analysis.
+/**
+ * @brief System-local variable (mutable, per-system instance)
+ *
+ * Unlike channels and resources, local<T> is NOT shared across systems
+ * and does NOT participate in dependency analysis.
+ */
 template <typename T>
 struct local {
-    using value_type = T;
-    using topic_type = void;
-
+    using value_type           = T;
+    using topic_type           = void;
     static constexpr auto kind = channel_kind::local;
 
-    T* ptr_ = nullptr;
+    T* ptr_ = nullptr; // Framework guarantees validity
 
     [[nodiscard]] T& operator*() noexcept { return *ptr_; }
     [[nodiscard]] T* operator->() noexcept { return ptr_; }
     [[nodiscard]] const T& operator*() const noexcept { return *ptr_; }
     [[nodiscard]] const T* operator->() const noexcept { return ptr_; }
+
+    // Note: valid() always returns true as ptr_ lifetime is guaranteed by the framework.
+    // Kept for API compatibility.
     [[nodiscard]] bool valid() const noexcept { return ptr_ != nullptr; }
 };
 
 // ============================================================================
-// Resource Types
+// Type Aliases (Public API)
 // ============================================================================
 
-/// Read-only resource wrapper
+// SPSC Channel (Single Producer, Single Consumer)
+template <typename T, typename Topic = DefaultTopic>
+using spsc = basic_channel<
+    T, Topic, typename primitive::SpscChannel<T>::Reader, channel_kind::spsc_reader,
+    false // No has_new()
+    >;
+
+template <typename T, typename Topic = DefaultTopic>
+using spsc_mut =
+    basic_writer<T, Topic, typename primitive::SpscChannel<T>::Writer, channel_kind::spsc_writer>;
+
+// SPMC Channel (Single Producer, Multiple Consumers)
+template <typename T, typename Topic = DefaultTopic>
+using spmc = basic_channel<
+    T, Topic, typename primitive::SpmcChannel<T>::Reader, channel_kind::spmc_reader,
+    true // Has has_new()
+    >;
+
+template <typename T, typename Topic = DefaultTopic>
+using spmc_mut =
+    basic_writer<T, Topic, typename primitive::SpmcChannel<T>, channel_kind::spmc_writer>;
+
+// Resources
 template <typename T>
-struct res {
-    using value_type = T;
-    using topic_type = void;
+using res = basic_resource<T, false, channel_kind::res>;
 
-    static constexpr auto kind = channel_kind::res;
-
-    const T* ptr_                         = nullptr;
-    const std::atomic<uint64_t>* version_ = nullptr;
-    mutable uint64_t last_seen_version_   = 0;
-
-    [[nodiscard]] const T& operator*() const noexcept {
-        if (version_) [[likely]]
-            last_seen_version_ = version_->load(std::memory_order_acquire);
-        return *ptr_;
-    }
-    [[nodiscard]] const T* operator->() const noexcept {
-        if (version_) [[likely]]
-            last_seen_version_ = version_->load(std::memory_order_acquire);
-        return ptr_;
-    }
-    [[nodiscard]] bool valid() const noexcept { return ptr_ != nullptr; }
-
-    [[nodiscard]] bool is_changed() const noexcept {
-        if (!version_)
-            return false;
-        if (const auto current = version_->load(std::memory_order_acquire);
-            current != last_seen_version_) {
-            last_seen_version_ = current;
-            return true;
-        }
-        return false;
-    }
-};
-
-/// Mutable resource wrapper
-/// Bumps version on every non-const access so res holders see is_changed().
 template <typename T>
-struct res_mut {
-    using value_type = T;
-    using topic_type = void;
+using res_mut = basic_resource<T, true, channel_kind::res_mut>;
 
-    static constexpr auto kind = channel_kind::res_mut;
+// Convenience aliases
+template <typename T, typename Topic = DefaultTopic>
+using subscribe = spmc<T, Topic>;
 
-    T* ptr_                             = nullptr;
-    std::atomic<uint64_t>* version_     = nullptr;
-    mutable uint64_t last_seen_version_ = 0;
+template <typename T, typename Topic = DefaultTopic>
+using publish = spmc_mut<T, Topic>;
 
-    [[nodiscard]] T& operator*() noexcept {
-        if (version_) [[likely]]
-            version_->fetch_add(1, std::memory_order_release);
-        return *ptr_;
-    }
-    [[nodiscard]] T* operator->() noexcept {
-        if (version_) [[likely]]
-            version_->fetch_add(1, std::memory_order_release);
-        return ptr_;
-    }
-    [[nodiscard]] const T& operator*() const noexcept { return *ptr_; }
-    [[nodiscard]] const T* operator->() const noexcept { return ptr_; }
-
-    [[nodiscard]] bool valid() const noexcept { return ptr_ != nullptr; }
-
-    [[nodiscard]] bool is_changed() const noexcept {
-        if (!version_)
-            return false;
-        if (const auto current = version_->load(std::memory_order_acquire);
-            current != last_seen_version_) {
-            last_seen_version_ = current;
-            return true;
-        }
-        return false;
-    }
-};
+// ============================================================================
+// Static Assertions
+// ============================================================================
 
 static_assert(component_kind<spsc<bool>>);
 static_assert(component_kind<spsc_mut<bool>>);
