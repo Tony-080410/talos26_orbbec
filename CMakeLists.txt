@@ -171,6 +171,13 @@ else()
     message(STATUS "TensorRT backend disabled (TensorRT not found)")
 endif()
 
+if(AXERA_FOUND)
+    list(APPEND FCS_SOURCES src/fcs/L2_perception/armor/backends/at_legacy_axera_backend.cpp)
+    message(STATUS "Axera backend enabled")
+else()
+    message(STATUS "Axera backend disabled (AXERA not found)")
+endif()
+
 add_library(fcs SHARED ${FCS_SOURCES})
 
 target_include_directories(fcs PUBLIC
@@ -200,6 +207,16 @@ if(OpenVINO_FOUND)
     message(STATUS "OpenVINO support enabled")
 else()
     target_compile_definitions(fcs PUBLIC TALOS_HAS_OPENVINO=0)
+endif()
+
+if(AXERA_FOUND)
+    target_compile_definitions(fcs PUBLIC TALOS_HAS_AXERA=1)
+    target_include_directories(fcs SYSTEM PUBLIC ${AXERA_INCLUDE_DIRS})
+    target_link_libraries(fcs PUBLIC ${AXERA_LIBRARIES})
+    message(STATUS "Axera support enabled")
+else()
+    target_compile_definitions(fcs PUBLIC TALOS_HAS_AXERA=0)
+    message(STATUS "Axera support disabled")
 endif()
 
 target_compile_options(fcs PRIVATE -Wno-error=array-bounds)

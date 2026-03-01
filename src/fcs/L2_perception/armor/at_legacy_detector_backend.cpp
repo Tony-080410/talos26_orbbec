@@ -7,6 +7,9 @@
 #if TALOS_HAS_TENSORRT
 # include "L2_perception/armor/backends/at_legacy_trt_backend.hpp"
 #endif
+#if TALOS_HAS_AXERA
+# include "L2_perception/armor/backends/at_legacy_axera_backend.hpp"
+#endif
 
 #include <type_traits>
 
@@ -37,6 +40,11 @@ AtLegacyDetectorBackend::AtLegacyDetectorBackend(std::unique_ptr<AtLegacyNNTupBa
 
 #if TALOS_HAS_TENSORRT
 AtLegacyDetectorBackend::AtLegacyDetectorBackend(std::unique_ptr<AtLegacyTrtBackend> backend)
+    : backend_(std::move(backend)) {}
+#endif
+
+#if TALOS_HAS_AXERA
+AtLegacyDetectorBackend::AtLegacyDetectorBackend(std::unique_ptr<AtLegacyAxeraBackend> backend)
     : backend_(std::move(backend)) {}
 #endif
 
@@ -86,6 +94,12 @@ void AtLegacyDetectorBackend::set_backend(std::unique_ptr<AtLegacyTrtBackend> ba
 }
 #endif
 
+#if TALOS_HAS_AXERA
+void AtLegacyDetectorBackend::set_backend(std::unique_ptr<AtLegacyAxeraBackend> backend) {
+    backend_ = std::move(backend);
+}
+#endif
+
 void AtLegacyDetectorBackend::set_detect_color(ArmorColor color) noexcept {
     std::visit(
         [color](auto& backend) {
@@ -116,6 +130,11 @@ void AtLegacyDetectorBackend::update_config(const AtLegacyConfig& config) noexce
 #if TALOS_HAS_TENSORRT
             else if constexpr (std::is_same_v<BackendT, AtLegacyTrtBackend>) {
                 backend->update_config(config.trt_ptr());
+            }
+#endif
+#if TALOS_HAS_AXERA
+            else if constexpr (std::is_same_v<BackendT, AtLegacyAxeraBackend>) {
+                backend->update_config(config.axera_ptr());
             }
 #endif
         },
@@ -161,6 +180,17 @@ void AtLegacyDetectorBackend::update_config(const AtLegacyConfig& config) noexce
         auto backend = std::make_unique<AtLegacyTrtBackend>(std::move(cfg_ptr));
         if (!backend->is_initialized()) {
             return std::unexpected(DetectorError::InitFailed);
+        }
+        backend->set_detect_color(config.detector.detect_color);
+        return AtLegacyDetectorBackend(std::move(backend));
+    }
+#endif
+#if TALOS_HAS_AXERA
+    case AtLegacyBackendTypeConfig::Axera: {
+        auto cfg_ptr = config.axera_ptr();
+        auto backend = std::make_unique<AtLegacyAxeraBackend>(std::move(cfg_ptr));
+        if (auto result = backend->init(); !result) {
+            return std::unexpected(result.error());
         }
         backend->set_detect_color(config.detector.detect_color);
         return AtLegacyDetectorBackend(std::move(backend));

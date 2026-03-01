@@ -69,6 +69,9 @@ std::expected<void, std::string> AtLegacyConfig::read_from(const toml::table& tb
 #if TALOS_HAS_TENSORRT
     READ(tbl, trt);
 #endif
+#if TALOS_HAS_AXERA
+    READ(tbl, axera);
+#endif
     return {};
 }
 
@@ -110,6 +113,26 @@ std::expected<void, std::string> AtLegacyTrtConfig::read_from(const toml::table&
     // Validate device_id >= 0
     if (device_id < 0) {
         return std::unexpected("device_id must be greater than or equal to 0");
+    }
+
+    return {};
+}
+#endif
+
+#if TALOS_HAS_AXERA
+std::expected<void, std::string> AtLegacyAxeraConfig::read_from(const toml::table& tbl) noexcept {
+    READ(tbl, model_path);
+    READ(tbl, confidence_threshold);
+    READ(tbl, top_k);
+
+    // Validate top_k > 0
+    if (top_k <= 0) {
+        return std::unexpected("top_k must be greater than 0");
+    }
+
+    // Validate confidence_threshold in [0, 1]
+    if (confidence_threshold < 0.0 || confidence_threshold > 1.0) {
+        return std::unexpected("confidence_threshold must be in range [0, 1]");
     }
 
     return {};

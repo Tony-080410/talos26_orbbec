@@ -71,6 +71,38 @@ else ()
     message(WARNING "HIK SDK not found at: ${HIK_SDK_ROOT}")
 endif ()
 
+# Axera AX650 SDK configuration
+# SDK should be deployed to /soc/ with env vars set (see docs/ax650.md)
+# CMAKE_PREFIX_PATH, CMAKE_INCLUDE_PATH, CMAKE_LIBRARY_PATH will be searched automatically
+
+find_path(AXERA_INCLUDE_DIRS
+    NAMES ax_sys_api.h ax_engine_api.h
+    PATH_SUFFIXES "soc/include" "include"
+    DOC "Axera SDK include directory"
+)
+
+find_library(AXERA_SYS_LIBRARY
+    NAMES ax_sys
+    DOC "Axera system library"
+)
+
+find_library(AXERA_ENGINE_LIBRARY
+    NAMES ax_engine
+    DOC "Axera engine library"
+)
+
+if (AXERA_INCLUDE_DIRS AND AXERA_SYS_LIBRARY AND AXERA_ENGINE_LIBRARY)
+    set(AXERA_LIBRARIES "${AXERA_SYS_LIBRARY}" "${AXERA_ENGINE_LIBRARY}")
+    set(AXERA_FOUND TRUE)
+    message(STATUS "Axera SDK found:")
+    message(STATUS "  Include: ${AXERA_INCLUDE_DIRS}")
+    message(STATUS "  Libraries: ${AXERA_LIBRARIES}")
+else ()
+    set(AXERA_FOUND FALSE)
+    message(WARNING "Axera SDK not found - ensure /soc/ is deployed and env vars are set")
+    message(WARNING "  See docs/ax650.md for deployment instructions")
+endif ()
+
 # Foxglove platform detection
 if (APPLE AND CMAKE_SYSTEM_PROCESSOR MATCHES "arm64|aarch64")
     set(FOXGLOVE_PLATFORM "aarch64-apple-darwin")

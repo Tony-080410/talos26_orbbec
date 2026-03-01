@@ -22,6 +22,9 @@ enum class AtLegacyBackendTypeConfig : int {
 #if TALOS_HAS_TENSORRT
     TensorRT = 3,         // TensorRT backend (GPU-accelerated)
 #endif
+#if TALOS_HAS_AXERA
+    Axera = 4,            // Axera AX650 NPU backend
+#endif
 };
 
 // ============================================================================
@@ -121,6 +124,22 @@ struct AtLegacyTrtConfig {
 };
 #endif
 
+#if TALOS_HAS_AXERA
+// ============================================================================
+// AT Legacy Axera Backend Config (AX650 NPU)
+// ============================================================================
+
+struct AtLegacyAxeraConfig {
+    std::string model_path;
+
+    // Detection parameters
+    double confidence_threshold = 0.25;
+    int top_k                   = 128;
+
+    std::expected<void, std::string> read_from(const toml::table& tbl) noexcept;
+};
+#endif
+
 // ============================================================================
 // AT Legacy Detector Config (combines Traditional + NN)
 // ============================================================================
@@ -144,6 +163,9 @@ struct AtLegacyConfig {
 #if TALOS_HAS_TENSORRT
     AtLegacyTrtConfig trt{};
 #endif
+#if TALOS_HAS_AXERA
+    AtLegacyAxeraConfig axera{};
+#endif
 
     /// Get shared_ptr for atomic config distribution
     [[nodiscard]] std::shared_ptr<const AtLegacyTraditionalConfig> traditional_ptr() const {
@@ -161,6 +183,12 @@ struct AtLegacyConfig {
 #if TALOS_HAS_TENSORRT
     [[nodiscard]] std::shared_ptr<const AtLegacyTrtConfig> trt_ptr() const {
         return std::make_shared<const AtLegacyTrtConfig>(trt);
+    }
+#endif
+
+#if TALOS_HAS_AXERA
+    [[nodiscard]] std::shared_ptr<const AtLegacyAxeraConfig> axera_ptr() const {
+        return std::make_shared<const AtLegacyAxeraConfig>(axera);
     }
 #endif
 

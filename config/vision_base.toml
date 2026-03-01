@@ -63,6 +63,12 @@ confidence_threshold = 0.20
 nms_threshold = 0.30
 top_k = 128
 
+# Required if backend_type = "Axera" (AX650 NPU)
+[axera]
+model_path = "models/compiled.axmodel"  # Path to AX650 .axmodel file
+confidence_threshold = 0.15
+top_k = 128
+
 [tracker]
 [tracker.robot]
 matcher_gate = 10.0             # Aligned with at_vision rm_bringup config

@@ -28,6 +28,9 @@ class AtLegacyNNTupBackend;
 #if TALOS_HAS_TENSORRT
 class AtLegacyTrtBackend;
 #endif
+#if TALOS_HAS_AXERA
+class AtLegacyAxeraBackend;
+#endif
 
 // Forward declare config types (defined in at_legacy_config.hpp)
 struct AtLegacyConfig;
@@ -38,6 +41,9 @@ struct AtLegacyNNTupConfig;
 #if TALOS_HAS_TENSORRT
 struct AtLegacyTrtConfig;
 #endif
+#if TALOS_HAS_AXERA
+struct AtLegacyAxeraConfig;
+#endif
 struct AtLegacyTraditionalConfig;
 
 // ============================================================================
@@ -45,10 +51,23 @@ struct AtLegacyTraditionalConfig;
 // ============================================================================
 
 /// Backend variant type for runtime switching
-#if TALOS_HAS_TENSORRT
+#if TALOS_HAS_AXERA
 using AtLegacyDetectorBackendVariant = std::variant<
-    std::unique_ptr<AtLegacyTraditionalBackend>, std::unique_ptr<AtLegacyNNBackend>,
-    std::unique_ptr<AtLegacyNNTupBackend>, std::unique_ptr<AtLegacyTrtBackend>>;
+    std::unique_ptr<AtLegacyTraditionalBackend>,
+# if TALOS_HAS_OPENVINO
+    std::unique_ptr<AtLegacyNNBackend>, std::unique_ptr<AtLegacyNNTupBackend>,
+# endif
+# if TALOS_HAS_TENSORRT
+    std::unique_ptr<AtLegacyTrtBackend>,
+# endif
+    std::unique_ptr<AtLegacyAxeraBackend>>;
+#elif TALOS_HAS_TENSORRT
+using AtLegacyDetectorBackendVariant = std::variant<
+    std::unique_ptr<AtLegacyTraditionalBackend>,
+# if TALOS_HAS_OPENVINO
+    std::unique_ptr<AtLegacyNNBackend>, std::unique_ptr<AtLegacyNNTupBackend>,
+# endif
+    std::unique_ptr<AtLegacyTrtBackend>>;
 #elif TALOS_HAS_OPENVINO
 using AtLegacyDetectorBackendVariant = std::variant<
     std::unique_ptr<AtLegacyTraditionalBackend>, std::unique_ptr<AtLegacyNNBackend>,
@@ -84,6 +103,9 @@ public:
 #if TALOS_HAS_TENSORRT
     explicit AtLegacyDetectorBackend(std::unique_ptr<AtLegacyTrtBackend> backend);
 #endif
+#if TALOS_HAS_AXERA
+    explicit AtLegacyDetectorBackend(std::unique_ptr<AtLegacyAxeraBackend> backend);
+#endif
 
     /// Detect armors in image (dispatches to active backend)
     [[nodiscard]] DetectionResult detect(const cv::Mat& image);
@@ -105,6 +127,9 @@ public:
 #endif
 #if TALOS_HAS_TENSORRT
     void set_backend(std::unique_ptr<AtLegacyTrtBackend> backend);
+#endif
+#if TALOS_HAS_AXERA
+    void set_backend(std::unique_ptr<AtLegacyAxeraBackend> backend);
 #endif
 
     /// Update config for the active backend (forward declaration, implemented in .cpp)
