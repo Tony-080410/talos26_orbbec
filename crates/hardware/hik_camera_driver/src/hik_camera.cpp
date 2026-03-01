@@ -176,9 +176,7 @@ public:
 
     ~Impl() { uninit_camera(); }
 
-    std::tuple<int, int> get_image_size() const {
-        return {convert_parameter_.nWidth, convert_parameter_.nHeight};
-    }
+    std::tuple<int, int> get_image_size() const { return {image_width_, image_height_}; }
 
     std::expected<cv::Mat, CameraError>
         read(std::chrono::duration<unsigned int, std::milli> timeout) {
@@ -210,31 +208,30 @@ public:
 
         ImageBufferGuard buffer_guard{camera_handle_, &stImageInfo};
 
-        // 先检查像素类型，避免不必要的内存分配
-        if (!is_rgb_pixel_type(stImageInfo.stFrameInfo.enPixelType))
-            return std::unexpected(CameraError{"RGB camera needed", 0});
-
-        cv::Mat img{stImageInfo.stFrameInfo.nHeight, stImageInfo.stFrameInfo.nWidth, CV_8UC3};
-
-        convert_parameter_.nWidth      = stImageInfo.stFrameInfo.nWidth;    // image width
-        convert_parameter_.nHeight     = stImageInfo.stFrameInfo.nHeight;   // image height
-        convert_parameter_.nSrcDataLen = stImageInfo.stFrameInfo.nFrameLen; // input data size
-        convert_parameter_.enSrcPixelType =
-            stImageInfo.stFrameInfo.enPixelType;                            // input pixel format
-        convert_parameter_.enDstPixelType = PixelType_Gvsp_BGR8_Packed;     // output pixel format
-        convert_parameter_.pDstBuffer     = img.data;                       // output data buffer
-        convert_parameter_.nDstBufferSize = stImageInfo.stFrameInfo.nWidth
-                                          * stImageInfo.stFrameInfo.nHeight
-                                          * 3;                              // output buffer size
-        convert_parameter_.pSrcData = stImageInfo.pBufAddr;                 // input data buffer
-
-        ret = MV_CC_ConvertPixelType(camera_handle_, &convert_parameter_);
-
-        if (ret != MV_OK) {
-            logger_->error("Failed to convert pixel type. nRet [{}]", ret);
-            return std::unexpected(CameraError{"Failed to convert pixel type", ret});
+        // 获取 Bayer 像素格式对应的 OpenCV 解拜耳代码
+        const auto bayer_code = get_bayer_conversion_code(stImageInfo.stFrameInfo.enPixelType);
+        if (!bayer_code) {
+            return std::unexpected(
+                CameraError{
+                    "Unsupported Bayer format: "
+                        + std::to_string(stImageInfo.stFrameInfo.enPixelType),
+                    0});
         }
 
+        // 包装原始 Bayer 数据（不拷贝数据，只创建 cv::Mat header）
+        const int width  = stImageInfo.stFrameInfo.nWidth;
+        const int height = stImageInfo.stFrameInfo.nHeight;
+        cv::Mat raw_bayer{height, width, CV_8UC1, stImageInfo.pBufAddr};
+
+        // 使用 OpenCV 的 VNG 算法解拜耳（质量最好，边缘锐利）
+        cv::Mat img;
+        cv::cvtColor(raw_bayer, img, *bayer_code);
+
+        // 缓存图像尺寸（供 get_width_height() 使用）
+        image_width_  = width;
+        image_height_ = height;
+
+        // 旋转图像（如果需要）
         if (rotate_type_ != RotateType::None) {
             try {
                 switch (rotate_type_) {
@@ -288,8 +285,9 @@ public:
 private:
     RotateType rotate_type_ = RotateType::None;
 
-    // 初始化 convert_parameter_ 为零
-    MV_CC_PIXEL_CONVERT_PARAM convert_parameter_ = {};
+    // 缓存图像尺寸（在第一次 read() 后填充）
+    int image_width_  = 0;
+    int image_height_ = 0;
 
 #define SDK_RET_ASSERT(ret, message, error_code)                                          \
     do {                                                                                  \
@@ -446,7 +444,7 @@ private:
         SDK_RET_ASSERT(ret, "Failed to set image node num.", ret);
 
         ret = MV_CC_StartGrabbing(camera_handle_);
-        SDK_RET_ASSERT(ret, "Failed to start grabbing.", ret);
+        SDK_RET_ASSERT(ret, "Failed to start grabbing.", error_code_to_message(ret));
 
         // SOFTWARE 模式下设置 TriggerSource 为 SOFTWARE
         if (sync_mode == SyncMode::SOFTWARE) {
@@ -459,32 +457,49 @@ private:
         return {};
     }
 
-    static bool is_rgb_pixel_type(MvGvspPixelType enType) {
+    // 将 HIK SDK 的 Bayer 像素格式映射到 OpenCV 的解拜耳代码
+    // 参考：OpenCV cvtColor 文档中 Bayer 模式定义
+    static std::expected<int, CameraError> get_bayer_conversion_code(MvGvspPixelType enType) {
         switch (enType) {
+        // 8-bit Bayer 格式（推荐使用）
+        case PixelType_Gvsp_BayerRG8: return cv::COLOR_BayerRG2BGR;
+        case PixelType_Gvsp_BayerBG8: return cv::COLOR_BayerBG2BGR;
+        case PixelType_Gvsp_BayerGR8: return cv::COLOR_BayerGR2BGR;
+        case PixelType_Gvsp_BayerGB8: return cv::COLOR_BayerGB2BGR;
+
+        // 10-bit Bayer 格式（需要预处理）
+        case PixelType_Gvsp_BayerRG10:
+        case PixelType_Gvsp_BayerRG10_Packed:
+        case PixelType_Gvsp_BayerBG10:
+        case PixelType_Gvsp_BayerBG10_Packed:
+        case PixelType_Gvsp_BayerGR10:
+        case PixelType_Gvsp_BayerGR10_Packed:
+        case PixelType_Gvsp_BayerGB10:
+        case PixelType_Gvsp_BayerGB10_Packed:
+            return std::unexpected(
+                CameraError{"10-bit Bayer not supported, please set to 8-bit mode", 0});
+
+        // 12-bit Bayer 格式（需要预处理）
+        case PixelType_Gvsp_BayerRG12:
+        case PixelType_Gvsp_BayerRG12_Packed:
+        case PixelType_Gvsp_BayerBG12:
+        case PixelType_Gvsp_BayerBG12_Packed:
+        case PixelType_Gvsp_BayerGR12:
+        case PixelType_Gvsp_BayerGR12_Packed:
+        case PixelType_Gvsp_BayerGB12:
+        case PixelType_Gvsp_BayerGB12_Packed:
+            return std::unexpected(
+                CameraError{"12-bit Bayer not supported, please set to 8-bit mode", 0});
+
+        // 已解拜耳的格式（非 Bayer）
         case PixelType_Gvsp_BGR8_Packed:
         case PixelType_Gvsp_YUV422_Packed:
         case PixelType_Gvsp_YUV422_YUYV_Packed:
-        case PixelType_Gvsp_BayerGR8:
-        case PixelType_Gvsp_BayerRG8:
-        case PixelType_Gvsp_BayerGB8:
-        case PixelType_Gvsp_BayerBG8:
-        case PixelType_Gvsp_BayerGB10:
-        case PixelType_Gvsp_BayerGB10_Packed:
-        case PixelType_Gvsp_BayerBG10:
-        case PixelType_Gvsp_BayerBG10_Packed:
-        case PixelType_Gvsp_BayerRG10:
-        case PixelType_Gvsp_BayerRG10_Packed:
-        case PixelType_Gvsp_BayerGR10:
-        case PixelType_Gvsp_BayerGR10_Packed:
-        case PixelType_Gvsp_BayerGB12:
-        case PixelType_Gvsp_BayerGB12_Packed:
-        case PixelType_Gvsp_BayerBG12:
-        case PixelType_Gvsp_BayerBG12_Packed:
-        case PixelType_Gvsp_BayerRG12:
-        case PixelType_Gvsp_BayerRG12_Packed:
-        case PixelType_Gvsp_BayerGR12:
-        case PixelType_Gvsp_BayerGR12_Packed: return true;
-        default: return false;
+            return std::unexpected(CameraError{"Already debayered format, not Bayer", 0});
+
+        default:
+            return std::unexpected(
+                CameraError{"Unknown pixel format: " + std::to_string(enType), 0});
         }
     }
 
@@ -494,19 +509,19 @@ private:
 
         unsigned int nRet = MV_CC_StopGrabbing(camera_handle_);
         if (MV_OK != nRet) {
-            logger_->error("Failed to stop grabbing. nRet [{}]", nRet);
+            logger_->error("Failed to stop grabbing. nRet [{}]", error_code_to_message(nRet));
             // 即使失败也继续尝试清理，确保尽可能释放资源
         }
 
         nRet = MV_CC_CloseDevice(camera_handle_);
         if (MV_OK != nRet) {
-            logger_->error("Failed to close device. nRet [{}]", nRet);
+            logger_->error("Failed to close device. nRet [{}]", error_code_to_message(nRet));
             // 即使失败也继续尝试销毁句柄
         }
 
         nRet = MV_CC_DestroyHandle(camera_handle_);
         if (MV_OK != nRet) {
-            logger_->error("Failed to destroy handle. nRet [{}]", nRet);
+            logger_->error("Failed to destroy handle. nRet [{}]", error_code_to_message(nRet));
             // 句柄销毁失败是最严重的情况，但我们已经尽力了
         }
 
@@ -537,7 +552,6 @@ private:
     };
 
     void* camera_handle_ = nullptr;
-    // convert_parameter_ 已在前面声明并初始化
 
     std::shared_ptr<spdlog::logger> logger_ = []() {
         auto logger = spdlog::get("hikcamera");
