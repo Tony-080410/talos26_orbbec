@@ -134,7 +134,7 @@ set(FCS_SOURCES
         src/fcs/L1_sensor/output_interface.cpp
         src/fcs/runtime/l1_l2_setup.cpp
         src/fcs/L2_perception/armor/at_legacy_config.cpp
-        src/fcs/L2_perception/armor/at_legacy_detector_factory.cpp
+        src/fcs/L2_perception/armor/at_legacy_detector_backend.cpp
         src/fcs/L2_perception/armor/at_legacy_systems.cpp
         src/fcs/L2_perception/rune/rune_detector.cpp
         src/fcs/L2_perception/rune/rune_config.cpp
@@ -157,7 +157,8 @@ set(FCS_SOURCES
 
 if(OpenVINO_FOUND)
     list(APPEND FCS_SOURCES
-        src/fcs/L2_perception/armor/backends/at_legacy_openvino_backend.cpp)
+        src/fcs/L2_perception/armor/backends/at_legacy_nn_backend.cpp
+        src/fcs/L2_perception/armor/backends/at_legacy_nn_tup_backend.cpp)
     message(STATUS "OpenVINO backends enabled")
 else()
     message(STATUS "OpenVINO backends disabled (OpenVINO not found)")

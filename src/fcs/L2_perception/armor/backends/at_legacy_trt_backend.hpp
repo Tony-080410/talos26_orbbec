@@ -18,8 +18,6 @@ struct AtLegacyTrtConfig;
 
 class AtLegacyTrtBackend : public AtLegacyDetectorBackendBase<AtLegacyTrtBackend> {
 public:
-    static constexpr std::string_view backend_name = "TensorRT";
-
     static constexpr int INPUT_W     = 640;
     static constexpr int INPUT_H     = 640;
     static constexpr int NUM_COLORS  = 4;
@@ -49,7 +47,7 @@ public:
     };
 
     explicit AtLegacyTrtBackend(ConfigPtr config);
-    ~AtLegacyTrtBackend() override;
+    ~AtLegacyTrtBackend();
 
     AtLegacyTrtBackend(AtLegacyTrtBackend&&) noexcept;
     AtLegacyTrtBackend& operator=(AtLegacyTrtBackend&&) noexcept;
@@ -57,9 +55,7 @@ public:
     AtLegacyTrtBackend& operator=(const AtLegacyTrtBackend&) = delete;
 
     void update_config(ConfigPtr new_config);
-
-    /// Get current config (thread-safe)
-    [[nodiscard]] ConfigPtr get_config() const noexcept { return config_; }
+    void set_detect_color(fcs::ArmorColor color);
 
     DetectionResult detect_impl(const cv::Mat& image);
     bool is_initialized_impl() const noexcept;
@@ -70,6 +66,8 @@ private:
     std::unique_ptr<Impl> impl_;
 
     ConfigPtr config_;
+    int detect_color_ = 0;
+    bool initialized_ = false;
 };
 
 } // namespace fcs::L2

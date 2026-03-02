@@ -41,6 +41,18 @@ std::expected<void, std::string> AtLegacyNNConfig::read_from(const toml::table& 
     return {};
 }
 
+std::expected<void, std::string> AtLegacyNNTupConfig::read_from(const toml::table& tbl) noexcept {
+    READ(tbl, model_path);
+    READ(tbl, device);
+    READ(tbl, device_priorities);
+    READ(tbl, enable_profiling);
+    READ(tbl, enable_multi_thread);
+    READ(tbl, confidence_threshold);
+    READ(tbl, nms_threshold);
+    READ(tbl, top_k);
+    return {};
+}
+
 std::expected<void, std::string>
     AtLegacyDetectorConfig::read_from(const toml::table& tbl) noexcept {
     READ(tbl, backend_type);

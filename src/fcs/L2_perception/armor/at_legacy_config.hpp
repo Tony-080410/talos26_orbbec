@@ -77,9 +77,23 @@ struct AtLegacyNNConfig {
     std::expected<void, std::string> read_from(const toml::table& tbl) noexcept;
 };
 
-// Type alias for backward compatibility (NNTup uses same config as NN)
-// TODO: Deprecate this alias
-using AtLegacyNNTupConfig = AtLegacyNNConfig;
+// ============================================================================
+// AT Legacy NN TUP Backend Config (YOLOX multi-scale)
+// ============================================================================
+
+struct AtLegacyNNTupConfig {
+    std::string model_path;
+    std::string device;
+    std::string device_priorities;
+    bool enable_profiling;
+    bool enable_multi_thread;
+
+    double confidence_threshold;
+    double nms_threshold;
+    int top_k;
+
+    std::expected<void, std::string> read_from(const toml::table& tbl) noexcept;
+};
 
 #if TALOS_HAS_TENSORRT
 // ============================================================================

@@ -14,7 +14,7 @@ struct CameraConfig;
 namespace fcs::L2 {
 
 struct AtLegacyConfig;
-class IDetectorBackend;
+class AtLegacyDetectorBackend;
 class AtLegacyPnPSolver;
 
 // ============================================================================
@@ -43,7 +43,7 @@ void register_at_legacy_detection_systems(talos::Scheduler& scheduler, AtLegacyC
 // ============================================================================
 
 struct DetectorBackendHandle {
-    std::shared_ptr<IDetectorBackend> backend;
+    std::shared_ptr<AtLegacyDetectorBackend> backend;
     std::string name;
 };
 

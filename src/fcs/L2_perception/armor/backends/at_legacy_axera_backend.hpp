@@ -17,13 +17,17 @@
 
 namespace fcs::L2 {
 
+// Forward declare config (defined in at_legacy_config.hpp)
 struct AtLegacyAxeraConfig;
 
+// ============================================================================
+// AT Legacy Axera Backend Implementation
+// ============================================================================
+
 /// Neural network detection backend using AX650 NPU
+/// Implements RAII for AX engine resources
 class AtLegacyAxeraBackend : public AtLegacyDetectorBackendBase<AtLegacyAxeraBackend> {
 public:
-    static constexpr std::string_view backend_name = "axera";
-
     static constexpr int INPUT_W     = 640;
     static constexpr int INPUT_H     = 640; // Square input for letterbox
     static constexpr int NUM_COLORS  = 4;
@@ -38,7 +42,7 @@ public:
     using ConfigPtr       = std::shared_ptr<const AtLegacyAxeraConfig>;
 
     explicit AtLegacyAxeraBackend(ConfigPtr config);
-    ~AtLegacyAxeraBackend() override;
+    ~AtLegacyAxeraBackend();
 
     // Move-only (AX engine resources are non-copyable)
     AtLegacyAxeraBackend(AtLegacyAxeraBackend&&) noexcept;
@@ -51,6 +55,12 @@ public:
 
     /// Detect armors in image (synchronous)
     [[nodiscard]] DetectionResult detect_impl(const cv::Mat& image);
+
+    [[nodiscard]] bool is_initialized_impl() const noexcept { return initialized_; }
+    [[nodiscard]] std::string_view name_impl() const noexcept { return "axera"; }
+
+    void set_detect_color(ArmorColor color) noexcept { detect_color_ = color; }
+    [[nodiscard]] ArmorColor detect_color() const noexcept { return detect_color_; }
 
     /// Hot-reload config (thread-safe)
     void update_config(ConfigPtr new_config) noexcept {
@@ -128,6 +138,8 @@ private:
 
 private:
     ConfigPtr config_; // Atomic shared_ptr for thread-safe config access
+    ArmorColor detect_color_ = ArmorColor::Blue;
+    bool initialized_        = false;
 
     // AX650 NPU resources
     AX_ENGINE_HANDLE handle_ = nullptr;
