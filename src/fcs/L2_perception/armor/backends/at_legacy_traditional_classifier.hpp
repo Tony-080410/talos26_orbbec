@@ -1,6 +1,6 @@
 #pragma once
 
-#include "../at_legacy_detector_backend.hpp"
+#include "at_legacy_detector_interface.hpp"
 #include "core/types.hpp"
 
 #include <expected>

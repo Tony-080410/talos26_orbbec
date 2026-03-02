@@ -1,8 +1,8 @@
 #include "L2_perception/armor/at_legacy_systems.hpp"
 
 #include "L2_perception/armor/at_legacy_config.hpp"
-#include "L2_perception/armor/at_legacy_detector_backend.hpp"
 #include "L2_perception/armor/at_legacy_pnp_solver.hpp"
+#include "L2_perception/armor/backends/at_legacy_detector_interface.hpp"
 #include "core/channel_topics.hpp"
 #include "frame.hpp"
 #include "scheduler/scheduler.hpp"
@@ -10,6 +10,10 @@
 #include <spdlog/spdlog.h>
 
 namespace fcs::L2 {
+
+// Forward declare factory function
+[[nodiscard]] std::expected<std::unique_ptr<IDetectorBackend>, DetectorError>
+    create_detector_backend(const AtLegacyConfig& config);
 
 void register_at_legacy_detection_systems(talos::Scheduler& scheduler, AtLegacyConfig&& config) {
     scheduler.world().insert_resource(std::move(config));
@@ -22,14 +26,18 @@ void register_at_legacy_detection_systems(talos::Scheduler& scheduler, AtLegacyC
             talos::spmc_mut<AtLegacyArmorMeasurementBatch, AtLegacyMeasurementChannelTopic>
                 measurement_out,
             talos::res<AtLegacyConfig> config,
-            talos::res_mut<std::shared_ptr<AtLegacyDetectorBackend>> backend_ptr,
+            talos::res_mut<std::shared_ptr<IDetectorBackend>> backend_ptr,
             talos::res<std::shared_ptr<AtLegacyPnPSolver>> solver_ptr,
-            talos::res<std::shared_ptr<fast_tf::CoordinateSystem<1024>>> tf_system) mutable {
-            // Reactively update backend config and detect color when changed
+            talos::res<std::shared_ptr<fast_tf::CoordinateSystem<1024>>> tf_system) {
+            // Reactively update backend when config changes
             if (config.is_changed()) {
-                (*backend_ptr)->update_config(*config);
-                (*backend_ptr)->set_detect_color(config->detector.detect_color);
-                last_detect_color = config->detector.detect_color;
+                auto new_backend = create_detector_backend(*config);
+                if (new_backend) {
+                    *backend_ptr = std::move(*new_backend);
+                }
+                if (*backend_ptr) {
+                    (*backend_ptr)->set_detect_color(config->detector.detect_color);
+                }
             }
 
             if (!image_in.has_new()) {
@@ -96,7 +104,7 @@ std::expected<DetectorBackendHandle, std::string>
         return std::unexpected(std::string(detector_error_str(backend_result.error())));
     }
 
-    auto backend_ptr  = std::make_shared<AtLegacyDetectorBackend>(std::move(*backend_result));
+    auto backend_ptr  = std::shared_ptr<IDetectorBackend>(std::move(*backend_result));
     auto backend_name = std::string(backend_ptr->name());
     return DetectorBackendHandle{std::move(backend_ptr), std::move(backend_name)};
 }

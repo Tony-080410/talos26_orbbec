@@ -131,15 +131,10 @@ using BuildResult = std::expected<void, BuildError>;
  * - Calls std::abort() to terminate the program
  * - Marked noexcept and [[noreturn]] for optimizer awareness
  *
- * ## Note
- *
- * Uses spdlog::critical() function (runtime format checking) instead of
- * SPDLOG_CRITICAL macro (compile-time checking) to avoid issues with
- * forwarding references and temporary objects.
  */
 template <typename... Args>
 [[noreturn]] inline void panic(const char* fmt, const Args&... args) noexcept {
-    spdlog::critical(fmt, args...);
+    SPDLOG_CRITICAL(fmt::runtime(fmt), args...);
     std::abort();
 }
 

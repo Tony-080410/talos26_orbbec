@@ -16,17 +16,14 @@ namespace fcs::L2 {
 // Constructor
 // ============================================================================
 
-AtLegacyTraditionalBackend::AtLegacyTraditionalBackend(ConfigPtr config)
-    : config_(std::move(config)) {
-    // Initialize classifier if enabled in config
-    if (config_ && !config_->classifier_model_path.empty()) {
+AtLegacyTraditionalBackend::AtLegacyTraditionalBackend(ConfigPtr config) {
+    config_holder_.config_ = std::move(config);
+    auto cfg               = config_holder_.config_;
+    if (cfg && !cfg->classifier_model_path.empty()) {
         classifier_ = std::make_unique<AtLegacyTraditionalClassifier>(
-            config_->classifier_model_path, config_->classifier_use_softmax);
-        // Initialize classifier - log error if initialization fails
+            cfg->classifier_model_path, cfg->classifier_use_softmax);
         if (const auto init_result = classifier_->init(); !init_result) {
-            // Log error but continue - detection will work without classification
-            SPDLOG_CRITICAL(
-                "Failed to initialize ONNX classifier: {}", config_->classifier_model_path);
+            SPDLOG_CRITICAL("Failed to initialize ONNX classifier: {}", cfg->classifier_model_path);
             std::abort();
         }
     } else {
@@ -40,25 +37,25 @@ AtLegacyTraditionalBackend::AtLegacyTraditionalBackend(ConfigPtr config)
 // ============================================================================
 
 AtLegacyTraditionalBackend::DetectionResult
-    AtLegacyTraditionalBackend::detect_impl(const cv::Mat& input) {
-    if (input.empty()) {
+    AtLegacyTraditionalBackend::detect(const cv::Mat& image) {
+    if (image.empty()) {
         return std::unexpected(DetectorError::InvalidImage);
     }
 
-    auto cfg = get_config();
+    auto cfg = config_holder_.config_;
     if (!cfg) {
         return std::unexpected(DetectorError::NotInitialized);
     }
 
     // 1. Preprocess the image
-    cv::Mat binary = preprocess_image(input, *cfg);
+    cv::Mat binary = preprocess_image(image, *cfg);
 
     // 2. Find lights
-    auto lights = find_lights(input, binary, *cfg);
+    auto lights = find_lights(image, binary, *cfg);
 
     // Save gray image for corner correction (precompute for efficiency)
     cv::Mat gray_img;
-    cv::cvtColor(input, gray_img, cv::COLOR_BGR2GRAY);
+    cv::cvtColor(image, gray_img, cv::COLOR_BGR2GRAY);
 
     // 3. Match lights to armors
     auto detections = match_lights(lights, *cfg, gray_img);
@@ -69,7 +66,7 @@ AtLegacyTraditionalBackend::DetectionResult
             auto& detection = detections[d];
 
             // Extract number image: perspective transform + OTSU binarization
-            cv::Mat number_img = extract_number(input, detection.corners, detection.type);
+            cv::Mat number_img = extract_number(image, detection.corners, detection.type);
 
             if (!number_img.empty()) {
                 float confidence = 0.0f;

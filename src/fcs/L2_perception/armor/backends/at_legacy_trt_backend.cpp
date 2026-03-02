@@ -518,10 +518,6 @@ AtLegacyTrtBackend& AtLegacyTrtBackend::operator=(AtLegacyTrtBackend&&) noexcept
 
 void AtLegacyTrtBackend::update_config(ConfigPtr new_config) { config_ = std::move(new_config); }
 
-void AtLegacyTrtBackend::set_detect_color(fcs::ArmorColor color) {
-    detect_color_ = static_cast<int>(color);
-}
-
 // ============================================================================
 // Detection
 // ============================================================================
@@ -756,9 +752,5 @@ AtLegacyTrtBackend::DetectionResult AtLegacyTrtBackend::detect_impl(const cv::Ma
 
     return detections;
 }
-
-bool AtLegacyTrtBackend::is_initialized_impl() const noexcept { return initialized_; }
-
-std::string_view AtLegacyTrtBackend::name_impl() const noexcept { return "TensorRT"; }
 
 } // namespace fcs::L2
