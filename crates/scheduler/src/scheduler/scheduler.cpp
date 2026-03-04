@@ -1218,15 +1218,14 @@ auto Scheduler::get_stats_json() const -> std::string {
             const auto latency    = sys_stats.latency_hist.compute();
 
             json sys;
-            sys["name"] = entry.system->meta().name;
             add_latency_stats(sys, latency, elapsed_sec);
             add_extra_fn(sys, entry, sys_stats);
-            arr.push_back(sys);
+            arr[entry.system->meta().name] = sys;
         }
     };
 
     // FixedRate systems
-    json& fixed_rate_arr = root["fixed_rate_systems"] = json::array();
+    json& fixed_rate_arr = root["fixed_rate_systems"] = json::object();
     generate_system_stats(
         fixed_rate_systems_, fixed_rate_stats_, fixed_rate_arr,
         [](json& sys, const auto& entry, const auto& stats) {
@@ -1236,7 +1235,7 @@ auto Scheduler::get_stats_json() const -> std::string {
         });
 
     // Compute systems
-    json& compute_arr = root["compute_systems"] = json::array();
+    json& compute_arr = root["compute_systems"] = json::object();
     generate_system_stats(
         compute_systems_, compute_stats_, compute_arr, [](json&, const auto&, const auto&) {
             // Compute systems have no extra fields
