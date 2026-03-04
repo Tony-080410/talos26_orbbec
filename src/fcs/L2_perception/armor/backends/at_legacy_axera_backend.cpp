@@ -215,8 +215,50 @@ AtLegacyAxeraBackend::~AtLegacyAxeraBackend() {
     }
 }
 
-AtLegacyAxeraBackend::AtLegacyAxeraBackend(AtLegacyAxeraBackend&&) noexcept            = default;
-AtLegacyAxeraBackend& AtLegacyAxeraBackend::operator=(AtLegacyAxeraBackend&&) noexcept = default;
+AtLegacyAxeraBackend::AtLegacyAxeraBackend(AtLegacyAxeraBackend&& other) noexcept
+    : config_(other.config_.load()),
+      detect_color_(other.detect_color_),
+      initialized_(other.initialized_),
+      handle_(other.handle_),
+      io_data_(std::move(other.io_data_)),
+      model_buffer_(std::move(other.model_buffer_)),
+      cached_grid_(std::move(other.cached_grid_)) {
+    // Clear the moved-from object to prevent double-free
+    other.config_.store(nullptr);
+    other.detect_color_ = ArmorColor::Blue;
+    other.initialized_ = false;
+    other.handle_ = nullptr;
+    other.io_data_ = {};
+    other.model_buffer_.clear();
+}
+
+AtLegacyAxeraBackend& AtLegacyAxeraBackend::operator=(AtLegacyAxeraBackend&& other) noexcept {
+    if (this != &other) {
+        // Clean up current resources first (RAII)
+        if (handle_) {
+            free_io(&io_data_);
+            AX_ENGINE_DestroyHandle(handle_);
+        }
+
+        // Transfer ownership from other
+        config_.store(other.config_.load());
+        detect_color_ = other.detect_color_;
+        initialized_ = other.initialized_;
+        handle_ = other.handle_;
+        io_data_ = std::move(other.io_data_);
+        model_buffer_ = std::move(other.model_buffer_);
+        cached_grid_ = std::move(other.cached_grid_);
+
+        // Reset the moved-from object to prevent double-free
+        other.config_.store(nullptr);
+        other.detect_color_ = ArmorColor::Blue;
+        other.initialized_ = false;
+        other.handle_ = nullptr;
+        other.io_data_ = {};
+        other.model_buffer_.clear();
+    }
+    return *this;
+}
 
 // ============================================================================
 // Initialization
@@ -392,9 +434,9 @@ void AtLegacyAxeraBackend::preprocess_image(const cv::Mat& image, const PreprocC
     // Resize directly into ROI, then swap channels in place.
     if (image.cols != new_unpad_w || image.rows != new_unpad_h) {
         cv::resize(image, roi_mat, {new_unpad_w, new_unpad_h}, 0, 0, cv::INTER_LINEAR);
-        cv::cvtColor(roi_mat, roi_mat, cv::COLOR_BGR2RGB);
+        // cv::cvtColor(roi_mat, roi_mat, cv::COLOR_BGR2RGB);
     } else {
-        cv::cvtColor(image, roi_mat, cv::COLOR_BGR2RGB);
+        // cv::cvtColor(image, roi_mat, cv::COLOR_BGR2RGB);
     }
 
     // Flush CPU cache to ensure NPU sees the data
