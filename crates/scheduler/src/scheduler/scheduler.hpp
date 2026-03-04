@@ -204,6 +204,13 @@ public:
      * - No dependency cycles
      * - Channel constraints (SPSC single writer, etc.)
      * - Orphaned readers detected
+     * - Resource constraints (single res_mut writer per type)
+     *
+     * ## Resource dependency semantics
+     *
+     * - **Only readers** (`res<T>`): Output systems (sink nodes, no downstream dependencies)
+     * - **Only writer** (`res_mut<T>`): Input systems (source nodes, read external data)
+     * - **Writer + readers**: Pipeline dependency (writer → readers)
      *
      * Can be called multiple times for dynamic system addition (idempotent).
      * Each call re-validates all channels and rebuilds wake-up chains.
@@ -322,14 +329,46 @@ public:
      */
     void print_systems() const;
 
-    /*
+    /**
      * @brief Print wake chains as Mermaid diagram
      *
      * Outputs the dependency graph showing which systems trigger other systems
      * in Mermaid flowchart syntax for visualization.
      *
+     * ## Edge labels
+     *
+     * - Edge labels show the channel topic name that connects the systems
      */
     void print_mermaid_wake_chains() const;
+
+    /**
+     * @brief Print data flow DAG as Mermaid diagram
+     *
+     * Outputs the complete data flow graph with channels as labeled edges.
+     * Shows both fixed_rate and compute systems with their data dependencies.
+     *
+     * ## Visualization style
+     *
+     * - Nodes: systems (grouped by type)
+     * - Edges: channels (labeled with topic names)
+     * - Direction: data flow (writer → reader)
+     */
+    void print_mermaid_data_flow() const;
+
+    /**
+     * @brief Print execution levels as Mermaid diagram
+     *
+     * Outputs the topologically sorted execution levels showing parallel
+     * execution opportunities and pipeline depth.
+     *
+     * ## Visualization style
+     *
+     * - Subgraphs: execution levels (systems within can run in parallel)
+     * - Nodes: systems within each level, labeled with I/O counts
+     * - Edges: dependencies between consecutive levels
+     * - Analysis: pipeline depth and max parallelism printed as comments
+     */
+    void print_mermaid_execution_levels() const;
 
     /**
      * @brief Print performance statistics
@@ -444,11 +483,18 @@ private:
     std::atomic<bool> built_{false};
     std::atomic<bool> running_{false};
 
-    // Selective notification: wake chains for all systems
+    // Selective notification: wake chains (waker -> direct wakee only)
+    // Transitive dependencies are handled by cascade wake in compute loop.
+    // Resource dependency semantics:
+    // - Only readers: output systems (sink nodes, no wake edges)
+    // - Only writer: input systems (source nodes, no wake edges)
+    // - Writer + readers: pipeline dependency (included in wake chains)
     std::vector<std::uint64_t>
-        fixed_rate_affects_; // [fixed_rate_idx] -> bitmask of compute systems
+        fixed_rate_affects_; // [fixed_rate_idx] -> bitmask of compute systems that directly read
+                             // this fixed_rate's channels
     std::vector<std::uint64_t>
-        compute_affects_;    // [compute_idx] -> bitmask of dependent compute systems
+        compute_affects_;    // [compute_idx] -> bitmask of compute systems that directly depend on
+                             // this system (channels + pipeline resources)
     std::atomic<std::uint64_t> ready_systems_{0}; // Bitmask of compute systems pending execution
 
     // Stats

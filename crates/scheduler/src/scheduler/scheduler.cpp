@@ -1,4 +1,5 @@
 #include "scheduler.hpp"
+#include "demangle.hpp"
 #include "primitive/performance_probe.hpp"
 #include "primitive/spin.hpp"
 #include "primitive/thread_affinity.hpp"
@@ -10,7 +11,9 @@
 #include <functional>
 #include <map>
 #include <nlohmann/json.hpp>
+#include <optional>
 #include <spdlog/spdlog.h>
+#include <unordered_map>
 
 namespace talos::scheduler {
 
@@ -383,20 +386,657 @@ void Scheduler::print_mermaid_wake_chains() const {
     printf("```mermaid\n");
     printf("flowchart LR\n\n");
 
-    // Unified node printer (eliminates duplicate loops)
-    auto print_nodes = [](const auto& systems, const char* prefix) {
-        for (std::size_t i = 0; i < systems.size(); ++i) {
-            const auto& name = systems[i].system->meta().name;
-            printf("    %s%d[%s]\n", prefix, (int)i, name.c_str());
+    // Build in_edges and out_edges for each compute system
+    std::vector<std::size_t> in_edges(compute_systems_.size(), 0);
+    std::vector<std::size_t> out_edges(compute_systems_.size(), 0);
+
+    for (std::size_t i = 0; i < compute_systems_.size(); ++i) {
+        out_edges[i] = (i < compute_affects_.size()) ? std::popcount(compute_affects_[i]) : 0;
+    }
+
+    for (std::size_t i = 0; i < compute_systems_.size(); ++i) {
+        for (std::size_t j = 0; j < compute_systems_.size(); ++j) {
+            if (i != j && (compute_affects_[i] & (1UL << j))) {
+                in_edges[j]++;
+            }
+        }
+    }
+
+    // Also count edges from fixed_rate systems
+    for (std::size_t i = 0; i < fixed_rate_systems_.size(); ++i) {
+        auto affects = i < fixed_rate_affects_.size() ? fixed_rate_affects_[i] : 0U;
+        for (std::size_t j = 0; j < compute_systems_.size(); ++j) {
+            if (affects & (1UL << j)) {
+                in_edges[j]++;
+            }
+        }
+    }
+
+    // Helper: classify system type based on graph edges
+    auto classify_system = [&](std::size_t idx) -> const char* {
+        const bool has_out = out_edges[idx] > 0;
+        const bool has_in  = in_edges[idx] > 0;
+
+        if (has_out && !has_in)
+            return "input";    // (1, 0) 只出不进
+        if (has_out && has_in)
+            return "pipeline"; // (1, 1) 有进有出
+        return "output";       // (0, 1) 或 (0, 0) 只进不出或孤立
+    };
+
+    // Define subgraphs for system types
+    printf("    subgraph External[FixedRate Systems]\n");
+    printf("        direction TB\n");
+    for (std::size_t i = 0; i < fixed_rate_systems_.size(); ++i) {
+        const auto& name = fixed_rate_systems_[i].system->meta().name;
+        const auto freq  = fixed_rate_systems_[i].policy.frequency_hz;
+        printf("        E%d[\"%s<br/>%dHz\"]:::fixedStyle\n", (int)i, name.c_str(), freq);
+    }
+    printf("    end\n\n");
+
+    // Group compute systems by type
+    std::vector<std::size_t> input_systems, pipeline_systems, output_systems;
+    for (std::size_t i = 0; i < compute_systems_.size(); ++i) {
+        const auto* type = classify_system(i);
+        if (strcmp(type, "input") == 0)
+            input_systems.push_back(i);
+        else if (strcmp(type, "output") == 0)
+            output_systems.push_back(i);
+        else
+            pipeline_systems.push_back(i);
+    }
+
+    if (!input_systems.empty()) {
+        printf("    subgraph Input[Input Systems]\n");
+        printf("        direction TB\n");
+        for (auto i : input_systems) {
+            const auto& name = compute_systems_[i].system->meta().name;
+            printf("        C%d[\"%s\"]:::inputStyle\n", (int)i, name.c_str());
+        }
+        printf("    end\n\n");
+    }
+
+    if (!pipeline_systems.empty()) {
+        printf("    subgraph Pipeline[Pipeline Systems]\n");
+        printf("        direction TB\n");
+        for (auto i : pipeline_systems) {
+            const auto& name = compute_systems_[i].system->meta().name;
+            printf("        C%d[\"%s\"]:::pipelineStyle\n", (int)i, name.c_str());
+        }
+        printf("    end\n\n");
+    }
+
+    if (!output_systems.empty()) {
+        printf("    subgraph Output[Output Systems]\n");
+        printf("        direction TB\n");
+        for (auto i : output_systems) {
+            const auto& name = compute_systems_[i].system->meta().name;
+            printf("        C%d[\"%s\"]:::outputStyle\n", (int)i, name.c_str());
+        }
+        printf("    end\n\n");
+    }
+
+    // Helper: collect channel topics that connect writer to reader
+    auto get_channel_topics = [&](const SystemBase* writer,
+                                  const SystemBase* reader) -> std::string {
+        std::vector<std::string> topics;
+        const auto& writer_meta = writer->meta();
+        const auto& reader_meta = reader->meta();
+
+        // Helper to check channel connections
+        auto check_channels = [&](const auto& writer_channels, const auto& reader_channels) {
+            for (const auto& wc : writer_channels) {
+                if (wc.kind != channel_kind::spsc_writer && wc.kind != channel_kind::spmc_writer) {
+                    continue;
+                }
+                for (const auto& rc : reader_channels) {
+                    if (rc.kind != channel_kind::spsc_reader
+                        && rc.kind != channel_kind::spmc_reader) {
+                        continue;
+                    }
+                    if (wc.type == rc.type && wc.topic == rc.topic) {
+                        // Demangle topic name for readability
+                        topics.push_back(talos::scheduler::detail::demangle(wc.topic.name()));
+                    }
+                }
+            }
+        };
+
+        check_channels(writer_meta.spsc_channels, reader_meta.spsc_channels);
+        check_channels(writer_meta.spsc_channels, reader_meta.spmc_channels);
+        check_channels(writer_meta.spmc_channels, reader_meta.spmc_channels);
+
+        if (topics.empty()) {
+            return "";
+        }
+        if (topics.size() == 1) {
+            return topics[0];
+        }
+        // Multiple channels: join with commas
+        std::string result;
+        for (const auto& t : topics) {
+            if (!result.empty())
+                result += ", ";
+            result += t;
+        }
+        return result;
+    };
+
+    // Helper: get resource topic between writer and reader
+    auto get_resource_topic = [&](const SystemBase* writer,
+                                  const SystemBase* reader) -> std::string {
+        const auto& writer_meta = writer->meta();
+        const auto& reader_meta = reader->meta();
+
+        // Find common resource type (writer has res_mut, reader has res)
+        for (const auto& writer_type : writer_meta.writes) {
+            for (const auto& reader_type : reader_meta.reads) {
+                if (writer_type == reader_type) {
+                    return talos::scheduler::detail::demangle(writer_type.name());
+                }
+            }
+        }
+        return "";
+    };
+
+    // FixedRate → Compute
+    for (std::size_t i = 0; i < fixed_rate_systems_.size(); ++i) {
+        auto affects = i < fixed_rate_affects_.size() ? fixed_rate_affects_[i] : 0U;
+        for (std::size_t j = 0; j < compute_systems_.size(); ++j) {
+            if (affects & (1UL << j)) {
+                const auto* writer = fixed_rate_systems_[i].system.get();
+                const auto* reader = compute_systems_[j].system.get();
+                const auto topic   = get_channel_topics(writer, reader);
+                if (topic.empty()) {
+                    printf("    E%d --> C%d\n", (int)i, (int)j);
+                } else {
+                    printf("    E%d -->|\"%s\"| C%d\n", (int)i, topic.c_str(), (int)j);
+                }
+            }
+        }
+    }
+
+    // Compute → Compute (channels + pipeline resources)
+    for (std::size_t i = 0; i < compute_systems_.size(); ++i) {
+        auto affects = i < compute_affects_.size() ? compute_affects_[i] : 0U;
+        for (std::size_t j = 0; j < compute_systems_.size(); ++j) {
+            if ((affects & (1UL << j)) && i != j) {
+                const auto* writer = compute_systems_[i].system.get();
+                const auto* reader = compute_systems_[j].system.get();
+
+                // Check for channel dependency
+                const auto channel_topic = get_channel_topics(writer, reader);
+                // Check for resource dependency
+                const auto resource_topic = get_resource_topic(writer, reader);
+
+                std::string label;
+                if (!channel_topic.empty() && !resource_topic.empty()) {
+                    label = channel_topic + " | res:" + resource_topic;
+                } else if (!channel_topic.empty()) {
+                    label = channel_topic;
+                } else if (!resource_topic.empty()) {
+                    label = "res:" + resource_topic;
+                }
+
+                if (label.empty()) {
+                    printf("    C%d --> C%d\n", (int)i, (int)j);
+                } else {
+                    printf("    C%d -->|\"%s\"| C%d\n", (int)i, label.c_str(), (int)j);
+                }
+            }
+        }
+    }
+
+    printf("```\n");
+}
+
+void Scheduler::print_mermaid_data_flow() const {
+    printf("```mermaid\n");
+    printf("flowchart LR\n\n");
+
+    // Define distinct path colors for different data flows
+    const char* path_colors[] = {
+        "#e53935", // Red
+        "#1e88e5", // Blue
+        "#43a047", // Green
+        "#fb8c00", // Orange
+        "#8e24aa", // Purple
+        "#00acc1", // Cyan
+        "#fdd835", // Yellow
+        "#6d4c41", // Brown
+        "#546e7a", // Blue Grey
+        "#d81b60", // Pink
+    };
+    constexpr std::size_t num_colors = sizeof(path_colors) / sizeof(path_colors[0]);
+
+    // ========================================================================
+    // Build data flow graphs: channels AND resources
+    // ========================================================================
+
+    struct ChannelEndpoint {
+        std::size_t system_idx;
+        bool is_fixed_rate;
+    };
+
+    // Channel connection: (type, topic) -> (writer, readers)
+    struct ChannelConnection {
+        std::optional<ChannelEndpoint> writer;
+        std::vector<ChannelEndpoint> readers;
+        std::type_index type;
+        std::type_index topic;
+        channel_kind kind;
+    };
+
+    // Resource connection: type -> (writers, readers)
+    struct ResourceConnection {
+        std::vector<ChannelEndpoint> writers; // res_mut<T>
+        std::vector<ChannelEndpoint> readers; // res<T>
+        std::type_index type;
+    };
+
+    std::unordered_map<ChannelKey, ChannelConnection, ChannelKeyHash> channel_graph;
+    std::unordered_map<std::type_index, ResourceConnection> resource_graph;
+
+    const std::size_t fixed_count   = fixed_rate_systems_.size();
+    const std::size_t compute_count = compute_systems_.size();
+
+    // Helper: process a system's channels
+    auto process_system_channels = [&](std::size_t idx, bool is_fixed, const SystemMeta& meta) {
+        ChannelEndpoint endpoint{idx, is_fixed};
+
+        // Process SPSC channels
+        for (const auto& ch : meta.spsc_channels) {
+            ChannelKey key{ch.type, ch.topic};
+            auto it = channel_graph.find(key);
+            if (it == channel_graph.end()) {
+                it = channel_graph
+                         .emplace(
+                             key,
+                             ChannelConnection{
+                                 .writer  = std::nullopt,
+                                 .readers = {},
+                                 .type    = ch.type,
+                                 .topic   = ch.topic,
+                                 .kind    = ch.kind})
+                         .first;
+            }
+
+            if (ch.kind == channel_kind::spsc_writer) {
+                it->second.writer = endpoint;
+            } else if (ch.kind == channel_kind::spsc_reader) {
+                it->second.readers.push_back(endpoint);
+            }
+        }
+
+        // Process SPMC channels
+        for (const auto& ch : meta.spmc_channels) {
+            ChannelKey key{ch.type, ch.topic};
+            auto it = channel_graph.find(key);
+            if (it == channel_graph.end()) {
+                it = channel_graph
+                         .emplace(
+                             key,
+                             ChannelConnection{
+                                 .writer  = std::nullopt,
+                                 .readers = {},
+                                 .type    = ch.type,
+                                 .topic   = ch.topic,
+                                 .kind    = ch.kind})
+                         .first;
+            }
+
+            if (ch.kind == channel_kind::spmc_writer) {
+                it->second.writer = endpoint;
+            } else if (ch.kind == channel_kind::spmc_reader) {
+                it->second.readers.push_back(endpoint);
+            }
         }
     };
 
-    print_nodes(fixed_rate_systems_, "E");
-    print_nodes(compute_systems_, "C");
+    // Helper: process a system's resources
+    auto process_system_resources = [&](std::size_t idx, bool is_fixed, const SystemMeta& meta) {
+        ChannelEndpoint endpoint{idx, is_fixed};
 
-    printf("\n");
+        // Process res_mut<T> (writers)
+        for (const auto& res_type : meta.writes) {
+            auto it = resource_graph.find(res_type);
+            if (it == resource_graph.end()) {
+                it = resource_graph
+                         .emplace(
+                             res_type,
+                             ResourceConnection{.writers = {}, .readers = {}, .type = res_type})
+                         .first;
+            }
+            it->second.writers.push_back(endpoint);
+        }
 
-    // FixedRate → Compute
+        // Process res<T> (readers)
+        for (const auto& res_type : meta.reads) {
+            auto it = resource_graph.find(res_type);
+            if (it == resource_graph.end()) {
+                it = resource_graph
+                         .emplace(
+                             res_type,
+                             ResourceConnection{.writers = {}, .readers = {}, .type = res_type})
+                         .first;
+            }
+            it->second.readers.push_back(endpoint);
+        }
+    };
+
+    // Build graphs from all systems
+    for (std::size_t i = 0; i < fixed_count; ++i) {
+        const auto& meta = fixed_rate_systems_[i].system->meta();
+        process_system_channels(i, true, meta);
+        process_system_resources(i, true, meta);
+    }
+    for (std::size_t i = 0; i < compute_count; ++i) {
+        const auto& meta = compute_systems_[i].system->meta();
+        process_system_channels(i, false, meta);
+        process_system_resources(i, false, meta);
+    }
+
+    // Helper: classify system by channels AND resources
+    auto classify_by_channels = [&](std::size_t idx, bool is_fixed) -> const char* {
+        const auto& meta = is_fixed ? fixed_rate_systems_[idx].system->meta()
+                                    : compute_systems_[idx].system->meta();
+
+        // Check for writer channels (pub)
+        const bool has_pub =
+            std::any_of(
+                meta.spsc_channels.begin(), meta.spsc_channels.end(),
+                [](const auto& c) { return c.kind == channel_kind::spsc_writer; })
+            || std::any_of(meta.spmc_channels.begin(), meta.spmc_channels.end(), [](const auto& c) {
+                   return c.kind == channel_kind::spmc_writer;
+               });
+
+        // Check for reader channels (sub)
+        const bool has_sub =
+            std::any_of(
+                meta.spsc_channels.begin(), meta.spsc_channels.end(),
+                [](const auto& c) { return c.kind == channel_kind::spsc_reader; })
+            || std::any_of(meta.spmc_channels.begin(), meta.spmc_channels.end(), [](const auto& c) {
+                   return c.kind == channel_kind::spmc_reader;
+               });
+
+        // Check for resources (res/res_mut)
+        const bool has_res_mut =
+            !meta.writes.empty();                 // res_mut<T> - writes resource (input source)
+        const bool has_res = !meta.reads.empty(); // res<T> - reads resource (output sink)
+
+        // Classification considering BOTH channels and resources
+        if (has_pub && has_sub)
+            return "pipeline"; // Pipeline: has both pub and sub channels
+
+        // Input: has res_mut (writes to resource) OR only publishes (no sub)
+        if (has_res_mut || (has_pub && !has_sub))
+            return "input";
+
+        // Output: has res (reads from resource, no writes) OR only subscribes (no pub)
+        if ((has_res && !has_res_mut) || (!has_pub && has_sub))
+            return "output";
+
+        return "orphan"; // No channels, no resources
+    };
+
+    // Group systems by channel-based classification
+    std::vector<std::pair<std::size_t, bool>> input_systems, pipeline_systems, output_systems,
+        orphan_systems;
+
+    for (std::size_t i = 0; i < fixed_count; ++i) {
+        const auto* type = classify_by_channels(i, true);
+        if (strcmp(type, "input") == 0)
+            input_systems.push_back({i, true});
+        else if (strcmp(type, "pipeline") == 0)
+            pipeline_systems.push_back({i, true});
+        else if (strcmp(type, "output") == 0)
+            output_systems.push_back({i, true});
+        else
+            orphan_systems.push_back({i, true});
+    }
+
+    for (std::size_t i = 0; i < compute_count; ++i) {
+        const auto* type = classify_by_channels(i, false);
+        if (strcmp(type, "input") == 0)
+            input_systems.push_back({i, false});
+        else if (strcmp(type, "pipeline") == 0)
+            pipeline_systems.push_back({i, false});
+        else if (strcmp(type, "output") == 0)
+            output_systems.push_back({i, false});
+        else
+            orphan_systems.push_back({i, false});
+    }
+
+    // Helper: print system node
+    auto print_system_node = [&](std::size_t idx, bool is_fixed, const char* style) {
+        const auto& meta   = is_fixed ? fixed_rate_systems_[idx].system->meta()
+                                      : compute_systems_[idx].system->meta();
+        const char* prefix = is_fixed ? "E" : "C";
+        if (is_fixed) {
+            const auto freq = fixed_rate_systems_[idx].policy.frequency_hz;
+            printf(
+                "        %s%d[\"%s<br/>%dHz\"]:::%s\n", prefix, (int)idx, meta.name.c_str(), freq,
+                style);
+        } else {
+            printf("        %s%d[\"%s\"]:::%s\n", prefix, (int)idx, meta.name.c_str(), style);
+        }
+    };
+
+    // Print Input systems
+    if (!input_systems.empty()) {
+        printf("    subgraph Input[Input Systems]\n");
+        for (auto [idx, is_fixed] : input_systems) {
+            print_system_node(idx, is_fixed, "inputStyle");
+        }
+        printf("    end\n\n");
+    }
+
+    // Print Pipeline systems
+    if (!pipeline_systems.empty()) {
+        printf("    subgraph Pipeline[Pipeline Systems]\n");
+        for (auto [idx, is_fixed] : pipeline_systems) {
+            print_system_node(idx, is_fixed, "pipelineStyle");
+        }
+        printf("    end\n\n");
+    }
+
+    // Print Output systems
+    if (!output_systems.empty()) {
+        printf("    subgraph Output[Output Systems]\n");
+        for (auto [idx, is_fixed] : output_systems) {
+            print_system_node(idx, is_fixed, "outputStyle");
+        }
+        printf("    end\n\n");
+    }
+
+    // Print Orphan systems
+    if (!orphan_systems.empty()) {
+        printf("    subgraph Orphan[Orphan Systems]\n");
+        for (auto [idx, is_fixed] : orphan_systems) {
+            print_system_node(idx, is_fixed, "orphanStyle");
+        }
+        printf("    end\n\n");
+    }
+
+    // ========================================================================
+    // Draw edges: Channel connections AND Resource dependencies
+    // ========================================================================
+
+    // Map to store color index for each channel (same channel = same color)
+    std::unordered_map<std::string, std::size_t> channel_color_map;
+    std::size_t next_color_idx = 0;
+
+    // Draw channel edges (pub/sub) - collect edges first
+    std::vector<std::tuple<std::string, std::string, std::string>> channel_edges;
+    std::vector<std::string> edge_colors;
+
+    for (const auto& [key, conn] : channel_graph) {
+        if (!conn.writer.has_value() || conn.readers.empty())
+            continue;
+
+        const char* writer_prefix = conn.writer->is_fixed_rate ? "E" : "C";
+        const auto& topic_name    = talos::scheduler::detail::demangle(conn.topic.name());
+
+        // Assign color to this channel (same topic = same color)
+        if (!channel_color_map.contains(topic_name)) {
+            channel_color_map[topic_name] = next_color_idx % num_colors;
+            next_color_idx++;
+        }
+        const std::size_t color_idx = channel_color_map[topic_name];
+
+        for (const auto& reader : conn.readers) {
+            const char* reader_prefix = reader.is_fixed_rate ? "E" : "C";
+            char edge_buf[256];
+            snprintf(
+                edge_buf, sizeof(edge_buf), "    %s%d -->|\"%s\"| %s%d", writer_prefix,
+                (int)conn.writer->system_idx, topic_name.c_str(), reader_prefix,
+                (int)reader.system_idx);
+            channel_edges.emplace_back(edge_buf, std::string(path_colors[color_idx]), topic_name);
+        }
+    }
+
+    // Print all channel edges
+    for (const auto& [edge_def, color, _] : channel_edges) {
+        printf("%s\n", edge_def.c_str());
+    }
+
+    // Print linkStyle for channel edges (apply colors)
+    for (std::size_t i = 0; i < channel_edges.size(); ++i) {
+        const auto& color = std::get<1>(channel_edges[i]);
+        printf("    linkStyle %zu stroke:%s,stroke-width:2px\n", i, color.c_str());
+    }
+
+    // Draw resource edges (res_mut → res) - use grey for all resource edges
+    const std::size_t resource_edge_start = channel_edges.size();
+    std::size_t resource_edge_count       = 0;
+
+    for (const auto& [type, conn] : resource_graph) {
+        if (conn.writers.empty() || conn.readers.empty())
+            continue;
+
+        const auto type_name = talos::scheduler::detail::demangle(type.name());
+
+        for (const auto& writer : conn.writers) {
+            const char* writer_prefix = writer.is_fixed_rate ? "E" : "C";
+            for (const auto& reader : conn.readers) {
+                const char* reader_prefix = reader.is_fixed_rate ? "E" : "C";
+                printf(
+                    "    %s%d -.->|\"res:%s\"| %s%d\n", writer_prefix, (int)writer.system_idx,
+                    type_name.c_str(), reader_prefix, (int)reader.system_idx);
+                resource_edge_count++;
+            }
+        }
+    }
+
+    // Print linkStyle for resource edges (all grey, dashed)
+    for (std::size_t i = 0; i < resource_edge_count; ++i) {
+        printf(
+            "    linkStyle %zu stroke:#9e9e9e,stroke-width:2px,stroke-dasharray: 5 5\n",
+            resource_edge_start + i);
+    }
+
+    printf("```\n");
+}
+
+void Scheduler::print_mermaid_execution_levels() const {
+    printf("```mermaid\n");
+    printf("flowchart LR\n\n"); // Changed from TB to LR for horizontal layout
+
+    // Print FixedRate systems (source wakers)
+    if (!fixed_rate_systems_.empty()) {
+        printf("    subgraph Wakers[FixedRate Wakers]\n");
+        printf("        direction TB\n"); // Vertical within subgraph for horizontal main flow
+        for (std::size_t i = 0; i < fixed_rate_systems_.size(); ++i) {
+            const auto& name = fixed_rate_systems_[i].system->meta().name;
+            const auto freq  = fixed_rate_systems_[i].policy.frequency_hz;
+            printf(
+                "        E%d[\"E%d: %s<br/>%dHz\"]:::fixedStyle\n", (int)i, (int)i, name.c_str(),
+                freq);
+        }
+        printf("    end\n\n");
+    }
+
+    if (levels_.empty()) {
+        printf("    NoLevels[\"No execution levels computed\"]\n");
+        printf("```\n");
+        return;
+    }
+
+    // Build in_edges and out_edges for each compute system
+    std::vector<std::size_t> in_edges(compute_systems_.size(), 0);
+    std::vector<std::size_t> out_edges(compute_systems_.size(), 0);
+
+    for (std::size_t i = 0; i < compute_systems_.size(); ++i) {
+        out_edges[i] = (i < compute_affects_.size()) ? std::popcount(compute_affects_[i]) : 0;
+    }
+
+    for (std::size_t i = 0; i < compute_systems_.size(); ++i) {
+        for (std::size_t j = 0; j < compute_systems_.size(); ++j) {
+            if (i != j && (compute_affects_[i] & (1UL << j))) {
+                in_edges[j]++;
+            }
+        }
+    }
+
+    // Also count edges from fixed_rate systems
+    for (std::size_t i = 0; i < fixed_rate_systems_.size(); ++i) {
+        auto affects = i < fixed_rate_affects_.size() ? fixed_rate_affects_[i] : 0U;
+        for (std::size_t j = 0; j < compute_systems_.size(); ++j) {
+            if (affects & (1UL << j)) {
+                in_edges[j]++;
+            }
+        }
+    }
+
+    // Helper: classify system type based on graph edges
+    auto classify_by_edges = [&](std::size_t idx) -> const char* {
+        const bool has_out = out_edges[idx] > 0;
+        const bool has_in  = in_edges[idx] > 0;
+
+        if (has_out && !has_in)
+            return "input";    // (1, 0) 只出不进
+        if (has_out && has_in)
+            return "pipeline"; // (1, 1) 有进有出
+        return "output";       // (0, 1) 或 (0, 0) 只进不出或孤立
+    };
+
+    // Print each level as a subgraph
+    for (std::size_t level_idx = 0; level_idx < levels_.size(); ++level_idx) {
+        const auto& level = levels_[level_idx];
+        printf(
+            "    subgraph L%d[\"Level %d: %zu systems\"]\n", (int)level_idx, (int)level_idx,
+            level.size());
+        printf("        direction TB\n"); // Vertical within subgraph for horizontal main flow
+
+        for (std::size_t i = 0; i < level.size(); ++i) {
+            const auto sys_idx = level[i];
+            const auto& name   = compute_systems_[sys_idx].system->meta().name;
+            const auto& meta   = compute_systems_[sys_idx].system->meta();
+            const auto readers = meta.spsc_channels.size() + meta.spmc_channels.size();
+            const auto writers = std::count_if(
+                meta.spsc_channels.begin(), meta.spsc_channels.end(), [](const auto& c) {
+                    return c.kind == channel_kind::spsc_writer
+                        || c.kind == channel_kind::spmc_writer;
+                });
+
+            const auto* sys_type    = classify_by_edges(sys_idx);
+            const char* style_class = (strcmp(sys_type, "input") == 0)  ? "inputStyle"
+                                    : (strcmp(sys_type, "output") == 0) ? "outputStyle"
+                                                                        : "pipelineStyle";
+
+            printf(
+                "        C%d[\"C%d: %s\\n(%d in, %d out)\"]:::%s\n", (int)sys_idx, (int)sys_idx,
+                name.c_str(), (int)readers, (int)writers, style_class);
+        }
+
+        printf("    end\n\n");
+    }
+
+    // ========================================================================
+    // Draw edges: FixedRate -> compute systems, then between consecutive levels
+    // ========================================================================
+
+    // FixedRate wakers -> compute systems (direct wake targets)
     for (std::size_t i = 0; i < fixed_rate_systems_.size(); ++i) {
         auto affects = i < fixed_rate_affects_.size() ? fixed_rate_affects_[i] : 0U;
         for (std::size_t j = 0; j < compute_systems_.size(); ++j) {
@@ -406,17 +1046,54 @@ void Scheduler::print_mermaid_wake_chains() const {
         }
     }
 
-    // Compute → Compute
-    for (std::size_t i = 0; i < compute_systems_.size(); ++i) {
-        auto affects = i < compute_affects_.size() ? compute_affects_[i] : 0U;
-        for (std::size_t j = 0; j < compute_systems_.size(); ++j) {
-            if ((affects & (1UL << j)) && i != j) {
-                printf("    C%d --> C%d\n", (int)i, (int)j);
+    // Draw edges between consecutive levels
+    for (std::size_t level_idx = 0; level_idx + 1 < levels_.size(); ++level_idx) {
+        const auto& current_level = levels_[level_idx];
+        const auto& next_level    = levels_[level_idx + 1];
+
+        for (std::size_t i = 0; i < current_level.size(); ++i) {
+            const auto src_idx = current_level[i];
+            auto src_affects   = src_idx < compute_affects_.size() ? compute_affects_[src_idx] : 0U;
+
+            for (std::size_t j = 0; j < next_level.size(); ++j) {
+                const auto dst_idx = next_level[j];
+                if (src_affects & (1UL << dst_idx)) {
+                    printf("    C%d --> C%d\n", (int)src_idx, (int)dst_idx);
+                }
             }
         }
     }
 
     printf("```\n");
+    printf("\n%% Pipeline Analysis:\n");
+
+    // Count system types
+    std::size_t input_count = 0, pipeline_count = 0, output_count = 0;
+    for (std::size_t i = 0; i < compute_systems_.size(); ++i) {
+        const auto* sys_type = classify_by_edges(i);
+        if (strcmp(sys_type, "input") == 0)
+            input_count++;
+        else if (strcmp(sys_type, "output") == 0)
+            output_count++;
+        else
+            pipeline_count++;
+    }
+
+    printf("%% - FixedRate wakers: %zu\n", (std::size_t)fixed_rate_systems_.size());
+    printf("%% - Total depth: %zu levels\n", (std::size_t)levels_.size());
+    printf(
+        "%% - Compute system types: %zu input, %zu pipeline, %zu output\n", input_count,
+        pipeline_count, output_count);
+    printf("%% - Max parallelism: ");
+    std::size_t max_parallel = 0;
+    std::size_t max_level    = 0;
+    for (std::size_t i = 0; i < levels_.size(); ++i) {
+        if (levels_[i].size() > max_parallel) {
+            max_parallel = levels_[i].size();
+            max_level    = i;
+        }
+    }
+    printf("%zu systems at Level %zu\n", max_parallel, max_level);
 }
 
 void Scheduler::print_stats() const {
@@ -982,7 +1659,7 @@ auto Scheduler::compute_levels() -> BuildResult {
     }
 
     // ========================================================================
-    // Phase 3: Build adjacency list and in-degree
+    // Phase 3: Build adjacency list and in-degree (channels only)
     // ========================================================================
 
     // Use bitmask for adjacency instead of std::set (O(1) vs O(log n))
@@ -1003,6 +1680,72 @@ auto Scheduler::compute_levels() -> BuildResult {
                     // New edge
                     adj_mask[writer] |= bit;
                     ++in_degree[reader];
+                }
+            }
+        }
+    }
+
+    // ========================================================================
+    // Phase 3.5: Build resource dependencies
+    // ========================================================================
+    // Resource dependency semantics:
+    // - Only readers → output systems (sink nodes, no downstream deps from this resource)
+    // - Only writer → input system (source node, reads external data)
+    // - Writer + readers → pipeline dependency (writer → readers)
+
+    struct ResourceUsage {
+        std::vector<std::size_t> readers; // res<T> readers
+        std::vector<std::size_t> writers; // res_mut<T> writers
+    };
+
+    std::map<std::type_index, ResourceUsage> resources;
+
+    // Collect resource usage from all compute systems
+    for (std::size_t i = 0; i < n; ++i) {
+        const auto& meta = compute_systems_[i].system->meta();
+
+        for (const auto& type : meta.reads) {
+            resources[type].readers.push_back(i);
+        }
+        for (const auto& type : meta.writes) {
+            resources[type].writers.push_back(i);
+        }
+    }
+
+    // Validate and build edges for resource dependencies
+    for (const auto& [type, usage] : resources) {
+        // Rule: Only one res_mut writer per resource type
+        if (usage.writers.size() > 1) {
+            std::vector<std::string> writer_names;
+            writer_names.reserve(usage.writers.size());
+            for (auto idx : usage.writers) {
+                writer_names.push_back(compute_systems_[idx].system->meta().name);
+            }
+            std::string names_str;
+            for (size_t i = 0; i < writer_names.size(); ++i) {
+                if (i > 0)
+                    names_str += ", ";
+                names_str += writer_names[i];
+            }
+            SPDLOG_CRITICAL(
+                "Resource type '{}' has multiple res_mut writers: {}",
+                talos::scheduler::detail::demangle(type.name()), names_str);
+            std::abort();
+        }
+
+        // Only readers: output systems (sink nodes, no dependency edges created)
+        // Only writer: input system (source node, no dependency edges created)
+        // Writer + readers: create dependency edges (writer → readers)
+        if (!usage.writers.empty() && !usage.readers.empty()) {
+            // Pipeline dependency: writer must execute before all readers
+            const std::size_t writer = usage.writers[0];
+            for (std::size_t reader : usage.readers) {
+                if (writer != reader) {
+                    const std::uint64_t bit = 1UL << reader;
+                    if ((adj_mask[writer] & bit) == 0) {
+                        adj_mask[writer] |= bit;
+                        ++in_degree[reader];
+                    }
                 }
             }
         }
@@ -1096,33 +1839,24 @@ auto Scheduler::compute_levels() -> BuildResult {
     }
 
     // ========================================================================
-    // Phase 6: Compute notify groups (which fixed_rate systems wake which compute systems)
+    // Phase 6: Build wake chains (waker -> direct wakee only)
     // ========================================================================
-    // Build transitive closure of compute system dependencies
-    // dependents[i] = bitmask of all systems that depend on system i (directly or transitively)
-    std::vector<std::uint64_t> dependents = adj_mask; // Direct dependencies are already in adj_mask
+    // Wake chains connect systems that directly communicate via channels OR resources.
+    // Transitive dependencies are handled by cascade wake in compute loop.
 
-    // Compute transitive closure (Floyd-Warshall style)
-    for (std::size_t k = 0; k < n; ++k) {
-        for (std::size_t i = 0; i < n; ++i) {
-            if (dependents[i] & (1UL << k)) {
-                dependents[i] |= dependents[k];
-            }
-        }
-    }
-
-    // For each fixed_rate system, compute which compute systems it affects
+    // Wake chains for fixed_rate systems:
+    // fixed_rate_affects_[i] = bitmask of compute systems that directly read this fixed_rate's
+    // channels
     fixed_rate_affects_.resize(fixed_rate_systems_.size(), 0);
 
-    // Helper lambda: process writer channels and accumulate affected systems
-    auto process_writer_channels = [&](const auto& meta_channels, std::uint64_t& affects) {
+    // Helper lambda: process writer channels and collect direct readers only
+    auto collect_direct_readers = [&](const auto& meta_channels, std::uint64_t& affects) {
         for (const auto& ch : meta_channels) {
             if (is_writer(ch.kind)) {
                 ChannelKey key{ch.type, ch.topic};
                 if (auto it = channels.find(key); it != channels.end()) {
                     for (auto reader : it->second.readers) {
-                        affects |= (1UL << reader);    // Direct reader
-                        affects |= dependents[reader]; // Transitive dependents
+                        affects |= (1UL << reader); // Direct reader only
                     }
                 }
             }
@@ -1133,20 +1867,47 @@ auto Scheduler::compute_levels() -> BuildResult {
         std::uint64_t affects = 0;
         const auto& meta      = fixed_rate_systems_[i].system->meta();
 
-        // Find compute systems that directly read from this fixed_rate's channels
-        process_writer_channels(meta.spsc_channels, affects);
-        process_writer_channels(meta.spmc_channels, affects);
+        // Collect direct readers of this fixed_rate's channels
+        collect_direct_readers(meta.spsc_channels, affects);
+        collect_direct_readers(meta.spmc_channels, affects);
 
         fixed_rate_affects_[i] = affects;
     }
 
-    // For each compute system, compute which other compute systems it affects
+    // Wake chains for compute systems:
+    // compute_affects_[i] = bitmask of compute systems that directly depend on system i
+    // via channels OR pipeline resources (writer + readers)
     // This enables cascade wake: when compute A finishes, wake compute B if B depends on A
     compute_affects_.resize(n, 0);
 
-    for (std::size_t i = 0; i < n; ++i) {
-        // dependents[i] already contains all systems that depend on system i (transitively)
-        compute_affects_[i] = dependents[i];
+    // Channel dependencies
+    for (const auto& [key, usage] : channels) {
+        if (usage.writers.empty() || usage.readers.empty()) {
+            continue;
+        }
+
+        const std::size_t writer = usage.writers[0];
+        for (std::size_t reader : usage.readers) {
+            if (writer != reader) {
+                compute_affects_[writer] |= (1UL << reader);
+            }
+        }
+    }
+
+    // Resource dependencies: only include pipeline resources (writer + readers)
+    // - Only readers: output systems (no wake edges)
+    // - Only writer: input systems (no wake edges)
+    // - Writer + readers: pipeline dependency (writer → readers)
+    for (const auto& [type, usage] : resources) {
+        if (!usage.writers.empty() && !usage.readers.empty()) {
+            // Pipeline dependency: include in wake chains
+            const std::size_t writer = usage.writers[0];
+            for (std::size_t reader : usage.readers) {
+                if (writer != reader) {
+                    compute_affects_[writer] |= (1UL << reader);
+                }
+            }
+        }
     }
 
     return {};
