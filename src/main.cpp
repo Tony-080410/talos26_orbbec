@@ -4,6 +4,7 @@
 #include "fcs/L3_estimation/tracker_systems.hpp"
 #include "fcs/L4_planning/planning_systems.hpp"
 #include "fcs/L5_weapon/enhanced/weapon_systems.hpp"
+#include "fcs/chiral/chiral_collector_system.hpp"
 #include "fcs/config.hpp"
 #include "fcs/core/trajectory/resource.hpp"
 #include "fcs/runtime/l1_l2_setup.hpp"
@@ -201,6 +202,10 @@ int main() {
 
     // Register L5 MPC Weapon system (consumes GimbalPlan from L4)
     fcs::L5::register_enhanced_weapon_system(scheduler, std::move(vision.l5.weapon));
+
+    // Register Chiral data collection system (publishes TrackerOutput to shared memory)
+    fcs::chiral::register_chiral_collector_system(scheduler);
+    SPDLOG_INFO("Chiral data collection system registered");
 
     if (foxglove.enabled) {
         auto foxglove_server = fcs::try_create_foxglove_server(foxglove.port, foxglove.host);

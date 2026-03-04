@@ -116,6 +116,9 @@ add_subdirectory(crates/fast_tf)
 add_subdirectory(crates/primitive)
 add_subdirectory(crates/scheduler)
 
+# Chiral bidirectional communication
+add_subdirectory(crates/chiral)
+
 # Hardware drivers
 add_subdirectory(crates/hardware/at_gimbal)
 add_subdirectory(crates/hardware/hik_camera_driver)
@@ -128,6 +131,7 @@ add_subdirectory(crates/hardware_daedalus)
 set(FCS_SOURCES
         src/fcs/config.cpp
         src/fcs/camera_config.cpp
+        src/fcs/chiral/chiral_collector_system.cpp
         src/fcs/core/trajectory/ballistic_model.cpp
         src/fcs/core/trajectory/solver/trajectory_solver.cpp
         src/fcs/L1_sensor/camera_interface.cpp
@@ -232,6 +236,7 @@ target_link_libraries(fcs PUBLIC
         talos_gimbal
         hikcamera
         ipc
+        chiral
         ${OpenCV_LIBS}
         $<$<TARGET_EXISTS:openvino::runtime>:openvino::runtime>
         $<$<TARGET_EXISTS:TensorRT::TensorRT>:TensorRT::TensorRT>
