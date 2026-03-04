@@ -53,7 +53,7 @@ function(crate)
         set(CRATE_SOURCES ${CRATE_CPP_SOURCES} ${CRATE_C_SOURCES} ${CRATE_CU_SOURCES})
     endif()
 
-    # INTERFACE 库特殊处理
+    # 根据类型创建库或可执行文件
     if(ARG_TYPE STREQUAL "INTERFACE")
         add_library(${ARG_NAME} INTERFACE)
         target_include_directories(${ARG_NAME} INTERFACE
@@ -63,53 +63,55 @@ function(crate)
         if(ARG_DEPS)
             target_link_libraries(${ARG_NAME} INTERFACE ${ARG_DEPS})
         endif()
-        return()
-    endif()
-
-    # EXECUTABLE: 不包含头文件
-    if(ARG_TYPE STREQUAL "EXECUTABLE")
+    elseif(ARG_TYPE STREQUAL "EXECUTABLE")
         if(NOT CRATE_SOURCES)
             message(FATAL_ERROR "crate(${ARG_NAME}): No source files found in src/")
         endif()
         add_executable(${ARG_NAME} ${CRATE_SOURCES})
-    else()
-        # SHARED/STATIC 库: 只包含源文件（头文件通过 include 目录暴露）
-        add_library(${ARG_NAME} ${ARG_TYPE} ${CRATE_SOURCES})
-    endif()
-
-    # include 目录（自身）
-    target_include_directories(${ARG_NAME} PUBLIC
-        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>
-        $<INSTALL_INTERFACE:include>
-    )
-
-    # 链接依赖
-    if(ARG_DEPS)
-        if(ARG_TYPE STREQUAL "EXECUTABLE")
+        # include 目录（自身）
+        target_include_directories(${ARG_NAME} PUBLIC
+            $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>
+            $<INSTALL_INTERFACE:include>
+        )
+        # 链接依赖
+        if(ARG_DEPS)
             target_link_libraries(${ARG_NAME} PRIVATE ${ARG_DEPS})
-        else()
+        endif()
+    else()
+        # SHARED/STATIC 库
+        add_library(${ARG_NAME} ${ARG_TYPE} ${CRATE_SOURCES})
+        # include 目录（自身）
+        target_include_directories(${ARG_NAME} PUBLIC
+            $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>
+            $<INSTALL_INTERFACE:include>
+        )
+        # 链接依赖
+        if(ARG_DEPS)
             target_link_libraries(${ARG_NAME} PUBLIC ${ARG_DEPS})
         endif()
     endif()
 
-    # 编译定义
-    if(ARG_DEFINES)
-        target_compile_definitions(${ARG_NAME} PRIVATE ${ARG_DEFINES})
-    endif()
+    # EXECUTABLE 和 SHARED/STATIC 库的额外配置
+    if(NOT ARG_TYPE STREQUAL "INTERFACE")
+        # 编译定义
+        if(ARG_DEFINES)
+            target_compile_definitions(${ARG_NAME} PRIVATE ${ARG_DEFINES})
+        endif()
 
-    # 编译选项
-    if(ARG_OPTIONS)
-        target_compile_options(${ARG_NAME} PRIVATE ${ARG_OPTIONS})
-    endif()
+        # 编译选项
+        if(ARG_OPTIONS)
+            target_compile_options(${ARG_NAME} PRIVATE ${ARG_OPTIONS})
+        endif()
 
-    # 链接选项
-    if(ARG_LINK_OPTIONS)
-        target_link_options(${ARG_NAME} PRIVATE ${ARG_LINK_OPTIONS})
-    endif()
+        # 链接选项
+        if(ARG_LINK_OPTIONS)
+            target_link_options(${ARG_NAME} PRIVATE ${ARG_LINK_OPTIONS})
+        endif()
 
-    # C++ 特性
-    if(ARG_FEATURES)
-        target_compile_features(${ARG_NAME} PUBLIC ${ARG_FEATURES})
+        # C++ 特性
+        if(ARG_FEATURES)
+            target_compile_features(${ARG_NAME} PUBLIC ${ARG_FEATURES})
+        endif()
     endif()
 
     # 自动添加导出宏定义 (对于 SHARED/STATIC 库)
