@@ -64,11 +64,11 @@ public:
 
     /// Hot-reload config (thread-safe)
     void update_config(ConfigPtr new_config) noexcept {
-        std::atomic_store(&config_, std::move(new_config));
+        config_.store(std::move(new_config));
     }
 
     /// Get current config (thread-safe)
-    [[nodiscard]] ConfigPtr get_config() const noexcept { return std::atomic_load(&config_); }
+    [[nodiscard]] ConfigPtr get_config() const noexcept { return config_.load(); }
 
 private:
     /// Preprocess context for letterbox
@@ -137,7 +137,7 @@ private:
     [[nodiscard]] static int argmax(const float* ptr, int len);
 
 private:
-    ConfigPtr config_; // Atomic shared_ptr for thread-safe config access
+    std::atomic<ConfigPtr> config_; // Atomic shared_ptr for thread-safe config access
     ArmorColor detect_color_ = ArmorColor::Blue;
     bool initialized_        = false;
 

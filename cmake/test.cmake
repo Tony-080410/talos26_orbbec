@@ -1,3 +1,6 @@
+# Build testing (default OFF for faster builds)
+option(BUILD_TESTING "Build tests" OFF)
+
 # Sanitizers (optional - enable via CMake flags)
 option(ENABLE_ASAN "Enable AddressSanitizer" OFF)
 option(ENABLE_TSAN "Enable ThreadSanitizer" OFF)

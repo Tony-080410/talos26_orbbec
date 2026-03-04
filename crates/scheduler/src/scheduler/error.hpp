@@ -139,7 +139,7 @@ using BuildResult = std::expected<void, BuildError>;
  */
 template <typename... Args>
 [[noreturn]] inline void panic(const char* fmt, const Args&... args) noexcept {
-    spdlog::critical(fmt, args...);
+    SPDLOG_CRITICAL(fmt::runtime(fmt), args...);
     std::abort();
 }
 

@@ -85,7 +85,7 @@ inline float pointLineDistance(const cv::Point2f& point, const cv::Vec4f& line) 
 }
 
 /*设置流水灯的参数*/
-bool Arrow::set(const std::vector<Light>& lights, const cv::Point2f& roi, const cv::Mat& image) {
+bool Arrow::set(const std::vector<Light>& lights, const cv::Point2f& roi, [[maybe_unused]] const cv::Mat& image) {
     std::vector<cv::Point2f> arrowPoints;
     double fillArea        = 0.0;
     double pointLineThresh = 0.0;
@@ -159,7 +159,7 @@ void Target::set(const Light& l) {
 
 Light::Light(
     const std::vector<cv::Point>& cnt, const cv::Rect2f& globalRoi, const cv::Rect2f& localRoi,
-    const cv::Mat& image)
+    [[maybe_unused]] const cv::Mat& image)
     : contour(cnt)
     , contourArea(cv::contourArea(cnt))
     , rotated(cv::minAreaRect(cnt)) {

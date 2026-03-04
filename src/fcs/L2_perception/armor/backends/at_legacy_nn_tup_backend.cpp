@@ -32,13 +32,29 @@ struct AtLegacyNNTupBackend::Impl {
 // ============================================================================
 
 AtLegacyNNTupBackend::AtLegacyNNTupBackend(ConfigPtr config)
-    : config_(std::move(config))
+    : config_{std::move(config)}
     , impl_(std::make_unique<Impl>()) {}
 
 AtLegacyNNTupBackend::~AtLegacyNNTupBackend() = default;
 
-AtLegacyNNTupBackend::AtLegacyNNTupBackend(AtLegacyNNTupBackend&&) noexcept            = default;
-AtLegacyNNTupBackend& AtLegacyNNTupBackend::operator=(AtLegacyNNTupBackend&&) noexcept = default;
+AtLegacyNNTupBackend::AtLegacyNNTupBackend(AtLegacyNNTupBackend&& other) noexcept
+    : config_{other.config_.load()}
+    , detect_color_(other.detect_color_)
+    , initialized_(other.initialized_)
+    , impl_(std::move(other.impl_)) {
+    other.initialized_ = false;
+}
+
+AtLegacyNNTupBackend& AtLegacyNNTupBackend::operator=(AtLegacyNNTupBackend&& other) noexcept {
+    if (this != &other) {
+        config_.store(other.config_.load());
+        detect_color_  = other.detect_color_;
+        initialized_ = other.initialized_;
+        impl_         = std::move(other.impl_);
+        other.initialized_ = false;
+    }
+    return *this;
+}
 
 // ============================================================================
 // Initialization
@@ -145,7 +161,7 @@ void AtLegacyNNTupBackend::generate_grids_and_strides(
 // ============================================================================
 
 AtLegacyNNTupBackend::PreprocContext
-    AtLegacyNNTupBackend::preprocess(const cv::Mat& image, const AtLegacyNNTupConfig& cfg) {
+    AtLegacyNNTupBackend::preprocess(const cv::Mat& image, const AtLegacyNNTupConfig&) {
     PreprocContext ctx;
 
     // Letterbox resize with symmetric padding

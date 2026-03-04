@@ -263,18 +263,20 @@ target_link_libraries(fcs_visualization PUBLIC
 target_precompile_headers(fcs_visualization PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/fcs_visualization/pch.hpp)
 
 # FCS tests (auto-discovered from src/fcs/tests/)
-file(GLOB FCS_TESTS "${CMAKE_CURRENT_SOURCE_DIR}/src/fcs/tests/*_test.cpp")
-foreach(test_file ${FCS_TESTS})
-    get_filename_component(test_name ${test_file} NAME_WE)
-    add_executable(${test_name} ${test_file})
-    target_link_libraries(${test_name} PRIVATE
-        GTest::gtest_main
-        Threads::Threads
-        fcs
-        fast_tf
-    )
-    add_test(NAME ${test_name} COMMAND ${test_name})
-endforeach()
+if(BUILD_TESTING)
+    file(GLOB FCS_TESTS "${CMAKE_CURRENT_SOURCE_DIR}/src/fcs/tests/*_test.cpp")
+    foreach(test_file ${FCS_TESTS})
+        get_filename_component(test_name ${test_file} NAME_WE)
+        add_executable(${test_name} ${test_file})
+        target_link_libraries(${test_name} PRIVATE
+            GTest::gtest_main
+            Threads::Threads
+            fcs
+            fast_tf
+        )
+        add_test(NAME ${test_name} COMMAND ${test_name})
+    endforeach()
+endif()
 
 # ============================================================================
 # Main executable

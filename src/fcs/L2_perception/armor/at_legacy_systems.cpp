@@ -15,7 +15,7 @@ void register_at_legacy_detection_systems(talos::Scheduler& scheduler, AtLegacyC
     scheduler.world().insert_resource(std::move(config));
     scheduler.add_system<talos::pool_compute>(
         "at_legacy_armor_detector_pnp_solver",
-        [last_detect_color = ArmorColor::Neutral](
+        [](
             talos::spmc<AtLegacyImageFrame, AtLegacyImageChannelTopic> image_in,
             talos::spmc_mut<AtLegacyArmorDetectionBatch, AtLegacyDetectionChannelTopic>
                 detection_out,
@@ -29,7 +29,6 @@ void register_at_legacy_detection_systems(talos::Scheduler& scheduler, AtLegacyC
             if (config.is_changed()) {
                 (*backend_ptr)->update_config(*config);
                 (*backend_ptr)->set_detect_color(config->detector.detect_color);
-                last_detect_color = config->detector.detect_color;
             }
 
             if (!image_in.has_new()) {

@@ -1,8 +1,6 @@
 #include "core/trajectory/model/quadratic_drag.hpp"
-
 #include <algorithm>
 #include <cmath>
-#include <limits>
 #include <numbers>
 
 namespace fcs::core::trajectory::model {
@@ -59,7 +57,7 @@ std::optional<ImpactResult> RK4Integrator::integrate_to_range(
     double vz = v0 * std::sin(pitch);
     double t  = 0.0;
 
-    double prev_x = x, prev_z = z, prev_vx = vx, prev_vz = vz, prev_t = t;
+    double prev_x = x, prev_z = z, prev_t = t;
 
     auto accel = [&](double _vx, double _vz) noexcept {
         const double speed = std::hypot(_vx, _vz);
@@ -71,8 +69,6 @@ std::optional<ImpactResult> RK4Integrator::integrate_to_range(
     for (int step = 0; step < max_steps; ++step) {
         prev_x  = x;
         prev_z  = z;
-        prev_vx = vx;
-        prev_vz = vz;
         prev_t  = t;
 
         const auto [ax1, az1] = accel(vx, vz);

@@ -17,16 +17,17 @@ namespace fcs::L2 {
 // ============================================================================
 
 AtLegacyTraditionalBackend::AtLegacyTraditionalBackend(ConfigPtr config)
-    : config_(std::move(config)) {
+    : config_{std::move(config)} {
     // Initialize classifier if enabled in config
-    if (config_ && !config_->classifier_model_path.empty()) {
+    auto cfg = config_.load();
+    if (cfg && !cfg->classifier_model_path.empty()) {
         classifier_ = std::make_unique<AtLegacyTraditionalClassifier>(
-            config_->classifier_model_path, config_->classifier_use_softmax);
+            cfg->classifier_model_path, cfg->classifier_use_softmax);
         // Initialize classifier - log error if initialization fails
         if (const auto init_result = classifier_->init(); !init_result) {
             // Log error but continue - detection will work without classification
             SPDLOG_CRITICAL(
-                "Failed to initialize ONNX classifier: {}", config_->classifier_model_path);
+                "Failed to initialize ONNX classifier: {}", cfg->classifier_model_path);
             std::abort();
         }
     } else {
@@ -232,7 +233,7 @@ bool AtLegacyTraditionalBackend::is_light(
 
 std::vector<AtLegacyArmorDetection> AtLegacyTraditionalBackend::match_lights(
     std::vector<AtLegacyLight>& lights, const AtLegacyTraditionalConfig& cfg,
-    const cv::Mat gray_img) const {
+    [[maybe_unused]] const cv::Mat gray_img) const {
     // Pre-allocate to avoid repeated reallocation in nested loop
     // Worst case: n*(n-1)/2 pairs where n = lights.size()
     std::vector<AtLegacyArmorDetection> detections;

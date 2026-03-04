@@ -151,6 +151,11 @@ endfunction()
 # 私有辅助函数: 处理测试
 # =============================================================================
 function(_crate_add_tests crate_name src_dir test_list)
+    # 跳过测试构建（默认 OFF）
+    if(NOT BUILD_TESTING)
+        return()
+    endif()
+
     # 如果提供了 TESTS 参数，使用它
     if(test_list)
         foreach(test_file ${test_list})

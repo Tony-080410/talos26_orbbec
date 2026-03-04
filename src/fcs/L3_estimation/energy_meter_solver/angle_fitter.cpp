@@ -7,13 +7,11 @@
 
 namespace energy_meter {
 
-AngleFitter::AngleFitter(double smooth_alpha, int min_data_points)
+AngleFitter::AngleFitter(double /*smooth_alpha*/, int min_data_points)
     : min_data_points_(min_data_points)
     , max_observations_(100)
     , last_prediction_error_(0)
     , start_time_(0)
-    , smooth_alpha_(smooth_alpha)
-    , fit_interval_ms_(50)
     , last_angle_(0.0)
     , last_timestamp_(0.0)
     , has_previous_observation_(false)

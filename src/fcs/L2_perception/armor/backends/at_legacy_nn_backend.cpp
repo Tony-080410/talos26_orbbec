@@ -33,13 +33,29 @@ struct AtLegacyNNBackend::Impl {
 // ============================================================================
 
 AtLegacyNNBackend::AtLegacyNNBackend(ConfigPtr config)
-    : config_(std::move(config))
+    : config_{std::move(config)}
     , impl_(std::make_unique<Impl>()) {}
 
 AtLegacyNNBackend::~AtLegacyNNBackend() = default;
 
-AtLegacyNNBackend::AtLegacyNNBackend(AtLegacyNNBackend&&) noexcept            = default;
-AtLegacyNNBackend& AtLegacyNNBackend::operator=(AtLegacyNNBackend&&) noexcept = default;
+AtLegacyNNBackend::AtLegacyNNBackend(AtLegacyNNBackend&& other) noexcept
+    : config_{other.config_.load()}
+    , detect_color_(other.detect_color_)
+    , initialized_(other.initialized_)
+    , impl_(std::move(other.impl_)) {
+    other.initialized_ = false;
+}
+
+AtLegacyNNBackend& AtLegacyNNBackend::operator=(AtLegacyNNBackend&& other) noexcept {
+    if (this != &other) {
+        config_.store(other.config_.load());
+        detect_color_ = other.detect_color_;
+        initialized_ = other.initialized_;
+        impl_         = std::move(other.impl_);
+        other.initialized_ = false;
+    }
+    return *this;
+}
 
 // ============================================================================
 // Initialization
@@ -302,12 +318,6 @@ std::vector<AtLegacyArmorDetection>
 
     for (int i = 0; i < max_det; ++i) {
         const size_t row_offset = static_cast<size_t>(i) * output_dim;
-
-        // Extract bbox: [x, y, w, h] - center format in model input space
-        const float cx = p[row_offset + 0];
-        const float cy = p[row_offset + 1];
-        const float w  = p[row_offset + 2];
-        const float h  = p[row_offset + 3];
 
         // Extract confidence and class_id
         const float conf = p[row_offset + 4];

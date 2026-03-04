@@ -4,6 +4,7 @@
 #include "at_legacy_traditional_classifier.hpp"
 #include "at_legacy_traditional_types.hpp"
 
+#include <atomic>
 #include <memory>
 #include <vector>
 
@@ -28,7 +29,7 @@ public:
     /// Detect armors in image
     [[nodiscard]] DetectionResult detect_impl(const cv::Mat& input);
 
-    [[nodiscard]] bool is_initialized_impl() const noexcept { return config_ != nullptr; }
+    [[nodiscard]] bool is_initialized_impl() const noexcept { return config_.load() != nullptr; }
 
     [[nodiscard]] std::string_view name_impl() const noexcept { return "traditional"; }
 
@@ -37,14 +38,14 @@ public:
 
     /// Hot-reload config (thread-safe)
     void update_config(ConfigPtr new_config) noexcept {
-        std::atomic_store(&config_, std::move(new_config));
+        config_.store(std::move(new_config));
     }
 
     /// Get current config (thread-safe)
-    [[nodiscard]] ConfigPtr get_config() const noexcept { return std::atomic_load(&config_); }
+    [[nodiscard]] ConfigPtr get_config() const noexcept { return config_.load(); }
 
 private:
-    ConfigPtr config_;
+    std::atomic<ConfigPtr> config_;
     ArmorColor detect_color_ = ArmorColor::Neutral;
     std::unique_ptr<AtLegacyTraditionalClassifier> classifier_;
 

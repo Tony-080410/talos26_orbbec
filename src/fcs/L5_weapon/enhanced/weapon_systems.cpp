@@ -16,7 +16,8 @@ void register_enhanced_weapon_system(talos::Scheduler& scheduler, WeaponControll
     scheduler.world().insert_resource(std::move(config));
     scheduler.add_system<talos::fixed_rate<250>>(
         "enhanced_weapon_control",
-        [&](talos::res<WeaponControllerConfig> _config, core::trajectory::trajectory_solver solver,
+        [&]([[maybe_unused]] talos::res<WeaponControllerConfig> _config,
+            [[maybe_unused]] core::trajectory::trajectory_solver solver,
             talos::spmc<fcs::L4::GimbalPlan, GimbalPlanChannelTopic> plan_in,
             talos::spmc_mut<WeaponCommand, WeaponCommandChannelTopic> weapon_out) mutable {
             auto plan = plan_in.read();

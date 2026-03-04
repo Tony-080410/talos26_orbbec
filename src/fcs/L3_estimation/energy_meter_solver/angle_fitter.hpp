@@ -78,9 +78,6 @@ private:
 
     static constexpr double OFFSET_BASE = 2.090;
 
-    double smooth_alpha_{};
-    int fit_interval_ms_{};
-
     double last_angle_{};
     double last_timestamp_{};
     bool has_previous_observation_{};
