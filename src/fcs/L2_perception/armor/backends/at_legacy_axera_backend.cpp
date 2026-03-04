@@ -357,45 +357,42 @@ AtLegacyAxeraBackend::PreprocContext AtLegacyAxeraBackend::preprocess_letterbox(
 void AtLegacyAxeraBackend::preprocess_image(const cv::Mat& image, const PreprocContext& ctx) {
     auto* npu_input         = static_cast<uint8_t*>(io_data_.pInputs[0].pVirAddr);
     const size_t input_size = INPUT_W * INPUT_H * 3;
-
-    // Update cache if image size changed
-    const bool size_changed = (image.cols != cached_img_w_ || image.rows != cached_img_h_);
-    if (size_changed) {
-        const float ratio_w = static_cast<float>(INPUT_W) / static_cast<float>(image.cols);
-        const float ratio_h = static_cast<float>(INPUT_H) / static_cast<float>(image.rows);
-        cached_ratio_       = std::min(ratio_w, ratio_h);
-
-        const int new_unpad_w = static_cast<int>(std::round(image.cols * cached_ratio_));
-        const int new_unpad_h = static_cast<int>(std::round(image.rows * cached_ratio_));
-
-        cached_pad_w_ = (INPUT_W - new_unpad_w) / 2.0f;
-        cached_pad_h_ = (INPUT_H - new_unpad_h) / 2.0f;
-        cached_img_w_ = image.cols;
-        cached_img_h_ = image.rows;
-    }
-
-    // Calculate letterbox dimensions from cached params
-    const int new_unpad_w = static_cast<int>(std::round(image.cols * cached_ratio_));
-    const int new_unpad_h = static_cast<int>(std::round(image.rows * cached_ratio_));
-
-    const int top  = static_cast<int>(std::round(cached_pad_h_ - 0.1f));
-    const int left = static_cast<int>(std::round(cached_pad_w_ - 0.1f));
+    const int new_unpad_w = static_cast<int>(std::round(image.cols * ctx.ratio));
+    const int new_unpad_h = static_cast<int>(std::round(image.rows * ctx.ratio));
+    const int top         = static_cast<int>(std::round(ctx.pad_h - 0.1f));
+    const int left        = static_cast<int>(std::round(ctx.pad_w - 0.1f));
+    const int bottom      = INPUT_H - top - new_unpad_h;
+    const int right       = INPUT_W - left - new_unpad_w;
 
     // Create cv::Mat wrapper around NPU input buffer (zero-copy)
     cv::Mat npu_mat(INPUT_H, INPUT_W, CV_8UC3, npu_input);
 
-    // Fill with gray padding (114, 114, 114) - YOLO standard
-    npu_mat.setTo(cv::Scalar(114, 114, 114));
+    // Fill only padding regions to reduce write traffic.
+    const cv::Scalar kPadColor(114, 114, 114);
+    if (top > 0) {
+        npu_mat.rowRange(0, top).setTo(kPadColor);
+    }
+    if (bottom > 0) {
+        npu_mat.rowRange(INPUT_H - bottom, INPUT_H).setTo(kPadColor);
+    }
+    if (left > 0 || right > 0) {
+        cv::Mat center_rows = npu_mat.rowRange(top, top + new_unpad_h);
+        if (left > 0) {
+            center_rows.colRange(0, left).setTo(kPadColor);
+        }
+        if (right > 0) {
+            center_rows.colRange(INPUT_W - right, INPUT_W).setTo(kPadColor);
+        }
+    }
 
     // Define ROI for the scaled image region
     cv::Rect roi(left, top, new_unpad_w, new_unpad_h);
     cv::Mat roi_mat = npu_mat(roi);
 
-    // Resize + BGR2RGB directly into ROI
+    // Resize directly into ROI, then swap channels in place.
     if (image.cols != new_unpad_w || image.rows != new_unpad_h) {
-        cv::Mat resized_bgr;
-        cv::resize(image, resized_bgr, {new_unpad_w, new_unpad_h}, 0, 0, cv::INTER_LINEAR);
-        cv::cvtColor(resized_bgr, roi_mat, cv::COLOR_BGR2RGB);
+        cv::resize(image, roi_mat, {new_unpad_w, new_unpad_h}, 0, 0, cv::INTER_LINEAR);
+        cv::cvtColor(roi_mat, roi_mat, cv::COLOR_BGR2RGB);
     } else {
         cv::cvtColor(image, roi_mat, cv::COLOR_BGR2RGB);
     }
@@ -537,9 +534,7 @@ cv::Point2f AtLegacyAxeraBackend::scale_point(const cv::Point2f& pt, const Prepr
 
 std::vector<AtLegacyArmorDetection> AtLegacyAxeraBackend::postprocess_four_head(
     const PreprocContext& ctx, const AtLegacyAxeraConfig& cfg) const {
-    // Get output pointers (4 outputs)
-    const float* raw_boxes =
-        static_cast<const float*>(io_data_.pOutputs[0].pVirAddr); // /model.23/Concat_output_0
+    // Get output pointers
     const float* color_scores =
         static_cast<const float*>(io_data_.pOutputs[1].pVirAddr); // /model.23/Sigmoid_output_0
     const float* obj_scores =
@@ -550,77 +545,79 @@ std::vector<AtLegacyArmorDetection> AtLegacyAxeraBackend::postprocess_four_head(
     // Use cached decode grid (built once at init, avoids rebuilding every frame)
     const DecodeGrid& grid = cached_grid_;
     const int num_anchors  = static_cast<int>(grid.grid_xy.size());
-
-    // Decode all predictions
-    auto all_predictions =
-        decode_four_head_outputs(raw_boxes, color_scores, obj_scores, raw_kpts, num_anchors, grid);
-
-    // Filter by confidence
-    std::vector<DecodedBox> filtered;
-    filtered.reserve(512);
-
-    for (const auto& pred : all_predictions) {
-        // Apply sigmoid to confidence (already sigmoided in NPU output?)
-        const float conf = pred.conf; // Assuming NPU outputs sigmoid
-        if (conf > cfg.confidence_threshold) {
-            filtered.push_back(pred);
-        }
-    }
-
-    // Convert to detections
     std::vector<AtLegacyArmorDetection> candidates;
-    candidates.reserve(filtered.size());
+    candidates.reserve(std::min(num_anchors, std::max(cfg.top_k * 4, 256)));
 
-    for (const auto& pred : filtered) {
-        // Get color class (argmax)
-        int color_id = argmax(pred.class1, 4);
+    // Map pair ID to ArmorName (using PAIR_NAMES_DEFAULT mapping)
+    // Python: ["Gs", "2s", "3s", "4s", "5s", "Os", "Gb", "1b", "3b", "4b", "5b", "Bb"]
+    // ArmorName: Sentry(0), One(1), Two(2), Three(3), Four(4), Five(5), Outpost(6), Base(7),
+    // BaseLarge(8)
+    static constexpr std::array<ArmorName, 12> PAIR_TO_ARMOR{
+        ArmorName::Sentry,   // 0: Gs (Guard sentry)
+        ArmorName::Two,      // 1: 2s
+        ArmorName::Three,    // 2: 3s
+        ArmorName::Four,     // 3: 4s
+        ArmorName::Five,     // 4: 5s
+        ArmorName::Outpost,  // 5: Os (Outpost)
+        ArmorName::Sentry,   // 6: Gb (Guard base - large armor)
+        ArmorName::One,      // 7: 1b (Base - hero number 1)
+        ArmorName::Three,    // 8: 3b
+        ArmorName::Four,     // 9: 4b
+        ArmorName::Five,     // 10: 5b
+        ArmorName::BaseLarge // 11: Bb (Balance/Buffer base)
+    };
+
+    for (int i = 0; i < num_anchors; ++i) {
+        int pair_id         = 0;
+        float max_obj_conf  = obj_scores[i];
+        int best_color_id   = 0;
+        float best_color_sc = color_scores[i];
+
+        for (int p = 1; p < NUM_PAIRS; ++p) {
+            const float conf = obj_scores[p * num_anchors + i];
+            if (conf > max_obj_conf) {
+                max_obj_conf = conf;
+                pair_id      = p;
+            }
+        }
+        if (max_obj_conf <= cfg.confidence_threshold) {
+            continue;
+        }
+
+        for (int c = 1; c < 4; ++c) {
+            const float sc = color_scores[c * num_anchors + i];
+            if (sc > best_color_sc) {
+                best_color_sc = sc;
+                best_color_id = c;
+            }
+        }
 
         // Color filtering (skip gray/purple: 2,3)
-        if (color_id == 2 || color_id == 3) {
+        if (best_color_id == 2 || best_color_id == 3) {
             continue;
         }
 
         // Map color: 0->Blue(0), 1->Red(1)
-        ArmorColor color = (color_id == 0) ? ArmorColor::Blue : ArmorColor::Red;
-
-        // Get pair class (argmax from obj_scores stored in class2)
-        int class_id = argmax(pred.class2, NUM_PAIRS);
-
-        // Map pair ID to ArmorName (using PAIR_NAMES_DEFAULT mapping)
-        // Python: ["Gs", "2s", "3s", "4s", "5s", "Os", "Gb", "1b", "3b", "4b", "5b", "Bb"]
-        // ArmorName: Sentry(0), One(1), Two(2), Three(3), Four(4), Five(5), Outpost(6), Base(7),
-        // BaseLarge(8)
-        static constexpr std::array<ArmorName, 12> PAIR_TO_ARMOR{
-            ArmorName::Sentry,   // 0: Gs (Guard sentry)
-            ArmorName::Two,      // 1: 2s
-            ArmorName::Three,    // 2: 3s
-            ArmorName::Four,     // 3: 4s
-            ArmorName::Five,     // 4: 5s
-            ArmorName::Outpost,  // 5: Os (Outpost)
-            ArmorName::Sentry,   // 6: Gb (Guard base - large armor)
-            ArmorName::One,      // 7: 1b (Base - hero number 1)
-            ArmorName::Three,    // 8: 3b
-            ArmorName::Four,     // 9: 4b
-            ArmorName::Five,     // 10: 5b
-            ArmorName::BaseLarge // 11: Bb (Balance/Buffer base)
-        };
-
-        if (class_id < 0 || class_id >= 12) {
-            continue;
-        }
-
-        const ArmorName armor_name = PAIR_TO_ARMOR[class_id];
+        const ArmorColor color    = (best_color_id == 0) ? ArmorColor::Blue : ArmorColor::Red;
+        const ArmorName armor_name = PAIR_TO_ARMOR[pair_id];
+        const float grid_x         = grid.grid_xy[i].first;
+        const float grid_y         = grid.grid_xy[i].second;
+        const float stride         = grid.strides[i];
 
         // Extract and scale keypoints back to original image
         std::array<cv::Point2f, 4> corners;
         for (int k = 0; k < 4; ++k) {
-            cv::Point2f kpt(pred.kpts[k * 2], pred.kpts[k * 2 + 1]);
-            corners[k] = scale_point(kpt, ctx);
+            const float kpt_x =
+                (raw_kpts[(k * 2 + 0) * num_anchors + i] + grid_x) * stride;
+            const float kpt_y =
+                (raw_kpts[(k * 2 + 1) * num_anchors + i] + grid_y) * stride;
+            corners[k].x = (kpt_x - ctx.pad_w) / ctx.ratio;
+            corners[k].y = (kpt_y - ctx.pad_h) / ctx.ratio;
         }
 
-        AtLegacyArmorDetection det(corners, armor_name, color, pred.conf);
+        AtLegacyArmorDetection det(corners, armor_name, color, max_obj_conf);
         if (det.area > 0) {
-            candidates.push_back(det);
+            candidates.push_back(std::move(det));
         }
     }
 
@@ -630,16 +627,6 @@ std::vector<AtLegacyArmorDetection> AtLegacyAxeraBackend::postprocess_four_head(
 // ============================================================================
 // Helper Functions
 // ============================================================================
-
-int AtLegacyAxeraBackend::argmax(const float* ptr, int len) {
-    int max_arg = 0;
-    for (int i = 1; i < len; i++) {
-        if (ptr[i] > ptr[max_arg]) {
-            max_arg = i;
-        }
-    }
-    return max_arg;
-}
 
 // ============================================================================
 // NMS

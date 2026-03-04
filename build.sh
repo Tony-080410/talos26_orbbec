@@ -46,7 +46,10 @@ clean_dir() {
     fi
 }
 
-cmake -DENABLE_CALIBRATION=ON -G Ninja -B build -S . \
+BUILD_TYPE="${BUILD_TYPE:-Release}"
+
+cmake -G Ninja -B build -S . \
+ -DCMAKE_BUILD_TYPE="${BUILD_TYPE}" \
  -DENABLE_CALIBRATION=OFF
 # -DCMAKE_CXX_FLAGS="-fsanitize=address -fno-omit-frame-pointer -g" \
 # -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address"

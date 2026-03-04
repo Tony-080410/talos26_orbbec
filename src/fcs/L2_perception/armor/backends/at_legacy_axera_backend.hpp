@@ -133,9 +133,6 @@ private:
     [[nodiscard]] static bool
         is_overlap(const AtLegacyArmorDetection& box1, const AtLegacyArmorDetection& box2);
 
-    /// Argmax helper
-    [[nodiscard]] static int argmax(const float* ptr, int len);
-
 private:
     std::atomic<ConfigPtr> config_; // Atomic shared_ptr for thread-safe config access
     ArmorColor detect_color_ = ArmorColor::Blue;
@@ -145,13 +142,6 @@ private:
     AX_ENGINE_HANDLE handle_ = nullptr;
     AX_ENGINE_IO_T io_data_{};
     std::vector<char> model_buffer_;
-
-    // Letterbox cache (avoids reallocating every frame)
-    int cached_img_w_   = 0;
-    int cached_img_h_   = 0;
-    float cached_ratio_ = 1.0f;
-    float cached_pad_w_ = 0.0f;
-    float cached_pad_h_ = 0.0f;
 };
 
 } // namespace fcs::L2
