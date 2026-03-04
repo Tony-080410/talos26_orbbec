@@ -13,7 +13,7 @@ namespace fcs::L2 {
 
 void register_at_legacy_detection_systems(talos::Scheduler& scheduler, AtLegacyConfig&& config) {
     scheduler.world().insert_resource(std::move(config));
-    scheduler.add_system<talos::pool_compute>(
+    scheduler.add_system<talos::fixed_rate<200>>(
         "at_legacy_armor_detector_pnp_solver",
         [](
             talos::spmc<AtLegacyImageFrame, AtLegacyImageChannelTopic> image_in,
@@ -52,22 +52,22 @@ void register_at_legacy_detection_systems(talos::Scheduler& scheduler, AtLegacyC
                 return;
             }
 
-            auto tf_odom_camera = fast_tf::lookup_clamped<fast_tf::odom_fuxk_frame>(
-                **tf_system, fast_tf::FuckTransform<fast_tf::camera_optical_fuxk_frame>(),
-                frame->timestamp_ns);
-
-            if (!tf_odom_camera) {
-                SPDLOG_ERROR(
-                    "TF lookup failed for timestamp {}: {}", frame->timestamp_ns,
-                    tf_odom_camera.error());
-                return;
-            }
-
             auto detections = std::move(*result);
 
             detection_out.write(
                 AtLegacyArmorDetectionBatch{
                     detections, frame->image, frame->timestamp_ns, frame->frame_id});
+
+            auto tf_odom_camera = fast_tf::lookup_clamped<fast_tf::odom_fuxk_frame>(
+                **tf_system, fast_tf::FuckTransform<fast_tf::camera_optical_fuxk_frame>(),
+                frame->timestamp_ns);
+
+            if (!tf_odom_camera) {
+                // SPDLOG_ERROR(
+                //     "TF lookup failed for timestamp {}: {}", frame->timestamp_ns,
+                //     tf_odom_camera.error());
+                return;
+            }
 
             auto measurements = (*solver_ptr)
                                     ->solve_batch_with_ba(
