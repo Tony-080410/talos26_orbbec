@@ -4,7 +4,6 @@
 
 #include <array>
 #include <expected>
-#include <memory>
 #include <string>
 // Forward declaration to avoid including toml++ in config headers.
 namespace toml {
@@ -165,31 +164,6 @@ struct AtLegacyConfig {
 #endif
 #if TALOS_HAS_AXERA
     AtLegacyAxeraConfig axera{};
-#endif
-
-    /// Get shared_ptr for atomic config distribution
-    [[nodiscard]] std::shared_ptr<const AtLegacyTraditionalConfig> traditional_ptr() const {
-        return std::make_shared<const AtLegacyTraditionalConfig>(traditional);
-    }
-
-    [[nodiscard]] std::shared_ptr<const AtLegacyNNConfig> nn_ptr() const {
-        return std::make_shared<const AtLegacyNNConfig>(nn);
-    }
-
-    [[nodiscard]] std::shared_ptr<const AtLegacyNNTupConfig> nn_tup_ptr() const {
-        return std::make_shared<const AtLegacyNNTupConfig>(nn_tup);
-    }
-
-#if TALOS_HAS_TENSORRT
-    [[nodiscard]] std::shared_ptr<const AtLegacyTrtConfig> trt_ptr() const {
-        return std::make_shared<const AtLegacyTrtConfig>(trt);
-    }
-#endif
-
-#if TALOS_HAS_AXERA
-    [[nodiscard]] std::shared_ptr<const AtLegacyAxeraConfig> axera_ptr() const {
-        return std::make_shared<const AtLegacyAxeraConfig>(axera);
-    }
 #endif
 
     std::expected<void, std::string> read_from(const toml::table& tbl) noexcept;

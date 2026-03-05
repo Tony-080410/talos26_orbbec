@@ -118,23 +118,23 @@ void AtLegacyDetectorBackend::update_config(const AtLegacyConfig& config) noexce
             }
             using BackendT = std::decay_t<decltype(*backend)>;
             if constexpr (std::is_same_v<BackendT, AtLegacyTraditionalBackend>) {
-                backend->update_config(config.traditional_ptr());
+                backend->update_config(config.traditional);
             }
 #if TALOS_HAS_OPENVINO
             else if constexpr (std::is_same_v<BackendT, AtLegacyNNBackend>) {
-                backend->update_config(config.nn_ptr());
+                backend->update_config(config.nn);
             } else if constexpr (std::is_same_v<BackendT, AtLegacyNNTupBackend>) {
-                backend->update_config(config.nn_tup_ptr());
+                backend->update_config(config.nn_tup);
             }
 #endif
 #if TALOS_HAS_TENSORRT
             else if constexpr (std::is_same_v<BackendT, AtLegacyTrtBackend>) {
-                backend->update_config(config.trt_ptr());
+                backend->update_config(config.trt);
             }
 #endif
 #if TALOS_HAS_AXERA
             else if constexpr (std::is_same_v<BackendT, AtLegacyAxeraBackend>) {
-                backend->update_config(config.axera_ptr());
+                backend->update_config(config.axera);
             }
 #endif
         },
@@ -149,15 +149,13 @@ void AtLegacyDetectorBackend::update_config(const AtLegacyConfig& config) noexce
     create_detector_backend(const AtLegacyConfig& config) {
     switch (config.detector.backend_type) {
     case AtLegacyBackendTypeConfig::Traditional: {
-        auto cfg_ptr = config.traditional_ptr();
-        auto backend = std::make_unique<AtLegacyTraditionalBackend>(std::move(cfg_ptr));
+        auto backend = std::make_unique<AtLegacyTraditionalBackend>(config.traditional);
         backend->set_detect_color(config.detector.detect_color);
         return AtLegacyDetectorBackend(std::move(backend));
     }
 #if TALOS_HAS_OPENVINO
     case AtLegacyBackendTypeConfig::NeuralNetwork: {
-        auto cfg_ptr = config.nn_ptr();
-        auto backend = std::make_unique<AtLegacyNNBackend>(std::move(cfg_ptr));
+        auto backend = std::make_unique<AtLegacyNNBackend>(config.nn);
         if (auto result = backend->init(); !result) {
             return std::unexpected(result.error());
         }
@@ -165,8 +163,7 @@ void AtLegacyDetectorBackend::update_config(const AtLegacyConfig& config) noexce
         return AtLegacyDetectorBackend(std::move(backend));
     }
     case AtLegacyBackendTypeConfig::NeuralNetworkTup: {
-        auto cfg_ptr = config.nn_tup_ptr();
-        auto backend = std::make_unique<AtLegacyNNTupBackend>(std::move(cfg_ptr));
+        auto backend = std::make_unique<AtLegacyNNTupBackend>(config.nn_tup);
         if (auto result = backend->init(); !result) {
             return std::unexpected(result.error());
         }
@@ -176,8 +173,7 @@ void AtLegacyDetectorBackend::update_config(const AtLegacyConfig& config) noexce
 #endif
 #if TALOS_HAS_TENSORRT
     case AtLegacyBackendTypeConfig::TensorRT: {
-        auto cfg_ptr = config.trt_ptr();
-        auto backend = std::make_unique<AtLegacyTrtBackend>(std::move(cfg_ptr));
+        auto backend = std::make_unique<AtLegacyTrtBackend>(config.trt);
         if (!backend->is_initialized()) {
             return std::unexpected(DetectorError::InitFailed);
         }
@@ -187,8 +183,7 @@ void AtLegacyDetectorBackend::update_config(const AtLegacyConfig& config) noexce
 #endif
 #if TALOS_HAS_AXERA
     case AtLegacyBackendTypeConfig::Axera: {
-        auto cfg_ptr = config.axera_ptr();
-        auto backend = std::make_unique<AtLegacyAxeraBackend>(std::move(cfg_ptr));
+        auto backend = std::make_unique<AtLegacyAxeraBackend>(config.axera);
         if (auto result = backend->init(); !result) {
             return std::unexpected(result.error());
         }

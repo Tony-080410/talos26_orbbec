@@ -1,9 +1,9 @@
 #pragma once
 
+#include "../at_legacy_config.hpp"
 #include "../at_legacy_detector_backend.hpp"
 #include "core/types.hpp"
 
-#include <atomic>
 #include <memory>
 #include <string>
 #include <vector>
@@ -19,15 +19,11 @@ class InferRequest;
 
 namespace fcs::L2 {
 
-// Forward declare config (defined in at_legacy_config.hpp)
-struct AtLegacyNNConfig;
-
 // ============================================================================
 // AT Legacy NN Backend Implementation
 // ============================================================================
 
 /// Neural network detection backend using OpenVINO
-/// Uses atomic shared_ptr for config hot-reload
 class AtLegacyNNBackend : public AtLegacyDetectorBackendBase<AtLegacyNNBackend> {
 public:
     static constexpr int INPUT_W     = 640;
@@ -37,9 +33,9 @@ public:
     static constexpr int NUM_CLASSES = 8; // G, 1, 2, 3, 4, 5, O, B
     static constexpr int NUM_KPTS    = 4; // 4 corner keypoints (x, y)
     using DetectionResult = std::expected<std::vector<AtLegacyArmorDetection>, DetectorError>;
-    using ConfigPtr       = std::shared_ptr<const AtLegacyNNConfig>;
+    using Config          = AtLegacyNNConfig;
 
-    explicit AtLegacyNNBackend(ConfigPtr config);
+    explicit AtLegacyNNBackend(Config config);
     ~AtLegacyNNBackend();
 
     // Move-only (OpenVINO resources)
@@ -63,13 +59,11 @@ public:
     /// Get execution devices
     [[nodiscard]] std::vector<std::string> execution_devices() const;
 
-    /// Hot-reload config (thread-safe)
-    void update_config(ConfigPtr new_config) noexcept {
-        config_.store(std::move(new_config));
-    }
+    /// Hot-reload config by value
+    void update_config(Config new_config) noexcept { config_ = std::move(new_config); }
 
-    /// Get current config (thread-safe)
-    [[nodiscard]] ConfigPtr get_config() const noexcept { return config_.load(); }
+    /// Get current config
+    [[nodiscard]] const Config& get_config() const noexcept { return config_; }
 
 private:
     /// Preprocess image for inference (letterbox + normalize)
@@ -102,7 +96,7 @@ private:
         nms(std::vector<AtLegacyArmorDetection>& detections, const AtLegacyNNConfig& cfg) const;
 
 private:
-    std::atomic<ConfigPtr> config_; // Atomic shared_ptr for thread-safe config access
+    Config config_;
     ArmorColor detect_color_ = ArmorColor::Blue;
     bool initialized_        = false;
 

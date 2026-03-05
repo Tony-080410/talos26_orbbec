@@ -15,16 +15,15 @@ void register_at_legacy_detection_systems(talos::Scheduler& scheduler, AtLegacyC
     scheduler.world().insert_resource(std::move(config));
     scheduler.add_system<talos::fixed_rate<200>>(
         "at_legacy_armor_detector_pnp_solver",
-        [](
-            talos::spmc<AtLegacyImageFrame, AtLegacyImageChannelTopic> image_in,
-            talos::spmc_mut<AtLegacyArmorDetectionBatch, AtLegacyDetectionChannelTopic>
-                detection_out,
-            talos::spmc_mut<AtLegacyArmorMeasurementBatch, AtLegacyMeasurementChannelTopic>
-                measurement_out,
-            talos::res<AtLegacyConfig> config,
-            talos::res_mut<std::shared_ptr<AtLegacyDetectorBackend>> backend_ptr,
-            talos::res<std::shared_ptr<AtLegacyPnPSolver>> solver_ptr,
-            talos::res<std::shared_ptr<fast_tf::CoordinateSystem<1024>>> tf_system) mutable {
+        [](talos::spmc<AtLegacyImageFrame, AtLegacyImageChannelTopic> image_in,
+           talos::spmc_mut<AtLegacyArmorDetectionBatch, AtLegacyDetectionChannelTopic>
+               detection_out,
+           talos::spmc_mut<AtLegacyArmorMeasurementBatch, AtLegacyMeasurementChannelTopic>
+               measurement_out,
+           talos::res<AtLegacyConfig> config,
+           talos::res_mut<std::shared_ptr<AtLegacyDetectorBackend>> backend_ptr,
+           talos::res<std::shared_ptr<AtLegacyPnPSolver>> solver_ptr,
+           talos::res<std::shared_ptr<fast_tf::CoordinateSystem<1024>>> tf_system) mutable {
             // Reactively update backend config and detect color when changed
             if (config.is_changed()) {
                 (*backend_ptr)->update_config(*config);

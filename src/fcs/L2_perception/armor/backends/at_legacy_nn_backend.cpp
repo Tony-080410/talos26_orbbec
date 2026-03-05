@@ -32,14 +32,14 @@ struct AtLegacyNNBackend::Impl {
 // Constructor / Destructor
 // ============================================================================
 
-AtLegacyNNBackend::AtLegacyNNBackend(ConfigPtr config)
+AtLegacyNNBackend::AtLegacyNNBackend(Config config)
     : config_{std::move(config)}
     , impl_(std::make_unique<Impl>()) {}
 
 AtLegacyNNBackend::~AtLegacyNNBackend() = default;
 
 AtLegacyNNBackend::AtLegacyNNBackend(AtLegacyNNBackend&& other) noexcept
-    : config_{other.config_.load()}
+    : config_{std::move(other.config_)}
     , detect_color_(other.detect_color_)
     , initialized_(other.initialized_)
     , impl_(std::move(other.impl_)) {
@@ -48,10 +48,10 @@ AtLegacyNNBackend::AtLegacyNNBackend(AtLegacyNNBackend&& other) noexcept
 
 AtLegacyNNBackend& AtLegacyNNBackend::operator=(AtLegacyNNBackend&& other) noexcept {
     if (this != &other) {
-        config_.store(other.config_.load());
-        detect_color_ = other.detect_color_;
-        initialized_ = other.initialized_;
-        impl_         = std::move(other.impl_);
+        config_            = std::move(other.config_);
+        detect_color_      = other.detect_color_;
+        initialized_       = other.initialized_;
+        impl_              = std::move(other.impl_);
         other.initialized_ = false;
     }
     return *this;
@@ -66,20 +66,16 @@ std::expected<void, DetectorError> AtLegacyNNBackend::init() {
         return {};
     }
 
-    auto cfg = get_config();
-    if (!cfg) {
-        SPDLOG_ERROR("[AtLegacyNNBackend] Config is null");
-        return std::unexpected(DetectorError::InitFailed);
-    }
+    const auto& cfg = get_config();
 
     try {
         // Enable profiling if requested
-        if (cfg->enable_profiling) {
-            impl_->core.set_property(cfg->device, ov::enable_profiling(true));
+        if (cfg.enable_profiling) {
+            impl_->core.set_property(cfg.device, ov::enable_profiling(true));
         }
 
         // Load model
-        impl_->model = impl_->core.read_model(cfg->model_path);
+        impl_->model = impl_->core.read_model(cfg.model_path);
         impl_->model->reshape({1, 3, INPUT_H, INPUT_W});
 
         // Configure preprocessing
@@ -92,32 +88,32 @@ std::expected<void, DetectorError> AtLegacyNNBackend::init() {
         // Compile options
         ov::AnyMap compile_opts;
         compile_opts.emplace(
-            ov::hint::performance_mode.name(), cfg->enable_multi_thread
+            ov::hint::performance_mode.name(), cfg.enable_multi_thread
                                                    ? ov::hint::PerformanceMode::THROUGHPUT
                                                    : ov::hint::PerformanceMode::LATENCY);
 
-        if (cfg->enable_multi_thread) {
+        if (cfg.enable_multi_thread) {
             compile_opts.emplace(ov::num_streams.name(), ov::streams::AUTO);
         } else {
             compile_opts.emplace(ov::num_streams.name(), 1);
         }
 
         // Set device priorities for AUTO/MULTI/HETERO
-        const auto& device = cfg->device;
-        if (!cfg->device_priorities.empty()
+        const auto& device = cfg.device;
+        if (!cfg.device_priorities.empty()
             && (device == "AUTO" || device.rfind("AUTO:", 0) == 0 || device == "MULTI"
                 || device.rfind("MULTI:", 0) == 0 || device == "HETERO"
                 || device.rfind("HETERO:", 0) == 0)) {
-            compile_opts.emplace(ov::device::priorities.name(), cfg->device_priorities);
+            compile_opts.emplace(ov::device::priorities.name(), cfg.device_priorities);
         }
 
         // Compile model
-        impl_->compiled = impl_->core.compile_model(impl_->model, cfg->device, compile_opts);
+        impl_->compiled = impl_->core.compile_model(impl_->model, cfg.device, compile_opts);
         impl_->request  = impl_->compiled.create_infer_request();
         impl_->loaded   = true;
         initialized_    = true;
 
-        SPDLOG_INFO("[AtLegacyNNBackend] Model loaded: {}", cfg->model_path);
+        SPDLOG_INFO("[AtLegacyNNBackend] Model loaded: {}", cfg.model_path);
         const auto devices = execution_devices();
         if (!devices.empty()) {
             // Reserve upfront to avoid reallocations (estimate: ~12 chars per device)
@@ -481,14 +477,10 @@ AtLegacyNNBackend::DetectionResult AtLegacyNNBackend::detect_impl(const cv::Mat&
         return std::unexpected(DetectorError::InvalidImage);
     }
 
-    // Get current config (atomic load for thread-safety)
-    auto cfg = get_config();
-    if (!cfg) {
-        return std::unexpected(DetectorError::NotInitialized);
-    }
+    const auto& cfg = get_config();
 
     // Preprocess
-    auto ctx = preprocess(image, *cfg);
+    auto ctx = preprocess(image, cfg);
     if (ctx.preprocessed.empty()) {
         return std::unexpected(DetectorError::PreprocessFailed);
     }
@@ -499,10 +491,10 @@ AtLegacyNNBackend::DetectionResult AtLegacyNNBackend::detect_impl(const cv::Mat&
     }
 
     // Postprocess
-    auto detections = postprocess(ctx, *cfg);
+    auto detections = postprocess(ctx, cfg);
 
     // NMS
-    auto result = nms(detections, *cfg);
+    auto result = nms(detections, cfg);
 
     // Debug: print detection results
     // SPDLOG_INFO("[AtLegacyNNBackend] ===== Detection Results =====");

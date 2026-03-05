@@ -1,10 +1,10 @@
 #pragma once
 
+#include "../at_legacy_config.hpp"
 #include "at_legacy_detector_backend_base.hpp"
 #include "core/armor_types.hpp"
 
 #include <array>
-#include <atomic>
 #include <memory>
 #include <string>
 #include <vector>
@@ -16,9 +16,6 @@
 #include "ax_sys_api.h"
 
 namespace fcs::L2 {
-
-// Forward declare config (defined in at_legacy_config.hpp)
-struct AtLegacyAxeraConfig;
 
 // ============================================================================
 // AT Legacy Axera Backend Implementation
@@ -39,9 +36,9 @@ public:
     static constexpr bool SUPPORTS_FOUR_HEAD_OUTPUT = true;
 
     using DetectionResult = std::expected<std::vector<AtLegacyArmorDetection>, DetectorError>;
-    using ConfigPtr       = std::shared_ptr<const AtLegacyAxeraConfig>;
+    using Config          = AtLegacyAxeraConfig;
 
-    explicit AtLegacyAxeraBackend(ConfigPtr config);
+    explicit AtLegacyAxeraBackend(Config config);
     ~AtLegacyAxeraBackend();
 
     // Move-only (AX engine resources are non-copyable)
@@ -62,13 +59,11 @@ public:
     void set_detect_color(ArmorColor color) noexcept { detect_color_ = color; }
     [[nodiscard]] ArmorColor detect_color() const noexcept { return detect_color_; }
 
-    /// Hot-reload config (thread-safe)
-    void update_config(ConfigPtr new_config) noexcept {
-        config_.store(std::move(new_config));
-    }
+    /// Hot-reload config by value
+    void update_config(Config new_config) noexcept { config_ = std::move(new_config); }
 
-    /// Get current config (thread-safe)
-    [[nodiscard]] ConfigPtr get_config() const noexcept { return config_.load(); }
+    /// Get current config
+    [[nodiscard]] const Config& get_config() const noexcept { return config_; }
 
 private:
     /// Preprocess context for letterbox
@@ -134,7 +129,7 @@ private:
         is_overlap(const AtLegacyArmorDetection& box1, const AtLegacyArmorDetection& box2);
 
 private:
-    std::atomic<ConfigPtr> config_; // Atomic shared_ptr for thread-safe config access
+    Config config_;
     ArmorColor detect_color_ = ArmorColor::Blue;
     bool initialized_        = false;
 

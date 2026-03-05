@@ -16,22 +16,21 @@ namespace fcs::L2 {
 // Constructor
 // ============================================================================
 
-AtLegacyTraditionalBackend::AtLegacyTraditionalBackend(ConfigPtr config)
+AtLegacyTraditionalBackend::AtLegacyTraditionalBackend(Config config)
     : config_{std::move(config)} {
     // Initialize classifier if enabled in config
-    auto cfg = config_.load();
-    if (cfg && !cfg->classifier_model_path.empty()) {
+    const auto& cfg = config_;
+    if (!cfg.classifier_model_path.empty()) {
         classifier_ = std::make_unique<AtLegacyTraditionalClassifier>(
-            cfg->classifier_model_path, cfg->classifier_use_softmax);
+            cfg.classifier_model_path, cfg.classifier_use_softmax);
         // Initialize classifier - log error if initialization fails
         if (const auto init_result = classifier_->init(); !init_result) {
             // Log error but continue - detection will work without classification
-            SPDLOG_CRITICAL(
-                "Failed to initialize ONNX classifier: {}", cfg->classifier_model_path);
+            SPDLOG_CRITICAL("Failed to initialize ONNX classifier: {}", cfg.classifier_model_path);
             std::abort();
         }
     } else {
-        SPDLOG_CRITICAL("Classifier is enabled but model path is empty or config is null.");
+        SPDLOG_CRITICAL("Classifier is enabled but model path is empty.");
         std::abort();
     }
 }
@@ -46,23 +45,20 @@ AtLegacyTraditionalBackend::DetectionResult
         return std::unexpected(DetectorError::InvalidImage);
     }
 
-    auto cfg = get_config();
-    if (!cfg) {
-        return std::unexpected(DetectorError::NotInitialized);
-    }
+    const auto& cfg = get_config();
 
     // 1. Preprocess the image
-    cv::Mat binary = preprocess_image(input, *cfg);
+    cv::Mat binary = preprocess_image(input, cfg);
 
     // 2. Find lights
-    auto lights = find_lights(input, binary, *cfg);
+    auto lights = find_lights(input, binary, cfg);
 
     // Save gray image for corner correction (precompute for efficiency)
     cv::Mat gray_img;
     cv::cvtColor(input, gray_img, cv::COLOR_BGR2GRAY);
 
     // 3. Match lights to armors
-    auto detections = match_lights(lights, *cfg, gray_img);
+    auto detections = match_lights(lights, cfg, gray_img);
 
     // 5. Classify armors if classifier is available
     if (classifier_ && classifier_->is_initialized()) {
@@ -91,9 +87,9 @@ AtLegacyTraditionalBackend::DetectionResult
         detections.erase(
             std::remove_if(
                 detections.begin(), detections.end(),
-                [cfg](const AtLegacyArmorDetection& detection) {
+                [&cfg](const AtLegacyArmorDetection& detection) {
                     // Filter by confidence threshold
-                    if (detection.confidence < cfg->classifier_confidence_threshold) {
+                    if (detection.confidence < cfg.classifier_confidence_threshold) {
                         return true;
                     }
 
@@ -103,7 +99,7 @@ AtLegacyTraditionalBackend::DetectionResult
                     }
 
                     // Filter by type-class matching (when type filtering enabled)
-                    if (cfg->classifier_enable_type_filtering) {
+                    if (cfg.classifier_enable_type_filtering) {
                         if (detection.type == ArmorType::Large) {
                             // Large armor cannot be: outpost, 2, sentry
                             if (detection.name == ArmorName::Outpost

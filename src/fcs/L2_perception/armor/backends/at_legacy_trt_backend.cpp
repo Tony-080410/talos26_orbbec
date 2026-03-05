@@ -378,22 +378,17 @@ namespace {
 // Constructor/Destructor
 // ============================================================================
 
-AtLegacyTrtBackend::AtLegacyTrtBackend(ConfigPtr config)
+AtLegacyTrtBackend::AtLegacyTrtBackend(Config config)
     : config_(std::move(config))
     , initialized_(false) {
-
-    if (!config_) {
-        SPDLOG_ERROR("TensorRT backend: config is null");
-        return;
-    }
 
     impl_ = std::make_unique<Impl>();
 
     // Set CUDA device
-    cudaError_t cuda_err = cudaSetDevice(config_->device_id);
+    cudaError_t cuda_err = cudaSetDevice(config_.device_id);
     if (cuda_err != cudaSuccess) {
         SPDLOG_ERROR(
-            "Failed to set CUDA device {}: {}", config_->device_id, cudaGetErrorString(cuda_err));
+            "Failed to set CUDA device {}: {}", config_.device_id, cudaGetErrorString(cuda_err));
         return;
     }
 
@@ -406,9 +401,9 @@ AtLegacyTrtBackend::AtLegacyTrtBackend(ConfigPtr config)
     }
 
     // Load or build engine
-    fs::path engine_path(config_->engine_path);
-    fs::path model_path(config_->model_path);
-    fs::path cache_dir(config_->engine_cache_dir);
+    fs::path engine_path(config_.engine_path);
+    fs::path model_path(config_.model_path);
+    fs::path cache_dir(config_.engine_cache_dir);
 
     std::unique_ptr<nvinfer1::ICudaEngine> engine;
 
@@ -427,8 +422,8 @@ AtLegacyTrtBackend::AtLegacyTrtBackend(ConfigPtr config)
     if (!engine && !model_path.empty() && fs::exists(model_path)) {
         SPDLOG_INFO("Building TensorRT engine from ONNX: {}", model_path.string());
         auto result = build_engine_from_onnx(
-            impl_->runtime_.get(), model_path, cache_dir, config_->compute_capability,
-            config_->enable_fp16, config_->enable_dla, config_->dla_core);
+            impl_->runtime_.get(), model_path, cache_dir, config_.compute_capability,
+            config_.enable_fp16, config_.enable_dla, config_.dla_core);
         if (!result) {
             SPDLOG_ERROR("Failed to build engine from ONNX");
             return;
@@ -481,7 +476,7 @@ AtLegacyTrtBackend::AtLegacyTrtBackend(ConfigPtr config)
     impl_->host_input_.resize(INPUT_W * INPUT_H * 3);
 
     // Create execution contexts and streams
-    int num_streams = config_->num_streams;
+    int num_streams = config_.num_streams;
     impl_->contexts_.reserve(num_streams);
     impl_->streams_.reserve(num_streams);
 
@@ -516,7 +511,7 @@ AtLegacyTrtBackend& AtLegacyTrtBackend::operator=(AtLegacyTrtBackend&&) noexcept
 // Config Updates
 // ============================================================================
 
-void AtLegacyTrtBackend::update_config(ConfigPtr new_config) { config_ = std::move(new_config); }
+void AtLegacyTrtBackend::update_config(Config new_config) { config_ = std::move(new_config); }
 
 void AtLegacyTrtBackend::set_detect_color(fcs::ArmorColor color) {
     detect_color_ = static_cast<int>(color);
@@ -663,7 +658,7 @@ AtLegacyTrtBackend::DetectionResult AtLegacyTrtBackend::detect_impl(const cv::Ma
         const float* row = output + i * OUTPUT_DIM;
 
         float conf = row[4];
-        if (!std::isfinite(conf) || conf < config_->confidence_threshold) {
+        if (!std::isfinite(conf) || conf < config_.confidence_threshold) {
             continue;
         }
 
@@ -738,7 +733,7 @@ AtLegacyTrtBackend::DetectionResult AtLegacyTrtBackend::detect_impl(const cv::Ma
 
         // Apply NMS
         std::vector<int> keep =
-            nms_merge_sorted_bboxes(sorted_boxes, sorted_confidences, config_->nms_threshold);
+            nms_merge_sorted_bboxes(sorted_boxes, sorted_confidences, config_.nms_threshold);
 
         // Create detections
         detections.reserve(keep.size());
@@ -749,8 +744,8 @@ AtLegacyTrtBackend::DetectionResult AtLegacyTrtBackend::detect_impl(const cv::Ma
         }
 
         // Apply top_k
-        if (static_cast<int>(detections.size()) > config_->top_k) {
-            detections.resize(config_->top_k);
+        if (static_cast<int>(detections.size()) > config_.top_k) {
+            detections.resize(config_.top_k);
         }
     }
 

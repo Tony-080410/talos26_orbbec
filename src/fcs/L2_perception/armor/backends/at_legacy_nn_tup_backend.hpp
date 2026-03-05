@@ -1,10 +1,10 @@
 #pragma once
 
+#include "../at_legacy_config.hpp"
 #include "../at_legacy_detector_backend.hpp"
 #include "core/types.hpp"
 
 #include <array>
-#include <atomic>
 #include <memory>
 #include <string>
 #include <vector>
@@ -21,9 +21,6 @@ class InferRequest;
 
 namespace fcs::L2 {
 
-// Forward declare config (defined in at_legacy_config.hpp)
-struct AtLegacyNNTupConfig;
-
 // ============================================================================
 // Grid and Stride for YOLOX multi-scale detection
 // ============================================================================
@@ -39,18 +36,17 @@ struct GridAndStride {
 // ============================================================================
 
 /// Neural network detection backend using OpenVINO (TUP model)
-/// Uses atomic shared_ptr for config hot-reload
 class AtLegacyNNTupBackend : public AtLegacyDetectorBackendBase<AtLegacyNNTupBackend> {
 public:
     using DetectionResult = std::expected<std::vector<AtLegacyArmorDetection>, DetectorError>;
-    using ConfigPtr       = std::shared_ptr<const AtLegacyNNTupConfig>;
+    using Config          = AtLegacyNNTupConfig;
 
     static constexpr int INPUT_W     = 416;
     static constexpr int INPUT_H     = 416;
     static constexpr int NUM_COLORS  = 4;
     static constexpr int NUM_CLASSES = 8;
 
-    explicit AtLegacyNNTupBackend(ConfigPtr config);
+    explicit AtLegacyNNTupBackend(Config config);
     ~AtLegacyNNTupBackend();
 
     // Move-only (OpenVINO resources)
@@ -75,13 +71,11 @@ public:
     /// Get execution devices
     [[nodiscard]] std::vector<std::string> execution_devices() const;
 
-    /// Hot-reload config (thread-safe)
-    void update_config(ConfigPtr new_config) noexcept {
-        config_.store(std::move(new_config));
-    }
+    /// Hot-reload config by value
+    void update_config(Config new_config) noexcept { config_ = std::move(new_config); }
 
-    /// Get current config (thread-safe)
-    [[nodiscard]] ConfigPtr get_config() const noexcept { return config_.load(); }
+    /// Get current config
+    [[nodiscard]] const Config& get_config() const noexcept { return config_; }
 
 private:
     /// Preprocess context
@@ -115,7 +109,7 @@ private:
         nms(std::vector<AtLegacyArmorDetection>& detections, const AtLegacyNNTupConfig& cfg);
 
 private:
-    std::atomic<ConfigPtr> config_; // Atomic shared_ptr for thread-safe config access
+    Config config_;
     ArmorColor detect_color_ = ArmorColor::Blue;
     bool initialized_        = false;
 

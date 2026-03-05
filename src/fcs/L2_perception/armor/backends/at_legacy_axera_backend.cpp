@@ -203,7 +203,7 @@ constexpr float GRID_OFFSET          = 0.5f;
 // Constructor / Destructor
 // ============================================================================
 
-AtLegacyAxeraBackend::AtLegacyAxeraBackend(ConfigPtr config)
+AtLegacyAxeraBackend::AtLegacyAxeraBackend(Config config)
     : config_(std::move(config)) {}
 
 AtLegacyAxeraBackend::~AtLegacyAxeraBackend() {
@@ -216,19 +216,18 @@ AtLegacyAxeraBackend::~AtLegacyAxeraBackend() {
 }
 
 AtLegacyAxeraBackend::AtLegacyAxeraBackend(AtLegacyAxeraBackend&& other) noexcept
-    : config_(other.config_.load()),
-      detect_color_(other.detect_color_),
-      initialized_(other.initialized_),
-      handle_(other.handle_),
-      io_data_(std::move(other.io_data_)),
-      model_buffer_(std::move(other.model_buffer_)),
-      cached_grid_(std::move(other.cached_grid_)) {
+    : config_(std::move(other.config_))
+    , detect_color_(other.detect_color_)
+    , initialized_(other.initialized_)
+    , handle_(other.handle_)
+    , io_data_(std::move(other.io_data_))
+    , model_buffer_(std::move(other.model_buffer_))
+    , cached_grid_(std::move(other.cached_grid_)) {
     // Clear the moved-from object to prevent double-free
-    other.config_.store(nullptr);
     other.detect_color_ = ArmorColor::Blue;
-    other.initialized_ = false;
-    other.handle_ = nullptr;
-    other.io_data_ = {};
+    other.initialized_  = false;
+    other.handle_       = nullptr;
+    other.io_data_      = {};
     other.model_buffer_.clear();
 }
 
@@ -241,20 +240,19 @@ AtLegacyAxeraBackend& AtLegacyAxeraBackend::operator=(AtLegacyAxeraBackend&& oth
         }
 
         // Transfer ownership from other
-        config_.store(other.config_.load());
+        config_       = std::move(other.config_);
         detect_color_ = other.detect_color_;
-        initialized_ = other.initialized_;
-        handle_ = other.handle_;
-        io_data_ = std::move(other.io_data_);
+        initialized_  = other.initialized_;
+        handle_       = other.handle_;
+        io_data_      = std::move(other.io_data_);
         model_buffer_ = std::move(other.model_buffer_);
-        cached_grid_ = std::move(other.cached_grid_);
+        cached_grid_  = std::move(other.cached_grid_);
 
         // Reset the moved-from object to prevent double-free
-        other.config_.store(nullptr);
         other.detect_color_ = ArmorColor::Blue;
-        other.initialized_ = false;
-        other.handle_ = nullptr;
-        other.io_data_ = {};
+        other.initialized_  = false;
+        other.handle_       = nullptr;
+        other.io_data_      = {};
         other.model_buffer_.clear();
     }
     return *this;
@@ -269,15 +267,11 @@ std::expected<void, DetectorError> AtLegacyAxeraBackend::init() {
         return {};
     }
 
-    auto cfg = get_config();
-    if (!cfg) {
-        SPDLOG_ERROR("[AxeraBackend] Config is null");
-        return std::unexpected(DetectorError::InitFailed);
-    }
+    const auto& cfg = get_config();
 
     // Check model file exists
-    if (!std::filesystem::exists(cfg->model_path)) {
-        SPDLOG_ERROR("[AxeraBackend] Model file not found: {}", cfg->model_path);
+    if (!std::filesystem::exists(cfg.model_path)) {
+        SPDLOG_ERROR("[AxeraBackend] Model file not found: {}", cfg.model_path);
         return std::unexpected(DetectorError::ModelLoadError);
     }
 
@@ -299,8 +293,8 @@ std::expected<void, DetectorError> AtLegacyAxeraBackend::init() {
     }
 
     // Load model
-    if (!read_file(cfg->model_path, model_buffer_)) {
-        SPDLOG_ERROR("[AxeraBackend] Failed to read model file: {}", cfg->model_path);
+    if (!read_file(cfg.model_path, model_buffer_)) {
+        SPDLOG_ERROR("[AxeraBackend] Failed to read model file: {}", cfg.model_path);
         AX_ENGINE_Deinit();
         AX_SYS_Deinit();
         return std::unexpected(DetectorError::ModelLoadError);
@@ -337,7 +331,7 @@ std::expected<void, DetectorError> AtLegacyAxeraBackend::init() {
     }
 
     // Log model info
-    SPDLOG_INFO("[AxeraBackend] Model: {}", cfg->model_path);
+    SPDLOG_INFO("[AxeraBackend] Model: {}", cfg.model_path);
     SPDLOG_INFO("[AxeraBackend] Inputs: {}", io_info->nInputSize);
     for (int i = 0; i < static_cast<int>(io_info->nInputSize); ++i) {
         const auto& in = io_info->pInputs[i];
@@ -399,12 +393,12 @@ AtLegacyAxeraBackend::PreprocContext AtLegacyAxeraBackend::preprocess_letterbox(
 void AtLegacyAxeraBackend::preprocess_image(const cv::Mat& image, const PreprocContext& ctx) {
     auto* npu_input         = static_cast<uint8_t*>(io_data_.pInputs[0].pVirAddr);
     const size_t input_size = INPUT_W * INPUT_H * 3;
-    const int new_unpad_w = static_cast<int>(std::round(image.cols * ctx.ratio));
-    const int new_unpad_h = static_cast<int>(std::round(image.rows * ctx.ratio));
-    const int top         = static_cast<int>(std::round(ctx.pad_h - 0.1f));
-    const int left        = static_cast<int>(std::round(ctx.pad_w - 0.1f));
-    const int bottom      = INPUT_H - top - new_unpad_h;
-    const int right       = INPUT_W - left - new_unpad_w;
+    const int new_unpad_w   = static_cast<int>(std::round(image.cols * ctx.ratio));
+    const int new_unpad_h   = static_cast<int>(std::round(image.rows * ctx.ratio));
+    const int top           = static_cast<int>(std::round(ctx.pad_h - 0.1f));
+    const int left          = static_cast<int>(std::round(ctx.pad_w - 0.1f));
+    const int bottom        = INPUT_H - top - new_unpad_h;
+    const int right         = INPUT_W - left - new_unpad_w;
 
     // Create cv::Mat wrapper around NPU input buffer (zero-copy)
     cv::Mat npu_mat(INPUT_H, INPUT_W, CV_8UC3, npu_input);
@@ -640,7 +634,7 @@ std::vector<AtLegacyArmorDetection> AtLegacyAxeraBackend::postprocess_four_head(
         }
 
         // Map color: 0->Blue(0), 1->Red(1)
-        const ArmorColor color    = (best_color_id == 0) ? ArmorColor::Blue : ArmorColor::Red;
+        const ArmorColor color     = (best_color_id == 0) ? ArmorColor::Blue : ArmorColor::Red;
         const ArmorName armor_name = PAIR_TO_ARMOR[pair_id];
         const float grid_x         = grid.grid_xy[i].first;
         const float grid_y         = grid.grid_xy[i].second;
@@ -649,12 +643,10 @@ std::vector<AtLegacyArmorDetection> AtLegacyAxeraBackend::postprocess_four_head(
         // Extract and scale keypoints back to original image
         std::array<cv::Point2f, 4> corners;
         for (int k = 0; k < 4; ++k) {
-            const float kpt_x =
-                (raw_kpts[(k * 2 + 0) * num_anchors + i] + grid_x) * stride;
-            const float kpt_y =
-                (raw_kpts[(k * 2 + 1) * num_anchors + i] + grid_y) * stride;
-            corners[k].x = (kpt_x - ctx.pad_w) / ctx.ratio;
-            corners[k].y = (kpt_y - ctx.pad_h) / ctx.ratio;
+            const float kpt_x = (raw_kpts[(k * 2 + 0) * num_anchors + i] + grid_x) * stride;
+            const float kpt_y = (raw_kpts[(k * 2 + 1) * num_anchors + i] + grid_y) * stride;
+            corners[k].x      = (kpt_x - ctx.pad_w) / ctx.ratio;
+            corners[k].y      = (kpt_y - ctx.pad_h) / ctx.ratio;
         }
 
         AtLegacyArmorDetection det(corners, armor_name, color, max_obj_conf);
@@ -730,14 +722,10 @@ AtLegacyAxeraBackend::DetectionResult AtLegacyAxeraBackend::detect_impl(const cv
         return std::unexpected(DetectorError::InvalidImage);
     }
 
-    // Get current config
-    auto cfg = get_config();
-    if (!cfg) {
-        return std::unexpected(DetectorError::NotInitialized);
-    }
+    const auto& cfg = get_config();
 
     // Preprocess: compute letterbox params (negligible time)
-    auto ctx = preprocess_letterbox(image, *cfg);
+    auto ctx = preprocess_letterbox(image, cfg);
 
     // Preprocess: actual image processing (resize + BGR2RGB + cache flush)
     {
@@ -756,13 +744,13 @@ AtLegacyAxeraBackend::DetectionResult AtLegacyAxeraBackend::detect_impl(const cv
     // Postprocess (4-head outputs)
     auto detections = ([&]() {
         ScopedTimer timer("postprocess");
-        return postprocess_four_head(ctx, *cfg);
+        return postprocess_four_head(ctx, cfg);
     })();
 
     // NMS
     auto result = ([&]() {
         ScopedTimer timer("nms");
-        return nms(detections, *cfg);
+        return nms(detections, cfg);
     })();
 
     // Total time

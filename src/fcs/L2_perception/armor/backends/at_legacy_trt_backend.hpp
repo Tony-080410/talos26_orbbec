@@ -1,5 +1,6 @@
 #pragma once
 
+#include "../at_legacy_config.hpp"
 #include "at_legacy_detector_backend_base.hpp"
 #include "core/armor_types.hpp"
 
@@ -14,8 +15,6 @@ class Mat;
 
 namespace fcs::L2 {
 
-struct AtLegacyTrtConfig;
-
 class AtLegacyTrtBackend : public AtLegacyDetectorBackendBase<AtLegacyTrtBackend> {
 public:
     static constexpr int INPUT_W     = 640;
@@ -28,7 +27,7 @@ public:
 
     using DetectionResult =
         std::expected<std::vector<fcs::AtLegacyArmorDetection>, fcs::L2::DetectorError>;
-    using ConfigPtr = std::shared_ptr<const AtLegacyTrtConfig>;
+    using Config = AtLegacyTrtConfig;
 
     struct PreprocContext {
         float scale_x;
@@ -46,7 +45,7 @@ public:
         ConfigError,
     };
 
-    explicit AtLegacyTrtBackend(ConfigPtr config);
+    explicit AtLegacyTrtBackend(Config config);
     ~AtLegacyTrtBackend();
 
     AtLegacyTrtBackend(AtLegacyTrtBackend&&) noexcept;
@@ -54,7 +53,7 @@ public:
     AtLegacyTrtBackend(const AtLegacyTrtBackend&)            = delete;
     AtLegacyTrtBackend& operator=(const AtLegacyTrtBackend&) = delete;
 
-    void update_config(ConfigPtr new_config);
+    void update_config(Config new_config);
     void set_detect_color(fcs::ArmorColor color);
 
     DetectionResult detect_impl(const cv::Mat& image);
@@ -65,7 +64,7 @@ private:
     struct Impl;
     std::unique_ptr<Impl> impl_;
 
-    ConfigPtr config_;
+    Config config_;
     int detect_color_ = 0;
     bool initialized_ = false;
 };
