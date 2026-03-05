@@ -1,11 +1,14 @@
 #pragma once
 
+#include <concepts>
+#include <cstdint>
 #include <expected>
 #include <fmt/format.h>
 #include <optional>
 #include <string>
 #include <string_view>
 #include <type_traits>
+#include <utility>
 #include <vector>
 #ifndef MAGIC_ENUM_RANGE_MIN
 # define MAGIC_ENUM_RANGE_MIN 0
@@ -20,11 +23,32 @@
 
 namespace toml_helper {
 template <typename T>
-struct type_tag {
-    using type = T;
+concept ReadFrom = requires(T& t, const toml::table& table) {
+    { t.read_from(table) } -> std::same_as<std::expected<void, std::string>>;
 };
 
+template <typename T>
+concept TomlScalarValue = std::is_arithmetic_v<T> || std::is_same_v<T, std::string>
+                       || std::is_same_v<T, std::string_view> || std::is_same_v<T, toml::date>
+                       || std::is_same_v<T, toml::time> || std::is_same_v<T, toml::date_time>;
+
+template <typename T>
+requires(std::is_enum_v<T>) [[nodiscard]] std::string enum_options() {
+    auto all = magic_enum::enum_names<T>();
+    std::string options;
+    for (const auto& name : all) {
+        if (!options.empty()) {
+            options += ", ";
+        }
+        options += fmt::format("'{}'", name);
+    }
+    return options;
+}
+
 namespace detail {
+template <typename>
+inline constexpr bool always_false_v = false;
+
 [[nodiscard]] inline const char* node_type_name(toml::node_type t) noexcept {
     switch (t) {
     case toml::node_type::none: return "none";
@@ -42,9 +66,8 @@ namespace detail {
 }
 
 [[nodiscard]] inline std::string join_unread_keys(const toml::table& table) {
-    // Pre-allocate to avoid repeated reallocations
     std::string out;
-    out.reserve(table.size() * 25); // Estimate: ~25 chars per key entry
+    out.reserve(table.size() * 25);
 
     bool first = true;
     for (const auto& [k, v] : table) {
@@ -66,6 +89,32 @@ namespace detail {
         return std::unexpected(fmt::format("Unread keys: {}", join_unread_keys(table)));
     }
     return std::unexpected(fmt::format("{}: unread keys: {}", context, join_unread_keys(table)));
+}
+
+[[nodiscard]] inline std::string missing_key_error(std::string_view key) {
+    return fmt::format("Missing key '{}'", key);
+}
+
+[[nodiscard]] inline std::string missing_table_error(std::string_view key) {
+    return fmt::format("Missing table '{}'", key);
+}
+
+[[nodiscard]] inline std::string invalid_table_error(std::string_view key) {
+    return fmt::format("Invalid value for key '{}': expected table", key);
+}
+
+[[nodiscard]] inline std::string
+    invalid_value_error(std::string_view key, std::string_view expected, toml::node_type actual) {
+    return fmt::format(
+        "Invalid value for key '{}': expected {}, got {}", key, expected, node_type_name(actual));
+}
+
+[[nodiscard]] inline std::string
+    prefixed_error(std::string_view context, std::string_view message) {
+    if (context.empty()) {
+        return std::string{message};
+    }
+    return fmt::format("{}: {}", context, message);
 }
 
 template <typename T>
@@ -102,234 +151,286 @@ template <typename T>
 
     return std::nullopt;
 }
-} // namespace detail
 
-template <typename T>
-concept ReadFrom = requires(T& t, const toml::table& table) {
-    { t.read_from(table) } -> std::same_as<std::expected<void, std::string>>;
-};
-
-template <typename T>
-concept TomlScalarValue = std::is_arithmetic_v<T> || std::is_same_v<T, std::string>
-                       || std::is_same_v<T, std::string_view> || std::is_same_v<T, toml::date>
-                       || std::is_same_v<T, toml::time> || std::is_same_v<T, toml::date_time>;
-
-template <typename T>
-requires(TomlScalarValue<T>) [[nodiscard]] std::expected<T, std::string>
-    read_impl(type_tag<T>, const toml::table& table, std::string_view key) {
-    const toml::node* node = table.get(key);
-    if (!node) {
-        return std::unexpected(fmt::format("Missing key '{}'", key));
-    }
-
-    if (auto val = detail::value_with_numeric_cast<T>(*node)) {
+template <TomlScalarValue T>
+[[nodiscard]] std::expected<T, std::string>
+    parse_scalar_node(const toml::node& node, std::string_view key) {
+    if (auto val = value_with_numeric_cast<T>(node)) {
         return *val;
     }
 
-    return std::unexpected(
-        fmt::format(
-            "Invalid value for key '{}': expected {}, got {}", key, detail::expected_type_name<T>(),
-            detail::node_type_name(node->type())));
-}
-
-template <typename T>
-requires(TomlScalarValue<T>) [[nodiscard]] std::expected<std::optional<T>, std::string>
-    read_optional_impl(type_tag<T>, const toml::table& table, std::string_view key) {
-    const toml::node* node = table.get(key);
-    if (!node) {
-        return std::optional<T>{};
-    }
-
-    if (auto val = detail::value_with_numeric_cast<T>(*node)) {
-        return std::optional<T>{*val};
-    }
-
-    return std::unexpected(
-        fmt::format(
-            "Invalid value for key '{}': expected {}, got {}", key, detail::expected_type_name<T>(),
-            detail::node_type_name(node->type())));
-}
-
-template <ReadFrom T>
-[[nodiscard]] std::expected<T, std::string>
-    read_impl(type_tag<T>, const toml::table& table, std::string_view key) {
-    if (const auto _t = table[key].as_table()) {
-        T t;
-        auto result = t.read_from(*_t);
-        if (!result) {
-            return std::unexpected(fmt::format("{}: {}", key, result.error()));
-        }
-        return t;
-    }
-    if (!table.get(key)) {
-        return std::unexpected(fmt::format("Missing table '{}'", key));
-    }
-    return std::unexpected(fmt::format("Invalid value for key '{}': expected table", key));
-}
-
-template <ReadFrom T>
-[[nodiscard]] std::expected<T, std::string> take(const toml::table& table, std::string_view key) {
-    const toml::node* node = table.get(key);
-    if (!node) {
-        return std::unexpected(fmt::format("Missing table '{}'", key));
-    }
-
-    const auto sub = node->as_table();
-    if (!sub) {
-        return std::unexpected(fmt::format("Invalid value for key '{}': expected table", key));
-    }
-
-    T out;
-    auto result = out.read_from(*sub);
-    if (!result) {
-        return std::unexpected(fmt::format("{}: {}", key, result.error()));
-    }
-
-    if (auto unread = detail::error_if_unread(*sub, key); !unread) {
-        return std::unexpected(unread.error());
-    }
-
-    (void)const_cast<toml::table&>(table).erase(key);
-    return out;
-}
-
-template <ReadFrom T>
-[[nodiscard]] std::expected<std::optional<T>, std::string>
-    read_optional_impl(type_tag<T>, const toml::table& table, std::string_view key) {
-    const toml::node* node = table.get(key);
-    if (!node) {
-        return std::optional<T>{};
-    }
-    if (const auto t = node->as_table()) {
-        T out;
-        auto result = out.read_from(*t);
-        if (!result) {
-            return std::unexpected(fmt::format("{}: {}", key, result.error()));
-        }
-        return std::optional<T>{std::move(out)};
-    }
-    return std::unexpected(fmt::format("Invalid value for key '{}': expected table", key));
-}
-
-template <ReadFrom T>
-[[nodiscard]] std::expected<std::optional<T>, std::string>
-    take_optional(const toml::table& table, std::string_view key) {
-    const toml::node* node = table.get(key);
-    if (!node) {
-        return std::optional<T>{};
-    }
-    const auto sub = node->as_table();
-    if (!sub) {
-        return std::unexpected(fmt::format("Invalid value for key '{}': expected table", key));
-    }
-
-    T out;
-    auto result = out.read_from(*sub);
-    if (!result) {
-        return std::unexpected(fmt::format("{}: {}", key, result.error()));
-    }
-
-    if (auto unread = detail::error_if_unread(*sub, key); !unread) {
-        return std::unexpected(unread.error());
-    }
-
-    (void)const_cast<toml::table&>(table).erase(key);
-    return std::optional<T>{std::move(out)};
-}
-
-template <typename T>
-requires(std::is_enum_v<T>) [[nodiscard]] std::string enum_options() {
-    auto all = magic_enum::enum_names<T>();
-    std::string options;
-    for (const auto& name : all) {
-        if (!options.empty()) {
-            options += ", ";
-        }
-        options += fmt::format("'{}'", name);
-    }
-    return options;
+    return std::unexpected(invalid_value_error(key, expected_type_name<T>(), node.type()));
 }
 
 template <typename T>
 requires(std::is_enum_v<T>) [[nodiscard]] std::expected<T, std::string>
-    read_impl(type_tag<T>, const toml::table& table, std::string_view key) {
-    const toml::node* node = table.get(key);
-    if (!node) {
-        return std::unexpected(fmt::format("Missing key '{}'", key));
-    }
+    parse_enum_node(const toml::node& node, std::string_view key) {
+    const std::string options = enum_options<T>();
 
-    if (auto s = node->value<std::string>()) {
+    if (auto s = node.value<std::string>()) {
         if (auto enum_val = magic_enum::enum_cast<T>(*s, magic_enum::case_insensitive)) {
             return *enum_val;
         }
         return std::unexpected(
             fmt::format(
-                "Invalid enum value for key '{}': '{}', must be one of {}", key, *s,
-                enum_options<T>()));
+                "Invalid enum value for key '{}': '{}', must be one of {}", key, *s, options));
     }
 
-    // Allow numeric enum values for convenience (e.g. backend_type = 0).
-    if (auto i = node->value<int64_t>()) {
+    if (auto i = node.value<int64_t>()) {
         using U = std::underlying_type_t<T>;
         if (auto enum_val = magic_enum::enum_cast<T>(static_cast<U>(*i))) {
             return *enum_val;
         }
         return std::unexpected(
             fmt::format(
-                "Invalid enum value for key '{}': {}, must be one of {}", key, *i,
-                enum_options<T>()));
+                "Invalid enum value for key '{}': {}, must be one of {}", key, *i, options));
     }
 
     return std::unexpected(
         fmt::format(
             "Invalid value for key '{}': expected enum as string/integer, got {}; options: {}", key,
-            detail::node_type_name(node->type()), enum_options<T>()));
+            node_type_name(node.type()), options));
 }
 
 template <typename T>
-requires(std::is_enum_v<T>) [[nodiscard]] std::expected<std::optional<T>, std::string>
-    read_optional_impl(type_tag<T>, const toml::table& table, std::string_view key) {
+[[nodiscard]] std::expected<std::optional<T>, std::string>
+    as_optional(std::expected<T, std::string>&& value) {
+    if (!value) {
+        return std::unexpected(value.error());
+    }
+    return std::optional<T>{std::move(*value)};
+}
+
+template <typename T>
+[[nodiscard]] std::expected<T, std::string> erase_on_success(
+    std::expected<T, std::string>&& value, const toml::table& table, std::string_view key) {
+    if (!value) {
+        return std::unexpected(value.error());
+    }
+    (void)const_cast<toml::table&>(table).erase(key);
+    return std::move(*value);
+}
+
+template <typename T>
+[[nodiscard]] std::expected<std::optional<T>, std::string> erase_on_success_optional(
+    std::expected<std::optional<T>, std::string>&& value, const toml::table& table,
+    std::string_view key) {
+    if (!value) {
+        return std::unexpected(value.error());
+    }
+    if (*value) {
+        (void)const_cast<toml::table&>(table).erase(key);
+    }
+    return std::move(*value);
+}
+
+template <typename T, typename ParseFn>
+[[nodiscard]] std::expected<T, std::string>
+    read_required(const toml::table& table, std::string_view key, ParseFn&& parse_fn) {
+    const toml::node* node = table.get(key);
+    if (!node) {
+        return std::unexpected(missing_key_error(key));
+    }
+    return std::forward<ParseFn>(parse_fn)(*node);
+}
+
+template <typename T, typename ParseFn>
+[[nodiscard]] std::expected<std::optional<T>, std::string>
+    read_optional_value(const toml::table& table, std::string_view key, ParseFn&& parse_fn) {
     const toml::node* node = table.get(key);
     if (!node) {
         return std::optional<T>{};
     }
-
-    if (auto s = node->value<std::string>()) {
-        if (auto enum_val = magic_enum::enum_cast<T>(*s, magic_enum::case_insensitive)) {
-            return std::optional<T>{*enum_val};
-        }
-        return std::unexpected(
-            fmt::format(
-                "Invalid enum value for key '{}': '{}', must be one of {}", key, *s,
-                enum_options<T>()));
-    }
-
-    if (auto i = node->value<int64_t>()) {
-        using U = std::underlying_type_t<T>;
-        if (auto enum_val = magic_enum::enum_cast<T>(static_cast<U>(*i))) {
-            return std::optional<T>{*enum_val};
-        }
-        return std::unexpected(
-            fmt::format(
-                "Invalid enum value for key '{}': {}, must be one of {}", key, *i,
-                enum_options<T>()));
-    }
-
-    return std::unexpected(
-        fmt::format(
-            "Invalid value for key '{}': expected enum as string/integer, got {}; options: {}", key,
-            detail::node_type_name(node->type()), enum_options<T>()));
+    return as_optional(std::forward<ParseFn>(parse_fn)(*node));
 }
+
+template <ReadFrom T>
+struct parsed_table_value {
+    T value;
+    const toml::table* parsed_table;
+};
+
+template <ReadFrom T>
+[[nodiscard]] std::expected<parsed_table_value<T>, std::string>
+    parse_read_from_node(const toml::node& node, std::string_view key) {
+    const auto* table = node.as_table();
+    if (!table) {
+        return std::unexpected(invalid_table_error(key));
+    }
+
+    T value;
+    auto result = value.read_from(*table);
+    if (!result) {
+        return std::unexpected(prefixed_error(key, result.error()));
+    }
+
+    return parsed_table_value<T>{std::move(value), table};
+}
+
+template <ReadFrom T>
+[[nodiscard]] std::expected<parsed_table_value<T>, std::string>
+    parse_read_from_key(const toml::table& table, std::string_view key) {
+    const toml::node* node = table.get(key);
+    if (!node) {
+        return std::unexpected(missing_table_error(key));
+    }
+    return parse_read_from_node<T>(*node, key);
+}
+} // namespace detail
+
+template <typename T, typename Enable = void>
+struct Deserialize {
+    [[nodiscard]] static std::expected<T, std::string> read(const toml::table&, std::string_view) {
+        static_assert(
+            detail::always_false_v<T>,
+            "No toml_helper::Deserialize<T> specialization available for this type");
+        return std::unexpected("No deserializer available");
+    }
+
+    [[nodiscard]] static std::expected<std::optional<T>, std::string>
+        read_optional(const toml::table& table, std::string_view key) {
+        const toml::node* node = table.get(key);
+        if (!node) {
+            return std::optional<T>{};
+        }
+        return detail::as_optional(read(table, key));
+    }
+
+    [[nodiscard]] static std::expected<T, std::string>
+        take(const toml::table& table, std::string_view key) {
+        return detail::erase_on_success(read(table, key), table, key);
+    }
+
+    [[nodiscard]] static std::expected<std::optional<T>, std::string>
+        take_optional(const toml::table& table, std::string_view key) {
+        return detail::erase_on_success_optional(read_optional(table, key), table, key);
+    }
+};
+
+template <TomlScalarValue T>
+struct Deserialize<T, void> {
+    [[nodiscard]] static std::expected<T, std::string>
+        read(const toml::table& table, std::string_view key) {
+        return detail::read_required<T>(table, key, [&](const toml::node& node) {
+            return detail::parse_scalar_node<T>(node, key);
+        });
+    }
+
+    [[nodiscard]] static std::expected<std::optional<T>, std::string>
+        read_optional(const toml::table& table, std::string_view key) {
+        return detail::read_optional_value<T>(table, key, [&](const toml::node& node) {
+            return detail::parse_scalar_node<T>(node, key);
+        });
+    }
+
+    [[nodiscard]] static std::expected<T, std::string>
+        take(const toml::table& table, std::string_view key) {
+        return detail::erase_on_success(read(table, key), table, key);
+    }
+
+    [[nodiscard]] static std::expected<std::optional<T>, std::string>
+        take_optional(const toml::table& table, std::string_view key) {
+        return detail::erase_on_success_optional(read_optional(table, key), table, key);
+    }
+};
+
+template <typename T>
+requires(std::is_enum_v<T>) struct Deserialize<T, void> {
+    [[nodiscard]] static std::expected<T, std::string>
+        read(const toml::table& table, std::string_view key) {
+        return detail::read_required<T>(table, key, [&](const toml::node& node) {
+            return detail::parse_enum_node<T>(node, key);
+        });
+    }
+
+    [[nodiscard]] static std::expected<std::optional<T>, std::string>
+        read_optional(const toml::table& table, std::string_view key) {
+        return detail::read_optional_value<T>(table, key, [&](const toml::node& node) {
+            return detail::parse_enum_node<T>(node, key);
+        });
+    }
+
+    [[nodiscard]] static std::expected<T, std::string>
+        take(const toml::table& table, std::string_view key) {
+        return detail::erase_on_success(read(table, key), table, key);
+    }
+
+    [[nodiscard]] static std::expected<std::optional<T>, std::string>
+        take_optional(const toml::table& table, std::string_view key) {
+        return detail::erase_on_success_optional(read_optional(table, key), table, key);
+    }
+};
+
+template <ReadFrom T>
+struct Deserialize<T, void> {
+    [[nodiscard]] static std::expected<T, std::string>
+        read(const toml::table& table, std::string_view key) {
+        auto parsed = detail::parse_read_from_key<T>(table, key);
+        if (!parsed) {
+            return std::unexpected(parsed.error());
+        }
+        return std::move(parsed->value);
+    }
+
+    [[nodiscard]] static std::expected<std::optional<T>, std::string>
+        read_optional(const toml::table& table, std::string_view key) {
+        const toml::node* node = table.get(key);
+        if (!node) {
+            return std::optional<T>{};
+        }
+
+        auto parsed = detail::parse_read_from_node<T>(*node, key);
+        if (!parsed) {
+            return std::unexpected(parsed.error());
+        }
+        return std::optional<T>{std::move(parsed->value)};
+    }
+
+    [[nodiscard]] static std::expected<T, std::string>
+        take(const toml::table& table, std::string_view key) {
+        auto parsed = detail::parse_read_from_key<T>(table, key);
+        if (!parsed) {
+            return std::unexpected(parsed.error());
+        }
+
+        if (auto unread = detail::error_if_unread(*parsed->parsed_table, key); !unread) {
+            return std::unexpected(unread.error());
+        }
+
+        (void)const_cast<toml::table&>(table).erase(key);
+        return std::move(parsed->value);
+    }
+
+    [[nodiscard]] static std::expected<std::optional<T>, std::string>
+        take_optional(const toml::table& table, std::string_view key) {
+        const toml::node* node = table.get(key);
+        if (!node) {
+            return std::optional<T>{};
+        }
+
+        auto parsed = detail::parse_read_from_node<T>(*node, key);
+        if (!parsed) {
+            return std::unexpected(parsed.error());
+        }
+
+        if (auto unread = detail::error_if_unread(*parsed->parsed_table, key); !unread) {
+            return std::unexpected(unread.error());
+        }
+
+        (void)const_cast<toml::table&>(table).erase(key);
+        return std::optional<T>{std::move(parsed->value)};
+    }
+};
 
 template <typename T>
 [[nodiscard]] std::expected<T, std::string> read(const toml::table& table, std::string_view key) {
-    return read_impl(type_tag<T>{}, table, key);
+    return Deserialize<T>::read(table, key);
 }
 
 template <typename T>
 [[nodiscard]] std::expected<std::optional<T>, std::string>
     read_optional(const toml::table& table, std::string_view key) {
-    return read_optional_impl(type_tag<T>{}, table, key);
+    return Deserialize<T>::read_optional(table, key);
 }
 
 [[nodiscard]] inline std::expected<void, std::string>
@@ -339,22 +440,13 @@ template <typename T>
 
 template <typename T>
 [[nodiscard]] std::expected<T, std::string> take(const toml::table& table, std::string_view key) {
-    return read<T>(table, key).transform([&](T&& val) {
-        (void)const_cast<toml::table&>(table).erase(key);
-        return std::move(val);
-    });
+    return Deserialize<T>::take(table, key);
 }
 
 template <typename T>
 [[nodiscard]] std::expected<std::optional<T>, std::string>
     take_optional(const toml::table& table, std::string_view key) {
-    return read_optional<T>(table, key)
-        .and_then([&](std::optional<T>&& opt_val) -> std::expected<std::optional<T>, std::string> {
-            if (opt_val) {
-                (void)const_cast<toml::table&>(table).erase(key);
-            }
-            return std::move(opt_val);
-        });
+    return Deserialize<T>::take_optional(table, key);
 }
 
 // Read a nested `ReadFrom` object from the *current* table instead of a subtable.
@@ -369,10 +461,7 @@ template <ReadFrom T>
     if (result) {
         return {};
     }
-    if (!context.empty()) {
-        return std::unexpected(fmt::format("{}: {}", context, result.error()));
-    }
-    return std::unexpected(result.error());
+    return std::unexpected(detail::prefixed_error(context, result.error()));
 }
 
 #define READ_OPT(tbl, val)                                               \
@@ -413,25 +502,23 @@ template <ReadFrom T>
 /// @return Merged table with override values winning on conflicts
 [[nodiscard]] inline std::expected<toml::table, std::string>
     merge_configs(const toml::table& base, const toml::table& override_table) noexcept {
-    toml::table result = base; // 先拷贝一份 base
+    toml::table result = base;
 
-    for (const auto& [k, v] : override_table) {
-        // 检查 base 中是否也存在这个键，且两者都是 table
-        auto* base_node = result.get(k);
+    for (const auto& [key, override_node] : override_table) {
+        auto* base_node               = result.get(key);
+        const auto* base_subtable     = base_node ? base_node->as_table() : nullptr;
+        const auto* override_subtable = override_node.as_table();
 
-        if (base_node && base_node->as_table() && v.as_table()) {
-            // 递归合并子表
-            auto merged = merge_configs(*base_node->as_table(), *v.as_table());
-            if (!merged)
+        if (base_subtable && override_subtable) {
+            auto merged = merge_configs(*base_subtable, *override_subtable);
+            if (!merged) {
                 return std::unexpected(merged.error());
-
-            // 替换为合并后的子表
-            result.insert_or_assign(k, std::move(*merged));
-        } else {
-            // 如果不是 table，或者 base 中不存在，则直接覆盖/插入
-            // 使用 insert_or_assign 确保 override 胜出
-            result.insert_or_assign(k, v);
+            }
+            result.insert_or_assign(key, std::move(*merged));
+            continue;
         }
+
+        result.insert_or_assign(key, override_node);
     }
 
     return result;
