@@ -10,10 +10,10 @@
 
 #include "L1_sensor/parcel.hpp"
 #include "core/channel_topics.hpp"
+#include "foxglove_server.hpp"
+#include "foxglove_types.hpp"
 #include "frame.hpp"
 #include "scheduler/scheduler.hpp"
-#include "visualization/foxglove_server.hpp"
-#include "visualization/foxglove_types.hpp"
 
 #include <memory>
 #include <opencv2/calib3d.hpp>

@@ -40,9 +40,9 @@ private:
     cv::Size board_size_;
     double square_size_;
     double marker_size_;
-    cv::Ptr<cv::aruco::Dictionary> dictionary_;
-    cv::Ptr<cv::aruco::CharucoBoard> charuco_board_;
-    cv::Ptr<cv::aruco::DetectorParameters> detector_params_;
+    cv::aruco::Dictionary dictionary_;
+    cv::aruco::CharucoBoard charuco_board_;
+    cv::aruco::DetectorParameters detector_params_;
     std::vector<cv::Point3f> object_points_;
 };
 

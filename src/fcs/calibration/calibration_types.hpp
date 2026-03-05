@@ -2,9 +2,9 @@
 
 #include <Eigen/Core>
 #include <cstdint>
-#include <opencv2/aruco/dictionary.hpp>
 #include <opencv2/calib3d.hpp>
 #include <opencv2/core.hpp>
+#include <opencv2/core/eigen.hpp>
 #ifdef HAVE_OPENCV_ARUCO
 # include <opencv2/aruco.hpp>
 #endif
@@ -92,7 +92,7 @@ enum class CalibrationState : uint8_t {
 #ifdef HAVE_OPENCV_ARUCO
 
 /// @brief Convert ArucoDictionary to OpenCV constant
-[[nodiscard]] constexpr cv::aruco::PREDEFINED_DICTIONARY_NAME
+[[nodiscard]] constexpr cv::aruco::PredefinedDictionaryType
     to_opencv_dict(ArucoDictionary d) noexcept {
     switch (d) {
     case ArucoDictionary::DICT_4X4_50: return cv::aruco::DICT_4X4_50;

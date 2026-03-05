@@ -1,10 +1,27 @@
-#!/bin/zsh
+#!/usr/bin/env bash
 
-YELLOW="\033[33m"
-GREEN="\033[32m"
-RED="\033[31m"
-BLUE="\033[34m"
-RESET="\033[0m"
+# =============================================================================
+# Talos Cross-Platform Build Script
+# =============================================================================
+# Supported configurations:
+#   macOS     | Apple Clang 17+ | libSystem   | any arch
+#   Linux     | clang-21        | libstdc++ >= 23 | any arch
+#
+# Usage:
+#   ./build.sh [--release] [--calib] [--] [args...]
+#     --release    Build in Release mode (default: Debug)
+#     --calib      Build calibration app (default: main talos app)
+#     --           Separator for app arguments
+# =============================================================================
+
+set -euo pipefail
+
+# Colors
+YELLOW='\033[33m'
+GREEN='\033[32m'
+RED='\033[31m'
+BLUE='\033[34m'
+RESET='\033[0m'
 
 status() {
     local symbol="$1"
@@ -13,45 +30,284 @@ status() {
     echo -e "${color}${symbol} ${msg}${RESET}"
 }
 
-download_file() {
-    local target_dir="$1"
-    local url="$2"
-    local filename="$(basename "$url")"
-    local dest="$target_dir/$filename"
+error() {
+    status "[x]" "$RED" "$1"
+    exit 1
+}
 
-    mkdir -p "$target_dir"
+# Detect OS
+detect_os() {
+    local os
+    os="$(uname -s)"
+    case "$os" in
+        Darwin)
+            echo "macos"
+            ;;
+        Linux)
+            echo "linux"
+            ;;
+        *)
+            echo "unknown"
+            ;;
+    esac
+}
 
-    if [[ -f "$dest" ]]; then
-        status "[x]" "$RED" "$dest already exists, skipping download."
-        return 0
+# Detect architecture
+detect_arch() {
+    local arch
+    arch="$(uname -m)"
+    case "$arch" in
+        x86_64|aarch64|arm64)
+            echo "$arch"
+            ;;
+        *)
+            echo "unknown"
+            ;;
+    esac
+}
+
+# Check compiler availability
+check_compiler() {
+    command -v "$1" &> /dev/null
+}
+
+# Get compiler version
+get_compiler_version() {
+    "$1" --version 2>/dev/null | head -n1 || echo "unknown"
+}
+
+# Validate libstdc++ version on Linux
+check_libstdcpp_version() {
+    local required_major="$1"
+    local output
+    local version_major
+
+    if command -v g++ &> /dev/null; then
+        output="$(g++ -v 2>&1 | grep "libstdc++" || true)"
+        if [[ "$output" =~ libstdc\+\+[\ \(]*([0-9]+) ]]; then
+            version_major="${BASH_REMATCH[1]}"
+            if [[ "$version_major" -ge "$required_major" ]]; then
+                return 0
+            fi
+        fi
     fi
 
-    status "[!]" "$YELLOW" "Downloading $filename..."
-    if wget -O "$dest" "$url"; then
-        status "[o]" "$GREEN" "Downloaded $filename successfully."
-    else
-        status "[x]" "$RED" "Failed to download $filename."
-        return 1
+    local libstdcpp_path
+    libstdcpp_path="$(ldd $(command -v ls) 2>/dev/null | grep libstdc++ | awk '{print $3}' | head -n1 || true)"
+    if [[ -n "$libstdcpp_path" && -f "$libstdcpp_path" ]]; then
+        local version_str
+        version_str="$("$libstdcpp_path" --version 2>/dev/null | head -n1 || true)"
+        if [[ "$version_str" =~ libstdc\+\+.*([0-9]+)\.([0-9]+) ]]; then
+            local major="${BASH_REMATCH[1]}"
+            if [[ "$major" -ge "$required_major" ]]; then
+                return 0
+            fi
+        fi
+    fi
+
+    return 1
+}
+
+# Configure build environment for macOS
+configure_macos() {
+    status "[+]" "$BLUE" "Configuring for macOS..."
+
+    if ! check_compiler "clang++"; then
+        error "clang++ not found. Install Xcode Command Line Tools."
+    fi
+
+    local clang_version
+    clang_version="$(get_compiler_version "clang++")"
+    status "[i]" "$BLUE" "Compiler: $clang_version"
+
+    # macOS uses libSystem by default
+    export CC=cc
+    export CXX=c++
+
+    # Build flags for macOS
+    CMAKE_COMPILER_ARGS=""
+    BUILD_JOBS="$(sysctl -n hw.ncpu)"
+
+    status "[o]" "$GREEN" "macOS ready (Apple Clang + libSystem)"
+}
+
+# Find latest libstdc++ library path
+find_latest_libstdcpp() {
+    local lib_dir
+    local latest_lib=""
+    local latest_ver="0"
+
+    # Common library directories
+    for lib_dir in /usr/lib/x86_64-linux-gnu /usr/lib/aarch64-linux-gnu /usr/lib64 /usr/lib; do
+        if [[ ! -d "$lib_dir" ]]; then
+            continue
+        fi
+
+        # Find all libstdc++.so.* files and extract version numbers
+        while IFS= read -r lib; do
+            if [[ "$lib" =~ libstdc\+\+\.so\.([0-9]+)\.([0-9]+) ]]; then
+                local major="${BASH_REMATCH[1]}"
+                local minor="${BASH_REMATCH[2]}"
+                local ver_num="$((major * 1000 + minor))"
+
+                if [[ "$ver_num" -gt "$latest_ver" ]]; then
+                    latest_ver="$ver_num"
+                    latest_lib="$lib"
+                fi
+            fi
+        done < <(find "$lib_dir" -maxdepth 1 -name "libstdc++.so.*" 2>/dev/null)
+    done
+
+    if [[ -n "$latest_lib" ]]; then
+        echo "$latest_lib"
     fi
 }
 
-clean_dir() {
-    local dir="$1"
-    if [[ -d "$dir" ]]; then
-        status "[!]" "$YELLOW" "Removing existing $dir..."
-        rm -rf "$dir"
-        status "[o]" "$GREEN" "Removed $dir."
-    else
-        status "[x]" "$RED" "No existing directory."
+# Configure build environment for Linux
+configure_linux() {
+    status "[+]" "$BLUE" "Configuring for Linux..."
+
+    if ! check_compiler "clang++-21"; then
+        status "[x]" "$RED" "clang++-21 not found!"
+        status "[i]" "$YELLOW" "Install: sudo apt install clang-21 clang++-21"
+        error "Required compiler not available."
     fi
+
+    local clang_version
+    clang_version="$(get_compiler_version "clang++-21")"
+    status "[i]" "$BLUE" "Compiler: $clang_version"
+
+    # Find latest libstdc++
+    local latest_libstdcpp
+    latest_libstdcpp="$(find_latest_libstdcpp)"
+
+    if [[ -z "$latest_libstdcpp" ]]; then
+        status "[x]" "$RED" "libstdc++ not found in system paths!"
+        error "Required stdlib not available."
+    fi
+
+    local libstdcpp_dir
+    libstdcpp_dir="$(dirname "$latest_libstdcpp")"
+    status "[i]" "$BLUE" "Latest libstdc++: $latest_libstdcpp"
+
+    # Get version info
+    local libstdcpp_version
+    libstdcpp_version="$("$latest_libstdcpp" --version 2>/dev/null | head -n1 || echo "unknown")"
+    status "[i]" "$BLUE" "Stdlib: $libstdcpp_version"
+
+    export CC=clang-21
+    export CXX=clang++-21
+
+    # Explicit compiler flags for Linux - force latest libstdc++
+    CMAKE_COMPILER_ARGS="-DCMAKE_CXX_COMPILER=clang++-21 -DCMAKE_C_COMPILER=clang-21"
+    CMAKE_LIBRARY_PATH="$libstdcpp_dir:${CMAKE_LIBRARY_PATH:-}"
+    export CMAKE_LIBRARY_PATH
+
+    # Add rpath to ensure runtime uses the correct libstdc++
+    local rpath_flags="-Wl,-rpath,$libstdcpp_dir"
+    CMAKE_CXX_FLAGS="-stdlib=libstdc++ $rpath_flags"
+
+    BUILD_JOBS="$(nproc)"
+
+    status "[o]" "$GREEN" "Linux ready (clang-21 + latest libstdc++)"
 }
 
-BUILD_TYPE="${BUILD_TYPE:-Release}"
+# Main
+main() {
+    # Parse arguments
+    BUILD_TYPE="Debug"
+    BUILD_TARGET="talos"
+    ENABLE_CALIBRATION="OFF"
+    RUN_ARGS=()
 
-cmake -G Ninja -B build -S . \
- -DCMAKE_BUILD_TYPE="${BUILD_TYPE}" \
- -DENABLE_CALIBRATION=OFF
-# -DCMAKE_CXX_FLAGS="-fsanitize=address -fno-omit-frame-pointer -g" \
-# -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address"
-cmake --build build -- talos -j64
-status "[+]" "$BLUE" "All done."
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --release)
+                BUILD_TYPE="Release"
+                shift
+                ;;
+            --calib)
+                BUILD_TARGET="rm_calibration"
+                ENABLE_CALIBRATION="ON"
+                shift
+                ;;
+            --)
+                shift
+                RUN_ARGS+=("$@")
+                break
+                ;;
+            *)
+                RUN_ARGS+=("$1")
+                shift
+                ;;
+        esac
+    done
+
+    echo ""
+    status "🤖" "$BLUE" "Talos Build & Run"
+    echo ""
+
+    # Detect platform
+    OS="$(detect_os)"
+    ARCH="$(detect_arch)"
+
+    if [[ "$OS" == "unknown" ]]; then
+        error "Unsupported OS: $(uname -s)"
+    fi
+
+    if [[ "$ARCH" == "unknown" ]]; then
+        error "Unsupported architecture: $(uname -m)"
+    fi
+
+    status "[i]" "$BLUE" "Platform: $OS ($ARCH)"
+    status "[i]" "$BLUE" "Build: $BUILD_TYPE"
+    status "[i]" "$BLUE" "Target: $BUILD_TARGET"
+
+    # Configure based on OS
+    case "$OS" in
+        macos)
+            configure_macos
+            ;;
+        linux)
+            configure_linux
+            ;;
+        *)
+            error "Unsupported platform"
+            ;;
+    esac
+
+    status "[i]" "$BLUE" "CC  = $CC"
+    status "[i]" "$BLUE" "CXX = $CXX"
+
+    # Configure CMake
+    status "[>]" "$GREEN" "Configuring CMake..."
+    cmake -G Ninja -B build -S . \
+        -DCMAKE_BUILD_TYPE="${BUILD_TYPE}" \
+        -DENABLE_CALIBRATION="${ENABLE_CALIBRATION}" \
+        ${CMAKE_COMPILER_ARGS} \
+        ${CMAKE_CXX_FLAGS:+-DCMAKE_CXX_FLAGS="$CMAKE_CXX_FLAGS"}
+
+    # Build
+    status "[>]" "$GREEN" "Building $BUILD_TARGET ($BUILD_TYPE)..."
+    cmake --build build -- "$BUILD_TARGET" -j"${BUILD_JOBS}"
+
+    status "[o]" "$GREEN" "Build complete!"
+
+    # Platform-specific run setup
+    case "$OS" in
+        linux)
+            # Set HIK SDK library path for Linux
+            HIK_LIB="$(pwd)/3dparty/hik_sdk/lib/arm64"
+            if [[ -d "$HIK_LIB" ]]; then
+                export LD_LIBRARY_PATH="$HIK_LIB:$LD_LIBRARY_PATH"
+                status "[i]" "$BLUE" "LD_LIBRARY_PATH=$HIK_LIB"
+            fi
+            ;;
+    esac
+
+    # Run
+    status "[>]" "$GREEN" "Starting $BUILD_TARGET..."
+    exec "./build/bin/$BUILD_TARGET"
+}
+
+main "$@"
