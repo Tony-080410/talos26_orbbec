@@ -25,14 +25,19 @@ std::shared_ptr<CoordinateSystem<N>> sentry_new(timestamp_ns_t ts = 0) {
     constexpr fp_t pi = std::numbers::pi;
     // odom -> world
     update<odom_fuxk_frame>(*system, FuckTransform<odom_fuxk_frame>{TransformMatrix4d{}}, ts);
-
+    update<gimbal_yaw_fuxk_frame>(
+        *system, FuckTransform<gimbal_yaw_fuxk_frame>{TransformMatrix4d{}}, ts);
+    update<gimbal_pitch_fuxk_frame>(
+        *system,
+        FuckTransform<gimbal_pitch_fuxk_frame>{TransformMatrix4d::from_rpy(0, 0, 0, 0, 0, 0.0791)},
+        ts);
     // NOTE: odom -> gimbal_link is dynamic (IMU); do not seed here.
 
     // camera_link -> gimbal_link (static)
     update<camera_link_fuxk_frame>(
         *system,
-        FuckTransform<camera_link_fuxk_frame>{TransformMatrix4d::from_rpy(
-            0.0, to_rad_2(-1.288), to_rad_2(-0.65), 0.0879, 0.0026, 0.0079)},
+        FuckTransform<camera_link_fuxk_frame>{
+            TransformMatrix4d::from_rpy(0.0, 0.0, 0.0, 0.0273, 0, 0.0544)},
         0);
 
     // camera_optical -> camera_link (static)
@@ -48,7 +53,7 @@ std::shared_ptr<CoordinateSystem<N>> sentry_new(timestamp_ns_t ts = 0) {
     update<muzzle_link_fuxk_frame>(
         *system,
         FuckTransform<muzzle_link_fuxk_frame>{
-            TransformMatrix4d::from_rpy(0.0, 0.0, 0.0, 0.0543, 0.0026, -0.0466)},
+            TransformMatrix4d::from_rpy(0.0, 0.0, 0.0, 0.06, 0, 0)},
         0);
     return system;
 }

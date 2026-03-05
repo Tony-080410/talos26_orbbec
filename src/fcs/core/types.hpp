@@ -93,7 +93,7 @@ struct AtLegacyArmorDetectionBatch {
 
 /// Single armor measurement (3D pose in odom frame after TF transform)
 struct AtLegacyArmorMeasurement {
-    fast_tf::FuckTransform<fast_tf::odom_fuxk_frame> transform;
+    fast_tf::FuckTransform<fast_tf::odom> transform;
     ArmorName name                 = ArmorName::Invalid;
     ArmorColor color               = ArmorColor::Neutral;
     ArmorType type                 = ArmorType::Small;
@@ -124,8 +124,8 @@ struct AtLegacyArmorMeasurement {
         , timestamp_ns(ts) {
         // Store PnP result (camera_optical frame) in odom-typed transform.
         // This will be corrected by the TF transform in at_legacy_systems.cpp.
-        transform = fast_tf::FuckTransform<fast_tf::odom_fuxk_frame>(
-            fast_tf::TransformMatrix4d::from_pnp(rvec, tvec));
+        transform =
+            fast_tf::FuckTransform<fast_tf::odom>(fast_tf::TransformMatrix4d::from_pnp(rvec, tvec));
     }
 
     /// Get distance to camera

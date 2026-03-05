@@ -35,14 +35,19 @@ struct DaedalusImu {
             // const Eigen::Quaterniond q(1.0, 0, 0, 0);
             fast_tf::update(
                 *tf_buffer->get(),
-                fast_tf::FuckTransform<fast_tf::gimbal_link_fuxk_frame>(
+                fast_tf::FuckTransform<fast_tf::gimbal>(
                     fast_tf::TransformMatrix4d::from_quaternion_xyz(q, pose->x, pose->y, pose->z)),
+                pose->timestamp_ns);
+            fast_tf::update(
+                *tf_buffer->get(),
+                fast_tf::FuckTransform<fast_tf::gimbal_pitch_fuxk_frame>(
+                    fast_tf::TransformMatrix4d::from_rpy(0, 0, 0)),
                 pose->timestamp_ns);
         }
         if (const auto pose = ipc_device->recv_pose(ipc::POSE_ODOM)) {
             fast_tf::update(
                 *tf_buffer->get(),
-                fast_tf::FuckTransform<fast_tf::odom_fuxk_frame>(
+                fast_tf::FuckTransform<fast_tf::odom>(
                     fast_tf::TransformMatrix4d::from_translation(pose->x, pose->y, pose->z)),
                 pose->timestamp_ns);
         }
@@ -78,9 +83,13 @@ struct UsbImu {
         const uint64_t timestamp_ns = fcs::clock::now_ns();
         fast_tf::update(
             *tf_buffer->get(),
-            fast_tf::FuckTransform<fast_tf::gimbal_link_fuxk_frame>(
-                fast_tf::TransformMatrix4d::from_rpy(
-                    imu_data->data.roll, imu_data->data.pitch, imu_data->data.yaw)),
+            fast_tf::FuckTransform<fast_tf::gimbal_yaw_fuxk_frame>(
+                fast_tf::TransformMatrix4d::from_rpy(imu_data->data.roll, 0.0, imu_data->data.yaw)),
+            timestamp_ns);
+        fast_tf::update(
+            *tf_buffer->get(),
+            fast_tf::FuckTransform<fast_tf::gimbal_pitch_fuxk_frame>(
+                fast_tf::TransformMatrix4d::from_rpy(0.0, imu_data->data.pitch, 0.0)),
             timestamp_ns);
     }
 };

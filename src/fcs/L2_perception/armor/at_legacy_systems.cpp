@@ -57,8 +57,8 @@ void register_at_legacy_detection_systems(talos::Scheduler& scheduler, AtLegacyC
                 AtLegacyArmorDetectionBatch{
                     detections, frame->image, frame->timestamp_ns, frame->frame_id});
 
-            auto tf_odom_camera = fast_tf::lookup_clamped<fast_tf::odom_fuxk_frame>(
-                **tf_system, fast_tf::FuckTransform<fast_tf::camera_optical_fuxk_frame>(),
+            auto tf_odom_camera = fast_tf::lookup_clamped<fast_tf::odom>(
+                **tf_system, fast_tf::FuckTransform<fast_tf::camera_optical>(),
                 frame->timestamp_ns);
 
             if (!tf_odom_camera) {
@@ -77,8 +77,8 @@ void register_at_legacy_detection_systems(talos::Scheduler& scheduler, AtLegacyC
             // T_odom_armor = T_odom_camera * T_camera_optical_armor
             const auto& T_odom_camera = *tf_odom_camera.value();
             for (auto& meas : measurements) {
-                meas.transform = fast_tf::FuckTransform<fast_tf::odom_fuxk_frame>{
-                    T_odom_camera * (*meas.transform)};
+                meas.transform =
+                    fast_tf::FuckTransform<fast_tf::odom>{T_odom_camera * (*meas.transform)};
             }
 
             measurement_out.write(

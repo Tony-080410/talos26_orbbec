@@ -84,22 +84,22 @@ constexpr size_t _base = __COUNTER__;
 
 DECL_ROOT(world);
 DECL(odom, world);
-DECL(gimbal_link, odom);
-DECL(camera_link, gimbal_link);
+DECL(gimbal_yaw, odom);
+DECL(gimbal_pitch, gimbal_yaw);
+DECL(camera_link, gimbal_pitch);
 struct camera_optical_fuxk_frame {
     static constexpr std::string_view frame_id = "camera_optical_frame";
     static constexpr size_t index              = __COUNTER__ - _base - 1;
     using ancestor                             = camera_link_fuxk_frame;
 };
-;
-DECL(muzzle_link, gimbal_link);
+DECL(muzzle_link, gimbal_pitch);
 
 // 防止外部使用
 #undef DECL_ROOT
 #undef DECL
 
 using odom           = odom_fuxk_frame;
-using gimbal         = gimbal_link_fuxk_frame;
+using gimbal         = gimbal_yaw_fuxk_frame;
 using camera         = camera_link_fuxk_frame;
 using camera_optical = camera_optical_fuxk_frame;
 using muzzle         = muzzle_link_fuxk_frame;
@@ -224,7 +224,7 @@ using FuckTransform = Fuck<Coordinate, TransformMatrix4d>;
 using FuckWorld = FuckTransform<world_fuxk_frame>;
 
 using FuckOdom   = FuckTransform<odom_fuxk_frame>;
-using FuckGimbal = FuckTransform<gimbal_link_fuxk_frame>;
+using FuckGimbal = FuckTransform<gimbal_yaw_fuxk_frame>;
 
 using FuckMuzzle = FuckTransform<muzzle_link_fuxk_frame>;
 
@@ -310,7 +310,8 @@ constexpr std::string_view frame_id_by_index(std::size_t index) noexcept {
     switch (index) {
     case world_fuxk_frame::index: return world_fuxk_frame::frame_id;
     case odom_fuxk_frame::index: return odom_fuxk_frame::frame_id;
-    case gimbal_link_fuxk_frame::index: return gimbal_link_fuxk_frame::frame_id;
+    case gimbal_yaw_fuxk_frame::index: return gimbal_yaw_fuxk_frame::frame_id;
+    case gimbal_pitch_fuxk_frame::index: return gimbal_pitch_fuxk_frame::frame_id;
     case camera_link_fuxk_frame::index: return camera_link_fuxk_frame::frame_id;
     case camera_optical_fuxk_frame::index: return camera_optical_fuxk_frame::frame_id;
     case muzzle_link_fuxk_frame::index: return muzzle_link_fuxk_frame::frame_id;
@@ -327,7 +328,8 @@ constexpr std::string_view parent_frame_id_by_index(std::size_t index) noexcept 
     switch (index) {
     case world_fuxk_frame::index: return ""; // root 无父节点
     case odom_fuxk_frame::index: return odom_fuxk_frame::ancestor::frame_id;
-    case gimbal_link_fuxk_frame::index: return gimbal_link_fuxk_frame::ancestor::frame_id;
+    case gimbal_yaw_fuxk_frame::index: return gimbal_yaw_fuxk_frame::ancestor::frame_id;
+    case gimbal_pitch_fuxk_frame::index: return gimbal_pitch_fuxk_frame::ancestor::frame_id;
     case camera_link_fuxk_frame::index: return camera_link_fuxk_frame::ancestor::frame_id;
     case camera_optical_fuxk_frame::index: return camera_optical_fuxk_frame::ancestor::frame_id;
     case muzzle_link_fuxk_frame::index: return muzzle_link_fuxk_frame::ancestor::frame_id;

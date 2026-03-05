@@ -122,7 +122,7 @@ void register_rune_detection_systems(talos::Scheduler& scheduler, RuneDetectorCo
             //}
 
             auto tf_odom_camera = fast_tf::lookup_clamped<fast_tf::odom>(
-                **tf_system, fast_tf::FuckTransform<fast_tf::camera_optical_fuxk_frame>(),
+                **tf_system, fast_tf::FuckTransform<fast_tf::camera_optical>(),
                 frame->timestamp_ns);
 
             if (!tf_odom_camera) {

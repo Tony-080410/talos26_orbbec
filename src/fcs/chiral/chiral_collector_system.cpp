@@ -131,8 +131,8 @@ void register_chiral_collector_system(talos::Scheduler& scheduler) {
             using namespace fast_tf;
 
             // Lookup gimbal transform (odom -> gimbal)
-            auto gimbal_tf = lookup_clamped<odom_fuxk_frame, gimbal_link_fuxk_frame>(
-                *tf_buffer->get(), FuckTransform<gimbal_link_fuxk_frame>{}, current_ns);
+            auto gimbal_tf = lookup_clamped<fast_tf::odom, fast_tf::gimbal>(
+                *tf_buffer->get(), FuckTransform<fast_tf::gimbal>{}, current_ns);
             if (gimbal_tf) {
                 auto translation                     = gimbal_tf.value()->translation();
                 auto rotation                        = gimbal_tf.value()->quaternion();
@@ -148,7 +148,7 @@ void register_chiral_collector_system(talos::Scheduler& scheduler) {
             }
 
             // Lookup camera transform (gimbal -> camera)
-            auto camera_tf = lookup_clamped<gimbal_link_fuxk_frame, camera_link_fuxk_frame>(
+            auto camera_tf = lookup_clamped<fast_tf::gimbal, camera_link_fuxk_frame>(
                 *tf_buffer->get(), FuckTransform<camera_link_fuxk_frame>{}, current_ns);
             if (camera_tf) {
 

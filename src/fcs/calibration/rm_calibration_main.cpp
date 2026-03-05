@@ -311,7 +311,7 @@ int main(int argc, char* argv[]) {
                     // Update gimbal_link transform
                     fast_tf::update(
                         *tf_buffer,
-                        fast_tf::FuckTransform<fast_tf::gimbal_link_fuxk_frame>(
+                        fast_tf::FuckTransform<fast_tf::gimbal>(
                             fast_tf::TransformMatrix4d::from_rpy(
                                 euler.roll, euler.pitch, euler.yaw)),
                         pose->timestamp_ns);
@@ -332,7 +332,7 @@ int main(int argc, char* argv[]) {
                     // Update gimbal_link transform
                     fast_tf::update(
                         *tf_buffer,
-                        fast_tf::FuckTransform<fast_tf::gimbal_link_fuxk_frame>(
+                        fast_tf::FuckTransform<fast_tf::gimbal>(
                             fast_tf::TransformMatrix4d::from_rpy(
                                 imu.data.roll, imu.data.pitch, imu.data.yaw)),
                         ts);
