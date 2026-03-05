@@ -5,6 +5,7 @@
 #include "scene_builder.hpp"
 #include "system_helpers.hpp"
 
+#include "L2_perception/armor/at_legacy_config.hpp"
 #include "camera_config.hpp"
 #include "core/channel_topics.hpp"
 #include "core/types.hpp"
@@ -34,6 +35,7 @@ void register_l1_sensor_systems(App& app) {
         "foxglove_l1_image_pub",
         [](talos::spmc<AtLegacyArmorDetectionBatch, AtLegacyDetectionChannelTopic> det_in,
            talos::res<std::shared_ptr<FoxgloveServer>> server, talos::res<CameraConfig> cam,
+           talos::res<L2::AtLegacyConfig> legacy_config,
            talos::res<std::shared_ptr<fast_tf::CoordinateSystem<1024>>> tf_buffer) {
             if (!detail::foxglove_ready(*server, det_in)) {
                 return;
@@ -49,13 +51,49 @@ void register_l1_sensor_systems(App& app) {
 
             // Clone image and draw detection boxes
             cv::Mat img_bgr = batch->image.clone();
+
+            // Determine ally color from config (opposite of detect_color)
+            // detect_color is enemy color, so ally is the opposite
+            const cv::Scalar ally_color =
+                (legacy_config->detector.detect_color == ArmorColor::Red)
+                    ? cv::Scalar(255, 0, 0)  // BGR: Blue (ally is blue when detecting red enemies)
+                    : cv::Scalar(0, 0, 255); // BGR: Red (ally is red when detecting blue enemies)
+
+            // Draw optical center (principal point) with ally color
+            // cx, cy are at camera_matrix(0,2) and camera_matrix(1,2)
+            const double cx      = cam->camera_matrix(0, 2);
+            const double cy      = cam->camera_matrix(1, 2);
+            const int cross_size = 15;
+            cv::drawMarker(
+                img_bgr, cv::Point(static_cast<int>(cx), static_cast<int>(cy)), ally_color,
+                cv::MARKER_CROSS, cross_size, 2);
+
+            // Box color is always green
+            const cv::Scalar box_color(0, 255, 0);
+
             for (const auto& det : batch->detections) {
-                cv::circle(img_bgr, det.center(), 5, cv::Scalar(0, 0, 255), 5);
+                // Draw detection box
                 for (size_t j = 0; j < det.corners.size(); j++) {
                     auto pp1 = det.corners[j];
                     auto pp2 = det.corners[(j + 1) % 4];
-                    cv::line(img_bgr, pp1, pp2, cv::Scalar(0, 255, 0), 2);
+                    cv::line(img_bgr, pp1, pp2, box_color, 2);
                 }
+
+                // Draw debug info below the box
+                // Text position: bottom-left corner of the detection box
+                cv::Point2f text_pos(det.rect.x, det.rect.y + det.rect.height + 20);
+
+                // Line 1: name and type (e.g., "Sentry Small")
+                std::string name_type = fmt::format(
+                    "{} {}", magic_enum::enum_name(det.name), magic_enum::enum_name(det.type));
+                cv::putText(
+                    img_bgr, name_type, text_pos, cv::FONT_HERSHEY_SIMPLEX, 0.5, box_color, 1);
+
+                // Line 2: confidence (e.g., "0.95")
+                cv::Point2f conf_pos(det.rect.x, det.rect.y + det.rect.height + 40);
+                std::string conf_str = fmt::format("conf: {:.2f}", det.confidence);
+                cv::putText(
+                    img_bgr, conf_str, conf_pos, cv::FONT_HERSHEY_SIMPLEX, 0.5, box_color, 1);
             }
 
             // Compress to JPEG

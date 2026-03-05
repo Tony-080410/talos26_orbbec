@@ -108,8 +108,8 @@ sigma_a_yaw = 8.0
 # Default: ~0.17 degrees (180.0 / pi ≈ 0.003)
 fire_thresh = 0.01744444
 # Physical window dimensions (meters)
-shooting_range_h = 0.0135
-shooting_range_w = 0.0135
+shooting_range_h = 0.135
+shooting_range_w = 0.135
 
 # Aimer configuration (shared by all target types: Robot/Outpost/Rune)
 [aimer]

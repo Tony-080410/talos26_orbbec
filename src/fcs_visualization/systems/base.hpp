@@ -9,6 +9,7 @@
 
 #include "core/channel_topics.hpp"
 #include "frame.hpp"
+#include "scheduler/scheduler.hpp"
 
 #include <memory>
 
