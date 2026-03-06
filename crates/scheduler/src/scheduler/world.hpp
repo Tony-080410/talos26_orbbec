@@ -115,14 +115,14 @@ public:
     template <typename T>
     [[nodiscard]] res<T> get_res() const noexcept {
         return get_resource_helper<T, res<T>>(
-            [](auto* storage) { return res<T>{&storage->value, nullptr, 0}; });
+            [](auto* storage) { return res<T>{&storage->value}; });
     }
 
     /// Get mutable resource. Panics if resource not found (bind-phase error).
     template <typename T>
     [[nodiscard]] res_mut<T> get_res_mut() noexcept {
         return get_resource_helper<T, res_mut<T>>(
-            [](auto* storage) { return res_mut<T>{&storage->value, nullptr, 0}; });
+            [](auto* storage) { return res_mut<T>{&storage->value}; });
     }
 
     // ==================== Type-Dispatched Access ====================
