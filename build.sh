@@ -182,8 +182,8 @@ get_compiler_major_version() {
 configure_linux() {
     status "[+]" "$BLUE" "Configuring for Linux..."
 
-    local CC="clang-21"
-    local CXX="clang++-21"
+    local selected_cc="clang-21"
+    local selected_cxx="clang++-21"
     local clang_version
 
     # Try clang-21 first
@@ -197,8 +197,8 @@ configure_linux() {
             major_version="$(get_compiler_major_version "clang++")"
 
             if [[ "$major_version" -ge 21 ]]; then
-                CC="clang"
-                CXX="clang++"
+                selected_cc="clang"
+                selected_cxx="clang++"
                 clang_version="$(get_compiler_version "clang++")"
                 status "[i]" "$BLUE" "Compiler: $clang_version"
             else
@@ -231,8 +231,8 @@ configure_linux() {
     libstdcpp_version="$("$latest_libstdcpp" --version 2>/dev/null | head -n1 || echo "unknown")"
     status "[i]" "$BLUE" "Stdlib: $libstdcpp_version"
 
-    export CC="$CC"
-    export CXX="$CXX"
+    export CC="$selected_cc"
+    export CXX="$selected_cxx"
 
     # Explicit compiler flags for Linux - force latest libstdc++
     CMAKE_COMPILER_ARGS="-DCMAKE_CXX_COMPILER=$CXX -DCMAKE_C_COMPILER=$CC"
@@ -245,7 +245,7 @@ configure_linux() {
 
     BUILD_JOBS="$(nproc)"
 
-    status "[o]" "$GREEN" "Linux ready ($CXX + latest libstdc++)"
+    status "[o]" "$GREEN" "Linux ready ($selected_cxx + latest libstdc++)"
 }
 
 # Main
