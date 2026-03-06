@@ -163,19 +163,55 @@ find_latest_libstdcpp() {
     fi
 }
 
+# Check compiler version
+get_compiler_major_version() {
+    local version_str
+    version_str="$("$1" --version 2>/dev/null | head -n1 || echo "")"
+
+    # Extract version number (handles formats like "clang version 21.0.0" or "Ubuntu clang version 21.0.0")
+    if [[ "$version_str" =~ clang[[:space:]]version[[:space:]]([0-9]+) ]]; then
+        echo "${BASH_REMATCH[1]}"
+    elif [[ "$version_str" =~ version[[:space:]]([0-9]+) ]]; then
+        echo "${BASH_REMATCH[1]}"
+    else
+        echo "0"
+    fi
+}
+
 # Configure build environment for Linux
 configure_linux() {
     status "[+]" "$BLUE" "Configuring for Linux..."
 
-    if ! check_compiler "clang++-21"; then
-        status "[x]" "$RED" "clang++-21 not found!"
-        status "[i]" "$YELLOW" "Install: sudo apt install clang-21 clang++-21"
-        error "Required compiler not available."
-    fi
-
+    local CC="clang-21"
+    local CXX="clang++-21"
     local clang_version
-    clang_version="$(get_compiler_version "clang++-21")"
-    status "[i]" "$BLUE" "Compiler: $clang_version"
+
+    # Try clang-21 first
+    if check_compiler "clang++-21"; then
+        clang_version="$(get_compiler_version "clang++-21")"
+        status "[i]" "$BLUE" "Compiler: $clang_version"
+    else
+        # Fallback to clang/clang++ and check version
+        if check_compiler "clang++"; then
+            local major_version
+            major_version="$(get_compiler_major_version "clang++")"
+
+            if [[ "$major_version" -ge 21 ]]; then
+                CC="clang"
+                CXX="clang++"
+                clang_version="$(get_compiler_version "clang++")"
+                status "[i]" "$BLUE" "Compiler: $clang_version"
+            else
+                status "[x]" "$RED" "clang++ version $major_version is too old (requires 21+)"
+                status "[i]" "$YELLOW" "Install: sudo apt install clang-21 clang++-21"
+                error "Required compiler version not available."
+            fi
+        else
+            status "[x]" "$RED" "clang++-21 not found and clang++ not available!"
+            status "[i]" "$YELLOW" "Install: sudo apt install clang-21 clang++-21"
+            error "Required compiler not available."
+        fi
+    fi
 
     # Find latest libstdc++
     local latest_libstdcpp
@@ -195,11 +231,11 @@ configure_linux() {
     libstdcpp_version="$("$latest_libstdcpp" --version 2>/dev/null | head -n1 || echo "unknown")"
     status "[i]" "$BLUE" "Stdlib: $libstdcpp_version"
 
-    export CC=clang-21
-    export CXX=clang++-21
+    export CC="$CC"
+    export CXX="$CXX"
 
     # Explicit compiler flags for Linux - force latest libstdc++
-    CMAKE_COMPILER_ARGS="-DCMAKE_CXX_COMPILER=clang++-21 -DCMAKE_C_COMPILER=clang-21"
+    CMAKE_COMPILER_ARGS="-DCMAKE_CXX_COMPILER=$CXX -DCMAKE_C_COMPILER=$CC"
     CMAKE_LIBRARY_PATH="$libstdcpp_dir:${CMAKE_LIBRARY_PATH:-}"
     export CMAKE_LIBRARY_PATH
 
@@ -209,7 +245,7 @@ configure_linux() {
 
     BUILD_JOBS="$(nproc)"
 
-    status "[o]" "$GREEN" "Linux ready (clang-21 + latest libstdc++)"
+    status "[o]" "$GREEN" "Linux ready ($CXX + latest libstdc++)"
 }
 
 # Main
