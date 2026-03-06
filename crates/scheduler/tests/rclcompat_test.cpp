@@ -1637,30 +1637,6 @@ TEST(ResourceAccessor, HasResource) {
     EXPECT_TRUE(node.has_resource<TestResource>());
 }
 
-TEST(ResourceAccessor, UpdateResource) {
-    World world;
-    Scheduler scheduler(world);
-
-    rclcompat::Node node("test", scheduler);
-
-    // Insert initial resource
-    node.insert_resource(TestResource{.value = 42, .name = "original"});
-
-    auto accessor = node.create_resource<TestResource>();
-    auto res      = accessor.get();
-    EXPECT_EQ(res->value, 42);
-
-    // Update the resource
-    auto result = node.update_resource(TestResource{.value = 100, .name = "updated"});
-    EXPECT_TRUE(result.has_value());
-    EXPECT_GT(*result, 0); // Version should be > 0
-
-    // Verify the update
-    auto res2 = accessor.get();
-    EXPECT_EQ(res2->value, 100);
-    EXPECT_EQ(res2->name, "updated");
-}
-
 // -------------------------------------------------------------------------
 // Test: ResourceAccessor_WithCallback
 // -------------------------------------------------------------------------

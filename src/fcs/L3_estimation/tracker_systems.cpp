@@ -17,10 +17,9 @@ void register_tracker_systems(talos::Scheduler& scheduler, TrackerConfig&& confi
             talos::spmc<AtLegacyArmorMeasurementBatch, AtLegacyMeasurementChannelTopic> meas_in,
             talos::spmc_mut<TrackerOutput, TrackerOutputChannelTopic> tracker_out,
             talos::res<TrackerConfig> config) mutable {
-            // Reactively update tracker config when changed
-            if (!tracker_new || config.is_changed()) {
-                tracker_new       = std::make_shared<TrackerNew>(*config);
-                last_timestamp_ns = 0;
+            // Initialize tracker on first run
+            if (!tracker_new) {
+                tracker_new = std::make_shared<TrackerNew>(*config);
             }
 
             if (!meas_in.has_new()) {

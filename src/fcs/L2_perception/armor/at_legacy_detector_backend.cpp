@@ -110,37 +110,6 @@ void AtLegacyDetectorBackend::set_detect_color(ArmorColor color) noexcept {
         backend_);
 }
 
-void AtLegacyDetectorBackend::update_config(const AtLegacyConfig& config) noexcept {
-    std::visit(
-        [&config](auto& backend) {
-            if (!backend) {
-                return;
-            }
-            using BackendT = std::decay_t<decltype(*backend)>;
-            if constexpr (std::is_same_v<BackendT, AtLegacyTraditionalBackend>) {
-                backend->update_config(config.traditional);
-            }
-#if TALOS_HAS_OPENVINO
-            else if constexpr (std::is_same_v<BackendT, AtLegacyNNBackend>) {
-                backend->update_config(config.nn);
-            } else if constexpr (std::is_same_v<BackendT, AtLegacyNNTupBackend>) {
-                backend->update_config(config.nn_tup);
-            }
-#endif
-#if TALOS_HAS_TENSORRT
-            else if constexpr (std::is_same_v<BackendT, AtLegacyTrtBackend>) {
-                backend->update_config(config.trt);
-            }
-#endif
-#if TALOS_HAS_AXERA
-            else if constexpr (std::is_same_v<BackendT, AtLegacyAxeraBackend>) {
-                backend->update_config(config.axera);
-            }
-#endif
-        },
-        backend_);
-}
-
 // ============================================================================
 // Factory Function
 // ============================================================================

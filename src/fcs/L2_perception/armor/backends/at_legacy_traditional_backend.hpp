@@ -33,9 +33,6 @@ public:
     void set_detect_color(ArmorColor color) noexcept { detect_color_ = color; }
     [[nodiscard]] ArmorColor detect_color() const noexcept { return detect_color_; }
 
-    /// Hot-reload config by value
-    void update_config(Config new_config) noexcept { config_ = std::move(new_config); }
-
     /// Get current config
     [[nodiscard]] const Config& get_config() const noexcept { return config_; }
 

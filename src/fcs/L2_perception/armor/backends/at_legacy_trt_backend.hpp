@@ -53,7 +53,6 @@ public:
     AtLegacyTrtBackend(const AtLegacyTrtBackend&)            = delete;
     AtLegacyTrtBackend& operator=(const AtLegacyTrtBackend&) = delete;
 
-    void update_config(Config new_config);
     void set_detect_color(fcs::ArmorColor color);
 
     DetectionResult detect_impl(const cv::Mat& image);

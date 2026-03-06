@@ -5,8 +5,6 @@
 #include "system/system_meta.hpp"
 
 #include <any>
-#include <atomic>
-#include <expected>
 #include <memory>
 #include <spdlog/spdlog.h>
 #include <string>
@@ -16,21 +14,15 @@
 namespace talos::scheduler {
 
 // ============================================================================
-// Versioned Resource Wrapper
+// Resource Wrapper
 // ============================================================================
 
 template <typename T>
-struct VersionedResource {
+struct Resource {
     T value;
-    alignas(std::hardware_destructive_interference_size) std::atomic<uint64_t> version{0};
 
-    explicit VersionedResource(T val) noexcept
+    explicit Resource(T val) noexcept
         : value(std::move(val)) {}
-
-    uint64_t update(T new_value) noexcept {
-        value = std::move(new_value);
-        return version.fetch_add(1, std::memory_order_release) + 1;
-    }
 };
 
 // ============================================================================
@@ -111,7 +103,7 @@ public:
 
     template <typename T>
     void insert_resource(T resource) {
-        resources_[typeid(T)] = std::make_shared<VersionedResource<T>>(std::move(resource));
+        resources_[typeid(T)] = std::make_shared<Resource<T>>(std::move(resource));
     }
 
     template <typename T>
@@ -123,24 +115,14 @@ public:
     template <typename T>
     [[nodiscard]] res<T> get_res() const noexcept {
         return get_resource_helper<T, res<T>>(
-            [](auto* storage) { return res<T>{&storage->value, &storage->version, 0}; });
+            [](auto* storage) { return res<T>{&storage->value, nullptr, 0}; });
     }
 
     /// Get mutable resource. Panics if resource not found (bind-phase error).
     template <typename T>
     [[nodiscard]] res_mut<T> get_res_mut() noexcept {
         return get_resource_helper<T, res_mut<T>>(
-            [](auto* storage) { return res_mut<T>{&storage->value, &storage->version, 0}; });
-    }
-
-    template <typename T>
-    [[nodiscard]] std::expected<uint64_t, std::string> update_resource(T new_value) {
-        auto it = resources_.find(typeid(T));
-        if (it == resources_.end()) {
-            return std::unexpected("Resource not found: " + demangle(typeid(T).name()));
-        }
-        auto storage = std::any_cast<std::shared_ptr<VersionedResource<T>>>(it->second);
-        return storage->update(std::move(new_value));
+            [](auto* storage) { return res_mut<T>{&storage->value, nullptr, 0}; });
     }
 
     // ==================== Type-Dispatched Access ====================
@@ -223,7 +205,7 @@ private:
             SPDLOG_CRITICAL("Resource not found: {}", demangle(typeid(T).name()));
             std::abort();
         }
-        auto storage = std::any_cast<std::shared_ptr<VersionedResource<T>>>(it->second);
+        auto storage = std::any_cast<std::shared_ptr<Resource<T>>>(it->second);
         return map_fn(storage.get());
     }
 

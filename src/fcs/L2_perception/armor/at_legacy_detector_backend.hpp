@@ -132,9 +132,6 @@ public:
     void set_backend(std::unique_ptr<AtLegacyAxeraBackend> backend);
 #endif
 
-    /// Update config for the active backend (forward declaration, implemented in .cpp)
-    void update_config(const AtLegacyConfig& config) noexcept;
-
     /// Check if backend variant holds a specific type
     template <typename Backend>
     [[nodiscard]] bool holds() const noexcept {

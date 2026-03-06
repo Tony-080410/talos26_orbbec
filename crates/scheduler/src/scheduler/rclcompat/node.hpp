@@ -250,26 +250,6 @@ public:
     }
 
     /**
-     * @brief Update a resource in the World
-     *
-     * ## Template parameters
-     *
-     * - `T`: resource type
-     *
-     * ## Parameters
-     *
-     * - `new_value`: the new resource value (moved)
-     *
-     * ## Returns
-     *
-     * `std::expected<uint64_t, std::string>` - the new version number on success
-     */
-    template <typename T>
-    [[nodiscard]] std::expected<uint64_t, std::string> update_resource(T new_value) {
-        return scheduler_.world().update_resource(std::move(new_value));
-    }
-
-    /**
      * @brief Get the node name
      *
      * ## Returns

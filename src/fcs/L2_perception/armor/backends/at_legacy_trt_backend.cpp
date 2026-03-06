@@ -507,12 +507,6 @@ AtLegacyTrtBackend::AtLegacyTrtBackend(AtLegacyTrtBackend&&) noexcept = default;
 
 AtLegacyTrtBackend& AtLegacyTrtBackend::operator=(AtLegacyTrtBackend&&) noexcept = default;
 
-// ============================================================================
-// Config Updates
-// ============================================================================
-
-void AtLegacyTrtBackend::update_config(Config new_config) { config_ = std::move(new_config); }
-
 void AtLegacyTrtBackend::set_detect_color(fcs::ArmorColor color) {
     detect_color_ = static_cast<int>(color);
 }

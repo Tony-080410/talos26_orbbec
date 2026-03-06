@@ -87,12 +87,6 @@ void register_rune_detection_systems(talos::Scheduler& scheduler, RuneDetectorCo
                 return;
             }
 
-            if (cfg.is_changed()) {
-                *detector = ::fyt::rune::RuneDetector(
-                    to_enemy_color(cfg->detect_color), cfg->arrow_threshold, cfg->target_threshold,
-                    cfg->rcenter_threshold);
-            }
-
             const auto reversed =
                 detector->detect(frame->image, frame->image.cols, frame->image.rows);
             ;

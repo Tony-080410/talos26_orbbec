@@ -39,27 +39,6 @@ enum class channel_kind {
 };
 
 // ============================================================================
-// Detail Helpers
-// ============================================================================
-
-namespace detail {
-
-/// Version checking helper: shared by res and res_mut
-[[nodiscard]] inline bool
-    check_version_changed(const std::atomic<uint64_t>* version, uint64_t& last_seen) noexcept {
-    if (!version)
-        return false;
-    const auto current = version->load(std::memory_order_acquire);
-    if (current != last_seen) {
-        last_seen = current;
-        return true;
-    }
-    return false;
-}
-
-} // namespace detail
-
-// ============================================================================
 // Unified Channel Templates
 // ============================================================================
 
@@ -129,46 +108,22 @@ struct basic_resource {
     static constexpr auto kind = Kind;
 
     using PtrType = std::conditional_t<IsMutable, T*, const T*>;
-    using VersionPtrType =
-        std::conditional_t<IsMutable, std::atomic<uint64_t>*, const std::atomic<uint64_t>*>;
 
-    PtrType ptr_                        = nullptr;
-    VersionPtrType version_             = nullptr;
-    mutable uint64_t last_seen_version_ = 0;
+    PtrType ptr_ = nullptr;
 
     // Read-only access (for both const and mutable resources)
-    [[nodiscard]] const T& operator*() const noexcept requires(!IsMutable) { return read_impl(); }
+    [[nodiscard]] const T& operator*() const noexcept requires(!IsMutable) { return *ptr_; }
 
-    [[nodiscard]] const T* operator->() const noexcept requires(!IsMutable) { return &read_impl(); }
+    [[nodiscard]] const T* operator->() const noexcept requires(!IsMutable) { return ptr_; }
 
     // Mutable access (only for res_mut)
-    [[nodiscard]] T& operator*() noexcept requires IsMutable { return write_impl(); }
+    [[nodiscard]] T& operator*() noexcept requires IsMutable { return *ptr_; }
 
-    [[nodiscard]] T* operator->() noexcept requires IsMutable { return &write_impl(); }
+    [[nodiscard]] T* operator->() noexcept requires IsMutable { return ptr_; }
 
     // Const overloads for mutable resource
-    [[nodiscard]] const T& operator*() const noexcept { return read_impl(); }
-    [[nodiscard]] const T* operator->() const noexcept { return &read_impl(); }
-
-    [[nodiscard]] bool is_changed() const noexcept {
-        return detail::check_version_changed(version_, last_seen_version_);
-    }
-
-private:
-    // Unified read implementation (eliminates duplication between read-only and mutable const
-    // access)
-    [[nodiscard]] const T& read_impl() const noexcept {
-        if (version_) [[likely]]
-            last_seen_version_ = version_->load(std::memory_order_acquire);
-        return *ptr_;
-    }
-
-    // Unified write implementation (eliminates duplication in mutable accessors)
-    [[nodiscard]] T& write_impl() noexcept {
-        if (version_) [[likely]]
-            version_->fetch_add(1, std::memory_order_release);
-        return *ptr_;
-    }
+    [[nodiscard]] const T& operator*() const noexcept { return *ptr_; }
+    [[nodiscard]] const T* operator->() const noexcept { return ptr_; }
 };
 
 // ============================================================================

@@ -71,9 +71,6 @@ public:
     /// Get execution devices
     [[nodiscard]] std::vector<std::string> execution_devices() const;
 
-    /// Hot-reload config by value
-    void update_config(Config new_config) noexcept { config_ = std::move(new_config); }
-
     /// Get current config
     [[nodiscard]] const Config& get_config() const noexcept { return config_; }
 

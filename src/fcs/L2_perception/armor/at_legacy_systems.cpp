@@ -20,16 +20,9 @@ void register_at_legacy_detection_systems(talos::Scheduler& scheduler, AtLegacyC
                detection_out,
            talos::spmc_mut<AtLegacyArmorMeasurementBatch, AtLegacyMeasurementChannelTopic>
                measurement_out,
-           talos::res<AtLegacyConfig> config,
            talos::res_mut<std::shared_ptr<AtLegacyDetectorBackend>> backend_ptr,
            talos::res<std::shared_ptr<AtLegacyPnPSolver>> solver_ptr,
            talos::res<std::shared_ptr<fast_tf::CoordinateSystem<1024>>> tf_system) mutable {
-            // Reactively update backend config and detect color when changed
-            if (config.is_changed()) {
-                (*backend_ptr)->update_config(*config);
-                (*backend_ptr)->set_detect_color(config->detector.detect_color);
-            }
-
             if (!image_in.has_new()) {
                 return;
             }
