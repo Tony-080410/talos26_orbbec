@@ -7,6 +7,7 @@
 #include "frame.hpp"
 #include "scheduler/scheduler.hpp"
 
+#include <algorithm>
 #include <spdlog/spdlog.h>
 
 namespace fcs::L2 {
@@ -36,6 +37,10 @@ void register_at_legacy_detection_systems(talos::Scheduler& scheduler, AtLegacyC
                 return;
             }
 
+            const auto detect_color = config->detector.detect_color;
+            // Re-apply detect color before each detection and enforce color before PnP.
+            backend->set_detect_color(detect_color);
+
             auto result = backend->detect(frame->image);
             if (!result) {
                 detection_out.write(
@@ -45,6 +50,13 @@ void register_at_legacy_detection_systems(talos::Scheduler& scheduler, AtLegacyC
             }
 
             auto detections = std::move(*result);
+            detections.erase(
+                std::remove_if(
+                    detections.begin(), detections.end(),
+                    [detect_color](const AtLegacyArmorDetection& det) {
+                        return det.color != detect_color;
+                    }),
+                detections.end());
 
             detection_out.write(
                 AtLegacyArmorDetectionBatch{
