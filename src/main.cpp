@@ -178,12 +178,25 @@ int main() {
     // Save config values for logging before move
     const double bullet_speed = vision.trajectory.model.bullet_speed;
 
-    auto setup_result = fcs::runtime::setup_l1_l2(
-        world, scheduler, vision, daedalus, hardware ? &*hardware : nullptr);
+    auto setup_result =
+        fcs::runtime::setup_l1(world, scheduler, daedalus, hardware ? &*hardware : nullptr);
     if (!setup_result) {
-        SPDLOG_CRITICAL("setup l1/l2: {}", setup_result.error());
+        SPDLOG_CRITICAL("setup l1: {}", setup_result.error());
         return 3;
     }
+
+    auto backend_handle_result = fcs::L2::create_detector_backend_handle(vision.at_legacy);
+    if (!backend_handle_result) {
+        SPDLOG_CRITICAL("create detector backend: {}", backend_handle_result.error());
+        return 4;
+    }
+
+    SPDLOG_INFO(
+        "detector backend: {} (color={})", backend_handle_result->name,
+        vision.at_legacy.detector.detect_color);
+
+    world.insert_resource(std::move(backend_handle_result->backend));
+    world.insert_resource(fcs::L2::create_pnp_solver(setup_result.value().camera_config));
 
     // Register trajectory solver resource (used by L4/L5)
     fcs::core::trajectory::register_resource(scheduler, std::move(vision.trajectory));

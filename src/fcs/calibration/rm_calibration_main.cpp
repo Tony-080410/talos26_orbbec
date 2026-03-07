@@ -189,9 +189,6 @@ int main(int argc, char* argv[]) {
     auto tf_buffer = fast_tf::infantry_new<1024>();
     world.insert_resource(tf_buffer);
 
-    // Create minimal vision config for L1_L2 setup
-    fcs::VisionConfig vision_config; // Default config is fine
-
     // Create hardware config if using real hardware
     fcs::HardwareConfig hardware_config;
     hardware_config.camera.width   = config->width;
@@ -199,8 +196,8 @@ int main(int argc, char* argv[]) {
     hardware_config.camera.profile = config->profile;
 
     // Setup L1_L2 runtime (camera + IMU)
-    auto setup_result = fcs::runtime::setup_l1_l2(
-        world, scheduler, vision_config, use_daedalus, use_daedalus ? nullptr : &hardware_config);
+    auto setup_result = fcs::runtime::setup_l1(
+        world, scheduler, use_daedalus, use_daedalus ? nullptr : &hardware_config);
     if (!setup_result) {
         SPDLOG_ERROR("Failed to setup L1/L2: {}", setup_result.error());
         return 1;

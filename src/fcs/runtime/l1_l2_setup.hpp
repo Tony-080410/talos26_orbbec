@@ -3,17 +3,17 @@
 #include <expected>
 #include <string>
 
+#include "camera_config.hpp"
 #include "scheduler/thin.hpp"
 
 namespace fcs {
 struct HardwareConfig;
-struct VisionConfig;
 } // namespace fcs
 
 namespace fcs::runtime {
 
 struct L1L2SetupResult {
-    std::string detector_backend_name;
+    CameraConfig camera_config;
 };
 
 // Creates and registers:
@@ -24,8 +24,8 @@ struct L1L2SetupResult {
 // - CameraConfig resource
 //
 // `hardware` must be non-null when `daedalus == false`.
-[[nodiscard]] std::expected<L1L2SetupResult, std::string> setup_l1_l2(
-    talos::World& world, talos::Scheduler& scheduler, const VisionConfig& vision, bool daedalus,
+[[nodiscard]] std::expected<L1L2SetupResult, std::string> setup_l1(
+    talos::World& world, talos::Scheduler& scheduler, bool daedalus,
     const HardwareConfig* hardware);
 
 } // namespace fcs::runtime

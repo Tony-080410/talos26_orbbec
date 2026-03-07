@@ -2,7 +2,6 @@
 
 #include "L1_sensor/camera_interface.hpp"
 #include "L1_sensor/output_interface.hpp"
-#include "L2_perception/armor/at_legacy_systems.hpp"
 #include "L5_weapon/fire_control.hpp"
 #include "config.hpp"
 #include "core/channel_topics.hpp"
@@ -105,8 +104,8 @@ struct Imu {
 
 } // namespace
 
-std::expected<L1L2SetupResult, std::string> setup_l1_l2(
-    talos::World& world, talos::Scheduler& scheduler, const VisionConfig& vision, bool daedalus,
+std::expected<L1L2SetupResult, std::string> setup_l1(
+    talos::World& world, talos::Scheduler& scheduler, bool daedalus,
     const HardwareConfig* hardware) {
     std::shared_ptr<fcs::L1::CameraInterface> camera;
     std::shared_ptr<fcs::L1::OutputInterface> output;
@@ -173,18 +172,6 @@ std::expected<L1L2SetupResult, std::string> setup_l1_l2(
     const auto& cam_info = camera->camera_info();
     world.insert_resource(cam_info);
 
-    auto backend_handle_result = fcs::L2::create_detector_backend_handle(vision.at_legacy);
-    if (!backend_handle_result) {
-        return std::unexpected(
-            fmt::format("create detector backend: {}", backend_handle_result.error()));
-    }
-    SPDLOG_INFO(
-        "detector backend: {} (color={})", backend_handle_result->name,
-        vision.at_legacy.detector.detect_color);
-
-    world.insert_resource(std::move(backend_handle_result->backend));
-    world.insert_resource(fcs::L2::create_pnp_solver(cam_info));
-
     // IMU: 1000Hz, silent update (no notify)
     scheduler.add_system<talos::fixed_rate_silent<1000, 1>>(
         "imu_reader",
@@ -227,7 +214,7 @@ std::expected<L1L2SetupResult, std::string> setup_l1_l2(
             output->send(*cmd);
         });
 
-    return L1L2SetupResult{.detector_backend_name = std::move(backend_handle_result->name)};
+    return L1L2SetupResult{.camera_config = cam_info};
 }
 
 } // namespace fcs::runtime
