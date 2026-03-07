@@ -1,14 +1,19 @@
 untrust_roll = true
 
+# Camera Intrinsic Calibration Result
+# RMS Error: 0.136355 pixels
+# Samples: 30
+
+# Date: 2026-03-07 15:12:09
 [camera]
-camera_matrix = [2538.32, 0, 1020.61, 0, 2525.25, 1522.65, 0, 0, 1]
-distort_coefficient = [-0.0645578, 0.0874827, -0.00239167, 0.00308088, -0.0206579]
-width = 2048
-height = 3072
+camera_matrix = [2333.06, 0, 657.19, 0, 2323.58, 592.108, 0, 0, 1]
+distort_coefficient = [-0.103011, 0.125266, 0.00137156, -0.00445701, 0.347987]
+width = 1440
+height = 1080
 
 [camera.profile]
 trigger_mode = false
-invert_image = true
-exposure_time_us = 7250  # 1.5ms in microseconds
+invert_image = false
+exposure_time_us = 5000  # 1.5ms in microseconds
 gain = 16.7
-rotate_angle = "Clockwise270"
+# rotate_angle = "Clockwise270"

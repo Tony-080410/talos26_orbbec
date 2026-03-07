@@ -21,11 +21,11 @@ rotate_angle = "None"
 type = "Chessboard"
 
 # 内角点数量 (棋盘格) 或方格数量 (ChArUco)
-width = 12
-height = 8
+width = 11
+height = 7
 
 # 方格边长 (米)
-square_size = 0.021
+square_size = 0.023
 
 # =============================================================================
 # ChArUco 专用配置 (仅当 type = "ChArUco" 时生效)
