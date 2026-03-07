@@ -1685,72 +1685,6 @@ auto Scheduler::compute_levels() -> BuildResult {
     }
 
     // ========================================================================
-    // Phase 3.5: Build resource dependencies
-    // ========================================================================
-    // Resource dependency semantics:
-    // - Only readers → output systems (sink nodes, no downstream deps from this resource)
-    // - Only writer → input system (source node, reads external data)
-    // - Writer + readers → pipeline dependency (writer → readers)
-
-    struct ResourceUsage {
-        std::vector<std::size_t> readers; // res<T> readers
-        std::vector<std::size_t> writers; // res_mut<T> writers
-    };
-
-    std::map<std::type_index, ResourceUsage> resources;
-
-    // Collect resource usage from all compute systems
-    for (std::size_t i = 0; i < n; ++i) {
-        const auto& meta = compute_systems_[i].system->meta();
-
-        for (const auto& type : meta.reads) {
-            resources[type].readers.push_back(i);
-        }
-        for (const auto& type : meta.writes) {
-            resources[type].writers.push_back(i);
-        }
-    }
-
-    // Validate and build edges for resource dependencies
-    for (const auto& [type, usage] : resources) {
-        // Rule: Only one res_mut writer per resource type
-        if (usage.writers.size() > 1) {
-            std::vector<std::string> writer_names;
-            writer_names.reserve(usage.writers.size());
-            for (auto idx : usage.writers) {
-                writer_names.push_back(compute_systems_[idx].system->meta().name);
-            }
-            std::string names_str;
-            for (size_t i = 0; i < writer_names.size(); ++i) {
-                if (i > 0)
-                    names_str += ", ";
-                names_str += writer_names[i];
-            }
-            SPDLOG_CRITICAL(
-                "Resource type '{}' has multiple res_mut writers: {}",
-                talos::scheduler::detail::demangle(type.name()), names_str);
-            std::abort();
-        }
-
-        // Only readers: output systems (sink nodes, no dependency edges created)
-        // Only writer: input system (source node, no dependency edges created)
-        // Writer + readers: create dependency edges (writer → readers)
-        if (!usage.writers.empty() && !usage.readers.empty()) {
-            // Pipeline dependency: writer must execute before all readers
-            const std::size_t writer = usage.writers[0];
-            for (std::size_t reader : usage.readers) {
-                if (writer != reader) {
-                    const std::uint64_t bit = 1UL << reader;
-                    if ((adj_mask[writer] & bit) == 0) {
-                        adj_mask[writer] |= bit;
-                        ++in_degree[reader];
-                    }
-                }
-            }
-        }
-    }
-
-    // ========================================================================
     // Phase 4: Kahn's algorithm for topological sort (by levels)
     // ========================================================================
 
@@ -1889,22 +1823,6 @@ auto Scheduler::compute_levels() -> BuildResult {
         for (std::size_t reader : usage.readers) {
             if (writer != reader) {
                 compute_affects_[writer] |= (1UL << reader);
-            }
-        }
-    }
-
-    // Resource dependencies: only include pipeline resources (writer + readers)
-    // - Only readers: output systems (no wake edges)
-    // - Only writer: input systems (no wake edges)
-    // - Writer + readers: pipeline dependency (writer → readers)
-    for (const auto& [type, usage] : resources) {
-        if (!usage.writers.empty() && !usage.readers.empty()) {
-            // Pipeline dependency: include in wake chains
-            const std::size_t writer = usage.writers[0];
-            for (std::size_t reader : usage.readers) {
-                if (writer != reader) {
-                    compute_affects_[writer] |= (1UL << reader);
-                }
             }
         }
     }
