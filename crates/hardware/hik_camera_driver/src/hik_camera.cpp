@@ -224,7 +224,9 @@ public:
         const int height = stImageInfo.stFrameInfo.nHeight;
         cv::Mat raw_bayer{height, width, CV_8UC1, stImageInfo.pBufAddr};
 
-        // 使用 OpenCV 的 VNG 算法解拜耳（质量最好，边缘锐利）
+        // 使用 OpenCV 的 EA（Edge-Aware，边缘感知）算法解拜耳
+        // 相比普通插值更注重边缘方向，能减少边缘处的彩边和模糊
+        // 在画质与速度之间通常比 VNG 更适合实时视觉场景
         cv::Mat img;
         cv::cvtColor(raw_bayer, img, *bayer_code);
 
@@ -463,10 +465,10 @@ private:
     static std::expected<int, CameraError> get_bayer_conversion_code(MvGvspPixelType enType) {
         switch (enType) {
         // 8-bit Bayer 格式（推荐使用）
-        case PixelType_Gvsp_BayerRG8: return cv::COLOR_BayerBG2BGR_VNG;
-        case PixelType_Gvsp_BayerBG8: return cv::COLOR_BayerRG2BGR_VNG;
-        case PixelType_Gvsp_BayerGR8: return cv::COLOR_BayerGB2BGR_VNG;
-        case PixelType_Gvsp_BayerGB8: return cv::COLOR_BayerGR2BGR_VNG;
+        case PixelType_Gvsp_BayerRG8: return cv::COLOR_BayerBG2BGR_EA;
+        case PixelType_Gvsp_BayerBG8: return cv::COLOR_BayerRG2BGR_EA;
+        case PixelType_Gvsp_BayerGR8: return cv::COLOR_BayerGB2BGR_EA;
+        case PixelType_Gvsp_BayerGB8: return cv::COLOR_BayerGR2BGR_EA;
 
         // 10-bit Bayer 格式（需要预处理）
         case PixelType_Gvsp_BayerRG10:
