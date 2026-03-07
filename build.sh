@@ -240,8 +240,7 @@ configure_linux() {
     export CMAKE_LIBRARY_PATH
 
     # Add rpath to ensure runtime uses the correct libstdc++
-    local rpath_flags="-Wl,-rpath,$libstdcpp_dir"
-    CMAKE_CXX_FLAGS="-stdlib=libstdc++ $rpath_flags"
+    CMAKE_CXX_FLAGS="-stdlib=libstdc++"
 
     BUILD_JOBS="$(nproc)"
 

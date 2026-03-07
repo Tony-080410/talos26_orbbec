@@ -29,6 +29,11 @@ for f in /etc/apt/sources.list.d/ubuntu-toolchain-r-ubuntu-test-*.list; do
     sed -i 's/ppa.launchpadcontent.net/launchpad.proxy.ustclug.org/g' $f
 done
 
+for f in /etc/apt/sources.list.d/ubuntu-toolchain-r-ubuntu-test-*.sources; do
+    cp $f $f.bak
+    sed -i 's/ppa.launchpadcontent.net/launchpad.proxy.ustclug.org/g' $f
+done
+
 apt update
 # apt install -y g++-15 gcc-15 || apt install -y g++-14 gcc-14 || apt install -y g++-13 gcc-13
-apt install -y libgcc-15-dev libstdc++-15-dev || apt install -y libgcc-14-dev libstdc++-14-dev || apt install -y libgcc-13-dev libstdc++-13-dev
+apt install libgcc-13-dev libstdc++-13-dev
