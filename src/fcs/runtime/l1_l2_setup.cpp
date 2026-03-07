@@ -80,15 +80,11 @@ struct UsbImu {
         talos::res_mut<std::shared_ptr<fast_tf::CoordinateSystem<1024>>> tf_buffer) noexcept {
         device->handle_events();
         const uint64_t timestamp_ns = fcs::clock::now_ns();
-        fast_tf::update(
-            *tf_buffer->get(),
-            fast_tf::FuckTransform<fast_tf::gimbal_yaw_fuxk_frame>(
-                fast_tf::TransformMatrix4d::from_rpy(imu_data->data.roll, 0.0, imu_data->data.yaw)),
+        fast_tf::update_rotate_only<fast_tf::gimbal_yaw_fuxk_frame>(
+            *tf_buffer->get(), math_fuxk::rpy<double>(imu_data->data.roll, 0.0, imu_data->data.yaw),
             timestamp_ns);
-        fast_tf::update(
-            *tf_buffer->get(),
-            fast_tf::FuckTransform<fast_tf::gimbal_pitch_fuxk_frame>(
-                fast_tf::TransformMatrix4d::from_rpy(0.0, imu_data->data.pitch, 0.0)),
+        fast_tf::update_rotate_only<fast_tf::gimbal_pitch_fuxk_frame>(
+            *tf_buffer->get(), math_fuxk::rpy<double>(0.0, imu_data->data.pitch, 0.0),
             timestamp_ns);
     }
 };
@@ -163,6 +159,7 @@ std::expected<L1L2SetupResult, std::string> setup_l1(
         if (!connect_result) {
             return std::unexpected(fmt::format("connect USB device: {}", connect_result.error()));
         }
+        SPDLOG_INFO("connected to USB device...");
 
         camera    = std::make_shared<fcs::L1::CameraInterface>(std::move(*input_result));
         output    = std::make_shared<fcs::L1::OutputInterface>(fcs::L1::UsbOutput(usb_device));

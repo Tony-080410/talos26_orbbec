@@ -31,7 +31,7 @@ std::shared_ptr<CoordinateSystem<N>> hero_new(timestamp_ns_t ts = 0) {
     update<gimbal_pitch_fuxk_frame>(
         *system,
         FuckTransform<gimbal_pitch_fuxk_frame>{
-            TransformMatrix4d::from_rpy(0, 0, 0, -0.6492, 0, 0.164)},
+            TransformMatrix4d::from_rpy(0, 0, 0, -0.06492, 0, 0.164)},
         ts);
     // NOTE: odom -> gimbal_link is dynamic (IMU); do not seed here.
 
@@ -39,7 +39,7 @@ std::shared_ptr<CoordinateSystem<N>> hero_new(timestamp_ns_t ts = 0) {
     update<camera_link_fuxk_frame>(
         *system,
         FuckTransform<camera_link_fuxk_frame>{
-            TransformMatrix4d::from_rpy(0, 0, 0, 0.25391, 0.03332, 0.00639)},
+            TransformMatrix4d::from_rpy(0, 0, 0, 0.25391, 0.0735, 0.00639)},
         0);
 
     // camera_optical -> camera_link (static)

@@ -197,6 +197,7 @@ int main() {
 
     world.insert_resource(std::move(backend_handle_result->backend));
     world.insert_resource(fcs::L2::create_pnp_solver(setup_result.value().camera_config));
+    SPDLOG_INFO("FUCK");
 
     // Register trajectory solver resource (used by L4/L5)
     fcs::core::trajectory::register_resource(scheduler, std::move(vision.trajectory));

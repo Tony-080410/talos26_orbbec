@@ -1,6 +1,7 @@
 #pragma once
 
 #include "error.hpp"
+#include "euler.hpp"
 #include "matrix.hpp"
 #include "types.hpp"
 #include "validation.hpp"
@@ -55,6 +56,31 @@ public:
     // ========================================================================
     // Write
     // ========================================================================
+    void update_rotate_only(timestamp_ns_t timestamp_ns, const math_fuxk::Ros2EulerRotd rot) {
+        auto old = latest();
+        mutex_type::scoped_lock lock(mutex_);
+        const auto translation =
+            old.value_or(TransformEntry(0, TransformMatrix4d{})).transform.translation();
+
+        const auto [roll, pitch, yaw] = rot.rpy();
+        buffer_[head_]                = TransformEntry(
+            timestamp_ns, TransformMatrix4d::from_rpy(
+                              roll, pitch, yaw, translation.x(), translation.y(), translation.z()));
+
+        if (size_ == 0) {
+            oldest_ts_ = timestamp_ns;
+        }
+        newest_ts_ = timestamp_ns;
+
+        head_ = (head_ + 1) % Capacity;
+
+        if (size_ < Capacity) {
+            ++size_;
+        } else {
+            // Buffer full, oldest entry overwritten, update oldest_ts
+            oldest_ts_ = buffer_[head_].timestamp_ns;
+        }
+    }
 
     void push(timestamp_ns_t timestamp_ns, const TransformMatrix4d& transform) {
         mutex_type::scoped_lock lock(mutex_);

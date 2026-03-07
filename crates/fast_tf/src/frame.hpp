@@ -1,6 +1,7 @@
 #pragma once
 
 #include "buffer.hpp"
+#include "euler.hpp"
 #include "matrix.hpp"
 #include "types.hpp"
 #include <string_view>
@@ -250,6 +251,12 @@ template <non_root_frame Layer, std::size_t N>
 constexpr void update(
     CoordinateSystem<N>& system, FuckTransform<Layer> transform, timestamp_ns_t ns) noexcept {
     system[Layer::index].push(ns, *transform);
+}
+
+template <non_root_frame Layer, std::size_t N>
+constexpr void update_rotate_only(
+    CoordinateSystem<N>& system, math_fuxk::Ros2EulerRotd rot, timestamp_ns_t ns) noexcept {
+    system[Layer::index].update_rotate_only(ns, rot);
 }
 
 template <frame To, frame From, std::size_t N>
