@@ -1,6 +1,7 @@
 #pragma once
 
 #include <atomic>
+#include <cstddef>
 #include <cstdint>
 
 namespace ipc {
@@ -93,6 +94,28 @@ struct alignas(64) CameraInfo {
 };
 static_assert(sizeof(CameraInfo) == 128, "CameraInfo must be 128 bytes");
 
+/**
+ * @brief 底盘观测数据 - 128 bytes
+ *
+ * 与 Rust `talos-ipc::ChassisObservation` 保持完全一致布局。
+ */
+struct alignas(64) ChassisObservation {
+    uint64_t frame_seq;
+    uint64_t timestamp_ns;
+    float dt_s;
+    float v_body[2];              // [vx, vy]
+    float wz_radps;
+    float wheel_linear_mps[4];    // [fl, fr, rl, rr]
+    float wheel_angular_radps[4]; // [fl, fr, rl, rr]
+    float a_body[2];              // [ax, ay]
+    float alpha_z_radps2;
+    float rpy_rad[3];             // [roll, pitch, yaw]
+    float gyro_xyz_radps[3];
+    float accel_xyz_mps2[3];
+    uint8_t _pad[16];
+};
+static_assert(sizeof(ChassisObservation) == 128, "ChassisObservation must be 128 bytes");
+
 // ============ TripleBuffer 槽位 ============
 
 /**
@@ -166,25 +189,31 @@ static_assert(sizeof(ShmHeader) == 64, "ShmHeader must be 64 bytes");
  * │   [1] odom_pose                     │
  * │   [2] muzzle_pose                   │
  * │   [3] camera_pose                   │
- * │   [4] reserved                      │
+ * │   [4] legacy chassis_observation    │
  * ├─────────────────────────────────────┤
  * │ GimbalTripleBuffer (192 bytes)      │ offset 1536
  * ├─────────────────────────────────────┤
  * │ CameraInfo (128 bytes)              │ offset 1728
  * ├─────────────────────────────────────┤
- * │ _pad (192 bytes)                    │ offset 1856
+ * │ ChassisObservation (128 bytes)      │ offset 1856
+ * ├─────────────────────────────────────┤
+ * │ _pad (64 bytes)                     │ offset 1984
  * └─────────────────────────────────────┘
  * Total: 2048 bytes
  */
 struct ShmMetaRegion {
     ShmHeader header;
     ImageTripleBuffer image;
-    PoseTripleBuffer poses[5]; // gimbal, odom, muzzle, camera, reserved
+    PoseTripleBuffer poses[5]; // gimbal, odom, muzzle, camera, legacy chassis_observation
     GimbalTripleBuffer gimbal_cmd;
     CameraInfo camera_info;
-    uint8_t _pad[192];         // 填充到 2048 字节
+    ChassisObservation chassis_observation;
+    uint8_t _pad[64];          // 填充到 2048 字节
 };
 static_assert(sizeof(ShmMetaRegion) == 2048, "ShmMetaRegion must be 2048 bytes");
+static_assert(offsetof(ShmMetaRegion, camera_info) == 1728, "camera_info offset mismatch");
+static_assert(
+    offsetof(ShmMetaRegion, chassis_observation) == 1856, "chassis_observation offset mismatch");
 
 // Pose 索引
 enum PoseIndex : uint8_t {
@@ -192,6 +221,8 @@ enum PoseIndex : uint8_t {
     POSE_ODOM   = 1,
     POSE_MUZZLE = 2,
     POSE_CAMERA = 3,
+    // Legacy compatibility channel; prefer ShmMetaRegion::chassis_observation.
+    POSE_CHASSIS_OBSERVATION = 4,
 };
 
 } // namespace ipc

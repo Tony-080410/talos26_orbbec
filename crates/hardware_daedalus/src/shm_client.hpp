@@ -186,7 +186,8 @@ public:
 
     /**
      * @brief 尝试接收指定类型的位姿
-     * @param index 位姿类型 (POSE_GIMBAL, POSE_ODOM, POSE_MUZZLE, POSE_CAMERA)
+     * @param index 位姿类型 (POSE_GIMBAL, POSE_ODOM, POSE_MUZZLE, POSE_CAMERA,
+     * POSE_CHASSIS_OBSERVATION[legacy])
      */
     [[nodiscard]] std::optional<Pose> recv_pose(const PoseIndex index) const {
         if (index > 4)
@@ -210,6 +211,20 @@ public:
             .frame_seq    = pose.frame_seq,
             .timestamp_ns = pose.timestamp_ns,
         };
+    }
+
+    /**
+     * @brief 接收底盘观测数据（推荐接口）
+     *
+     * 数据来源为 ShmMetaRegion::chassis_observation（独立结构体通道）。
+     * 若 timestamp_ns=0，表示生产者尚未发布有效数据。
+     */
+    [[nodiscard]] std::optional<ChassisObservation> recv_chassis_observation() const {
+        const auto observation = meta_->chassis_observation;
+        if (observation.timestamp_ns == 0) {
+            return std::nullopt;
+        }
+        return observation;
     }
 
     // ============ 云台命令发布 ============

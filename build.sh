@@ -261,9 +261,13 @@ main() {
                 BUILD_TYPE="Release"
                 shift
                 ;;
-            --calib)
+            -c|--calib)
                 BUILD_TARGET="rm_calibration"
                 ENABLE_CALIBRATION="ON"
+                shift
+                ;;
+            -p|--playground|--play)
+                BUILD_TARGET="talos-playground"
                 shift
                 ;;
             --)

@@ -299,3 +299,19 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
         fmt::fmt
         "$<$<PLATFORM_ID:Darwin>:-mmacosx-version-min=15.5>"
 )
+
+add_executable(talos-playground src/playground.cpp)
+
+target_include_directories(talos-playground PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/crates/hardware_daedalus/src
+)
+
+target_link_libraries(talos-playground PRIVATE
+        fast_tf
+        Eigen3::Eigen
+        lieplusplus
+        ipc
+        talos_log
+        spdlog::spdlog
+        ${OpenCV_LIBS}
+)
