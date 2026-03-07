@@ -3,7 +3,7 @@ compensator_type = "RK4"
 
 [detector]
 backend_type = "Traditional"  # Options: "Traditional", "NeuralNetwork", "NeuralNetworkTup", "TensorRT"
-detect_color = "Blue"
+detect_color = "Red"
 
 # Required if backend_type = "traditional"
 [traditional]
