@@ -20,6 +20,7 @@ std::expected<void, std::string> HardwareConfig::read_from(const toml::table& tb
 }
 
 std::expected<void, std::string> VisionConfig::read_from(const toml::table& tbl) noexcept {
+    READ(tbl, trajectory);
     READ_FLATTEN(tbl, at_legacy);
     READ(tbl, rune_detector);
 

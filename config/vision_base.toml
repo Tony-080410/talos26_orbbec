@@ -1,9 +1,6 @@
-# L4 root key (must be in TOML root, not inside any [table])
-compensator_type = "RK4"
-
 [detector]
 backend_type = "Traditional"  # Options: "Traditional", "NeuralNetwork", "NeuralNetworkTup", "TensorRT"
-detect_color = "Red"
+detect_color = "Blue"
 
 # Required if backend_type = "traditional"
 [traditional]
@@ -118,17 +115,29 @@ shooting_range_w = 0.135
 delay = 0.01
 
 [trajectory]
+type = "QuadraticDrag"
+
 iteration_times = 10
+
 bullet_speed = 25.0
 gravity = 9.7997
 resistance = 0.0005
+
 cd = 0.47
 rho = 1.225
 diameter = 0.017
 mass = 0.0032
+
 rk4_dt = 0.025
 rk4_min_steps = 500
 rk4_max_steps = 2000
+
+table_range_max = 20.0
+
+table_range_step = 0.01
+table_pitch_min = -0.6
+table_pitch_max = 0.9
+table_pitch_step = 0.005
 
 # Reference trajectory generator configuration (for L5 MPC)
 [ref_trajectory_generator]

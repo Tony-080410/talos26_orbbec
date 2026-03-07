@@ -3,6 +3,7 @@
 
 # L4 trajectory compensation overrides
 compensator_type = "Ideal"
+traditional.advanced_binary = true
 
 [trajectory]
 bullet_speed = 25.0

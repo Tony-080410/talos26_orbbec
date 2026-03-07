@@ -1,5 +1,6 @@
 #pragma once
 
+#include "toml_helper.hpp"
 #include <cstdint>
 
 namespace toml::inline v3 {
@@ -69,7 +70,26 @@ struct ModelConfig {
     /// Pitch step size in lookup table (radians).
     double table_pitch_step{0.005};
 
-    std::expected<void, std::string> read_from(const toml::table& tbl) noexcept;
+    std::expected<void, std::string> read_from(const toml::table& tbl) noexcept {
+        READ(tbl, type);
+        READ(tbl, iteration_times);
+        READ(tbl, bullet_speed);
+        READ(tbl, gravity);
+        READ(tbl, resistance);
+        READ(tbl, cd);
+        READ(tbl, rho);
+        READ(tbl, diameter);
+        READ(tbl, mass);
+        READ(tbl, rk4_dt);
+        READ(tbl, rk4_min_steps);
+        READ(tbl, rk4_max_steps);
+        READ(tbl, table_range_max);
+        READ(tbl, table_range_step);
+        READ(tbl, table_pitch_min);
+        READ(tbl, table_pitch_max);
+        READ(tbl, table_pitch_step);
+        return {};
+    }
 };
 
 } // namespace fcs::core::trajectory::model
