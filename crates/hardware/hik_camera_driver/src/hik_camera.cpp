@@ -8,6 +8,7 @@
 
 #include <chrono>
 #include <memory>
+#include <opencv2/imgproc.hpp>
 #include <ratio>
 #include <thread>
 #include <tuple>
@@ -462,10 +463,10 @@ private:
     static std::expected<int, CameraError> get_bayer_conversion_code(MvGvspPixelType enType) {
         switch (enType) {
         // 8-bit Bayer 格式（推荐使用）
-        case PixelType_Gvsp_BayerRG8: return cv::COLOR_BayerBG2BGR;
-        case PixelType_Gvsp_BayerBG8: return cv::COLOR_BayerRG2BGR;
-        case PixelType_Gvsp_BayerGR8: return cv::COLOR_BayerGB2BGR;
-        case PixelType_Gvsp_BayerGB8: return cv::COLOR_BayerGR2BGR;
+        case PixelType_Gvsp_BayerRG8: return cv::COLOR_BayerBG2BGR_VNG;
+        case PixelType_Gvsp_BayerBG8: return cv::COLOR_BayerRG2BGR_VNG;
+        case PixelType_Gvsp_BayerGR8: return cv::COLOR_BayerGB2BGR_VNG;
+        case PixelType_Gvsp_BayerGB8: return cv::COLOR_BayerGR2BGR_VNG;
 
         // 10-bit Bayer 格式（需要预处理）
         case PixelType_Gvsp_BayerRG10:
