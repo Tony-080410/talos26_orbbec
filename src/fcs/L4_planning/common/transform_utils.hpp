@@ -52,12 +52,12 @@ struct TransformLookupResult {
     }
 
     // Lookup gimbal transform (odom -> gimbal)
-    auto gimbal_tf = lookup_clamped<odom_fuxk_frame, fast_tf::gimbal>(
-        *tf_buffer, FuckTransform<fast_tf::gimbal>{}, current_ns);
+    auto gimbal_tf = lookup_clamped<odom_fuxk_frame, fast_tf::gimbal_pitch_fuxk_frame>(
+        *tf_buffer, FuckTransform<fast_tf::gimbal_pitch_fuxk_frame>{}, current_ns);
     if (!gimbal_tf) {
         return std::unexpected(
             fmt::format(
-                "Transform lookup failed: odom -> gimbal. Error: {}. Query timestamp: {} ns",
+                "Transform lookup failed: odom -> gimbal_pitch. Error: {}. Query timestamp: {} ns",
                 gimbal_tf.error(), current_ns));
     }
 
@@ -81,8 +81,8 @@ struct TransformLookupResult {
     uint64_t current_ns) noexcept {
     using namespace fast_tf;
 
-    auto gimbal_tf = lookup_clamped<odom_fuxk_frame, fast_tf::gimbal>(
-        *tf_buffer, FuckTransform<fast_tf::gimbal>{}, current_ns);
+    auto gimbal_tf = lookup_clamped<odom_fuxk_frame, fast_tf::gimbal_pitch_fuxk_frame>(
+        *tf_buffer, FuckTransform<fast_tf::gimbal_pitch_fuxk_frame>{}, current_ns);
     if (!gimbal_tf) {
         return std::unexpected(
             fmt::format(
