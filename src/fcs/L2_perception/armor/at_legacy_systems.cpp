@@ -8,6 +8,7 @@
 #include "scheduler/scheduler.hpp"
 
 #include <algorithm>
+#include <iterator>
 #include <spdlog/spdlog.h>
 
 namespace fcs::L2 {
@@ -51,17 +52,17 @@ void register_at_legacy_detection_systems(talos::Scheduler& scheduler, AtLegacyC
             }
 
             auto detections = std::move(*result);
-            detections.erase(
-                std::remove_if(
-                    detections.begin(), detections.end(),
-                    [detect_color](const AtLegacyArmorDetection& det) {
-                        return det.color != detect_color;
-                    }),
-                detections.end());
+            std::vector<AtLegacyArmorDetection> detections_for_pnp;
+            detections_for_pnp.reserve(detections.size());
+            std::copy_if(
+                detections.begin(), detections.end(), std::back_inserter(detections_for_pnp),
+                [detect_color](const AtLegacyArmorDetection& det) {
+                    return det.color == detect_color;
+                });
 
             detection_out.write(
                 AtLegacyArmorDetectionBatch{
-                    detections, frame->image, frame->timestamp_ns, frame->frame_id});
+                    std::move(detections), frame->image, frame->timestamp_ns, frame->frame_id});
 
             auto tf_odom_camera = fast_tf::lookup_clamped<fast_tf::odom>(
                 **tf_system, fast_tf::FuckTransform<fast_tf::camera_optical>(),
@@ -76,7 +77,8 @@ void register_at_legacy_detection_systems(talos::Scheduler& scheduler, AtLegacyC
 
             auto measurements = (*solver_ptr)
                                     ->solve_batch_with_ba(
-                                        detections, tf_odom_camera.value()->rotation().matrix(),
+                                        detections_for_pnp,
+                                        tf_odom_camera.value()->rotation().matrix(),
                                         frame->timestamp_ns);
 
             // Transform measurements from camera_optical frame to odom frame

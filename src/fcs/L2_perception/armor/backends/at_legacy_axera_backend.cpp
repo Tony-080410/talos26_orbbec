@@ -425,12 +425,13 @@ void AtLegacyAxeraBackend::preprocess_image(const cv::Mat& image, const PreprocC
     cv::Rect roi(left, top, new_unpad_w, new_unpad_h);
     cv::Mat roi_mat = npu_mat(roi);
 
-    // Resize directly into ROI, then swap channels in place.
+    // Resize directly into ROI, then convert BGR->RGB.
     if (image.cols != new_unpad_w || image.rows != new_unpad_h) {
-        cv::resize(image, roi_mat, {new_unpad_w, new_unpad_h}, 0, 0, cv::INTER_LINEAR);
-        // cv::cvtColor(roi_mat, roi_mat, cv::COLOR_BGR2RGB);
+        cv::Mat resized;
+        cv::resize(image, resized, {new_unpad_w, new_unpad_h}, 0, 0, cv::INTER_LINEAR);
+        cv::cvtColor(resized, roi_mat, cv::COLOR_BGR2RGB);
     } else {
-        // cv::cvtColor(image, roi_mat, cv::COLOR_BGR2RGB);
+        cv::cvtColor(image, roi_mat, cv::COLOR_BGR2RGB);
     }
 
     // Flush CPU cache to ensure NPU sees the data
@@ -628,13 +629,8 @@ std::vector<AtLegacyArmorDetection> AtLegacyAxeraBackend::postprocess_four_head(
             }
         }
 
-        // Color filtering (skip gray/purple: 2,3)
-        if (best_color_id == 2 || best_color_id == 3) {
-            continue;
-        }
-
-        // Map color: 0->Blue(0), 1->Red(1)
-        const ArmorColor color     = (best_color_id == 0) ? ArmorColor::Blue : ArmorColor::Red;
+        // Keep all model colors in detection output for debug visibility.
+        const ArmorColor color     = static_cast<ArmorColor>(best_color_id);
         const ArmorName armor_name = PAIR_TO_ARMOR[pair_id];
         const float grid_x         = grid.grid_xy[i].first;
         const float grid_y         = grid.grid_xy[i].second;
