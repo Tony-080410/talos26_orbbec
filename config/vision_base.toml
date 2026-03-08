@@ -19,14 +19,14 @@ armor_max_large_center_distance = 8.0
 armor_max_angle = 40.0
 
 # Classifier configuration (ONNX-based number classification)
-classifier_model_path = "mlp.onnx"
+classifier_model_path = "models/mlp.onnx"
 classifier_confidence_threshold = 0.5
 classifier_enable_type_filtering = true
 classifier_use_softmax = true
 
 # Required if backend_type = "nn"
 [nn]
-model_path = "best.onnx"
+model_path = "models/best.onnx"
 device = "CPU"
 device_priorities = ""
 enable_profiling = false
@@ -36,7 +36,7 @@ nms_threshold = 0.30
 top_k = 128
 
 [nn_tup]
-model_path = "opt-1208-001.onnx"
+model_path = "models/opt-1208-001.onnx"
 device = "CPU"
 device_priorities = ""
 enable_profiling = false
@@ -47,8 +47,8 @@ top_k = 128
 
 # Required if backend_type = "TensorRT"
 [trt]
-model_path = "best_fp16.onnx"  # Path to ONNX model (will be compiled to TensorRT engine)
-engine_path = "best_fp16_sm87_fp16.engine"  # Optional: Path to pre-built TensorRT engine (.engine file)
+model_path = "models/best_fp16.onnx"  # Path to ONNX model (will be compiled to TensorRT engine)
+engine_path = "models/best_fp16_sm87_fp16.engine"  # Optional: Path to pre-built TensorRT engine (.engine file)
 engine_cache_dir = "/tmp/tensorrt_cache"  # Directory for caching compiled engines
 device_id = 0  # CUDA device ID
 num_streams = 2  # Number of CUDA streams for concurrent inference
