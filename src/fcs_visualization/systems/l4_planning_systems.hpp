@@ -44,15 +44,18 @@ void register_l4_planning_systems(App& app) {
             }
 
             nlohmann::json cmd_json;
-            cmd_json["timestamp_ns"] = cmd->timestamp_ns;
-            cmd_json["yaw"]          = cmd->yaw;
-            cmd_json["pitch"]        = cmd->pitch;
-            cmd_json["v_yaw"]        = cmd->yaw_vel;
-            cmd_json["v_pitch"]      = cmd->pitch_vel;
-            cmd_json["a_yaw"]        = cmd->yaw_accel;
-            cmd_json["a_pitch"]      = cmd->pitch_accel;
-            cmd_json["distance"]     = cmd->distance;
-            cmd_json["fire_advice"]  = cmd->fire;
+            cmd_json["timestamp_ns"]      = cmd->timestamp_ns;
+            cmd_json["timestamp"]         = nlohmann::json::object();
+            cmd_json["timestamp"]["sec"]  = cmd->timestamp_ns / 1000000000L;
+            cmd_json["timestamp"]["nsec"] = cmd->timestamp_ns % 1000000000L;
+            cmd_json["yaw"]               = cmd->yaw;
+            cmd_json["pitch"]             = cmd->pitch;
+            cmd_json["v_yaw"]             = cmd->yaw_vel;
+            cmd_json["v_pitch"]           = cmd->pitch_vel;
+            cmd_json["a_yaw"]             = cmd->yaw_accel;
+            cmd_json["a_pitch"]           = cmd->pitch_accel;
+            cmd_json["distance"]          = cmd->distance;
+            cmd_json["fire_advice"]       = cmd->fire;
 
             detail::publish_json_message<GimbalCmdMessage>(*server, cmd_json);
         });
