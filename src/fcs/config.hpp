@@ -33,7 +33,7 @@ struct FoxgloveConfig {
     std::expected<void, std::string> read_from(const toml::table& tbl) noexcept;
 };
 
-enum class RobotType { Infantry, Hero, Sentry };
+enum class RobotType { Infantry, Hero, Sentry, Drone };
 
 struct HardwareConfig {
     CameraConfig camera{};
