@@ -10,8 +10,10 @@
 #include "core/types.hpp"
 #include "frame.hpp"
 
+#include <Eigen/Core>
 #include <magic_enum.hpp>
 #include <nlohmann/json.hpp>
+#include <optional>
 
 namespace fcs::foxglove::systems {
 
@@ -98,36 +100,51 @@ void register_l3_estimation_systems(App& app) {
 
             // Publish target state JSON
             nlohmann::json target_json;
-            target_json["timestamp_ns"] = output->timestamp_ns;
-            target_json["status"]       = magic_enum::enum_name(output->status);
-            target_json["tracking"]     = output->is_tracking();
+            target_json["timestamp_ns"]      = output->timestamp_ns;
+            target_json["timestamp"]         = nlohmann::json::object();
+            target_json["timestamp"]["sec"]  = output->timestamp_ns / 1000000000L;
+            target_json["timestamp"]["nsec"] = output->timestamp_ns % 1000000000L;
+            target_json["status"]            = magic_enum::enum_name(output->status);
+            target_json["tracking"]          = output->is_tracking();
+
+            std::string type                        = "unknown";
+            std::optional<Eigen::Vector3d> position = std::nullopt, velocity = std::nullopt;
+            std::optional<double> yaw = std::nullopt, v_yaw = std::nullopt;
 
             if (output->is_robot()) {
-                const auto& state       = *output->robot_state();
-                target_json["type"]     = "robot";
-                target_json["position"] = {
-                    state.position.x(), state.position.y(), state.position.z()};
-                target_json["velocity"] = {
-                    state.velocity.x(), state.velocity.y(), state.velocity.z()};
-                target_json["yaw"]    = state.yaw;
-                target_json["v_yaw"]  = state.v_yaw;
+                const auto& state     = *output->robot_state();
+                type                  = "robot";
+                position              = state.position;
+                velocity              = state.velocity;
+                yaw                   = state.yaw;
+                v_yaw                 = state.v_yaw;
                 target_json["radius"] = {state.radius0, state.radius1};
-                target_json["z1"]     = state.z1;
+                target_json["z"]      = state.z1;
             } else if (output->is_outpost()) {
-                const auto& state       = *output->outpost_state();
-                target_json["type"]     = "outpost";
-                target_json["position"] = {
+                const auto& state = *output->outpost_state();
+                type              = "outpost";
+                position          = {
                     state.position.x(), state.position.y(),
                     (state.z[0] + state.z[1] + state.z[2]) / 3.0};
-                auto x = Eigen::Vector3d{
-                    state.position.x(), state.position.y(),
-                    (state.z[0] + state.z[1] + state.z[2]) / 3.0};
-                target_json["dist"]     = x.norm();
-                target_json["velocity"] = {
-                    state.velocity.x(), state.velocity.y(), state.velocity.z()};
-                target_json["yaw"]   = state.yaw;
-                target_json["v_yaw"] = state.v_yaw;
-                target_json["z"]     = {state.z[0], state.z[1], state.z[2]};
+                velocity         = state.velocity;
+                yaw              = state.yaw;
+                v_yaw            = state.v_yaw;
+                target_json["z"] = {state.z[0], state.z[1], state.z[2]};
+            }
+            target_json["type"] = type;
+            if (velocity) {
+                target_json["velocity"]      = {velocity->x(), velocity->y(), velocity->z()};
+                target_json["velocity_norm"] = velocity->norm();
+            }
+            if (position) {
+                target_json["position"] = {position->x(), position->y(), position->z()};
+                target_json["distance"] = position->norm();
+            }
+            if (yaw) {
+                target_json["yaw"] = yaw;
+            }
+            if (v_yaw) {
+                target_json["v_yaw"] = v_yaw;
             }
 
             detail::publish_json_message<TargetMessage>(*server, target_json);

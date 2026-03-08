@@ -41,8 +41,11 @@ void register_l2_perception_systems(App& app) {
             }
 
             nlohmann::json armors_json;
-            armors_json["timestamp_ns"] = batch->timestamp_ns;
-            armors_json["armors"]       = nlohmann::json::array();
+            armors_json["timestamp_ns"]      = batch->timestamp_ns;
+            armors_json["timestamp"]         = nlohmann::json::object();
+            armors_json["timestamp"]["sec"]  = batch->timestamp_ns / 1000000000L;
+            armors_json["timestamp"]["nsec"] = batch->timestamp_ns % 1000000000L;
+            armors_json["armors"]            = nlohmann::json::array();
 
             for (size_t i = 0; i < batch->detections.size(); ++i) {
                 const auto& det = batch->detections[i];
@@ -142,20 +145,26 @@ void register_l2_perception_systems(App& app) {
             }
 
             nlohmann::json j;
-            j["timestamp_ns"] = batch->timestamp_ns;
-            j["measurements"] = nlohmann::json::array();
+            j["timestamp_ns"]      = batch->timestamp_ns;
+            j["timestamp"]         = nlohmann::json::object();
+            j["timestamp"]["sec"]  = batch->timestamp_ns / 1000000000L;
+            j["timestamp"]["nsec"] = batch->timestamp_ns % 1000000000L;
+            j["measurements"]      = nlohmann::json::array();
 
             for (const auto& m : batch->measurements) {
                 const auto t = m.transform->translation();
                 const auto q = m.transform->quaternion();
                 nlohmann::json mj;
-                mj["timestamp_ns"] = m.timestamp_ns;
-                mj["name"]         = std::string(magic_enum::enum_name(m.name));
-                mj["type"]         = std::string(magic_enum::enum_name(m.type));
-                mj["color"]        = std::string(magic_enum::enum_name(m.color));
-                mj["confidence"]   = m.confidence;
-                mj["position"]     = {t.x(), t.y(), t.z()};
-                mj["orientation"]  = {q.x(), q.y(), q.z(), q.w()};
+                mj["timestamp_ns"]      = m.timestamp_ns;
+                mj["timestamp"]         = nlohmann::json::object();
+                mj["timestamp"]["sec"]  = m.timestamp_ns / 1000000000L;
+                mj["timestamp"]["nsec"] = m.timestamp_ns % 1000000000L;
+                mj["name"]              = std::string(magic_enum::enum_name(m.name));
+                mj["type"]              = std::string(magic_enum::enum_name(m.type));
+                mj["color"]             = std::string(magic_enum::enum_name(m.color));
+                mj["confidence"]        = m.confidence;
+                mj["position"]          = {t.x(), t.y(), t.z()};
+                mj["orientation"]       = {q.x(), q.y(), q.z(), q.w()};
                 j["measurements"].push_back(mj);
             }
 
