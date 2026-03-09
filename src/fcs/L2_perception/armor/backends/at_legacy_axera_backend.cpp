@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -197,6 +198,22 @@ cv::Rect2f gen_rect_bbox(const AtLegacyArmorDetection& box) {
 // Strides for multi-scale detection (P3, P4, P5)
 constexpr std::array<int, 3> STRIDES = {8, 16, 32};
 constexpr float GRID_OFFSET          = 0.5f;
+
+// O2O cls(12) mapping follows four-head pair mapping.
+static constexpr std::array<ArmorName, 12> O2O_PAIR_TO_ARMOR{
+    ArmorName::Sentry,   // 0: Gs
+    ArmorName::Two,      // 1: 2s
+    ArmorName::Three,    // 2: 3s
+    ArmorName::Four,     // 3: 4s
+    ArmorName::Five,     // 4: 5s
+    ArmorName::Outpost,  // 5: Os
+    ArmorName::Sentry,   // 6: Gb
+    ArmorName::One,      // 7: 1b
+    ArmorName::Three,    // 8: 3b
+    ArmorName::Four,     // 9: 4b
+    ArmorName::Five,     // 10: 5b
+    ArmorName::BaseLarge // 11: Bb
+};
 } // anonymous namespace
 
 // ============================================================================
@@ -571,6 +588,12 @@ cv::Point2f AtLegacyAxeraBackend::scale_point(const cv::Point2f& pt, const Prepr
 
 std::vector<AtLegacyArmorDetection> AtLegacyAxeraBackend::postprocess_four_head(
     const PreprocContext& ctx, const AtLegacyAxeraConfig& cfg) const {
+    if (io_data_.nOutputSize < 4) {
+        SPDLOG_ERROR(
+            "[AxeraBackend] four-head postprocess requires >=4 outputs, got {}", io_data_.nOutputSize);
+        return {};
+    }
+
     // Get output pointers
     const float* color_scores =
         static_cast<const float*>(io_data_.pOutputs[1].pVirAddr); // /model.23/Sigmoid_output_0
@@ -646,6 +669,135 @@ std::vector<AtLegacyArmorDetection> AtLegacyAxeraBackend::postprocess_four_head(
         }
 
         AtLegacyArmorDetection det(corners, armor_name, color, max_obj_conf);
+        if (det.area > 0) {
+            candidates.push_back(std::move(det));
+        }
+    }
+
+    return candidates;
+}
+
+std::vector<AtLegacyArmorDetection> AtLegacyAxeraBackend::postprocess_o2o(
+    const PreprocContext& ctx, const AtLegacyAxeraConfig& cfg) const {
+    if (io_data_.nOutputSize < 1) {
+        SPDLOG_ERROR("[AxeraBackend] o2o postprocess requires at least one output");
+        return {};
+    }
+
+    const size_t min_output_bytes = static_cast<size_t>(O2O_OUTPUT_DIM) * sizeof(float);
+
+    // Find the best-matching output tensor for o2o format:
+    // each detection row is fixed 28 floats:
+    // [color(4), pts(8), xywh(4), cls(12)].
+    const AX_ENGINE_IO_BUFFER_T* output_buf = nullptr;
+    int output_index                         = -1;
+    for (int i = 0; i < static_cast<int>(io_data_.nOutputSize); ++i) {
+        const AX_ENGINE_IO_BUFFER_T& buf = io_data_.pOutputs[i];
+        if (!buf.pVirAddr || static_cast<size_t>(buf.nSize) < min_output_bytes) {
+            continue;
+        }
+
+        const size_t output_bytes = static_cast<size_t>(buf.nSize);
+        if (output_bytes % sizeof(float) != 0) {
+            continue;
+        }
+
+        const size_t elem_count = output_bytes / sizeof(float);
+        if (elem_count % O2O_OUTPUT_DIM != 0) {
+            continue;
+        }
+
+        if (!output_buf || buf.nSize > output_buf->nSize) {
+            output_buf   = &buf;
+            output_index = i;
+        }
+    }
+
+    if (!output_buf) {
+        SPDLOG_ERROR(
+            "[AxeraBackend] No valid o2o output tensor found in {} outputs", io_data_.nOutputSize);
+        return {};
+    }
+
+    const size_t elem_count = static_cast<size_t>(output_buf->nSize) / sizeof(float);
+    const int max_det = static_cast<int>(elem_count / O2O_OUTPUT_DIM);
+    if (max_det <= 0) {
+        return {};
+    }
+
+    SPDLOG_DEBUG(
+        "[AxeraBackend] o2o output tensor index={} size={} bytes max_det={}", output_index,
+        output_buf->nSize, max_det);
+
+    const float* output = static_cast<const float*>(output_buf->pVirAddr);
+    std::vector<AtLegacyArmorDetection> candidates;
+    candidates.reserve(std::min(max_det, std::max(cfg.top_k * 4, 128)));
+
+    for (int i = 0; i < max_det; ++i) {
+        const float* row = output + i * O2O_OUTPUT_DIM;
+
+        // 1) color argmax from row[0:4]
+        int best_color_id   = 0;
+        float best_color_sc = row[0];
+        for (int c = 1; c < O2O_COLOR_DIM; ++c) {
+            const float sc = row[c];
+            if (sc > best_color_sc) {
+                best_color_sc = sc;
+                best_color_id = c;
+            }
+        }
+
+        // 2) class argmax from row[16:28], and use it as detection confidence.
+        const int cls_offset = O2O_COLOR_DIM + O2O_KPTS_DIM + O2O_XYWH_DIM;
+        int best_cls_id      = 0;
+        float best_cls_sc    = row[cls_offset];
+        for (int c = 1; c < O2O_CLS_DIM; ++c) {
+            const float sc = row[cls_offset + c];
+            if (sc > best_cls_sc) {
+                best_cls_sc = sc;
+                best_cls_id = c;
+            }
+        }
+
+        if (!std::isfinite(best_cls_sc) || best_cls_sc <= cfg.confidence_threshold) {
+            continue;
+        }
+
+        // 3) validate xywh block row[12:16]
+        const int xywh_offset = O2O_COLOR_DIM + O2O_KPTS_DIM;
+        const float x         = row[xywh_offset + 0];
+        const float y         = row[xywh_offset + 1];
+        const float w         = row[xywh_offset + 2];
+        const float h         = row[xywh_offset + 3];
+        if (!std::isfinite(x) || !std::isfinite(y) || !std::isfinite(w) || !std::isfinite(h)
+            || w <= 0.0F || h <= 0.0F) {
+            continue;
+        }
+
+        // 4) keypoints block row[4:12]
+        std::array<cv::Point2f, 4> corners;
+        bool valid_keypoints = true;
+        const int kpt_offset = O2O_COLOR_DIM;
+        for (int k = 0; k < NUM_KPTS; ++k) {
+            const float kx = row[kpt_offset + 2 * k + 0];
+            const float ky = row[kpt_offset + 2 * k + 1];
+            if (!std::isfinite(kx) || !std::isfinite(ky)) {
+                valid_keypoints = false;
+                break;
+            }
+
+            // Keep model order directly: [p0, p1, p2, p3].
+            corners[k] = scale_point(cv::Point2f{kx, ky}, ctx);
+        }
+
+        if (!valid_keypoints) {
+            continue;
+        }
+
+        const ArmorColor color = static_cast<ArmorColor>(best_color_id);
+        const ArmorName name   = O2O_PAIR_TO_ARMOR[best_cls_id];
+
+        AtLegacyArmorDetection det(corners, name, color, best_cls_sc);
         if (det.area > 0) {
             candidates.push_back(std::move(det));
         }
@@ -737,10 +889,19 @@ AtLegacyAxeraBackend::DetectionResult AtLegacyAxeraBackend::detect_impl(const cv
         }
     }
 
-    // Postprocess (4-head outputs)
+    // Postprocess (configurable: four-head or o2o)
     auto detections = ([&]() {
         ScopedTimer timer("postprocess");
-        return postprocess_four_head(ctx, cfg);
+        switch (cfg.postprocess_option) {
+        case AtLegacyAxeraPostprocessOption::FourHead: return postprocess_four_head(ctx, cfg);
+        case AtLegacyAxeraPostprocessOption::O2O: return postprocess_o2o(ctx, cfg);
+        default: {
+            SPDLOG_WARN(
+                "[AxeraBackend] Unknown postprocess_option={}, fallback to FourHead",
+                static_cast<int>(cfg.postprocess_option));
+            return postprocess_four_head(ctx, cfg);
+        }
+        }
     })();
 
     // NMS

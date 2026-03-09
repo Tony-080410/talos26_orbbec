@@ -31,9 +31,15 @@ public:
     static constexpr int NUM_CLASSES = 9;   // Class2 from AXCL
     static constexpr int NUM_KPTS    = 4;   // 4 corner keypoints (x, y)
     static constexpr int NUM_PAIRS   = 12;  // Armor type classes
+    static constexpr int O2O_COLOR_DIM  = 4;
+    static constexpr int O2O_KPTS_DIM   = 8;
+    static constexpr int O2O_XYWH_DIM   = 4;
+    static constexpr int O2O_CLS_DIM    = 12;
+    static constexpr int O2O_OUTPUT_DIM = O2O_COLOR_DIM + O2O_KPTS_DIM + O2O_XYWH_DIM + O2O_CLS_DIM;
 
     // Feature flag: support both 4-output and single-output models formats
     static constexpr bool SUPPORTS_FOUR_HEAD_OUTPUT = true;
+    static constexpr bool SUPPORTS_O2O_OUTPUT       = true;
 
     using DetectionResult = std::expected<std::vector<AtLegacyArmorDetection>, DetectorError>;
     using Config          = AtLegacyAxeraConfig;
@@ -116,6 +122,10 @@ private:
     /// Postprocess inference output (4-head network)
     [[nodiscard]] std::vector<AtLegacyArmorDetection>
         postprocess_four_head(const PreprocContext& ctx, const AtLegacyAxeraConfig& cfg) const;
+
+    /// Postprocess inference output (o2o end-to-end network)
+    [[nodiscard]] std::vector<AtLegacyArmorDetection>
+        postprocess_o2o(const PreprocContext& ctx, const AtLegacyAxeraConfig& cfg) const;
 
     /// Non-maximum suppression with keypoints
     [[nodiscard]] std::vector<AtLegacyArmorDetection>
