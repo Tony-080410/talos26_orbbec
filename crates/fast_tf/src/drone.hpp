@@ -18,7 +18,7 @@ std::shared_ptr<CoordinateSystem<N>> drone_new(timestamp_ns_t ts = 0) {
     update<gimbal_pitch_fuxk_frame>(
         *system,
         FuckTransform<gimbal_pitch_fuxk_frame>{
-            TransformMatrix4d::from_rpy(0, 0, 0, -0.005, -0.08364, 0)},
+            TransformMatrix4d::from_rpy(0, 0, 0, -0.005, 0, -0.08364)},
         ts);
 
     update<camera_link_fuxk_frame>(
