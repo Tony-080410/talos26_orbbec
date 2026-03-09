@@ -141,10 +141,10 @@ void register_l3_estimation_systems(App& app) {
                 target_json["distance"] = position->norm();
             }
             if (yaw) {
-                target_json["yaw"] = yaw;
+                target_json["yaw"] = yaw.value();
             }
             if (v_yaw) {
-                target_json["v_yaw"] = v_yaw;
+                target_json["v_yaw"] = v_yaw.value();
             }
 
             detail::publish_json_message<TargetMessage>(*server, target_json);
