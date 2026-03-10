@@ -70,12 +70,18 @@ void register_l1_sensor_systems(App& app) {
 
             // Box color is always green
             const cv::Scalar box_color(0, 255, 0);
-
+            std::array<cv::Scalar, 4> colors = {
+                cv::Scalar(0, 255, 0),   // 绿色 (LT)
+                cv::Scalar(255, 255, 0), // 青色 (LB)
+                cv::Scalar(255, 0, 255), // 品红 (RB)
+                cv::Scalar(0, 255, 255)  // 黄色 (RT)
+            };
             for (const auto& det : batch->detections) {
                 // Draw detection box
                 for (size_t j = 0; j < det.corners.size(); j++) {
                     auto pp1 = det.corners[j];
                     auto pp2 = det.corners[(j + 1) % 4];
+                    cv::circle(img_bgr, pp1, 5, colors[(j + 1) % 4], 2);
                     cv::line(img_bgr, pp1, pp2, box_color, 2);
                 }
 
