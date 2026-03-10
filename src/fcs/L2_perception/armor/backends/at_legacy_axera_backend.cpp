@@ -590,7 +590,8 @@ std::vector<AtLegacyArmorDetection> AtLegacyAxeraBackend::postprocess_four_head(
     const PreprocContext& ctx, const AtLegacyAxeraConfig& cfg) const {
     if (io_data_.nOutputSize < 4) {
         SPDLOG_ERROR(
-            "[AxeraBackend] four-head postprocess requires >=4 outputs, got {}", io_data_.nOutputSize);
+            "[AxeraBackend] four-head postprocess requires >=4 outputs, got {}",
+            io_data_.nOutputSize);
         return {};
     }
 
@@ -686,11 +687,11 @@ std::vector<AtLegacyArmorDetection> AtLegacyAxeraBackend::postprocess_o2o(
 
     const size_t min_output_bytes = static_cast<size_t>(O2O_OUTPUT_DIM) * sizeof(float);
 
-    // Find the best-matching output tensor for o2o format:
-    // each detection row is fixed 28 floats:
-    // [color(4), pts(8), xywh(4), cls(12)].
+    // Find the best-matching output tensor for o2o format.
+    // Output layout is (B, C, A), C=28:
+    // [boxes(4), color(4), obj(12), kpts(8)].
     const AX_ENGINE_IO_BUFFER_T* output_buf = nullptr;
-    int output_index                         = -1;
+    int output_index                        = -1;
     for (int i = 0; i < static_cast<int>(io_data_.nOutputSize); ++i) {
         const AX_ENGINE_IO_BUFFER_T& buf = io_data_.pOutputs[i];
         if (!buf.pVirAddr || static_cast<size_t>(buf.nSize) < min_output_bytes) {
@@ -720,39 +721,57 @@ std::vector<AtLegacyArmorDetection> AtLegacyAxeraBackend::postprocess_o2o(
     }
 
     const size_t elem_count = static_cast<size_t>(output_buf->nSize) / sizeof(float);
-    const int max_det = static_cast<int>(elem_count / O2O_OUTPUT_DIM);
+    const int max_det       = static_cast<int>(elem_count / O2O_OUTPUT_DIM);
     if (max_det <= 0) {
         return {};
     }
 
     SPDLOG_DEBUG(
-        "[AxeraBackend] o2o output tensor index={} size={} bytes max_det={}", output_index,
-        output_buf->nSize, max_det);
+        "[AxeraBackend] o2o output tensor index={} size={} bytes shape=(1, {}, {})", output_index,
+        output_buf->nSize, O2O_OUTPUT_DIM, max_det);
 
     const float* output = static_cast<const float*>(output_buf->pVirAddr);
+    // Transpose view: source is (B, C, A), consume as (B, A, C).
+    auto tensor_at = [output, max_det](int anchor_idx, int channel_idx) -> float {
+        return output
+            [static_cast<size_t>(channel_idx) * static_cast<size_t>(max_det)
+             + static_cast<size_t>(anchor_idx)];
+    };
+
+    constexpr int box_offset   = 0;
+    constexpr int color_offset = box_offset + O2O_XYWH_DIM;
+    constexpr int obj_offset   = color_offset + O2O_COLOR_DIM;
+    constexpr int kpt_offset   = obj_offset + O2O_CLS_DIM;
+
+    // Color head order from model output: BRGP.
+    static constexpr std::array<ArmorColor, O2O_COLOR_DIM> O2O_COLOR_ORDER{
+        ArmorColor::Blue, ArmorColor::Red,
+        ArmorColor::Neutral, // Model "G" channel maps to Neutral in enum.
+        ArmorColor::Purple};
+
     std::vector<AtLegacyArmorDetection> candidates;
     candidates.reserve(std::min(max_det, std::max(cfg.top_k * 4, 128)));
 
     for (int i = 0; i < max_det; ++i) {
-        const float* row = output + i * O2O_OUTPUT_DIM;
-
-        // 1) color argmax from row[0:4]
+        // 1) color argmax from color block.
         int best_color_id   = 0;
-        float best_color_sc = row[0];
+        float best_color_sc = tensor_at(i, color_offset);
         for (int c = 1; c < O2O_COLOR_DIM; ++c) {
-            const float sc = row[c];
+            const float sc = tensor_at(i, color_offset + c);
             if (sc > best_color_sc) {
                 best_color_sc = sc;
                 best_color_id = c;
             }
         }
+        if (!std::isfinite(best_color_sc)) {
+            continue;
+        }
 
-        // 2) class argmax from row[16:28], and use it as detection confidence.
-        const int cls_offset = O2O_COLOR_DIM + O2O_KPTS_DIM + O2O_XYWH_DIM;
-        int best_cls_id      = 0;
-        float best_cls_sc    = row[cls_offset];
+        // 2) object class argmax from obj block, and use it as detection confidence.
+        int best_cls_id   = 0;
+        float best_cls_sc = tensor_at(i, obj_offset);
         for (int c = 1; c < O2O_CLS_DIM; ++c) {
-            const float sc = row[cls_offset + c];
+            const float sc = tensor_at(i, obj_offset + c);
             if (sc > best_cls_sc) {
                 best_cls_sc = sc;
                 best_cls_id = c;
@@ -763,24 +782,22 @@ std::vector<AtLegacyArmorDetection> AtLegacyAxeraBackend::postprocess_o2o(
             continue;
         }
 
-        // 3) validate xywh block row[12:16]
-        const int xywh_offset = O2O_COLOR_DIM + O2O_KPTS_DIM;
-        const float x         = row[xywh_offset + 0];
-        const float y         = row[xywh_offset + 1];
-        const float w         = row[xywh_offset + 2];
-        const float h         = row[xywh_offset + 3];
+        // 3) validate xywh block.
+        const float x = tensor_at(i, box_offset + 0);
+        const float y = tensor_at(i, box_offset + 1);
+        const float w = tensor_at(i, box_offset + 2);
+        const float h = tensor_at(i, box_offset + 3);
         if (!std::isfinite(x) || !std::isfinite(y) || !std::isfinite(w) || !std::isfinite(h)
             || w <= 0.0F || h <= 0.0F) {
             continue;
         }
 
-        // 4) keypoints block row[4:12]
+        // 4) keypoints block.
         std::array<cv::Point2f, 4> corners;
         bool valid_keypoints = true;
-        const int kpt_offset = O2O_COLOR_DIM;
         for (int k = 0; k < NUM_KPTS; ++k) {
-            const float kx = row[kpt_offset + 2 * k + 0];
-            const float ky = row[kpt_offset + 2 * k + 1];
+            const float kx = tensor_at(i, kpt_offset + 2 * k + 0);
+            const float ky = tensor_at(i, kpt_offset + 2 * k + 1);
             if (!std::isfinite(kx) || !std::isfinite(ky)) {
                 valid_keypoints = false;
                 break;
@@ -794,7 +811,7 @@ std::vector<AtLegacyArmorDetection> AtLegacyAxeraBackend::postprocess_o2o(
             continue;
         }
 
-        const ArmorColor color = static_cast<ArmorColor>(best_color_id);
+        const ArmorColor color = O2O_COLOR_ORDER[best_color_id];
         const ArmorName name   = O2O_PAIR_TO_ARMOR[best_cls_id];
 
         AtLegacyArmorDetection det(corners, name, color, best_cls_sc);
