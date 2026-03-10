@@ -590,7 +590,8 @@ std::vector<AtLegacyArmorDetection> AtLegacyAxeraBackend::postprocess_four_head(
     const PreprocContext& ctx, const AtLegacyAxeraConfig& cfg) const {
     if (io_data_.nOutputSize < 4) {
         SPDLOG_ERROR(
-            "[AxeraBackend] four-head postprocess requires >=4 outputs, got {}", io_data_.nOutputSize);
+            "[AxeraBackend] four-head postprocess requires >=4 outputs, got {}",
+            io_data_.nOutputSize);
         return {};
     }
 
@@ -696,7 +697,7 @@ std::vector<AtLegacyArmorDetection> AtLegacyAxeraBackend::postprocess_o2o(
     // each detection row is fixed 28 floats:
     // [color(4), pts(8), xywh(4), cls(12)].
     const AX_ENGINE_IO_BUFFER_T* output_buf = nullptr;
-    int output_index                         = -1;
+    int output_index                        = -1;
     for (int i = 0; i < static_cast<int>(io_data_.nOutputSize); ++i) {
         const AX_ENGINE_IO_BUFFER_T& buf = io_data_.pOutputs[i];
         if (!buf.pVirAddr || static_cast<size_t>(buf.nSize) < min_output_bytes) {
@@ -726,7 +727,7 @@ std::vector<AtLegacyArmorDetection> AtLegacyAxeraBackend::postprocess_o2o(
     }
 
     const size_t elem_count = static_cast<size_t>(output_buf->nSize) / sizeof(float);
-    const int max_det = static_cast<int>(elem_count / O2O_OUTPUT_DIM);
+    const int max_det       = static_cast<int>(elem_count / O2O_OUTPUT_DIM);
     if (max_det <= 0) {
         return {};
     }

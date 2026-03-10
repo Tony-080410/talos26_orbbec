@@ -25,12 +25,12 @@ namespace fcs::L2 {
 /// Implements RAII for AX engine resources
 class AtLegacyAxeraBackend : public AtLegacyDetectorBackendBase<AtLegacyAxeraBackend> {
 public:
-    static constexpr int INPUT_W     = 640;
-    static constexpr int INPUT_H     = 640; // Square input for letterbox
-    static constexpr int NUM_COLORS  = 4;
-    static constexpr int NUM_CLASSES = 9;   // Class2 from AXCL
-    static constexpr int NUM_KPTS    = 4;   // 4 corner keypoints (x, y)
-    static constexpr int NUM_PAIRS   = 12;  // Armor type classes
+    static constexpr int INPUT_W        = 640;
+    static constexpr int INPUT_H        = 640; // Square input for letterbox
+    static constexpr int NUM_COLORS     = 4;
+    static constexpr int NUM_CLASSES    = 9;   // Class2 from AXCL
+    static constexpr int NUM_KPTS       = 4;   // 4 corner keypoints (x, y)
+    static constexpr int NUM_PAIRS      = 12;  // Armor type classes
     static constexpr int O2O_COLOR_DIM  = 4;
     static constexpr int O2O_KPTS_DIM   = 8;
     static constexpr int O2O_XYWH_DIM   = 4;
