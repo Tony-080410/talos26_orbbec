@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstddef>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -27,9 +28,13 @@ public:
         , start_(std::chrono::high_resolution_clock::now()) {}
 
     ~ScopedTimer() {
+        auto* logger = spdlog::default_logger_raw();
+        if (!logger || !logger->should_log(spdlog::level::debug)) {
+            return;
+        }
         const auto end      = std::chrono::high_resolution_clock::now();
         const auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start_);
-        SPDLOG_INFO("[AxeraBackend] {} elapsed: {} us", name_, duration.count());
+        SPDLOG_DEBUG("[AxeraBackend] {} elapsed: {} us", name_, duration.count());
     }
 
     [[nodiscard]] double elapsed_us() const {
@@ -156,44 +161,6 @@ bool read_file(const std::string& path, std::vector<char>& data) {
 
 // Helper: sigmoid
 constexpr float sigmoid(float x) { return 1.0f / (1.0f + std::exp(-x)); }
-
-// Helper: reduce_max
-template <typename T>
-T reduce_max(T x) {
-    return x;
-}
-
-template <typename T, typename... Ts>
-T reduce_max(T x, Ts... xs) {
-    return std::max(x, reduce_max(xs...));
-}
-
-// Helper: reduce_min
-template <typename T>
-T reduce_min(T x) {
-    return x;
-}
-
-template <typename T, typename... Ts>
-T reduce_min(T x, Ts... xs) {
-    return std::min(x, reduce_min(xs...));
-}
-
-// Helper: gen_rect_bbox from keypoints
-cv::Rect2f gen_rect_bbox(const AtLegacyArmorDetection& box) {
-    cv::Rect2f rect_bbox;
-    rect_bbox.x =
-        reduce_min(box.corners[0].x, box.corners[1].x, box.corners[2].x, box.corners[3].x);
-    rect_bbox.y =
-        reduce_min(box.corners[0].y, box.corners[1].y, box.corners[2].y, box.corners[3].y);
-    rect_bbox.width =
-        reduce_max(box.corners[0].x, box.corners[1].x, box.corners[2].x, box.corners[3].x)
-        - rect_bbox.x;
-    rect_bbox.height =
-        reduce_max(box.corners[0].y, box.corners[1].y, box.corners[2].y, box.corners[3].y)
-        - rect_bbox.y;
-    return rect_bbox;
-}
 
 // Strides for multi-scale detection (P3, P4, P5)
 constexpr std::array<int, 3> STRIDES = {8, 16, 32};
@@ -375,6 +342,19 @@ std::expected<void, DetectorError> AtLegacyAxeraBackend::init() {
     // Build and cache decode grid once (avoids rebuilding every frame)
     cached_grid_ = build_decode_grid();
     SPDLOG_INFO("[AxeraBackend] Cached decode grid with {} anchors", cached_grid_.grid_xy.size());
+
+    // Warm up one synchronous inference to absorb one-time runtime jitters (lazy kernel/setup).
+    if (io_data_.nInputSize > 0 && io_data_.pInputs[0].pVirAddr) {
+        auto* warmup_input = static_cast<uint8_t*>(io_data_.pInputs[0].pVirAddr);
+        std::memset(warmup_input, 114, static_cast<size_t>(io_data_.pInputs[0].nSize));
+        AX_SYS_MflushCache(io_data_.pInputs[0].phyAddr, warmup_input, io_data_.pInputs[0].nSize);
+    }
+    ret = AX_ENGINE_RunSync(handle_, &io_data_);
+    if (ret != 0) {
+        SPDLOG_WARN("[AxeraBackend] Warmup AX_ENGINE_RunSync failed: {}", ret);
+    } else {
+        SPDLOG_INFO("[AxeraBackend] Warmup inference complete");
+    }
 
     initialized_ = true;
     SPDLOG_INFO("[AxeraBackend] Initialization complete");
@@ -606,6 +586,9 @@ std::vector<AtLegacyArmorDetection> AtLegacyAxeraBackend::postprocess_four_head(
     // Use cached decode grid (built once at init, avoids rebuilding every frame)
     const DecodeGrid& grid = cached_grid_;
     const int num_anchors  = static_cast<int>(grid.grid_xy.size());
+    const float inv_ratio  = 1.0f / ctx.ratio;
+    const float x_offset   = -ctx.pad_w * inv_ratio;
+    const float y_offset   = -ctx.pad_h * inv_ratio;
     std::vector<AtLegacyArmorDetection> candidates;
     candidates.reserve(std::min(num_anchors, std::max(cfg.top_k * 4, 256)));
 
@@ -665,8 +648,8 @@ std::vector<AtLegacyArmorDetection> AtLegacyAxeraBackend::postprocess_four_head(
         for (int k = 0; k < 4; ++k) {
             const float kpt_x = (raw_kpts[(k * 2 + 0) * num_anchors + i] + grid_x) * stride;
             const float kpt_y = (raw_kpts[(k * 2 + 1) * num_anchors + i] + grid_y) * stride;
-            corners[k].x      = (kpt_x - ctx.pad_w) / ctx.ratio;
-            corners[k].y      = (kpt_y - ctx.pad_h) / ctx.ratio;
+            corners[k].x      = kpt_x * inv_ratio + x_offset;
+            corners[k].y      = kpt_y * inv_ratio + y_offset;
         }
 
         std::array<cv::Point2f, 4> corners_sorted;
@@ -737,17 +720,25 @@ std::vector<AtLegacyArmorDetection> AtLegacyAxeraBackend::postprocess_o2o(
         output_buf->nSize, O2O_OUTPUT_DIM, max_det);
 
     const float* output = static_cast<const float*>(output_buf->pVirAddr);
-    // Transpose view: source is (B, C, A), consume as (B, A, C).
-    auto tensor_at = [output, max_det](int anchor_idx, int channel_idx) -> float {
-        return output
-            [static_cast<size_t>(channel_idx) * static_cast<size_t>(max_det)
-             + static_cast<size_t>(anchor_idx)];
-    };
+    const float inv_ratio = 1.0f / ctx.ratio;
+    const float x_offset  = -ctx.pad_w * inv_ratio;
+    const float y_offset  = -ctx.pad_h * inv_ratio;
 
     constexpr int box_offset   = 0;
     constexpr int color_offset = box_offset + O2O_XYWH_DIM;
     constexpr int obj_offset   = color_offset + O2O_COLOR_DIM;
     constexpr int kpt_offset   = obj_offset + O2O_CLS_DIM;
+
+    // Source tensor is channel-major (B, C, A). Build base pointers once to avoid repeated
+    // index arithmetic in hot loops.
+    const float* boxes_block =
+        output + static_cast<size_t>(box_offset) * static_cast<size_t>(max_det);
+    const float* color_block =
+        output + static_cast<size_t>(color_offset) * static_cast<size_t>(max_det);
+    const float* obj_block =
+        output + static_cast<size_t>(obj_offset) * static_cast<size_t>(max_det);
+    const float* kpts_block =
+        output + static_cast<size_t>(kpt_offset) * static_cast<size_t>(max_det);
 
     // Color head order from model output: BRGP.
     static constexpr std::array<ArmorColor, O2O_COLOR_DIM> O2O_COLOR_ORDER{
@@ -761,9 +752,10 @@ std::vector<AtLegacyArmorDetection> AtLegacyAxeraBackend::postprocess_o2o(
     for (int i = 0; i < max_det; ++i) {
         // 1) color argmax from color block.
         int best_color_id   = 0;
-        float best_color_sc = tensor_at(i, color_offset);
+        float best_color_sc = color_block[i];
         for (int c = 1; c < O2O_COLOR_DIM; ++c) {
-            const float sc = tensor_at(i, color_offset + c);
+            const float sc =
+                color_block[static_cast<size_t>(c) * static_cast<size_t>(max_det) + i];
             if (sc > best_color_sc) {
                 best_color_sc = sc;
                 best_color_id = c;
@@ -775,9 +767,9 @@ std::vector<AtLegacyArmorDetection> AtLegacyAxeraBackend::postprocess_o2o(
 
         // 2) object class argmax from obj block, and use it as detection confidence.
         int best_cls_id   = 0;
-        float best_cls_sc = tensor_at(i, obj_offset);
+        float best_cls_sc = obj_block[i];
         for (int c = 1; c < O2O_CLS_DIM; ++c) {
-            const float sc = tensor_at(i, obj_offset + c);
+            const float sc = obj_block[static_cast<size_t>(c) * static_cast<size_t>(max_det) + i];
             if (sc > best_cls_sc) {
                 best_cls_sc = sc;
                 best_cls_id = c;
@@ -789,10 +781,12 @@ std::vector<AtLegacyArmorDetection> AtLegacyAxeraBackend::postprocess_o2o(
         }
 
         // 3) validate xywh block.
-        const float x = tensor_at(i, box_offset + 0);
-        const float y = tensor_at(i, box_offset + 1);
-        const float w = tensor_at(i, box_offset + 2);
-        const float h = tensor_at(i, box_offset + 3);
+        const float x = boxes_block[i];
+        const float y = boxes_block[static_cast<size_t>(max_det) + i];
+        const float w =
+            boxes_block[static_cast<size_t>(2) * static_cast<size_t>(max_det) + i];
+        const float h =
+            boxes_block[static_cast<size_t>(3) * static_cast<size_t>(max_det) + i];
         if (!std::isfinite(x) || !std::isfinite(y) || !std::isfinite(w) || !std::isfinite(h)
             || w <= 0.0F || h <= 0.0F) {
             continue;
@@ -802,15 +796,17 @@ std::vector<AtLegacyArmorDetection> AtLegacyAxeraBackend::postprocess_o2o(
         std::array<cv::Point2f, 4> corners;
         bool valid_keypoints = true;
         for (int k = 0; k < NUM_KPTS; ++k) {
-            const float kx = tensor_at(i, kpt_offset + 2 * k + 0);
-            const float ky = tensor_at(i, kpt_offset + 2 * k + 1);
+            const size_t kpt_base = static_cast<size_t>(k * 2) * static_cast<size_t>(max_det);
+            const float kx        = kpts_block[kpt_base + i];
+            const float ky        = kpts_block[kpt_base + static_cast<size_t>(max_det) + i];
             if (!std::isfinite(kx) || !std::isfinite(ky)) {
                 valid_keypoints = false;
                 break;
             }
 
             // Keep model order directly: [p0, p1, p2, p3].
-            corners[k] = scale_point(cv::Point2f{kx, ky}, ctx);
+            corners[k].x = kx * inv_ratio + x_offset;
+            corners[k].y = ky * inv_ratio + y_offset;
         }
 
         if (!valid_keypoints) {
@@ -839,15 +835,24 @@ std::vector<AtLegacyArmorDetection> AtLegacyAxeraBackend::postprocess_o2o(
 
 bool AtLegacyAxeraBackend::is_overlap(
     const AtLegacyArmorDetection& box1, const AtLegacyArmorDetection& box2) {
-    cv::Rect2f bbox1 = gen_rect_bbox(box1);
-    cv::Rect2f bbox2 = gen_rect_bbox(box2);
-    return (bbox1 & bbox2).area() > 0;
+    return (box1.rect & box2.rect).area() > 0.0f;
 }
 
 std::vector<AtLegacyArmorDetection> AtLegacyAxeraBackend::nms(
     std::vector<AtLegacyArmorDetection>& detections, const AtLegacyAxeraConfig& cfg) const {
     if (detections.empty()) {
         return {};
+    }
+
+    const size_t pre_nms_limit =
+        static_cast<size_t>(std::max(cfg.top_k * 4, std::max(cfg.top_k, 128)));
+    if (detections.size() > pre_nms_limit) {
+        std::nth_element(
+            detections.begin(), detections.begin() + static_cast<std::ptrdiff_t>(pre_nms_limit),
+            detections.end(), [](const AtLegacyArmorDetection& a, const AtLegacyArmorDetection& b) {
+                return a.confidence > b.confidence;
+            });
+        detections.resize(pre_nms_limit);
     }
 
     // Sort by confidence (descending)
@@ -858,7 +863,8 @@ std::vector<AtLegacyArmorDetection> AtLegacyAxeraBackend::nms(
         });
 
     std::vector<AtLegacyArmorDetection> result;
-    std::vector<bool> removed(detections.size(), false);
+    result.reserve(std::min(detections.size(), static_cast<size_t>(cfg.top_k)));
+    std::vector<uint8_t> removed(detections.size(), 0);
 
     for (size_t i = 0; i < detections.size() && result.size() < static_cast<size_t>(cfg.top_k);
          i++) {
@@ -937,7 +943,7 @@ AtLegacyAxeraBackend::DetectionResult AtLegacyAxeraBackend::detect_impl(const cv
     const auto total_end = std::chrono::high_resolution_clock::now();
     const auto total_us =
         std::chrono::duration_cast<std::chrono::microseconds>(total_end - total_start).count();
-    SPDLOG_INFO(
+    SPDLOG_DEBUG(
         "[AxeraBackend] Total detection time: {} us ({:.2f} ms)", total_us, total_us / 1000.0);
 
     return result;
