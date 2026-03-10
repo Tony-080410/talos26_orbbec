@@ -75,11 +75,11 @@ void register_at_legacy_detection_systems(talos::Scheduler& scheduler, AtLegacyC
                 return;
             }
 
-            auto measurements = (*solver_ptr)
-                                    ->solve_batch_with_ba(
-                                        detections_for_pnp,
-                                        tf_odom_camera.value()->rotation().matrix(),
-                                        frame->timestamp_ns);
+            auto measurements =
+                (*solver_ptr)
+                    ->solve_batch_with_ba(
+                        detections_for_pnp, tf_odom_camera.value()->rotation().matrix(),
+                        frame->timestamp_ns);
 
             // Transform measurements from camera_optical frame to odom frame
             // T_odom_armor = T_odom_camera * T_camera_optical_armor

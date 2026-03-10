@@ -669,7 +669,13 @@ std::vector<AtLegacyArmorDetection> AtLegacyAxeraBackend::postprocess_four_head(
             corners[k].y      = (kpt_y - ctx.pad_h) / ctx.ratio;
         }
 
-        AtLegacyArmorDetection det(corners, armor_name, color, max_obj_conf);
+        std::array<cv::Point2f, 4> corners_sorted;
+        corners_sorted[3] = corners[0];
+        corners_sorted[0] = corners[1];
+        corners_sorted[1] = corners[2];
+        corners_sorted[2] = corners[3];
+
+        AtLegacyArmorDetection det(corners_sorted, armor_name, color, max_obj_conf);
         if (det.area > 0) {
             candidates.push_back(std::move(det));
         }

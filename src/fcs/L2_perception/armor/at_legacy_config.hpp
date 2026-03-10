@@ -137,10 +137,9 @@ struct AtLegacyAxeraConfig {
     std::string model_path;
 
     // Detection parameters
-    double confidence_threshold = 0.25;
-    int top_k                   = 128;
-    AtLegacyAxeraPostprocessOption postprocess_option =
-        AtLegacyAxeraPostprocessOption::FourHead;
+    double confidence_threshold                       = 0.25;
+    int top_k                                         = 128;
+    AtLegacyAxeraPostprocessOption postprocess_option = AtLegacyAxeraPostprocessOption::FourHead;
 
     std::expected<void, std::string> read_from(const toml::table& tbl) noexcept;
 };
