@@ -68,7 +68,7 @@ namespace fcs::foxglove::systems::detail {
 //    res<std::shared_ptr<FoxgloveServer>> server,
 //    res<CameraConfig> cam,
 //    spmc<AtLegacyArmorDetectionBatch, AtLegacyDetectionChannelTopic> det_in,
-//    res<std::shared_ptr<fast_tf::CoordinateSystem<1024>>> tf_buffer) { ... }
+//    res<std::shared_ptr<fast_tf::CoordinateSystem>> tf_buffer) { ... }
 
 // Scene publisher from any tracked channel
 // [](spmc<ChannelType, ChannelTopic> input,

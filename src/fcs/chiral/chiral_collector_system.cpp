@@ -73,7 +73,7 @@ void register_chiral_collector_system(talos::Scheduler& scheduler) {
         [writer_storage =
              std::make_shared<talos::chiral::ipc::TalosDataWriter>(std::move(*writer))](
             talos::spmc<L3::TrackerOutput, TrackerOutputChannelTopic> tracker_in,
-            talos::res<std::shared_ptr<fast_tf::CoordinateSystem<1024>>> tf_buffer) mutable {
+            talos::res<std::shared_ptr<fast_tf::CoordinateSystem>> tf_buffer) mutable {
             // Check for new tracker data
             if (!tracker_in.has_new()) {
                 return;

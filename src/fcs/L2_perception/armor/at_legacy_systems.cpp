@@ -24,7 +24,7 @@ void register_at_legacy_detection_systems(talos::Scheduler& scheduler, AtLegacyC
                measurement_out,
            talos::res_mut<std::shared_ptr<AtLegacyDetectorBackend>> backend_ptr,
            talos::res<std::shared_ptr<AtLegacyPnPSolver>> solver_ptr,
-           talos::res<std::shared_ptr<fast_tf::CoordinateSystem<1024>>> tf_system,
+           talos::res<std::shared_ptr<fast_tf::CoordinateSystem>> tf_system,
            talos::res<AtLegacyConfig> config_res) mutable {
             if (!image_in.has_new()) {
                 return;

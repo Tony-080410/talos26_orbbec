@@ -37,8 +37,7 @@ struct TransformLookupResult {
 /// @note Both transforms are returned as FuckOdom (in odom frame)
 [[nodiscard]] inline std::expected<TransformLookupResult, std::string>
     lookup_gimbal_muzzle_transforms(
-        const std::shared_ptr<fast_tf::CoordinateSystem<1024>>& tf_buffer,
-        uint64_t current_ns) noexcept {
+        const std::shared_ptr<fast_tf::CoordinateSystem>& tf_buffer, uint64_t current_ns) noexcept {
     using namespace fast_tf;
 
     // Lookup muzzle transform (odom -> muzzle)
@@ -77,8 +76,7 @@ struct TransformLookupResult {
 /// @note Used by Planner which only requires gimbal transform
 /// @note Error messages include detailed diagnostic information
 [[nodiscard]] inline std::expected<fast_tf::FuckOdom, std::string> lookup_gimbal_transform(
-    const std::shared_ptr<fast_tf::CoordinateSystem<1024>>& tf_buffer,
-    uint64_t current_ns) noexcept {
+    const std::shared_ptr<fast_tf::CoordinateSystem>& tf_buffer, uint64_t current_ns) noexcept {
     using namespace fast_tf;
 
     auto gimbal_tf = lookup_clamped<odom_fuxk_frame, fast_tf::gimbal_pitch_fuxk_frame>(

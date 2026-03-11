@@ -16,6 +16,7 @@ namespace fast_tf {
 enum class TransformError : uint8_t {
     FrameNotFound,               // Frame not registered in tree
     NoDataAvailable,             // Buffer is empty
+    ExactTimestampNotFound,      // Exact timestamp match required but missing
     PastExtrapolationRequired,   // Timestamp outside buffer range
     FutureExtrapolationRequired, // Timestamp outside buffer range
     Timeout,                     // Query timed out

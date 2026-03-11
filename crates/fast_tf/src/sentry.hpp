@@ -19,9 +19,8 @@ constexpr auto to_rad_2(double x) { return x * std::numbers::pi / 180.0; }
  *                 │     └── camera_optical
  *                 └── muzzle_link
  */
-template <std::size_t N>
-std::shared_ptr<CoordinateSystem<N>> sentry_new(timestamp_ns_t ts = 0) {
-    auto system       = std::make_shared<CoordinateSystem<N>>();
+inline std::shared_ptr<CoordinateSystem> sentry_new(timestamp_ns_t ts = 0) {
+    auto system       = std::make_shared<CoordinateSystem>();
     constexpr fp_t pi = std::numbers::pi;
     // odom -> world
     update<odom_fuxk_frame>(*system, FuckTransform<odom_fuxk_frame>{TransformMatrix4d{}}, ts);
@@ -57,7 +56,5 @@ std::shared_ptr<CoordinateSystem<N>> sentry_new(timestamp_ns_t ts = 0) {
         0);
     return system;
 }
-
-extern template std::shared_ptr<CoordinateSystem<1024>> sentry_new<1024>(timestamp_ns_t);
 
 } // namespace fast_tf

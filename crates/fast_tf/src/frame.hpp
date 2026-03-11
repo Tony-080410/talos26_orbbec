@@ -244,24 +244,28 @@ using FuckIntrinsicEulerRotd = Fuck<Coordinate, math_fuxk::Ros2EulerRotd>;
 template <frame Coordinate>
 using FuckIntrinsicEulerRotf = Fuck<Coordinate, math_fuxk::Ros2EulerRotf>;
 
-template <std::size_t N>
-using CoordinateSystem = std::array<CircularTransformBuffer<N>, frame_count>;
+inline constexpr sec coordinate_history_range_sec          = 5;
+inline constexpr sample_per_sec coordinate_history_density = 500;
 
-template <non_root_frame Layer, std::size_t N>
-constexpr void update(
-    CoordinateSystem<N>& system, FuckTransform<Layer> transform, timestamp_ns_t ns) noexcept {
+using CoordinateSystem = std::array<
+    Buffer<TransformMatrix4d, coordinate_history_range_sec, coordinate_history_density>,
+    frame_count>;
+
+template <non_root_frame Layer>
+constexpr void
+    update(CoordinateSystem& system, FuckTransform<Layer> transform, timestamp_ns_t ns) noexcept {
     system[Layer::index].push(ns, *transform);
 }
 
-template <non_root_frame Layer, std::size_t N>
+template <non_root_frame Layer>
 constexpr void update_rotate_only(
-    CoordinateSystem<N>& system, math_fuxk::Ros2EulerRotd rot, timestamp_ns_t ns) noexcept {
-    system[Layer::index].update_rotate_only(ns, rot);
+    CoordinateSystem& system, math_fuxk::Ros2EulerRotd rot, timestamp_ns_t ns) noexcept {
+    system[Layer::index].push_rotate_only(ns, rot);
 }
 
-template <frame To, frame From, std::size_t N>
+template <frame To, frame From>
 constexpr auto lookup(
-    const CoordinateSystem<N>& system, FuckTransform<From> tf_source, timestamp_ns_t ns) noexcept
+    const CoordinateSystem& system, FuckTransform<From> tf_source, timestamp_ns_t ns) noexcept
     -> std::expected<FuckTransform<To>, TransformError> {
     static_assert(is_descendant_of<From, To>(), "From must be a descendant of To");
     if constexpr (std::is_same_v<From, To>) {
@@ -271,12 +275,12 @@ constexpr auto lookup(
         return std::unexpected(TransformError::FrameNotFound);
     } else {
         const auto& buffer = system[From::index];
-        auto result        = buffer.at_interpolated(ns);
+        auto result        = buffer.lookup(ns, interpolate);
         if (!result) {
             return std::unexpected(result.error());
         }
-        FuckTransform<typename From::ancestor> parent_tf{tf_source->reparent_to(result->transform)};
-        return lookup<To, typename From::ancestor, N>(system, parent_tf, ns);
+        FuckTransform<typename From::ancestor> parent_tf{tf_source->reparent_to(result->value)};
+        return lookup<To, typename From::ancestor>(system, parent_tf, ns);
     }
 }
 
@@ -285,9 +289,9 @@ constexpr auto lookup(
 /// This never returns `FutureExtrapolationRequired`/`PastExtrapolationRequired` as long as the
 /// buffer has data; it clamps the query time to the buffer's time range (equivalent to TF2
 /// `TimePointZero` semantics for "latest available" when `ns` is newer than the newest sample).
-template <frame To, frame From, std::size_t N>
+template <frame To, frame From>
 constexpr auto lookup_clamped(
-    const CoordinateSystem<N>& system, FuckTransform<From> tf_source, timestamp_ns_t ns) noexcept
+    const CoordinateSystem& system, FuckTransform<From> tf_source, timestamp_ns_t ns) noexcept
     -> std::expected<FuckTransform<To>, TransformError> {
     static_assert(is_descendant_of<From, To>(), "From must be a descendant of To");
     if constexpr (std::is_same_v<From, To>) {
@@ -296,12 +300,12 @@ constexpr auto lookup_clamped(
         return std::unexpected(TransformError::FrameNotFound);
     } else {
         const auto& buffer = system[From::index];
-        auto result        = buffer.at_interpolated_clamped(ns);
+        auto result        = buffer.lookup(ns, clamped);
         if (!result) {
             return std::unexpected(result.error());
         }
-        FuckTransform<typename From::ancestor> parent_tf{tf_source->reparent_to(result->transform)};
-        return lookup_clamped<To, typename From::ancestor, N>(system, parent_tf, ns);
+        FuckTransform<typename From::ancestor> parent_tf{tf_source->reparent_to(result->value)};
+        return lookup_clamped<To, typename From::ancestor>(system, parent_tf, ns);
     }
 }
 

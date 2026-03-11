@@ -7,309 +7,268 @@
 #include "validation.hpp"
 #include <array>
 #include <cassert>
+#include <concepts>
 #include <cstdint>
 #include <expected>
 #include <optional>
 #include <tbb/spin_rw_mutex.h>
+#include <type_traits>
+#include <utility>
 
 namespace fast_tf {
 
-// ============================================================================
-// Transform Entry
-// ============================================================================
+using sec            = std::size_t;
+using sample_per_sec = std::size_t;
 
-struct TransformEntry {
-    timestamp_ns_t timestamp_ns;
-    TransformMatrix4d transform;
+struct exact_t {};
+struct nearest_t {};
+struct interpolate_t {};
+struct clamped_t {};
 
-    TransformEntry()
-        : timestamp_ns(0) {}
+inline constexpr exact_t exact{};
+inline constexpr nearest_t nearest{};
+inline constexpr interpolate_t interpolate{};
+inline constexpr clamped_t clamped{};
 
-    TransformEntry(timestamp_ns_t ts, const TransformMatrix4d& tf)
-        : timestamp_ns(ts)
-        , transform(tf) {}
+template <typename Mode>
+concept buffer_lookup_mode = std::same_as<Mode, exact_t> || std::same_as<Mode, nearest_t>
+                          || std::same_as<Mode, interpolate_t> || std::same_as<Mode, clamped_t>;
+
+template <typename Ops, typename T>
+concept buffer_value_ops = requires(const T& value, fp_t ratio) {
+    { Ops::identity() } -> std::same_as<T>;
+    { Ops::interpolate(value, value, ratio) } -> std::same_as<T>;
+    { Ops::is_valid(value) } -> std::same_as<bool>;
 };
 
-// ============================================================================
-// Circular Transform Buffer (Optimized)
-// ============================================================================
+template <typename T>
+struct BufferOps;
 
-/// Fixed-size circular buffer for transform entries.
-/// Assumes timestamps are strictly increasing (typical for sensor data).
-/// Zero heap allocation, O(log n) lookup.
-template <std::size_t Capacity>
-class CircularTransformBuffer {
-public:
-    static_assert(Capacity > 0, "Capacity must be greater than 0");
-    static constexpr std::size_t capacity_value = Capacity;
+template <>
+struct BufferOps<TransformMatrix4d> {
+    static TransformMatrix4d identity() { return TransformMatrix4d{}; }
 
-    using value_type = TransformEntry;
-    using mutex_type = tbb::spin_rw_mutex;
+    static TransformMatrix4d
+        interpolate(const TransformMatrix4d& a, const TransformMatrix4d& b, fp_t ratio) {
+        return TransformMatrix4d::lerp_se3(a, b, ratio);
+    }
 
-    CircularTransformBuffer() = default;
+    static bool is_valid(const TransformMatrix4d& value) {
+        return validate_transform(value).has_value();
+    }
 
-    CircularTransformBuffer(const CircularTransformBuffer&)            = delete;
-    CircularTransformBuffer& operator=(const CircularTransformBuffer&) = delete;
-    CircularTransformBuffer(CircularTransformBuffer&&)                 = default;
-    CircularTransformBuffer& operator=(CircularTransformBuffer&&)      = default;
-
-    // ========================================================================
-    // Write
-    // ========================================================================
-    void update_rotate_only(timestamp_ns_t timestamp_ns, const math_fuxk::Ros2EulerRotd rot) {
-        auto old = latest();
-        mutex_type::scoped_lock lock(mutex_);
-        const auto translation =
-            old.value_or(TransformEntry(0, TransformMatrix4d{})).transform.translation();
-
+    static TransformMatrix4d
+        with_rotation(const TransformMatrix4d& base, const math_fuxk::Ros2EulerRotd& rot) {
+        const auto translation        = base.translation();
         const auto [roll, pitch, yaw] = rot.rpy();
-        buffer_[head_]                = TransformEntry(
-            timestamp_ns, TransformMatrix4d::from_rpy(
-                              roll, pitch, yaw, translation.x(), translation.y(), translation.z()));
-
-        if (size_ == 0) {
-            oldest_ts_ = timestamp_ns;
-        }
-        newest_ts_ = timestamp_ns;
-
-        head_ = (head_ + 1) % Capacity;
-
-        if (size_ < Capacity) {
-            ++size_;
-        } else {
-            // Buffer full, oldest entry overwritten, update oldest_ts
-            oldest_ts_ = buffer_[head_].timestamp_ns;
-        }
+        return TransformMatrix4d::from_rpy(
+            roll, pitch, yaw, translation.x(), translation.y(), translation.z());
     }
+};
 
-    void push(timestamp_ns_t timestamp_ns, const TransformMatrix4d& transform) {
+template <typename T, sec Range, sample_per_sec Density, typename Ops = BufferOps<T>>
+class Buffer {
+    static_assert(Density > 0, "Density must be greater than 0");
+    static_assert(buffer_value_ops<Ops, T>, "Buffer ops are not defined for this value type");
+    static_assert(
+        Range > 0 || Density == 1, "Static Buffer only supports Range == 0 && Density == 1");
+
+public:
+    struct Timestamped {
+        T value;
+        timestamp_ns_t timestamp;
+    };
+
+    static constexpr bool is_static             = Range == 0;
+    static constexpr std::size_t capacity_value = is_static ? 1 : Range * Density;
+    using mutex_type                            = tbb::spin_rw_mutex;
+
+    Buffer() noexcept requires(!is_static) = default;
+
+    explicit Buffer(const T& value) noexcept requires(is_static)
+        : buffer_{
+              StoredSample{value, 0}
+    } {}
+
+    void push(timestamp_ns_t timestamp_ns, const T& value) noexcept requires(!is_static) {
+        if (!Ops::is_valid(value)) {
+            return;
+        }
+
         mutex_type::scoped_lock lock(mutex_);
-
-        // 数值验证（包括静态变换）
-        auto validation = validate_transform(transform);
-        if (!validation) {
-            // 验证失败，静默丢弃
-            // TODO: 可选的日志记录
+        if (size_ != 0 && timestamp_ns <= newest_ts_) {
             return;
         }
 
-        // Debug: ensure timestamps are increasing
-        if (newest_ts_ != 0 && timestamp_ns == newest_ts_) {
-            return;
-        }
-        if (timestamp_ns != 0 && timestamp_ns < newest_ts_) {
-            return;
-        }
-
-        buffer_[head_] = TransformEntry(timestamp_ns, transform);
+        buffer_[head_] = StoredSample{value, timestamp_ns};
 
         if (size_ == 0) {
             oldest_ts_ = timestamp_ns;
         }
         newest_ts_ = timestamp_ns;
 
-        head_ = (head_ + 1) % Capacity;
+        head_ = (head_ + 1) % capacity_value;
 
-        if (size_ < Capacity) {
+        if (size_ < capacity_value) {
             ++size_;
         } else {
-            // Buffer full, oldest entry overwritten, update oldest_ts
-            oldest_ts_ = buffer_[head_].timestamp_ns;
+            oldest_ts_ = buffer_[head_].timestamp;
         }
     }
 
-    // ========================================================================
-    // Read
-    // ========================================================================
+    template <typename U = T>
+    void push_rotate_only(timestamp_ns_t timestamp_ns, const math_fuxk::Ros2EulerRotd rot) noexcept
+        requires(!is_static && requires(const U& value, const math_fuxk::Ros2EulerRotd& rotation) {
+            { Ops::with_rotation(value, rotation) } -> std::same_as<U>;
+        }) {
+        T base = Ops::identity();
+        if (auto latest_result = latest(); latest_result) {
+            base = latest_result->value;
+        }
+        push(timestamp_ns, Ops::with_rotation(base, rot));
+    }
 
-    [[nodiscard]] std::expected<TransformEntry, TransformError> latest() const {
+    [[nodiscard]] std::expected<Timestamped, TransformError> latest() const noexcept {
+        if constexpr (is_static) {
+            return Timestamped{buffer_[0].value, 0};
+        }
+
         mutex_type::scoped_lock lock(mutex_, false);
-
         if (size_ == 0) {
             return std::unexpected(TransformError::NoDataAvailable);
         }
 
-        return buffer_[(head_ + Capacity - 1) % Capacity];
+        return materialize(at_logical(size_ - 1));
     }
 
-    [[nodiscard]] std::expected<TransformEntry, TransformError>
-        at_interpolated_clamped(timestamp_ns_t ts) const {
-        mutex_type::scoped_lock lock(mutex_, false);
+    template <buffer_lookup_mode Mode>
+    [[nodiscard]] std::expected<Timestamped, TransformError>
+        lookup(timestamp_ns_t ts, Mode) const noexcept {
+        if constexpr (is_static) {
+            return Timestamped{buffer_[0].value, ts};
+        }
 
+        mutex_type::scoped_lock lock(mutex_, false);
         if (size_ == 0) {
             return std::unexpected(TransformError::NoDataAvailable);
         }
 
-        if (size_ == 1) {
-            const auto& entry = buffer_[(head_ + Capacity - 1) % Capacity];
-            if (entry.timestamp_ns == 0) {
-                // static transform
-                return TransformEntry{ts, entry.transform};
+        const auto& oldest = at_logical(0);
+        const auto& newest = at_logical(size_ - 1);
+
+        if constexpr (std::same_as<Mode, clamped_t>) {
+            if (ts < oldest.timestamp) {
+                return materialize(oldest);
             }
-            // Single data point: use it as-is (no extrapolation possible)
-            return TransformEntry{ts, entry.transform};
-        }
-
-        // Binary search for the first entry with timestamp > ts
-        // Result: lo points to entry just after ts (or size_ if ts >= newest)
-        std::size_t lo = 0;
-        std::size_t hi = size_;
-
-        while (lo < hi) {
-            std::size_t mid       = lo + (hi - lo) / 2;
-            timestamp_ns_t mid_ts = at_logical(mid).timestamp_ns;
-
-            if (mid_ts <= ts) {
-                lo = mid + 1;
-            } else {
-                hi = mid;
+            if (ts > newest.timestamp) {
+                return materialize(newest);
             }
-        }
-
-        // Determine interpolation/extrapolation pair
-        const auto* prev = &at_logical(0);
-        const auto* next = &at_logical(1);
-
-        if (lo == 0) {
-            // Extrapolate backward: use first two points
-            prev = &at_logical(0);
-            next = &at_logical(1);
-        } else if (lo >= size_) {
-            // Extrapolate forward: use last two points
-            prev = &at_logical(size_ - 2);
-            next = &at_logical(size_ - 1);
         } else {
-            // Interpolate: between lo-1 and lo
-            prev = &at_logical(lo - 1);
-            next = &at_logical(lo);
+            if (ts < oldest.timestamp) {
+                return std::unexpected(TransformError::PastExtrapolationRequired);
+            }
+            if (ts > newest.timestamp) {
+                return std::unexpected(TransformError::FutureExtrapolationRequired);
+            }
         }
 
-        // Exact match check
-        if (prev->timestamp_ns == ts) {
-            return *prev;
+        const std::size_t lower_idx = find_floor_from_latest(ts);
+        const auto& lower           = at_logical(lower_idx);
+        if (lower.timestamp == ts) {
+            return materialize(lower);
         }
 
-        // Interpolate/extrapolate
-        const uint64_t dt = next->timestamp_ns - prev->timestamp_ns;
-        if (dt == 0) {
-            return *prev; // 防御性编程：除零保护
-        }
-        const fp_t t = static_cast<fp_t>(ts - prev->timestamp_ns) / static_cast<fp_t>(dt);
+        if constexpr (std::same_as<Mode, exact_t>) {
+            return std::unexpected(TransformError::ExactTimestampNotFound);
+        } else if constexpr (std::same_as<Mode, nearest_t>) {
+            if (lower_idx + 1 >= size_) {
+                return materialize(lower);
+            }
 
-        return TransformEntry(ts, TransformMatrix4d::lerp(prev->transform, next->transform, t));
+            if (lower.timestamp > ts) {
+                return materialize(oldest);
+            }
+
+            const auto& next = at_logical(lower_idx + 1);
+
+            const auto prev_delta = ts - lower.timestamp;
+            const auto next_delta = next.timestamp - ts;
+            return materialize(prev_delta <= next_delta ? lower : next);
+        } else {
+            if (lower.timestamp > ts) {
+                return materialize(oldest);
+            }
+            if (lower_idx + 1 >= size_) {
+                return materialize(lower);
+            }
+
+            const auto& next = at_logical(lower_idx + 1);
+            const auto dt    = next.timestamp - lower.timestamp;
+            if (dt == 0) {
+                return materialize(lower);
+            }
+
+            const fp_t ratio = static_cast<fp_t>(ts - lower.timestamp) / static_cast<fp_t>(dt);
+            return Timestamped{Ops::interpolate(lower.value, next.value, ratio), ts};
+        }
     }
 
-    [[nodiscard]] std::expected<TransformEntry, TransformError>
-        at_interpolated(timestamp_ns_t ts) const {
+    [[nodiscard]] std::optional<std::pair<timestamp_ns_t, timestamp_ns_t>>
+        time_range() const noexcept {
+        if constexpr (is_static) {
+            return std::make_pair(timestamp_ns_t{0}, timestamp_ns_t{0});
+        }
+
         mutex_type::scoped_lock lock(mutex_, false);
-
-        if (size_ == 0) {
-            return std::unexpected(TransformError::NoDataAvailable);
-        }
-
-        if (size_ == 1) {
-            const auto& entry = buffer_[(head_ + Capacity - 1) % Capacity];
-            if (entry.timestamp_ns == ts) {
-                return entry;
-            }
-            // static transform
-            if (entry.timestamp_ns == 0) {
-                return TransformEntry{ts, entry.transform};
-            }
-            return std::unexpected(TransformError::FutureExtrapolationRequired);
-        }
-
-        // Check bounds (no extrapolation)
-        if (ts < oldest_ts_) {
-            return std::unexpected(TransformError::PastExtrapolationRequired);
-        }
-        if (ts > newest_ts_) {
-            return std::unexpected(TransformError::FutureExtrapolationRequired);
-        }
-
-        // Binary search
-        std::size_t lo = 0;
-        std::size_t hi = size_;
-
-        while (lo < hi) {
-            std::size_t mid       = lo + (hi - lo) / 2;
-            timestamp_ns_t mid_ts = at_logical(mid).timestamp_ns;
-
-            if (mid_ts <= ts) {
-                lo = mid + 1;
-            } else {
-                hi = mid;
-            }
-        }
-
-        if (lo == 0) {
-            // ts < all entries (shouldn't happen due to bounds check)
-            return std::unexpected(TransformError::FutureExtrapolationRequired);
-        }
-
-        const auto& prev = at_logical(lo - 1);
-
-        // Exact match
-        if (prev.timestamp_ns == ts) {
-            return prev;
-        }
-
-        if (lo >= size_) {
-            // ts > all entries
-            return std::unexpected(TransformError::FutureExtrapolationRequired);
-        }
-
-        const auto& next = at_logical(lo);
-
-        // Interpolate
-        const uint64_t dt = next.timestamp_ns - prev.timestamp_ns;
-        if (dt == 0) {
-            return prev; // 防御性编程：除零保护
-        }
-        const fp_t t = static_cast<fp_t>(ts - prev.timestamp_ns) / static_cast<fp_t>(dt);
-
-        return TransformEntry(ts, TransformMatrix4d::lerp(prev.transform, next.transform, t));
-    }
-
-    // ========================================================================
-    // Query
-    // ========================================================================
-
-    [[nodiscard]] std::optional<std::pair<timestamp_ns_t, timestamp_ns_t>> time_range() const {
-        mutex_type::scoped_lock lock(mutex_, false);
-
         if (size_ == 0) {
             return std::nullopt;
         }
-
         return std::make_pair(oldest_ts_, newest_ts_);
     }
 
-    [[nodiscard]] std::size_t size() const {
+    [[nodiscard]] std::size_t size() const noexcept {
+        if constexpr (is_static) {
+            return 1;
+        }
+
         mutex_type::scoped_lock lock(mutex_, false);
         return size_;
     }
 
-    [[nodiscard]] constexpr std::size_t capacity() const { return Capacity; }
+    [[nodiscard]] constexpr std::size_t capacity() const noexcept { return capacity_value; }
 
-    [[nodiscard]] bool is_full() const {
+    [[nodiscard]] bool is_full() const noexcept {
+        if constexpr (is_static) {
+            return true;
+        }
+
         mutex_type::scoped_lock lock(mutex_, false);
-        return size_ == Capacity;
+        return size_ == capacity_value;
     }
 
-    [[nodiscard]] bool is_empty() const {
+    [[nodiscard]] bool is_empty() const noexcept {
+        if constexpr (is_static) {
+            return false;
+        }
+
         mutex_type::scoped_lock lock(mutex_, false);
         return size_ == 0;
     }
 
-    [[nodiscard]] bool contains_time(timestamp_ns_t ts) const {
+    [[nodiscard]] bool contains_time(timestamp_ns_t ts) const noexcept {
+        if constexpr (is_static) {
+            (void)ts;
+            return true;
+        }
+
         mutex_type::scoped_lock lock(mutex_, false);
-        if (size_ == 0)
+        if (size_ == 0) {
             return false;
+        }
         return ts >= oldest_ts_ && ts <= newest_ts_;
     }
 
-    void clear() {
+    void clear() noexcept requires(!is_static) {
         mutex_type::scoped_lock lock(mutex_);
         head_      = 0;
         size_      = 0;
@@ -318,14 +277,29 @@ public:
     }
 
 private:
-    /// Get entry by logical index (0 = oldest, size_-1 = newest)
-    [[nodiscard]] const TransformEntry& at_logical(std::size_t idx) const {
-        // tail is at (head_ + Capacity - size_) % Capacity
-        std::size_t physical = (head_ + Capacity - size_ + idx) % Capacity;
+    struct StoredSample {
+        T value{};
+        timestamp_ns_t timestamp = 0;
+    };
+
+    [[nodiscard]] Timestamped materialize(const StoredSample& sample) const {
+        return Timestamped{sample.value, sample.timestamp};
+    }
+
+    [[nodiscard]] const StoredSample& at_logical(std::size_t idx) const {
+        const std::size_t physical = (head_ + capacity_value - size_ + idx) % capacity_value;
         return buffer_[physical];
     }
 
-    std::array<TransformEntry, Capacity> buffer_{};
+    [[nodiscard]] std::size_t find_floor_from_latest(timestamp_ns_t ts) const {
+        std::size_t idx = size_ - 1;
+        while (idx > 0 && at_logical(idx).timestamp > ts) {
+            --idx;
+        }
+        return idx;
+    }
+
+    std::array<StoredSample, capacity_value> buffer_{};
     std::size_t head_         = 0;
     std::size_t size_         = 0;
     timestamp_ns_t oldest_ts_ = 0;

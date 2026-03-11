@@ -36,7 +36,7 @@ void register_l1_sensor_systems(App& app) {
         [](talos::spmc<AtLegacyArmorDetectionBatch, AtLegacyDetectionChannelTopic> det_in,
            talos::res<std::shared_ptr<FoxgloveServer>> server, talos::res<CameraConfig> cam,
            talos::res<L2::AtLegacyConfig> legacy_config,
-           talos::res<std::shared_ptr<fast_tf::CoordinateSystem<1024>>> tf_buffer) {
+           talos::res<std::shared_ptr<fast_tf::CoordinateSystem>> tf_buffer) {
             if (!detail::foxglove_ready(*server, det_in)) {
                 return;
             }

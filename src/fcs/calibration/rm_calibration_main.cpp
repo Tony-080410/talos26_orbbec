@@ -186,7 +186,7 @@ int main(int argc, char* argv[]) {
     talos::Scheduler scheduler(world);
 
     // Create TF buffer
-    auto tf_buffer = fast_tf::infantry_new<1024>();
+    auto tf_buffer = fast_tf::infantry_new();
     world.insert_resource(tf_buffer);
 
     // Create hardware config if using real hardware

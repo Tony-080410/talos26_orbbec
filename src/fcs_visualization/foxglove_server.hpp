@@ -235,8 +235,7 @@ public:
         channels_.camera_calib_ch->log(calib);
     }
 
-    void publish_tf(
-        const fast_tf::CoordinateSystem<1024>& tf_buffer, uint64_t timestamp_ns) noexcept {
+    void publish_tf(const fast_tf::CoordinateSystem& tf_buffer, uint64_t timestamp_ns) noexcept {
         if (tf_exporter_) {
             tf_exporter_->publish_all(tf_buffer, timestamp_ns);
         }

@@ -1,12 +1,12 @@
 #include <gtest/gtest.h>
 
-#include "math/fast_tf/buffer.hpp"
-#include "math/fast_tf/matrix.hpp"
+#include "buffer.hpp"
+#include "matrix.hpp"
 
 using namespace fast_tf;
 
-TEST(CircularTransformBufferTest, BasicPushAndLatest) {
-    CircularTransformBuffer<10> buffer;
+TEST(BufferBasicsTest, BasicPushAndLatest) {
+    Buffer<TransformMatrix4d, 10, 1> buffer;
 
     EXPECT_TRUE(buffer.is_empty());
     EXPECT_EQ(buffer.size(), 0);
@@ -19,11 +19,11 @@ TEST(CircularTransformBufferTest, BasicPushAndLatest) {
 
     const auto result = buffer.latest();
     ASSERT_TRUE(result.has_value());
-    EXPECT_EQ(result->timestamp_ns, 1000);
+    EXPECT_EQ(result->timestamp, 1000);
 }
 
-TEST(CircularTransformBufferTest, TimeRange) {
-    CircularTransformBuffer<10> buffer;
+TEST(BufferBasicsTest, TimeRange) {
+    Buffer<TransformMatrix4d, 10, 1> buffer;
 
     EXPECT_FALSE(buffer.time_range().has_value());
 
@@ -37,8 +37,8 @@ TEST(CircularTransformBufferTest, TimeRange) {
     EXPECT_EQ(range->second, 3000);
 }
 
-TEST(CircularTransformBufferTest, InterpolationClamped) {
-    CircularTransformBuffer<10> buffer;
+TEST(BufferBasicsTest, InterpolationClamped) {
+    Buffer<TransformMatrix4d, 10, 1> buffer;
 
     // Push transforms at t=0, 1000, 2000
     buffer.push(0, TransformMatrix4d::from_translation(0.0, 0.0, 0.0));
@@ -46,28 +46,28 @@ TEST(CircularTransformBufferTest, InterpolationClamped) {
     buffer.push(2000, TransformMatrix4d::from_translation(2.0, 0.0, 0.0));
 
     // Test exact match
-    auto result = buffer.at_interpolated_clamped(1000);
+    auto result = buffer.lookup(1000, clamped);
     ASSERT_TRUE(result.has_value());
-    EXPECT_NEAR(result->transform.translation().x(), 1.0, 1e-6);
+    EXPECT_NEAR(result->value.translation().x(), 1.0, 1e-6);
 
     // Test interpolation at t=500 (between 0 and 1000)
-    result = buffer.at_interpolated_clamped(500);
+    result = buffer.lookup(500, clamped);
     ASSERT_TRUE(result.has_value());
-    EXPECT_NEAR(result->transform.translation().x(), 0.5, 1e-6);
+    EXPECT_NEAR(result->value.translation().x(), 0.5, 1e-6);
 
     // Test clamping below range
-    result = buffer.at_interpolated_clamped(0);
+    result = buffer.lookup(0, clamped);
     ASSERT_TRUE(result.has_value());
-    EXPECT_NEAR(result->transform.translation().x(), 0.0, 1e-6);
+    EXPECT_NEAR(result->value.translation().x(), 0.0, 1e-6);
 
     // Test clamping above range
-    result = buffer.at_interpolated_clamped(3000);
+    result = buffer.lookup(3000, clamped);
     ASSERT_TRUE(result.has_value());
-    EXPECT_NEAR(result->transform.translation().x(), 2.0, 1e-6);
+    EXPECT_NEAR(result->value.translation().x(), 2.0, 1e-6);
 }
 
-TEST(CircularTransformBufferTest, CircularOverwrite) {
-    CircularTransformBuffer<3> buffer;
+TEST(BufferBasicsTest, CircularOverwrite) {
+    Buffer<TransformMatrix4d, 3, 1> buffer;
 
     buffer.push(1000, TransformMatrix4d::from_translation(1.0, 0.0, 0.0));
     buffer.push(2000, TransformMatrix4d::from_translation(2.0, 0.0, 0.0));
@@ -134,4 +134,121 @@ TEST(TransformMatrix4dTest, FromQuaternionNormalizes) {
     EXPECT_NEAR(tf.translation().x(), 1.0, 1e-12);
     EXPECT_NEAR(tf.translation().y(), 2.0, 1e-12);
     EXPECT_NEAR(tf.translation().z(), 3.0, 1e-12);
+}
+
+TEST(BufferTest, ExactLookupReturnsStoredValue) {
+    Buffer<TransformMatrix4d, 8, 1> buffer;
+
+    buffer.push(1000, TransformMatrix4d::from_translation(11.0, 0.0, 0.0));
+
+    const auto result = buffer.lookup(1000, exact);
+    ASSERT_TRUE(result.has_value());
+    EXPECT_EQ(result->timestamp, 1000);
+    EXPECT_NEAR(result->value.translation().x(), 11.0, 1e-6);
+}
+
+TEST(BufferTest, ExactRequiresMatchingTimestamp) {
+    Buffer<TransformMatrix4d, 8, 1> buffer;
+
+    buffer.push(1000, TransformMatrix4d::from_translation(1.0, 0.0, 0.0));
+    buffer.push(2000, TransformMatrix4d::from_translation(2.0, 0.0, 0.0));
+
+    const auto result = buffer.lookup(1500, exact);
+    EXPECT_FALSE(result.has_value());
+    EXPECT_EQ(result.error(), TransformError::ExactTimestampNotFound);
+}
+
+TEST(BufferTest, NearestReturnsClosestInRangeSample) {
+    Buffer<TransformMatrix4d, 8, 1> buffer;
+
+    buffer.push(1000, TransformMatrix4d::from_translation(1.0, 0.0, 0.0));
+    buffer.push(2000, TransformMatrix4d::from_translation(2.0, 0.0, 0.0));
+
+    auto result = buffer.lookup(1400, nearest);
+    ASSERT_TRUE(result.has_value());
+    EXPECT_EQ(result->timestamp, 1000);
+    EXPECT_NEAR(result->value.translation().x(), 1.0, 1e-6);
+
+    result = buffer.lookup(1600, nearest);
+    ASSERT_TRUE(result.has_value());
+    EXPECT_EQ(result->timestamp, 2000);
+    EXPECT_NEAR(result->value.translation().x(), 2.0, 1e-6);
+}
+
+TEST(BufferTest, NearestBreaksExactMidpointTowardOlderSample) {
+    Buffer<TransformMatrix4d, 8, 1> buffer;
+
+    buffer.push(1000, TransformMatrix4d::from_translation(1.0, 0.0, 0.0));
+    buffer.push(2000, TransformMatrix4d::from_translation(2.0, 0.0, 0.0));
+
+    const auto result = buffer.lookup(1500, nearest);
+    ASSERT_TRUE(result.has_value());
+    EXPECT_EQ(result->timestamp, 1000);
+    EXPECT_NEAR(result->value.translation().x(), 1.0, 1e-6);
+}
+
+TEST(BufferTest, InterpolateUsesAdjacentSamplesWithoutExtrapolation) {
+    Buffer<TransformMatrix4d, 8, 1> buffer;
+
+    buffer.push(1000, TransformMatrix4d::from_translation(1.0, 0.0, 0.0));
+    buffer.push(2000, TransformMatrix4d::from_translation(3.0, 0.0, 0.0));
+
+    auto result = buffer.lookup(1500, interpolate);
+    ASSERT_TRUE(result.has_value());
+    EXPECT_EQ(result->timestamp, 1500);
+    EXPECT_NEAR(result->value.translation().x(), 2.0, 1e-6);
+
+    result = buffer.lookup(500, interpolate);
+    EXPECT_FALSE(result.has_value());
+    EXPECT_EQ(result.error(), TransformError::PastExtrapolationRequired);
+}
+
+TEST(BufferTest, ClampedReturnsBoundarySamplesOutsideRange) {
+    Buffer<TransformMatrix4d, 8, 1> buffer;
+
+    buffer.push(1000, TransformMatrix4d::from_translation(1.0, 0.0, 0.0));
+    buffer.push(2000, TransformMatrix4d::from_translation(3.0, 0.0, 0.0));
+
+    auto result = buffer.lookup(500, clamped);
+    ASSERT_TRUE(result.has_value());
+    EXPECT_EQ(result->timestamp, 1000);
+    EXPECT_NEAR(result->value.translation().x(), 1.0, 1e-6);
+
+    result = buffer.lookup(2500, clamped);
+    ASSERT_TRUE(result.has_value());
+    EXPECT_EQ(result->timestamp, 2000);
+    EXPECT_NEAR(result->value.translation().x(), 3.0, 1e-6);
+
+    result = buffer.lookup(1500, clamped);
+    ASSERT_TRUE(result.has_value());
+    EXPECT_EQ(result->timestamp, 1500);
+    EXPECT_NEAR(result->value.translation().x(), 2.0, 1e-6);
+}
+
+TEST(BufferTest, StaticModeReturnsSameValueForAnyQueryTime) {
+    Buffer<TransformMatrix4d, 0, 1> buffer(TransformMatrix4d::from_translation(5.0, 0.0, 0.0));
+
+    const auto result = buffer.lookup(4242, exact);
+    ASSERT_TRUE(result.has_value());
+    EXPECT_EQ(result->timestamp, 4242);
+    EXPECT_NEAR(result->value.translation().x(), 5.0, 1e-6);
+}
+
+TEST(BufferTest, PushRotateOnlyKeepsLatestTranslation) {
+    Buffer<TransformMatrix4d, 8, 1> buffer;
+
+    buffer.push(1000, TransformMatrix4d::from_translation(1.0, 2.0, 3.0));
+    buffer.push_rotate_only(2000, math_fuxk::rpy(0.1, -0.2, 0.3));
+
+    const auto result = buffer.lookup(2000, exact);
+    ASSERT_TRUE(result.has_value());
+    EXPECT_EQ(result->timestamp, 2000);
+    EXPECT_NEAR(result->value.translation().x(), 1.0, 1e-6);
+    EXPECT_NEAR(result->value.translation().y(), 2.0, 1e-6);
+    EXPECT_NEAR(result->value.translation().z(), 3.0, 1e-6);
+
+    const auto euler = result->value.euler_rot();
+    EXPECT_NEAR(euler.roll, 0.1, 1e-6);
+    EXPECT_NEAR(euler.pitch, -0.2, 1e-6);
+    EXPECT_NEAR(euler.yaw, 0.3, 1e-6);
 }

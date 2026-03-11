@@ -27,8 +27,7 @@ namespace {
 struct DaedalusImu {
     std::shared_ptr<ipc::ShmClient> ipc_device;
 
-    void system(
-        talos::res_mut<std::shared_ptr<fast_tf::CoordinateSystem<1024>>> tf_buffer) noexcept {
+    void system(talos::res_mut<std::shared_ptr<fast_tf::CoordinateSystem>> tf_buffer) noexcept {
         if (const auto pose = ipc_device->recv_pose(ipc::POSE_GIMBAL)) {
             const Eigen::Quaterniond q(pose->qw, pose->qx, pose->qy, pose->qz);
             // const Eigen::Quaterniond q(1.0, 0, 0, 0);
@@ -76,8 +75,7 @@ struct UsbImu {
     std::shared_ptr<UsbDevice> device;
     talos_gimbal::ReceiveImuData* imu_data = nullptr;
 
-    void system(
-        talos::res_mut<std::shared_ptr<fast_tf::CoordinateSystem<1024>>> tf_buffer) noexcept {
+    void system(talos::res_mut<std::shared_ptr<fast_tf::CoordinateSystem>> tf_buffer) noexcept {
         device->handle_events();
         const uint64_t timestamp_ns = fcs::clock::now_ns();
         fast_tf::update_rotate_only<fast_tf::gimbal_yaw_fuxk_frame>(
@@ -92,8 +90,7 @@ struct UsbImu {
 struct Imu {
     std::variant<DaedalusImu, UsbImu> impl;
 
-    void system(
-        talos::res_mut<std::shared_ptr<fast_tf::CoordinateSystem<1024>>> tf_buffer) noexcept {
+    void system(talos::res_mut<std::shared_ptr<fast_tf::CoordinateSystem>> tf_buffer) noexcept {
         std::visit([&](auto& inner) { inner.system(tf_buffer); }, impl);
     }
 };
@@ -171,9 +168,8 @@ std::expected<L1L2SetupResult, std::string> setup_l1(
 
     // IMU: 1000Hz, silent update (no notify)
     scheduler.add_system<talos::fixed_rate_silent<1000, 1>>(
-        "imu_reader",
-        [imu = std::move(imu)](
-            talos::res_mut<std::shared_ptr<fast_tf::CoordinateSystem<1024>>> tf_buffer) {
+        "imu_reader", [imu = std::move(imu)](
+                          talos::res_mut<std::shared_ptr<fast_tf::CoordinateSystem>> tf_buffer) {
             imu->system(tf_buffer);
         });
 
