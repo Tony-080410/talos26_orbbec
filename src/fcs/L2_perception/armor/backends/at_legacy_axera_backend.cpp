@@ -56,6 +56,7 @@ private:
 namespace {
 constexpr int AX_CMM_ALIGN_SIZE           = 128;
 constexpr const char* AX_CMM_SESSION_NAME = "ax-samples-cmm";
+constexpr int AX_IVPS_ALIGN               = 16;  // IVPS requires 16-byte alignment
 
 // Memory allocation strategy (matching AXCL)
 enum class AX_ENGINE_ALLOC_BUFFER_STRATEGY_T {
@@ -195,18 +196,20 @@ AtLegacyAxeraBackend::~AtLegacyAxeraBackend() {
         free_io(&io_data_);
         AX_ENGINE_DestroyHandle(handle_);
         AX_ENGINE_Deinit();
+        deinit_ivps();
+        AX_IVPS_Deinit();
         AX_SYS_Deinit();
     }
 }
 
 AtLegacyAxeraBackend::AtLegacyAxeraBackend(AtLegacyAxeraBackend&& other) noexcept
-    : config_(std::move(other.config_))
+    : cached_grid_(std::move(other.cached_grid_))
+    , config_(std::move(other.config_))
     , detect_color_(other.detect_color_)
     , initialized_(other.initialized_)
     , handle_(other.handle_)
     , io_data_(std::move(other.io_data_))
-    , model_buffer_(std::move(other.model_buffer_))
-    , cached_grid_(std::move(other.cached_grid_)) {
+    , model_buffer_(std::move(other.model_buffer_)) {
     // Clear the moved-from object to prevent double-free
     other.detect_color_ = ArmorColor::Blue;
     other.initialized_  = false;
@@ -264,6 +267,17 @@ std::expected<void, DetectorError> AtLegacyAxeraBackend::init() {
     if (ret != 0) {
         SPDLOG_ERROR("[AxeraBackend] AX_SYS_Init failed: {}", ret);
         return std::unexpected(DetectorError::InitFailed);
+    }
+
+    // Initialize IVPS for hardware-accelerated preprocessing
+    // IVPS is more efficient than IVE: single operation for letterbox+resize+color conversion
+    ret = AX_IVPS_Init();
+    if (ret != 0) {
+        SPDLOG_WARN("[AxeraBackend] AX_IVPS_Init failed: {}, falling back to OpenCV preprocessing", ret);
+        // Continue without IVPS - will use OpenCV fallback
+    } else {
+        SPDLOG_INFO("[AxeraBackend] IVPS initialized for hardware preprocessing");
+        ivps_initialized_ = true;
     }
 
     // Initialize engine
@@ -436,6 +450,171 @@ void AtLegacyAxeraBackend::preprocess_image(const cv::Mat& image, const PreprocC
 }
 
 // ============================================================================
+// IVPS Hardware-Accelerated Preprocessing
+// ============================================================================
+
+std::expected<void, DetectorError> AtLegacyAxeraBackend::init_ivps() {
+    // Initialize IVPS module
+    auto ret = AX_IVPS_Init();
+    if (ret != AX_SUCCESS) {
+        SPDLOG_WARN("[AxeraBackend] AX_IVPS_Init failed: {}, IVPS preprocessing disabled", ret);
+        ivps_initialized_ = false;
+        // Not a fatal error - will fallback to OpenCV
+        return {};
+    }
+
+    SPDLOG_INFO("[AxeraBackend] IVPS initialized for hardware preprocessing");
+    ivps_initialized_ = true;
+    return {};
+}
+
+void AtLegacyAxeraBackend::deinit_ivps() {
+    if (ivps_initialized_) {
+        free_ivps_buffers();
+        AX_IVPS_Deinit();
+        ivps_initialized_ = false;
+    }
+}
+
+std::expected<void, DetectorError> AtLegacyAxeraBackend::allocate_ivps_buffers(
+    int max_src_width, int max_src_height) {
+    // Free existing buffers if any
+    free_ivps_buffers();
+
+    // Calculate aligned stride and size for source buffer (BGR888)
+    // IVPS requires 16-byte alignment for stride
+    const AX_U32 aligned_stride = ((max_src_width * 3 + AX_IVPS_ALIGN - 1) / AX_IVPS_ALIGN) * AX_IVPS_ALIGN;
+    ivps_src_buffer_size_       = aligned_stride * max_src_height;
+
+    // Allocate physically contiguous memory for source image
+    auto ret = AX_SYS_MemAllocCached(
+        &ivps_src_phy_addr_,
+        &ivps_src_vir_addr_,
+        ivps_src_buffer_size_,
+        AX_IVPS_ALIGN,
+        reinterpret_cast<const AX_S8*>("ivps-src"));
+
+    if (ret != AX_SUCCESS || ivps_src_vir_addr_ == nullptr) {
+        SPDLOG_WARN("[AxeraBackend] IVPS source buffer alloc failed: {}", ret);
+        ivps_src_phy_addr_    = 0;
+        ivps_src_vir_addr_    = nullptr;
+        ivps_src_buffer_size_ = 0;
+        return std::unexpected(DetectorError::InitFailed);
+    }
+
+    // Initialize source frame descriptor (BGR888 from camera)
+    memset(&ivps_src_frame_, 0, sizeof(ivps_src_frame_));
+    ivps_src_frame_.u64PhyAddr[0]   = ivps_src_phy_addr_;
+    ivps_src_frame_.u64VirAddr[0]   = reinterpret_cast<AX_U64>(ivps_src_vir_addr_);
+    ivps_src_frame_.u32PicStride[0] = aligned_stride;
+    ivps_src_frame_.u32Width        = max_src_width;
+    ivps_src_frame_.u32Height       = max_src_height;
+    ivps_src_frame_.enImgFormat     = AX_FORMAT_BGR888;
+
+    // Initialize destination frame descriptor (RGB888 for NPU)
+    // Uses NPU input buffer directly (zero-copy)
+    memset(&ivps_dst_frame_, 0, sizeof(ivps_dst_frame_));
+    ivps_dst_frame_.u64PhyAddr[0]   = io_data_.pInputs[0].phyAddr;
+    ivps_dst_frame_.u64VirAddr[0]   = reinterpret_cast<AX_U64>(io_data_.pInputs[0].pVirAddr);
+    ivps_dst_frame_.u32PicStride[0] = INPUT_W * 3;
+    ivps_dst_frame_.u32Width        = INPUT_W;
+    ivps_dst_frame_.u32Height       = INPUT_H;
+    ivps_dst_frame_.enImgFormat     = AX_FORMAT_RGB888;  // Output RGB for NPU
+
+    SPDLOG_INFO(
+        "[AxeraBackend] IVPS buffers allocated: src={}x{} stride={} ({} bytes), dst={}x{}",
+        max_src_width, max_src_height, aligned_stride, ivps_src_buffer_size_,
+        INPUT_W, INPUT_H);
+
+    return {};
+}
+
+void AtLegacyAxeraBackend::free_ivps_buffers() {
+    if (ivps_src_vir_addr_ != nullptr && ivps_src_phy_addr_ != 0) {
+        AX_SYS_MemFree(ivps_src_phy_addr_, ivps_src_vir_addr_);
+        ivps_src_phy_addr_    = 0;
+        ivps_src_vir_addr_    = nullptr;
+        ivps_src_buffer_size_ = 0;
+    }
+    memset(&ivps_src_frame_, 0, sizeof(ivps_src_frame_));
+    memset(&ivps_dst_frame_, 0, sizeof(ivps_dst_frame_));
+}
+
+void AtLegacyAxeraBackend::preprocess_image_ivps(const cv::Mat& image, const PreprocContext& ctx) {
+    // IVPS can do letterbox + resize + BGR->RGB in a single hardware operation
+    // This is more efficient than IVE which requires separate operations
+
+    // Fallback to OpenCV if IVPS not initialized
+    if (!ivps_initialized_) {
+        preprocess_image(image, ctx);
+        return;
+    }
+
+    // Check if source buffer is large enough, reallocate if needed
+    const size_t required_size = static_cast<size_t>(image.cols) * image.rows * 3;
+    if (required_size > ivps_src_buffer_size_ || ivps_src_vir_addr_ == nullptr) {
+        free_ivps_buffers();
+        auto result = allocate_ivps_buffers(image.cols, image.rows);
+        if (!result) {
+            SPDLOG_WARN("[AxeraBackend] Failed to allocate IVPS buffers, fallback to OpenCV");
+            preprocess_image(image, ctx);
+            return;
+        }
+    }
+
+    auto* npu_input     = static_cast<uint8_t*>(io_data_.pInputs[0].pVirAddr);
+    const size_t input_size = INPUT_W * INPUT_H * 3;
+
+    // Update source frame descriptor for actual image size
+    AX_VIDEO_FRAME_T src_frame = ivps_src_frame_;
+    src_frame.u32Width         = image.cols;
+    src_frame.u32Height        = image.rows;
+    // Stride should already be aligned from allocation
+
+    // Copy BGR image data to IVPS buffer with stride adjustment
+    const AX_U32 src_stride = src_frame.u32PicStride[0];
+    if (image.isContinuous() && image.cols * 3 == static_cast<int>(src_stride)) {
+        // Fast path: continuous memory with matching stride
+        std::memcpy(ivps_src_vir_addr_, image.data, image.cols * image.rows * 3);
+    } else {
+        // Slow path: copy row by row with stride padding
+        auto* dst_ptr = static_cast<uint8_t*>(ivps_src_vir_addr_);
+        for (int y = 0; y < image.rows; ++y) {
+            std::memcpy(dst_ptr + y * src_stride, image.ptr(y), image.cols * 3);
+        }
+    }
+    AX_SYS_MflushCache(ivps_src_phy_addr_, ivps_src_vir_addr_, src_stride * image.rows);
+
+    // Setup destination frame (directly into NPU input buffer)
+    AX_VIDEO_FRAME_T dst_frame = ivps_dst_frame_;
+
+    // Setup aspect ratio for letterbox (center alignment, gray padding)
+    AX_IVPS_ASPECT_RATIO_T aspect_ratio{};
+    aspect_ratio.eMode = AX_IVPS_ASPECT_RATIO_AUTO;  // Auto letterbox based on alignment
+    // Border color: gray (114, 114, 114) in RGB888 = 0x727272
+    aspect_ratio.nBgColor = 0x727272;
+    // Center alignment for both horizontal and vertical
+    aspect_ratio.eAligns[0] = AX_IVPS_ASPECT_RATIO_HORIZONTAL_CENTER;
+    aspect_ratio.eAligns[1] = AX_IVPS_ASPECT_RATIO_VERTICAL_CENTER;
+
+    // Execute IVPS CropResize (single operation: resize + letterbox + BGR->RGB)
+    // Using TDP engine which is optimized for this task
+    auto ret = AX_IVPS_CropResizeTdp(&src_frame, &dst_frame, &aspect_ratio);
+
+    if (ret != AX_SUCCESS) {
+        SPDLOG_WARN("[AxeraBackend] AX_IVPS_CropResizeTdp failed: {}, fallback to OpenCV", ret);
+        preprocess_image(image, ctx);
+        return;
+    }
+
+    // Flush cache to ensure NPU sees the data correctly
+    AX_SYS_MflushCache(io_data_.pInputs[0].phyAddr, npu_input, input_size);
+
+    SPDLOG_DEBUG("[AxeraBackend] IVPS preprocessing complete: {}x{} -> {}x{}",
+                 image.cols, image.rows, INPUT_W, INPUT_H);
+}
+
+// ============================================================================
 // Inference (Pure NPU)
 // ============================================================================
 
@@ -559,7 +738,9 @@ std::vector<AtLegacyAxeraBackend::DecodedBox> AtLegacyAxeraBackend::decode_four_
 }
 
 cv::Point2f AtLegacyAxeraBackend::scale_point(const cv::Point2f& pt, const PreprocContext& ctx) {
-    return cv::Point2f{(pt.x - ctx.pad_w) / ctx.ratio, (pt.y - ctx.pad_h) / ctx.ratio};
+    return cv::Point2f{
+        (pt.x - ctx.pad_w) / ctx.ratio,
+        (pt.y - ctx.pad_h) / ctx.ratio};
 }
 
 // ============================================================================
@@ -586,9 +767,9 @@ std::vector<AtLegacyArmorDetection> AtLegacyAxeraBackend::postprocess_four_head(
     // Use cached decode grid (built once at init, avoids rebuilding every frame)
     const DecodeGrid& grid = cached_grid_;
     const int num_anchors  = static_cast<int>(grid.grid_xy.size());
-    const float inv_ratio  = 1.0f / ctx.ratio;
-    const float x_offset   = -ctx.pad_w * inv_ratio;
-    const float y_offset   = -ctx.pad_h * inv_ratio;
+    const float inv_ratio = 1.0f / ctx.ratio;
+    const float x_offset  = -ctx.pad_w * inv_ratio;
+    const float y_offset  = -ctx.pad_h * inv_ratio;
     std::vector<AtLegacyArmorDetection> candidates;
     candidates.reserve(std::min(num_anchors, std::max(cfg.top_k * 4, 256)));
 
@@ -678,9 +859,8 @@ std::vector<AtLegacyArmorDetection> AtLegacyAxeraBackend::postprocess_o2o(
 
     // Find the best-matching output tensor for o2o format.
     // Output layout is (B, C, A), C=28:
-    // [boxes(4), color(4), obj(12), kpts(8)].
+    // [color(4), pts(8), xywh(4), cls(12)].
     const AX_ENGINE_IO_BUFFER_T* output_buf = nullptr;
-    int output_index                        = -1;
     for (int i = 0; i < static_cast<int>(io_data_.nOutputSize); ++i) {
         const AX_ENGINE_IO_BUFFER_T& buf = io_data_.pOutputs[i];
         if (!buf.pVirAddr || static_cast<size_t>(buf.nSize) < min_output_bytes) {
@@ -698,8 +878,7 @@ std::vector<AtLegacyArmorDetection> AtLegacyAxeraBackend::postprocess_o2o(
         }
 
         if (!output_buf || buf.nSize > output_buf->nSize) {
-            output_buf   = &buf;
-            output_index = i;
+            output_buf = &buf;
         }
     }
 
@@ -715,19 +894,15 @@ std::vector<AtLegacyArmorDetection> AtLegacyAxeraBackend::postprocess_o2o(
         return {};
     }
 
-    SPDLOG_DEBUG(
-        "[AxeraBackend] o2o output tensor index={} size={} bytes shape=(1, {}, {})", output_index,
-        output_buf->nSize, O2O_OUTPUT_DIM, max_det);
-
     const float* output = static_cast<const float*>(output_buf->pVirAddr);
     const float inv_ratio = 1.0f / ctx.ratio;
     const float x_offset  = -ctx.pad_w * inv_ratio;
     const float y_offset  = -ctx.pad_h * inv_ratio;
 
-    constexpr int box_offset   = 0;
-    constexpr int color_offset = box_offset + O2O_XYWH_DIM;
-    constexpr int obj_offset   = color_offset + O2O_COLOR_DIM;
-    constexpr int kpt_offset   = obj_offset + O2O_CLS_DIM;
+    constexpr int color_offset = 0;
+    constexpr int kpt_offset   = color_offset + O2O_COLOR_DIM;
+    constexpr int box_offset   = kpt_offset + O2O_KPTS_DIM;
+    constexpr int obj_offset   = box_offset + O2O_XYWH_DIM;
 
     // Source tensor is channel-major (B, C, A). Build base pointers once to avoid repeated
     // index arithmetic in hot loops.
@@ -739,12 +914,6 @@ std::vector<AtLegacyArmorDetection> AtLegacyAxeraBackend::postprocess_o2o(
         output + static_cast<size_t>(obj_offset) * static_cast<size_t>(max_det);
     const float* kpts_block =
         output + static_cast<size_t>(kpt_offset) * static_cast<size_t>(max_det);
-
-    // Color head order from model output: BRGP.
-    static constexpr std::array<ArmorColor, O2O_COLOR_DIM> O2O_COLOR_ORDER{
-        ArmorColor::Blue, ArmorColor::Red,
-        ArmorColor::Neutral, // Model "G" channel maps to Neutral in enum.
-        ArmorColor::Purple};
 
     std::vector<AtLegacyArmorDetection> candidates;
     candidates.reserve(std::min(max_det, std::max(cfg.top_k * 4, 128)));
@@ -813,7 +982,7 @@ std::vector<AtLegacyArmorDetection> AtLegacyAxeraBackend::postprocess_o2o(
             continue;
         }
 
-        const ArmorColor color = O2O_COLOR_ORDER[best_color_id];
+        const ArmorColor color = static_cast<ArmorColor>(best_color_id);
         const ArmorName name   = O2O_PAIR_TO_ARMOR[best_cls_id];
 
         AtLegacyArmorDetection det(corners, name, color, best_cls_sc);
@@ -905,9 +1074,14 @@ AtLegacyAxeraBackend::DetectionResult AtLegacyAxeraBackend::detect_impl(const cv
     auto ctx = preprocess_letterbox(image, cfg);
 
     // Preprocess: actual image processing (resize + BGR2RGB + cache flush)
+    // Try IVPS first (single hardware operation), fall back to OpenCV if IVPS fails
     {
         ScopedTimer timer("preprocess");
-        preprocess_image(image, ctx);
+        if (ivps_initialized_) {
+            preprocess_image_ivps(image, ctx);
+        } else {
+            preprocess_image(image, ctx);
+        }
     }
 
     // Infer: pure NPU execution

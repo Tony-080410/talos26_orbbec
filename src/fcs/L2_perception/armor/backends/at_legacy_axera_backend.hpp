@@ -15,6 +15,10 @@
 #include "ax_engine_api.h"
 #include "ax_sys_api.h"
 
+// AX650 IVPS (Image Video Processing System) API for hardware-accelerated preprocessing
+#include "ax_ivps_api.h"
+#include "ax_ivps_type.h"
+
 namespace fcs::L2 {
 
 // ============================================================================
@@ -144,6 +148,22 @@ private:
     AX_ENGINE_HANDLE handle_ = nullptr;
     AX_ENGINE_IO_T io_data_{};
     std::vector<char> model_buffer_;
+
+    // IVPS (Image Video Processing System) resources for hardware-accelerated preprocessing
+    // IVPS is more efficient than IVE because it can do letterbox+resize+color conversion in one operation
+    bool ivps_initialized_                   = false;
+    AX_U64 ivps_src_phy_addr_                = 0;        // Physical address for source buffer
+    AX_VOID* ivps_src_vir_addr_              = nullptr; // Virtual address for source buffer
+    AX_U32 ivps_src_buffer_size_              = 0;      // Source buffer size (bytes)
+    AX_VIDEO_FRAME_T ivps_src_frame_{};                // Source frame descriptor (BGR from camera)
+    AX_VIDEO_FRAME_T ivps_dst_frame_{};                // Destination frame descriptor (RGB for NPU)
+
+    // IVPS helper methods
+    [[nodiscard]] std::expected<void, DetectorError> init_ivps();
+    void deinit_ivps();
+    [[nodiscard]] std::expected<void, DetectorError> allocate_ivps_buffers(int max_src_width, int max_src_height);
+    void free_ivps_buffers();
+    void preprocess_image_ivps(const cv::Mat& image, const PreprocContext& ctx);
 };
 
 } // namespace fcs::L2
