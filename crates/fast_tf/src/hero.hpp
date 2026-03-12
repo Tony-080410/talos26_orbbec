@@ -39,7 +39,7 @@ std::shared_ptr<CoordinateSystem<N>> hero_new(timestamp_ns_t ts = 0) {
     update<camera_link_fuxk_frame>(
         *system,
         FuckTransform<camera_link_fuxk_frame>{
-            TransformMatrix4d::from_rpy(0, 0, 0, 0.25391, 0.0735, 0.00639)},
+            TransformMatrix4d::from_rpy(0, to_rad(-1.0), 0.0, 0.25391, 0.0735, 0.00639)},
         0);
 
     // camera_optical -> camera_link (static)
