@@ -129,6 +129,10 @@ void register_aimer_systems(talos::Scheduler& scheduler, L4Config&& config) {
                 }
                 plan.viz_debug = viz_debug;
                 aimer_out.write(std::move(plan));
+            } else {
+                GimbalPlan plan;
+                plan.distance = -1;
+                aimer_out.write(std::move(plan));
             }
         });
 }
