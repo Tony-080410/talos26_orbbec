@@ -59,9 +59,9 @@ void register_debug_systems(App& app, talos::Scheduler* scheduler_ptr = nullptr)
                 nlohmann::json obj;
                 obj["index"]      = i;
                 obj["name"]       = magic_enum::enum_name(m.name);
-                const auto t      = m.transform->translation();
+                const auto t      = m.transform.translation();
                 obj["position"]   = {t.x(), t.y(), t.z()};
-                const auto rpy    = m.transform->euler_rot().rpy();
+                const auto rpy    = m.transform.euler_rot().rpy();
                 obj["rpy"]        = {std::get<0>(rpy), std::get<1>(rpy), std::get<2>(rpy)};
                 obj["confidence"] = m.confidence;
                 pnp_json["measurements"].push_back(obj);

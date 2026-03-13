@@ -72,12 +72,12 @@ public:
                 continue;
             }
             const auto& m  = observations.measurements[j];
-            const auto ypd = xyz2ypd(m.transform->translation());
+            const auto ypd = xyz2ypd(m.transform.translation());
             VecZ z;
             z[0]         = ypd[0];
             z[1]         = ypd[1];
             z[2]         = ypd[2];
-            z[3]         = m.transform->euler_rot().yaw;
+            z[3]         = m.transform.euler_rot().yaw;
             meas_list[j] = z;
         }
 

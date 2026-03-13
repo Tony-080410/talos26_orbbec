@@ -5,6 +5,7 @@
 #include "matrix.hpp"
 #include "types.hpp"
 #include <string_view>
+#include <tuple>
 #include <type_traits>
 #include <utility>
 
@@ -219,18 +220,14 @@ inline auto fucked(T&& t) {
     return Fuck<Coordinate, T>(std::forward<T>(t));
 }
 
+template <frame From, frame To>
+using FrameTransform = TransformMatrixd<From, To>;
+
 template <frame Coordinate>
-using FuckTransform = Fuck<Coordinate, TransformMatrix4d>;
+using IdentityTransform = FrameTransform<Coordinate, Coordinate>;
 
-using FuckWorld = FuckTransform<world_fuxk_frame>;
-
-using FuckOdom   = FuckTransform<odom_fuxk_frame>;
-using FuckGimbal = FuckTransform<gimbal_yaw_fuxk_frame>;
-
-using FuckMuzzle = FuckTransform<muzzle_link_fuxk_frame>;
-
-using FuckCamera  = FuckTransform<camera_link_fuxk_frame>;
-using FuckOptical = FuckTransform<camera_optical_fuxk_frame>;
+template <non_root_frame Layer>
+using EdgeTransform = FrameTransform<Layer, typename Layer::ancestor>;
 
 template <frame Coordinate>
 using FuckDouble = Fuck<Coordinate, double>;
@@ -247,41 +244,84 @@ using FuckIntrinsicEulerRotf = Fuck<Coordinate, math_fuxk::Ros2EulerRotf>;
 inline constexpr sec coordinate_history_range_sec          = 5;
 inline constexpr sample_per_sec coordinate_history_density = 500;
 
-using CoordinateSystem = std::array<
-    Buffer<TransformMatrix4d, coordinate_history_range_sec, coordinate_history_density>,
-    frame_count>;
+using coordinate_buffer_frames = std::tuple<
+    odom_fuxk_frame, gimbal_yaw_fuxk_frame, gimbal_pitch_fuxk_frame, camera_link_fuxk_frame,
+    camera_optical_fuxk_frame, muzzle_link_fuxk_frame>;
+
+using CoordinateSystem = std::tuple<
+    Buffer<
+        EdgeTransform<odom_fuxk_frame>, coordinate_history_range_sec, coordinate_history_density>,
+    Buffer<
+        EdgeTransform<gimbal_yaw_fuxk_frame>, coordinate_history_range_sec,
+        coordinate_history_density>,
+    Buffer<
+        EdgeTransform<gimbal_pitch_fuxk_frame>, coordinate_history_range_sec,
+        coordinate_history_density>,
+    Buffer<
+        EdgeTransform<camera_link_fuxk_frame>, coordinate_history_range_sec,
+        coordinate_history_density>,
+    Buffer<
+        EdgeTransform<camera_optical_fuxk_frame>, coordinate_history_range_sec,
+        coordinate_history_density>,
+    Buffer<
+        EdgeTransform<muzzle_link_fuxk_frame>, coordinate_history_range_sec,
+        coordinate_history_density>>;
+
+template <non_root_frame Layer, typename System>
+[[nodiscard]] constexpr decltype(auto) buffer_of(System&& system) noexcept {
+    return std::get<Layer::index - 1>(std::forward<System>(system));
+}
+
+template <typename System, typename Fn, std::size_t... Is>
+constexpr void
+    for_each_coordinate_buffer_impl(System&& system, Fn&& fn, std::index_sequence<Is...>) {
+    (fn(std::type_identity<std::tuple_element_t<Is, coordinate_buffer_frames>>{},
+        std::get<Is>(std::forward<System>(system))),
+     ...);
+}
+
+template <typename System, typename Fn>
+constexpr void for_each_coordinate_buffer(System&& system, Fn&& fn) {
+    for_each_coordinate_buffer_impl(
+        std::forward<System>(system), std::forward<Fn>(fn),
+        std::make_index_sequence<std::tuple_size_v<coordinate_buffer_frames>>{});
+}
 
 template <non_root_frame Layer>
-constexpr void
-    update(CoordinateSystem& system, FuckTransform<Layer> transform, timestamp_ns_t ns) noexcept {
-    system[Layer::index].push(ns, *transform);
+constexpr void update(
+    CoordinateSystem& system, const EdgeTransform<Layer>& transform, timestamp_ns_t ns) noexcept {
+    buffer_of<Layer>(system).push(ns, transform);
 }
 
 template <non_root_frame Layer>
 constexpr void update_rotate_only(
     CoordinateSystem& system, math_fuxk::Ros2EulerRotd rot, timestamp_ns_t ns) noexcept {
-    system[Layer::index].push_rotate_only(ns, rot);
+    buffer_of<Layer>(system).push_rotate_only(ns, rot);
 }
 
-template <frame To, frame From>
+template <frame To, frame Source, frame From>
 constexpr auto lookup(
-    const CoordinateSystem& system, FuckTransform<From> tf_source, timestamp_ns_t ns) noexcept
-    -> std::expected<FuckTransform<To>, TransformError> {
+    const CoordinateSystem& system, FrameTransform<Source, From> tf_source,
+    timestamp_ns_t ns) noexcept -> std::expected<FrameTransform<Source, To>, TransformError> {
     static_assert(is_descendant_of<From, To>(), "From must be a descendant of To");
     if constexpr (std::is_same_v<From, To>) {
         return tf_source;
     } else if constexpr (root_frame<From>) {
-        // 到根了还没找到，不应该发生（static_assert 应该拦住）
         return std::unexpected(TransformError::FrameNotFound);
     } else {
-        const auto& buffer = system[From::index];
+        const auto& buffer = buffer_of<From>(system);
         auto result        = buffer.lookup(ns, interpolate);
         if (!result) {
             return std::unexpected(result.error());
         }
-        FuckTransform<typename From::ancestor> parent_tf{tf_source->reparent_to(result->value)};
-        return lookup<To, typename From::ancestor>(system, parent_tf, ns);
+        return lookup<To>(system, tf_source * result->value, ns);
     }
+}
+
+template <frame To, frame From>
+constexpr auto lookup(const CoordinateSystem& system, timestamp_ns_t ns) noexcept
+    -> std::expected<FrameTransform<From, To>, TransformError> {
+    return lookup<To>(system, I<From>(), ns);
 }
 
 /// Lookup transform using clamped interpolation.
@@ -289,24 +329,29 @@ constexpr auto lookup(
 /// This never returns `FutureExtrapolationRequired`/`PastExtrapolationRequired` as long as the
 /// buffer has data; it clamps the query time to the buffer's time range (equivalent to TF2
 /// `TimePointZero` semantics for "latest available" when `ns` is newer than the newest sample).
-template <frame To, frame From>
+template <frame To, frame Source, frame From>
 constexpr auto lookup_clamped(
-    const CoordinateSystem& system, FuckTransform<From> tf_source, timestamp_ns_t ns) noexcept
-    -> std::expected<FuckTransform<To>, TransformError> {
+    const CoordinateSystem& system, FrameTransform<Source, From> tf_source,
+    timestamp_ns_t ns) noexcept -> std::expected<FrameTransform<Source, To>, TransformError> {
     static_assert(is_descendant_of<From, To>(), "From must be a descendant of To");
     if constexpr (std::is_same_v<From, To>) {
         return tf_source;
     } else if constexpr (root_frame<From>) {
         return std::unexpected(TransformError::FrameNotFound);
     } else {
-        const auto& buffer = system[From::index];
+        const auto& buffer = buffer_of<From>(system);
         auto result        = buffer.lookup(ns, clamped);
         if (!result) {
             return std::unexpected(result.error());
         }
-        FuckTransform<typename From::ancestor> parent_tf{tf_source->reparent_to(result->value)};
-        return lookup_clamped<To, typename From::ancestor>(system, parent_tf, ns);
+        return lookup_clamped<To>(system, tf_source * result->value, ns);
     }
+}
+
+template <frame To, frame From>
+constexpr auto lookup_clamped(const CoordinateSystem& system, timestamp_ns_t ns) noexcept
+    -> std::expected<FrameTransform<From, To>, TransformError> {
+    return lookup_clamped<To, From, From>(system, I<From>(), ns);
 }
 
 // ============================================================================

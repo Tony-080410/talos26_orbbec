@@ -14,6 +14,8 @@
 
 namespace fcs::calibration {
 
+struct calibration_board_frame {};
+
 // ============================================================================
 // Channel Topics
 // ============================================================================
@@ -152,9 +154,8 @@ struct CalibrationStatus {
 
 /// @brief Pose sample for hand-eye calibration
 struct PoseSample {
-    Eigen::Matrix4d gimbal_pose; ///< gimbal_link → odom (from IMU)
-    cv::Vec3d rvec;              ///< board → camera_optical rotation vector
-    cv::Vec3d tvec;              ///< board → camera_optical translation vector
+    fast_tf::TransformMatrixd<fast_tf::gimbal, fast_tf::odom> gimbal_pose;
+    fast_tf::TransformMatrixd<calibration_board_frame, fast_tf::camera> board_pose;
     timestamp_ns_t timestamp_ns;
 };
 

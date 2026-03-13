@@ -19,7 +19,7 @@ HandEyeCalibrator::HandEyeCalibrator(
     samples_.reserve(capture.max_samples);
 }
 
-fast_tf::TransformMatrix4d
+fast_tf::TransformMatrixd<calibration_board_frame, fast_tf::camera>
     HandEyeCalibrator::opencv_to_ros(const cv::Vec3d& rvec, const cv::Vec3d& tvec) noexcept {
     // Convert rvec/tvec to 4x4 matrix
     cv::Mat R_cv;
@@ -39,31 +39,33 @@ fast_tf::TransformMatrix4d
     // This converts from OpenCV convention to ROS convention
     constexpr double pi = std::numbers::pi;
     auto T_optical_to_link =
-        fast_tf::TransformMatrix4d::from_rpy(-pi / 2.0, 0.0, -pi / 2.0, 0.0, 0.0, 0.0);
+        fast_tf::TransformMatrixd<fast_tf::camera_optical, fast_tf::camera>::from_rpy(
+            -pi / 2.0, 0.0, -pi / 2.0, 0.0, 0.0, 0.0);
 
-    // Apply coordinate conversion: T_ros = T_optical_to_link * T_opencv
-    fast_tf::TransformMatrix4d T_opencv_tf(T_opencv);
-    return T_optical_to_link * T_opencv_tf;
+    // OpenCV solvePnP gives board -> camera_optical. Convert to board -> camera_link.
+    fast_tf::TransformMatrixd<calibration_board_frame, fast_tf::camera_optical> T_opencv_tf(
+        T_opencv);
+    return T_opencv_tf * T_optical_to_link;
 }
 
-bool HandEyeCalibrator::is_diverse_enough(const Eigen::Matrix4d& gimbal_pose) const noexcept {
+bool HandEyeCalibrator::is_diverse_enough(
+    const fast_tf::TransformMatrixd<fast_tf::gimbal, fast_tf::odom>& gimbal_pose) const noexcept {
     if (samples_.empty()) {
         return true;
     }
 
-    // Extract rotation as euler angles for comparison
-    Eigen::Matrix3d R_new = gimbal_pose.block<3, 3>(0, 0);
-    Eigen::Vector3d t_new = gimbal_pose.block<3, 1>(0, 3);
-    auto euler_new        = math_fuxk::rpy(R_new);
+    const Eigen::Matrix3d R_new = gimbal_pose.rotation();
+    const Eigen::Vector3d t_new = gimbal_pose.translation();
+    auto euler_new              = math_fuxk::rpy(R_new);
 
     constexpr double deg_to_rad = std::numbers::pi / 180.0;
     const double min_angle_rad  = capture_config_.min_angle_diff * deg_to_rad;
     const double min_trans      = capture_config_.min_translation_diff;
 
     for (const auto& sample : samples_) {
-        Eigen::Matrix3d R_old = sample.gimbal_pose.block<3, 3>(0, 0);
-        Eigen::Vector3d t_old = sample.gimbal_pose.block<3, 1>(0, 3);
-        auto euler_old        = math_fuxk::rpy(R_old);
+        const Eigen::Matrix3d R_old = sample.gimbal_pose.rotation();
+        const Eigen::Vector3d t_old = sample.gimbal_pose.translation();
+        auto euler_old              = math_fuxk::rpy(R_old);
 
         // Angle difference (sum of absolute differences in euler angles)
         double roll_diff  = std::abs(euler_new.roll - euler_old.roll);
@@ -83,7 +85,8 @@ bool HandEyeCalibrator::is_diverse_enough(const Eigen::Matrix4d& gimbal_pose) co
 }
 
 std::expected<void, std::string> HandEyeCalibrator::add_sample(
-    const Eigen::Matrix4d& gimbal_pose, const cv::Vec3d& rvec, const cv::Vec3d& tvec,
+    const fast_tf::TransformMatrixd<fast_tf::gimbal, fast_tf::odom>& gimbal_pose,
+    const fast_tf::TransformMatrixd<calibration_board_frame, fast_tf::camera>& board_pose,
     timestamp_ns_t ts) noexcept {
     if (samples_.size() >= capture_config_.max_samples) {
         return std::unexpected("Maximum sample count reached");
@@ -91,8 +94,7 @@ std::expected<void, std::string> HandEyeCalibrator::add_sample(
 
     PoseSample sample;
     sample.gimbal_pose  = gimbal_pose;
-    sample.rvec         = rvec;
-    sample.tvec         = tvec;
+    sample.board_pose   = board_pose;
     sample.timestamp_ns = ts;
 
     samples_.push_back(sample);
@@ -119,8 +121,8 @@ std::expected<HandEyeResult, std::string> HandEyeCalibrator::calibrate() noexcep
 
     for (const auto& sample : samples_) {
         // A: gimbal → odom (directly use)
-        Eigen::Matrix3d R_A = sample.gimbal_pose.block<3, 3>(0, 0);
-        Eigen::Vector3d t_A = sample.gimbal_pose.block<3, 1>(0, 3);
+        Eigen::Matrix3d R_A = sample.gimbal_pose.rotation();
+        Eigen::Vector3d t_A = sample.gimbal_pose.translation();
 
         cv::Mat R_A_cv, t_A_cv;
         cv::eigen2cv(R_A, R_A_cv);
@@ -128,10 +130,8 @@ std::expected<HandEyeResult, std::string> HandEyeCalibrator::calibrate() noexcep
         R_gripper2base.push_back(R_A_cv);
         t_gripper2base.push_back(t_A_cv);
 
-        // B: board → camera (convert to ROS frame)
-        auto T_B_ros        = opencv_to_ros(sample.rvec, sample.tvec);
-        Eigen::Matrix3d R_B = T_B_ros.rotation();
-        Eigen::Vector3d t_B = T_B_ros.translation();
+        Eigen::Matrix3d R_B = sample.board_pose.rotation();
+        Eigen::Vector3d t_B = sample.board_pose.translation();
 
         cv::Mat R_B_cv, t_B_cv;
         cv::eigen2cv(R_B, R_B_cv);
@@ -165,10 +165,8 @@ std::expected<HandEyeResult, std::string> HandEyeCalibrator::calibrate() noexcep
 
     for (size_t i = 0; i < samples_.size(); ++i) {
         const auto& sample = samples_[i];
-        Eigen::Matrix4d A  = sample.gimbal_pose;
-
-        auto T_B_ros      = opencv_to_ros(sample.rvec, sample.tvec);
-        Eigen::Matrix4d B = T_B_ros.matrix();
+        Eigen::Matrix4d A  = sample.gimbal_pose.matrix();
+        Eigen::Matrix4d B  = sample.board_pose.matrix();
 
         Eigen::Matrix4d AX = A * X;
         Eigen::Matrix4d XB = X * B;

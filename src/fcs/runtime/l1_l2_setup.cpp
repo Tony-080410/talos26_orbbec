@@ -33,36 +33,34 @@ struct DaedalusImu {
             // const Eigen::Quaterniond q(1.0, 0, 0, 0);
             fast_tf::update(
                 *tf_buffer->get(),
-                fast_tf::FuckTransform<fast_tf::gimbal>(
-                    fast_tf::TransformMatrix4d::from_quaternion_xyz(q, pose->x, pose->y, pose->z)),
+                fast_tf::EdgeTransform<fast_tf::gimbal>::from_quaternion_xyz(
+                    q, pose->x, pose->y, pose->z),
                 pose->timestamp_ns);
             fast_tf::update(
                 *tf_buffer->get(),
-                fast_tf::FuckTransform<fast_tf::gimbal_pitch_fuxk_frame>(
-                    fast_tf::TransformMatrix4d::from_rpy(0, 0, 0)),
+                fast_tf::EdgeTransform<fast_tf::gimbal_pitch_fuxk_frame>::from_rpy(0, 0, 0),
                 pose->timestamp_ns);
         }
         if (const auto pose = ipc_device->recv_pose(ipc::POSE_ODOM)) {
             fast_tf::update(
                 *tf_buffer->get(),
-                fast_tf::FuckTransform<fast_tf::odom>(
-                    fast_tf::TransformMatrix4d::from_translation(pose->x, pose->y, pose->z)),
+                fast_tf::EdgeTransform<fast_tf::odom>::from_translation(pose->x, pose->y, pose->z),
                 pose->timestamp_ns);
         }
         if (const auto pose = ipc_device->recv_pose(ipc::POSE_CAMERA)) {
             const Eigen::Quaterniond q(pose->qw, pose->qx, pose->qy, pose->qz);
             fast_tf::update(
                 *tf_buffer->get(),
-                fast_tf::FuckTransform<fast_tf::camera_link_fuxk_frame>(
-                    fast_tf::TransformMatrix4d::from_quaternion_xyz(q, pose->x, pose->y, pose->z)),
+                fast_tf::EdgeTransform<fast_tf::camera_link_fuxk_frame>::from_quaternion_xyz(
+                    q, pose->x, pose->y, pose->z),
                 pose->timestamp_ns);
         }
         if (const auto pose = ipc_device->recv_pose(ipc::POSE_MUZZLE)) {
             const Eigen::Quaterniond q(pose->qw, pose->qx, pose->qy, pose->qz);
             fast_tf::update(
                 *tf_buffer->get(),
-                fast_tf::FuckTransform<fast_tf::muzzle_link_fuxk_frame>(
-                    fast_tf::TransformMatrix4d::from_quaternion_xyz(q, pose->x, pose->y, pose->z)),
+                fast_tf::EdgeTransform<fast_tf::muzzle_link_fuxk_frame>::from_quaternion_xyz(
+                    q, pose->x, pose->y, pose->z),
                 pose->timestamp_ns);
         }
     }

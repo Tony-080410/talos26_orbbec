@@ -81,7 +81,7 @@ void register_aimer_systems(talos::Scheduler& scheduler, L4Config&& config) {
             }
 
             if (aim_result) {
-                const auto euler     = gimbal->euler_rot();
+                const auto euler     = gimbal.euler_rot();
                 const auto cur_pitch = euler.pitch;
                 const auto cur_yaw   = euler.yaw;
 

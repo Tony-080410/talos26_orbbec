@@ -115,14 +115,13 @@ void register_rune_detection_systems(talos::Scheduler& scheduler, RuneDetectorCo
             //    return;
             //}
 
-            auto tf_odom_camera = fast_tf::lookup_clamped<fast_tf::odom>(
-                **tf_system, fast_tf::FuckTransform<fast_tf::camera_optical>(),
-                frame->timestamp_ns);
+            auto tf_camera_odom = fast_tf::lookup_clamped<fast_tf::odom, fast_tf::camera_optical>(
+                **tf_system, frame->timestamp_ns);
 
-            if (!tf_odom_camera) {
+            if (!tf_camera_odom) {
                 SPDLOG_DEBUG(
                     "rune: TF lookup failed at {}: {}", frame->timestamp_ns,
-                    tf_odom_camera.error());
+                    tf_camera_odom.error());
                 dbg.tf_ok = false;
                 debug_out.write(std::move(dbg));
                 obs_out.write(out);
@@ -135,7 +134,7 @@ void register_rune_detection_systems(talos::Scheduler& scheduler, RuneDetectorCo
             cv::eigen2cv(cam_cfg->camera_matrix, camera_matrix);
             cv::eigen2cv(cam_cfg->distort_coefficient, dist_coeffs);
 
-            const Eigen::Matrix4d odom_T_cam = tf_odom_camera.value()->matrix();
+            const Eigen::Matrix4d odom_T_cam = tf_camera_odom.value().matrix();
             const double timestamp_sec       = ns_to_sec(frame->timestamp_ns);
 
             auto pose_result =

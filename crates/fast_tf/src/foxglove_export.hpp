@@ -23,35 +23,26 @@ public:
     void publish_all(const CoordinateSystem& system, const uint64_t ts) noexcept {
         foxglove::schemas::FrameTransforms transforms_msg;
 
-        // 遍历所有 buffer，跳过 root frame (index 0)
-        for (std::size_t i = 1; i < frame_count; ++i) {
-            const auto& buffer = system[i];
+        for_each_coordinate_buffer(system, [&](auto frame_tag, const auto& buffer) {
+            using Descendant = typename decltype(frame_tag)::type;
+            using Ancestor   = typename Descendant::ancestor;
 
-            // 跳过未初始化的 buffer
             auto latest_result = buffer.latest();
             if (!latest_result) {
-                continue; // NoDataAvailable
+                return;
             }
 
-            // 查询变换
             auto tf_result = buffer.lookup(ts, interpolate);
             if (!tf_result) {
-                // 对于静态变换，lookup() 不会失败；这里保留 latest 作为兜底。
                 tf_result = latest_result;
             }
 
-            // 判断是否为静态变换
             const auto time_range = buffer.time_range();
             const bool is_static  = time_range && time_range->first == 0 && time_range->second == 0;
 
-            // 获取 frame_id 和 parent_frame_id
-            const std::string_view child_frame_id  = frame_id_by_index(i);
-            const std::string_view parent_frame_id = parent_frame_id_by_index(i);
-
-            // 构建 FrameTransform
             foxglove::schemas::FrameTransform frame_transform;
-            frame_transform.parent_frame_id = std::string(parent_frame_id);
-            frame_transform.child_frame_id  = std::string(child_frame_id);
+            frame_transform.parent_frame_id = std::string(Ancestor::frame_id);
+            frame_transform.child_frame_id  = std::string(Descendant::frame_id);
 
             if (is_static) {
                 frame_transform.timestamp = std::nullopt;
@@ -67,7 +58,7 @@ public:
             frame_transform.rotation    = {quat.x(), quat.y(), quat.z(), quat.w()};
 
             transforms_msg.transforms.push_back(frame_transform);
-        }
+        });
 
         [[maybe_unused]] auto error = channel_.log(transforms_msg);
     }
@@ -96,7 +87,7 @@ public:
      */
     template <non_root_frame Descendant>
     void publish_single(
-        [[maybe_unused]] const CoordinateSystem& system, const FuckTransform<Descendant>& transform,
+        [[maybe_unused]] const CoordinateSystem& system, const EdgeTransform<Descendant>& transform,
         const uint64_t ts, const timestamp_ns_t transform_ts) noexcept {
 
         foxglove::schemas::FrameTransforms transforms_msg;
@@ -121,13 +112,12 @@ private:
         const CoordinateSystem& system, foxglove::schemas::FrameTransforms& msg,
         uint64_t ts) noexcept {
         if constexpr (!root_frame<Descendant>) {
-            if (auto result = system[Descendant::index].lookup(ts, interpolate); result) {
-                const auto& buffer    = system[Descendant::index];
+            const auto& buffer = buffer_of<Descendant>(system);
+            if (auto result = buffer.lookup(ts, interpolate); result) {
                 const auto time_range = buffer.time_range();
                 const bool is_static =
                     time_range && time_range->first == 0 && time_range->second == 0;
-                append_transform<Descendant>(
-                    msg, FuckTransform<Descendant>(result->value), ts, is_static);
+                append_transform<Descendant>(msg, result->value, ts, is_static);
                 append_ancestors<typename Descendant::ancestor>(system, msg, ts);
             }
         }
@@ -135,12 +125,12 @@ private:
 
     template <non_root_frame Descendant>
     static void append_transform(
-        foxglove::schemas::FrameTransforms& msg, const FuckTransform<Descendant>& transform,
+        foxglove::schemas::FrameTransforms& msg, const EdgeTransform<Descendant>& transform,
         const uint64_t ts, bool is_static) noexcept {
         using Ancestor = Descendant::ancestor;
 
-        const auto translation = transform->translation();
-        const auto quat        = transform->quaternion();
+        const auto translation = transform.translation();
+        const auto quat        = transform.quaternion();
 
         foxglove::schemas::FrameTransform frame_transform;
         frame_transform.parent_frame_id = std::string(Ancestor::frame_id);

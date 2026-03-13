@@ -162,7 +162,7 @@ public:
         }
 
         const auto& target     = measurements.measurements[static_cast<size_t>(min_idx)];
-        const auto& pos        = target.transform->translation();
+        const auto& pos        = target.transform.translation();
         const double armor_yaw = target.yaw();
         constexpr double v0    = 0.0;
 
@@ -435,7 +435,7 @@ private:
 
     static RobotEkfMotionModel::VecZ
         measurement_to_z_(const AtLegacyArmorMeasurement& meas) noexcept {
-        const auto ypd = xyz2ypd(meas.transform->translation());
+        const auto ypd = xyz2ypd(meas.transform.translation());
         RobotEkfMotionModel::VecZ z;
         z[ARMOR_YAW]       = ypd[0];
         z[ARMOR_PITCH]     = ypd[1];

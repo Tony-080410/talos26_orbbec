@@ -14,12 +14,10 @@ namespace fcs::L4 {
 
 /// Result of gimbal/muzzle transform lookup
 ///
-/// Both transforms are in odom frame (FuckOdom = FuckTransform<odom_fuxk_frame>).
-/// This is consistent with the coordinate lookup return type.
 struct TransformLookupResult {
-    fast_tf::FuckOdom gimbal; ///< Odom -> Gimbal transform (in odom frame)
-    fast_tf::FuckOdom muzzle; ///< Odom -> Muzzle transform (in odom frame)
-    uint64_t timestamp_ns;    ///< Query timestamp (ns)
+    fast_tf::TransformMatrixd<fast_tf::gimbal_pitch_fuxk_frame, fast_tf::odom_fuxk_frame> gimbal;
+    fast_tf::TransformMatrixd<fast_tf::muzzle_link_fuxk_frame, fast_tf::odom_fuxk_frame> muzzle;
+    uint64_t timestamp_ns;
 };
 
 // ============================================================================
@@ -34,15 +32,13 @@ struct TransformLookupResult {
 ///
 /// @note Uses fast_tf::lookup_clamped which clamps to buffer time range
 /// @note Error messages include detailed diagnostic information
-/// @note Both transforms are returned as FuckOdom (in odom frame)
 [[nodiscard]] inline std::expected<TransformLookupResult, std::string>
     lookup_gimbal_muzzle_transforms(
         const std::shared_ptr<fast_tf::CoordinateSystem>& tf_buffer, uint64_t current_ns) noexcept {
     using namespace fast_tf;
 
-    // Lookup muzzle transform (odom -> muzzle)
-    auto muzzle_tf = lookup_clamped<odom_fuxk_frame, muzzle_link_fuxk_frame>(
-        *tf_buffer, FuckTransform<muzzle_link_fuxk_frame>{}, current_ns);
+    auto muzzle_tf =
+        lookup_clamped<odom_fuxk_frame, muzzle_link_fuxk_frame>(*tf_buffer, current_ns);
     if (!muzzle_tf) {
         return std::unexpected(
             fmt::format(
@@ -50,9 +46,8 @@ struct TransformLookupResult {
                 muzzle_tf.error(), current_ns));
     }
 
-    // Lookup gimbal transform (odom -> gimbal)
-    auto gimbal_tf = lookup_clamped<odom_fuxk_frame, fast_tf::gimbal_pitch_fuxk_frame>(
-        *tf_buffer, FuckTransform<fast_tf::gimbal_pitch_fuxk_frame>{}, current_ns);
+    auto gimbal_tf =
+        lookup_clamped<odom_fuxk_frame, fast_tf::gimbal_pitch_fuxk_frame>(*tf_buffer, current_ns);
     if (!gimbal_tf) {
         return std::unexpected(
             fmt::format(
@@ -71,16 +66,15 @@ struct TransformLookupResult {
 ///
 /// @param tf_buffer Coordinate system buffer (shared_ptr)
 /// @param current_ns Query timestamp in nanoseconds
-/// @return FuckOdom (gimbal transform in odom frame) on success, error message on failure
-///
-/// @note Used by Planner which only requires gimbal transform
-/// @note Error messages include detailed diagnostic information
-[[nodiscard]] inline std::expected<fast_tf::FuckOdom, std::string> lookup_gimbal_transform(
-    const std::shared_ptr<fast_tf::CoordinateSystem>& tf_buffer, uint64_t current_ns) noexcept {
+[[nodiscard]] inline std::expected<
+    fast_tf::TransformMatrixd<fast_tf::gimbal_pitch_fuxk_frame, fast_tf::odom_fuxk_frame>,
+    std::string>
+    lookup_gimbal_transform(
+        const std::shared_ptr<fast_tf::CoordinateSystem>& tf_buffer, uint64_t current_ns) noexcept {
     using namespace fast_tf;
 
-    auto gimbal_tf = lookup_clamped<odom_fuxk_frame, fast_tf::gimbal_pitch_fuxk_frame>(
-        *tf_buffer, FuckTransform<fast_tf::gimbal_pitch_fuxk_frame>{}, current_ns);
+    auto gimbal_tf =
+        lookup_clamped<odom_fuxk_frame, fast_tf::gimbal_pitch_fuxk_frame>(*tf_buffer, current_ns);
     if (!gimbal_tf) {
         return std::unexpected(
             fmt::format(

@@ -25,18 +25,20 @@ public:
 
     /// @brief Add pose sample pair
     /// @param gimbal_pose gimbal_link → odom transform (from IMU)
-    /// @param rvec board → camera rotation vector (from PnP)
-    /// @param tvec board → camera translation vector (from PnP)
+    /// @param board_pose board → camera_link transform (from PnP, converted to ROS frame)
     /// @param ts Timestamp
     /// @return Success or error message
     [[nodiscard]] std::expected<void, std::string> add_sample(
-        const Eigen::Matrix4d& gimbal_pose, const cv::Vec3d& rvec, const cv::Vec3d& tvec,
+        const fast_tf::TransformMatrixd<fast_tf::gimbal, fast_tf::odom>& gimbal_pose,
+        const fast_tf::TransformMatrixd<calibration_board_frame, fast_tf::camera>& board_pose,
         timestamp_ns_t ts) noexcept;
 
     /// @brief Check if pose is diverse enough from existing samples
     /// @param gimbal_pose New gimbal pose to check
     /// @return true if sample adds diversity
-    [[nodiscard]] bool is_diverse_enough(const Eigen::Matrix4d& gimbal_pose) const noexcept;
+    [[nodiscard]] bool is_diverse_enough(
+        const fast_tf::TransformMatrixd<fast_tf::gimbal, fast_tf::odom>& gimbal_pose)
+        const noexcept;
 
     /// @brief Run hand-eye calibration with collected samples
     /// @return Calibration result or error message
@@ -54,7 +56,7 @@ public:
     /// OpenCV: X-right, Y-down, Z-forward
     /// ROS: X-forward, Y-left, Z-up
     /// The conversion applies camera_optical → camera_link transform: rpy[-π/2, 0, -π/2]
-    [[nodiscard]] static fast_tf::TransformMatrix4d
+    [[nodiscard]] static fast_tf::TransformMatrixd<calibration_board_frame, fast_tf::camera>
         opencv_to_ros(const cv::Vec3d& rvec, const cv::Vec3d& tvec) noexcept;
 
 private:

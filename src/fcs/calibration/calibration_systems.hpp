@@ -136,18 +136,16 @@ void register_calibration_systems(
             }
 
             // Get gimbal pose from TF buffer
-            auto tf_result = fast_tf::lookup<fast_tf::odom>(
-                **tf_buffer, fast_tf::FuckTransform<fast_tf::gimbal>{}, detection->timestamp_ns);
+            auto tf_result = fast_tf::lookup<fast_tf::odom, fast_tf::gimbal>(
+                **tf_buffer, detection->timestamp_ns);
 
             if (!tf_result) {
                 SPDLOG_WARN("TF lookup failed for handeye sample");
                 return;
             }
 
-            Eigen::Matrix4d gimbal_pose = (*tf_result)->matrix();
-
             // Check diversity
-            if (!handeye_calibrator->is_diverse_enough(gimbal_pose)) {
+            if (!handeye_calibrator->is_diverse_enough(*tf_result)) {
                 SPDLOG_DEBUG("Handeye sample rejected: not diverse enough");
                 return;
             }
@@ -171,9 +169,10 @@ void register_calibration_systems(
                 return;
             }
 
-            // Add sample
-            if (auto result = handeye_calibrator->add_sample(
-                    gimbal_pose, rvec, tvec, detection->timestamp_ns);
+            const auto board_pose = HandEyeCalibrator::opencv_to_ros(rvec, tvec);
+
+            if (auto result =
+                    handeye_calibrator->add_sample(*tf_result, board_pose, detection->timestamp_ns);
                 !result) {
                 SPDLOG_WARN("Failed to add handeye sample: {}", result.error());
                 return;

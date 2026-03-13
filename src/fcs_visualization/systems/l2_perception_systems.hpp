@@ -87,8 +87,8 @@ void register_l2_perception_systems(App& app) {
 
             for (size_t i = 0; i < batch->measurements.size(); ++i) {
                 const auto& m = batch->measurements[i];
-                const auto t  = m.transform->translation();
-                const auto q  = m.transform->quaternion();
+                const auto t  = m.transform.translation();
+                const auto q  = m.transform.quaternion();
 
                 // Use convenience builder - semantic layer organization
                 auto entity =
@@ -152,8 +152,8 @@ void register_l2_perception_systems(App& app) {
             j["measurements"]      = nlohmann::json::array();
 
             for (const auto& m : batch->measurements) {
-                const auto t = m.transform->translation();
-                const auto q = m.transform->quaternion();
+                const auto t = m.transform.translation();
+                const auto q = m.transform.quaternion();
                 nlohmann::json mj;
                 mj["timestamp_ns"]      = m.timestamp_ns;
                 mj["timestamp"]         = nlohmann::json::object();

@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <string>
 #include <string_view>
+#include <type_traits>
 #include <vector>
 
 #include <Eigen/Core>
@@ -16,6 +17,10 @@
 #include <opencv2/imgproc.hpp>
 
 namespace fcs {
+
+struct at_legacy_armor_frame_tag {};
+
+using at_legacy_armor_frame = at_legacy_armor_frame_tag;
 
 // ============================================================================
 // AT Legacy Frame Data Types (for Scheduler Channels)
@@ -92,8 +97,11 @@ struct AtLegacyArmorDetectionBatch {
 };
 
 /// Single armor measurement (3D pose in odom frame after TF transform)
-struct AtLegacyArmorMeasurement {
-    fast_tf::FuckTransform<fast_tf::odom> transform;
+template <fast_tf::frame Frame>
+struct AtLegacyArmorMeasurementT {
+    using Transform = fast_tf::TransformMatrixd<at_legacy_armor_frame, Frame>;
+
+    Transform transform{};
     ArmorName name                 = ArmorName::Invalid;
     ArmorColor color               = ArmorColor::Neutral;
     ArmorType type                 = ArmorType::Small;
@@ -101,7 +109,7 @@ struct AtLegacyArmorMeasurement {
     float distance_to_image_center = 0.0f; // Pixel distance from armor center to image center
     uint64_t timestamp_ns          = 0;
 
-    AtLegacyArmorMeasurement() = default;
+    AtLegacyArmorMeasurementT() = default;
 
     /// Construct from Detection + PnP result
     ///
@@ -110,43 +118,59 @@ struct AtLegacyArmorMeasurement {
     /// - Y axis: down
     /// - Z axis: forward (pointing into the scene)
     ///
-    /// The transform here is temporarily stored as odom frame for type consistency,
-    /// but the actual data is in camera_optical frame. It will be properly
-    /// transformed to odom frame by the detection system in at_legacy_systems.cpp.
-    AtLegacyArmorMeasurement(
+    /// OpenCV returns object -> camera pose, so this constructor is only valid for
+    /// camera_optical-frame measurements before TF reframe.
+    AtLegacyArmorMeasurementT(
         const AtLegacyArmorDetection& det, const cv::Mat& rvec, const cv::Mat& tvec, uint64_t ts,
-        float dist_to_center = 0.0f)
+        float dist_to_center = 0.0f) requires(std::same_as<Frame, fast_tf::camera_optical>)
         : name(det.name)
         , color(det.color)
         , type(det.type)
         , confidence(det.confidence)
         , distance_to_image_center(dist_to_center)
         , timestamp_ns(ts) {
-        // Store PnP result (camera_optical frame) in odom-typed transform.
-        // This will be corrected by the TF transform in at_legacy_systems.cpp.
-        transform =
-            fast_tf::FuckTransform<fast_tf::odom>(fast_tf::TransformMatrix4d::from_pnp(rvec, tvec));
+        const cv::Vec3d rvec_v(rvec.at<double>(0), rvec.at<double>(1), rvec.at<double>(2));
+        const cv::Vec3d tvec_v(tvec.at<double>(0), tvec.at<double>(1), tvec.at<double>(2));
+        transform = Transform::from_pnp(rvec_v, tvec_v);
     }
 
     /// Get distance to camera
-    [[nodiscard]] double distance() const noexcept { return transform->translation().norm(); }
+    [[nodiscard]] double distance() const noexcept { return transform.translation().norm(); }
 
     /// Get yaw angle (in radians)
-    [[nodiscard]] double yaw() const noexcept { return transform->euler_rot().yaw; }
+    [[nodiscard]] double yaw() const noexcept { return transform.euler_rot().yaw; }
 
     /// Get pitch angle (in radians)
-    [[nodiscard]] double pitch() const noexcept { return transform->euler_rot().pitch; }
+    [[nodiscard]] double pitch() const noexcept { return transform.euler_rot().pitch; }
+
+    template <fast_tf::frame ToFrame>
+    [[nodiscard]] AtLegacyArmorMeasurementT<ToFrame>
+        reframe(const fast_tf::FrameTransform<Frame, ToFrame>& frame_transform) const {
+        AtLegacyArmorMeasurementT<ToFrame> reframed;
+        reframed.transform                = transform * frame_transform;
+        reframed.name                     = name;
+        reframed.color                    = color;
+        reframed.type                     = type;
+        reframed.confidence               = confidence;
+        reframed.distance_to_image_center = distance_to_image_center;
+        reframed.timestamp_ns             = timestamp_ns;
+        return reframed;
+    }
 };
 
+using AtLegacyArmorMeasurement       = AtLegacyArmorMeasurementT<fast_tf::odom>;
+using AtLegacyCameraArmorMeasurement = AtLegacyArmorMeasurementT<fast_tf::camera_optical>;
+
 /// Batch of measurements from a single frame
-struct AtLegacyArmorMeasurementBatch {
-    std::vector<AtLegacyArmorMeasurement> measurements;
+template <fast_tf::frame Frame>
+struct AtLegacyArmorMeasurementBatchT {
+    std::vector<AtLegacyArmorMeasurementT<Frame>> measurements;
     uint64_t timestamp_ns = 0;
     uint64_t frame_id     = 0;
 
-    AtLegacyArmorMeasurementBatch() = default;
-    AtLegacyArmorMeasurementBatch(
-        std::vector<AtLegacyArmorMeasurement> meas, uint64_t ts, uint64_t fid)
+    AtLegacyArmorMeasurementBatchT() = default;
+    AtLegacyArmorMeasurementBatchT(
+        std::vector<AtLegacyArmorMeasurementT<Frame>> meas, uint64_t ts, uint64_t fid)
         : measurements(std::move(meas))
         , timestamp_ns(ts)
         , frame_id(fid) {}
@@ -154,5 +178,7 @@ struct AtLegacyArmorMeasurementBatch {
     [[nodiscard]] bool empty() const noexcept { return measurements.empty(); }
     [[nodiscard]] size_t size() const noexcept { return measurements.size(); }
 };
+
+using AtLegacyArmorMeasurementBatch = AtLegacyArmorMeasurementBatchT<fast_tf::odom>;
 
 } // namespace fcs

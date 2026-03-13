@@ -126,7 +126,7 @@ private:
 /// PnP solver for armor pose estimation
 class AtLegacyPnPSolver {
 public:
-    using PoseResult = std::expected<AtLegacyArmorMeasurement, PnPError>;
+    using PoseResult = std::expected<AtLegacyCameraArmorMeasurement, PnPError>;
 
     AtLegacyPnPSolver() = default;
 
@@ -273,14 +273,15 @@ public:
         }
         // If optimization failed, use original PnP result
 
-        return AtLegacyArmorMeasurement(detection, rvec, tvec, timestamp_ns, input->dist_to_center);
+        return AtLegacyCameraArmorMeasurement(
+            detection, rvec, tvec, timestamp_ns, input->dist_to_center);
     }
 
     /// Solve PnP with BA for multiple detections
-    [[nodiscard]] std::vector<AtLegacyArmorMeasurement> solve_batch_with_ba(
+    [[nodiscard]] std::vector<AtLegacyCameraArmorMeasurement> solve_batch_with_ba(
         const std::vector<AtLegacyArmorDetection>& detections, const Eigen::Matrix3d& R_imu_cam,
         uint64_t timestamp_ns) const {
-        std::vector<AtLegacyArmorMeasurement> measurements;
+        std::vector<AtLegacyCameraArmorMeasurement> measurements;
         measurements.reserve(detections.size());
 
         for (const auto& det : detections) {

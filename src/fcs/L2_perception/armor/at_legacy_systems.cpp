@@ -64,34 +64,33 @@ void register_at_legacy_detection_systems(talos::Scheduler& scheduler, AtLegacyC
                 AtLegacyArmorDetectionBatch{
                     std::move(detections), frame->image, frame->timestamp_ns, frame->frame_id});
 
-            auto tf_odom_camera = fast_tf::lookup_clamped<fast_tf::odom>(
-                **tf_system, fast_tf::FuckTransform<fast_tf::camera_optical>(),
-                frame->timestamp_ns);
+            auto tf_camera_odom = fast_tf::lookup_clamped<fast_tf::odom, fast_tf::camera_optical>(
+                **tf_system, frame->timestamp_ns);
 
-            if (!tf_odom_camera) {
+            if (!tf_camera_odom) {
                 // SPDLOG_ERROR(
                 //     "TF lookup failed for timestamp {}: {}", frame->timestamp_ns,
-                //     tf_odom_camera.error());
+                //     tf_camera_odom.error());
                 return;
             }
 
+            const auto& T_camera_odom = *tf_camera_odom;
+            // BA expects R_imu_cam in the sense of imu <- camera (here: odom <- camera).
+            const Eigen::Matrix3d R_odom_camera = T_camera_odom.rotation();
             auto measurements =
                 (*solver_ptr)
-                    ->solve_batch_with_ba(
-                        detections_for_pnp, tf_odom_camera.value()->rotation().matrix(),
-                        frame->timestamp_ns);
+                    ->solve_batch_with_ba(detections_for_pnp, R_odom_camera, frame->timestamp_ns);
 
-            // Transform measurements from camera_optical frame to odom frame
-            // T_odom_armor = T_odom_camera * T_camera_optical_armor
-            const auto& T_odom_camera = *tf_odom_camera.value();
-            for (auto& meas : measurements) {
-                meas.transform =
-                    fast_tf::FuckTransform<fast_tf::odom>{T_odom_camera * (*meas.transform)};
+            std::vector<AtLegacyArmorMeasurement> odom_measurements;
+            odom_measurements.reserve(measurements.size());
+
+            for (const auto& meas : measurements) {
+                odom_measurements.push_back(meas.reframe(T_camera_odom));
             }
 
             measurement_out.write(
                 AtLegacyArmorMeasurementBatch{
-                    std::move(measurements), frame->timestamp_ns, frame->frame_id});
+                    std::move(odom_measurements), frame->timestamp_ns, frame->frame_id});
         });
 }
 

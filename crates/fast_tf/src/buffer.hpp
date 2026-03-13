@@ -44,25 +44,24 @@ concept buffer_value_ops = requires(const T& value, fp_t ratio) {
 template <typename T>
 struct BufferOps;
 
-template <>
-struct BufferOps<TransformMatrix4d> {
-    static TransformMatrix4d identity() { return TransformMatrix4d{}; }
+template <std::floating_point T, typename From, typename To>
+struct BufferOps<TransformMatrix<T, From, To>> {
+    using Transform = TransformMatrix<T, From, To>;
 
-    static TransformMatrix4d
-        interpolate(const TransformMatrix4d& a, const TransformMatrix4d& b, fp_t ratio) {
-        return TransformMatrix4d::lerp_se3(a, b, ratio);
+    static Transform identity() { return Transform{}; }
+
+    static Transform interpolate(const Transform& a, const Transform& b, fp_t ratio) {
+        return Transform::lerp_se3(a, b, static_cast<T>(ratio));
     }
 
-    static bool is_valid(const TransformMatrix4d& value) {
-        return validate_transform(value).has_value();
-    }
+    static bool is_valid(const Transform& value) { return validate_transform(value).has_value(); }
 
-    static TransformMatrix4d
-        with_rotation(const TransformMatrix4d& base, const math_fuxk::Ros2EulerRotd& rot) {
+    static Transform with_rotation(const Transform& base, const math_fuxk::Ros2EulerRotd& rot) {
         const auto translation        = base.translation();
         const auto [roll, pitch, yaw] = rot.rpy();
-        return TransformMatrix4d::from_rpy(
-            roll, pitch, yaw, translation.x(), translation.y(), translation.z());
+        return Transform::from_rpy(
+            static_cast<T>(roll), static_cast<T>(pitch), static_cast<T>(yaw), translation.x(),
+            translation.y(), translation.z());
     }
 };
 

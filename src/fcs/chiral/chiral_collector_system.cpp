@@ -132,10 +132,10 @@ void register_chiral_collector_system(talos::Scheduler& scheduler) {
 
             // Lookup gimbal transform (odom -> gimbal)
             auto gimbal_tf = lookup_clamped<fast_tf::odom, fast_tf::gimbal_pitch_fuxk_frame>(
-                *tf_buffer->get(), FuckTransform<fast_tf::gimbal_pitch_fuxk_frame>{}, current_ns);
+                *tf_buffer->get(), current_ns);
             if (gimbal_tf) {
-                auto translation                     = gimbal_tf.value()->translation();
-                auto rotation                        = gimbal_tf.value()->quaternion();
+                auto translation                     = gimbal_tf.value().translation();
+                auto rotation                        = gimbal_tf.value().quaternion();
                 talos_data.gimbal_link.translation.x = translation.x();
                 talos_data.gimbal_link.translation.y = translation.y();
                 talos_data.gimbal_link.translation.z = translation.z();
@@ -149,11 +149,11 @@ void register_chiral_collector_system(talos::Scheduler& scheduler) {
 
             // Lookup camera transform (gimbal -> camera)
             auto camera_tf = lookup_clamped<fast_tf::gimbal, camera_link_fuxk_frame>(
-                *tf_buffer->get(), FuckTransform<camera_link_fuxk_frame>{}, current_ns);
+                *tf_buffer->get(), current_ns);
             if (camera_tf) {
 
-                auto translation                     = camera_tf.value()->translation();
-                auto rotation                        = camera_tf.value()->quaternion();
+                auto translation                     = camera_tf.value().translation();
+                auto rotation                        = camera_tf.value().quaternion();
                 talos_data.camera_link.translation.x = translation.x();
                 talos_data.camera_link.translation.y = translation.y();
                 talos_data.camera_link.translation.z = translation.z();
@@ -167,10 +167,10 @@ void register_chiral_collector_system(talos::Scheduler& scheduler) {
 
             // Lookup muzzle transform (odom -> muzzle)
             auto muzzle_tf = lookup_clamped<odom_fuxk_frame, muzzle_link_fuxk_frame>(
-                *tf_buffer->get(), FuckTransform<muzzle_link_fuxk_frame>{}, current_ns);
+                *tf_buffer->get(), current_ns);
             if (muzzle_tf) {
-                auto translation                     = muzzle_tf.value()->translation();
-                auto rotation                        = muzzle_tf.value()->quaternion();
+                auto translation                     = muzzle_tf.value().translation();
+                auto rotation                        = muzzle_tf.value().quaternion();
                 talos_data.muzzle_link.translation.x = translation.x();
                 talos_data.muzzle_link.translation.y = translation.y();
                 talos_data.muzzle_link.translation.z = translation.z();

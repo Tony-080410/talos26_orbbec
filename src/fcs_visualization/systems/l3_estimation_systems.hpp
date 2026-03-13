@@ -209,7 +209,7 @@ void register_l3_estimation_systems(App& app) {
             // Measurements (past) - ghost silver
             for (size_t i = 0; i < batch->measurements.size(); ++i) {
                 const auto& m = batch->measurements[i];
-                const auto t  = m.transform->translation();
+                const auto t  = m.transform.translation();
                 entities.push_back(
                     viz::patterns::measurement_sphere<fast_tf::odom>(
                         Eigen::Vector3d(t.x(), t.y(), t.z()), m.confidence, m.timestamp_ns));

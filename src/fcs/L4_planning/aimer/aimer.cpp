@@ -84,7 +84,7 @@ Eigen::Vector3d Aimer::predict_position(const L3::OutpostTargetState& target, do
 
 template <class TargetType>
 std::expected<TargetPrediction, std::string> Aimer::aim_generic(
-    const TargetType& target, fast_tf::FuckOdom gimbal, fast_tf::FuckOdom muzzle,
+    const TargetType& target, const GimbalTransform& gimbal, const MuzzleTransform& muzzle,
     uint64_t measurement_ns, uint64_t current_ns, double bullet_speed,
     const core::trajectory::solver::TrajectorySolver& solver) const noexcept {
 
@@ -97,7 +97,7 @@ std::expected<TargetPrediction, std::string> Aimer::aim_generic(
     const double age         = static_cast<double>(current_ns - measurement_ns) * 1e-9;
     const double total_delay = age + config_.delay;
 
-    const Eigen::Vector3d t            = muzzle->translation();
+    const Eigen::Vector3d t            = muzzle.translation();
     const double total_prediction_time = refine_flying_time(
         solver, [&](double dt) -> Eigen::Vector3d { return predict_position(target, dt) - t; },
         total_delay, bullet_speed);
@@ -123,7 +123,7 @@ std::expected<TargetPrediction, std::string> Aimer::aim_generic(
 
 template <class TargetType>
 std::expected<TargetPrediction, std::string> Aimer::aim_generic_no_prediction(
-    const TargetType& target, fast_tf::FuckOdom gimbal, fast_tf::FuckOdom muzzle,
+    const TargetType& target, const GimbalTransform& gimbal, const MuzzleTransform& muzzle,
     uint64_t current_ns, double bullet_speed,
     const core::trajectory::solver::TrajectorySolver& solver) const noexcept {
 
@@ -136,7 +136,7 @@ std::expected<TargetPrediction, std::string> Aimer::aim_generic_no_prediction(
     output.predicted_position  = target.predicted_position_odom;
     output.predicted_future_ns = target.predicted_future_ns;
     const auto solution =
-        solver.solve(output.predicted_position - muzzle->translation(), bullet_speed);
+        solver.solve(output.predicted_position - muzzle.translation(), bullet_speed);
     output.flying_time = solution.time_of_flight;
 
     const auto [yaw, pitch] =
@@ -154,9 +154,9 @@ std::expected<TargetPrediction, std::string> Aimer::aim_generic_no_prediction(
 // ============================================================================
 
 std::expected<TargetPrediction, std::string> Aimer::aim(
-    const L3::RobotTargetState& target, fast_tf::FuckOdom gimbal, fast_tf::FuckOdom muzzle,
-    uint64_t measurement_ns, uint64_t current_ns, double bullet_speed,
-    const core::trajectory::solver::TrajectorySolver& solver) const noexcept {
+    const L3::RobotTargetState& target, const GimbalTransform& gimbal,
+    const MuzzleTransform& muzzle, uint64_t measurement_ns, uint64_t current_ns,
+    double bullet_speed, const core::trajectory::solver::TrajectorySolver& solver) const noexcept {
     return aim_generic(target, gimbal, muzzle, measurement_ns, current_ns, bullet_speed, solver);
 }
 
@@ -165,9 +165,9 @@ std::expected<TargetPrediction, std::string> Aimer::aim(
 // ============================================================================
 
 std::expected<TargetPrediction, std::string> Aimer::aim(
-    const L3::OutpostTargetState& target, fast_tf::FuckOdom gimbal, fast_tf::FuckOdom muzzle,
-    uint64_t measurement_ns, uint64_t current_ns, double bullet_speed,
-    const core::trajectory::solver::TrajectorySolver& solver) const noexcept {
+    const L3::OutpostTargetState& target, const GimbalTransform& gimbal,
+    const MuzzleTransform& muzzle, uint64_t measurement_ns, uint64_t current_ns,
+    double bullet_speed, const core::trajectory::solver::TrajectorySolver& solver) const noexcept {
     return aim_generic(target, gimbal, muzzle, measurement_ns, current_ns, bullet_speed, solver);
 }
 
@@ -176,8 +176,8 @@ std::expected<TargetPrediction, std::string> Aimer::aim(
 // ============================================================================
 
 std::expected<TargetPrediction, std::string> Aimer::aim(
-    const energy_meter::EnergyMeterState& state, fast_tf::FuckOdom gimbal, fast_tf::FuckOdom muzzle,
-    uint64_t current_ns, double bullet_speed,
+    const energy_meter::EnergyMeterState& state, const GimbalTransform& gimbal,
+    const MuzzleTransform& muzzle, uint64_t current_ns, double bullet_speed,
     const core::trajectory::solver::TrajectorySolver& solver) const noexcept {
     return aim_generic_no_prediction(state, gimbal, muzzle, current_ns, bullet_speed, solver);
 }
