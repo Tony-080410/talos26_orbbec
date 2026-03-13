@@ -34,11 +34,10 @@ struct TransformLookupResult {
 /// @note Error messages include detailed diagnostic information
 [[nodiscard]] inline std::expected<TransformLookupResult, std::string>
     lookup_gimbal_muzzle_transforms(
-        const std::shared_ptr<fast_tf::CoordinateSystem>& tf_buffer, uint64_t current_ns) noexcept {
+        const fast_tf::CoordinateSystem& tf_buffer, uint64_t current_ns) noexcept {
     using namespace fast_tf;
 
-    auto muzzle_tf =
-        lookup_clamped<odom_fuxk_frame, muzzle_link_fuxk_frame>(*tf_buffer, current_ns);
+    auto muzzle_tf = lookup_clamped<odom_fuxk_frame, muzzle_link_fuxk_frame>(tf_buffer, current_ns);
     if (!muzzle_tf) {
         return std::unexpected(
             fmt::format(
@@ -47,7 +46,7 @@ struct TransformLookupResult {
     }
 
     auto gimbal_tf =
-        lookup_clamped<odom_fuxk_frame, fast_tf::gimbal_pitch_fuxk_frame>(*tf_buffer, current_ns);
+        lookup_clamped<odom_fuxk_frame, fast_tf::gimbal_pitch_fuxk_frame>(tf_buffer, current_ns);
     if (!gimbal_tf) {
         return std::unexpected(
             fmt::format(
@@ -70,11 +69,11 @@ struct TransformLookupResult {
     fast_tf::TransformMatrixd<fast_tf::gimbal_pitch_fuxk_frame, fast_tf::odom_fuxk_frame>,
     std::string>
     lookup_gimbal_transform(
-        const std::shared_ptr<fast_tf::CoordinateSystem>& tf_buffer, uint64_t current_ns) noexcept {
+        const fast_tf::CoordinateSystem& tf_buffer, uint64_t current_ns) noexcept {
     using namespace fast_tf;
 
     auto gimbal_tf =
-        lookup_clamped<odom_fuxk_frame, fast_tf::gimbal_pitch_fuxk_frame>(*tf_buffer, current_ns);
+        lookup_clamped<odom_fuxk_frame, fast_tf::gimbal_pitch_fuxk_frame>(tf_buffer, current_ns);
     if (!gimbal_tf) {
         return std::unexpected(
             fmt::format(

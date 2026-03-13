@@ -213,7 +213,7 @@ void example_transform_matrix() {
 
 // 创建坐标系统 (每个坐标系 1024 个历史样本)
 using CoordinateSystem = fast_tf::CoordinateSystem<1024>;
-auto tf_buffer = std::make_shared<CoordinateSystem>();
+auto tf_buffer = CoordinateSystem();
 ```
 
 ---

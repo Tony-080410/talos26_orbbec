@@ -9,6 +9,8 @@
 #include "system.hpp"
 #include "timer_factory.hpp"
 
+#include <utility>
+
 namespace talos::scheduler::rclcompat {
 using namespace system;
 using namespace talos::scheduler::detail;
@@ -245,8 +247,8 @@ public:
      * - `resource`: the resource to insert (moved)
      */
     template <typename T>
-    void insert_resource(T resource) {
-        scheduler_.world().insert_resource(std::move(resource));
+    void insert_resource(T&& resource) {
+        scheduler_.world().insert_resource(std::forward<T>(resource));
     }
 
     /**

@@ -115,7 +115,7 @@ void register_calibration_systems(
         "calibration_handeye_collector",
         [handeye_calibrator, intrinsic_result, config](
             talos::spmc<CornerDetection, CalibrationCornerChannelTopic> corner_in,
-            talos::res<std::shared_ptr<fast_tf::CoordinateSystem>> tf_buffer,
+            talos::res<fast_tf::CoordinateSystem> tf_buffer,
             talos::res_mut<std::shared_ptr<CalibrationStatus>> status) {
             if (!corner_in.has_new()) {
                 return;

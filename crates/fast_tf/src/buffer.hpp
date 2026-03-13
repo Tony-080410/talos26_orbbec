@@ -89,6 +89,21 @@ public:
               StoredSample{value, 0}
     } {}
 
+    Buffer(const Buffer&)            = delete;
+    Buffer& operator=(const Buffer&) = delete;
+
+    Buffer(Buffer&& other) noexcept(std::is_nothrow_move_assignable_v<decltype(buffer_)>) {
+        move_from(std::move(other));
+    }
+
+    Buffer&
+        operator=(Buffer&& other) noexcept(std::is_nothrow_move_assignable_v<decltype(buffer_)>) {
+        if (this != &other) {
+            move_assign_from(std::move(other));
+        }
+        return *this;
+    }
+
     void push(timestamp_ns_t timestamp_ns, const T& value) noexcept requires(!is_static) {
         if (!Ops::is_valid(value)) {
             return;
@@ -280,6 +295,37 @@ private:
         T value{};
         timestamp_ns_t timestamp = 0;
     };
+
+    void move_from(Buffer&& other) noexcept(std::is_nothrow_move_assignable_v<decltype(buffer_)>) {
+        typename mutex_type::scoped_lock lock(other.mutex_);
+        buffer_    = std::move(other.buffer_);
+        head_      = other.head_;
+        size_      = other.size_;
+        oldest_ts_ = other.oldest_ts_;
+        newest_ts_ = other.newest_ts_;
+        reset_moved_from(other);
+    }
+
+    void move_assign_from(Buffer&& other) noexcept(
+        std::is_nothrow_move_assignable_v<decltype(buffer_)>) {
+        typename mutex_type::scoped_lock this_lock(mutex_);
+        typename mutex_type::scoped_lock other_lock(other.mutex_);
+        buffer_    = std::move(other.buffer_);
+        head_      = other.head_;
+        size_      = other.size_;
+        oldest_ts_ = other.oldest_ts_;
+        newest_ts_ = other.newest_ts_;
+        reset_moved_from(other);
+    }
+
+    static void reset_moved_from(Buffer& other) noexcept {
+        if constexpr (!is_static) {
+            other.head_      = 0;
+            other.size_      = 0;
+            other.oldest_ts_ = 0;
+            other.newest_ts_ = 0;
+        }
+    }
 
     [[nodiscard]] Timestamped materialize(const StoredSample& sample) const {
         return Timestamped{sample.value, sample.timestamp};

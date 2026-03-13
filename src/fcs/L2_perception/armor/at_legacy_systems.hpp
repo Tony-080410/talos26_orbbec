@@ -36,7 +36,7 @@ class AtLegacyPnPSolver;
 ///
 /// - `scheduler`: the scheduler to register systems with
 /// - `config`: L2 perception configuration (will be moved into resource)
-void register_at_legacy_detection_systems(talos::Scheduler& scheduler, AtLegacyConfig&& config);
+void register_at_legacy_detection_systems(talos::Scheduler& scheduler);
 
 // ============================================================================
 // Configuration Helpers

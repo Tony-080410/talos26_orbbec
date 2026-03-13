@@ -73,7 +73,7 @@ void register_chiral_collector_system(talos::Scheduler& scheduler) {
         [writer_storage =
              std::make_shared<talos::chiral::ipc::TalosDataWriter>(std::move(*writer))](
             talos::spmc<L3::TrackerOutput, TrackerOutputChannelTopic> tracker_in,
-            talos::res<std::shared_ptr<fast_tf::CoordinateSystem>> tf_buffer) mutable {
+            talos::res<fast_tf::CoordinateSystem> tf_buffer) mutable {
             // Check for new tracker data
             if (!tracker_in.has_new()) {
                 return;
@@ -132,7 +132,7 @@ void register_chiral_collector_system(talos::Scheduler& scheduler) {
 
             // Lookup gimbal transform (odom -> gimbal)
             auto gimbal_tf = lookup_clamped<fast_tf::odom, fast_tf::gimbal_pitch_fuxk_frame>(
-                *tf_buffer->get(), current_ns);
+                *tf_buffer, current_ns);
             if (gimbal_tf) {
                 auto translation                     = gimbal_tf.value().translation();
                 auto rotation                        = gimbal_tf.value().quaternion();
@@ -148,8 +148,8 @@ void register_chiral_collector_system(talos::Scheduler& scheduler) {
             }
 
             // Lookup camera transform (gimbal -> camera)
-            auto camera_tf = lookup_clamped<fast_tf::gimbal, camera_link_fuxk_frame>(
-                *tf_buffer->get(), current_ns);
+            auto camera_tf =
+                lookup_clamped<fast_tf::gimbal, camera_link_fuxk_frame>(*tf_buffer, current_ns);
             if (camera_tf) {
 
                 auto translation                     = camera_tf.value().translation();
@@ -166,8 +166,8 @@ void register_chiral_collector_system(talos::Scheduler& scheduler) {
             }
 
             // Lookup muzzle transform (odom -> muzzle)
-            auto muzzle_tf = lookup_clamped<odom_fuxk_frame, muzzle_link_fuxk_frame>(
-                *tf_buffer->get(), current_ns);
+            auto muzzle_tf =
+                lookup_clamped<odom_fuxk_frame, muzzle_link_fuxk_frame>(*tf_buffer, current_ns);
             if (muzzle_tf) {
                 auto translation                     = muzzle_tf.value().translation();
                 auto rotation                        = muzzle_tf.value().quaternion();

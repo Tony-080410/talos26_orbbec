@@ -5,11 +5,14 @@
 #include "system/system_meta.hpp"
 
 #include <any>
+#include <concepts>
 #include <memory>
 #include <spdlog/spdlog.h>
 #include <string>
+#include <type_traits>
 #include <typeindex>
 #include <unordered_map>
+#include <utility>
 
 namespace talos::scheduler {
 
@@ -21,8 +24,17 @@ template <typename T>
 struct Resource {
     T value;
 
-    explicit Resource(T val) noexcept
-        : value(std::move(val)) {}
+    Resource() noexcept(std::is_nothrow_default_constructible_v<T>)
+        requires std::default_initializable<T> = default;
+
+    template <typename... Args>
+    explicit Resource(std::in_place_t, Args&&... args) noexcept(
+        std::is_nothrow_constructible_v<T, Args&&...>)
+        : value(std::forward<Args>(args)...) {}
+
+    template <typename U>
+    explicit Resource(U&& val) noexcept(std::is_nothrow_constructible_v<T, U&&>)
+        : value(std::forward<U>(val)) {}
 };
 
 // ============================================================================
@@ -102,8 +114,17 @@ public:
     // ==================== Resource API ====================
 
     template <typename T>
-    void insert_resource(T resource) {
-        resources_[typeid(T)] = std::make_shared<Resource<T>>(std::move(resource));
+    void insert_resource(T&& resource) {
+        using U               = std::remove_cvref_t<T>;
+        resources_[typeid(U)] = std::make_shared<Resource<U>>(std::forward<T>(resource));
+    }
+
+    template <typename T, typename... Args>
+    [[nodiscard]] T& emplace_resource(Args&&... args) {
+        auto storage = std::make_shared<Resource<T>>(std::in_place, std::forward<Args>(args)...);
+        auto& value  = storage->value;
+        resources_[typeid(T)] = std::move(storage);
+        return value;
     }
 
     template <typename T>

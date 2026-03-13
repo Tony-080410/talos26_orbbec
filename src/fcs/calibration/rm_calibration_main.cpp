@@ -21,7 +21,7 @@
 #include "core/channel_topics.hpp"
 #include "core/time.hpp"
 #include "foxglove_server.hpp"
-#include "infantry.hpp"
+#include "robot_factory.hpp"
 #include "runtime/l1_l2_setup.hpp"
 #include "scheduler/scheduler.hpp"
 #include "toml_helper.hpp"
@@ -186,8 +186,8 @@ int main(int argc, char* argv[]) {
     talos::Scheduler scheduler(world);
 
     // Create TF buffer
-    auto tf_buffer = fast_tf::infantry_new();
-    world.insert_resource(tf_buffer);
+    auto& tf_buffer = world.emplace_resource<fast_tf::CoordinateSystem>();
+    fast_tf::init_infantry_system(tf_buffer);
 
     // Create hardware config if using real hardware
     fcs::HardwareConfig hardware_config;

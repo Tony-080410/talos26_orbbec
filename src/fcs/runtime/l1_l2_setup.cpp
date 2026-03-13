@@ -31,7 +31,7 @@ struct DaedalusImu {
     std::shared_ptr<ipc::ShmClient> ipc_device;
 
     void system(
-        talos::res_mut<std::shared_ptr<fast_tf::CoordinateSystem>> tf_buffer,
+        talos::res_mut<fast_tf::CoordinateSystem> tf_buffer,
         [[maybe_unused]] core::trajectory::bullet_speed_mut bullet_speed,
         [[maybe_unused]] core::detecting_color_mut detecting_color,
         [[maybe_unused]] core::imu_state_mut imu_state) noexcept {
@@ -39,25 +39,25 @@ struct DaedalusImu {
             const Eigen::Quaterniond q(pose->qw, pose->qx, pose->qy, pose->qz);
             // const Eigen::Quaterniond q(1.0, 0, 0, 0);
             fast_tf::update(
-                *tf_buffer->get(),
+                *tf_buffer,
                 fast_tf::EdgeTransform<fast_tf::gimbal>::from_quaternion_xyz(
                     q, pose->x, pose->y, pose->z),
                 pose->timestamp_ns);
             fast_tf::update(
-                *tf_buffer->get(),
+                *tf_buffer,
                 fast_tf::EdgeTransform<fast_tf::gimbal_pitch_fuxk_frame>::from_rpy(0, 0, 0),
                 pose->timestamp_ns);
         }
         if (const auto pose = ipc_device->recv_pose(ipc::POSE_ODOM)) {
             fast_tf::update(
-                *tf_buffer->get(),
+                *tf_buffer,
                 fast_tf::EdgeTransform<fast_tf::odom>::from_translation(pose->x, pose->y, pose->z),
                 pose->timestamp_ns);
         }
         if (const auto pose = ipc_device->recv_pose(ipc::POSE_CAMERA)) {
             const Eigen::Quaterniond q(pose->qw, pose->qx, pose->qy, pose->qz);
             fast_tf::update(
-                *tf_buffer->get(),
+                *tf_buffer,
                 fast_tf::EdgeTransform<fast_tf::camera_link_fuxk_frame>::from_quaternion_xyz(
                     q, pose->x, pose->y, pose->z),
                 pose->timestamp_ns);
@@ -65,7 +65,7 @@ struct DaedalusImu {
         if (const auto pose = ipc_device->recv_pose(ipc::POSE_MUZZLE)) {
             const Eigen::Quaterniond q(pose->qw, pose->qx, pose->qy, pose->qz);
             fast_tf::update(
-                *tf_buffer->get(),
+                *tf_buffer,
                 fast_tf::EdgeTransform<fast_tf::muzzle_link_fuxk_frame>::from_quaternion_xyz(
                     q, pose->x, pose->y, pose->z),
                 pose->timestamp_ns);
@@ -84,17 +84,16 @@ struct UsbImu {
     talos_gimbal::ReceiveImuData* imu_data = nullptr;
 
     void system(
-        talos::res_mut<std::shared_ptr<fast_tf::CoordinateSystem>> tf_buffer,
+        talos::res_mut<fast_tf::CoordinateSystem> tf_buffer,
         core::trajectory::bullet_speed_mut bullet_speed, core::detecting_color_mut detecting_color,
         core::imu_state_mut imu_state) noexcept {
         device->handle_events();
         const uint64_t timestamp_ns = fcs::clock::now_ns();
         fast_tf::update_rotate_only<fast_tf::gimbal_yaw_fuxk_frame>(
-            *tf_buffer->get(), math_fuxk::rpy<double>(imu_data->data.roll, 0.0, imu_data->data.yaw),
+            *tf_buffer, math_fuxk::rpy<double>(imu_data->data.roll, 0.0, imu_data->data.yaw),
             timestamp_ns);
         fast_tf::update_rotate_only<fast_tf::gimbal_pitch_fuxk_frame>(
-            *tf_buffer->get(), math_fuxk::rpy<double>(0.0, imu_data->data.pitch, 0.0),
-            timestamp_ns);
+            *tf_buffer, math_fuxk::rpy<double>(0.0, imu_data->data.pitch, 0.0), timestamp_ns);
         double new_speed = imu_data->data.bullet_speed;
         if (new_speed != bullet_speed->bullet_speed) [[unlikely]] {
             SPDLOG_INFO("bullet speed changed: {} -> {}", bullet_speed->bullet_speed, new_speed);
@@ -117,7 +116,7 @@ struct Imu {
     std::variant<DaedalusImu, UsbImu> impl;
 
     void system(
-        talos::res_mut<std::shared_ptr<fast_tf::CoordinateSystem>> tf_buffer,
+        talos::res_mut<fast_tf::CoordinateSystem> tf_buffer,
         core::trajectory::bullet_speed_mut bullet_speed, core::detecting_color_mut detecting_color,
         core::imu_state_mut imu_state) noexcept {
         std::visit(
@@ -201,7 +200,7 @@ std::expected<L1L2SetupResult, std::string> setup_l1(
     scheduler.add_system<talos::fixed_rate_silent<1000, 1>>(
         "imu_reader",
         [imu = std::move(imu)](
-            talos::res_mut<std::shared_ptr<fast_tf::CoordinateSystem>> tf_buffer,
+            talos::res_mut<fast_tf::CoordinateSystem> tf_buffer,
             core::trajectory::bullet_speed_mut bullet_speed,
             core::detecting_color_mut detecting_color, core::imu_state_mut imu_state) {
             imu->system(tf_buffer, bullet_speed, detecting_color, imu_state);

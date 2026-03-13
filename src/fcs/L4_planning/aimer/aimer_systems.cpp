@@ -32,7 +32,7 @@ void register_aimer_systems(talos::Scheduler& scheduler, L4Config&& config) {
             core::trajectory::bullet_speed bullet_speed_,
             talos::spmc<L3::TrackerOutput, TrackerOutputChannelTopic> tracker_in,
             talos::spmc<energy_meter::EnergyMeterState, EnergyMeterStateChannelTopic> rune_in,
-            talos::res<std::shared_ptr<fast_tf::CoordinateSystem>> tf_buffer,
+            talos::res<fast_tf::CoordinateSystem> tf_buffer,
             talos::spmc_mut<GimbalPlan, GimbalPlanChannelTopic> aimer_out) mutable {
             std::expected<TargetPrediction, std::string> aim_result = std::unexpected("none");
 

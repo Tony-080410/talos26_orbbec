@@ -60,7 +60,7 @@ void register_rune_detection_systems(talos::Scheduler& scheduler, RuneDetectorCo
             talos::spmc_mut<RuneObservation, RuneObservationChannelTopic> obs_out,
             talos::spmc_mut<RuneDebugFrame, RuneDebugFrameChannelTopic> debug_out,
             talos::res<RuneDetectorConfig> cfg, talos::res<CameraConfig> cam_cfg,
-            talos::res<std::shared_ptr<fast_tf::CoordinateSystem>> tf_system) mutable {
+            talos::res<fast_tf::CoordinateSystem> tf_system) mutable {
             if (!image_in.has_new()) {
                 return;
             }
@@ -116,7 +116,7 @@ void register_rune_detection_systems(talos::Scheduler& scheduler, RuneDetectorCo
             //}
 
             auto tf_camera_odom = fast_tf::lookup_clamped<fast_tf::odom, fast_tf::camera_optical>(
-                **tf_system, frame->timestamp_ns);
+                *tf_system, frame->timestamp_ns);
 
             if (!tf_camera_odom) {
                 SPDLOG_DEBUG(

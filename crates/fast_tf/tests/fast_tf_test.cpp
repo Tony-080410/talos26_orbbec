@@ -174,7 +174,7 @@ TEST(TypedTransformMatrixTest, CompositionAndInverseAreStronglyTyped) {
 
 TEST(FrameLookupTest, TypedLookupReturnsFrameSpecificTransform) {
     const auto system = hero_new(0);
-    const auto result = lookup_clamped<odom_fuxk_frame, camera_link_fuxk_frame>(*system, 0);
+    const auto result = lookup_clamped<odom_fuxk_frame, camera_link_fuxk_frame>(system, 0);
 
     ASSERT_TRUE(result.has_value());
     static_assert(std::is_same_v<

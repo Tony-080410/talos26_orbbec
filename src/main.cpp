@@ -165,11 +165,12 @@ int main() {
     talos::Scheduler scheduler(world);
 
     // Create coordinate system for fast_tf lookups (required by IMU and planning systems)
+    auto& tf_buffer = world.emplace_resource<fast_tf::CoordinateSystem>();
     switch (robot) {
-    case fcs::RobotType::Infantry: world.insert_resource(fast_tf::create_infantry_system()); break;
-    case fcs::RobotType::Hero: world.insert_resource(fast_tf::create_hero_system()); break;
-    case fcs::RobotType::Sentry: world.insert_resource(fast_tf::create_sentry_system()); break;
-    case fcs::RobotType::Drone: world.insert_resource(fast_tf::create_drone_system()); break;
+    case fcs::RobotType::Infantry: fast_tf::init_infantry_system(tf_buffer); break;
+    case fcs::RobotType::Hero: fast_tf::init_hero_system(tf_buffer); break;
+    case fcs::RobotType::Sentry: fast_tf::init_sentry_system(tf_buffer); break;
+    case fcs::RobotType::Drone: fast_tf::init_drone_system(tf_buffer); break;
     }
 
     // Insert config as shared resource (for foxglove and other systems)
@@ -204,7 +205,7 @@ int main() {
     SPDLOG_INFO("Trajectory resources configured (bullet_speed={:.1f}m/s)", bullet_speed);
 
     // Register AT Legacy detection pipeline systems
-    fcs::L2::register_at_legacy_detection_systems(scheduler, std::move(vision.at_legacy));
+    fcs::L2::register_at_legacy_detection_systems(scheduler);
     fcs::rune::register_rune_detection_systems(scheduler, std::move(vision.rune_detector));
 
     // Register L3 Tracker pipeline (Measurement -> TrackerOutput)

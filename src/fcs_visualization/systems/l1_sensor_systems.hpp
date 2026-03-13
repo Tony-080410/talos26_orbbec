@@ -37,7 +37,7 @@ void register_l1_sensor_systems(App& app) {
         [](talos::spmc<AtLegacyArmorDetectionBatch, AtLegacyDetectionChannelTopic> det_in,
            talos::res<std::shared_ptr<FoxgloveServer>> server, talos::res<CameraConfig> cam,
            core::detecting_color detecting_color_,
-           talos::res<std::shared_ptr<fast_tf::CoordinateSystem>> tf_buffer) {
+           talos::res<fast_tf::CoordinateSystem> tf_buffer) {
             if (!detail::foxglove_ready(*server, det_in)) {
                 return;
             }
@@ -48,7 +48,7 @@ void register_l1_sensor_systems(App& app) {
             }
 
             // Publish TF
-            (*server)->publish_tf(**tf_buffer, batch->timestamp_ns);
+            (*server)->publish_tf(*tf_buffer, batch->timestamp_ns);
 
             // Clone image and draw detection boxes
             cv::Mat img_bgr = batch->image.clone();
