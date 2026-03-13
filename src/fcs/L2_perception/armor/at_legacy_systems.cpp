@@ -3,7 +3,9 @@
 #include "L2_perception/armor/at_legacy_config.hpp"
 #include "L2_perception/armor/at_legacy_detector_backend.hpp"
 #include "L2_perception/armor/at_legacy_pnp_solver.hpp"
+#include "core/armor_types.hpp"
 #include "core/channel_topics.hpp"
+#include "core/runtime.hpp"
 #include "frame.hpp"
 #include "scheduler/scheduler.hpp"
 
@@ -14,7 +16,6 @@
 namespace fcs::L2 {
 
 void register_at_legacy_detection_systems(talos::Scheduler& scheduler, AtLegacyConfig&& config) {
-    scheduler.world().insert_resource(std::move(config));
     scheduler.add_system<talos::fixed_rate<200>>(
         "at_legacy_armor_detector_pnp_solver",
         [](talos::spmc<AtLegacyImageFrame, AtLegacyImageChannelTopic> image_in,
@@ -25,7 +26,7 @@ void register_at_legacy_detection_systems(talos::Scheduler& scheduler, AtLegacyC
            talos::res_mut<std::shared_ptr<AtLegacyDetectorBackend>> backend_ptr,
            talos::res<std::shared_ptr<AtLegacyPnPSolver>> solver_ptr,
            talos::res<std::shared_ptr<fast_tf::CoordinateSystem>> tf_system,
-           talos::res<AtLegacyConfig> config_res) mutable {
+           core::detecting_color detecting_color_) mutable {
             if (!image_in.has_new()) {
                 return;
             }
@@ -39,7 +40,7 @@ void register_at_legacy_detection_systems(talos::Scheduler& scheduler, AtLegacyC
                 return;
             }
 
-            const auto detect_color = config_res->detector.detect_color;
+            ArmorColor detect_color = *detecting_color_;
             // Re-apply detect color before each detection and enforce color before PnP.
             backend->set_detect_color(detect_color);
 

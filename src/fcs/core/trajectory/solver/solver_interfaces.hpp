@@ -3,7 +3,6 @@
 #include "core/trajectory/model/ballistic_model.hpp"
 #include <Eigen/Core>
 
-#include <memory>
 #include <string_view>
 #include <utility>
 #include <vector>

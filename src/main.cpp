@@ -174,11 +174,11 @@ int main() {
 
     // Insert config as shared resource (for foxglove and other systems)
     world.insert_resource(robot);
-    world.insert_resource(std::make_shared<fcs::VisionConfig>(vision));
 
     // Save config values for logging before move
-    const double bullet_speed = vision.trajectory.model.bullet_speed;
+    const double bullet_speed = vision.trajectory.default_bullet_speed;
 
+    world.insert_resource(vision.at_legacy.default_detect_color);
     auto setup_result =
         fcs::runtime::setup_l1(world, scheduler, daedalus, hardware ? &*hardware : nullptr);
     if (!setup_result) {
@@ -194,7 +194,7 @@ int main() {
 
     SPDLOG_INFO(
         "detector backend: {} (color={})", backend_handle_result->name,
-        vision.at_legacy.detector.detect_color);
+        vision.at_legacy.default_detect_color);
 
     world.insert_resource(std::move(backend_handle_result->backend));
     world.insert_resource(fcs::L2::create_pnp_solver(setup_result.value().camera_config));

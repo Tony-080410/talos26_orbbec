@@ -1,7 +1,6 @@
 # Infantry Vision Configuration
 # extend from vision_base.toml
 
-trajectory.cd = 0.22516
 trajectory.diameter = 0.017
 trajectory.mass = 0.00312
 trajectory.bullet_speed = 22.0

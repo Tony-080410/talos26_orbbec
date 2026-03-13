@@ -140,22 +140,12 @@ struct AtLegacyAxeraConfig {
 #endif
 
 // ============================================================================
-// AT Legacy Detector Config (combines Traditional + NN)
-// ============================================================================
-
-struct AtLegacyDetectorConfig {
-    AtLegacyBackendTypeConfig backend_type = AtLegacyBackendTypeConfig::Traditional;
-    ArmorColor detect_color; // 0=BLUE, 1=RED
-
-    std::expected<void, std::string> read_from(const toml::table& tbl) noexcept;
-};
-
-// ============================================================================
 // AT Legacy Full Config
 // ============================================================================
 
 struct AtLegacyConfig {
-    AtLegacyDetectorConfig detector{};
+    AtLegacyBackendTypeConfig backend_type = AtLegacyBackendTypeConfig::Traditional;
+    ArmorColor default_detect_color; // 0=BLUE, 1=RED
     AtLegacyTraditionalConfig traditional{};
     AtLegacyNNConfig nn{};
     AtLegacyNNTupConfig nn_tup{};

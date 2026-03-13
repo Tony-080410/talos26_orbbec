@@ -132,7 +132,6 @@ set(FCS_SOURCES
         src/fcs/config.cpp
         src/fcs/camera_config.cpp
         src/fcs/chiral/chiral_collector_system.cpp
-        src/fcs/core/trajectory/ballistic_model.cpp
         src/fcs/core/trajectory/solver/trajectory_solver.cpp
         src/fcs/L1_sensor/camera_interface.cpp
         src/fcs/L1_sensor/output_interface.cpp

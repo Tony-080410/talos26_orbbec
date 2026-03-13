@@ -3,7 +3,6 @@
 
 trajectory.bullet_speed = 21.0
 
-trajectory.cd = 0.22516
 trajectory.diameter = 0.017
 trajectory.mass = 0.00312
 

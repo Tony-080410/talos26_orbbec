@@ -1,6 +1,5 @@
-[detector]
-backend_type = "Traditional"  # Options: "Traditional", "NeuralNetwork", "NeuralNetworkTup", "TensorRT"
-detect_color = "Blue"
+backend_type = "Traditional"  # Options: "Traditional", "NeuralNetwork", "NeuralNetworkTup", "TensorRT", "Axera"
+default_detect_color = "Blue"
 
 # Required if backend_type = "traditional"
 [traditional]
@@ -119,25 +118,11 @@ type = "LinearDrag"
 
 iteration_times = 10
 
-bullet_speed = 25.0
+default_bullet_speed = 25.0
 gravity = 9.7997
 resistance = 0.0005
 
-cd = 0.47
 rho = 1.225
-diameter = 0.017
-mass = 0.0032
-
-rk4_dt = 0.05
-rk4_min_steps = 100
-rk4_max_steps = 2000
-
-table_range_max = 20.0
-
-table_range_step = 0.01
-table_pitch_min = -0.6
-table_pitch_max = 0.9
-table_pitch_step = 0.01
 
 # Reference trajectory generator configuration (for L5 MPC)
 [ref_trajectory_generator]

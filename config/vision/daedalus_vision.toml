@@ -6,8 +6,7 @@ compensator_type = "Ideal"
 traditional.advanced_binary = true
 
 [trajectory]
-bullet_speed = 25.0
-cd = 0.22516
+default_bullet_speed = 25.0
 diameter = 0.017
 mass = 0.00312
 gravity = 9.81

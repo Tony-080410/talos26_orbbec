@@ -29,7 +29,7 @@ void register_aimer_systems(talos::Scheduler& scheduler, L4Config&& config) {
         "l4_aimer",
         [aimer](
             talos::res<L4Config> cfg, core::trajectory::trajectory_solver solver,
-            core::trajectory::trajectory_config traj_conf,
+            core::trajectory::bullet_speed bullet_speed_,
             talos::spmc<L3::TrackerOutput, TrackerOutputChannelTopic> tracker_in,
             talos::spmc<energy_meter::EnergyMeterState, EnergyMeterStateChannelTopic> rune_in,
             talos::res<std::shared_ptr<fast_tf::CoordinateSystem>> tf_buffer,
@@ -51,7 +51,7 @@ void register_aimer_systems(talos::Scheduler& scheduler, L4Config&& config) {
                 return;
             }
             const auto& solver_ref    = **solver;
-            const double bullet_speed = traj_conf->bullet_speed;
+            const double bullet_speed = bullet_speed_->bullet_speed;
 
             // Try Robot/Outpost from tracker
             const auto tracker_output = tracker_in.read();

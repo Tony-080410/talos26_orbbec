@@ -7,11 +7,19 @@
 
 namespace fcs::core::trajectory {
 
+struct bullet_speed_data {
+    double bullet_speed;
+};
 using trajectory_solver = talos::res<std::unique_ptr<solver::TrajectorySolver>>;
 using trajectory_config = talos::res<model::ModelConfig>;
 
+using bullet_speed     = talos::res<bullet_speed_data>;
+using bullet_speed_mut = talos::res_mut<bullet_speed_data>;
+
 constexpr void register_resource(talos::Scheduler& scheduler, TrajectoryConfig&& config) noexcept {
     scheduler.world().insert_resource(config.model);
+    scheduler.world().insert_resource(
+        bullet_speed_data{.bullet_speed = config.default_bullet_speed});
     auto solver = solver::create_solver(config);
     scheduler.world().insert_resource(std::move(solver));
 }

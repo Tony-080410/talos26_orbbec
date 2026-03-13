@@ -116,10 +116,10 @@ void AtLegacyDetectorBackend::set_detect_color(ArmorColor color) noexcept {
 
 [[nodiscard]] std::expected<AtLegacyDetectorBackend, DetectorError>
     create_detector_backend(const AtLegacyConfig& config) {
-    switch (config.detector.backend_type) {
+    switch (config.backend_type) {
     case AtLegacyBackendTypeConfig::Traditional: {
         auto backend = std::make_unique<AtLegacyTraditionalBackend>(config.traditional);
-        backend->set_detect_color(config.detector.detect_color);
+        backend->set_detect_color(config.default_detect_color);
         return AtLegacyDetectorBackend(std::move(backend));
     }
 #if TALOS_HAS_OPENVINO
@@ -128,7 +128,7 @@ void AtLegacyDetectorBackend::set_detect_color(ArmorColor color) noexcept {
         if (auto result = backend->init(); !result) {
             return std::unexpected(result.error());
         }
-        backend->set_detect_color(config.detector.detect_color);
+        backend->set_detect_color(config.default_detect_color);
         return AtLegacyDetectorBackend(std::move(backend));
     }
     case AtLegacyBackendTypeConfig::NeuralNetworkTup: {
@@ -136,7 +136,7 @@ void AtLegacyDetectorBackend::set_detect_color(ArmorColor color) noexcept {
         if (auto result = backend->init(); !result) {
             return std::unexpected(result.error());
         }
-        backend->set_detect_color(config.detector.detect_color);
+        backend->set_detect_color(config.default_detect_color);
         return AtLegacyDetectorBackend(std::move(backend));
     }
 #endif
@@ -146,7 +146,7 @@ void AtLegacyDetectorBackend::set_detect_color(ArmorColor color) noexcept {
         if (!backend->is_initialized()) {
             return std::unexpected(DetectorError::InitFailed);
         }
-        backend->set_detect_color(config.detector.detect_color);
+        backend->set_detect_color(config.default_detect_color);
         return AtLegacyDetectorBackend(std::move(backend));
     }
 #endif
@@ -156,7 +156,7 @@ void AtLegacyDetectorBackend::set_detect_color(ArmorColor color) noexcept {
         if (auto result = backend->init(); !result) {
             return std::unexpected(result.error());
         }
-        backend->set_detect_color(config.detector.detect_color);
+        backend->set_detect_color(config.default_detect_color);
         return AtLegacyDetectorBackend(std::move(backend));
     }
 #endif

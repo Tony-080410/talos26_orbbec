@@ -5,6 +5,5 @@ compensator_type = "RK4"
 
 [trajectory]
 bullet_speed = 11.0
-cd = 0.382987
 diameter = 0.041
 mass = 0.052

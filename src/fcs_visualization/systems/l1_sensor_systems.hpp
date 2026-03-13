@@ -1,6 +1,7 @@
 #pragma once
 
 #include "base.hpp"
+#include "core/runtime.hpp"
 #include "foxglove_types.hpp"
 #include "scene_builder.hpp"
 #include "system_helpers.hpp"
@@ -35,7 +36,7 @@ void register_l1_sensor_systems(App& app) {
         "foxglove_l1_image_pub",
         [](talos::spmc<AtLegacyArmorDetectionBatch, AtLegacyDetectionChannelTopic> det_in,
            talos::res<std::shared_ptr<FoxgloveServer>> server, talos::res<CameraConfig> cam,
-           talos::res<L2::AtLegacyConfig> legacy_config,
+           core::detecting_color detecting_color_,
            talos::res<std::shared_ptr<fast_tf::CoordinateSystem>> tf_buffer) {
             if (!detail::foxglove_ready(*server, det_in)) {
                 return;
@@ -55,9 +56,9 @@ void register_l1_sensor_systems(App& app) {
             // Determine ally color from config (opposite of detect_color)
             // detect_color is enemy color, so ally is the opposite
             const cv::Scalar ally_color =
-                (legacy_config->detector.detect_color == ArmorColor::Red)
-                    ? cv::Scalar(255, 0, 0)  // BGR: Blue (ally is blue when detecting red enemies)
-                    : cv::Scalar(0, 0, 255); // BGR: Red (ally is red when detecting blue enemies)
+                (*detecting_color_ == ArmorColor::Red)
+                    ? cv::Scalar(0, 0, 255)  // BGR: Red (ally is red when detecting red enemies)
+                    : cv::Scalar(255, 0, 0); // BGR: Blue (ally is blue when detecting blue enemies)
 
             // Draw optical center (principal point) with ally color
             // cx, cy are at camera_matrix(0,2) and camera_matrix(1,2)

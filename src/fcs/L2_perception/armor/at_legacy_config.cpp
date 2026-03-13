@@ -53,15 +53,9 @@ std::expected<void, std::string> AtLegacyNNTupConfig::read_from(const toml::tabl
     return {};
 }
 
-std::expected<void, std::string>
-    AtLegacyDetectorConfig::read_from(const toml::table& tbl) noexcept {
-    READ(tbl, backend_type);
-    READ(tbl, detect_color);
-    return {};
-}
-
 std::expected<void, std::string> AtLegacyConfig::read_from(const toml::table& tbl) noexcept {
-    READ(tbl, detector);
+    READ(tbl, backend_type);
+    READ(tbl, default_detect_color);
     // Read backend-specific config based on type
     READ(tbl, traditional);
     READ(tbl, nn);
