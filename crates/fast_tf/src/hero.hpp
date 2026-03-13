@@ -33,7 +33,8 @@ inline std::shared_ptr<CoordinateSystem> hero_new(timestamp_ns_t ts = 0) {
     // camera_link -> gimbal_link (static)
     update<camera_link_fuxk_frame>(
         *system,
-        EdgeTransform<camera_link_fuxk_frame>::from_rpy(0, to_rad(-1.0), 0.0, 0.25391, 0.0735, 0.00639),
+        EdgeTransform<camera_link_fuxk_frame>::from_rpy(
+            0, to_rad(-1.0), 0.0, 0.25391, 0.0735, 0.00639),
         0);
 
     // camera_optical -> camera_link (static)
