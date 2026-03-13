@@ -124,7 +124,6 @@ std::expected<void, std::string> AtLegacyAxeraConfig::read_from(const toml::tabl
     READ(tbl, model_path);
     READ(tbl, confidence_threshold);
     READ(tbl, top_k);
-    READ_OPT(tbl, postprocess_option);
 
     // Validate top_k > 0
     if (top_k <= 0) {

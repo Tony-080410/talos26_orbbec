@@ -62,10 +62,9 @@ top_k = 128
 
 # Required if backend_type = "Axera" (AX650 NPU)
 [axera]
-model_path = "models/u16_attn.axmodel"  # Path to AX650 .axmodel file
+model_path = "models/compiled.axmodel"  # Path to AX650 .axmodel file
 confidence_threshold = 0.15
 top_k = 128 # works when o2m
-postprocess_option = "O2O"  # "FourHead" or "O2O"
 
 [tracker]
 [tracker.robot]

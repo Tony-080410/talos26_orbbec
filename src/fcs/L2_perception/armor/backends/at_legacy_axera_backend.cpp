@@ -4,23 +4,34 @@
 #include "core/types.hpp"
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <cstddef>
+#include <cstdint>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
+#include <limits>
+#include <utility>
 
 #include <opencv2/imgproc.hpp>
 #include <spdlog/spdlog.h>
 
 namespace fcs::L2 {
 
-// ============================================================================
-// Scoped Timer (RAII)
-// ============================================================================
-
 namespace {
+
+// 快速 sigmoid（直接用 std::exp，但提前过滤减少调用次数）
+inline float fast_sigmoid(float x) noexcept {
+    if (x > 6.0f)
+        return 1.0f;
+    if (x < -6.0f)
+        return 0.0f;
+    return 1.0f / (1.0f + std::exp(-x));
+}
+
 class ScopedTimer {
 public:
     explicit ScopedTimer(std::string name)
@@ -34,141 +45,36 @@ public:
         }
         const auto end      = std::chrono::high_resolution_clock::now();
         const auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start_);
+        (void)duration;
         SPDLOG_DEBUG("[AxeraBackend] {} elapsed: {} us", name_, duration.count());
-    }
-
-    [[nodiscard]] double elapsed_us() const {
-        const auto now = std::chrono::high_resolution_clock::now();
-        return static_cast<double>(
-            std::chrono::duration_cast<std::chrono::microseconds>(now - start_).count());
     }
 
 private:
     std::string name_;
     std::chrono::high_resolution_clock::time_point start_;
 };
-} // anonymous namespace
 
-// ============================================================================
-// Constants
-// ============================================================================
-
-namespace {
 constexpr int AX_CMM_ALIGN_SIZE           = 128;
 constexpr const char* AX_CMM_SESSION_NAME = "ax-samples-cmm";
-constexpr int AX_IVPS_ALIGN               = 16;  // IVPS requires 16-byte alignment
+constexpr std::array<int, 3> STRIDES      = {8, 16, 32};
+constexpr float GRID_OFFSET               = 0.5f;
+constexpr float NMS_IOU_THRESHOLD         = 0.70f;
+constexpr float FOUR_THIRDS               = 4.0f / 3.0f;
+constexpr float FOUR_THIRDS_TOLERANCE     = 0.01f;
+constexpr std::array<int, 4> KPT_ORDER    = {1, 2, 3, 0};
 
-// Memory allocation strategy (matching AXCL)
 enum class AX_ENGINE_ALLOC_BUFFER_STRATEGY_T {
     DEFAULT = 0,
     CACHED  = 1,
 };
 
-// Helper: free IO buffer by index
-void free_io_index(AX_ENGINE_IO_BUFFER_T* io_buf, size_t index) {
-    for (size_t i = 0; i < index; ++i) {
-        AX_ENGINE_IO_BUFFER_T* pBuf = io_buf + i;
-        AX_SYS_MemFree(pBuf->phyAddr, pBuf->pVirAddr);
-    }
-}
+struct RankedAnchor {
+    float best_obj_logit = -std::numeric_limits<float>::infinity();
+    int pair_id          = -1;
+    int anchor_idx       = -1;
+};
 
-// Helper: free all IO
-void free_io(AX_ENGINE_IO_T* io) {
-    for (size_t j = 0; j < io->nInputSize; ++j) {
-        AX_ENGINE_IO_BUFFER_T* pBuf = io->pInputs + j;
-        AX_SYS_MemFree(pBuf->phyAddr, pBuf->pVirAddr);
-    }
-    for (size_t j = 0; j < io->nOutputSize; ++j) {
-        AX_ENGINE_IO_BUFFER_T* pBuf = io->pOutputs + j;
-        AX_SYS_MemFree(pBuf->phyAddr, pBuf->pVirAddr);
-    }
-    delete[] io->pInputs;
-    delete[] io->pOutputs;
-}
-
-// Helper: prepare IO with cached input for optimal CPU->NPU transfer
-std::expected<void, DetectorError> prepare_io(
-    AX_ENGINE_IO_INFO_T* info, AX_ENGINE_IO_T* io_data,
-    [[maybe_unused]] std::pair<AX_ENGINE_ALLOC_BUFFER_STRATEGY_T, AX_ENGINE_ALLOC_BUFFER_STRATEGY_T>
-        strategy) {
-    memset(io_data, 0, sizeof(*io_data));
-    io_data->pInputs = new AX_ENGINE_IO_BUFFER_T[info->nInputSize];
-    memset(io_data->pInputs, 0, sizeof(AX_ENGINE_IO_BUFFER_T) * info->nInputSize);
-    io_data->nInputSize = info->nInputSize;
-
-    // Allocate input buffers with CACHED memory for faster CPU writes
-    // Critical: CPU writes to cached memory, then flush before NPU reads
-    for (int i = 0; i < static_cast<int>(info->nInputSize); ++i) {
-        auto meta     = info->pInputs[i];
-        auto buffer   = &io_data->pInputs[i];
-        buffer->nSize = meta.nSize;
-
-        auto ret = AX_SYS_MemAllocCached(
-            reinterpret_cast<AX_U64*>(&buffer->phyAddr), &buffer->pVirAddr, meta.nSize,
-            AX_CMM_ALIGN_SIZE, reinterpret_cast<const AX_S8*>(AX_CMM_SESSION_NAME));
-
-        if (ret != 0) {
-            free_io_index(io_data->pInputs, i);
-            SPDLOG_ERROR("[AxeraBackend] Allocate input{} failed", i);
-            return std::unexpected(DetectorError::InitFailed);
-        }
-    }
-
-    // Allocate output buffers (use cached for output)
-    io_data->pOutputs = new AX_ENGINE_IO_BUFFER_T[info->nOutputSize];
-    memset(io_data->pOutputs, 0, sizeof(AX_ENGINE_IO_BUFFER_T) * info->nOutputSize);
-    io_data->nOutputSize = info->nOutputSize;
-
-    for (int i = 0; i < static_cast<int>(info->nOutputSize); ++i) {
-        auto meta     = info->pOutputs[i];
-        auto buffer   = &io_data->pOutputs[i];
-        buffer->nSize = meta.nSize;
-
-        auto ret = AX_SYS_MemAllocCached(
-            reinterpret_cast<AX_U64*>(&buffer->phyAddr), &buffer->pVirAddr, meta.nSize,
-            AX_CMM_ALIGN_SIZE, reinterpret_cast<const AX_S8*>(AX_CMM_SESSION_NAME));
-
-        if (ret != 0) {
-            free_io_index(io_data->pInputs, io_data->nInputSize);
-            free_io_index(io_data->pOutputs, i);
-            delete[] io_data->pOutputs;
-            SPDLOG_ERROR("[AxeraBackend] Allocate output{} failed", i);
-            return std::unexpected(DetectorError::InitFailed);
-        }
-    }
-
-    return {};
-}
-
-// Helper: read model file
-bool read_file(const std::string& path, std::vector<char>& data) {
-    std::fstream fs(path, std::ios::in | std::ios::binary);
-    if (!fs.is_open()) {
-        return false;
-    }
-
-    fs.seekg(std::ios::end);
-    auto fs_end = fs.tellg();
-    fs.seekg(std::ios::beg);
-    auto fs_beg = fs.tellg();
-
-    auto file_size = static_cast<size_t>(fs_end - fs_beg);
-    data.reserve(file_size);
-    data.insert(data.end(), std::istreambuf_iterator<char>(fs), std::istreambuf_iterator<char>());
-
-    fs.close();
-    return true;
-}
-
-// Helper: sigmoid
-constexpr float sigmoid(float x) { return 1.0f / (1.0f + std::exp(-x)); }
-
-// Strides for multi-scale detection (P3, P4, P5)
-constexpr std::array<int, 3> STRIDES = {8, 16, 32};
-constexpr float GRID_OFFSET          = 0.5f;
-
-// O2O cls(12) mapping follows four-head pair mapping.
-static constexpr std::array<ArmorName, 12> O2O_PAIR_TO_ARMOR{
+static constexpr std::array<ArmorName, 12> PAIR_TO_ARMOR{
     ArmorName::Sentry,   // 0: Gs
     ArmorName::Two,      // 1: 2s
     ArmorName::Three,    // 2: 3s
@@ -182,22 +88,128 @@ static constexpr std::array<ArmorName, 12> O2O_PAIR_TO_ARMOR{
     ArmorName::Five,     // 10: 5b
     ArmorName::BaseLarge // 11: Bb
 };
-} // anonymous namespace
 
-// ============================================================================
-// Constructor / Destructor
-// ============================================================================
+void free_io_index(AX_ENGINE_IO_BUFFER_T* io_buf, size_t index) {
+    for (size_t i = 0; i < index; ++i) {
+        AX_ENGINE_IO_BUFFER_T* p_buf = io_buf + i;
+        AX_SYS_MemFree(p_buf->phyAddr, p_buf->pVirAddr);
+    }
+}
+
+void free_io(AX_ENGINE_IO_T* io) {
+    if (io->pInputs != nullptr) {
+        for (size_t j = 0; j < io->nInputSize; ++j) {
+            AX_ENGINE_IO_BUFFER_T* p_buf = io->pInputs + j;
+            AX_SYS_MemFree(p_buf->phyAddr, p_buf->pVirAddr);
+        }
+        delete[] io->pInputs;
+    }
+    if (io->pOutputs != nullptr) {
+        for (size_t j = 0; j < io->nOutputSize; ++j) {
+            AX_ENGINE_IO_BUFFER_T* p_buf = io->pOutputs + j;
+            AX_SYS_MemFree(p_buf->phyAddr, p_buf->pVirAddr);
+        }
+        delete[] io->pOutputs;
+    }
+    *io = {};
+}
+
+std::expected<void, DetectorError> prepare_io(
+    AX_ENGINE_IO_INFO_T* info, AX_ENGINE_IO_T* io_data,
+    [[maybe_unused]] std::pair<AX_ENGINE_ALLOC_BUFFER_STRATEGY_T, AX_ENGINE_ALLOC_BUFFER_STRATEGY_T>
+        strategy) {
+    *io_data         = {};
+    io_data->pInputs = new AX_ENGINE_IO_BUFFER_T[info->nInputSize];
+    memset(io_data->pInputs, 0, sizeof(AX_ENGINE_IO_BUFFER_T) * info->nInputSize);
+    io_data->nInputSize = info->nInputSize;
+
+    for (int i = 0; i < static_cast<int>(info->nInputSize); ++i) {
+        auto meta     = info->pInputs[i];
+        auto* buffer  = &io_data->pInputs[i];
+        buffer->nSize = meta.nSize;
+
+        const auto ret = AX_SYS_MemAllocCached(
+            reinterpret_cast<AX_U64*>(&buffer->phyAddr), &buffer->pVirAddr, meta.nSize,
+            AX_CMM_ALIGN_SIZE, reinterpret_cast<const AX_S8*>(AX_CMM_SESSION_NAME));
+        if (ret != 0) {
+            free_io_index(io_data->pInputs, i);
+            delete[] io_data->pInputs;
+            io_data->pInputs = nullptr;
+            SPDLOG_ERROR("[AxeraBackend] Allocate input{} failed", i);
+            return std::unexpected(DetectorError::InitFailed);
+        }
+    }
+
+    io_data->pOutputs = new AX_ENGINE_IO_BUFFER_T[info->nOutputSize];
+    memset(io_data->pOutputs, 0, sizeof(AX_ENGINE_IO_BUFFER_T) * info->nOutputSize);
+    io_data->nOutputSize = info->nOutputSize;
+
+    for (int i = 0; i < static_cast<int>(info->nOutputSize); ++i) {
+        auto meta     = info->pOutputs[i];
+        auto* buffer  = &io_data->pOutputs[i];
+        buffer->nSize = meta.nSize;
+
+        const auto ret = AX_SYS_MemAllocCached(
+            reinterpret_cast<AX_U64*>(&buffer->phyAddr), &buffer->pVirAddr, meta.nSize,
+            AX_CMM_ALIGN_SIZE, reinterpret_cast<const AX_S8*>(AX_CMM_SESSION_NAME));
+        if (ret != 0) {
+            free_io_index(io_data->pInputs, io_data->nInputSize);
+            free_io_index(io_data->pOutputs, i);
+            delete[] io_data->pInputs;
+            delete[] io_data->pOutputs;
+            io_data->pInputs  = nullptr;
+            io_data->pOutputs = nullptr;
+            SPDLOG_ERROR("[AxeraBackend] Allocate output{} failed", i);
+            return std::unexpected(DetectorError::InitFailed);
+        }
+    }
+
+    return {};
+}
+
+bool read_file(const std::string& path, std::vector<char>& data) {
+    std::fstream fs(path, std::ios::in | std::ios::binary);
+    if (!fs.is_open()) {
+        return false;
+    }
+
+    fs.seekg(std::ios::end);
+    const auto fs_end = fs.tellg();
+    fs.seekg(std::ios::beg);
+    const auto fs_beg = fs.tellg();
+
+    const auto file_size = static_cast<size_t>(fs_end - fs_beg);
+    data.reserve(file_size);
+    data.insert(data.end(), std::istreambuf_iterator<char>(fs), std::istreambuf_iterator<char>());
+    return true;
+}
+
+constexpr float clampf(float value, float lo, float hi) noexcept {
+    return value < lo ? lo : (value > hi ? hi : value);
+}
+
+bool is_four_three(int width, int height) noexcept {
+    if (width <= 0 || height <= 0) {
+        return false;
+    }
+    const float aspect = static_cast<float>(width) / static_cast<float>(height);
+    return std::fabs(aspect - FOUR_THIRDS) <= FOUR_THIRDS_TOLERANCE;
+}
+
+} // namespace
 
 AtLegacyAxeraBackend::AtLegacyAxeraBackend(Config config)
     : config_(std::move(config)) {}
 
 AtLegacyAxeraBackend::~AtLegacyAxeraBackend() {
-    if (handle_) {
+    if (handle_ != nullptr) {
         free_io(&io_data_);
         AX_ENGINE_DestroyHandle(handle_);
+        handle_ = nullptr;
         AX_ENGINE_Deinit();
-        deinit_ivps();
-        AX_IVPS_Deinit();
+    }
+    deinit_ivps();
+    if (initialized_) {
         AX_SYS_Deinit();
     }
 }
@@ -207,47 +219,76 @@ AtLegacyAxeraBackend::AtLegacyAxeraBackend(AtLegacyAxeraBackend&& other) noexcep
     , config_(std::move(other.config_))
     , detect_color_(other.detect_color_)
     , initialized_(other.initialized_)
+    , warned_non_four_three_input_(other.warned_non_four_three_input_)
     , handle_(other.handle_)
-    , io_data_(std::move(other.io_data_))
-    , model_buffer_(std::move(other.model_buffer_)) {
-    // Clear the moved-from object to prevent double-free
-    other.detect_color_ = ArmorColor::Blue;
-    other.initialized_  = false;
-    other.handle_       = nullptr;
-    other.io_data_      = {};
+    , io_data_(other.io_data_)
+    , model_buffer_(std::move(other.model_buffer_))
+    , ivps_initialized_(other.ivps_initialized_)
+    , ivps_src_phy_addr_(other.ivps_src_phy_addr_)
+    , ivps_src_vir_addr_(other.ivps_src_vir_addr_)
+    , ivps_src_buffer_size_(other.ivps_src_buffer_size_)
+    , ivps_src_stride_(other.ivps_src_stride_)
+    , ivps_max_src_width_(other.ivps_max_src_width_)
+    , ivps_max_src_height_(other.ivps_max_src_height_)
+    , ivps_aspect_ratio_(other.ivps_aspect_ratio_) {
+    other.detect_color_                = ArmorColor::Blue;
+    other.initialized_                 = false;
+    other.warned_non_four_three_input_ = false;
+    other.handle_                      = nullptr;
+    other.io_data_                     = {};
     other.model_buffer_.clear();
+    other.ivps_initialized_     = false;
+    other.ivps_src_phy_addr_    = 0;
+    other.ivps_src_vir_addr_    = nullptr;
+    other.ivps_src_buffer_size_ = 0;
+    other.ivps_src_stride_      = 0;
 }
 
 AtLegacyAxeraBackend& AtLegacyAxeraBackend::operator=(AtLegacyAxeraBackend&& other) noexcept {
-    if (this != &other) {
-        // Clean up current resources first (RAII)
-        if (handle_) {
-            free_io(&io_data_);
-            AX_ENGINE_DestroyHandle(handle_);
-        }
-
-        // Transfer ownership from other
-        config_       = std::move(other.config_);
-        detect_color_ = other.detect_color_;
-        initialized_  = other.initialized_;
-        handle_       = other.handle_;
-        io_data_      = std::move(other.io_data_);
-        model_buffer_ = std::move(other.model_buffer_);
-        cached_grid_  = std::move(other.cached_grid_);
-
-        // Reset the moved-from object to prevent double-free
-        other.detect_color_ = ArmorColor::Blue;
-        other.initialized_  = false;
-        other.handle_       = nullptr;
-        other.io_data_      = {};
-        other.model_buffer_.clear();
+    if (this == &other) {
+        return *this;
     }
+
+    if (handle_ != nullptr) {
+        free_io(&io_data_);
+        AX_ENGINE_DestroyHandle(handle_);
+        AX_ENGINE_Deinit();
+    }
+    deinit_ivps();
+    if (initialized_) {
+        AX_SYS_Deinit();
+    }
+
+    cached_grid_                 = std::move(other.cached_grid_);
+    config_                      = std::move(other.config_);
+    detect_color_                = other.detect_color_;
+    initialized_                 = other.initialized_;
+    warned_non_four_three_input_ = other.warned_non_four_three_input_;
+    handle_                      = other.handle_;
+    io_data_                     = other.io_data_;
+    model_buffer_                = std::move(other.model_buffer_);
+    ivps_initialized_            = other.ivps_initialized_;
+    ivps_src_phy_addr_           = other.ivps_src_phy_addr_;
+    ivps_src_vir_addr_           = other.ivps_src_vir_addr_;
+    ivps_src_buffer_size_        = other.ivps_src_buffer_size_;
+    ivps_src_stride_             = other.ivps_src_stride_;
+    ivps_max_src_width_          = other.ivps_max_src_width_;
+    ivps_max_src_height_         = other.ivps_max_src_height_;
+    ivps_aspect_ratio_           = other.ivps_aspect_ratio_;
+
+    other.detect_color_                = ArmorColor::Blue;
+    other.initialized_                 = false;
+    other.warned_non_four_three_input_ = false;
+    other.handle_                      = nullptr;
+    other.io_data_                     = {};
+    other.model_buffer_.clear();
+    other.ivps_initialized_     = false;
+    other.ivps_src_phy_addr_    = 0;
+    other.ivps_src_vir_addr_    = nullptr;
+    other.ivps_src_buffer_size_ = 0;
+    other.ivps_src_stride_      = 0;
     return *this;
 }
-
-// ============================================================================
-// Initialization
-// ============================================================================
 
 std::expected<void, DetectorError> AtLegacyAxeraBackend::init() {
     if (initialized_) {
@@ -255,110 +296,108 @@ std::expected<void, DetectorError> AtLegacyAxeraBackend::init() {
     }
 
     const auto& cfg = get_config();
-
-    // Check model file exists
     if (!std::filesystem::exists(cfg.model_path)) {
         SPDLOG_ERROR("[AxeraBackend] Model file not found: {}", cfg.model_path);
         return std::unexpected(DetectorError::ModelLoadError);
     }
 
-    // Initialize AX system
+    bool sys_initialized     = false;
+    bool engine_initialized  = false;
+    auto cleanup_failed_init = [&]() {
+        if (io_data_.pInputs != nullptr || io_data_.pOutputs != nullptr) {
+            free_io(&io_data_);
+        }
+        if (handle_ != nullptr) {
+            AX_ENGINE_DestroyHandle(handle_);
+            handle_ = nullptr;
+        }
+        if (engine_initialized) {
+            AX_ENGINE_Deinit();
+            engine_initialized = false;
+        }
+        deinit_ivps();
+        if (sys_initialized) {
+            AX_SYS_Deinit();
+            sys_initialized = false;
+        }
+    };
+
     auto ret = AX_SYS_Init();
     if (ret != 0) {
         SPDLOG_ERROR("[AxeraBackend] AX_SYS_Init failed: {}", ret);
         return std::unexpected(DetectorError::InitFailed);
     }
+    sys_initialized = true;
 
-    // Initialize IVPS for hardware-accelerated preprocessing
-    // IVPS is more efficient than IVE: single operation for letterbox+resize+color conversion
-    ret = AX_IVPS_Init();
-    if (ret != 0) {
-        SPDLOG_WARN("[AxeraBackend] AX_IVPS_Init failed: {}, falling back to OpenCV preprocessing", ret);
-        // Continue without IVPS - will use OpenCV fallback
-    } else {
-        SPDLOG_INFO("[AxeraBackend] IVPS initialized for hardware preprocessing");
-        ivps_initialized_ = true;
-    }
+    (void)init_ivps();
 
-    // Initialize engine
     AX_ENGINE_NPU_ATTR_T npu_attr{};
     npu_attr.eHardMode = AX_ENGINE_VIRTUAL_NPU_DISABLE;
     ret                = AX_ENGINE_Init(&npu_attr);
     if (ret != 0) {
         SPDLOG_ERROR("[AxeraBackend] AX_ENGINE_Init failed: {}", ret);
-        AX_SYS_Deinit();
+        cleanup_failed_init();
         return std::unexpected(DetectorError::InitFailed);
     }
+    engine_initialized = true;
 
-    // Load model
     if (!read_file(cfg.model_path, model_buffer_)) {
         SPDLOG_ERROR("[AxeraBackend] Failed to read model file: {}", cfg.model_path);
-        AX_ENGINE_Deinit();
-        AX_SYS_Deinit();
+        cleanup_failed_init();
         return std::unexpected(DetectorError::ModelLoadError);
     }
 
-    // Create handle
     ret = AX_ENGINE_CreateHandle(&handle_, model_buffer_.data(), model_buffer_.size());
     if (ret != 0) {
         SPDLOG_ERROR("[AxeraBackend] AX_ENGINE_CreateHandle failed: {}", ret);
-        AX_ENGINE_Deinit();
-        AX_SYS_Deinit();
+        cleanup_failed_init();
         return std::unexpected(DetectorError::ModelLoadError);
     }
 
-    // Create context
     ret = AX_ENGINE_CreateContext(handle_);
     if (ret != 0) {
         SPDLOG_ERROR("[AxeraBackend] AX_ENGINE_CreateContext failed: {}", ret);
-        AX_ENGINE_DestroyHandle(handle_);
-        AX_ENGINE_Deinit();
-        AX_SYS_Deinit();
+        cleanup_failed_init();
         return std::unexpected(DetectorError::InitFailed);
     }
 
-    // Get IO info
     AX_ENGINE_IO_INFO_T* io_info = nullptr;
     ret                          = AX_ENGINE_GetIOInfo(handle_, &io_info);
     if (ret != 0) {
         SPDLOG_ERROR("[AxeraBackend] AX_ENGINE_GetIOInfo failed: {}", ret);
-        AX_ENGINE_DestroyHandle(handle_);
-        AX_ENGINE_Deinit();
-        AX_SYS_Deinit();
+        cleanup_failed_init();
         return std::unexpected(DetectorError::InitFailed);
     }
 
-    // Log model info
     SPDLOG_INFO("[AxeraBackend] Model: {}", cfg.model_path);
-    SPDLOG_INFO("[AxeraBackend] Inputs: {}", io_info->nInputSize);
+    SPDLOG_INFO(
+        "[AxeraBackend] Expecting concat-predecode model: input={}x{}, output_dim={}, anchors={}",
+        INPUT_W, INPUT_H, PREDECODE_OUTPUT_DIM, NUM_ANCHORS);
     for (int i = 0; i < static_cast<int>(io_info->nInputSize); ++i) {
         const auto& in = io_info->pInputs[i];
         SPDLOG_INFO("[AxeraBackend]   Input[{}]: name={}, size={} bytes", i, in.pName, in.nSize);
     }
-    SPDLOG_INFO("[AxeraBackend] Outputs: {}", io_info->nOutputSize);
     for (int i = 0; i < static_cast<int>(io_info->nOutputSize); ++i) {
         const auto& out = io_info->pOutputs[i];
         SPDLOG_INFO("[AxeraBackend]   Output[{}]: name={}, size={} bytes", i, out.pName, out.nSize);
     }
+    SPDLOG_INFO(
+        "[AxeraBackend] Using CPU decode for concat predecode output (anchor offsets removed from "
+        "model)");
 
-    // Allocate IO (use CACHED for both input and output for optimal CPU->NPU transfer)
-    auto result = prepare_io(
+    auto io_result = prepare_io(
         io_info, &io_data_,
         std::make_pair(
             AX_ENGINE_ALLOC_BUFFER_STRATEGY_T::CACHED, AX_ENGINE_ALLOC_BUFFER_STRATEGY_T::CACHED));
-    if (!result) {
-        AX_ENGINE_DestroyHandle(handle_);
-        AX_ENGINE_Deinit();
-        AX_SYS_Deinit();
-        return std::unexpected(result.error());
+    if (!io_result) {
+        cleanup_failed_init();
+        return std::unexpected(io_result.error());
     }
 
-    // Build and cache decode grid once (avoids rebuilding every frame)
     cached_grid_ = build_decode_grid();
-    SPDLOG_INFO("[AxeraBackend] Cached decode grid with {} anchors", cached_grid_.grid_xy.size());
+    SPDLOG_INFO("[AxeraBackend] Cached decode grid with {} anchors", cached_grid_.grid_x.size());
 
-    // Warm up one synchronous inference to absorb one-time runtime jitters (lazy kernel/setup).
-    if (io_data_.nInputSize > 0 && io_data_.pInputs[0].pVirAddr) {
+    if (io_data_.nInputSize > 0 && io_data_.pInputs[0].pVirAddr != nullptr) {
         auto* warmup_input = static_cast<uint8_t*>(io_data_.pInputs[0].pVirAddr);
         std::memset(warmup_input, 114, static_cast<size_t>(io_data_.pInputs[0].nSize));
         AX_SYS_MflushCache(io_data_.pInputs[0].phyAddr, warmup_input, io_data_.pInputs[0].nSize);
@@ -366,8 +405,6 @@ std::expected<void, DetectorError> AtLegacyAxeraBackend::init() {
     ret = AX_ENGINE_RunSync(handle_, &io_data_);
     if (ret != 0) {
         SPDLOG_WARN("[AxeraBackend] Warmup AX_ENGINE_RunSync failed: {}", ret);
-    } else {
-        SPDLOG_INFO("[AxeraBackend] Warmup inference complete");
     }
 
     initialized_ = true;
@@ -375,279 +412,214 @@ std::expected<void, DetectorError> AtLegacyAxeraBackend::init() {
     return {};
 }
 
-// ============================================================================
-// Preprocessing (Letterbox)
-// ============================================================================
-
-AtLegacyAxeraBackend::PreprocContext AtLegacyAxeraBackend::preprocess_letterbox(
-    const cv::Mat& image, const AtLegacyAxeraConfig& /*cfg*/) const {
+AtLegacyAxeraBackend::PreprocContext AtLegacyAxeraBackend::preprocess(const cv::Mat& image) const {
     PreprocContext ctx;
-    ctx.orig_w = image.cols;
-    ctx.orig_h = image.rows;
-
-    // Calculate scale factor (maintain aspect ratio)
-    const float ratio_w = static_cast<float>(INPUT_W) / static_cast<float>(image.cols);
-    const float ratio_h = static_cast<float>(INPUT_H) / static_cast<float>(image.rows);
-    ctx.ratio           = std::min(ratio_w, ratio_h);
-
-    // Calculate new size after scaling
-    const int new_unpad_w = static_cast<int>(std::round(image.cols * ctx.ratio));
-    const int new_unpad_h = static_cast<int>(std::round(image.rows * ctx.ratio));
-
-    // Calculate padding (center the image)
-    ctx.pad_w = (INPUT_W - new_unpad_w) / 2.0f;
-    ctx.pad_h = (INPUT_H - new_unpad_h) / 2.0f;
-
+    ctx.orig_w        = image.cols;
+    ctx.orig_h        = image.rows;
+    ctx.scale_x       = static_cast<float>(image.cols) / static_cast<float>(INPUT_W);
+    ctx.scale_y       = static_cast<float>(image.rows) / static_cast<float>(INPUT_H);
+    ctx.is_four_three = is_four_three(image.cols, image.rows);
     return ctx;
 }
 
-void AtLegacyAxeraBackend::preprocess_image(const cv::Mat& image, const PreprocContext& ctx) {
-    auto* npu_input         = static_cast<uint8_t*>(io_data_.pInputs[0].pVirAddr);
-    const size_t input_size = INPUT_W * INPUT_H * 3;
-    const int new_unpad_w   = static_cast<int>(std::round(image.cols * ctx.ratio));
-    const int new_unpad_h   = static_cast<int>(std::round(image.rows * ctx.ratio));
-    const int top           = static_cast<int>(std::round(ctx.pad_h - 0.1f));
-    const int left          = static_cast<int>(std::round(ctx.pad_w - 0.1f));
-    const int bottom        = INPUT_H - top - new_unpad_h;
-    const int right         = INPUT_W - left - new_unpad_w;
+void AtLegacyAxeraBackend::preprocess_image(const cv::Mat& image) {
+    auto* npu_input = static_cast<uint8_t*>(io_data_.pInputs[0].pVirAddr);
 
-    // Create cv::Mat wrapper around NPU input buffer (zero-copy)
-    cv::Mat npu_mat(INPUT_H, INPUT_W, CV_8UC3, npu_input);
+    // 直接写入 NPU 输入缓冲区，避免额外拷贝和内存分配
+    cv::Mat npu_input_mat(INPUT_H, INPUT_W, CV_8UC3, npu_input);
+    cv::resize(image, npu_input_mat, cv::Size(INPUT_W, INPUT_H), 0, 0, cv::INTER_LINEAR);
 
-    // Fill only padding regions to reduce write traffic.
-    const cv::Scalar kPadColor(114, 114, 114);
-    if (top > 0) {
-        npu_mat.rowRange(0, top).setTo(kPadColor);
-    }
-    if (bottom > 0) {
-        npu_mat.rowRange(INPUT_H - bottom, INPUT_H).setTo(kPadColor);
-    }
-    if (left > 0 || right > 0) {
-        cv::Mat center_rows = npu_mat.rowRange(top, top + new_unpad_h);
-        if (left > 0) {
-            center_rows.colRange(0, left).setTo(kPadColor);
-        }
-        if (right > 0) {
-            center_rows.colRange(INPUT_W - right, INPUT_W).setTo(kPadColor);
-        }
-    }
-
-    // Define ROI for the scaled image region
-    cv::Rect roi(left, top, new_unpad_w, new_unpad_h);
-    cv::Mat roi_mat = npu_mat(roi);
-
-    // Resize directly into ROI, then convert BGR->RGB.
-    if (image.cols != new_unpad_w || image.rows != new_unpad_h) {
-        cv::Mat resized;
-        cv::resize(image, resized, {new_unpad_w, new_unpad_h}, 0, 0, cv::INTER_LINEAR);
-        cv::cvtColor(resized, roi_mat, cv::COLOR_BGR2RGB);
-    } else {
-        cv::cvtColor(image, roi_mat, cv::COLOR_BGR2RGB);
-    }
-
-    // Flush CPU cache to ensure NPU sees the data
-    AX_SYS_MflushCache(io_data_.pInputs[0].phyAddr, npu_input, input_size);
+    // 只刷新实际使用的内存范围
+    const size_t flush_size = INPUT_W * INPUT_H * 3;
+    AX_SYS_MflushCache(io_data_.pInputs[0].phyAddr, npu_input, flush_size);
 }
 
-// ============================================================================
-// IVPS Hardware-Accelerated Preprocessing
-// ============================================================================
-
 std::expected<void, DetectorError> AtLegacyAxeraBackend::init_ivps() {
-    // Initialize IVPS module
-    auto ret = AX_IVPS_Init();
+    const auto ret = AX_IVPS_Init();
     if (ret != AX_SUCCESS) {
-        SPDLOG_WARN("[AxeraBackend] AX_IVPS_Init failed: {}, IVPS preprocessing disabled", ret);
+        SPDLOG_WARN(
+            "[AxeraBackend] AX_IVPS_Init failed: {:#x}, falling back to OpenCV preprocessing", ret);
         ivps_initialized_ = false;
-        // Not a fatal error - will fallback to OpenCV
         return {};
     }
 
-    SPDLOG_INFO("[AxeraBackend] IVPS initialized for hardware preprocessing");
+    // 初始化 aspect ratio 配置（STRETCH 模式，类似测试代码）
+    ivps_aspect_ratio_.eMode      = AX_IVPS_ASPECT_RATIO_STRETCH;
+    ivps_aspect_ratio_.eAligns[0] = AX_IVPS_ASPECT_RATIO_HORIZONTAL_CENTER;
+    ivps_aspect_ratio_.eAligns[1] = AX_IVPS_ASPECT_RATIO_VERTICAL_CENTER;
+    ivps_aspect_ratio_.nBgColor   = 0xFF00FF; // 紫色背景（STRETCH 模式下不可见）
+
+    SPDLOG_INFO("[AxeraBackend] IVPS initialized for hardware-accelerated resize");
     ivps_initialized_ = true;
     return {};
 }
 
 void AtLegacyAxeraBackend::deinit_ivps() {
-    if (ivps_initialized_) {
-        free_ivps_buffers();
-        AX_IVPS_Deinit();
-        ivps_initialized_ = false;
+    if (!ivps_initialized_) {
+        return;
     }
+    free_ivps_buffers();
+    // 不清理 AX_POOL，可能是共享资源
+    AX_IVPS_Deinit();
+    ivps_initialized_ = false;
 }
 
-std::expected<void, DetectorError> AtLegacyAxeraBackend::allocate_ivps_buffers(
-    int max_src_width, int max_src_height) {
-    // Free existing buffers if any
+std::expected<void, DetectorError>
+    AtLegacyAxeraBackend::allocate_ivps_buffers(int max_src_width, int max_src_height) {
     free_ivps_buffers();
 
-    // Calculate aligned stride and size for source buffer (BGR888)
-    // IVPS requires 16-byte alignment for stride
-    const AX_U32 aligned_stride = ((max_src_width * 3 + AX_IVPS_ALIGN - 1) / AX_IVPS_ALIGN) * AX_IVPS_ALIGN;
-    ivps_src_buffer_size_       = aligned_stride * max_src_height;
+    ivps_max_src_width_  = max_src_width;
+    ivps_max_src_height_ = max_src_height;
 
-    // Allocate physically contiguous memory for source image
-    auto ret = AX_SYS_MemAllocCached(
-        &ivps_src_phy_addr_,
-        &ivps_src_vir_addr_,
-        ivps_src_buffer_size_,
-        AX_IVPS_ALIGN,
+    // 计算对齐后的 stride（类似测试代码）
+    constexpr int ALIGN = 16;
+    const AX_U32 aligned_stride =
+        ((static_cast<AX_U32>(max_src_width) * 3 + ALIGN - 1) / ALIGN) * ALIGN;
+    ivps_src_stride_      = aligned_stride;
+    ivps_src_buffer_size_ = aligned_stride * static_cast<AX_U32>(max_src_height);
+
+    // 分配源缓冲区（使用 AX_SYS_MemAllocCached）
+    const auto ret = AX_SYS_MemAllocCached(
+        &ivps_src_phy_addr_, &ivps_src_vir_addr_, ivps_src_buffer_size_, ALIGN,
         reinterpret_cast<const AX_S8*>("ivps-src"));
 
     if (ret != AX_SUCCESS || ivps_src_vir_addr_ == nullptr) {
-        SPDLOG_WARN("[AxeraBackend] IVPS source buffer alloc failed: {}", ret);
+        SPDLOG_WARN("[AxeraBackend] IVPS src buffer alloc failed: {:#x}", ret);
         ivps_src_phy_addr_    = 0;
         ivps_src_vir_addr_    = nullptr;
         ivps_src_buffer_size_ = 0;
+        ivps_src_stride_      = 0;
         return std::unexpected(DetectorError::InitFailed);
     }
 
-    // Initialize source frame descriptor (BGR888 from camera)
-    memset(&ivps_src_frame_, 0, sizeof(ivps_src_frame_));
-    ivps_src_frame_.u64PhyAddr[0]   = ivps_src_phy_addr_;
-    ivps_src_frame_.u64VirAddr[0]   = reinterpret_cast<AX_U64>(ivps_src_vir_addr_);
-    ivps_src_frame_.u32PicStride[0] = aligned_stride;
-    ivps_src_frame_.u32Width        = max_src_width;
-    ivps_src_frame_.u32Height       = max_src_height;
-    ivps_src_frame_.enImgFormat     = AX_FORMAT_BGR888;
-
-    // Initialize destination frame descriptor (RGB888 for NPU)
-    // Uses NPU input buffer directly (zero-copy)
-    memset(&ivps_dst_frame_, 0, sizeof(ivps_dst_frame_));
-    ivps_dst_frame_.u64PhyAddr[0]   = io_data_.pInputs[0].phyAddr;
-    ivps_dst_frame_.u64VirAddr[0]   = reinterpret_cast<AX_U64>(io_data_.pInputs[0].pVirAddr);
-    ivps_dst_frame_.u32PicStride[0] = INPUT_W * 3;
-    ivps_dst_frame_.u32Width        = INPUT_W;
-    ivps_dst_frame_.u32Height       = INPUT_H;
-    ivps_dst_frame_.enImgFormat     = AX_FORMAT_RGB888;  // Output RGB for NPU
-
     SPDLOG_INFO(
-        "[AxeraBackend] IVPS buffers allocated: src={}x{} stride={} ({} bytes), dst={}x{}",
-        max_src_width, max_src_height, aligned_stride, ivps_src_buffer_size_,
-        INPUT_W, INPUT_H);
-
+        "[AxeraBackend] IVPS buffers allocated: {}x{} (stride={}) -> {}x{}", max_src_width,
+        max_src_height, aligned_stride, INPUT_W, INPUT_H);
     return {};
 }
 
 void AtLegacyAxeraBackend::free_ivps_buffers() {
     if (ivps_src_vir_addr_ != nullptr && ivps_src_phy_addr_ != 0) {
         AX_SYS_MemFree(ivps_src_phy_addr_, ivps_src_vir_addr_);
-        ivps_src_phy_addr_    = 0;
-        ivps_src_vir_addr_    = nullptr;
-        ivps_src_buffer_size_ = 0;
     }
-    memset(&ivps_src_frame_, 0, sizeof(ivps_src_frame_));
-    memset(&ivps_dst_frame_, 0, sizeof(ivps_dst_frame_));
+    ivps_src_phy_addr_    = 0;
+    ivps_src_vir_addr_    = nullptr;
+    ivps_src_buffer_size_ = 0;
+    ivps_src_stride_      = 0;
 }
 
-void AtLegacyAxeraBackend::preprocess_image_ivps(const cv::Mat& image, const PreprocContext& ctx) {
-    // IVPS can do letterbox + resize + BGR->RGB in a single hardware operation
-    // This is more efficient than IVE which requires separate operations
-
-    // Fallback to OpenCV if IVPS not initialized
+void AtLegacyAxeraBackend::preprocess_image_ivps(const cv::Mat& image) {
     if (!ivps_initialized_) {
-        preprocess_image(image, ctx);
+        static bool warned = false;
+        if (!warned) {
+            SPDLOG_WARN("[AxeraBackend] IVPS not initialized, using OpenCV (slower)");
+            warned = true;
+        }
+        preprocess_image(image);
         return;
     }
 
-    // Check if source buffer is large enough, reallocate if needed
-    const size_t required_size = static_cast<size_t>(image.cols) * image.rows * 3;
-    if (required_size > ivps_src_buffer_size_ || ivps_src_vir_addr_ == nullptr) {
-        free_ivps_buffers();
-        auto result = allocate_ivps_buffers(image.cols, image.rows);
-        if (!result) {
-            SPDLOG_WARN("[AxeraBackend] Failed to allocate IVPS buffers, fallback to OpenCV");
-            preprocess_image(image, ctx);
+    // 检查是否需要重新分配缓冲区
+    if (image.cols > ivps_max_src_width_ || image.rows > ivps_max_src_height_
+        || ivps_src_vir_addr_ == nullptr) {
+        auto buffer_result = allocate_ivps_buffers(image.cols, image.rows);
+        if (!buffer_result) {
+            static bool warned = false;
+            if (!warned) {
+                SPDLOG_WARN("[AxeraBackend] Failed to allocate IVPS buffers, using OpenCV");
+                warned = true;
+            }
+            preprocess_image(image);
             return;
         }
     }
 
-    auto* npu_input     = static_cast<uint8_t*>(io_data_.pInputs[0].pVirAddr);
-    const size_t input_size = INPUT_W * INPUT_H * 3;
+    // 构造源帧描述（参考测试代码）
+    AX_VIDEO_FRAME_T src_frame{};
+    src_frame.u32Width                      = image.cols;
+    src_frame.u32Height                     = image.rows;
+    src_frame.u32PicStride[0]               = ivps_src_stride_;
+    src_frame.enImgFormat                   = AX_FORMAT_BGR888;
+    src_frame.u64PhyAddr[0]                 = ivps_src_phy_addr_;
+    src_frame.u64VirAddr[0]                 = reinterpret_cast<AX_U64>(ivps_src_vir_addr_);
+    src_frame.u32FrameSize                  = ivps_src_buffer_size_;
+    src_frame.stCompressInfo.enCompressMode = AX_COMPRESS_MODE_NONE;
 
-    // Update source frame descriptor for actual image size
-    AX_VIDEO_FRAME_T src_frame = ivps_src_frame_;
-    src_frame.u32Width         = image.cols;
-    src_frame.u32Height        = image.rows;
-    // Stride should already be aligned from allocation
-
-    // Copy BGR image data to IVPS buffer with stride adjustment
-    const AX_U32 src_stride = src_frame.u32PicStride[0];
-    if (image.isContinuous() && image.cols * 3 == static_cast<int>(src_stride)) {
-        // Fast path: continuous memory with matching stride
-        std::memcpy(ivps_src_vir_addr_, image.data, image.cols * image.rows * 3);
+    // 复制图像数据到源缓冲区（优化：只复制实际需要的区域）
+    auto* dst_ptr         = static_cast<uint8_t*>(ivps_src_vir_addr_);
+    const size_t row_size = image.cols * 3;
+    if (image.isContinuous() && image.cols * 3 == static_cast<int>(ivps_src_stride_)) {
+        std::memcpy(dst_ptr, image.data, row_size * image.rows);
     } else {
-        // Slow path: copy row by row with stride padding
-        auto* dst_ptr = static_cast<uint8_t*>(ivps_src_vir_addr_);
         for (int y = 0; y < image.rows; ++y) {
-            std::memcpy(dst_ptr + y * src_stride, image.ptr(y), image.cols * 3);
+            std::memcpy(
+                dst_ptr + static_cast<size_t>(y) * ivps_src_stride_, image.ptr(y), row_size);
         }
     }
-    AX_SYS_MflushCache(ivps_src_phy_addr_, ivps_src_vir_addr_, src_stride * image.rows);
 
-    // Setup destination frame (directly into NPU input buffer)
-    AX_VIDEO_FRAME_T dst_frame = ivps_dst_frame_;
+    // 构造目标帧描述（直接写入 NPU 输入缓冲区）
+    AX_VIDEO_FRAME_T dst_frame{};
+    dst_frame.u32Width        = INPUT_W;
+    dst_frame.u32Height       = INPUT_H;
+    dst_frame.u32PicStride[0] = INPUT_W * 3;
+    dst_frame.enImgFormat     = AX_FORMAT_BGR888;
+    dst_frame.u64PhyAddr[0]   = io_data_.pInputs[0].phyAddr;
+    dst_frame.u64VirAddr[0]   = reinterpret_cast<AX_U64>(io_data_.pInputs[0].pVirAddr);
+    dst_frame.u32FrameSize    = static_cast<AX_U32>(INPUT_W * INPUT_H * 3);
+    dst_frame.stCompressInfo.enCompressMode = AX_COMPRESS_MODE_NONE;
 
-    // Setup aspect ratio for letterbox (center alignment, gray padding)
-    AX_IVPS_ASPECT_RATIO_T aspect_ratio{};
-    aspect_ratio.eMode = AX_IVPS_ASPECT_RATIO_AUTO;  // Auto letterbox based on alignment
-    // Border color: gray (114, 114, 114) in RGB888 = 0x727272
-    aspect_ratio.nBgColor = 0x727272;
-    // Center alignment for both horizontal and vertical
-    aspect_ratio.eAligns[0] = AX_IVPS_ASPECT_RATIO_HORIZONTAL_CENTER;
-    aspect_ratio.eAligns[1] = AX_IVPS_ASPECT_RATIO_VERTICAL_CENTER;
-
-    // Execute IVPS CropResize (single operation: resize + letterbox + BGR->RGB)
-    // Using TDP engine which is optimized for this task
-    auto ret = AX_IVPS_CropResizeTdp(&src_frame, &dst_frame, &aspect_ratio);
-
+    // 调用 IVPS 硬件加速
+    const auto ret = AX_IVPS_CropResizeTdp(&src_frame, &dst_frame, &ivps_aspect_ratio_);
     if (ret != AX_SUCCESS) {
-        SPDLOG_WARN("[AxeraBackend] AX_IVPS_CropResizeTdp failed: {}, fallback to OpenCV", ret);
-        preprocess_image(image, ctx);
+        static bool warned = false;
+        if (!warned) {
+            SPDLOG_WARN("[AxeraBackend] AX_IVPS_CropResizeTdp failed: {:#x}, using OpenCV", ret);
+            warned = true;
+        }
+        preprocess_image(image);
         return;
     }
 
-    // Flush cache to ensure NPU sees the data correctly
-    AX_SYS_MflushCache(io_data_.pInputs[0].phyAddr, npu_input, input_size);
+    static bool logged_ivps_success = false;
+    if (!logged_ivps_success) {
+        SPDLOG_INFO(
+            "[AxeraBackend] IVPS hardware resize working! ({}x{} -> {}x{})", image.cols, image.rows,
+            INPUT_W, INPUT_H);
+        logged_ivps_success = true;
+    }
 
-    SPDLOG_DEBUG("[AxeraBackend] IVPS preprocessing complete: {}x{} -> {}x{}",
-                 image.cols, image.rows, INPUT_W, INPUT_H);
+    // 只刷新实际使用的内存范围
+    const size_t flush_size = INPUT_W * INPUT_H * 3;
+    AX_SYS_MflushCache(io_data_.pInputs[0].phyAddr, io_data_.pInputs[0].pVirAddr, flush_size);
 }
 
-// ============================================================================
-// Inference (Pure NPU)
-// ============================================================================
-
 bool AtLegacyAxeraBackend::infer() {
-    if (!initialized_ || !handle_) {
+    if (!initialized_ || handle_ == nullptr) {
         return false;
     }
 
-    auto ret = AX_ENGINE_RunSync(handle_, &io_data_);
+    const auto ret = AX_ENGINE_RunSync(handle_, &io_data_);
     if (ret != 0) {
         SPDLOG_ERROR("[AxeraBackend] AX_ENGINE_RunSync failed: {}", ret);
         return false;
     }
-
     return true;
 }
 
-// ============================================================================
-// Decoding (4-Head Predecode Outputs)
-// ============================================================================
-
 AtLegacyAxeraBackend::DecodeGrid AtLegacyAxeraBackend::build_decode_grid() const {
     DecodeGrid grid;
-    grid.grid_xy.reserve(8400); // Total anchors: 80*80 + 40*40 + 20*20 = 8400
-    grid.strides.reserve(8400);
+    grid.grid_x.reserve(NUM_ANCHORS);
+    grid.grid_y.reserve(NUM_ANCHORS);
+    grid.strides.reserve(NUM_ANCHORS);
 
-    for (float stride : STRIDES) {
-        const int feat_size = INPUT_H / static_cast<int>(stride); // 80, 40, 20
-
-        for (int y = 0; y < feat_size; ++y) {
-            for (int x = 0; x < feat_size; ++x) {
-                grid.grid_xy.emplace_back(x + GRID_OFFSET, y + GRID_OFFSET);
-                grid.strides.push_back(stride);
+    for (const int stride : STRIDES) {
+        const int feat_h = INPUT_H / stride;
+        const int feat_w = INPUT_W / stride;
+        for (int y = 0; y < feat_h; ++y) {
+            for (int x = 0; x < feat_w; ++x) {
+                grid.grid_x.push_back(static_cast<float>(x) + GRID_OFFSET);
+                grid.grid_y.push_back(static_cast<float>(y) + GRID_OFFSET);
+                grid.strides.push_back(static_cast<float>(stride));
             }
         }
     }
@@ -655,407 +627,259 @@ AtLegacyAxeraBackend::DecodeGrid AtLegacyAxeraBackend::build_decode_grid() const
     return grid;
 }
 
-std::vector<AtLegacyAxeraBackend::DecodedBox> AtLegacyAxeraBackend::decode_four_head_outputs(
-    const float* raw_boxes,    // Shape: (1, 4, num_anchors) -> flattened, channel-major
-    const float* color_scores, // Shape: (1, 4, num_anchors) -> flattened, channel-major
-    const float* obj_scores,   // Shape: (1, num_pairs, num_anchors) -> flattened, channel-major
-    const float* raw_kpts,     // Shape: (1, 4, 2, num_anchors) -> flattened
-    int num_anchors, const DecodeGrid& grid) const {
-    std::vector<DecodedBox> results;
-    results.reserve(num_anchors);
-
-    for (int i = 0; i < num_anchors; ++i) {
-        const float grid_x = grid.grid_xy[i].first;
-        const float grid_y = grid.grid_xy[i].second;
-        const float stride = grid.strides[i];
-
-        // Extract raw_boxes: layout [batch, box_channel, anchor] (channel-major)
-        // box_channel 0 = lt_x, 1 = lt_y, 2 = rb_x, 3 = rb_y
-        const float lt_x = raw_boxes[0 * num_anchors + i];
-        const float lt_y = raw_boxes[1 * num_anchors + i];
-        const float rb_x = raw_boxes[2 * num_anchors + i];
-        const float rb_y = raw_boxes[3 * num_anchors + i];
-
-        // Decode bounding box (xywh format)
-        // boxes_xy = (grid_xy + (rb - lt) / 2) * stride
-        // boxes_wh = (lt + rb) * stride
-        const float center_x = (grid_x + (rb_x - lt_x) / 2.0f) * stride;
-        const float center_y = (grid_y + (rb_y - lt_y) / 2.0f) * stride;
-        const float width    = (lt_x + rb_x) * stride;
-        const float height   = (lt_y + rb_y) * stride;
-
-        // Extract raw_kpts: layout [batch, kpt_idx, xy, anchor] (channel-major)
-        // NPU output memory order: [k0_x_a0, k0_x_a1, ..., k0_x_aN, k0_y_a0, k0_y_a1, ..., k0_y_aN,
-        //                          k1_x_a0, k1_x_a1, ..., k1_y_aN, ..., k3_x_a0, ..., k3_y_aN]
-        // For anchor i, keypoint k, coordinate xy: offset = k * 2 * num_anchors + xy * num_anchors
-        // + i
-        //
-        // CRITICAL: Do NOT use interleaved access! NPU outputs are channel-major!
-        // Wrong: const float* kpt_raw = raw_kpts + i * 8;
-
-        // Find max object score across all pairs
-        float max_obj_conf = obj_scores[i];
-        for (int p = 1; p < NUM_PAIRS; ++p) {
-            const float conf = obj_scores[p * num_anchors + i];
-            if (conf > max_obj_conf) {
-                max_obj_conf = conf;
-            }
-        }
-
-        DecodedBox decoded;
-
-        // Store center x, center y, width, height (temporarily, used for bbox if needed)
-        decoded.kpts[0] = center_x;
-        decoded.kpts[1] = center_y;
-        decoded.kpts[2] = width;
-        decoded.kpts[3] = height;
-
-        // Decode keypoints: kpts = (raw_kpts + grid_xy) * stride
-        // Use channel-major indexing: (kpt_idx * 2 + xy) * num_anchors + anchor_idx
-        for (int k = 0; k < 4; ++k) {
-            const float kpt_x       = raw_kpts[(k * 2 + 0) * num_anchors + i];
-            const float kpt_y       = raw_kpts[(k * 2 + 1) * num_anchors + i];
-            decoded.kpts[k * 2]     = (kpt_x + grid_x) * stride;
-            decoded.kpts[k * 2 + 1] = (kpt_y + grid_y) * stride;
-        }
-
-        decoded.conf = max_obj_conf;
-
-        // Extract color scores: layout [batch, color_idx, anchor] (channel-major)
-        for (int c = 0; c < 4; ++c) {
-            decoded.class1[c] = color_scores[c * num_anchors + i];
-        }
-
-        // Store pair class scores (from obj_scores)
-        for (int p = 0; p < NUM_PAIRS; ++p) {
-            decoded.class2[p] = obj_scores[p * num_anchors + i];
-        }
-
-        results.push_back(std::move(decoded));
+float AtLegacyAxeraBackend::iou(const cv::Rect2f& lhs, const cv::Rect2f& rhs) noexcept {
+    const float inter = (lhs & rhs).area();
+    if (inter <= 0.0f) {
+        return 0.0f;
     }
-
-    return results;
+    const float union_area = lhs.area() + rhs.area() - inter;
+    return union_area > 0.0f ? inter / union_area : 0.0f;
 }
 
-cv::Point2f AtLegacyAxeraBackend::scale_point(const cv::Point2f& pt, const PreprocContext& ctx) {
-    return cv::Point2f{
-        (pt.x - ctx.pad_w) / ctx.ratio,
-        (pt.y - ctx.pad_h) / ctx.ratio};
-}
-
-// ============================================================================
-// Postprocessing (4-Head Network)
-// ============================================================================
-
-std::vector<AtLegacyArmorDetection> AtLegacyAxeraBackend::postprocess_four_head(
+std::vector<AtLegacyArmorDetection> AtLegacyAxeraBackend::postprocess_concat_predecode(
     const PreprocContext& ctx, const AtLegacyAxeraConfig& cfg) const {
-    if (io_data_.nOutputSize < 4) {
-        SPDLOG_ERROR(
-            "[AxeraBackend] four-head postprocess requires >=4 outputs, got {}",
-            io_data_.nOutputSize);
-        return {};
-    }
+    const auto total_start = std::chrono::high_resolution_clock::now();
 
-    // Get output pointers
-    const float* color_scores =
-        static_cast<const float*>(io_data_.pOutputs[1].pVirAddr); // /model.23/Sigmoid_output_0
-    const float* obj_scores =
-        static_cast<const float*>(io_data_.pOutputs[2].pVirAddr); // /model.23/Sigmoid_1_output_0
-    const float* raw_kpts =
-        static_cast<const float*>(io_data_.pOutputs[3].pVirAddr); // /model.23/Reshape_12_output_0
-
-    // Use cached decode grid (built once at init, avoids rebuilding every frame)
-    const DecodeGrid& grid = cached_grid_;
-    const int num_anchors  = static_cast<int>(grid.grid_xy.size());
-    const float inv_ratio = 1.0f / ctx.ratio;
-    const float x_offset  = -ctx.pad_w * inv_ratio;
-    const float y_offset  = -ctx.pad_h * inv_ratio;
-    std::vector<AtLegacyArmorDetection> candidates;
-    candidates.reserve(std::min(num_anchors, std::max(cfg.top_k * 4, 256)));
-
-    // Map pair ID to ArmorName (using PAIR_NAMES_DEFAULT mapping)
-    // Python: ["Gs", "2s", "3s", "4s", "5s", "Os", "Gb", "1b", "3b", "4b", "5b", "Bb"]
-    // ArmorName: Sentry(0), One(1), Two(2), Three(3), Four(4), Five(5), Outpost(6), Base(7),
-    // BaseLarge(8)
-    static constexpr std::array<ArmorName, 12> PAIR_TO_ARMOR{
-        ArmorName::Sentry,   // 0: Gs (Guard sentry)
-        ArmorName::Two,      // 1: 2s
-        ArmorName::Three,    // 2: 3s
-        ArmorName::Four,     // 3: 4s
-        ArmorName::Five,     // 4: 5s
-        ArmorName::Outpost,  // 5: Os (Outpost)
-        ArmorName::Sentry,   // 6: Gb (Guard base - large armor)
-        ArmorName::One,      // 7: 1b (Base - hero number 1)
-        ArmorName::Three,    // 8: 3b
-        ArmorName::Four,     // 9: 4b
-        ArmorName::Five,     // 10: 5b
-        ArmorName::BaseLarge // 11: Bb (Balance/Buffer base)
-    };
-
-    for (int i = 0; i < num_anchors; ++i) {
-        int pair_id         = 0;
-        float max_obj_conf  = obj_scores[i];
-        int best_color_id   = 0;
-        float best_color_sc = color_scores[i];
-
-        for (int p = 1; p < NUM_PAIRS; ++p) {
-            const float conf = obj_scores[p * num_anchors + i];
-            if (conf > max_obj_conf) {
-                max_obj_conf = conf;
-                pair_id      = p;
-            }
-        }
-        if (max_obj_conf <= cfg.confidence_threshold) {
-            continue;
-        }
-
-        for (int c = 1; c < 4; ++c) {
-            const float sc = color_scores[c * num_anchors + i];
-            if (sc > best_color_sc) {
-                best_color_sc = sc;
-                best_color_id = c;
-            }
-        }
-
-        // Keep all model colors in detection output for debug visibility.
-        const ArmorColor color     = static_cast<ArmorColor>(best_color_id);
-        const ArmorName armor_name = PAIR_TO_ARMOR[pair_id];
-        const float grid_x         = grid.grid_xy[i].first;
-        const float grid_y         = grid.grid_xy[i].second;
-        const float stride         = grid.strides[i];
-
-        // Extract and scale keypoints back to original image
-        std::array<cv::Point2f, 4> corners;
-        for (int k = 0; k < 4; ++k) {
-            const float kpt_x = (raw_kpts[(k * 2 + 0) * num_anchors + i] + grid_x) * stride;
-            const float kpt_y = (raw_kpts[(k * 2 + 1) * num_anchors + i] + grid_y) * stride;
-            corners[k].x      = kpt_x * inv_ratio + x_offset;
-            corners[k].y      = kpt_y * inv_ratio + y_offset;
-        }
-
-        std::array<cv::Point2f, 4> corners_sorted;
-        corners_sorted[3] = corners[0];
-        corners_sorted[0] = corners[1];
-        corners_sorted[1] = corners[2];
-        corners_sorted[2] = corners[3];
-
-        AtLegacyArmorDetection det(corners_sorted, armor_name, color, max_obj_conf);
-        if (det.area > 0) {
-            candidates.push_back(std::move(det));
-        }
-    }
-
-    return candidates;
-}
-
-std::vector<AtLegacyArmorDetection> AtLegacyAxeraBackend::postprocess_o2o(
-    const PreprocContext& ctx, const AtLegacyAxeraConfig& cfg) const {
-    if (io_data_.nOutputSize < 1) {
-        SPDLOG_ERROR("[AxeraBackend] o2o postprocess requires at least one output");
-        return {};
-    }
-
-    const size_t min_output_bytes = static_cast<size_t>(O2O_OUTPUT_DIM) * sizeof(float);
-
-    // Find the best-matching output tensor for o2o format.
-    // Output layout is (B, C, A), C=28:
-    // [color(4), pts(8), xywh(4), cls(12)].
     const AX_ENGINE_IO_BUFFER_T* output_buf = nullptr;
+    const size_t min_output_bytes = static_cast<size_t>(PREDECODE_OUTPUT_DIM) * sizeof(float);
+
     for (int i = 0; i < static_cast<int>(io_data_.nOutputSize); ++i) {
         const AX_ENGINE_IO_BUFFER_T& buf = io_data_.pOutputs[i];
-        if (!buf.pVirAddr || static_cast<size_t>(buf.nSize) < min_output_bytes) {
+        if (buf.pVirAddr == nullptr || static_cast<size_t>(buf.nSize) < min_output_bytes) {
             continue;
         }
-
-        const size_t output_bytes = static_cast<size_t>(buf.nSize);
-        if (output_bytes % sizeof(float) != 0) {
+        if (static_cast<size_t>(buf.nSize) % (sizeof(float) * PREDECODE_OUTPUT_DIM) != 0U) {
             continue;
         }
-
-        const size_t elem_count = output_bytes / sizeof(float);
-        if (elem_count % O2O_OUTPUT_DIM != 0) {
-            continue;
-        }
-
-        if (!output_buf || buf.nSize > output_buf->nSize) {
+        if (output_buf == nullptr || buf.nSize > output_buf->nSize) {
             output_buf = &buf;
         }
     }
 
-    if (!output_buf) {
+    if (output_buf == nullptr) {
+        SPDLOG_ERROR("[AxeraBackend] No valid concat-predecode output tensor found");
+        return {};
+    }
+
+    const int num_anchors = static_cast<int>(
+        static_cast<size_t>(output_buf->nSize) / (sizeof(float) * PREDECODE_OUTPUT_DIM));
+    if (num_anchors != static_cast<int>(cached_grid_.grid_x.size())) {
         SPDLOG_ERROR(
-            "[AxeraBackend] No valid o2o output tensor found in {} outputs", io_data_.nOutputSize);
+            "[AxeraBackend] Anchor count mismatch: output={} grid={}", num_anchors,
+            cached_grid_.grid_x.size());
         return {};
     }
 
-    const size_t elem_count = static_cast<size_t>(output_buf->nSize) / sizeof(float);
-    const int max_det       = static_cast<int>(elem_count / O2O_OUTPUT_DIM);
-    if (max_det <= 0) {
-        return {};
+    const float* output       = static_cast<const float*>(output_buf->pVirAddr);
+    const float* raw_boxes    = output;
+    const float* color_logits = raw_boxes + PREDECODE_BOX_DIM * num_anchors;
+    const float* obj_logits   = color_logits + NUM_COLORS * num_anchors;
+    const float* raw_kpts     = obj_logits + PREDECODE_OBJ_DIM * num_anchors;
+
+    const auto phase1_end = std::chrono::high_resolution_clock::now();
+
+    // 更严格的 logit 阈值，减少后续计算量
+    const float confidence_threshold = static_cast<float>(cfg.confidence_threshold);
+    const float logit_threshold = std::log(confidence_threshold / (1.0f - confidence_threshold));
+
+    static bool logged_threshold = false;
+    if (!logged_threshold) {
+        SPDLOG_INFO(
+            "[AxeraBackend] confidence_threshold={}, logit_threshold={:.2f}", confidence_threshold,
+            logit_threshold);
+        logged_threshold = true;
     }
 
-    const float* output = static_cast<const float*>(output_buf->pVirAddr);
-    const float inv_ratio = 1.0f / ctx.ratio;
-    const float x_offset  = -ctx.pad_w * inv_ratio;
-    const float y_offset  = -ctx.pad_h * inv_ratio;
+    const size_t pre_nms_top_k = static_cast<size_t>(std::min(cfg.top_k, std::max(num_anchors, 1)));
+    auto min_heap_comp         = [](const RankedAnchor& lhs, const RankedAnchor& rhs) {
+        return lhs.best_obj_logit > rhs.best_obj_logit;
+    };
 
-    constexpr int color_offset = 0;
-    constexpr int kpt_offset   = color_offset + O2O_COLOR_DIM;
-    constexpr int box_offset   = kpt_offset + O2O_KPTS_DIM;
-    constexpr int obj_offset   = box_offset + O2O_XYWH_DIM;
+    std::vector<RankedAnchor> ranked;
+    ranked.reserve(pre_nms_top_k);
 
-    // Source tensor is channel-major (B, C, A). Build base pointers once to avoid repeated
-    // index arithmetic in hot loops.
-    const float* boxes_block =
-        output + static_cast<size_t>(box_offset) * static_cast<size_t>(max_det);
-    const float* color_block =
-        output + static_cast<size_t>(color_offset) * static_cast<size_t>(max_det);
-    const float* obj_block =
-        output + static_cast<size_t>(obj_offset) * static_cast<size_t>(max_det);
-    const float* kpts_block =
-        output + static_cast<size_t>(kpt_offset) * static_cast<size_t>(max_det);
+    // 扫描所有 anchors，找最佳 class
+    int anchor_scan_count = 0;
 
-    std::vector<AtLegacyArmorDetection> candidates;
-    candidates.reserve(std::min(max_det, std::max(cfg.top_k * 4, 128)));
+    for (int anchor_idx = 0; anchor_idx < num_anchors; ++anchor_idx) {
+        // 先找所有 classes 中的最佳 logit
+        float best_obj_logit = obj_logits[anchor_idx];
+        int pair_id          = 0;
+        for (int cls = 1; cls < NUM_PAIRS; ++cls) {
+            const float score = obj_logits[cls * num_anchors + anchor_idx];
+            if (score > best_obj_logit) {
+                best_obj_logit = score;
+                pair_id        = cls;
+            }
+        }
 
-    for (int i = 0; i < max_det; ++i) {
-        // 1) color argmax from color block.
+        // 用 logit 阈值过滤
+        if (best_obj_logit < logit_threshold) {
+            continue;
+        }
+        ++anchor_scan_count;
+
+        const RankedAnchor item{best_obj_logit, pair_id, anchor_idx};
+        if (ranked.size() < pre_nms_top_k) {
+            ranked.push_back(item);
+            std::push_heap(ranked.begin(), ranked.end(), min_heap_comp);
+            continue;
+        }
+        if (!ranked.empty() && item.best_obj_logit > ranked.front().best_obj_logit) {
+            std::pop_heap(ranked.begin(), ranked.end(), min_heap_comp);
+            ranked.back() = item;
+            std::push_heap(ranked.begin(), ranked.end(), min_heap_comp);
+        }
+    }
+
+    const auto phase2_end = std::chrono::high_resolution_clock::now();
+
+    std::sort(ranked.begin(), ranked.end(), [](const RankedAnchor& lhs, const RankedAnchor& rhs) {
+        return lhs.best_obj_logit > rhs.best_obj_logit;
+    });
+
+    const float max_x = static_cast<float>(std::max(ctx.orig_w - 1, 0));
+    const float max_y = static_cast<float>(std::max(ctx.orig_h - 1, 0));
+
+    std::vector<DecodedCandidate> candidates;
+    candidates.reserve(ranked.size());
+
+    // 预计算 scale 因子
+    const float scale_x = ctx.scale_x;
+    const float scale_y = ctx.scale_y;
+
+    for (const RankedAnchor& ranked_anchor : ranked) {
+        const float confidence = fast_sigmoid(ranked_anchor.best_obj_logit);
+        if (confidence <= confidence_threshold) {
+            continue;
+        }
+
+        const int anchor_idx = ranked_anchor.anchor_idx;
+        const float grid_x   = cached_grid_.grid_x[anchor_idx];
+        const float grid_y   = cached_grid_.grid_y[anchor_idx];
+        const float stride   = cached_grid_.strides[anchor_idx];
+
+        const float lt_x = raw_boxes[anchor_idx];
+        const float lt_y = raw_boxes[num_anchors + anchor_idx];
+        const float rb_x = raw_boxes[2 * num_anchors + anchor_idx];
+        const float rb_y = raw_boxes[3 * num_anchors + anchor_idx];
+
+        const float center_x = (grid_x + (rb_x - lt_x) * 0.5f) * stride;
+        const float center_y = (grid_y + (rb_y - lt_y) * 0.5f) * stride;
+        const float width    = (lt_x + rb_x) * stride;
+        const float height   = (lt_y + rb_y) * stride;
+        if (width <= 0.0f || height <= 0.0f) [[unlikely]] {
+            continue;
+        }
+
+        const float x1 = clampf((center_x - width * 0.5f) * scale_x, 0.0f, max_x);
+        const float y1 = clampf((center_y - height * 0.5f) * scale_y, 0.0f, max_y);
+        const float x2 = clampf((center_x + width * 0.5f) * scale_x, 0.0f, max_x);
+        const float y2 = clampf((center_y + height * 0.5f) * scale_y, 0.0f, max_y);
+        if (x2 <= x1 || y2 <= y1) [[unlikely]] {
+            continue;
+        }
+
+        // 找最佳颜色
         int best_color_id   = 0;
-        float best_color_sc = color_block[i];
-        for (int c = 1; c < O2O_COLOR_DIM; ++c) {
-            const float sc =
-                color_block[static_cast<size_t>(c) * static_cast<size_t>(max_det) + i];
-            if (sc > best_color_sc) {
-                best_color_sc = sc;
-                best_color_id = c;
-            }
-        }
-        if (!std::isfinite(best_color_sc)) {
-            continue;
-        }
-
-        // 2) object class argmax from obj block, and use it as detection confidence.
-        int best_cls_id   = 0;
-        float best_cls_sc = obj_block[i];
-        for (int c = 1; c < O2O_CLS_DIM; ++c) {
-            const float sc = obj_block[static_cast<size_t>(c) * static_cast<size_t>(max_det) + i];
-            if (sc > best_cls_sc) {
-                best_cls_sc = sc;
-                best_cls_id = c;
+        float best_color_sc = color_logits[anchor_idx];
+        for (int color_idx = 1; color_idx < NUM_COLORS; ++color_idx) {
+            const float score = color_logits[color_idx * num_anchors + anchor_idx];
+            if (score > best_color_sc) {
+                best_color_sc = score;
+                best_color_id = color_idx;
             }
         }
 
-        if (!std::isfinite(best_cls_sc) || best_cls_sc <= cfg.confidence_threshold) {
-            continue;
-        }
-
-        // 3) validate xywh block.
-        const float x = boxes_block[i];
-        const float y = boxes_block[static_cast<size_t>(max_det) + i];
-        const float w =
-            boxes_block[static_cast<size_t>(2) * static_cast<size_t>(max_det) + i];
-        const float h =
-            boxes_block[static_cast<size_t>(3) * static_cast<size_t>(max_det) + i];
-        if (!std::isfinite(x) || !std::isfinite(y) || !std::isfinite(w) || !std::isfinite(h)
-            || w <= 0.0F || h <= 0.0F) {
-            continue;
-        }
-
-        // 4) keypoints block.
-        std::array<cv::Point2f, 4> corners;
-        bool valid_keypoints = true;
+        std::array<cv::Point2f, NUM_KPTS> model_corners{};
         for (int k = 0; k < NUM_KPTS; ++k) {
-            const size_t kpt_base = static_cast<size_t>(k * 2) * static_cast<size_t>(max_det);
-            const float kx        = kpts_block[kpt_base + i];
-            const float ky        = kpts_block[kpt_base + static_cast<size_t>(max_det) + i];
-            if (!std::isfinite(kx) || !std::isfinite(ky)) {
-                valid_keypoints = false;
-                break;
-            }
+            const float kx = raw_kpts[(k * 2 + 0) * num_anchors + anchor_idx];
+            const float ky = raw_kpts[(k * 2 + 1) * num_anchors + anchor_idx];
 
-            // Keep model order directly: [p0, p1, p2, p3].
-            corners[k].x = kx * inv_ratio + x_offset;
-            corners[k].y = ky * inv_ratio + y_offset;
+            model_corners[k].x = clampf((kx + grid_x) * stride * scale_x, 0.0f, max_x);
+            model_corners[k].y = clampf((ky + grid_y) * stride * scale_y, 0.0f, max_y);
         }
 
-        if (!valid_keypoints) {
-            continue;
+        std::array<cv::Point2f, NUM_KPTS> ordered_corners{};
+        for (int k = 0; k < NUM_KPTS; ++k) {
+            ordered_corners[k] = model_corners[KPT_ORDER[k]];
         }
 
-        const ArmorColor color = static_cast<ArmorColor>(best_color_id);
-        const ArmorName name   = O2O_PAIR_TO_ARMOR[best_cls_id];
-
-        AtLegacyArmorDetection det(corners, name, color, best_cls_sc);
-        if (det.area > 0) {
-            candidates.push_back(std::move(det));
-        }
+        DecodedCandidate candidate;
+        candidate.corners    = ordered_corners;
+        candidate.bbox       = cv::Rect2f(x1, y1, x2 - x1, y2 - y1);
+        candidate.name       = PAIR_TO_ARMOR[ranked_anchor.pair_id];
+        candidate.color      = static_cast<ArmorColor>(best_color_id);
+        candidate.confidence = confidence;
+        candidate.pair_id    = ranked_anchor.pair_id;
+        candidates.push_back(std::move(candidate));
     }
 
-    return candidates;
-}
+    const auto phase3_end = std::chrono::high_resolution_clock::now();
 
-// ============================================================================
-// Helper Functions
-// ============================================================================
+    auto result = nms(candidates, cfg);
 
-// ============================================================================
-// NMS
-// ============================================================================
+    const auto total_end = std::chrono::high_resolution_clock::now();
 
-bool AtLegacyAxeraBackend::is_overlap(
-    const AtLegacyArmorDetection& box1, const AtLegacyArmorDetection& box2) {
-    return (box1.rect & box2.rect).area() > 0.0f;
+    const auto phase2_us =
+        std::chrono::duration_cast<std::chrono::microseconds>(phase2_end - phase1_end).count();
+    const auto phase3_us =
+        std::chrono::duration_cast<std::chrono::microseconds>(phase3_end - phase2_end).count();
+    const auto nms_us =
+        std::chrono::duration_cast<std::chrono::microseconds>(total_end - phase3_end).count();
+    const auto total_us =
+        std::chrono::duration_cast<std::chrono::microseconds>(total_end - total_start).count();
+
+    SPDLOG_INFO(
+        "[AxeraBackend] Postproc: scan={}ms decode={}ms nms={}ms total={}ms | passed={}/{}",
+        phase2_us / 1000.0, phase3_us / 1000.0, nms_us / 1000.0, total_us / 1000.0,
+        anchor_scan_count, num_anchors);
+
+    return result;
 }
 
 std::vector<AtLegacyArmorDetection> AtLegacyAxeraBackend::nms(
-    std::vector<AtLegacyArmorDetection>& detections, const AtLegacyAxeraConfig& cfg) const {
+    std::vector<DecodedCandidate>& detections, const AtLegacyAxeraConfig& cfg) const {
     if (detections.empty()) {
         return {};
     }
 
-    const size_t pre_nms_limit =
-        static_cast<size_t>(std::max(cfg.top_k * 4, std::max(cfg.top_k, 128)));
-    if (detections.size() > pre_nms_limit) {
-        std::nth_element(
-            detections.begin(), detections.begin() + static_cast<std::ptrdiff_t>(pre_nms_limit),
-            detections.end(), [](const AtLegacyArmorDetection& a, const AtLegacyArmorDetection& b) {
-                return a.confidence > b.confidence;
-            });
-        detections.resize(pre_nms_limit);
-    }
-
-    // Sort by confidence (descending)
     std::sort(
         detections.begin(), detections.end(),
-        [](const AtLegacyArmorDetection& a, const AtLegacyArmorDetection& b) {
-            return a.confidence > b.confidence;
+        [](const DecodedCandidate& lhs, const DecodedCandidate& rhs) {
+            return lhs.confidence > rhs.confidence;
         });
 
+    std::vector<uint8_t> removed(detections.size(), 0);
     std::vector<AtLegacyArmorDetection> result;
     result.reserve(std::min(detections.size(), static_cast<size_t>(cfg.top_k)));
-    std::vector<uint8_t> removed(detections.size(), 0);
 
     for (size_t i = 0; i < detections.size() && result.size() < static_cast<size_t>(cfg.top_k);
-         i++) {
-        if (removed[i])
+         ++i) {
+        if (removed[i] != 0) {
             continue;
+        }
 
-        result.push_back(detections[i]);
+        AtLegacyArmorDetection det(
+            detections[i].corners, detections[i].name, detections[i].color,
+            detections[i].confidence);
+        if (det.area <= 0) {
+            continue;
+        }
+        result.push_back(std::move(det));
 
-        // Suppress overlapping detections
-        for (size_t j = i + 1; j < detections.size(); j++) {
-            if (!removed[j] && is_overlap(detections[i], detections[j])) {
-                removed[j] = true;
+        for (size_t j = i + 1; j < detections.size(); ++j) {
+            if (removed[j] != 0 || detections[i].pair_id != detections[j].pair_id) {
+                continue;
+            }
+            if (iou(detections[i].bbox, detections[j].bbox) > NMS_IOU_THRESHOLD) {
+                removed[j] = 1;
             }
         }
     }
 
     return result;
 }
-
-// ============================================================================
-// Detection Entry Point
-// ============================================================================
 
 AtLegacyAxeraBackend::DetectionResult AtLegacyAxeraBackend::detect_impl(const cv::Mat& image) {
     const auto total_start = std::chrono::high_resolution_clock::now();
@@ -1063,64 +887,58 @@ AtLegacyAxeraBackend::DetectionResult AtLegacyAxeraBackend::detect_impl(const cv
     if (!initialized_) {
         return std::unexpected(DetectorError::NotInitialized);
     }
-
     if (image.empty()) {
         return std::unexpected(DetectorError::InvalidImage);
     }
 
     const auto& cfg = get_config();
-
-    // Preprocess: compute letterbox params (negligible time)
-    auto ctx = preprocess_letterbox(image, cfg);
-
-    // Preprocess: actual image processing (resize + BGR2RGB + cache flush)
-    // Try IVPS first (single hardware operation), fall back to OpenCV if IVPS fails
-    {
-        ScopedTimer timer("preprocess");
-        if (ivps_initialized_) {
-            preprocess_image_ivps(image, ctx);
-        } else {
-            preprocess_image(image, ctx);
-        }
+    const auto ctx  = preprocess(image);
+    if (!ctx.is_four_three && !warned_non_four_three_input_) {
+        SPDLOG_WARN(
+            "[AxeraBackend] Input {}x{} is not 4:3; direct resize to {}x{} will be used without "
+            "letterbox",
+            image.cols, image.rows, INPUT_W, INPUT_H);
+        warned_non_four_three_input_ = true;
     }
 
-    // Infer: pure NPU execution
-    {
-        ScopedTimer timer("infer");
-        if (!infer()) {
-            return std::unexpected(DetectorError::InferenceFailed);
-        }
+    // Preprocess timing
+    const auto preproc_start = std::chrono::high_resolution_clock::now();
+    if (ivps_initialized_) {
+        preprocess_image_ivps(image);
+    } else {
+        preprocess_image(image);
     }
+    const auto preproc_end = std::chrono::high_resolution_clock::now();
+    const auto preproc_us =
+        std::chrono::duration_cast<std::chrono::microseconds>(preproc_end - preproc_start).count();
 
-    // Postprocess (configurable: four-head or o2o)
-    auto detections = ([&]() {
-        ScopedTimer timer("postprocess");
-        switch (cfg.postprocess_option) {
-        case AtLegacyAxeraPostprocessOption::FourHead: return postprocess_four_head(ctx, cfg);
-        case AtLegacyAxeraPostprocessOption::O2O: return postprocess_o2o(ctx, cfg);
-        default: {
-            SPDLOG_WARN(
-                "[AxeraBackend] Unknown postprocess_option={}, fallback to FourHead",
-                static_cast<int>(cfg.postprocess_option));
-            return postprocess_four_head(ctx, cfg);
-        }
-        }
-    })();
+    // Inference timing
+    const auto infer_start = std::chrono::high_resolution_clock::now();
+    if (!infer()) {
+        return std::unexpected(DetectorError::InferenceFailed);
+    }
+    const auto infer_end = std::chrono::high_resolution_clock::now();
+    const auto infer_us =
+        std::chrono::duration_cast<std::chrono::microseconds>(infer_end - infer_start).count();
 
-    // NMS
-    auto result = ([&]() {
-        ScopedTimer timer("nms");
-        return nms(detections, cfg);
-    })();
+    // Postprocess timing
+    const auto postproc_start = std::chrono::high_resolution_clock::now();
+    auto detections           = postprocess_concat_predecode(ctx, cfg);
+    const auto postproc_end   = std::chrono::high_resolution_clock::now();
+    const auto postproc_us =
+        std::chrono::duration_cast<std::chrono::microseconds>(postproc_end - postproc_start)
+            .count();
 
-    // Total time
     const auto total_end = std::chrono::high_resolution_clock::now();
     const auto total_us =
         std::chrono::duration_cast<std::chrono::microseconds>(total_end - total_start).count();
-    SPDLOG_DEBUG(
-        "[AxeraBackend] Total detection time: {} us ({:.2f} ms)", total_us, total_us / 1000.0);
 
-    return result;
+    SPDLOG_INFO(
+        "[AxeraBackend] Timing: preproc={:.2f}ms, infer={:.2f}ms, postproc={:.2f}ms, "
+        "total={:.2f}ms",
+        preproc_us / 1000.0, infer_us / 1000.0, postproc_us / 1000.0, total_us / 1000.0);
+
+    return detections;
 }
 
 } // namespace fcs::L2
