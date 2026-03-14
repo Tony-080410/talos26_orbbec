@@ -118,7 +118,7 @@ template <typename TargetState>
     const WeaponControllerConfig& config, const L4::Aimer& aimer, const L4::PlannerSeed& seed,
     uint64_t current_ns, const GimbalTransform& gimbal, const MuzzleTransform& muzzle,
     const core::trajectory::solver::TrajectorySolver& solver, double bullet_speed) noexcept {
-    const int horizon = config.mpc.horizon_ahead + config.mpc.horizon_back;
+    const int horizon = config.mpc.horizon_ahead + config.mpc.horizon_back + 1;
 
     ReferenceTrajectory trajectory{
         .state           = ReferenceMatrix(4, horizon),
@@ -173,21 +173,20 @@ template <typename TargetState>
 }
 
 [[nodiscard]] bool compute_fire_gate(
-    const L4::FireDecisionConfig& fire_decision, int center_index,
-    const ReferenceTrajectory& trajectory, const TinySolver* yaw_solver,
+    const L4::FireDecisionConfig& fire_decision, double current_yaw, double current_pitch,
+    int center_index, const ReferenceTrajectory& trajectory, const TinySolver* yaw_solver,
     const TinySolver* pitch_solver) noexcept {
     const int sample_index =
         std::min(center_index, static_cast<int>(trajectory.distances.size()) - 1);
-    const double reference_yaw =
-        normalize_angle(trajectory.state(0, sample_index) + trajectory.yaw_origin);
     const double optimized_yaw =
-        normalize_angle(yaw_solver->work->x(0, sample_index) + trajectory.yaw_origin);
-    const double reference_pitch = trajectory.state(2, sample_index);
-    const double optimized_pitch = pitch_solver->work->x(0, sample_index);
+        normalize_angle(yaw_solver->solution->x(0, sample_index) + trajectory.yaw_origin);
+    // is_on_target compares against TF pitch convention; optimizer pitch follows command
+    // convention.
+    const double optimized_pitch = -pitch_solver->solution->x(0, sample_index);
     const double distance        = std::max(trajectory.distances[sample_index], 1e-6);
 
     return L4::is_on_target(
-        fire_decision, optimized_yaw, optimized_pitch, reference_yaw, reference_pitch, distance);
+        fire_decision, current_yaw, current_pitch, optimized_yaw, optimized_pitch, distance);
 }
 
 [[nodiscard]] WeaponVisualizationDebugData build_debug_data(
@@ -215,8 +214,8 @@ template <typename TargetState>
             debug.reference_plan.back().pitch);
         const Eigen::Vector3d world_bias = trajectory.positions[k] - reconstructed_reference;
         const double optimized_yaw =
-            normalize_angle(yaw_solver->work->x(0, k) + trajectory.yaw_origin);
-        const double optimized_pitch = pitch_solver->work->x(0, k);
+            normalize_angle(yaw_solver->solution->x(0, k) + trajectory.yaw_origin);
+        const double optimized_pitch = pitch_solver->solution->x(0, k);
         const Eigen::Vector3d reconstructed_optimized =
             spherical_to_cartesian(trajectory.distances[k], optimized_yaw, optimized_pitch);
         debug.optimized_plan.push_back(
@@ -344,23 +343,28 @@ std::expected<WeaponCommand, std::string> TinyMpcTrajectoryOptimizer::optimize(
         return std::unexpected("pitch MPC did not converge");
     }
 
-    const int center_index  = config_.mpc.horizon_back;
+    const auto current_gimbal  = transforms->gimbal.euler_rot();
+    const double current_yaw   = normalize_angle(current_gimbal.yaw);
+    const double current_pitch = current_gimbal.pitch;
+    const int center_index     = config_.mpc.horizon_back;
     const int control_index = std::min(center_index, static_cast<int>(reference->state.cols()) - 2);
 
     WeaponCommand cmd = passthrough(plan, current_ns);
     cmd.ref_yaw       = normalize_angle(reference->state(0, center_index) + reference->yaw_origin);
     cmd.ref_pitch     = reference->state(2, center_index);
-    cmd.yaw = normalize_angle(yaw_solver->work->x(0, center_index) + reference->yaw_origin);
-    cmd.pitch =
-        std::clamp(pitch_solver->work->x(0, center_index), config_.pitch_min, config_.pitch_max);
-    cmd.yaw_vel     = yaw_solver->work->x(1, center_index);
-    cmd.pitch_vel   = pitch_solver->work->x(1, center_index);
-    cmd.yaw_accel   = yaw_solver->work->u(0, control_index);
-    cmd.pitch_accel = pitch_solver->work->u(0, control_index);
+    cmd.yaw   = normalize_angle(yaw_solver->solution->x(0, center_index) + reference->yaw_origin);
+    cmd.pitch = std::clamp(
+        pitch_solver->solution->x(0, center_index), config_.pitch_min, config_.pitch_max);
+    cmd.yaw_vel     = yaw_solver->solution->x(1, center_index);
+    cmd.pitch_vel   = pitch_solver->solution->x(1, center_index);
+    cmd.yaw_accel   = yaw_solver->solution->u(0, control_index);
+    cmd.pitch_accel = pitch_solver->solution->u(0, control_index);
     cmd.distance    = reference->distances[center_index];
     cmd.tof         = reference->time_of_flights[center_index];
     cmd.fire        = plan.fire_advice
-                   && compute_fire_gate(fire_decision, center_index, *reference, yaw_solver, pitch_solver);
+                   && compute_fire_gate(
+                          fire_decision, current_yaw, current_pitch, center_index, *reference, yaw_solver,
+                          pitch_solver);
     if (config_.enable_debug) {
         cmd.viz_debug = build_debug_data(config_, *reference, yaw_solver, pitch_solver);
     }
@@ -379,7 +383,7 @@ void TinyMpcTrajectoryOptimizer::initialize_solvers() noexcept {
     yaw_solver_.reset();
     pitch_solver_.reset();
 
-    const int horizon = config_.mpc.horizon_ahead + config_.mpc.horizon_back;
+    const int horizon = config_.mpc.horizon_ahead + config_.mpc.horizon_back + 1;
     const double dt   = config_.mpc.dt;
 
     const Eigen::Matrix2d A             = (Eigen::Matrix2d{} << 1.0, dt, 0.0, 1.0).finished();
