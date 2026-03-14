@@ -39,25 +39,88 @@ void register_l4_planning_systems(App& app) {
             }
 
             auto cmd = cmd_in.read();
-            if (!cmd) {
+            if (!cmd || cmd->distance < 0) {
                 return;
             }
 
             nlohmann::json cmd_json;
             cmd_json["timestamp_ns"]      = cmd->timestamp_ns;
+            cmd_json["plan_timestamp_ns"] = cmd->plan_timestamp_ns;
             cmd_json["timestamp"]         = nlohmann::json::object();
             cmd_json["timestamp"]["sec"]  = cmd->timestamp_ns / 1000000000L;
             cmd_json["timestamp"]["nsec"] = cmd->timestamp_ns % 1000000000L;
-            cmd_json["yaw"]               = cmd->yaw;
-            cmd_json["pitch"]             = cmd->pitch;
-            cmd_json["v_yaw"]             = cmd->yaw_vel;
-            cmd_json["v_pitch"]           = cmd->pitch_vel;
-            cmd_json["a_yaw"]             = cmd->yaw_accel;
-            cmd_json["a_pitch"]           = cmd->pitch_accel;
-            cmd_json["distance"]          = cmd->distance;
-            cmd_json["fire_advice"]       = cmd->fire;
+            cmd_json["pre_plan"]          = {
+                {        "yaw",   cmd->plan_yaw},
+                {      "pitch", cmd->plan_pitch},
+                {"fire_advice",  cmd->plan_fire},
+            };
+            cmd_json["post_plan"] = {
+                {        "yaw",   cmd->yaw},
+                {      "pitch", cmd->pitch},
+                {"fire_advice",  cmd->fire},
+            };
+            cmd_json["reference_center"] = {
+                {  "yaw",   cmd->ref_yaw},
+                {"pitch", cmd->ref_pitch},
+            };
+            cmd_json["yaw"]         = cmd->yaw;
+            cmd_json["pitch"]       = cmd->pitch;
+            cmd_json["v_yaw"]       = cmd->yaw_vel;
+            cmd_json["v_pitch"]     = cmd->pitch_vel;
+            cmd_json["a_yaw"]       = cmd->yaw_accel;
+            cmd_json["a_pitch"]     = cmd->pitch_accel;
+            cmd_json["distance"]    = cmd->distance;
+            cmd_json["fire_advice"] = cmd->fire;
 
             detail::publish_json_message<GimbalCmdMessage>(*server, cmd_json);
+        });
+
+    app.template add_system<talos::pool_compute>(
+        "foxglove_l4_mpc_trajectory_pub",
+        [](talos::spmc<::fcs::L5::WeaponCommand, WeaponCommandChannelTopic> cmd_in,
+           talos::res<std::shared_ptr<FoxgloveServer>> server) {
+            if (!detail::foxglove_ready(*server, cmd_in)) {
+                return;
+            }
+
+            auto cmd = cmd_in.read();
+            if (!cmd || !cmd->viz_debug) {
+                return;
+            }
+
+            nlohmann::json traj_json;
+            traj_json["timestamp_ns"]      = cmd->timestamp_ns;
+            traj_json["plan_timestamp_ns"] = cmd->plan_timestamp_ns;
+            traj_json["center_index"]      = cmd->viz_debug->center_index;
+            traj_json["lookahead_index"]   = cmd->viz_debug->lookahead_index;
+            traj_json["reference"]         = nlohmann::json::array();
+            traj_json["optimized"]         = nlohmann::json::array();
+
+            for (int i = 0; i < static_cast<int>(cmd->viz_debug->reference_plan.size()); ++i) {
+                const auto& reference = cmd->viz_debug->reference_plan[i];
+                traj_json["reference"].push_back({
+                    {          "index",                                i},
+                    {"temporal_offset", i - cmd->viz_debug->center_index},
+                    {            "yaw",                    reference.yaw},
+                    {          "pitch",                  reference.pitch},
+                    {       "distance",               reference.distance},
+                    {            "tof",                    reference.tof},
+                });
+            }
+
+            for (int i = 0; i < static_cast<int>(cmd->viz_debug->optimized_plan.size()); ++i) {
+                const auto& optimized = cmd->viz_debug->optimized_plan[i];
+                traj_json["optimized"].push_back({
+                    {          "index",                                i},
+                    {"temporal_offset", i - cmd->viz_debug->center_index},
+                    {            "yaw",                    optimized.yaw},
+                    {          "pitch",                  optimized.pitch},
+                    {       "distance",               optimized.distance},
+                    {            "tof",                    optimized.tof},
+                });
+            }
+
+            detail::publish_json_message<MpcTrajectoryMessage>(*server, traj_json);
         });
 
     // =========================================================================
@@ -115,6 +178,42 @@ void register_l4_planning_systems(App& app) {
             }
 
             viz::publish_scene_if_nonempty<GimbalSceneMessage>(*server, std::move(entities));
+        });
+
+    app.template add_system<talos::pool_compute>(
+        "foxglove_l4_mpc_prediction_scene",
+        [](talos::spmc<::fcs::L5::WeaponCommand, WeaponCommandChannelTopic> cmd_in,
+           talos::res<std::shared_ptr<FoxgloveServer>> server) {
+            if (!detail::foxglove_ready(*server, cmd_in)) {
+                return;
+            }
+
+            auto cmd = cmd_in.read();
+            if (!cmd || !cmd->viz_debug) {
+                return;
+            }
+
+            std::vector<::foxglove::schemas::SceneEntity> entities;
+            entities.reserve(
+                cmd->viz_debug->reference_plan.size() + cmd->viz_debug->optimized_plan.size());
+
+            for (int i = 0; i < static_cast<int>(cmd->viz_debug->reference_plan.size()); ++i) {
+                const auto& reference = cmd->viz_debug->reference_plan[i];
+                entities.push_back(
+                    viz::patterns::mpc_trajectory_point<fast_tf::odom>(
+                        reference.world_position, i - cmd->viz_debug->center_index, true,
+                        cmd->timestamp_ns));
+            }
+
+            for (int i = 0; i < static_cast<int>(cmd->viz_debug->optimized_plan.size()); ++i) {
+                const auto& optimized = cmd->viz_debug->optimized_plan[i];
+                entities.push_back(
+                    viz::patterns::mpc_trajectory_point<fast_tf::odom>(
+                        optimized.world_position, i - cmd->viz_debug->center_index, false,
+                        cmd->timestamp_ns));
+            }
+
+            viz::publish_scene_if_nonempty<MpcPredictionSceneMessage>(*server, std::move(entities));
         });
 }
 } // namespace fcs::foxglove::systems

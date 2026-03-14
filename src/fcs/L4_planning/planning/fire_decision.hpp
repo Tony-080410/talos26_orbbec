@@ -16,8 +16,8 @@ namespace fcs::L4 {
 /// Fire decision configuration
 struct FireDecisionConfig {
     /// Minimum shooting threshold (radians), used for long distances
-    /// Default: ~0.17 degrees (180.0 / pi)
-    double fire_thresh{180.0 / std::numbers::pi};
+    /// Default aligned with sp_vision_25 planner
+    double fire_thresh{0.003};
 
     /// Physical window dimensions (meters)
     double shooting_range_h{0.135}; // Height
@@ -30,8 +30,8 @@ struct FireDecisionConfig {
 /// Check if target is within shootable range
 ///
 /// Converts physical window (meters) to angular tolerance and checks if current gimbal
-/// attitude is within range. This is the unified fire decision logic used by both
-/// Aimer and Planner.
+/// attitude is within range. This is the unified fire decision logic used by L4 aimers
+/// and the L5 MPC fire gate.
 ///
 /// @param cfg Fire decision configuration
 /// @param cur_yaw Current gimbal yaw (radians)

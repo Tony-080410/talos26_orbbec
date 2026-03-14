@@ -16,14 +16,14 @@ namespace fcs::L4 {
 struct AimerConfig {
     /// System delay compensation (seconds)
     /// Includes: camera exposure, image processing, communication, gimbal response
-    double delay{0.015};
+    double delay{0.01};
 
     [[nodiscard]] std::expected<void, std::string> read_from(const toml::table& tbl) noexcept;
 };
 
 /// L4 planning configuration (Aimer + plan adapter architecture)
 struct L4Config {
-    // Fire decision configuration (shared by Aimer and Planner)
+    // Fire decision configuration shared by L4 aiming and L5 fire gating.
     FireDecisionConfig fire_decision{};
 
     // Shared aimer configuration (used for Robot/Outpost/Rune)

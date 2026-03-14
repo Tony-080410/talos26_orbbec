@@ -6,6 +6,7 @@
 #include <Eigen/Core>
 #include <cstdint>
 #include <optional>
+#include <variant>
 #include <vector>
 
 namespace fcs::L4 {
@@ -29,6 +30,33 @@ enum class GimbalPlanSource : uint8_t {
     Rune  = 2,
 };
 
+/// L4 planner seed passed to L5 for trajectory generation.
+///
+/// L5 uses the raw target state to rebuild a future reference horizon without
+/// re-implementing the entire L4 planner pipeline.
+struct PlannerSeed {
+    using State = std::variant<std::monostate, L3::RobotTargetState, L3::OutpostTargetState>;
+
+    uint64_t state_timestamp_ns{0};
+    State state{};
+
+    [[nodiscard]] bool is_robot() const noexcept {
+        return std::holds_alternative<L3::RobotTargetState>(state);
+    }
+
+    [[nodiscard]] bool is_outpost() const noexcept {
+        return std::holds_alternative<L3::OutpostTargetState>(state);
+    }
+
+    [[nodiscard]] const L3::RobotTargetState* robot_state() const noexcept {
+        return std::get_if<L3::RobotTargetState>(&state);
+    }
+
+    [[nodiscard]] const L3::OutpostTargetState* outpost_state() const noexcept {
+        return std::get_if<L3::OutpostTargetState>(&state);
+    }
+};
+
 // ============================================================================
 // Gimbal Plan - Final Output from L4 Planner
 // ============================================================================
@@ -44,7 +72,8 @@ struct GimbalPlan {
     double distance{0.0};
     std::optional<Eigen::Vector3d> predicted_position;
     uint64_t predicted_future{0};
-    GimbalPlanSource source;
+    GimbalPlanSource source{GimbalPlanSource::Armor};
+    std::optional<PlannerSeed> planner_seed;
 
     // ========================================================================
     // Target Angles

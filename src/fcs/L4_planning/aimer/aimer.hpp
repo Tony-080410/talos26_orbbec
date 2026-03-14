@@ -35,11 +35,25 @@ public:
             double bullet_speed,
             const core::trajectory::solver::TrajectorySolver& solver) const noexcept;
 
+    /// Compute aim point for robot target with extra delay on top of AimerConfig::delay.
+    [[nodiscard]] std::expected<TargetPrediction, std::string>
+        aim(const L3::RobotTargetState& target, const GimbalTransform& gimbal,
+            const MuzzleTransform& muzzle, uint64_t measurement_ns, uint64_t current_ns,
+            double extra_prediction_delay, double bullet_speed,
+            const core::trajectory::solver::TrajectorySolver& solver) const noexcept;
+
     /// Compute aim point for outpost target
     [[nodiscard]] std::expected<TargetPrediction, std::string>
         aim(const L3::OutpostTargetState& target, const GimbalTransform& gimbal,
             const MuzzleTransform& muzzle, uint64_t measurement_ns, uint64_t current_ns,
             double bullet_speed,
+            const core::trajectory::solver::TrajectorySolver& solver) const noexcept;
+
+    /// Compute aim point for outpost target with extra delay on top of AimerConfig::delay.
+    [[nodiscard]] std::expected<TargetPrediction, std::string>
+        aim(const L3::OutpostTargetState& target, const GimbalTransform& gimbal,
+            const MuzzleTransform& muzzle, uint64_t measurement_ns, uint64_t current_ns,
+            double extra_prediction_delay, double bullet_speed,
             const core::trajectory::solver::TrajectorySolver& solver) const noexcept;
 
     /// Compute aim point for rune target (EnergyMeterState)
@@ -68,10 +82,10 @@ private:
         double bullet_speed) noexcept {
         const Eigen::Vector2d aim_angles =
             compute_aim_point(solver, predicted_pos - muzzle.translation(), bullet_speed);
-        const auto muzzle_des = math_fuxk::rpy(0.0, aim_angles.y(), aim_angles.x()).so3();
-        const auto idk        = muzzle.so3().inv() * muzzle_des;
-        const auto x          = gimbal.so3() * idk;
-        const auto [r, p, y]  = math_fuxk::rpy(x).rpy();
+        const auto desired_muzzle = math_fuxk::rpy(0.0, aim_angles.y(), aim_angles.x()).so3();
+        const auto muzzle_delta   = muzzle.so3().inv() * desired_muzzle;
+        const auto desired_gimbal = gimbal.so3() * muzzle_delta;
+        const auto [r, p, y]      = math_fuxk::rpy(desired_gimbal).rpy();
         return {y, p};
     }
 
@@ -83,7 +97,7 @@ private:
     template <class TargetType>
     [[nodiscard]] std::expected<TargetPrediction, std::string> aim_generic(
         const TargetType& target, const GimbalTransform& gimbal, const MuzzleTransform& muzzle,
-        uint64_t measurement_ns, uint64_t current_ns, double bullet_speed,
+        uint64_t measurement_ns, uint64_t current_ns, double prediction_delay, double bullet_speed,
         const core::trajectory::solver::TrajectorySolver& solver) const noexcept;
 
     /// Generic aim implementation for targets without prediction (Rune)

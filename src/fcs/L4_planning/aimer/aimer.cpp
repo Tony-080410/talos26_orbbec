@@ -1,8 +1,32 @@
 #include "L4_planning/aimer/aimer.hpp"
 
+#include <cmath>
+#include <limits>
 #include <numbers>
 
 namespace fcs::L4 {
+namespace {
+
+[[nodiscard]] uint64_t offset_timestamp_ns(uint64_t base_ns, double offset_s) noexcept {
+    if (!std::isfinite(offset_s)) {
+        return base_ns;
+    }
+
+    const long double shifted_ns =
+        static_cast<long double>(base_ns) + static_cast<long double>(offset_s) * 1.0e9L;
+    if (shifted_ns <= 0.0L) {
+        return 0;
+    }
+
+    const long double max_ns = static_cast<long double>(std::numeric_limits<uint64_t>::max());
+    if (shifted_ns >= max_ns) {
+        return std::numeric_limits<uint64_t>::max();
+    }
+
+    return static_cast<uint64_t>(std::llround(shifted_ns));
+}
+
+} // namespace
 
 // ============================================================================
 // predict_position - Robot
@@ -85,7 +109,7 @@ Eigen::Vector3d Aimer::predict_position(const L3::OutpostTargetState& target, do
 template <class TargetType>
 std::expected<TargetPrediction, std::string> Aimer::aim_generic(
     const TargetType& target, const GimbalTransform& gimbal, const MuzzleTransform& muzzle,
-    uint64_t measurement_ns, uint64_t current_ns, double bullet_speed,
+    uint64_t measurement_ns, uint64_t current_ns, double prediction_delay, double bullet_speed,
     const core::trajectory::solver::TrajectorySolver& solver) const noexcept {
 
     TargetPrediction output;
@@ -94,18 +118,19 @@ std::expected<TargetPrediction, std::string> Aimer::aim_generic(
     output.target_velocity = target.velocity;
     output.target_v_yaw    = target.v_yaw;
 
-    const double age         = static_cast<double>(current_ns - measurement_ns) * 1e-9;
-    const double total_delay = age + config_.delay;
+    const double age =
+        static_cast<double>(static_cast<int64_t>(current_ns) - static_cast<int64_t>(measurement_ns))
+        * 1e-9;
+    const double total_delay = age + prediction_delay;
 
     const Eigen::Vector3d t            = muzzle.translation();
     const double total_prediction_time = refine_flying_time(
         solver, [&](double dt) -> Eigen::Vector3d { return predict_position(target, dt) - t; },
         total_delay, bullet_speed);
 
-    output.predicted_position = predict_position(target, total_prediction_time);
-    output.predicted_future_ns =
-        measurement_ns + static_cast<uint64_t>(total_prediction_time * 1e9);
-    output.flying_time = total_prediction_time - total_delay;
+    output.predicted_position  = predict_position(target, total_prediction_time);
+    output.predicted_future_ns = offset_timestamp_ns(measurement_ns, total_prediction_time);
+    output.flying_time         = total_prediction_time - total_delay;
 
     const auto [yaw, pitch] =
         compute_gimbal_aim_angles(output.predicted_position, gimbal, muzzle, solver, bullet_speed);
@@ -157,7 +182,18 @@ std::expected<TargetPrediction, std::string> Aimer::aim(
     const L3::RobotTargetState& target, const GimbalTransform& gimbal,
     const MuzzleTransform& muzzle, uint64_t measurement_ns, uint64_t current_ns,
     double bullet_speed, const core::trajectory::solver::TrajectorySolver& solver) const noexcept {
-    return aim_generic(target, gimbal, muzzle, measurement_ns, current_ns, bullet_speed, solver);
+    return aim_generic(
+        target, gimbal, muzzle, measurement_ns, current_ns, config_.delay, bullet_speed, solver);
+}
+
+std::expected<TargetPrediction, std::string> Aimer::aim(
+    const L3::RobotTargetState& target, const GimbalTransform& gimbal,
+    const MuzzleTransform& muzzle, uint64_t measurement_ns, uint64_t current_ns,
+    double extra_prediction_delay, double bullet_speed,
+    const core::trajectory::solver::TrajectorySolver& solver) const noexcept {
+    return aim_generic(
+        target, gimbal, muzzle, measurement_ns, current_ns, config_.delay + extra_prediction_delay,
+        bullet_speed, solver);
 }
 
 // ============================================================================
@@ -168,7 +204,18 @@ std::expected<TargetPrediction, std::string> Aimer::aim(
     const L3::OutpostTargetState& target, const GimbalTransform& gimbal,
     const MuzzleTransform& muzzle, uint64_t measurement_ns, uint64_t current_ns,
     double bullet_speed, const core::trajectory::solver::TrajectorySolver& solver) const noexcept {
-    return aim_generic(target, gimbal, muzzle, measurement_ns, current_ns, bullet_speed, solver);
+    return aim_generic(
+        target, gimbal, muzzle, measurement_ns, current_ns, config_.delay, bullet_speed, solver);
+}
+
+std::expected<TargetPrediction, std::string> Aimer::aim(
+    const L3::OutpostTargetState& target, const GimbalTransform& gimbal,
+    const MuzzleTransform& muzzle, uint64_t measurement_ns, uint64_t current_ns,
+    double extra_prediction_delay, double bullet_speed,
+    const core::trajectory::solver::TrajectorySolver& solver) const noexcept {
+    return aim_generic(
+        target, gimbal, muzzle, measurement_ns, current_ns, config_.delay + extra_prediction_delay,
+        bullet_speed, solver);
 }
 
 // ============================================================================

@@ -155,6 +155,7 @@ set(FCS_SOURCES
         src/fcs/L4_planning/planning/fire_decision.cpp
         src/fcs/L4_planning/planning_systems.cpp
         src/fcs/L5_weapon/config.cpp
+        src/fcs/L5_weapon/enhanced/trajectory_optimizer.cpp
         src/fcs/L5_weapon/enhanced/weapon_systems.cpp
 )
 

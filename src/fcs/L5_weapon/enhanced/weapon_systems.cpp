@@ -1,10 +1,13 @@
 #include "L5_weapon/enhanced/weapon_systems.hpp"
 
+#include "L4_planning/aimer/aimer.hpp"
 #include "L4_planning/config.hpp"
 #include "L4_planning/gimbal_planner/types.hpp"
 #include "L5_weapon/config.hpp"
+#include "L5_weapon/enhanced/trajectory_optimizer.hpp"
 #include "L5_weapon/fire_control.hpp"
 #include "core/channel_topics.hpp"
+#include "core/time.hpp"
 #include "core/trajectory/resource.hpp"
 #include "scheduler/scheduler.hpp"
 
@@ -13,11 +16,16 @@
 
 namespace fcs::L5 {
 void register_enhanced_weapon_system(talos::Scheduler& scheduler, WeaponControllerConfig&& config) {
+    auto optimizer = std::make_shared<TinyMpcTrajectoryOptimizer>(config);
     scheduler.world().insert_resource(std::move(config));
     scheduler.add_system<talos::fixed_rate<250>>(
         "enhanced_weapon_control",
-        [&]([[maybe_unused]] talos::res<WeaponControllerConfig> _config,
-            [[maybe_unused]] core::trajectory::trajectory_solver solver,
+        [optimizer](
+            [[maybe_unused]] talos::res<WeaponControllerConfig> _config,
+            talos::res<L4::L4Config> l4_config, talos::res<L4::Aimer> aimer,
+            core::trajectory::trajectory_solver solver,
+            core::trajectory::bullet_speed bullet_speed_,
+            talos::res<fast_tf::CoordinateSystem> tf_buffer,
             talos::spmc<fcs::L4::GimbalPlan, GimbalPlanChannelTopic> plan_in,
             talos::spmc_mut<WeaponCommand, WeaponCommandChannelTopic> weapon_out) mutable {
             auto plan = plan_in.read();
@@ -25,19 +33,17 @@ void register_enhanced_weapon_system(talos::Scheduler& scheduler, WeaponControll
                 return;
             }
 
-            WeaponCommand cmd;
-            cmd.timestamp_ns = plan->timestamp_ns;
-            cmd.yaw          = plan->yaw;
-            cmd.pitch        = plan->pitch;
-            cmd.yaw_vel      = plan->yaw_vel;
-            cmd.pitch_vel    = plan->pitch_vel;
-            cmd.yaw_accel    = plan->yaw_acc;
-            cmd.pitch_accel  = plan->pitch_acc;
-            cmd.fire         = plan->fire_advice;
-            cmd.distance     = plan->distance;
+            const uint64_t command_timestamp_ns = fcs::clock::now_ns();
+            WeaponCommand cmd = optimizer->passthrough(*plan, command_timestamp_ns);
 
-            // Calculate time of flight using trajectory solver
-            cmd.tof = 0.0;
+            if (solver->get()) {
+                const auto optimized = optimizer->optimize(
+                    *plan, *aimer, l4_config->fire_decision, *tf_buffer, **solver,
+                    bullet_speed_->bullet_speed, command_timestamp_ns);
+                if (optimized) {
+                    cmd = std::move(*optimized);
+                }
+            }
 
             weapon_out.write(cmd);
         });
