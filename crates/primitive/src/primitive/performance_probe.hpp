@@ -6,6 +6,7 @@
 #include <cmath>
 #include <cstdint>
 #include <iostream>
+#include <mutex>
 #include <numeric>
 #include <ranges>
 #include <vector>
@@ -80,10 +81,29 @@ public:
         : samples_()
         , count_(0) {}
 
+    LatencyHistogram(LatencyHistogram&& other) noexcept {
+        std::lock_guard lock(other.lock_);
+        samples_ = other.samples_;
+        count_   = other.count_;
+    }
+
+    LatencyHistogram& operator=(LatencyHistogram&& other) noexcept {
+        if (this != &other) {
+            std::scoped_lock lock(lock_, other.lock_);
+            samples_ = other.samples_;
+            count_   = other.count_;
+        }
+        return *this;
+    }
+
+    LatencyHistogram(const LatencyHistogram&)            = delete;
+    LatencyHistogram& operator=(const LatencyHistogram&) = delete;
+
     /**
      * @brief Record a latency sample (nanoseconds)
      */
     void record(const uint64_t latency_ns) {
+        std::lock_guard lock(lock_);
         if (count_ < MAX_SAMPLES) {
             samples_[count_++] = latency_ns;
         }
@@ -105,20 +125,24 @@ public:
     };
 
     [[nodiscard]] Stats compute() const {
-        // Cache count_ to avoid race condition with concurrent record() calls
-        const size_t count = count_;
+        std::vector<uint64_t> snapshot;
+        {
+            std::lock_guard lock(lock_);
+            snapshot.assign(samples_.begin(), samples_.begin() + count_);
+        }
+
+        const size_t count = snapshot.size();
         if (count == 0) {
             return {0, 0, 0, 0, 0, 0, 0, 0.0, 0};
         }
 
         // Sort for percentile computation
-        std::vector sorted(samples_.begin(), samples_.begin() + count);
-        std::ranges::sort(sorted);
+        std::ranges::sort(snapshot);
 
         // Compute statistics
-        const auto min_val  = sorted.front();
-        const auto max_val  = sorted.back();
-        const auto sum      = std::accumulate(sorted.begin(), sorted.end(), 0UL);
+        const auto min_val  = snapshot.front();
+        const auto max_val  = snapshot.back();
+        const auto sum      = std::accumulate(snapshot.begin(), snapshot.end(), 0UL);
         const auto mean_val = sum / count;
 
         // Percentiles (clamp to valid range to handle edge cases)
@@ -131,14 +155,21 @@ public:
         double sum_sq       = 0.0;
         const double mean_d = static_cast<double>(mean_val);
         for (size_t i = 0; i < count; i++) {
-            const double diff = static_cast<double>(sorted[i]) - mean_d;
+            const double diff = static_cast<double>(snapshot[i]) - mean_d;
             sum_sq += diff * diff;
         }
         const double stddev = std::sqrt(sum_sq / static_cast<double>(count));
 
-        return {min_val,          max_val,         mean_val,
-                sorted[p50_idx],  sorted[p95_idx], sorted[p99_idx],
-                sorted[p999_idx], stddev,          count};
+        return {
+            min_val,
+            max_val,
+            mean_val,
+            snapshot[p50_idx],
+            snapshot[p95_idx],
+            snapshot[p99_idx],
+            snapshot[p999_idx],
+            stddev,
+            count};
     }
 
     /**
@@ -159,6 +190,7 @@ public:
     }
 
 private:
+    mutable std::mutex lock_;
     std::array<uint64_t, MAX_SAMPLES> samples_;
     size_t count_;
 };

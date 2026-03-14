@@ -64,15 +64,17 @@ struct SpscStorage {
     using Reader     = Channel::Reader;
     using value_type = T;
 
-    std::shared_ptr<Writer> writer;
-    std::shared_ptr<Reader> reader;
+    std::unique_ptr<Writer> writer;
+    std::unique_ptr<Reader> reader;
+    bool writer_claimed = false;
+    bool reader_claimed = false;
 
     static std::shared_ptr<SpscStorage> create() {
         auto ch         = primitive::make_spsc_channel<T>();
         auto [w, r]     = ch.split();
         auto storage    = std::make_shared<SpscStorage>();
-        storage->writer = std::make_shared<Writer>(std::move(w));
-        storage->reader = std::make_shared<Reader>(std::move(r));
+        storage->writer = std::make_unique<Writer>(std::move(w));
+        storage->reader = std::make_unique<Reader>(std::move(r));
         return storage;
     }
 };
@@ -169,13 +171,28 @@ private:
     // Channel implementations (3 cases use unified get_channel_member, 1 special case)
     template <typename T, typename Topic = DefaultTopic>
     [[nodiscard]] auto get_impl(spsc<T, Topic>) noexcept {
-        return get_channel_member<spsc<T, Topic>, Topic, SpscStorage<T>, &SpscStorage<T>::reader>();
+        auto* s = get_channel_storage<SpscStorage<T>, Topic>();
+        if (s->reader_claimed) [[unlikely]] {
+            SPDLOG_CRITICAL(
+                "SPSC reader already bound: {}@{}", demangle(typeid(T).name()),
+                demangle(typeid(Topic).name()));
+            std::abort();
+        }
+        s->reader_claimed = true;
+        return spsc<T, Topic>{s->reader.get()};
     }
 
     template <typename T, typename Topic = DefaultTopic>
     [[nodiscard]] auto get_impl(spsc_mut<T, Topic>) noexcept {
-        return get_channel_member<
-            spsc_mut<T, Topic>, Topic, SpscStorage<T>, &SpscStorage<T>::writer>();
+        auto* s = get_channel_storage<SpscStorage<T>, Topic>();
+        if (s->writer_claimed) [[unlikely]] {
+            SPDLOG_CRITICAL(
+                "SPSC writer already bound: {}@{}", demangle(typeid(T).name()),
+                demangle(typeid(Topic).name()));
+            std::abort();
+        }
+        s->writer_claimed = true;
+        return spsc_mut<T, Topic>{s->writer.get()};
     }
 
     template <typename T, typename Topic = DefaultTopic>

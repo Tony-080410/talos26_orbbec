@@ -1492,10 +1492,6 @@ auto Scheduler::run_compute_selective(const std::uint64_t ready_mask) -> std::ui
 // ============================================================================
 
 auto Scheduler::compute_levels() -> BuildResult {
-    if (compute_systems_.empty()) {
-        return {};
-    }
-
     const auto n = compute_systems_.size();
 
     // Enforce max 64 compute systems for bitmask scheduling
@@ -1517,82 +1513,88 @@ auto Scheduler::compute_levels() -> BuildResult {
         return k == channel_kind::spsc_reader || k == channel_kind::spsc_writer;
     };
 
+    struct ChannelEndpoint {
+        std::size_t index;
+        bool is_fixed_rate;
+    };
+
     struct ChannelUsage {
-        channel_kind kind = channel_kind::local; // Will be set on first use
-        std::vector<std::size_t> writers;        // Compute system indices
-        std::vector<std::size_t> readers;        // Compute system indices
-        bool has_fixed_rate_writer = false;      // Written by fixed_rate system
-        std::string first_system;                // For kind conflict reporting
+        channel_kind kind = channel_kind::local; ///< Will be set on first use
+        std::vector<ChannelEndpoint> writers;
+        std::vector<ChannelEndpoint> readers;
+        std::string first_system;                ///< For kind conflict reporting
     };
 
     std::map<ChannelKey, ChannelUsage> channels;
 
-    // First, collect fixed_rate systems' outputs as external sources
-    for (const auto& entry : fixed_rate_systems_) {
-        const auto& meta = entry.system->meta();
+    auto endpoint_name = [&](const ChannelEndpoint endpoint) -> std::string {
+        const auto& name = endpoint.is_fixed_rate
+                             ? fixed_rate_systems_[endpoint.index].system->meta().name
+                             : compute_systems_[endpoint.index].system->meta().name;
+        if (endpoint.is_fixed_rate) {
+            return fmt::format("{} (fixed_rate)", name);
+        }
+        return name;
+    };
 
-        // Helper lambda to process writer channels (unified for spsc/spmc)
-        auto collect_writer = [&](const ChannelMeta& ch) {
-            if (is_writer(ch.kind)) {
+    auto process_system_channels = [&](const auto& systems,
+                                       const bool is_fixed_rate) -> BuildResult {
+        for (std::size_t i = 0; i < systems.size(); ++i) {
+            const auto& meta = systems[i].system->meta();
+
+            auto process_channel = [&](const ChannelMeta& ch,
+                                       const bool expect_spsc) -> BuildResult {
                 ChannelKey key{ch.type, ch.topic};
-                auto& usage                 = channels[key];
-                usage.kind                  = ch.kind;
-                usage.has_fixed_rate_writer = true;
-                usage.first_system          = meta.name;
-            }
-        };
+                auto& usage              = channels[key];
+                const bool has_endpoints = !usage.writers.empty() || !usage.readers.empty();
 
-        for (const auto& ch : meta.spsc_channels) {
-            collect_writer(ch);
-        }
-        for (const auto& ch : meta.spmc_channels) {
-            collect_writer(ch);
-        }
-    }
-
-    // Then collect compute systems' channels
-    for (std::size_t i = 0; i < n; ++i) {
-        const auto& meta = compute_systems_[i].system->meta();
-
-        // Process channels using lambda to avoid duplication
-        auto process_channel = [&](const ChannelMeta& ch, bool expect_spc) -> BuildResult {
-            ChannelKey key{ch.type, ch.topic};
-            auto& usage = channels[key];
-
-            // Check for kind conflict (same key used as both SPSC and SPMC)
-            if (!usage.writers.empty() || !usage.readers.empty()) {
-                const auto is_expected_kind =
-                    expect_spc ? is_spsc(usage.kind) : !is_spsc(usage.kind);
-                if (!is_expected_kind) {
-                    return std::unexpected(
-                        ChannelKindConflict{
-                            .key           = ChannelKeyInfo(ch.type, ch.topic, expect_spc),
-                            .first_system  = usage.first_system,
-                            .second_system = meta.name,
-                        });
+                if (has_endpoints) {
+                    const auto is_expected_kind =
+                        expect_spsc ? is_spsc(usage.kind) : !is_spsc(usage.kind);
+                    if (!is_expected_kind) {
+                        return std::unexpected(
+                            ChannelKindConflict{
+                                .key           = ChannelKeyInfo(ch.type, ch.topic, expect_spsc),
+                                .first_system  = usage.first_system,
+                                .second_system = meta.name,
+                            });
+                    }
+                } else {
+                    usage.kind         = ch.kind;
+                    usage.first_system = meta.name;
                 }
-            } else {
-                usage.kind         = ch.kind;
-                usage.first_system = meta.name;
+
+                const ChannelEndpoint endpoint{
+                    .index         = i,
+                    .is_fixed_rate = is_fixed_rate,
+                };
+                if (is_writer(ch.kind)) {
+                    usage.writers.push_back(endpoint);
+                } else {
+                    usage.readers.push_back(endpoint);
+                }
+                return {};
+            };
+
+            for (const auto& ch : meta.spsc_channels) {
+                if (auto result = process_channel(ch, true); !result) {
+                    return result;
+                }
             }
-
-            if (is_writer(ch.kind)) {
-                usage.writers.push_back(i);
-            } else {
-                usage.readers.push_back(i);
+            for (const auto& ch : meta.spmc_channels) {
+                if (auto result = process_channel(ch, false); !result) {
+                    return result;
+                }
             }
-            return {};
-        };
-
-        for (const auto& ch : meta.spsc_channels) {
-            if (auto result = process_channel(ch, true); !result)
-                return result;
         }
+        return {};
+    };
 
-        for (const auto& ch : meta.spmc_channels) {
-            if (auto result = process_channel(ch, false); !result)
-                return result;
-        }
+    if (auto result = process_system_channels(fixed_rate_systems_, true); !result) {
+        return result;
+    }
+    if (auto result = process_system_channels(compute_systems_, false); !result) {
+        return result;
     }
 
     // ========================================================================
@@ -1600,33 +1602,22 @@ auto Scheduler::compute_levels() -> BuildResult {
     // ========================================================================
 
     // Helper: collect reader names from indices
-    auto collect_reader_names = [&](const std::vector<std::size_t>& reader_indices) {
-        std::vector<std::string> reader_names;
-        reader_names.reserve(reader_indices.size());
-        for (auto idx : reader_indices) {
-            reader_names.push_back(compute_systems_[idx].system->meta().name);
+    auto collect_endpoint_names = [&](const std::vector<ChannelEndpoint>& endpoints) {
+        std::vector<std::string> names;
+        names.reserve(endpoints.size());
+        for (const auto endpoint : endpoints) {
+            names.push_back(endpoint_name(endpoint));
         }
-        return reader_names;
+        return names;
     };
 
     for (const auto& [key, usage] : channels) {
-        // Count total writers (fixed_rate + compute)
-        std::size_t total_writers = usage.writers.size() + (usage.has_fixed_rate_writer ? 1 : 0);
-
         // Multiple writers is always an error
-        if (total_writers > 1) {
-            std::vector<std::string> writer_names;
-            writer_names.reserve(usage.writers.size() + (usage.has_fixed_rate_writer ? 1 : 0));
-            if (usage.has_fixed_rate_writer) {
-                writer_names.emplace_back(fmt::format("{} (fixed_rate)", usage.first_system));
-            }
-            for (auto idx : usage.writers) {
-                writer_names.emplace_back(compute_systems_[idx].system->meta().name);
-            }
+        if (usage.writers.size() > 1) {
             return std::unexpected(
                 MultipleWritersError{
                     .key     = ChannelKeyInfo(key.type, key.topic, is_spsc(usage.kind)),
-                    .writers = std::move(writer_names),
+                    .writers = collect_endpoint_names(usage.writers),
                 });
         }
 
@@ -1635,25 +1626,25 @@ auto Scheduler::compute_levels() -> BuildResult {
             return std::unexpected(
                 MultipleReadersError{
                     .key     = ChannelKeyInfo(key.type, key.topic, true),
-                    .readers = collect_reader_names(usage.readers),
+                    .readers = collect_endpoint_names(usage.readers),
                 });
         }
 
         // Reader without writer is an error (neither fixed_rate nor compute writer)
-        if (total_writers == 0 && !usage.readers.empty()) {
+        if (usage.writers.empty() && !usage.readers.empty()) {
             return std::unexpected(
                 OrphanedReaderError{
                     .key     = ChannelKeyInfo(key.type, key.topic, is_spsc(usage.kind)),
-                    .readers = collect_reader_names(usage.readers),
+                    .readers = collect_endpoint_names(usage.readers),
                 });
         }
 
-        // Orphaned compute writer is a warning (printed but not an error)
-        // Note: fixed_rate writers with no readers are fine (they notify the scheduler)
-        if (!usage.writers.empty() && usage.readers.empty() && !usage.has_fixed_rate_writer) {
+        // Orphaned compute writer is a warning (printed but not an error). Fixed-rate writers with
+        // no readers are fine because they may still act as periodic sources.
+        if (!usage.writers.empty() && usage.readers.empty() && !usage.writers[0].is_fixed_rate) {
             SPDLOG_WARN(
                 "[WARN] Channel has writer '{}' but no readers\n",
-                compute_systems_[usage.writers[0]].system->meta().name.c_str());
+                compute_systems_[usage.writers[0].index].system->meta().name.c_str());
         }
     }
 
@@ -1671,14 +1662,18 @@ auto Scheduler::compute_levels() -> BuildResult {
             continue;
         }
 
-        std::size_t writer = usage.writers[0];
-        for (std::size_t reader : usage.readers) {
-            if (writer != reader) {
-                const std::uint64_t bit = 1UL << reader;
-                if ((adj_mask[writer] & bit) == 0) {
+        const auto writer = usage.writers[0];
+        if (writer.is_fixed_rate) {
+            continue;
+        }
+
+        for (const auto reader : usage.readers) {
+            if (!reader.is_fixed_rate && writer.index != reader.index) {
+                const std::uint64_t bit = 1UL << reader.index;
+                if ((adj_mask[writer.index] & bit) == 0) {
                     // New edge
-                    adj_mask[writer] |= bit;
-                    ++in_degree[reader];
+                    adj_mask[writer.index] |= bit;
+                    ++in_degree[reader.index];
                 }
             }
         }
@@ -1780,7 +1775,7 @@ auto Scheduler::compute_levels() -> BuildResult {
     // Wake chains for fixed_rate systems:
     // fixed_rate_affects_[i] = bitmask of compute systems that directly read this fixed_rate's
     // channels
-    fixed_rate_affects_.resize(fixed_rate_systems_.size(), 0);
+    fixed_rate_affects_.assign(fixed_rate_systems_.size(), 0);
 
     // Helper lambda: process writer channels and collect direct readers only
     auto collect_direct_readers = [&](const auto& meta_channels, std::uint64_t& affects) {
@@ -1788,8 +1783,10 @@ auto Scheduler::compute_levels() -> BuildResult {
             if (is_writer(ch.kind)) {
                 ChannelKey key{ch.type, ch.topic};
                 if (auto it = channels.find(key); it != channels.end()) {
-                    for (auto reader : it->second.readers) {
-                        affects |= (1UL << reader); // Direct reader only
+                    for (const auto reader : it->second.readers) {
+                        if (!reader.is_fixed_rate) {
+                            affects |= (1UL << reader.index); // Direct compute reader only
+                        }
                     }
                 }
             }
@@ -1811,7 +1808,7 @@ auto Scheduler::compute_levels() -> BuildResult {
     // compute_affects_[i] = bitmask of compute systems that directly depend on system i
     // via channels OR pipeline resources (writer + readers)
     // This enables cascade wake: when compute A finishes, wake compute B if B depends on A
-    compute_affects_.resize(n, 0);
+    compute_affects_.assign(n, 0);
 
     // Channel dependencies
     for (const auto& [key, usage] : channels) {
@@ -1819,10 +1816,14 @@ auto Scheduler::compute_levels() -> BuildResult {
             continue;
         }
 
-        const std::size_t writer = usage.writers[0];
-        for (std::size_t reader : usage.readers) {
-            if (writer != reader) {
-                compute_affects_[writer] |= (1UL << reader);
+        const auto writer = usage.writers[0];
+        if (writer.is_fixed_rate) {
+            continue;
+        }
+
+        for (const auto reader : usage.readers) {
+            if (!reader.is_fixed_rate && writer.index != reader.index) {
+                compute_affects_[writer.index] |= (1UL << reader.index);
             }
         }
     }
