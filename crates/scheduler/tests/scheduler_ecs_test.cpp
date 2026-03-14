@@ -1,5 +1,5 @@
-#include "../src/scheduler/scheduler.hpp"
 #include "scheduler/error_formatter.hpp"
+#include "scheduler/scheduler.hpp"
 
 #include <atomic>
 #include <chrono>
@@ -49,8 +49,6 @@ void test_scheduler_fixed_rate_and_pool() {
     std::atomic imu_count{0};
     std::atomic camera_count{0};
     std::atomic fusion_count{0};
-    std::atomic test_done{false};
-
     // IMU: 100Hz, silent update (no notify)
     scheduler.add_system<talos::fixed_rate_silent<100>>(
         "imu_reader", [&imu_count](talos::spmc_mut<ImuData, ImuChannel> imu_out) {
@@ -95,7 +93,7 @@ void test_scheduler_fixed_rate_and_pool() {
     }
 
     // Run in background thread
-    std::jthread scheduler_thread([&scheduler, &test_done]() { (void)scheduler.run(); });
+    std::jthread scheduler_thread([&scheduler]() { (void)scheduler.run(); });
 
     // Let it run for 200ms
     std::this_thread::sleep_for(std::chrono::milliseconds(200));
@@ -141,21 +139,33 @@ void test_scheduler_fixed_rate_and_pool() {
 void test_silent_vs_notify() {
     printf("=== Test: Silent vs Notify ===\n");
 
+    struct NotifyTag {};
+
     talos::World world;
     talos::Scheduler scheduler(world);
 
     std::atomic silent_count{0};
     std::atomic notify_count{0};
+    std::atomic sink_count{0};
 
     // Silent system at 200Hz - should NOT trigger compute
     scheduler.add_system<talos::fixed_rate_silent<200>>("silent_source", [&silent_count]() {
         silent_count.fetch_add(1, std::memory_order_relaxed);
     });
 
-    // Notify system at 50Hz - SHOULD trigger compute
-    scheduler.add_system<talos::fixed_rate<50>>("notify_source", [&notify_count]() {
-        notify_count.fetch_add(1, std::memory_order_relaxed);
-    });
+    // Notify system at 50Hz - SHOULD trigger compute when it writes
+    scheduler.add_system<talos::fixed_rate<50>>(
+        "notify_source", [&notify_count](talos::spmc_mut<int, NotifyTag> out) {
+            const auto count = notify_count.fetch_add(1, std::memory_order_relaxed) + 1;
+            out.write(count);
+        });
+
+    scheduler.add_system<talos::pool_compute>(
+        "notify_sink", [&sink_count](talos::spmc<int, NotifyTag> in) {
+            if (in.read()) {
+                sink_count.fetch_add(1, std::memory_order_relaxed);
+            }
+        });
 
     (void)scheduler.build();
 
@@ -174,7 +184,7 @@ void test_silent_vs_notify() {
     // Only the notify_source should have triggered notifies
     const bool notify_match = stats.notify_count == static_cast<uint64_t>(notify_count.load());
 
-    if (notify_match && silent_count.load() > notify_count.load()) {
+    if (notify_match && silent_count.load() > notify_count.load() && sink_count.load() > 0) {
         printf("  Silent vs Notify test passed!\n\n");
     } else {
         printf("  ERROR: Test failed\n");
@@ -276,8 +286,8 @@ void test_spmc_multiple_readers_ok() {
     talos::World world;
     talos::Scheduler scheduler(world);
 
-    // One writer
-    scheduler.add_system<talos::pool_compute>(
+    // One external source feeding multiple compute readers
+    scheduler.add_system<talos::fixed_rate<30>>(
         "broadcaster", [](talos::spmc_mut<int, BroadcastChannel> out) { out.write(42); });
 
     // Multiple readers on SPMC - should be OK
@@ -423,6 +433,7 @@ void test_dependency_cycle_error() {
 void test_valid_dependency_chain() {
     printf("=== Test: Valid Dependency Chain ===\n");
 
+    struct SourceOut {};
     struct Stopice1Out {};
     struct Stopice2Out {};
     struct Stopice3Out {};
@@ -430,9 +441,15 @@ void test_valid_dependency_chain() {
     talos::World world;
     talos::Scheduler scheduler(world);
 
-    // Linear pipeline: stopice1 -> stopice2 -> stopice3
+    // Linear reactive pipeline: source -> stopice1 -> stopice2 -> stopice3
+    scheduler.add_system<talos::fixed_rate<30>>(
+        "source", [](talos::spsc_mut<int, SourceOut> out) { out.write(1); });
+
     scheduler.add_system<talos::pool_compute>(
-        "stopice1", [](talos::spsc_mut<int, Stopice1Out> out) { out.write(1); });
+        "stopice1", [](talos::spsc<int, SourceOut> in, talos::spsc_mut<int, Stopice1Out> out) {
+            if (const auto v = in.read())
+                out.write(*v);
+        });
 
     scheduler.add_system<talos::pool_compute>(
         "stopice2", [](talos::spsc<int, Stopice1Out> in, talos::spsc_mut<int, Stopice2Out> out) {

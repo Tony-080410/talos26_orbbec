@@ -9,6 +9,8 @@
 #include "system.hpp"
 #include "timer_factory.hpp"
 
+#include <cstddef>
+#include <memory>
 #include <utility>
 
 namespace talos::scheduler::rclcompat {
@@ -31,8 +33,14 @@ enum class Qos {
  * ## Thread safety
  *
  * - create_publisher() / create_subscription() must be called from a single thread
- * - finalize() must be called before scheduler.run() or while scheduler is paused
- * - Publisher::publish() is thread-safe after finalize()
+ * - finalize() may be called before scheduler.run() or while it is running; the running case
+ *   uses scheduler hot-add internally and is not atomic across multiple pending systems
+ * - Publisher::publish() is thread-safe after finalize() and wakes the internal publisher system
+ *
+ * ## Lifetime
+ *
+ * Publisher slots are shared with scheduler-owned systems, so Publisher handles may outlive
+ * the Node object itself. `finalize()` is not transactional across multiple pending systems.
  */
 class Node {
 public:
@@ -94,10 +102,10 @@ public:
         pub_slots_[key] = slot;
 
         // Register ownership
-        registry_.register_owner(key, system_name);
+        registry_->register_owner(key, system_name);
 
         // Claim the publisher handle
-        if (!registry_.try_claim(key)) {
+        if (!registry_->try_claim(key)) {
             using namespace talos::scheduler;
             panic(
                 "Node '{}': Failed to claim publisher for channel {}@{}", name_,
@@ -105,10 +113,9 @@ public:
         }
 
         // Create the system (deferred registration until finalize())
-        pending_systems_.push_back(
-            std::make_unique<RclPubSystem<T, Topic>>(system_name, slot.get()));
+        pending_systems_.push_back(std::make_unique<RclPubSystem<T, Topic>>(system_name, slot));
 
-        return Publisher<T, Topic>(slot.get(), &registry_, key);
+        return Publisher<T, Topic>(slot, registry_, key);
     }
 
     /**
@@ -174,9 +181,9 @@ public:
      * capture lists, consider capturing by reference in the lambda itself.
      */
     void create_wall_timer(const Frequency frequency, std::function<void()> callback) {
-        const std::string system_name = name_ + "/timer/" + std::to_string(pending_systems_.size());
+        std::string system_name = name_ + "/timer/" + std::to_string(pending_systems_.size());
 
-        auto system = create_timer_system(system_name, frequency, std::move(callback));
+        auto system = create_timer_system(std::move(system_name), frequency, std::move(callback));
         pending_systems_.push_back(std::move(system));
     }
 
@@ -194,6 +201,11 @@ public:
      * ## Returns
      *
      * ResourceAccessor handle for accessing the resource
+     *
+     * ## Contract
+     *
+     * Resource values may be mutated after build/finalize, but replacing an existing
+     * resource object after the first successful build is rejected.
      *
      * ## Example
      *
@@ -216,7 +228,8 @@ public:
      */
     template <typename T>
     [[nodiscard]] ResourceAccessor<T> create_resource() noexcept {
-        return ResourceAccessor<T>(&scheduler_.world());
+        auto& world = scheduler_.world();
+        return ResourceAccessor<T>(&world, world.lifetime_token());
     }
 
     /**
@@ -245,6 +258,11 @@ public:
      * ## Parameters
      *
      * - `resource`: the resource to insert (moved)
+     *
+     * ## Contract
+     *
+     * Replacing an existing resource after the first successful scheduler build/finalize
+     * is rejected because bound systems may cache raw resource pointers.
      */
     template <typename T>
     void insert_resource(T&& resource) {
@@ -271,20 +289,34 @@ public:
      *
      * BuildResult indicating success or failure
      *
+     * ## Contract
+     *
+     * This operation is not transactional. On failure, already-consumed systems stay registered
+     * in the scheduler, while the remaining pending systems stay on the Node.
+     *
      * ## Thread safety
      *
-     * Must be called from a single thread, either before scheduler.run()
-     * or while the scheduler is paused.
+     * Must be called from a single thread. If the scheduler is running, finalize()
+     * uses hot-add internally; earlier systems may already be registered if a later
+     * pending system fails validation.
      */
     [[nodiscard]] BuildResult finalize() {
-        for (auto& sys : pending_systems_) {
+        std::size_t consumed = 0;
+        for (; consumed < pending_systems_.size(); ++consumed) {
+            auto& sys = pending_systems_[consumed];
             if (scheduler_.is_running()) {
                 // Hot-add: scheduler is running, need to pause/rebuild/resume
                 if (auto result = scheduler_.hot_add_system(std::move(sys)); !result) {
+                    pending_systems_.erase(
+                        pending_systems_.begin(),
+                        pending_systems_.begin() + static_cast<std::ptrdiff_t>(consumed + 1));
                     return result;
                 }
             } else {
                 if (auto result = scheduler_.add_system(std::move(sys)); !result) {
+                    pending_systems_.erase(
+                        pending_systems_.begin(),
+                        pending_systems_.begin() + static_cast<std::ptrdiff_t>(consumed + 1));
                     return std::unexpected(BuildError{result.error()});
                 }
             }
@@ -306,7 +338,7 @@ public:
      *
      * Reference to the ownership registry
      */
-    [[nodiscard]] OwnershipRegistry& registry() noexcept { return registry_; }
+    [[nodiscard]] OwnershipRegistry& registry() noexcept { return *registry_; }
 
     /**
      * @brief Get a raw pointer to a PubSlot (for advanced use)
@@ -333,7 +365,7 @@ public:
 private:
     std::string name_;
     Scheduler& scheduler_;
-    OwnershipRegistry registry_;
+    std::shared_ptr<OwnershipRegistry> registry_ = std::make_shared<OwnershipRegistry>();
 
     // Type-erased storage for PubSlots using shared_ptr for ownership
     std::unordered_map<ChannelKey, std::any, ChannelKeyHash> pub_slots_;
@@ -350,3 +382,7 @@ private:
 };
 
 } // namespace talos::scheduler::rclcompat
+
+namespace talos {
+namespace rclcompat = scheduler::rclcompat;
+} // namespace talos

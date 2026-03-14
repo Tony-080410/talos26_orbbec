@@ -40,7 +40,7 @@ public:
         CallbackContextScope scope(this);
         callback_();
 
-        return detail::check_tracked_write_flags(tracked_write_flags_);
+        return false;
     }
 
 private:

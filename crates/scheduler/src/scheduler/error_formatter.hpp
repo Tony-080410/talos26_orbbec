@@ -113,6 +113,15 @@ struct formatter<TooManyComputeSystemsError> : error_formatter_base<TooManyCompu
 };
 
 template <>
+struct formatter<UnreachableComputeSystemsError>
+    : error_formatter_base<UnreachableComputeSystemsError> {
+    auto format(const UnreachableComputeSystemsError& e, format_context& ctx) const {
+        return fmt::format_to(
+            ctx.out(), "UnreachableComputeSystems: {}", join_strings(e.systems, ", "));
+    }
+};
+
+template <>
 struct formatter<BuildError> : error_formatter_base<BuildError> {
     auto format(const BuildError& err, format_context& ctx) const {
         return std::visit(

@@ -55,9 +55,9 @@ struct fixed_rate_base {
 } // namespace detail
 
 /**
- * @brief FixedRate with notify: dedicated thread, notifies scheduler after each tick
+ * @brief FixedRate with notify: dedicated thread, notifies scheduler after writes
  *
- * Use for: data sources that should trigger compute (e.g., Camera)
+ * Use for: data sources that should trigger compute when they actually publish new data
  *
  * ## Template parameters
  *
@@ -101,10 +101,10 @@ template <std::uint32_t FreqHz = 0, std::int32_t Affinity = -1, std::int32_t Pri
 using fixed_rate_silent = detail::fixed_rate_base<FreqHz, Affinity, Priority, detail::SilentTopic>;
 
 /**
- * @brief Pool compute: TBB thread pool, triggered by fixed_rate notify
+ * @brief Pool compute: TBB thread pool, triggered by the scheduler ready set
  *
- * Default policy. Systems run on the TBB thread pool and are
- * selectively woken when fixed_rate systems produce data.
+ * Default policy. Systems run on the TBB thread pool and are selectively
+ * woken when an external source or upstream compute system produces data.
  */
 struct pool_compute {};
 

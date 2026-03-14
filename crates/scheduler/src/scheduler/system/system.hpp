@@ -5,6 +5,8 @@
 #include "execution_policy.hpp"
 #include "system_meta.hpp"
 
+#include <atomic>
+#include <cstdint>
 #include <memory>
 #include <utility>
 
@@ -16,10 +18,33 @@ namespace talos::scheduler::system {
 
 class SystemBase {
 public:
-    virtual ~SystemBase() noexcept           = default;
-    virtual void bind(World& world) noexcept = 0; // Pre-create channels/resources (single-threaded)
-    virtual bool run(World& world) noexcept  = 0; // Returns true if any channel was written
+    virtual ~SystemBase() noexcept = default;
+    // bind() is the only phase where channel handles may be acquired from World.
+    virtual void bind(World& world) noexcept = 0;
+    // run() returns true only if a declared output channel was written and must not dynamically
+    // bind channels or mutate scheduler topology.
+    virtual bool run(World& world) noexcept         = 0;
     virtual const SystemMeta& meta() const noexcept = 0;
+};
+
+/**
+ * @brief Marker for compute systems that can be woken by external threads
+ *
+ * Systems implementing this interface act as build-time liveness sources.
+ * The scheduler also binds them to the shared ready bitmask after build().
+ *
+ * ## Contract
+ *
+ * - Only compute systems may implement this interface
+ * - External wakeups may only set the system's own ready bit
+ * - Channel access still has to be acquired during bind(), not lazily in run()
+ */
+class ExternalComputeSource {
+public:
+    virtual ~ExternalComputeSource() noexcept = default;
+
+    virtual void bind_external_ready_slot(
+        std::atomic<std::uint64_t>* ready_systems, std::size_t system_index) noexcept = 0;
 };
 
 // ============================================================================

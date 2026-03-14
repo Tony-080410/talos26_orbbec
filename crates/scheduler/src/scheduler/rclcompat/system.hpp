@@ -4,6 +4,7 @@
 #include "../system/system.hpp"
 #include "registry.hpp"
 #include "system_builder.hpp"
+#include <cstdint>
 #include <spdlog/spdlog.h>
 
 namespace talos::scheduler::rclcompat {
@@ -14,7 +15,7 @@ class RclSubSystemBase;
 /**
  * @brief Thread-local context for tracking the currently executing callback
  *
- * This enables automatic binding of Publishers to the callback that first uses them,
+ * This tracks which callback first claims a Publisher handle,
  * preventing multiple callbacks from sharing the same Publisher instance.
  *
  * ## Architecture
@@ -24,8 +25,8 @@ class RclSubSystemBase;
  *   ├─ CallbackContextScope scope(this)  // Set g_callback_context.current_system = this
  *   ├─ callback_(*msg)  ─────────────────┐
  *   │   └─ publisher.publish(msg)        │
- *   │       ├─ First use: Auto-bind to this
- *   │       └─ Subsequent: Verify binding ─────┘
+ *   │       ├─ First use: claim ownership
+ *   │       └─ Subsequent: verify same owner ───┘
  *   └─ ~CallbackContextScope()  // Restore previous context
  * ```
  */
@@ -62,7 +63,7 @@ struct CallbackContextScope {
 /**
  * @brief Base class for RclSubSystem
  *
- * Provides SystemMeta storage, publisher tracking, and callback ownership tracking.
+ * Provides SystemMeta storage and callback ownership tracking.
  */
 class RclSubSystemBase : public SystemBase {
 public:
@@ -71,27 +72,6 @@ public:
     const SystemMeta& meta() const noexcept override { return meta_; }
 
 protected:
-    /**
-     * @brief Track a publisher that the callback may write to
-     *
-     * This updates the SystemMeta to include the publisher's channel as a writer,
-     * enabling proper wake chain computation.
-     *
-     * ## Parameters
-     *
-     * - `write_flag`: pointer to the PubSlot's pending_write flag
-     * - `type`: data type of the publisher
-     * - `topic`: topic type of the publisher
-     */
-    void track_publisher(
-        std::atomic<bool>* write_flag, const std::type_index type,
-        const std::type_index topic) noexcept {
-        tracked_write_flags_.push_back(write_flag);
-
-        meta_.spmc_channels.push_back(
-            ChannelMeta{.type = type, .topic = topic, .kind = channel_kind::spmc_writer});
-    }
-
     /**
      * @brief Build system metadata with policy and channel configuration
      *
@@ -121,36 +101,7 @@ protected:
     }
 
     SystemMeta meta_;
-    std::vector<std::atomic<bool>*> tracked_write_flags_;
 };
-
-namespace detail {
-
-/**
- * @brief Check tracked write flags with OR-combine pattern
- *
- * Atomically exchanges each flag to false and ORs all results together.
- * This prevents lost-write bug by reading AND clearing atomically,
- * then combining all results.
- *
- * ## Parameters
- *
- * - `flags`: vector of atomic boolean flags to check
- *
- * ## Returns
- *
- * `true` if any flag was set
- */
-inline bool check_tracked_write_flags(const std::vector<std::atomic<bool>*>& flags) noexcept {
-    bool any_written = false;
-    for (auto* flag : flags) {
-        const auto had_write = flag->exchange(false, std::memory_order_acq_rel);
-        any_written          = any_written || had_write;
-    }
-    return any_written;
-}
-
-} // namespace detail
 
 // ============================================================================
 // PubSlot: Publisher state (owned by Node)
@@ -171,8 +122,10 @@ struct PubSlot {
     std::optional<spmc_mut<T, Topic>> writer;
     std::atomic<bool> bound{false};         ///< Has bind() been called?
     std::atomic<bool> pending_write{false}; ///< Is there a pending write for run() to consume?
+    std::atomic<std::uint64_t>* ready_systems = nullptr;
+    std::uint64_t ready_bit                   = 0;
 
-    // Callback ownership tracking (prevents multiple callbacks from sharing the same Publisher)
+    // Callback ownership tracking only; scheduling still flows through RclPubSystem.
     std::atomic<RclSubSystemBase*> owner_callback{
         nullptr};                        ///< The callback that owns this publisher
     std::atomic<bool> auto_bound{false}; ///< Whether auto-binding has occurred
@@ -187,8 +140,16 @@ struct PubSlot {
      * - `world`: the world
      */
     void bind(World& world) noexcept {
+        world.open_channel_binding();
         writer = world.get<spmc_mut<T, Topic>>();
+        world.close_channel_binding();
         bound.store(true, std::memory_order_release);
+    }
+
+    void bind_ready_target(
+        std::atomic<std::uint64_t>* ready_mask, const std::size_t system_index) noexcept {
+        ready_systems = ready_mask;
+        ready_bit     = 1ULL << system_index;
     }
 
     /**
@@ -204,6 +165,9 @@ struct PubSlot {
         if (bound.load(std::memory_order_acquire)) [[likely]] {
             writer->write(std::move(msg));
             pending_write.store(true, std::memory_order_release);
+            if (ready_systems != nullptr) [[likely]] {
+                ready_systems->fetch_or(ready_bit, std::memory_order_release);
+            }
         }
     }
 
@@ -225,7 +189,8 @@ struct PubSlot {
  * @brief Move-only publisher handle
  *
  * Lightweight handle that references a PubSlot owned by a Node.
- * Move-only to enforce single-ownership at compile time.
+ * Move-only to enforce single-ownership at compile time. The slot itself is
+ * shared with scheduler-owned systems, so the handle may outlive the Node.
  *
  * ## Template parameters
  *
@@ -255,11 +220,13 @@ public:
      *
      * ## Parameters
      *
-     * - `slot`: pointer to the PubSlot (non-owning)
-     * - `registry`: pointer to the OwnershipRegistry
+     * - `slot`: shared ownership of the PubSlot
+     * - `registry`: shared ownership of the OwnershipRegistry state
      * - `key`: channel key for this publisher
      */
-    Publisher(PubSlot<T, Topic>* slot, OwnershipRegistry* registry, const ChannelKey key) noexcept
+    Publisher(
+        std::shared_ptr<PubSlot<T, Topic>> slot, std::shared_ptr<OwnershipRegistry> registry,
+        const ChannelKey key) noexcept
         : slot_(slot)
         , registry_(registry)
         , key_(key) {}
@@ -269,11 +236,11 @@ public:
     Publisher& operator=(const Publisher&) = delete;
 
     Publisher(Publisher&& other) noexcept
-        : slot_(other.slot_)
-        , registry_(other.registry_)
+        : slot_(std::move(other.slot_))
+        , registry_(std::move(other.registry_))
         , key_(other.key_) {
-        other.slot_     = nullptr;
-        other.registry_ = nullptr;
+        other.slot_.reset();
+        other.registry_.reset();
     }
 
     Publisher& operator=(Publisher&& other) noexcept {
@@ -282,11 +249,11 @@ public:
             if (slot_ && registry_) {
                 registry_->release_claim(key_);
             }
-            slot_           = other.slot_;
-            registry_       = other.registry_;
-            key_            = other.key_;
-            other.slot_     = nullptr;
-            other.registry_ = nullptr;
+            slot_     = std::move(other.slot_);
+            registry_ = std::move(other.registry_);
+            key_      = other.key_;
+            other.slot_.reset();
+            other.registry_.reset();
         }
         return *this;
     }
@@ -315,8 +282,7 @@ public:
             std::abort();
         }
 
-        // Automatic callback binding check
-        // This prevents multiple different callbacks from sharing the same Publisher instance
+        // Automatic callback ownership check. This is not part of graph construction.
         auto* current_callback = g_callback_context.current_system;
 
         // Helper lambda: log ownership error
@@ -330,7 +296,7 @@ public:
         };
 
         if (current_callback && !slot_->auto_bound.load(std::memory_order_acquire)) {
-            // First use: attempt to bind to the current callback
+            // First use: attempt to claim ownership for the current callback
             RclSubSystemBase* expected = nullptr;
             if (slot_->owner_callback.compare_exchange_strong(
                     expected, current_callback, std::memory_order_release,
@@ -373,16 +339,17 @@ public:
     [[nodiscard]] bool ready() const noexcept { return slot_ && slot_->ready(); }
 
 private:
-    PubSlot<T, Topic>* slot_     = nullptr;
-    OwnershipRegistry* registry_ = nullptr;
+    std::shared_ptr<PubSlot<T, Topic>> slot_{};
+    std::shared_ptr<OwnershipRegistry> registry_{};
     ChannelKey key_{typeid(void), typeid(void)};
 };
 
 /**
  * @brief System that manages a publisher channel
  *
- * This system's run() checks if any writes have been made to the PubSlot
- * and returns true if so, triggering downstream systems.
+ * This system is the single graph-visible writer for a publisher channel.
+ * Publisher::publish() writes into the slot and wakes this compute source,
+ * then run() consumes the pending_write flag to propagate data downstream.
  *
  * ## Template parameters
  *
@@ -391,7 +358,9 @@ private:
  * - `Policy`: execution policy (default: pool_compute)
  */
 template <typename T, typename Topic = DefaultTopic, typename Policy = pool_compute>
-class RclPubSystem : public RclSubSystemBase {
+class RclPubSystem
+    : public RclSubSystemBase
+    , public ExternalComputeSource {
 public:
     /**
      * @brief Construct a publisher system
@@ -399,9 +368,9 @@ public:
      * ## Parameters
      *
      * - `name`: system name
-     * - `slot`: pointer to the PubSlot to manage
+     * - `slot`: shared ownership of the PubSlot to manage
      */
-    explicit RclPubSystem(std::string name, PubSlot<T, Topic>* slot) noexcept
+    explicit RclPubSystem(std::string name, std::shared_ptr<PubSlot<T, Topic>> slot) noexcept
         : slot_(slot) {
         meta_ = build_meta<Policy>(std::move(name), [](auto& builder) {
             builder.add_spmc_writer(typeid(T), typeid(Topic));
@@ -410,20 +379,25 @@ public:
 
     void bind(World& world) noexcept override { slot_->bind(world); }
 
+    void bind_external_ready_slot(
+        std::atomic<std::uint64_t>* ready_systems,
+        const std::size_t system_index) noexcept override {
+        slot_->bind_ready_target(ready_systems, system_index);
+    }
+
     bool run([[maybe_unused]] World& world) noexcept override {
         // Consume the pending_write flag atomically
         return slot_->pending_write.exchange(false, std::memory_order_acq_rel);
     }
 
 private:
-    PubSlot<T, Topic>* slot_;
+    std::shared_ptr<PubSlot<T, Topic>> slot_;
 };
 
 /**
  * @brief System that manages a subscription
  *
  * Reads from an SPMC channel and invokes a callback.
- * Can optionally track associated publishers for write detection.
  *
  * ## Template parameters
  *
@@ -452,13 +426,12 @@ public:
 
         auto msg = reader_.read();
         if (msg) {
-            // Set thread-local context to enable automatic Publisher binding
-            // The RAII scope guard automatically restores the previous context on destruction
+            // Set thread-local context so Publisher ownership checks can identify the callback.
             CallbackContextScope scope(this);
             callback_(*msg);
         }
 
-        return detail::check_tracked_write_flags(tracked_write_flags_);
+        return false;
     }
 
 private:
@@ -475,7 +448,7 @@ private:
  *
  * Similar to Publisher, this is a lightweight handle that provides access
  * to resources stored in the World. Can be stored as a class member and
- * used from callbacks.
+ * used from callbacks. Access is rejected after the owning World dies.
  *
  * ## Template parameters
  *
@@ -510,10 +483,12 @@ public:
      *
      * ## Parameters
      *
-     * - `world`: pointer to the world (non-owning)
+     * - `world`: pointer to the world (non-owning, checked by lifetime token)
+     * - `lifetime`: token used to detect a dead World/Scheduler owner
      */
-    explicit ResourceAccessor(World* world) noexcept
-        : world_(world) {}
+    explicit ResourceAccessor(World* world, std::weak_ptr<WorldLifetimeToken> lifetime) noexcept
+        : world_(world)
+        , lifetime_(std::move(lifetime)) {}
 
     /**
      * @brief Get immutable access to the resource
@@ -525,6 +500,7 @@ public:
      * ## Thread safety
      *
      * Multiple threads can call get() concurrently.
+     * Resource identity is expected to remain stable after the first successful build.
      */
     [[nodiscard]] res<T> get() const noexcept { return validate_world()->template get_res<T>(); }
 
@@ -538,8 +514,8 @@ public:
      * ## Thread safety
      *
      * Multiple threads can call get_mut(), but concurrent writes must be
-     * synchronized externally. The resource version is automatically
-     * incremented on write.
+     * synchronized externally by the resource owner.
+     * Resource identity is expected to remain stable after the first successful build.
      */
     [[nodiscard]] res_mut<T> get_mut() const noexcept {
         return validate_world()->template get_res_mut<T>();
@@ -552,7 +528,7 @@ public:
      *
      * `true` if this accessor is bound to a World
      */
-    [[nodiscard]] bool valid() const noexcept { return world_ != nullptr; }
+    [[nodiscard]] bool valid() const noexcept { return world_ != nullptr && !lifetime_.expired(); }
 
     // Copyable (multiple accessors can reference the same World)
     ResourceAccessor(const ResourceAccessor&)            = default;
@@ -560,9 +536,10 @@ public:
 
 private:
     World* world_ = nullptr;
+    std::weak_ptr<WorldLifetimeToken> lifetime_;
 
     [[nodiscard]] World* validate_world() const noexcept {
-        if (!world_) [[unlikely]] {
+        if (!world_ || lifetime_.expired()) [[unlikely]] {
             SPDLOG_CRITICAL("ResourceAccessor::get() called on invalid accessor");
             std::abort();
         }

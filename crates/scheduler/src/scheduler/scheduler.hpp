@@ -12,18 +12,19 @@
  * - **FixedRate systems**: Run on dedicated threads, can notify the scheduler
  * - **Compute systems**: Run on TBB thread pool, triggered by notifications
  * - **Dependency graph**: Built from channel connections, enables selective wakeup
+ * - **Resources**: Shared side state only; resources do not contribute scheduling edges
  *
  * ## Execution model
  *
  * 1. FixedRate systems run on their own threads
- * 2. When an fixed_rate system notifies, it triggers dependent compute systems
- * 3. Compute systems run in topological order (levels)
+ * 2. When a notifying fixed_rate system writes output, it triggers dependent compute systems
+ * 3. Compute systems drain the ready set to a fixed point in topological order (levels)
  * 4. TBB arena manages thread pool concurrency
  *
  * ## Build errors
  *
  * The scheduler validates the system graph during `build()`:
- * - Single writer per channel (SPSC) / multiple writers allowed (SPMC)
+ * - Single writer per channel (both SPSC and SPMC)
  * - No cycles in dependency graph
  * - Orphaned readers detected
  * - Max 64 compute systems for bitmask scheduling
@@ -42,6 +43,7 @@
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
+#include <cstdint>
 #include <cstdlib>
 #include <expected>
 #include <memory>
@@ -121,13 +123,21 @@ using namespace system;
  * ## Thread safety
  *
  * The scheduler is not thread-safe after construction. Configure and build
- * in a single-threaded context before calling `run()`.
+ * in a single-threaded context before calling `run()`. A successful `build()`
+ * also freezes resource identity: existing resource objects may be mutated,
+ * but replacing them invalidates bound `res/res_mut` pointers and is rejected.
  */
 class Scheduler {
 public:
     using Clock     = std::chrono::steady_clock;
     using TimePoint = Clock::time_point;
     using Duration  = Clock::duration;
+
+    enum class LifecycleState : std::uint8_t {
+        Configuring, ///< Topology/resources may still change; must build before run
+        Built,       ///< Graph is valid and ready to run
+        Running,     ///< Fixed-rate threads and compute loop are active
+    };
 
     /**
      * @brief Construct a scheduler
@@ -178,8 +188,11 @@ public:
      *
      * ## Notes
      *
-     * - Registration is only valid before `build()`.
+     * - Registration is only valid while the scheduler is not running.
      * - The scheduler's dependency analysis and validation still uses SystemMeta.
+     * - Custom systems are trusted to keep `meta()`, `bind()`, and `run()` consistent.
+     * - Declared channel handles must be acquired in `bind()`. `run()` must not dynamically
+     *   acquire channels from `World` or mutate scheduler topology.
      */
     [[nodiscard]] auto add_system(std::unique_ptr<SystemBase> system)
         -> std::expected<uint64_t, SchedulerError>;
@@ -190,6 +203,13 @@ public:
      * ## Returns
      *
      * Reference to the World containing resources and channels
+     *
+     * ## Contract
+     *
+     * Structural mutation of resources should happen before the first successful `build()`.
+     * After that point, replacing an existing resource is rejected to preserve bound pointer
+     * stability. Channel acquisition through `World` is reserved for scheduler bind-time;
+     * external code must not lazily create or claim channel endpoints after build.
      */
     [[nodiscard]] World& world() noexcept { return world_; }
 
@@ -204,13 +224,14 @@ public:
      * - No dependency cycles
      * - Channel constraints (SPSC single writer, etc.)
      * - Orphaned readers detected
-     * - Resource constraints (single res_mut writer per type)
+     * - All compute systems must be reachable from an external wake source
      *
-     * ## Resource dependency semantics
+     * ## Resource semantics
      *
-     * - **Only readers** (`res<T>`): Output systems (sink nodes, no downstream dependencies)
-     * - **Only writer** (`res_mut<T>`): Input systems (source nodes, read external data)
-     * - **Writer + readers**: Pipeline dependency (writer → readers)
+     * Resources (`res<T>` / `res_mut<T>`) do not participate in dependency analysis
+     * or wake-up propagation. Their thread-safety contract is defined by the resource type.
+     * After the first successful build, resource identity is frozen: the value behind an
+     * existing resource may change, but replacing the object is rejected.
      *
      * Can be called multiple times for dynamic system addition (idempotent).
      * Each call re-validates all channels and rebuilds wake-up chains.
@@ -221,7 +242,7 @@ public:
      *
      * ## Thread safety
      *
-     * Must be called from a single thread before `run()`.
+     * Must be called from a single thread and is rejected while `run()` is active.
      */
     [[nodiscard]] auto build() -> BuildResult;
 
@@ -233,18 +254,14 @@ public:
      * ## Returns
      *
      * `std::expected<void, SchedulerError>` - success or lifecycle error
-     *
-     * ## Panics
-     *
-     * Panics if called without a prior successful `build()`.
      */
     [[nodiscard]] auto run() -> std::expected<void, SchedulerError>;
 
     /**
      * @brief Request graceful shutdown
      *
-     * Sets the running flag to false. FixedRate threads will exit
-     * after their current tick completes.
+     * Transitions the scheduler from `Running` back to `Built`.
+     * FixedRate threads will exit after their current tick completes.
      */
     void stop() noexcept;
 
@@ -280,6 +297,8 @@ public:
      * `true` if the scheduler is currently running
      */
     [[nodiscard]] auto is_running() const noexcept -> bool;
+
+    [[nodiscard]] auto lifecycle_state() const noexcept -> LifecycleState;
 
     // ========================================================================
     // Notification (called by fixed_rate threads)
@@ -332,12 +351,14 @@ public:
     /**
      * @brief Print wake chains as Mermaid diagram
      *
-     * Outputs the dependency graph showing which systems trigger other systems
-     * in Mermaid flowchart syntax for visualization.
+     * Outputs the wake graph showing which systems can actually trigger compute work
+     * in Mermaid flowchart syntax.
      *
      * ## Edge labels
      *
-     * - Edge labels show the channel topic name that connects the systems
+     * - Edge labels show the channel topic name that carries the wake-causing write
+     * - `fixed_rate_silent` systems are shown as side inputs, not wake sources
+     * - External compute sources (for example `RclPubSystem`) are grouped separately
      */
     void print_mermaid_wake_chains() const;
 
@@ -349,23 +370,25 @@ public:
      *
      * ## Visualization style
      *
-     * - Nodes: systems (grouped by type)
+     * - Nodes: systems (grouped by semantic role)
      * - Edges: channels (labeled with topic names)
      * - Direction: data flow (writer → reader)
+     * - This graph shows channel connectivity, not wake-up causality
      */
     void print_mermaid_data_flow() const;
 
     /**
      * @brief Print execution levels as Mermaid diagram
      *
-     * Outputs the topologically sorted execution levels showing parallel
-     * execution opportunities and pipeline depth.
+     * Outputs the topologically sorted compute levels plus external wake sources.
+     * Levels describe the compute closure stages the scheduler drains within one round.
      *
      * ## Visualization style
      *
      * - Subgraphs: execution levels (systems within can run in parallel)
      * - Nodes: systems within each level, labeled with I/O counts
-     * - Edges: dependencies between consecutive levels
+     * - Edges: wake-causing dependencies between consecutive compute levels
+     * - `fixed_rate_silent` systems are shown as side inputs, not level-entry wakers
      * - Analysis: pipeline depth and max parallelism printed as comments
      */
     void print_mermaid_execution_levels() const;
@@ -394,7 +417,7 @@ private:
     struct FixedRateContext {
         SystemBase* system;
         PolicyInfo policy;
-        std::atomic<bool>* running;
+        std::atomic<LifecycleState>* lifecycle;
         Scheduler* scheduler;
         World* world;
         std::size_t system_index;
@@ -437,12 +460,20 @@ private:
     // Internal Methods
     // ========================================================================
 
+    struct ComputeRoundResult {
+        std::uint64_t written_mask  = 0;
+        std::uint64_t deferred_mask = 0;
+    };
+
     static void run_fixed_rate_thread(FixedRateContext ctx);
     void run_compute_loop();
-    [[nodiscard]] std::uint64_t
-        run_compute_selective(std::uint64_t ready_mask); // Returns mask of systems that wrote
+    [[nodiscard]] ComputeRoundResult run_compute_selective(std::uint64_t ready_mask);
 
     [[nodiscard]] auto compute_levels() -> BuildResult;
+    void bind_external_compute_sources() noexcept;
+    static constexpr bool is_running_state(const LifecycleState state) noexcept {
+        return state == LifecycleState::Running;
+    }
 
     // Pause/resume helpers for hot-add
     void request_compute_loop_pause() noexcept;
@@ -453,10 +484,14 @@ private:
 
     // Helper: check if scheduler is running and abort if so (eliminates duplicate checks)
     void ensure_not_running() const noexcept {
-        if (running_.load(std::memory_order_acquire)) {
+        if (is_running_state(lifecycle_.load(std::memory_order_acquire))) {
             SPDLOG_CRITICAL("add_system: system already running!");
             std::abort();
         }
+    }
+
+    void mark_topology_dirty() noexcept {
+        lifecycle_.store(LifecycleState::Configuring, std::memory_order_release);
     }
 
     // ========================================================================
@@ -479,22 +514,16 @@ private:
     // TBB
     std::unique_ptr<tbb::task_arena> compute_arena_;
 
-    // State
-    std::atomic<bool> built_{false};
-    std::atomic<bool> running_{false};
+    // Lifecycle
+    std::atomic<LifecycleState> lifecycle_{LifecycleState::Configuring};
 
     // Selective notification: wake chains (waker -> direct wakee only)
-    // Transitive dependencies are handled by cascade wake in compute loop.
-    // Resource dependency semantics:
-    // - Only readers: output systems (sink nodes, no wake edges)
-    // - Only writer: input systems (source nodes, no wake edges)
-    // - Writer + readers: pipeline dependency (included in wake chains)
+    // Transitive propagation is handled by compute-round closure.
     std::vector<std::uint64_t>
         fixed_rate_affects_; // [fixed_rate_idx] -> bitmask of compute systems that directly read
                              // this fixed_rate's channels
-    std::vector<std::uint64_t>
-        compute_affects_;    // [compute_idx] -> bitmask of compute systems that directly depend on
-                             // this system (channels + pipeline resources)
+    std::vector<std::uint64_t> compute_affects_; // [compute_idx] -> bitmask of compute systems that
+                                                 // directly depend on this system via channels
     std::atomic<std::uint64_t> ready_systems_{0}; // Bitmask of compute systems pending execution
 
     // Stats
@@ -519,10 +548,7 @@ private:
 template <typename Policy, typename F>
 auto Scheduler::add_system(std::string&& name, F&& func) -> void {
     ensure_not_running();
-
-    if (built_.load(std::memory_order_acquire)) {
-        built_.store(false, std::memory_order_release);
-    }
+    mark_topology_dirty();
 
     auto system = make_system<F, Policy>(std::move(name), std::forward<F>(func));
     auto policy = make_policy_info<Policy>();
@@ -551,6 +577,15 @@ auto Scheduler::add_system(std::string&& name, F&& func) -> void {
 
 namespace talos {
 using namespace talos::scheduler::system;
+using talos::scheduler::BuildError;
+using talos::scheduler::ChannelKindConflict;
+using talos::scheduler::DependencyCycleError;
+using talos::scheduler::MultipleReadersError;
+using talos::scheduler::MultipleWritersError;
+using talos::scheduler::OrphanedReaderError;
 using talos::scheduler::Scheduler;
+using talos::scheduler::SchedulerError;
+using talos::scheduler::TooManyComputeSystemsError;
+using talos::scheduler::UnreachableComputeSystemsError;
 using talos::scheduler::World;
 } // namespace talos

@@ -1,11 +1,14 @@
 #pragma once
 
 #include "demangle.hpp"
+#include "error.hpp"
 #include "system/components.hpp"
 #include "system/system_meta.hpp"
 
 #include <any>
+#include <atomic>
 #include <concepts>
+#include <cstdint>
 #include <memory>
 #include <spdlog/spdlog.h>
 #include <string>
@@ -15,6 +18,11 @@
 #include <utility>
 
 namespace talos::scheduler {
+
+namespace rclcompat {
+template <typename T, typename Topic>
+struct PubSlot;
+} // namespace rclcompat
 
 // ============================================================================
 // Resource Wrapper
@@ -36,6 +44,8 @@ struct Resource {
     explicit Resource(U&& val) noexcept(std::is_nothrow_constructible_v<T, U&&>)
         : value(std::forward<U>(val)) {}
 };
+
+struct WorldLifetimeToken {};
 
 // ============================================================================
 // Design Note: Type Erasure for Heterogeneous Storage
@@ -117,16 +127,26 @@ public:
 
     template <typename T>
     void insert_resource(T&& resource) {
-        using U               = std::remove_cvref_t<T>;
+        using U = std::remove_cvref_t<T>;
+        ensure_resource_replacement_allowed<U>();
         resources_[typeid(U)] = std::make_shared<Resource<U>>(std::forward<T>(resource));
     }
 
     template <typename T, typename... Args>
     [[nodiscard]] T& emplace_resource(Args&&... args) {
+        ensure_resource_replacement_allowed<T>();
         auto storage = std::make_shared<Resource<T>>(std::in_place, std::forward<Args>(args)...);
         auto& value  = storage->value;
         resources_[typeid(T)] = std::move(storage);
         return value;
+    }
+
+    void freeze_resource_identity() noexcept {
+        resource_identity_frozen_.store(true, std::memory_order_release);
+    }
+
+    [[nodiscard]] bool resource_identity_frozen() const noexcept {
+        return resource_identity_frozen_.load(std::memory_order_acquire);
     }
 
     template <typename T>
@@ -153,14 +173,63 @@ public:
     // Unified get() that uses tag dispatch (zero if-constexpr, zero pasta)
     //
     // Usage: world.get<res<Config>>(); world.get<spsc<Image, Tag>>();
+    // Channel components are only valid during scheduler-controlled bind phases.
+    //
+    // Channel endpoints are bind-phase only. Calling channel getters outside scheduler bind()
+    // aborts because it would mutate or claim graph-visible topology behind the scheduler's back.
 
     template <typename ComponentT>
     [[nodiscard]] auto get() noexcept {
         return get_impl(ComponentT{});
     }
 
+    template <typename T, typename Topic = DefaultTopic>
+    [[nodiscard]] auto get_spsc_reader() noexcept {
+        return get<spsc<T, Topic>>();
+    }
+
+    template <typename T, typename Topic = DefaultTopic>
+    [[nodiscard]] auto get_spsc_writer() noexcept {
+        return get<spsc_mut<T, Topic>>();
+    }
+
+    template <typename T, typename Topic = DefaultTopic>
+    [[nodiscard]] auto get_spmc_reader() noexcept {
+        return get<spmc<T, Topic>>();
+    }
+
+    template <typename T, typename Topic = DefaultTopic>
+    [[nodiscard]] auto get_spmc_writer() noexcept {
+        return get<spmc_mut<T, Topic>>();
+    }
+
 private:
 private:
+    friend class Scheduler;
+    template <typename T, typename Topic>
+    friend struct rclcompat::PubSlot;
+
+    void open_channel_binding() noexcept {
+        channel_binding_depth_.fetch_add(1, std::memory_order_acq_rel);
+    }
+
+    void close_channel_binding() noexcept {
+        auto depth = channel_binding_depth_.load(std::memory_order_acquire);
+        while (true) {
+            if (depth == 0) [[unlikely]] {
+                panic("Channel binding scope underflow");
+            }
+            if (channel_binding_depth_.compare_exchange_weak(
+                    depth, depth - 1, std::memory_order_acq_rel, std::memory_order_acquire)) {
+                return;
+            }
+        }
+    }
+
+    [[nodiscard]] bool channel_binding_open() const noexcept {
+        return channel_binding_depth_.load(std::memory_order_acquire) != 0;
+    }
+
     // Unified channel accessor: one template for all member-pointer-based access
     template <typename Ret, typename Topic, typename Storage, auto MemberPtr>
     [[nodiscard]] auto get_channel_member() noexcept {
@@ -221,6 +290,7 @@ private:
     // Original storage accessor (kept for get_channel_storage compatibility)
     template <typename Storage, typename Topic = DefaultTopic>
     [[nodiscard]] auto* get_channel_storage() noexcept {
+        ensure_channel_binding_open();
         using T = typename Storage::value_type;
         const ChannelKey key{typeid(T), typeid(Topic)};
         auto& storage_map = select_storage_map<Storage>();
@@ -234,7 +304,32 @@ private:
     std::unordered_map<std::type_index, std::any> resources_;
     std::unordered_map<ChannelKey, std::any, ChannelKeyHash> spsc_storage_;
     std::unordered_map<ChannelKey, std::any, ChannelKeyHash> spmc_storage_;
+    std::atomic<bool> resource_identity_frozen_{false};
+    std::atomic<std::uint32_t> channel_binding_depth_{0};
+    std::shared_ptr<WorldLifetimeToken> lifetime_token_ = std::make_shared<WorldLifetimeToken>();
 
+    template <typename T>
+    void ensure_resource_replacement_allowed() const noexcept {
+        if (resource_identity_frozen_.load(std::memory_order_acquire)
+            && resources_.contains(typeid(T))) [[unlikely]] {
+            panic(
+                "Replacing resource '{}' after build() invalidates bound res/res_mut pointers",
+                demangle(typeid(T).name()));
+        }
+    }
+
+    void ensure_channel_binding_open() const noexcept {
+        if (channel_binding_depth_.load(std::memory_order_acquire) == 0) [[unlikely]] {
+            panic("Channel access through World is only allowed during scheduler bind()");
+        }
+    }
+
+public:
+    [[nodiscard]] std::weak_ptr<WorldLifetimeToken> lifetime_token() const noexcept {
+        return lifetime_token_;
+    }
+
+private:
     /// Helper: Get resource storage with unified error handling
     template <typename T, typename Return, typename MapFn>
     [[nodiscard]] Return get_resource_helper(MapFn&& map_fn) const noexcept {

@@ -9,6 +9,7 @@
 #include <cinttypes>
 #include <cstdio>
 #include <functional>
+#include <limits>
 #include <map>
 #include <nlohmann/json.hpp>
 #include <optional>
@@ -83,10 +84,7 @@ auto Scheduler::add_system(std::unique_ptr<SystemBase> system)
         std::abort();
     }
     ensure_not_running();
-
-    if (built_.load(std::memory_order_acquire)) {
-        built_.store(false, std::memory_order_release);
-    }
+    mark_topology_dirty();
 
     const auto policy = system->meta().policy;
     SystemEntry entry{
@@ -106,6 +104,10 @@ auto Scheduler::add_system(std::unique_ptr<SystemBase> system)
 }
 
 auto Scheduler::build() -> BuildResult {
+    if (is_running()) {
+        return std::unexpected(BuildError{SchedulerError::AlreadyRunning});
+    }
+
     // Compute execution levels for pool_compute systems
     // This re-validates all channels and rebuilds wake-up chains on each call
     if (auto result = compute_levels(); !result) {
@@ -127,6 +129,7 @@ auto Scheduler::build() -> BuildResult {
     compute_stats_.resize(compute_systems_.size());
 
     // Bind all systems (pre-create channel readers/writers, single-threaded)
+    world_.open_channel_binding();
     auto bind_all_systems = [&](auto& systems) {
         for (auto& entry : systems) {
             entry.system->bind(world_);
@@ -134,19 +137,23 @@ auto Scheduler::build() -> BuildResult {
     };
     bind_all_systems(fixed_rate_systems_);
     bind_all_systems(compute_systems_);
+    world_.close_channel_binding();
+    bind_external_compute_sources();
+    world_.freeze_resource_identity();
 
-    built_.store(true, std::memory_order_release);
+    lifecycle_.store(LifecycleState::Built, std::memory_order_release);
     return {};
 }
 
 auto Scheduler::run() -> std::expected<void, SchedulerError> {
-    if (!built_.load(std::memory_order_acquire)) {
+    auto expected = LifecycleState::Built;
+    if (!lifecycle_.compare_exchange_strong(
+            expected, LifecycleState::Running, std::memory_order_acq_rel,
+            std::memory_order_acquire)) {
+        if (expected == LifecycleState::Running) {
+            return std::unexpected(SchedulerError::AlreadyRunning);
+        }
         return std::unexpected(SchedulerError::NotBuilt);
-    }
-
-    if (running_.exchange(true, std::memory_order_acq_rel)) {
-        SPDLOG_CRITICAL("run(): scheduler is already running!");
-        std::abort();
     }
 
     // Start fixed_rate threads
@@ -155,7 +162,7 @@ auto Scheduler::run() -> std::expected<void, SchedulerError> {
         FixedRateContext ctx{
             .system       = entry.system.get(),
             .policy       = entry.policy,
-            .running      = &running_,
+            .lifecycle    = &lifecycle_,
             .scheduler    = this,
             .world        = &world_,
             .system_index = i,
@@ -179,7 +186,9 @@ auto Scheduler::run() -> std::expected<void, SchedulerError> {
 }
 
 void Scheduler::stop() noexcept {
-    running_.store(false, std::memory_order_release);
+    auto expected = LifecycleState::Running;
+    lifecycle_.compare_exchange_strong(
+        expected, LifecycleState::Built, std::memory_order_acq_rel, std::memory_order_acquire);
 
     // Wake up compute loop if it's paused
     {
@@ -195,7 +204,7 @@ auto Scheduler::hot_add_system(std::unique_ptr<SystemBase> system) -> BuildResul
     }
 
     // If not running, just do a regular add + build
-    if (!running_.load(std::memory_order_acquire)) {
+    if (!is_running()) {
         const auto policy = system->meta().policy;
         SystemEntry entry{
             .system = std::move(system),
@@ -253,6 +262,7 @@ auto Scheduler::hot_add_system(std::unique_ptr<SystemBase> system) -> BuildResul
     compute_stats_.resize(compute_systems_.size());
 
     // Bind the new system
+    world_.open_channel_binding();
     if (is_fixed_rate) {
         auto& new_entry = fixed_rate_systems_.back();
         new_entry.system->bind(world_);
@@ -262,7 +272,7 @@ auto Scheduler::hot_add_system(std::unique_ptr<SystemBase> system) -> BuildResul
         FixedRateContext ctx{
             .system       = new_entry.system.get(),
             .policy       = new_entry.policy,
-            .running      = &running_,
+            .lifecycle    = &lifecycle_,
             .scheduler    = this,
             .world        = &world_,
             .system_index = idx,
@@ -271,6 +281,8 @@ auto Scheduler::hot_add_system(std::unique_ptr<SystemBase> system) -> BuildResul
     } else {
         compute_systems_.back().system->bind(world_);
     }
+    world_.close_channel_binding();
+    bind_external_compute_sources();
 
     // Resume compute loop
     resume_compute_loop();
@@ -279,7 +291,11 @@ auto Scheduler::hot_add_system(std::unique_ptr<SystemBase> system) -> BuildResul
 }
 
 auto Scheduler::is_running() const noexcept -> bool {
-    return running_.load(std::memory_order_acquire);
+    return is_running_state(lifecycle_.load(std::memory_order_acquire));
+}
+
+auto Scheduler::lifecycle_state() const noexcept -> LifecycleState {
+    return lifecycle_.load(std::memory_order_acquire);
 }
 
 // ============================================================================
@@ -313,6 +329,15 @@ std::uint64_t Scheduler::sum_notify_counts() const noexcept {
         total += s.notify_count.load(std::memory_order_relaxed);
     }
     return total;
+}
+
+void Scheduler::bind_external_compute_sources() noexcept {
+    for (std::size_t i = 0; i < compute_systems_.size(); ++i) {
+        if (auto* external = dynamic_cast<ExternalComputeSource*>(compute_systems_[i].system.get());
+            external != nullptr) {
+            external->bind_external_ready_slot(&ready_systems_, i);
+        }
+    }
 }
 
 // ============================================================================
@@ -374,10 +399,18 @@ void Scheduler::print_systems() const {
         printf("\n");
     }
 
+    std::vector<std::uint64_t> notifying_fixed_rate_affects(fixed_rate_affects_.size(), 0);
+    for (std::size_t i = 0; i < fixed_rate_systems_.size(); ++i) {
+        if (fixed_rate_systems_[i].policy.notifies) {
+            notifying_fixed_rate_affects[i] =
+                i < fixed_rate_affects_.size() ? fixed_rate_affects_[i] : 0U;
+        }
+    }
+
     // Print wake chains using unified helper
     print_wake_chains(
-        "Wake chains (fixed_rate -> compute):", fixed_rate_systems_, fixed_rate_affects_,
-        compute_systems_);
+        "Wake chains (notifying fixed_rate -> compute):", fixed_rate_systems_,
+        notifying_fixed_rate_affects, compute_systems_);
     print_wake_chains(
         "Wake chains (compute -> compute):", compute_systems_, compute_affects_, compute_systems_);
 }
@@ -385,6 +418,10 @@ void Scheduler::print_systems() const {
 void Scheduler::print_mermaid_wake_chains() const {
     printf("```mermaid\n");
     printf("flowchart LR\n\n");
+
+    const auto is_external_compute_source = [&](const std::size_t idx) {
+        return dynamic_cast<ExternalComputeSource*>(compute_systems_[idx].system.get()) != nullptr;
+    };
 
     // Build in_edges and out_edges for each compute system
     std::vector<std::size_t> in_edges(compute_systems_.size(), 0);
@@ -404,6 +441,9 @@ void Scheduler::print_mermaid_wake_chains() const {
 
     // Also count edges from fixed_rate systems
     for (std::size_t i = 0; i < fixed_rate_systems_.size(); ++i) {
+        if (!fixed_rate_systems_[i].policy.notifies) {
+            continue;
+        }
         auto affects = i < fixed_rate_affects_.size() ? fixed_rate_affects_[i] : 0U;
         for (std::size_t j = 0; j < compute_systems_.size(); ++j) {
             if (affects & (1UL << j)) {
@@ -412,44 +452,74 @@ void Scheduler::print_mermaid_wake_chains() const {
         }
     }
 
-    // Helper: classify system type based on graph edges
+    // Helper: classify compute systems by wake semantics, not raw channel shape.
     auto classify_system = [&](std::size_t idx) -> const char* {
+        if (is_external_compute_source(idx)) {
+            return "external";
+        }
         const bool has_out = out_edges[idx] > 0;
         const bool has_in  = in_edges[idx] > 0;
 
-        if (has_out && !has_in)
-            return "input";    // (1, 0) 只出不进
         if (has_out && has_in)
             return "pipeline"; // (1, 1) 有进有出
-        return "output";       // (0, 1) 或 (0, 0) 只进不出或孤立
+        if (!has_out)
+            return "sink";
+        return "internal";
     };
 
-    // Define subgraphs for system types
-    printf("    subgraph External[FixedRate Systems]\n");
+    // Define subgraphs for wake-source types
+    printf("    subgraph ExternalWake[Notifying FixedRate Sources]\n");
     printf("        direction TB\n");
     for (std::size_t i = 0; i < fixed_rate_systems_.size(); ++i) {
+        if (!fixed_rate_systems_[i].policy.notifies) {
+            continue;
+        }
         const auto& name = fixed_rate_systems_[i].system->meta().name;
         const auto freq  = fixed_rate_systems_[i].policy.frequency_hz;
         printf("        E%d[\"%s<br/>%dHz\"]:::fixedStyle\n", (int)i, name.c_str(), freq);
     }
     printf("    end\n\n");
 
-    // Group compute systems by type
-    std::vector<std::size_t> input_systems, pipeline_systems, output_systems;
+    bool has_silent_fixed_rate = false;
+    for (std::size_t i = 0; i < fixed_rate_systems_.size(); ++i) {
+        if (!fixed_rate_systems_[i].policy.notifies) {
+            has_silent_fixed_rate = true;
+            break;
+        }
+    }
+    if (has_silent_fixed_rate) {
+        printf("    subgraph SilentInputs[Silent FixedRate Side Inputs]\n");
+        printf("        direction TB\n");
+        for (std::size_t i = 0; i < fixed_rate_systems_.size(); ++i) {
+            if (fixed_rate_systems_[i].policy.notifies) {
+                continue;
+            }
+            const auto& name = fixed_rate_systems_[i].system->meta().name;
+            const auto freq  = fixed_rate_systems_[i].policy.frequency_hz;
+            printf("        E%d[\"%s<br/>%dHz\"]:::fixedStyle\n", (int)i, name.c_str(), freq);
+        }
+        printf("    end\n\n");
+    }
+
+    // Group compute systems by wake role
+    std::vector<std::size_t> external_compute_systems, pipeline_systems, sink_systems,
+        internal_systems;
     for (std::size_t i = 0; i < compute_systems_.size(); ++i) {
         const auto* type = classify_system(i);
-        if (strcmp(type, "input") == 0)
-            input_systems.push_back(i);
-        else if (strcmp(type, "output") == 0)
-            output_systems.push_back(i);
+        if (strcmp(type, "external") == 0)
+            external_compute_systems.push_back(i);
+        else if (strcmp(type, "sink") == 0)
+            sink_systems.push_back(i);
+        else if (strcmp(type, "internal") == 0)
+            internal_systems.push_back(i);
         else
             pipeline_systems.push_back(i);
     }
 
-    if (!input_systems.empty()) {
-        printf("    subgraph Input[Input Systems]\n");
+    if (!external_compute_systems.empty()) {
+        printf("    subgraph ExternalCompute[External Compute Sources]\n");
         printf("        direction TB\n");
-        for (auto i : input_systems) {
+        for (auto i : external_compute_systems) {
             const auto& name = compute_systems_[i].system->meta().name;
             printf("        C%d[\"%s\"]:::inputStyle\n", (int)i, name.c_str());
         }
@@ -466,12 +536,22 @@ void Scheduler::print_mermaid_wake_chains() const {
         printf("    end\n\n");
     }
 
-    if (!output_systems.empty()) {
-        printf("    subgraph Output[Output Systems]\n");
+    if (!sink_systems.empty()) {
+        printf("    subgraph Sink[Sink Systems]\n");
         printf("        direction TB\n");
-        for (auto i : output_systems) {
+        for (auto i : sink_systems) {
             const auto& name = compute_systems_[i].system->meta().name;
             printf("        C%d[\"%s\"]:::outputStyle\n", (int)i, name.c_str());
+        }
+        printf("    end\n\n");
+    }
+
+    if (!internal_systems.empty()) {
+        printf("    subgraph Internal[Internal Compute Roots]\n");
+        printf("        direction TB\n");
+        for (auto i : internal_systems) {
+            const auto& name = compute_systems_[i].system->meta().name;
+            printf("        C%d[\"%s\"]:::orphanStyle\n", (int)i, name.c_str());
         }
         printf("    end\n\n");
     }
@@ -522,25 +602,11 @@ void Scheduler::print_mermaid_wake_chains() const {
         return result;
     };
 
-    // Helper: get resource topic between writer and reader
-    auto get_resource_topic = [&](const SystemBase* writer,
-                                  const SystemBase* reader) -> std::string {
-        const auto& writer_meta = writer->meta();
-        const auto& reader_meta = reader->meta();
-
-        // Find common resource type (writer has res_mut, reader has res)
-        for (const auto& writer_type : writer_meta.writes) {
-            for (const auto& reader_type : reader_meta.reads) {
-                if (writer_type == reader_type) {
-                    return talos::scheduler::detail::demangle(writer_type.name());
-                }
-            }
-        }
-        return "";
-    };
-
     // FixedRate → Compute
     for (std::size_t i = 0; i < fixed_rate_systems_.size(); ++i) {
+        if (!fixed_rate_systems_[i].policy.notifies) {
+            continue;
+        }
         auto affects = i < fixed_rate_affects_.size() ? fixed_rate_affects_[i] : 0U;
         for (std::size_t j = 0; j < compute_systems_.size(); ++j) {
             if (affects & (1UL << j)) {
@@ -556,32 +622,18 @@ void Scheduler::print_mermaid_wake_chains() const {
         }
     }
 
-    // Compute → Compute (channels + pipeline resources)
+    // Compute → Compute (channels only)
     for (std::size_t i = 0; i < compute_systems_.size(); ++i) {
         auto affects = i < compute_affects_.size() ? compute_affects_[i] : 0U;
         for (std::size_t j = 0; j < compute_systems_.size(); ++j) {
             if ((affects & (1UL << j)) && i != j) {
-                const auto* writer = compute_systems_[i].system.get();
-                const auto* reader = compute_systems_[j].system.get();
-
-                // Check for channel dependency
+                const auto* writer       = compute_systems_[i].system.get();
+                const auto* reader       = compute_systems_[j].system.get();
                 const auto channel_topic = get_channel_topics(writer, reader);
-                // Check for resource dependency
-                const auto resource_topic = get_resource_topic(writer, reader);
-
-                std::string label;
-                if (!channel_topic.empty() && !resource_topic.empty()) {
-                    label = channel_topic + " | res:" + resource_topic;
-                } else if (!channel_topic.empty()) {
-                    label = channel_topic;
-                } else if (!resource_topic.empty()) {
-                    label = "res:" + resource_topic;
-                }
-
-                if (label.empty()) {
+                if (channel_topic.empty()) {
                     printf("    C%d --> C%d\n", (int)i, (int)j);
                 } else {
-                    printf("    C%d -->|\"%s\"| C%d\n", (int)i, label.c_str(), (int)j);
+                    printf("    C%d -->|\"%s\"| C%d\n", (int)i, channel_topic.c_str(), (int)j);
                 }
             }
         }
@@ -593,6 +645,10 @@ void Scheduler::print_mermaid_wake_chains() const {
 void Scheduler::print_mermaid_data_flow() const {
     printf("```mermaid\n");
     printf("flowchart LR\n\n");
+
+    const auto is_external_compute_source = [&](const std::size_t idx) {
+        return dynamic_cast<ExternalComputeSource*>(compute_systems_[idx].system.get()) != nullptr;
+    };
 
     // Define distinct path colors for different data flows
     const char* path_colors[] = {
@@ -610,7 +666,7 @@ void Scheduler::print_mermaid_data_flow() const {
     constexpr std::size_t num_colors = sizeof(path_colors) / sizeof(path_colors[0]);
 
     // ========================================================================
-    // Build data flow graphs: channels AND resources
+    // Build data flow graph from channels only
     // ========================================================================
 
     struct ChannelEndpoint {
@@ -627,15 +683,7 @@ void Scheduler::print_mermaid_data_flow() const {
         channel_kind kind;
     };
 
-    // Resource connection: type -> (writers, readers)
-    struct ResourceConnection {
-        std::vector<ChannelEndpoint> writers; // res_mut<T>
-        std::vector<ChannelEndpoint> readers; // res<T>
-        std::type_index type;
-    };
-
     std::unordered_map<ChannelKey, ChannelConnection, ChannelKeyHash> channel_graph;
-    std::unordered_map<std::type_index, ResourceConnection> resource_graph;
 
     const std::size_t fixed_count   = fixed_rate_systems_.size();
     const std::size_t compute_count = compute_systems_.size();
@@ -693,55 +741,22 @@ void Scheduler::print_mermaid_data_flow() const {
         }
     };
 
-    // Helper: process a system's resources
-    auto process_system_resources = [&](std::size_t idx, bool is_fixed, const SystemMeta& meta) {
-        ChannelEndpoint endpoint{idx, is_fixed};
-
-        // Process res_mut<T> (writers)
-        for (const auto& res_type : meta.writes) {
-            auto it = resource_graph.find(res_type);
-            if (it == resource_graph.end()) {
-                it = resource_graph
-                         .emplace(
-                             res_type,
-                             ResourceConnection{.writers = {}, .readers = {}, .type = res_type})
-                         .first;
-            }
-            it->second.writers.push_back(endpoint);
-        }
-
-        // Process res<T> (readers)
-        for (const auto& res_type : meta.reads) {
-            auto it = resource_graph.find(res_type);
-            if (it == resource_graph.end()) {
-                it = resource_graph
-                         .emplace(
-                             res_type,
-                             ResourceConnection{.writers = {}, .readers = {}, .type = res_type})
-                         .first;
-            }
-            it->second.readers.push_back(endpoint);
-        }
-    };
-
     // Build graphs from all systems
     for (std::size_t i = 0; i < fixed_count; ++i) {
         const auto& meta = fixed_rate_systems_[i].system->meta();
         process_system_channels(i, true, meta);
-        process_system_resources(i, true, meta);
     }
     for (std::size_t i = 0; i < compute_count; ++i) {
         const auto& meta = compute_systems_[i].system->meta();
         process_system_channels(i, false, meta);
-        process_system_resources(i, false, meta);
     }
 
-    // Helper: classify system by channels AND resources
-    auto classify_by_channels = [&](std::size_t idx, bool is_fixed) -> const char* {
-        const auto& meta = is_fixed ? fixed_rate_systems_[idx].system->meta()
-                                    : compute_systems_[idx].system->meta();
+    auto classify_compute_by_channels = [&](const std::size_t idx) -> const char* {
+        if (is_external_compute_source(idx)) {
+            return "external";
+        }
 
-        // Check for writer channels (pub)
+        const auto& meta = compute_systems_[idx].system->meta();
         const bool has_pub =
             std::any_of(
                 meta.spsc_channels.begin(), meta.spsc_channels.end(),
@@ -749,8 +764,6 @@ void Scheduler::print_mermaid_data_flow() const {
             || std::any_of(meta.spmc_channels.begin(), meta.spmc_channels.end(), [](const auto& c) {
                    return c.kind == channel_kind::spmc_writer;
                });
-
-        // Check for reader channels (sub)
         const bool has_sub =
             std::any_of(
                 meta.spsc_channels.begin(), meta.spsc_channels.end(),
@@ -759,52 +772,38 @@ void Scheduler::print_mermaid_data_flow() const {
                    return c.kind == channel_kind::spmc_reader;
                });
 
-        // Check for resources (res/res_mut)
-        const bool has_res_mut =
-            !meta.writes.empty();                 // res_mut<T> - writes resource (input source)
-        const bool has_res = !meta.reads.empty(); // res<T> - reads resource (output sink)
-
-        // Classification considering BOTH channels and resources
         if (has_pub && has_sub)
-            return "pipeline"; // Pipeline: has both pub and sub channels
-
-        // Input: has res_mut (writes to resource) OR only publishes (no sub)
-        if (has_res_mut || (has_pub && !has_sub))
-            return "input";
-
-        // Output: has res (reads from resource, no writes) OR only subscribes (no pub)
-        if ((has_res && !has_res_mut) || (!has_pub && has_sub))
-            return "output";
-
-        return "orphan"; // No channels, no resources
+            return "pipeline";
+        if (!has_pub && has_sub)
+            return "sink";
+        if (has_pub && !has_sub)
+            return "internal";
+        return "orphan";
     };
 
-    // Group systems by channel-based classification
-    std::vector<std::pair<std::size_t, bool>> input_systems, pipeline_systems, output_systems,
-        orphan_systems;
+    std::vector<std::size_t> notifying_fixed_systems, silent_fixed_systems,
+        external_compute_systems, pipeline_systems, sink_systems, internal_systems, orphan_systems;
 
     for (std::size_t i = 0; i < fixed_count; ++i) {
-        const auto* type = classify_by_channels(i, true);
-        if (strcmp(type, "input") == 0)
-            input_systems.push_back({i, true});
-        else if (strcmp(type, "pipeline") == 0)
-            pipeline_systems.push_back({i, true});
-        else if (strcmp(type, "output") == 0)
-            output_systems.push_back({i, true});
-        else
-            orphan_systems.push_back({i, true});
+        if (fixed_rate_systems_[i].policy.notifies) {
+            notifying_fixed_systems.push_back(i);
+        } else {
+            silent_fixed_systems.push_back(i);
+        }
     }
 
     for (std::size_t i = 0; i < compute_count; ++i) {
-        const auto* type = classify_by_channels(i, false);
-        if (strcmp(type, "input") == 0)
-            input_systems.push_back({i, false});
+        const auto* type = classify_compute_by_channels(i);
+        if (strcmp(type, "external") == 0)
+            external_compute_systems.push_back(i);
         else if (strcmp(type, "pipeline") == 0)
-            pipeline_systems.push_back({i, false});
-        else if (strcmp(type, "output") == 0)
-            output_systems.push_back({i, false});
+            pipeline_systems.push_back(i);
+        else if (strcmp(type, "sink") == 0)
+            sink_systems.push_back(i);
+        else if (strcmp(type, "internal") == 0)
+            internal_systems.push_back(i);
         else
-            orphan_systems.push_back({i, false});
+            orphan_systems.push_back(i);
     }
 
     // Helper: print system node
@@ -822,44 +821,64 @@ void Scheduler::print_mermaid_data_flow() const {
         }
     };
 
-    // Print Input systems
-    if (!input_systems.empty()) {
-        printf("    subgraph Input[Input Systems]\n");
-        for (auto [idx, is_fixed] : input_systems) {
-            print_system_node(idx, is_fixed, "inputStyle");
+    if (!notifying_fixed_systems.empty()) {
+        printf("    subgraph NotifyingFixed[Notifying FixedRate Sources]\n");
+        for (auto idx : notifying_fixed_systems) {
+            print_system_node(idx, true, "fixedStyle");
         }
         printf("    end\n\n");
     }
 
-    // Print Pipeline systems
+    if (!silent_fixed_systems.empty()) {
+        printf("    subgraph SilentFixed[Silent FixedRate Side Inputs]\n");
+        for (auto idx : silent_fixed_systems) {
+            print_system_node(idx, true, "fixedStyle");
+        }
+        printf("    end\n\n");
+    }
+
+    if (!external_compute_systems.empty()) {
+        printf("    subgraph ComputeSources[External Compute Sources]\n");
+        for (auto idx : external_compute_systems) {
+            print_system_node(idx, false, "inputStyle");
+        }
+        printf("    end\n\n");
+    }
+
     if (!pipeline_systems.empty()) {
         printf("    subgraph Pipeline[Pipeline Systems]\n");
-        for (auto [idx, is_fixed] : pipeline_systems) {
-            print_system_node(idx, is_fixed, "pipelineStyle");
+        for (auto idx : pipeline_systems) {
+            print_system_node(idx, false, "pipelineStyle");
         }
         printf("    end\n\n");
     }
 
-    // Print Output systems
-    if (!output_systems.empty()) {
-        printf("    subgraph Output[Output Systems]\n");
-        for (auto [idx, is_fixed] : output_systems) {
-            print_system_node(idx, is_fixed, "outputStyle");
+    if (!sink_systems.empty()) {
+        printf("    subgraph Sink[Sink Systems]\n");
+        for (auto idx : sink_systems) {
+            print_system_node(idx, false, "outputStyle");
         }
         printf("    end\n\n");
     }
 
-    // Print Orphan systems
+    if (!internal_systems.empty()) {
+        printf("    subgraph Internal[Internal Compute Roots]\n");
+        for (auto idx : internal_systems) {
+            print_system_node(idx, false, "orphanStyle");
+        }
+        printf("    end\n\n");
+    }
+
     if (!orphan_systems.empty()) {
         printf("    subgraph Orphan[Orphan Systems]\n");
-        for (auto [idx, is_fixed] : orphan_systems) {
-            print_system_node(idx, is_fixed, "orphanStyle");
+        for (auto idx : orphan_systems) {
+            print_system_node(idx, false, "orphanStyle");
         }
         printf("    end\n\n");
     }
 
     // ========================================================================
-    // Draw edges: Channel connections AND Resource dependencies
+    // Draw channel edges
     // ========================================================================
 
     // Map to store color index for each channel (same channel = same color)
@@ -868,8 +887,6 @@ void Scheduler::print_mermaid_data_flow() const {
 
     // Draw channel edges (pub/sub) - collect edges first
     std::vector<std::tuple<std::string, std::string, std::string>> channel_edges;
-    std::vector<std::string> edge_colors;
-
     for (const auto& [key, conn] : channel_graph) {
         if (!conn.writer.has_value() || conn.readers.empty())
             continue;
@@ -906,47 +923,47 @@ void Scheduler::print_mermaid_data_flow() const {
         printf("    linkStyle %zu stroke:%s,stroke-width:2px\n", i, color.c_str());
     }
 
-    // Draw resource edges (res_mut → res) - use grey for all resource edges
-    const std::size_t resource_edge_start = channel_edges.size();
-    std::size_t resource_edge_count       = 0;
-
-    for (const auto& [type, conn] : resource_graph) {
-        if (conn.writers.empty() || conn.readers.empty())
-            continue;
-
-        const auto type_name = talos::scheduler::detail::demangle(type.name());
-
-        for (const auto& writer : conn.writers) {
-            const char* writer_prefix = writer.is_fixed_rate ? "E" : "C";
-            for (const auto& reader : conn.readers) {
-                const char* reader_prefix = reader.is_fixed_rate ? "E" : "C";
-                printf(
-                    "    %s%d -.->|\"res:%s\"| %s%d\n", writer_prefix, (int)writer.system_idx,
-                    type_name.c_str(), reader_prefix, (int)reader.system_idx);
-                resource_edge_count++;
-            }
-        }
-    }
-
-    // Print linkStyle for resource edges (all grey, dashed)
-    for (std::size_t i = 0; i < resource_edge_count; ++i) {
-        printf(
-            "    linkStyle %zu stroke:#9e9e9e,stroke-width:2px,stroke-dasharray: 5 5\n",
-            resource_edge_start + i);
-    }
-
     printf("```\n");
 }
 
 void Scheduler::print_mermaid_execution_levels() const {
     printf("```mermaid\n");
-    printf("flowchart LR\n\n"); // Changed from TB to LR for horizontal layout
+    printf("flowchart LR\n\n");           // Changed from TB to LR for horizontal layout
 
-    // Print FixedRate systems (source wakers)
-    if (!fixed_rate_systems_.empty()) {
-        printf("    subgraph Wakers[FixedRate Wakers]\n");
+    const auto is_external_compute_source = [&](const std::size_t idx) {
+        return dynamic_cast<ExternalComputeSource*>(compute_systems_[idx].system.get()) != nullptr;
+    };
+
+    bool has_notifying_fixed_rate = false;
+    bool has_silent_fixed_rate    = false;
+    for (const auto& entry : fixed_rate_systems_) {
+        has_notifying_fixed_rate |= entry.policy.notifies;
+        has_silent_fixed_rate |= !entry.policy.notifies;
+    }
+
+    if (has_notifying_fixed_rate) {
+        printf("    subgraph Wakers[Notifying FixedRate Sources]\n");
         printf("        direction TB\n"); // Vertical within subgraph for horizontal main flow
         for (std::size_t i = 0; i < fixed_rate_systems_.size(); ++i) {
+            if (!fixed_rate_systems_[i].policy.notifies) {
+                continue;
+            }
+            const auto& name = fixed_rate_systems_[i].system->meta().name;
+            const auto freq  = fixed_rate_systems_[i].policy.frequency_hz;
+            printf(
+                "        E%d[\"E%d: %s<br/>%dHz\"]:::fixedStyle\n", (int)i, (int)i, name.c_str(),
+                freq);
+        }
+        printf("    end\n\n");
+    }
+
+    if (has_silent_fixed_rate) {
+        printf("    subgraph SideInputs[Silent FixedRate Side Inputs]\n");
+        printf("        direction TB\n");
+        for (std::size_t i = 0; i < fixed_rate_systems_.size(); ++i) {
+            if (fixed_rate_systems_[i].policy.notifies) {
+                continue;
+            }
             const auto& name = fixed_rate_systems_[i].system->meta().name;
             const auto freq  = fixed_rate_systems_[i].policy.frequency_hz;
             printf(
@@ -980,6 +997,9 @@ void Scheduler::print_mermaid_execution_levels() const {
 
     // Also count edges from fixed_rate systems
     for (std::size_t i = 0; i < fixed_rate_systems_.size(); ++i) {
+        if (!fixed_rate_systems_[i].policy.notifies) {
+            continue;
+        }
         auto affects = i < fixed_rate_affects_.size() ? fixed_rate_affects_[i] : 0U;
         for (std::size_t j = 0; j < compute_systems_.size(); ++j) {
             if (affects & (1UL << j)) {
@@ -990,14 +1010,17 @@ void Scheduler::print_mermaid_execution_levels() const {
 
     // Helper: classify system type based on graph edges
     auto classify_by_edges = [&](std::size_t idx) -> const char* {
+        if (is_external_compute_source(idx)) {
+            return "external";
+        }
         const bool has_out = out_edges[idx] > 0;
         const bool has_in  = in_edges[idx] > 0;
 
-        if (has_out && !has_in)
-            return "input";    // (1, 0) 只出不进
         if (has_out && has_in)
             return "pipeline"; // (1, 1) 有进有出
-        return "output";       // (0, 1) 或 (0, 0) 只进不出或孤立
+        if (!has_out)
+            return "sink";
+        return "internal";
     };
 
     // Print each level as a subgraph
@@ -1013,20 +1036,23 @@ void Scheduler::print_mermaid_execution_levels() const {
             const auto& name   = compute_systems_[sys_idx].system->meta().name;
             const auto& meta   = compute_systems_[sys_idx].system->meta();
             const auto readers = meta.spsc_channels.size() + meta.spmc_channels.size();
-            const auto writers = std::count_if(
-                meta.spsc_channels.begin(), meta.spsc_channels.end(), [](const auto& c) {
-                    return c.kind == channel_kind::spsc_writer
-                        || c.kind == channel_kind::spmc_writer;
-                });
+            const auto writers =
+                std::count_if(
+                    meta.spsc_channels.begin(), meta.spsc_channels.end(),
+                    [](const auto& c) { return c.kind == channel_kind::spsc_writer; })
+                + std::count_if(
+                    meta.spmc_channels.begin(), meta.spmc_channels.end(),
+                    [](const auto& c) { return c.kind == channel_kind::spmc_writer; });
 
             const auto* sys_type    = classify_by_edges(sys_idx);
-            const char* style_class = (strcmp(sys_type, "input") == 0)  ? "inputStyle"
-                                    : (strcmp(sys_type, "output") == 0) ? "outputStyle"
-                                                                        : "pipelineStyle";
+            const char* style_class = (strcmp(sys_type, "external") == 0) ? "inputStyle"
+                                    : (strcmp(sys_type, "sink") == 0)     ? "outputStyle"
+                                                                          : "pipelineStyle";
+            const char* extra       = (strcmp(sys_type, "external") == 0) ? " [external]" : "";
 
             printf(
-                "        C%d[\"C%d: %s\\n(%d in, %d out)\"]:::%s\n", (int)sys_idx, (int)sys_idx,
-                name.c_str(), (int)readers, (int)writers, style_class);
+                "        C%d[\"C%d: %s%s\\n(%d in, %d out)\"]:::%s\n", (int)sys_idx, (int)sys_idx,
+                name.c_str(), extra, (int)readers, (int)writers, style_class);
         }
 
         printf("    end\n\n");
@@ -1038,6 +1064,9 @@ void Scheduler::print_mermaid_execution_levels() const {
 
     // FixedRate wakers -> compute systems (direct wake targets)
     for (std::size_t i = 0; i < fixed_rate_systems_.size(); ++i) {
+        if (!fixed_rate_systems_[i].policy.notifies) {
+            continue;
+        }
         auto affects = i < fixed_rate_affects_.size() ? fixed_rate_affects_[i] : 0U;
         for (std::size_t j = 0; j < compute_systems_.size(); ++j) {
             if (affects & (1UL << j)) {
@@ -1068,22 +1097,33 @@ void Scheduler::print_mermaid_execution_levels() const {
     printf("\n%% Pipeline Analysis:\n");
 
     // Count system types
-    std::size_t input_count = 0, pipeline_count = 0, output_count = 0;
+    std::size_t external_count = 0, pipeline_count = 0, sink_count = 0, internal_count = 0;
     for (std::size_t i = 0; i < compute_systems_.size(); ++i) {
         const auto* sys_type = classify_by_edges(i);
-        if (strcmp(sys_type, "input") == 0)
-            input_count++;
-        else if (strcmp(sys_type, "output") == 0)
-            output_count++;
+        if (strcmp(sys_type, "external") == 0)
+            external_count++;
+        else if (strcmp(sys_type, "sink") == 0)
+            sink_count++;
+        else if (strcmp(sys_type, "internal") == 0)
+            internal_count++;
         else
             pipeline_count++;
     }
 
-    printf("%% - FixedRate wakers: %zu\n", (std::size_t)fixed_rate_systems_.size());
+    printf(
+        "%% - Notifying fixed_rate sources: %zu\n",
+        std::count_if(
+            fixed_rate_systems_.begin(), fixed_rate_systems_.end(),
+            [](const auto& entry) { return entry.policy.notifies; }));
+    printf(
+        "%% - Silent fixed_rate side inputs: %zu\n",
+        std::count_if(
+            fixed_rate_systems_.begin(), fixed_rate_systems_.end(),
+            [](const auto& entry) { return !entry.policy.notifies; }));
     printf("%% - Total depth: %zu levels\n", (std::size_t)levels_.size());
     printf(
-        "%% - Compute system types: %zu input, %zu pipeline, %zu output\n", input_count,
-        pipeline_count, output_count);
+        "%% - Compute system types: %zu external, %zu pipeline, %zu sink, %zu internal\n",
+        external_count, pipeline_count, sink_count, internal_count);
     printf("%% - Max parallelism: ");
     std::size_t max_parallel = 0;
     std::size_t max_level    = 0;
@@ -1249,6 +1289,10 @@ auto Scheduler::get_stats_json() const -> std::string {
 // ============================================================================
 
 void Scheduler::run_fixed_rate_thread(FixedRateContext ctx) {
+    const auto keep_running = [&ctx] {
+        return is_running_state(ctx.lifecycle->load(std::memory_order_acquire));
+    };
+
     // Set CPU affinity
     if (ctx.policy.cpu_affinity >= 0) {
         auto result = primitive::ThreadAffinity::pin_to_core(
@@ -1277,17 +1321,14 @@ void Scheduler::run_fixed_rate_thread(FixedRateContext ctx) {
 
     if (frequency == 0) {
         // Unlimited frequency mode: run as fast as possible
-        const auto writer = ctx.system->meta().writes.size() > 0;
-        while (ctx.running->load(std::memory_order_acquire)) {
+        while (keep_running()) {
             primitive::LatencyProbe probe;
             const bool written = ctx.system->run(*ctx.world);
             const auto elapsed = probe.elapsed_ns();
 
-            if (!writer || (writer && written)) [[likely]] {
-                stats.latency_hist.record(elapsed);
-                if (written && ctx.policy.notifies) [[likely]] {
-                    ctx.scheduler->notify(ctx.system_index);
-                }
+            stats.latency_hist.record(elapsed);
+            if (written && ctx.policy.notifies) [[likely]] {
+                ctx.scheduler->notify(ctx.system_index);
             }
         }
         return;
@@ -1300,8 +1341,7 @@ void Scheduler::run_fixed_rate_thread(FixedRateContext ctx) {
         std::chrono::nanoseconds(1'000'000'000ULL / static_cast<std::uint64_t>(frequency));
     auto next_tick = Clock::now();
 
-    const auto writer = ctx.system->meta().writes.size() > 0;
-    while (ctx.running->load(std::memory_order_acquire)) [[likely]] {
+    while (keep_running()) [[likely]] {
         next_tick += period;
 
         // Execute system
@@ -1309,11 +1349,9 @@ void Scheduler::run_fixed_rate_thread(FixedRateContext ctx) {
         const bool written = ctx.system->run(*ctx.world);
         const auto elapsed = probe.elapsed_ns();
 
-        if (!writer || (writer && written)) [[likely]] {
-            stats.latency_hist.record(elapsed);
-            if (written && ctx.policy.notifies) [[likely]] {
-                ctx.scheduler->notify(ctx.system_index);
-            }
+        stats.latency_hist.record(elapsed);
+        if (written && ctx.policy.notifies) [[likely]] {
+            ctx.scheduler->notify(ctx.system_index);
         }
 
         // Busy wait until next tick
@@ -1335,7 +1373,7 @@ void Scheduler::run_compute_loop() {
     const auto print_interval         = std::chrono::seconds(5);
     auto last_print                   = Clock::now();
 
-    while (running_.load(std::memory_order_acquire)) [[likely]] {
+    while (is_running()) [[likely]] {
         // Check for pause request (hot-add in progress)
         if (pause_requested_.load(std::memory_order_acquire)) [[unlikely]] {
             // Reset idle counter on resume
@@ -1352,14 +1390,13 @@ void Scheduler::run_compute_loop() {
             {
                 std::unique_lock lock(pause_mutex_);
                 pause_cv_.wait(lock, [this] {
-                    return !pause_requested_.load(std::memory_order_acquire)
-                        || !running_.load(std::memory_order_acquire);
+                    return !pause_requested_.load(std::memory_order_acquire) || !is_running();
                 });
                 paused_.store(false, std::memory_order_release);
             }
 
             // Check if we should exit after resume
-            if (!running_.load(std::memory_order_acquire)) {
+            if (!is_running()) {
                 break;
             }
             continue;
@@ -1373,22 +1410,14 @@ void Scheduler::run_compute_loop() {
             idle_count = 0;
 
             primitive::LatencyProbe probe;
-            const auto written = run_compute_selective(ready);
+            const auto result  = run_compute_selective(ready);
             const auto elapsed = probe.elapsed_ns();
 
             compute_cycles_.fetch_add(1, std::memory_order_relaxed);
             compute_total_time_ns_.fetch_add(elapsed, std::memory_order_relaxed);
             compute_last_time_ns_.store(elapsed, std::memory_order_relaxed);
-
-            // Cascade wake: mark dependents of systems that actually wrote
-            std::uint64_t cascade = 0;
-            for (std::size_t i = 0; i < compute_affects_.size(); ++i) {
-                if (written & (1UL << i)) {
-                    cascade |= compute_affects_[i];
-                }
-            }
-            if (cascade != 0) {
-                ready_systems_.fetch_or(cascade, std::memory_order_release);
+            if (result.deferred_mask != 0) {
+                ready_systems_.fetch_or(result.deferred_mask, std::memory_order_release);
             }
 
             // Check stats after compute (amortize cost)
@@ -1420,71 +1449,105 @@ void Scheduler::run_compute_loop() {
     }
 }
 
-auto Scheduler::run_compute_selective(const std::uint64_t ready_mask) -> std::uint64_t {
+auto Scheduler::run_compute_selective(const std::uint64_t ready_mask) -> ComputeRoundResult {
     if (compute_systems_.empty()) [[unlikely]] {
-        return 0;
+        return {};
     }
 
-    std::atomic<std::uint64_t> written_mask{0};
+    std::uint64_t pending_ready = ready_mask;
+    std::uint64_t executed_mask = 0;
+    std::uint64_t written_mask  = 0;
+    std::uint64_t deferred_mask = 0;
 
-    compute_arena_->execute([this, ready_mask, &written_mask] {
-        // Reusable buffer for system indices to avoid per-call allocation
-        // Max 64 systems, so 64 elements is sufficient
-        std::size_t to_run_buf[64];
-        std::size_t to_run_count = 0;
+    auto enqueue_ready = [&](const std::uint64_t new_bits) {
+        deferred_mask |= new_bits & executed_mask;
+        pending_ready |= new_bits & ~executed_mask;
+    };
 
-        for (const auto& level : levels_) {
-            // Filter systems in this level that are ready (inline, no temporary vector)
-            to_run_count = 0;
-            for (const auto idx : level) {
-                if (ready_mask & (1UL << idx)) {
-                    to_run_buf[to_run_count++] = idx;
-                }
-            }
+    enqueue_ready(ready_systems_.exchange(0, std::memory_order_acq_rel));
 
-            if (to_run_count == 0) [[unlikely]] {
-                continue;
-            }
+    while (pending_ready != 0) {
+        bool ran_any = false;
 
-            if (to_run_count == 1) {
-                // Single system: execute directly, avoid task_group overhead
-                const auto idx = to_run_buf[0];
-                primitive::LatencyProbe probe;
-                const bool written = compute_systems_[idx].system->run(world_);
-                const auto elapsed = probe.elapsed_ns();
-                const auto writer  = compute_systems_[idx].system->meta().writes.size() > 0;
+        compute_arena_->execute([&] {
+            std::size_t to_run_buf[64];
 
-                if (!writer || (writer && written)) [[likely]] {
-                    compute_stats_[idx].latency_hist.record(elapsed);
-                    if (written) [[likely]] {
-                        written_mask.fetch_or(1UL << idx, std::memory_order_relaxed);
+            for (const auto& level : levels_) {
+                enqueue_ready(ready_systems_.exchange(0, std::memory_order_acq_rel));
+
+                std::size_t to_run_count = 0;
+                std::uint64_t level_mask = 0;
+                for (const auto idx : level) {
+                    const std::uint64_t bit = 1ULL << idx;
+                    if ((pending_ready & bit) != 0) {
+                        to_run_buf[to_run_count++] = idx;
+                        level_mask |= bit;
                     }
                 }
-            } else {
-                // Multiple systems: execute in parallel
-                tbb::task_group tg;
-                for (std::size_t i = 0; i < to_run_count; ++i) {
-                    const auto idx = to_run_buf[i];
-                    tg.run([this, idx, &written_mask] {
-                        primitive::LatencyProbe probe;
-                        const bool written = compute_systems_[idx].system->run(world_);
-                        const auto elapsed = probe.elapsed_ns();
-                        const auto writer  = compute_systems_[idx].system->meta().writes.size() > 0;
 
-                        if (!writer || (writer && written)) [[likely]] {
+                if (to_run_count == 0) [[unlikely]] {
+                    continue;
+                }
+
+                ran_any = true;
+                pending_ready &= ~level_mask;
+                executed_mask |= level_mask;
+
+                std::atomic<std::uint64_t> level_written{0};
+
+                if (to_run_count == 1) {
+                    const auto idx = to_run_buf[0];
+                    primitive::LatencyProbe probe;
+                    const bool written = compute_systems_[idx].system->run(world_);
+                    const auto elapsed = probe.elapsed_ns();
+
+                    compute_stats_[idx].latency_hist.record(elapsed);
+                    if (written) [[likely]] {
+                        level_written.store(1ULL << idx, std::memory_order_relaxed);
+                    }
+                } else {
+                    tbb::task_group tg;
+                    for (std::size_t i = 0; i < to_run_count; ++i) {
+                        const auto idx = to_run_buf[i];
+                        tg.run([this, idx, &level_written] {
+                            primitive::LatencyProbe probe;
+                            const bool written = compute_systems_[idx].system->run(world_);
+                            const auto elapsed = probe.elapsed_ns();
+
                             compute_stats_[idx].latency_hist.record(elapsed);
                             if (written) [[likely]] {
-                                written_mask.fetch_or(1UL << idx, std::memory_order_relaxed);
+                                level_written.fetch_or(1ULL << idx, std::memory_order_relaxed);
                             }
-                        }
-                    });
+                        });
+                    }
+                    tg.wait();
                 }
-                tg.wait();
-            }
-        }
-    });
 
-    return written_mask.load(std::memory_order_relaxed);
+                const auto level_written_mask = level_written.load(std::memory_order_relaxed);
+                written_mask |= level_written_mask;
+
+                std::uint64_t cascade = 0;
+                auto writers          = level_written_mask;
+                while (writers != 0) {
+                    const auto writer_idx = static_cast<std::size_t>(std::countr_zero(writers));
+                    writers &= writers - 1;
+                    cascade |= compute_affects_[writer_idx];
+                }
+
+                enqueue_ready(cascade);
+            }
+        });
+
+        enqueue_ready(ready_systems_.exchange(0, std::memory_order_acq_rel));
+        if (!ran_any) [[unlikely]] {
+            break;
+        }
+    }
+
+    return ComputeRoundResult{
+        .written_mask  = written_mask,
+        .deferred_mask = deferred_mask,
+    };
 }
 
 // ============================================================================
@@ -1679,6 +1742,32 @@ auto Scheduler::compute_levels() -> BuildResult {
         }
     }
 
+    // Compute systems must be reachable from an external source:
+    // - a notifying fixed_rate writer feeding compute readers
+    // - a compute system that can be woken externally (for example, RclPubSystem)
+    std::uint64_t external_source_mask = 0;
+    for (std::size_t i = 0; i < n; ++i) {
+        if (dynamic_cast<ExternalComputeSource*>(compute_systems_[i].system.get()) != nullptr) {
+            external_source_mask |= (1ULL << i);
+        }
+    }
+    for (const auto& [key, usage] : channels) {
+        if (usage.writers.empty() || usage.readers.empty()) {
+            continue;
+        }
+
+        const auto writer = usage.writers[0];
+        if (!writer.is_fixed_rate || !fixed_rate_systems_[writer.index].policy.notifies) {
+            continue;
+        }
+
+        for (const auto reader : usage.readers) {
+            if (!reader.is_fixed_rate) {
+                external_source_mask |= (1ULL << reader.index);
+            }
+        }
+    }
+
     // ========================================================================
     // Phase 4: Kahn's algorithm for topological sort (by levels)
     // ========================================================================
@@ -1767,10 +1856,42 @@ auto Scheduler::compute_levels() -> BuildResult {
     }
 
     // ========================================================================
-    // Phase 6: Build wake chains (waker -> direct wakee only)
+    // Phase 6: Liveness validation
     // ========================================================================
-    // Wake chains connect systems that directly communicate via channels OR resources.
-    // Transitive dependencies are handled by cascade wake in compute loop.
+
+    const auto all_compute_mask =
+        n == 64 ? std::numeric_limits<std::uint64_t>::max() : ((1ULL << n) - 1ULL);
+    std::uint64_t reachable = external_source_mask;
+    std::uint64_t frontier  = external_source_mask;
+
+    while (frontier != 0) {
+        std::uint64_t next = 0;
+        auto sources       = frontier;
+        while (sources != 0) {
+            const auto idx = static_cast<std::size_t>(std::countr_zero(sources));
+            sources &= sources - 1;
+            next |= adj_mask[idx];
+        }
+        frontier = next & ~reachable;
+        reachable |= frontier;
+    }
+
+    if ((reachable & all_compute_mask) != all_compute_mask) {
+        std::vector<std::string> unreachable;
+        for (std::size_t i = 0; i < n; ++i) {
+            const auto bit = 1ULL << i;
+            if ((reachable & bit) == 0) {
+                unreachable.push_back(compute_systems_[i].system->meta().name);
+            }
+        }
+        return std::unexpected(UnreachableComputeSystemsError{.systems = std::move(unreachable)});
+    }
+
+    // ========================================================================
+    // Phase 7: Build wake chains (waker -> direct wakee only)
+    // ========================================================================
+    // Wake chains connect systems that directly communicate via channels.
+    // Transitive propagation is handled by compute-round closure.
 
     // Wake chains for fixed_rate systems:
     // fixed_rate_affects_[i] = bitmask of compute systems that directly read this fixed_rate's
@@ -1806,8 +1927,7 @@ auto Scheduler::compute_levels() -> BuildResult {
 
     // Wake chains for compute systems:
     // compute_affects_[i] = bitmask of compute systems that directly depend on system i
-    // via channels OR pipeline resources (writer + readers)
-    // This enables cascade wake: when compute A finishes, wake compute B if B depends on A
+    // via channels
     compute_affects_.assign(n, 0);
 
     // Channel dependencies

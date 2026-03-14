@@ -1,17 +1,18 @@
-#include "../src/system/channel_types.hpp"
-#include "ecs/execution_policy.hpp"
-#include "rclcompat/node.hpp"
-#include "rclcompat/timer_constants.hpp"
+#include "scheduler/error_formatter.hpp"
+#include "scheduler/rclcompat/node.hpp"
 #include "scheduler/rclcompat/registry.hpp"
 #include "scheduler/rclcompat/system.hpp"
-#include "scheduler/scheduler/error_formatter.hpp"
-#include "scheduler/scheduler/scheduler.hpp"
+#include "scheduler/rclcompat/timer_constants.hpp"
+#include "scheduler/scheduler.hpp"
+#include "scheduler/system/components.hpp"
+#include "scheduler/system/execution_policy.hpp"
 
 #include <functional>
 #include <gtest/gtest.h>
 
 #include <atomic>
 #include <chrono>
+#include <memory>
 #include <print>
 #include <string>
 #include <thread>
@@ -244,21 +245,25 @@ TEST(PubSlotTest, BindAndPublish) {
     //   - EXPECT_TRUE(was_pending) after exchange
 
     World world;
-    rclcompat::PubSlot<TestMessage, TestTag1> slot;
+    Scheduler scheduler(world);
+    rclcompat::Node node("test_node", scheduler);
+    auto pub = node.create_publisher<TestMessage, TestTag1>();
 
-    slot.bind(world);
+    ASSERT_TRUE(node.finalize().has_value());
 
-    EXPECT_TRUE(slot.ready());
-    EXPECT_TRUE(slot.bound.load());
-    EXPECT_FALSE(slot.pending_write.load());
+    auto* slot = node.get_pub_slot<TestMessage, TestTag1>();
+    ASSERT_NE(slot, nullptr);
+    EXPECT_TRUE(slot->ready());
+    EXPECT_TRUE(slot->bound.load());
+    EXPECT_FALSE(slot->pending_write.load());
 
-    slot.publish(TestMessage{42, "hello"});
-    EXPECT_TRUE(slot.pending_write.load());
+    slot->publish(TestMessage{42, "hello"});
+    EXPECT_TRUE(slot->pending_write.load());
 
     // Consume the pending write (this is what RclPubSystem::run() does)
-    bool was_pending = slot.pending_write.exchange(false, std::memory_order_acq_rel);
+    bool was_pending = slot->pending_write.exchange(false, std::memory_order_acq_rel);
     EXPECT_TRUE(was_pending);
-    EXPECT_FALSE(slot.pending_write.load());
+    EXPECT_FALSE(slot->pending_write.load());
 }
 
 // ============================================================================
@@ -358,6 +363,26 @@ TEST(PublisherTest, PublishAfterFinalize) {
     EXPECT_TRUE(slot->pending_write.load());
 }
 
+TEST(PublisherTest, SurvivesNodeDestructionBeforeFinalize) {
+    World world;
+    Scheduler scheduler(world);
+    rclcompat::Publisher<TestMessage, TestTag1> pub;
+
+    {
+        rclcompat::Node node("test_node", scheduler);
+        pub = node.create_publisher<TestMessage, TestTag1>();
+        EXPECT_TRUE(pub.valid());
+        EXPECT_FALSE(pub.ready());
+    }
+
+    EXPECT_TRUE(pub.valid());
+    EXPECT_FALSE(pub.ready());
+
+    // Safe no-op: slot still exists even though the Node object is gone.
+    pub.publish(TestMessage{7, "orphaned"});
+    EXPECT_TRUE(pub.valid());
+}
+
 // ============================================================================
 // rclcompat::Node Tests
 // ============================================================================
@@ -407,7 +432,7 @@ TEST(NodeTest, CreateSubscription) {
 
     std::atomic<int> callback_count{0};
     node.create_subscription<TestMessage, TestTag1>(
-        [&callback_count](const TestMessage& msg) { callback_count.fetch_add(1); });
+        [&callback_count](const TestMessage&) { callback_count.fetch_add(1); });
 
     // Subscription created with publisher, finalize should succeed
     auto result = node.finalize();
@@ -431,7 +456,7 @@ TEST(NodeTest, FinalizeBuild) {
     rclcompat::Node node("my_node", scheduler);
 
     auto pub = node.create_publisher<TestMessage, TestTag1>();
-    node.create_subscription<TestMessage, TestTag1>([](const TestMessage& msg) { /* no-op */ });
+    node.create_subscription<TestMessage, TestTag1>([](const TestMessage&) { /* no-op */ });
 
     auto result = node.finalize();
     EXPECT_TRUE(result.has_value());
@@ -441,6 +466,33 @@ TEST(NodeTest, FinalizeBuild) {
     //   Wake chains (compute -> compute):
     //     [my_node/pub_...] -> [my_node/sub_...]
     scheduler.print_systems();
+}
+
+TEST(NodeTest, DestroyedAfterFinalizeStillRunsOwnedTimerPublisher) {
+    World world;
+    Scheduler scheduler(world);
+    std::atomic<int> recv_count{0};
+
+    {
+        rclcompat::Node node("my_node", scheduler);
+        auto pub = node.create_publisher<TestMessage, TestTag1>();
+        auto pub_handle =
+            std::make_shared<rclcompat::Publisher<TestMessage, TestTag1>>(std::move(pub));
+        node.create_subscription<TestMessage, TestTag1>(
+            [&recv_count](const TestMessage&) { recv_count.fetch_add(1); });
+        node.create_wall_timer(Frequency::Hz_30, [pub_handle]() {
+            pub_handle->publish(TestMessage{.value = 1, .text = "tick"});
+        });
+
+        ASSERT_TRUE(node.finalize().has_value());
+    }
+
+    std::jthread scheduler_thread([&scheduler]() { (void)scheduler.run(); });
+    std::this_thread::sleep_for(std::chrono::milliseconds(120));
+    scheduler.stop();
+    scheduler_thread.join();
+
+    EXPECT_GE(recv_count.load(), 2);
 }
 
 // ============================================================================
@@ -743,6 +795,45 @@ TEST(HotAddTest, HotAddDuringExecution) {
     EXPECT_TRUE(consumer.finalize().has_value());
 
     scheduler.print_systems();
+}
+
+TEST(HotAddTest, FinalizeRemainsUsableAfterPartialHotAddFailure) {
+    World world;
+    Scheduler scheduler(world);
+
+    Node source("source", scheduler);
+    auto source_pub = source.create_publisher<TestMessage, TestTag1>();
+    ASSERT_TRUE(source.finalize().has_value());
+
+    std::jthread scheduler_thread([&scheduler]() { (void)scheduler.run(); });
+
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(1);
+    while (!scheduler.is_running() && std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    ASSERT_TRUE(scheduler.is_running());
+
+    Node retry_node("retry", scheduler);
+    std::atomic<int> received{0};
+    retry_node.create_subscription<TestMessage, TestTag1>(
+        [&received](const TestMessage&) { received.fetch_add(1); });
+    auto duplicate_pub = retry_node.create_publisher<TestMessage, TestTag1>();
+    EXPECT_TRUE(duplicate_pub.valid());
+
+    const auto first_finalize = retry_node.finalize();
+    ASSERT_FALSE(first_finalize.has_value());
+    ASSERT_TRUE(std::holds_alternative<talos::MultipleWritersError>(first_finalize.error()));
+
+    // A failed hot-add must not leave moved-from systems behind.
+    const auto second_finalize = retry_node.finalize();
+    EXPECT_TRUE(second_finalize.has_value());
+
+    source_pub.publish(TestMessage{.value = 7, .text = "retry"});
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    EXPECT_GT(received.load(), 0);
+
+    scheduler.stop();
+    scheduler_thread.join();
 }
 
 // -------------------------------------------------------------------------
@@ -1542,6 +1633,45 @@ TEST(RclCompatOwnership, PublisherOutsideCallback) {
     EXPECT_TRUE(pub.ready());
 }
 
+TEST(RclCompatFlow, ExternalPublishDrainsCallbackChainInSingleComputeRound) {
+    World world;
+    Scheduler scheduler(world);
+    Node node("test", scheduler);
+
+    auto input_pub     = node.create_publisher<TestMessage, TestTag1>();
+    auto forwarded_pub = node.create_publisher<TestMessage, TestTag2>();
+
+    std::atomic<int> stage1_count{0};
+    std::atomic<int> stage2_count{0};
+    std::atomic<int> final_value{0};
+
+    node.create_subscription<TestMessage, TestTag1>(
+        [&forwarded_pub, &stage1_count](const TestMessage& msg) {
+            stage1_count.fetch_add(1);
+            forwarded_pub.publish(TestMessage{.value = msg.value + 1, .text = "forwarded"});
+        });
+
+    node.create_subscription<TestMessage, TestTag2>(
+        [&stage2_count, &final_value](const TestMessage& msg) {
+            stage2_count.fetch_add(1);
+            final_value.store(msg.value);
+        });
+
+    ASSERT_TRUE(node.finalize().has_value());
+
+    input_pub.publish(TestMessage{.value = 41, .text = "start"});
+
+    std::jthread scheduler_thread([&scheduler]() { (void)scheduler.run(); });
+    std::this_thread::sleep_for(std::chrono::milliseconds(80));
+    scheduler.stop();
+    scheduler_thread.join();
+
+    EXPECT_EQ(stage1_count.load(), 1);
+    EXPECT_EQ(stage2_count.load(), 1);
+    EXPECT_EQ(final_value.load(), 42);
+    EXPECT_EQ(scheduler.stats().compute_cycle_count, 1U);
+}
+
 // -------------------------------------------------------------------------
 // Test Suite: ResourceAccessor
 // -------------------------------------------------------------------------
@@ -1665,7 +1795,7 @@ TEST(ResourceAccessor, WithCallback) {
     std::atomic<int> final_value{0};
 
     node.create_subscription<TestMessage, TestTag1>(
-        [&counter_accessor, &callback_executed, &final_value](const TestMessage& msg) {
+        [&counter_accessor, &callback_executed, &final_value](const TestMessage&) {
             callback_executed.store(true);
 
             // Access the resource
@@ -1751,6 +1881,23 @@ TEST(ResourceAccessor, Copyable) {
     EXPECT_EQ(res1_after->value, 100);
 }
 
+TEST(ResourceAccessor, InvalidAfterWorldDestruction) {
+    rclcompat::ResourceAccessor<TestResource> accessor;
+
+    {
+        World world;
+        Scheduler scheduler(world);
+        rclcompat::Node node("test", scheduler);
+
+        node.insert_resource(TestResource{.value = 42, .name = "ephemeral"});
+        accessor = node.create_resource<TestResource>();
+        EXPECT_TRUE(accessor.valid());
+    }
+
+    EXPECT_FALSE(accessor.valid());
+    EXPECT_DEATH_IF_SUPPORTED((void)accessor.get(), "");
+}
+
 // ============================================================================
 // Wall Timer Tests
 // ============================================================================
@@ -1797,10 +1944,10 @@ TEST(RclTimer, BasicTimer) {
 //
 // VERIFICATION:
 //   1. Timer publishes messages at the specified frequency
-//   2. Publisher's pending_write flag is set
+//   2. Scheduler consumes the publish and runs compute work
 //
 // NOTE: This test verifies that the timer callback can execute and call publish.
-// The wake chain from timer to subscriber is a separate concern.
+// Subscriber wake-up is covered separately.
 // -------------------------------------------------------------------------
 
 TEST(RclTimer, TimerWithPublisher) {
@@ -1825,10 +1972,34 @@ TEST(RclTimer, TimerWithPublisher) {
     // Verify the timer ran and published multiple times
     EXPECT_GE(publish_count.load(), 2);
 
-    // Verify the publisher has a pending write
+    // Verify the publisher slot exists and the publish path woke compute work.
     auto* slot = node.get_pub_slot<TestMessage, TestTag1>();
     ASSERT_NE(slot, nullptr);
-    EXPECT_TRUE(slot->pending_write.load());
+    EXPECT_GE(scheduler.stats().compute_cycle_count, 1U);
+}
+
+TEST(RclTimer, TimerPublisherWakesSubscriber) {
+    World world;
+    Scheduler scheduler(world);
+    Node node("test", scheduler);
+
+    auto pub = node.create_publisher<TestMessage, TestTag1>();
+    std::atomic<int> recv_count{0};
+
+    node.create_subscription<TestMessage, TestTag1>(
+        [&recv_count](const TestMessage&) { recv_count.fetch_add(1); });
+
+    node.create_wall_timer(
+        Frequency::Hz_30, [&pub]() { pub.publish(TestMessage{.value = 1, .text = "timer"}); });
+
+    ASSERT_TRUE(node.finalize().has_value());
+
+    std::jthread t([&scheduler]() { (void)scheduler.run(); });
+    std::this_thread::sleep_for(std::chrono::milliseconds(120));
+    scheduler.stop();
+    t.join();
+
+    EXPECT_GE(recv_count.load(), 2);
 }
 
 // -------------------------------------------------------------------------
