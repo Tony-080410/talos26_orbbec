@@ -749,6 +749,243 @@ TEST(RclCompatIntegrationTest, ChainedProcessingPipeline) {
     }
 }
 
+TEST(MermaidExecutionLevels, CountsChannelReadersAndWritersSeparately) {
+    struct InputTag {};
+    struct DebugTag {};
+    struct OutputTag {};
+
+    World world;
+    Scheduler scheduler(world);
+
+    scheduler.add_system<talos::fixed_rate<30>>(
+        "source", [](talos::spmc_mut<TestMessage, InputTag> out) {
+            out.write(TestMessage{.value = 1, .text = "tick"});
+        });
+
+    scheduler.add_system<talos::pool_compute>(
+        "fanout",
+        [](talos::spmc<TestMessage, InputTag> in, talos::spmc_mut<TestMessage, DebugTag> debug_out,
+           talos::spsc_mut<TestMessage, OutputTag> output_out) {
+            const auto msg = in.read();
+            if (!msg) {
+                return;
+            }
+            debug_out.write(*msg);
+            output_out.write(*msg);
+        });
+
+    scheduler.add_system<talos::pool_compute>(
+        "debug_sink", [](talos::spmc<TestMessage, DebugTag> in) { (void)in.read(); });
+
+    scheduler.add_system<talos::pool_compute>(
+        "output_sink", [](talos::spsc<TestMessage, OutputTag> in) { (void)in.read(); });
+
+    ASSERT_TRUE(scheduler.build().has_value());
+
+    testing::internal::CaptureStdout();
+    scheduler.print_mermaid_execution_levels();
+    const std::string mermaid = testing::internal::GetCapturedStdout();
+
+    EXPECT_NE(mermaid.find("fanout"), std::string::npos);
+    EXPECT_NE(mermaid.find("(1 in, 2 out)"), std::string::npos);
+    EXPECT_EQ(mermaid.find("(3 in, 2 out)"), std::string::npos);
+}
+
+TEST(MermaidExecutionLevels, RendersCrossLevelDependenciesForMultiInputNodes) {
+    struct SourceTag {};
+    struct BranchATag {};
+    struct BranchBTag {};
+    struct MergeTag {};
+    struct SinkTag {};
+
+    World world;
+    Scheduler scheduler(world);
+
+    scheduler.add_system<talos::fixed_rate<30>>(
+        "source", [](talos::spmc_mut<TestMessage, SourceTag> out) {
+            out.write(TestMessage{.value = 1, .text = "tick"});
+        });
+
+    scheduler.add_system<talos::pool_compute>(
+        "stage_a",
+        [](talos::spmc<TestMessage, SourceTag> in, talos::spmc_mut<TestMessage, BranchATag> a_out,
+           talos::spmc_mut<TestMessage, MergeTag> merge_out) {
+            const auto msg = in.read();
+            if (!msg) {
+                return;
+            }
+            a_out.write(*msg);
+            merge_out.write(*msg);
+        });
+
+    scheduler.add_system<talos::pool_compute>(
+        "stage_b",
+        [](talos::spmc<TestMessage, BranchATag> in, talos::spmc_mut<TestMessage, BranchBTag> out) {
+            const auto msg = in.read();
+            if (!msg) {
+                return;
+            }
+            out.write(*msg);
+        });
+
+    scheduler.add_system<talos::pool_compute>(
+        "merge",
+        [](talos::spmc<TestMessage, MergeTag> direct_in, talos::spmc<TestMessage, BranchBTag> b_in,
+           talos::spmc_mut<TestMessage, SinkTag> out) {
+            if (const auto direct = direct_in.read(); direct && b_in.read()) {
+                out.write(*direct);
+            }
+        });
+
+    scheduler.add_system<talos::pool_compute>(
+        "sink", [](talos::spmc<TestMessage, SinkTag> in) { (void)in.read(); });
+
+    ASSERT_TRUE(scheduler.build().has_value());
+
+    testing::internal::CaptureStdout();
+    scheduler.print_mermaid_execution_levels();
+    const std::string mermaid = testing::internal::GetCapturedStdout();
+
+    EXPECT_NE(mermaid.find("stage_a"), std::string::npos);
+    EXPECT_NE(mermaid.find("stage_b"), std::string::npos);
+    EXPECT_NE(mermaid.find("merge"), std::string::npos);
+    EXPECT_NE(mermaid.find("C0 --> C1"), std::string::npos);
+    EXPECT_NE(mermaid.find("C0 --> C2"), std::string::npos);
+    EXPECT_NE(mermaid.find("C1 --> C2"), std::string::npos);
+}
+
+TEST(MermaidLabels, DisambiguatesSameTopicDifferentPayloadTypes) {
+    World world;
+    Scheduler scheduler(world);
+
+    scheduler.add_system<talos::fixed_rate<30>>(
+        "source", [](talos::spmc_mut<TestMessage, TestTag1> test_out,
+                     talos::spmc_mut<AnotherMessage, TestTag1> other_out) {
+            test_out.write(TestMessage{.value = 1, .text = "tick"});
+            other_out.write(AnotherMessage{.x = 1.0, .y = 2.0});
+        });
+
+    scheduler.add_system<talos::pool_compute>(
+        "sink", [](talos::spmc<TestMessage, TestTag1> test_in,
+                   talos::spmc<AnotherMessage, TestTag1> other_in) {
+            (void)test_in.read();
+            (void)other_in.read();
+        });
+
+    ASSERT_TRUE(scheduler.build().has_value());
+
+    testing::internal::CaptureStdout();
+    scheduler.print_mermaid_wake_chains();
+    const std::string wake_mermaid = testing::internal::GetCapturedStdout();
+
+    EXPECT_NE(wake_mermaid.find("TestTag1"), std::string::npos);
+    EXPECT_NE(wake_mermaid.find("TestMessage"), std::string::npos);
+    EXPECT_NE(wake_mermaid.find("AnotherMessage"), std::string::npos);
+    EXPECT_EQ(wake_mermaid.find("|\"TestTag1\"|"), std::string::npos);
+
+    testing::internal::CaptureStdout();
+    scheduler.print_mermaid_data_flow();
+    const std::string data_flow_mermaid = testing::internal::GetCapturedStdout();
+
+    EXPECT_NE(data_flow_mermaid.find("TestTag1"), std::string::npos);
+    EXPECT_NE(data_flow_mermaid.find("TestMessage"), std::string::npos);
+    EXPECT_NE(data_flow_mermaid.find("AnotherMessage"), std::string::npos);
+    EXPECT_EQ(data_flow_mermaid.find("|\"TestTag1\"|"), std::string::npos);
+}
+
+TEST(MermaidWakeChains, RequiresBuildForFreshWakeGraph) {
+    World world;
+    Scheduler scheduler(world);
+
+    scheduler.add_system<talos::fixed_rate<30>>(
+        "source", [](talos::spmc_mut<TestMessage, TestTag1> out) {
+            out.write(TestMessage{.value = 1, .text = "tick"});
+        });
+    scheduler.add_system<talos::pool_compute>(
+        "sink", [](talos::spmc<TestMessage, TestTag1> in) { (void)in.read(); });
+
+    testing::internal::CaptureStdout();
+    scheduler.print_mermaid_wake_chains();
+    const std::string mermaid = testing::internal::GetCapturedStdout();
+
+    EXPECT_NE(mermaid.find("Call build() to render wake chains"), std::string::npos);
+}
+
+TEST(MermaidWakeChains, ExcludesSharedResourceAccess) {
+    World world;
+    Scheduler scheduler(world);
+
+    world.insert_resource(TestMessage{.value = 7, .text = "resource"});
+
+    scheduler.add_system<talos::fixed_rate<30>>(
+        "source", [](talos::spmc_mut<AnotherMessage, TestTag1> out) {
+            out.write(AnotherMessage{.x = 1.0, .y = 2.0});
+        });
+    scheduler.add_system<talos::pool_compute>(
+        "sink", [](talos::spmc<AnotherMessage, TestTag1> in, talos::res<TestMessage> state) {
+            (void)in.read();
+            (void)state->value;
+        });
+
+    ASSERT_TRUE(scheduler.build().has_value());
+
+    testing::internal::CaptureStdout();
+    scheduler.print_mermaid_wake_chains();
+    const std::string mermaid = testing::internal::GetCapturedStdout();
+
+    EXPECT_NE(mermaid.find("TestTag1"), std::string::npos);
+    EXPECT_EQ(mermaid.find("TestMessage"), std::string::npos);
+    EXPECT_EQ(mermaid.find("|\"res\"|"), std::string::npos);
+    EXPECT_EQ(mermaid.find("|\"res_mut\"|"), std::string::npos);
+}
+
+TEST(MermaidDataFlow, AnnotatesInvalidMultipleWriterChannels) {
+    World world;
+    Scheduler scheduler(world);
+
+    scheduler.add_system<talos::fixed_rate<30>>(
+        "writer_a", [](talos::spmc_mut<TestMessage, TestTag1> out) {
+            out.write(TestMessage{.value = 1, .text = "a"});
+        });
+    scheduler.add_system<talos::fixed_rate<60>>(
+        "writer_b", [](talos::spmc_mut<TestMessage, TestTag1> out) {
+            out.write(TestMessage{.value = 2, .text = "b"});
+        });
+    scheduler.add_system<talos::pool_compute>(
+        "sink", [](talos::spmc<TestMessage, TestTag1> in) { (void)in.read(); });
+
+    testing::internal::CaptureStdout();
+    scheduler.print_mermaid_data_flow();
+    const std::string mermaid = testing::internal::GetCapturedStdout();
+
+    EXPECT_NE(mermaid.find("multiple writers"), std::string::npos);
+    EXPECT_EQ(mermaid.find("E0 -->|\"TestTag1"), std::string::npos);
+    EXPECT_EQ(mermaid.find("E1 -->|\"TestTag1"), std::string::npos);
+}
+
+TEST(MermaidDataFlow, IncludesSharedResourceReadAndMutAccess) {
+    World world;
+    Scheduler scheduler(world);
+
+    world.insert_resource(TestMessage{.value = 3, .text = "resource"});
+
+    scheduler.add_system<talos::fixed_rate_silent<30>>(
+        "reader", [](talos::res<TestMessage> state) { (void)state->value; });
+    scheduler.add_system<talos::pool_compute>(
+        "mutator", [](talos::res_mut<TestMessage> state) { state->value += 1; });
+
+    testing::internal::CaptureStdout();
+    scheduler.print_mermaid_data_flow();
+    const std::string mermaid = testing::internal::GetCapturedStdout();
+
+    EXPECT_NE(mermaid.find("Shared Resources"), std::string::npos);
+    EXPECT_NE(mermaid.find("TestMessage"), std::string::npos);
+    EXPECT_NE(mermaid.find("R0 -->|\"res\"| E0"), std::string::npos);
+    EXPECT_NE(mermaid.find("R0 -->|\"res_mut\"| C0"), std::string::npos);
+    EXPECT_NE(mermaid.find("C0 -->|\"res_mut\"| R0"), std::string::npos);
+    EXPECT_NE(mermaid.find("shared resource access only"), std::string::npos);
+}
+
 // -------------------------------------------------------------------------
 // Test: HotAddDuringExecution
 // -------------------------------------------------------------------------

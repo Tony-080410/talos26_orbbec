@@ -55,6 +55,107 @@ static void print_wake_chains(
     }
 }
 
+struct ChannelIoCounts {
+    std::size_t inputs  = 0;
+    std::size_t outputs = 0;
+};
+
+template <typename Channels>
+static void
+    accumulate_channel_io_counts(const Channels& channels, ChannelIoCounts& counts) noexcept {
+    for (const auto& channel : channels) {
+        switch (channel.kind) {
+        case channel_kind::spsc_reader:
+        case channel_kind::spmc_reader: counts.inputs++; break;
+        case channel_kind::spsc_writer:
+        case channel_kind::spmc_writer: counts.outputs++; break;
+        default: std::unreachable();
+        }
+    }
+}
+
+static auto count_channel_io(const SystemMeta& meta) noexcept -> ChannelIoCounts {
+    ChannelIoCounts counts;
+    accumulate_channel_io_counts(meta.spsc_channels, counts);
+    accumulate_channel_io_counts(meta.spmc_channels, counts);
+    return counts;
+}
+
+struct ChannelLabelNames {
+    std::string topic_name;
+    std::string type_name;
+};
+
+template <typename Systems>
+static auto build_resource_label_map(const Systems& systems)
+    -> std::map<std::type_index, std::string> {
+    std::map<std::type_index, std::string> resource_labels;
+    for (const auto& entry : systems) {
+        const auto& meta = entry.system->meta();
+        for (const auto& type : meta.reads) {
+            resource_labels.try_emplace(type, talos::scheduler::detail::demangle(type.name()));
+        }
+        for (const auto& type : meta.writes) {
+            resource_labels.try_emplace(type, talos::scheduler::detail::demangle(type.name()));
+        }
+    }
+    return resource_labels;
+}
+
+template <typename Systems>
+static void collect_channel_label_names(
+    const Systems& systems, std::map<ChannelKey, ChannelLabelNames>& channel_names) {
+    for (const auto& entry : systems) {
+        const auto& meta = entry.system->meta();
+        auto collect     = [&](const auto& channels) {
+            for (const auto& channel : channels) {
+                const ChannelKey key{channel.type, channel.topic};
+                channel_names.try_emplace(
+                    key, ChannelLabelNames{
+                             .topic_name = talos::scheduler::detail::demangle(channel.topic.name()),
+                             .type_name  = talos::scheduler::detail::demangle(channel.type.name()),
+                         });
+            }
+        };
+        collect(meta.spsc_channels);
+        collect(meta.spmc_channels);
+    }
+}
+
+template <typename FixedSystems, typename ComputeSystems>
+static auto build_channel_label_map(
+    const FixedSystems& fixed_systems, const ComputeSystems& compute_systems)
+    -> std::map<ChannelKey, std::string> {
+    std::map<ChannelKey, ChannelLabelNames> channel_names;
+    collect_channel_label_names(fixed_systems, channel_names);
+    collect_channel_label_names(compute_systems, channel_names);
+
+    std::unordered_map<std::string, std::size_t> topic_name_counts;
+    for (const auto& [_, names] : channel_names) {
+        topic_name_counts[names.topic_name]++;
+    }
+
+    std::map<ChannelKey, std::string> channel_labels;
+    for (const auto& [key, names] : channel_names) {
+        std::string label = names.topic_name;
+        if (topic_name_counts[names.topic_name] > 1) {
+            label += " [";
+            label += names.type_name;
+            label += "]";
+        }
+        channel_labels.emplace(key, std::move(label));
+    }
+
+    return channel_labels;
+}
+
+static void print_mermaid_rebuild_hint(const char* message) {
+    printf("```mermaid\n");
+    printf("flowchart LR\n\n");
+    printf("    BuildRequired[\"%s\"]\n", message);
+    printf("```\n");
+}
+
 // ============================================================================
 // Constructor / Destructor
 // ============================================================================
@@ -416,12 +517,19 @@ void Scheduler::print_systems() const {
 }
 
 void Scheduler::print_mermaid_wake_chains() const {
+    if (lifecycle_state() == LifecycleState::Configuring) {
+        print_mermaid_rebuild_hint(
+            "Scheduler graph not built. Call build() to render wake chains.");
+        return;
+    }
+
     printf("```mermaid\n");
     printf("flowchart LR\n\n");
 
     const auto is_external_compute_source = [&](const std::size_t idx) {
         return dynamic_cast<ExternalComputeSource*>(compute_systems_[idx].system.get()) != nullptr;
     };
+    const auto channel_labels = build_channel_label_map(fixed_rate_systems_, compute_systems_);
 
     // Build in_edges and out_edges for each compute system
     std::vector<std::size_t> in_edges(compute_systems_.size(), 0);
@@ -467,18 +575,23 @@ void Scheduler::print_mermaid_wake_chains() const {
         return "internal";
     };
 
-    // Define subgraphs for wake-source types
-    printf("    subgraph ExternalWake[Notifying FixedRate Sources]\n");
-    printf("        direction TB\n");
-    for (std::size_t i = 0; i < fixed_rate_systems_.size(); ++i) {
-        if (!fixed_rate_systems_[i].policy.notifies) {
-            continue;
-        }
-        const auto& name = fixed_rate_systems_[i].system->meta().name;
-        const auto freq  = fixed_rate_systems_[i].policy.frequency_hz;
-        printf("        E%d[\"%s<br/>%dHz\"]:::fixedStyle\n", (int)i, name.c_str(), freq);
+    bool has_notifying_fixed_rate = false;
+    for (const auto& entry : fixed_rate_systems_) {
+        has_notifying_fixed_rate |= entry.policy.notifies;
     }
-    printf("    end\n\n");
+    if (has_notifying_fixed_rate) {
+        printf("    subgraph ExternalWake[Notifying FixedRate Sources]\n");
+        printf("        direction TB\n");
+        for (std::size_t i = 0; i < fixed_rate_systems_.size(); ++i) {
+            if (!fixed_rate_systems_[i].policy.notifies) {
+                continue;
+            }
+            const auto& name = fixed_rate_systems_[i].system->meta().name;
+            const auto freq  = fixed_rate_systems_[i].policy.frequency_hz;
+            printf("        E%d[\"%s<br/>%dHz\"]:::fixedStyle\n", (int)i, name.c_str(), freq);
+        }
+        printf("    end\n\n");
+    }
 
     bool has_silent_fixed_rate = false;
     for (std::size_t i = 0; i < fixed_rate_systems_.size(); ++i) {
@@ -575,8 +688,10 @@ void Scheduler::print_mermaid_wake_chains() const {
                         continue;
                     }
                     if (wc.type == rc.type && wc.topic == rc.topic) {
-                        // Demangle topic name for readability
-                        topics.push_back(talos::scheduler::detail::demangle(wc.topic.name()));
+                        const ChannelKey key{wc.type, wc.topic};
+                        if (auto it = channel_labels.find(key); it != channel_labels.end()) {
+                            topics.push_back(it->second);
+                        }
                     }
                 }
             }
@@ -589,6 +704,8 @@ void Scheduler::print_mermaid_wake_chains() const {
         if (topics.empty()) {
             return "";
         }
+        std::sort(topics.begin(), topics.end());
+        topics.erase(std::unique(topics.begin(), topics.end()), topics.end());
         if (topics.size() == 1) {
             return topics[0];
         }
@@ -649,6 +766,7 @@ void Scheduler::print_mermaid_data_flow() const {
     const auto is_external_compute_source = [&](const std::size_t idx) {
         return dynamic_cast<ExternalComputeSource*>(compute_systems_[idx].system.get()) != nullptr;
     };
+    const auto channel_labels = build_channel_label_map(fixed_rate_systems_, compute_systems_);
 
     // Define distinct path colors for different data flows
     const char* path_colors[] = {
@@ -666,7 +784,7 @@ void Scheduler::print_mermaid_data_flow() const {
     constexpr std::size_t num_colors = sizeof(path_colors) / sizeof(path_colors[0]);
 
     // ========================================================================
-    // Build data flow graph from channels only
+    // Build data flow graph from channels and shared resources
     // ========================================================================
 
     struct ChannelEndpoint {
@@ -676,7 +794,7 @@ void Scheduler::print_mermaid_data_flow() const {
 
     // Channel connection: (type, topic) -> (writer, readers)
     struct ChannelConnection {
-        std::optional<ChannelEndpoint> writer;
+        std::vector<ChannelEndpoint> writers;
         std::vector<ChannelEndpoint> readers;
         std::type_index type;
         std::type_index topic;
@@ -684,9 +802,18 @@ void Scheduler::print_mermaid_data_flow() const {
     };
 
     std::unordered_map<ChannelKey, ChannelConnection, ChannelKeyHash> channel_graph;
+    struct ResourceAccess {
+        std::vector<ChannelEndpoint> readers;
+        std::vector<ChannelEndpoint> mutators;
+    };
+    std::map<std::type_index, ResourceAccess> resource_graph;
 
-    const std::size_t fixed_count   = fixed_rate_systems_.size();
-    const std::size_t compute_count = compute_systems_.size();
+    const std::size_t fixed_count      = fixed_rate_systems_.size();
+    const std::size_t compute_count    = compute_systems_.size();
+    const auto fixed_resource_labels   = build_resource_label_map(fixed_rate_systems_);
+    const auto compute_resource_labels = build_resource_label_map(compute_systems_);
+    std::map<std::type_index, std::string> resource_labels = fixed_resource_labels;
+    resource_labels.insert(compute_resource_labels.begin(), compute_resource_labels.end());
 
     // Helper: process a system's channels
     auto process_system_channels = [&](std::size_t idx, bool is_fixed, const SystemMeta& meta) {
@@ -701,7 +828,7 @@ void Scheduler::print_mermaid_data_flow() const {
                          .emplace(
                              key,
                              ChannelConnection{
-                                 .writer  = std::nullopt,
+                                 .writers = {},
                                  .readers = {},
                                  .type    = ch.type,
                                  .topic   = ch.topic,
@@ -710,7 +837,7 @@ void Scheduler::print_mermaid_data_flow() const {
             }
 
             if (ch.kind == channel_kind::spsc_writer) {
-                it->second.writer = endpoint;
+                it->second.writers.push_back(endpoint);
             } else if (ch.kind == channel_kind::spsc_reader) {
                 it->second.readers.push_back(endpoint);
             }
@@ -725,7 +852,7 @@ void Scheduler::print_mermaid_data_flow() const {
                          .emplace(
                              key,
                              ChannelConnection{
-                                 .writer  = std::nullopt,
+                                 .writers = {},
                                  .readers = {},
                                  .type    = ch.type,
                                  .topic   = ch.topic,
@@ -734,10 +861,17 @@ void Scheduler::print_mermaid_data_flow() const {
             }
 
             if (ch.kind == channel_kind::spmc_writer) {
-                it->second.writer = endpoint;
+                it->second.writers.push_back(endpoint);
             } else if (ch.kind == channel_kind::spmc_reader) {
                 it->second.readers.push_back(endpoint);
             }
+        }
+
+        for (const auto& type : meta.reads) {
+            resource_graph[type].readers.push_back(endpoint);
+        }
+        for (const auto& type : meta.writes) {
+            resource_graph[type].mutators.push_back(endpoint);
         }
     };
 
@@ -751,26 +885,26 @@ void Scheduler::print_mermaid_data_flow() const {
         process_system_channels(i, false, meta);
     }
 
-    auto classify_compute_by_channels = [&](const std::size_t idx) -> const char* {
+    auto classify_compute_by_data_flow = [&](const std::size_t idx) -> const char* {
         if (is_external_compute_source(idx)) {
             return "external";
         }
 
-        const auto& meta = compute_systems_[idx].system->meta();
-        const bool has_pub =
-            std::any_of(
-                meta.spsc_channels.begin(), meta.spsc_channels.end(),
-                [](const auto& c) { return c.kind == channel_kind::spsc_writer; })
-            || std::any_of(meta.spmc_channels.begin(), meta.spmc_channels.end(), [](const auto& c) {
-                   return c.kind == channel_kind::spmc_writer;
-               });
-        const bool has_sub =
-            std::any_of(
-                meta.spsc_channels.begin(), meta.spsc_channels.end(),
-                [](const auto& c) { return c.kind == channel_kind::spsc_reader; })
-            || std::any_of(meta.spmc_channels.begin(), meta.spmc_channels.end(), [](const auto& c) {
-                   return c.kind == channel_kind::spmc_reader;
-               });
+        const auto& meta   = compute_systems_[idx].system->meta();
+        const bool has_pub = std::any_of(
+                                 meta.spsc_channels.begin(), meta.spsc_channels.end(),
+                                 [](const auto& c) { return c.kind == channel_kind::spsc_writer; })
+                          || std::any_of(
+                                 meta.spmc_channels.begin(), meta.spmc_channels.end(),
+                                 [](const auto& c) { return c.kind == channel_kind::spmc_writer; })
+                          || !meta.writes.empty();
+        const bool has_sub = std::any_of(
+                                 meta.spsc_channels.begin(), meta.spsc_channels.end(),
+                                 [](const auto& c) { return c.kind == channel_kind::spsc_reader; })
+                          || std::any_of(
+                                 meta.spmc_channels.begin(), meta.spmc_channels.end(),
+                                 [](const auto& c) { return c.kind == channel_kind::spmc_reader; })
+                          || !meta.reads.empty() || !meta.writes.empty();
 
         if (has_pub && has_sub)
             return "pipeline";
@@ -793,7 +927,7 @@ void Scheduler::print_mermaid_data_flow() const {
     }
 
     for (std::size_t i = 0; i < compute_count; ++i) {
-        const auto* type = classify_compute_by_channels(i);
+        const auto* type = classify_compute_by_data_flow(i);
         if (strcmp(type, "external") == 0)
             external_compute_systems.push_back(i);
         else if (strcmp(type, "pipeline") == 0)
@@ -877,56 +1011,156 @@ void Scheduler::print_mermaid_data_flow() const {
         printf("    end\n\n");
     }
 
+    std::map<std::type_index, std::size_t> resource_indices;
+    std::size_t next_resource_idx = 0;
+    for (const auto& [type, access] : resource_graph) {
+        if (access.readers.empty() && access.mutators.empty()) {
+            continue;
+        }
+        resource_indices.emplace(type, next_resource_idx++);
+    }
+    if (!resource_indices.empty()) {
+        printf("    subgraph Resources[Shared Resources]\n");
+        for (const auto& [type, idx] : resource_indices) {
+            const auto label_it = resource_labels.find(type);
+            if (label_it == resource_labels.end()) {
+                continue;
+            }
+            printf(
+                "        R%d[\"%s<br/>resource\"]:::resourceStyle\n", (int)idx,
+                label_it->second.c_str());
+        }
+        printf("    end\n\n");
+    }
+
     // ========================================================================
     // Draw channel edges
     // ========================================================================
 
     // Map to store color index for each channel (same channel = same color)
-    std::unordered_map<std::string, std::size_t> channel_color_map;
+    std::map<ChannelKey, std::size_t> channel_color_map;
     std::size_t next_color_idx = 0;
 
     // Draw channel edges (pub/sub) - collect edges first
-    std::vector<std::tuple<std::string, std::string, std::string>> channel_edges;
+    std::vector<std::pair<std::string, std::string>> styled_edges;
+    std::vector<std::string> channel_comments;
     for (const auto& [key, conn] : channel_graph) {
-        if (!conn.writer.has_value() || conn.readers.empty())
+        const auto label_it = channel_labels.find(key);
+        if (label_it == channel_labels.end()) {
             continue;
+        }
+        const auto& channel_label = label_it->second;
 
-        const char* writer_prefix = conn.writer->is_fixed_rate ? "E" : "C";
-        const auto& topic_name    = talos::scheduler::detail::demangle(conn.topic.name());
+        if (conn.writers.size() > 1) {
+            channel_comments.push_back(
+                "    %% Skipped invalid channel \"" + channel_label + "\": multiple writers");
+            continue;
+        }
+        if (conn.writers.empty()) {
+            if (!conn.readers.empty()) {
+                channel_comments.push_back(
+                    "    %% Skipped invalid channel \"" + channel_label + "\": no writer");
+            }
+            continue;
+        }
+        if (conn.readers.empty()) {
+            continue;
+        }
 
-        // Assign color to this channel (same topic = same color)
-        if (!channel_color_map.contains(topic_name)) {
-            channel_color_map[topic_name] = next_color_idx % num_colors;
+        const auto& writer        = conn.writers.front();
+        const char* writer_prefix = writer.is_fixed_rate ? "E" : "C";
+
+        // Assign color to this channel identity (same key = same color)
+        if (!channel_color_map.contains(key)) {
+            channel_color_map[key] = next_color_idx % num_colors;
             next_color_idx++;
         }
-        const std::size_t color_idx = channel_color_map[topic_name];
+        const std::size_t color_idx = channel_color_map[key];
 
         for (const auto& reader : conn.readers) {
             const char* reader_prefix = reader.is_fixed_rate ? "E" : "C";
             char edge_buf[256];
             snprintf(
                 edge_buf, sizeof(edge_buf), "    %s%d -->|\"%s\"| %s%d", writer_prefix,
-                (int)conn.writer->system_idx, topic_name.c_str(), reader_prefix,
+                (int)writer.system_idx, channel_label.c_str(), reader_prefix,
                 (int)reader.system_idx);
-            channel_edges.emplace_back(edge_buf, std::string(path_colors[color_idx]), topic_name);
+            styled_edges.emplace_back(
+                edge_buf, "stroke:" + std::string(path_colors[color_idx]) + ",stroke-width:2px");
         }
     }
 
-    // Print all channel edges
-    for (const auto& [edge_def, color, _] : channel_edges) {
+    std::vector<std::string> seen_resource_edge_defs;
+    auto has_seen_resource_edge = [&](const std::string& edge_def) {
+        return std::find(seen_resource_edge_defs.begin(), seen_resource_edge_defs.end(), edge_def)
+            != seen_resource_edge_defs.end();
+    };
+    auto remember_resource_edge = [&](std::string edge_def) {
+        if (has_seen_resource_edge(edge_def)) {
+            return;
+        }
+        seen_resource_edge_defs.push_back(edge_def);
+        styled_edges.emplace_back(
+            std::move(edge_def), "stroke:#7f8c8d,stroke-width:2px,stroke-dasharray: 5 5");
+    };
+
+    for (const auto& [type, access] : resource_graph) {
+        const auto resource_it = resource_indices.find(type);
+        const auto label_it    = resource_labels.find(type);
+        if (resource_it == resource_indices.end() || label_it == resource_labels.end()) {
+            continue;
+        }
+
+        const auto resource_idx = resource_it->second;
+        for (const auto& reader : access.readers) {
+            const char* reader_prefix = reader.is_fixed_rate ? "E" : "C";
+            char edge_buf[256];
+            snprintf(
+                edge_buf, sizeof(edge_buf), "    R%d -->|\"res\"| %s%d", (int)resource_idx,
+                reader_prefix, (int)reader.system_idx);
+            remember_resource_edge(edge_buf);
+        }
+        for (const auto& mutator : access.mutators) {
+            const char* mutator_prefix = mutator.is_fixed_rate ? "E" : "C";
+            char read_edge_buf[256];
+            snprintf(
+                read_edge_buf, sizeof(read_edge_buf), "    R%d -->|\"res_mut\"| %s%d",
+                (int)resource_idx, mutator_prefix, (int)mutator.system_idx);
+            remember_resource_edge(read_edge_buf);
+
+            char write_edge_buf[256];
+            snprintf(
+                write_edge_buf, sizeof(write_edge_buf), "    %s%d -->|\"res_mut\"| R%d",
+                mutator_prefix, (int)mutator.system_idx, (int)resource_idx);
+            remember_resource_edge(write_edge_buf);
+        }
+    }
+
+    for (const auto& comment : channel_comments) {
+        printf("%s\n", comment.c_str());
+    }
+    if ((!channel_comments.empty() || !resource_indices.empty()) && !styled_edges.empty()) {
+        printf("\n");
+    }
+
+    for (const auto& [edge_def, _] : styled_edges) {
         printf("%s\n", edge_def.c_str());
     }
 
-    // Print linkStyle for channel edges (apply colors)
-    for (std::size_t i = 0; i < channel_edges.size(); ++i) {
-        const auto& color = std::get<1>(channel_edges[i]);
-        printf("    linkStyle %zu stroke:%s,stroke-width:2px\n", i, color.c_str());
+    for (std::size_t i = 0; i < styled_edges.size(); ++i) {
+        const auto& style = styled_edges[i].second;
+        printf("    linkStyle %zu %s\n", i, style.c_str());
     }
 
     printf("```\n");
 }
 
 void Scheduler::print_mermaid_execution_levels() const {
+    if (lifecycle_state() == LifecycleState::Configuring) {
+        print_mermaid_rebuild_hint(
+            "Scheduler graph not built. Call build() to render execution levels.");
+        return;
+    }
+
     printf("```mermaid\n");
     printf("flowchart LR\n\n");           // Changed from TB to LR for horizontal layout
 
@@ -1032,17 +1266,10 @@ void Scheduler::print_mermaid_execution_levels() const {
         printf("        direction TB\n"); // Vertical within subgraph for horizontal main flow
 
         for (std::size_t i = 0; i < level.size(); ++i) {
-            const auto sys_idx = level[i];
-            const auto& name   = compute_systems_[sys_idx].system->meta().name;
-            const auto& meta   = compute_systems_[sys_idx].system->meta();
-            const auto readers = meta.spsc_channels.size() + meta.spmc_channels.size();
-            const auto writers =
-                std::count_if(
-                    meta.spsc_channels.begin(), meta.spsc_channels.end(),
-                    [](const auto& c) { return c.kind == channel_kind::spsc_writer; })
-                + std::count_if(
-                    meta.spmc_channels.begin(), meta.spmc_channels.end(),
-                    [](const auto& c) { return c.kind == channel_kind::spmc_writer; });
+            const auto sys_idx   = level[i];
+            const auto& name     = compute_systems_[sys_idx].system->meta().name;
+            const auto& meta     = compute_systems_[sys_idx].system->meta();
+            const auto io_counts = count_channel_io(meta);
 
             const auto* sys_type    = classify_by_edges(sys_idx);
             const char* style_class = (strcmp(sys_type, "external") == 0) ? "inputStyle"
@@ -1052,7 +1279,7 @@ void Scheduler::print_mermaid_execution_levels() const {
 
             printf(
                 "        C%d[\"C%d: %s%s\\n(%d in, %d out)\"]:::%s\n", (int)sys_idx, (int)sys_idx,
-                name.c_str(), extra, (int)readers, (int)writers, style_class);
+                name.c_str(), extra, (int)io_counts.inputs, (int)io_counts.outputs, style_class);
         }
 
         printf("    end\n\n");
@@ -1075,20 +1302,14 @@ void Scheduler::print_mermaid_execution_levels() const {
         }
     }
 
-    // Draw edges between consecutive levels
-    for (std::size_t level_idx = 0; level_idx + 1 < levels_.size(); ++level_idx) {
-        const auto& current_level = levels_[level_idx];
-        const auto& next_level    = levels_[level_idx + 1];
-
-        for (std::size_t i = 0; i < current_level.size(); ++i) {
-            const auto src_idx = current_level[i];
-            auto src_affects   = src_idx < compute_affects_.size() ? compute_affects_[src_idx] : 0U;
-
-            for (std::size_t j = 0; j < next_level.size(); ++j) {
-                const auto dst_idx = next_level[j];
-                if (src_affects & (1UL << dst_idx)) {
-                    printf("    C%d --> C%d\n", (int)src_idx, (int)dst_idx);
-                }
+    // Draw all direct compute dependencies, including edges that skip intermediate levels.
+    for (std::size_t src_idx = 0; src_idx < compute_systems_.size(); ++src_idx) {
+        auto src_affects = src_idx < compute_affects_.size() ? compute_affects_[src_idx] : 0U;
+        while (src_affects != 0) {
+            const auto dst_idx = static_cast<std::size_t>(std::countr_zero(src_affects));
+            src_affects &= src_affects - 1;
+            if (src_idx != dst_idx) {
+                printf("    C%d --> C%d\n", (int)src_idx, (int)dst_idx);
             }
         }
     }

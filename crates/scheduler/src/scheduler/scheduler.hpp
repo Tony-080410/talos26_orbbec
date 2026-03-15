@@ -353,10 +353,13 @@ public:
      *
      * Outputs the wake graph showing which systems can actually trigger compute work
      * in Mermaid flowchart syntax.
+     * Requires a successful `build()` / `Node::finalize()` so cached wake masks are current.
      *
      * ## Edge labels
      *
-     * - Edge labels show the channel topic name that carries the wake-causing write
+     * - Edge labels show the wake-causing channel; payload type is appended when topic names
+     *   alone would be ambiguous
+     * - Shared resources (`res<T>` / `res_mut<T>`) are intentionally excluded
      * - `fixed_rate_silent` systems are shown as side inputs, not wake sources
      * - External compute sources (for example `RclPubSystem`) are grouped separately
      */
@@ -365,15 +368,20 @@ public:
     /**
      * @brief Print data flow DAG as Mermaid diagram
      *
-     * Outputs the complete data flow graph with channels as labeled edges.
+     * Outputs the complete data flow graph with channels and shared resources.
      * Shows both fixed_rate and compute systems with their data dependencies.
      *
      * ## Visualization style
      *
      * - Nodes: systems (grouped by semantic role)
-     * - Edges: channels (labeled with topic names)
-     * - Direction: data flow (writer → reader)
-     * - This graph shows channel connectivity, not wake-up causality
+     * - Nodes also include shared resource objects when accessed via `res<T>` / `res_mut<T>`
+     * - Solid colored edges: channel flow (writer → reader)
+     * - Dashed grey edges: shared resource access only; these do not imply wake-up causality
+     * - `res<T>` is rendered as resource → system; `res_mut<T>` is rendered in both directions
+     *   to show mutable shared-state access
+     * - This graph is broader than `print_mermaid_wake_chains()`: it includes data dependencies
+     *   that do not participate in scheduling
+     * - Invalid channel topologies are annotated instead of rendered as misleading edges
      */
     void print_mermaid_data_flow() const;
 
@@ -382,12 +390,15 @@ public:
      *
      * Outputs the topologically sorted compute levels plus external wake sources.
      * Levels describe the compute closure stages the scheduler drains within one round.
+     * Requires a successful `build()` / `Node::finalize()` so cached levels and wake masks are
+     * current.
      *
      * ## Visualization style
      *
      * - Subgraphs: execution levels (systems within can run in parallel)
-     * - Nodes: systems within each level, labeled with I/O counts
-     * - Edges: wake-causing dependencies between consecutive compute levels
+     * - Nodes: systems within each level, labeled with channel I/O counts
+     *   (reader endpoints vs writer endpoints; resources excluded)
+     * - Edges: all direct wake-causing dependencies across compute levels
      * - `fixed_rate_silent` systems are shown as side inputs, not level-entry wakers
      * - Analysis: pipeline depth and max parallelism printed as comments
      */
