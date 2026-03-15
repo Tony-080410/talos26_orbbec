@@ -104,8 +104,8 @@ sigma_a_yaw = 8.0
 # Shared fire gate threshold for L4/L5
 fire_thresh = 0.01744444
 # Physical window dimensions (meters)
-shooting_range_h = 0.0135
-shooting_range_w = 0.0135
+shooting_range_h = 0.135
+shooting_range_w = 0.135
 
 # Aimer configuration (shared by all target types: Robot/Outpost/Rune)
 [aimer]
