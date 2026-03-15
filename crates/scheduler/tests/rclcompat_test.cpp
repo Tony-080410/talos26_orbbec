@@ -1057,17 +1057,101 @@ TEST(HotAddTest, FinalizeRemainsUsableAfterPartialHotAddFailure) {
     auto duplicate_pub = retry_node.create_publisher<TestMessage, TestTag1>();
     EXPECT_TRUE(duplicate_pub.valid());
 
-    const auto first_finalize = retry_node.finalize();
+    const auto first_finalize = retry_node.unsafe_finalize();
     ASSERT_FALSE(first_finalize.has_value());
     ASSERT_TRUE(std::holds_alternative<talos::MultipleWritersError>(first_finalize.error()));
 
     // A failed hot-add must not leave moved-from systems behind.
-    const auto second_finalize = retry_node.finalize();
+    const auto second_finalize = retry_node.unsafe_finalize();
     EXPECT_TRUE(second_finalize.has_value());
 
     source_pub.publish(TestMessage{.value = 7, .text = "retry"});
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
     EXPECT_GT(received.load(), 0);
+
+    scheduler.stop();
+    scheduler_thread.join();
+}
+
+TEST(HotAddTest, UnsafeHotAddSystemWhileRunning) {
+    World world;
+    Scheduler scheduler(world);
+
+    Node source("source", scheduler);
+    auto source_pub = source.create_publisher<TestMessage, TestTag1>();
+    ASSERT_TRUE(source.finalize().has_value());
+
+    std::jthread scheduler_thread([&scheduler]() { (void)scheduler.run(); });
+
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(1);
+    while (!scheduler.is_running() && std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    ASSERT_TRUE(scheduler.is_running());
+
+    std::atomic<int> received{0};
+    auto consumer = [&received](talos::spmc<TestMessage, TestTag1> in) {
+        if (in.read()) {
+            received.fetch_add(1);
+        }
+    };
+
+    auto result = scheduler.unsafe_hot_add_system(
+        talos::make_system<decltype(consumer), talos::pool_compute>(
+            "unsafe_hot_add_consumer", std::move(consumer)));
+    ASSERT_TRUE(result.has_value());
+
+    source_pub.publish(TestMessage{.value = 9, .text = "unsafe-hot-add"});
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    EXPECT_GT(received.load(), 0);
+
+    scheduler.stop();
+    scheduler_thread.join();
+}
+
+TEST(HotAddTest, SafeHotAddPanicsWhileRunning) {
+    World world;
+    Scheduler scheduler(world);
+    ASSERT_TRUE(scheduler.build().has_value());
+
+    std::jthread scheduler_thread([&scheduler]() { (void)scheduler.run(); });
+
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(1);
+    while (!scheduler.is_running() && std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    ASSERT_TRUE(scheduler.is_running());
+
+    auto consumer = [](talos::spmc<TestMessage, TestTag1> in) { (void)in.read(); };
+    EXPECT_DEATH_IF_SUPPORTED(
+        (void)scheduler.hot_add_system(
+            talos::make_system<decltype(consumer), talos::pool_compute>(
+                "safe_hot_add_consumer", std::move(consumer))),
+        "");
+
+    scheduler.stop();
+    scheduler_thread.join();
+}
+
+TEST(HotAddTest, FinalizePanicsWhileRunning) {
+    World world;
+    Scheduler scheduler(world);
+
+    Node source("source", scheduler);
+    ASSERT_TRUE(source.finalize().has_value());
+
+    std::jthread scheduler_thread([&scheduler]() { (void)scheduler.run(); });
+
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(1);
+    while (!scheduler.is_running() && std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    ASSERT_TRUE(scheduler.is_running());
+
+    Node consumer("consumer", scheduler);
+    consumer.create_subscription<TestMessage, TestTag1>([](const TestMessage&) {});
+
+    EXPECT_DEATH_IF_SUPPORTED((void)consumer.finalize(), "");
 
     scheduler.stop();
     scheduler_thread.join();
@@ -2002,6 +2086,31 @@ TEST(ResourceAccessor, HasResource) {
 
     // Now it exists
     EXPECT_TRUE(node.has_resource<TestResource>());
+}
+
+TEST(ResourceAccessor, UnsafeInsertResourceAfterFinalize) {
+    World world;
+    Scheduler scheduler(world);
+
+    rclcompat::Node node("test", scheduler);
+    ASSERT_TRUE(node.finalize().has_value());
+
+    node.unsafe_insert_resource(TestResource{.value = 77, .name = "late_bound"});
+
+    auto accessor = node.create_resource<TestResource>();
+    ASSERT_TRUE(accessor.valid());
+    auto res = accessor.get();
+    EXPECT_EQ(res->value, 77);
+    EXPECT_EQ(res->name, "late_bound");
+}
+
+TEST(ResourceAccessor, InsertResourcePanicsAfterFinalize) {
+    World world;
+    Scheduler scheduler(world);
+    ASSERT_TRUE(scheduler.build().has_value());
+
+    EXPECT_DEATH_IF_SUPPORTED(
+        world.insert_resource(TestResource{.value = 1, .name = "forbidden"}), "");
 }
 
 // -------------------------------------------------------------------------

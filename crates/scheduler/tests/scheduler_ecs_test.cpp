@@ -427,6 +427,64 @@ void test_dependency_cycle_error() {
 }
 
 // ============================================================================
+// Test: Unreachable Compute Error
+// ============================================================================
+
+void test_unreachable_compute_error() {
+    printf("=== Test: Unreachable Compute Error ===\n");
+
+    talos::World world;
+    talos::Scheduler scheduler(world);
+
+    scheduler.add_system<talos::pool_compute>("isolated_compute", []() {});
+
+    auto result = scheduler.build();
+    if (result) {
+        printf("  ERROR: Build should have failed with UnreachableComputeSystemsError\n");
+        return;
+    }
+
+    if (!std::holds_alternative<talos::UnreachableComputeSystemsError>(result.error())) {
+        printf("  ERROR: Wrong error type: %s\n", fmt::format("{}", result.error()).c_str());
+        return;
+    }
+
+    printf("  Got expected error: %s\n", fmt::format("{}", result.error()).c_str());
+    printf("  Unreachable Compute Error test passed!\n\n");
+}
+
+// ============================================================================
+// Test: Too Many Compute Systems Error
+// ============================================================================
+
+void test_too_many_compute_systems_error() {
+    printf("=== Test: Too Many Compute Systems Error ===\n");
+
+    talos::World world;
+    talos::Scheduler scheduler(world);
+
+    for (std::size_t i = 0; i <= talos::TooManyComputeSystemsError::max_count; ++i) {
+        scheduler.add_system<talos::pool_compute>(fmt::format("compute_{}", i), []() {});
+    }
+
+    auto result = scheduler.build();
+    if (result) {
+        printf("  ERROR: Build should have failed with TooManyComputeSystemsError\n");
+        return;
+    }
+
+    if (!std::holds_alternative<talos::TooManyComputeSystemsError>(result.error())) {
+        printf("  ERROR: Wrong error type: %s\n", fmt::format("{}", result.error()).c_str());
+        return;
+    }
+
+    auto& err = std::get<talos::TooManyComputeSystemsError>(result.error());
+    printf("  Got expected error: %s\n", fmt::format("{}", result.error()).c_str());
+    printf("  Count: %zu\n", err.count);
+    printf("  Too Many Compute Systems Error test passed!\n\n");
+}
+
+// ============================================================================
 // Test: Valid Dependency Chain (no cycle)
 // ============================================================================
 
@@ -471,6 +529,122 @@ void test_valid_dependency_chain() {
 
     scheduler.print_systems();
     printf("  Valid Dependency Chain test passed!\n\n");
+}
+
+// ============================================================================
+// Test: Failed Safe Hot-Add Leaves Scheduler Configuring
+// ============================================================================
+
+void test_failed_safe_hot_add_leaves_scheduler_configuring() {
+    printf("=== Test: Failed Safe Hot-Add Leaves Scheduler Configuring ===\n");
+
+    struct SafeHotAddChannel {};
+
+    talos::World world;
+    talos::Scheduler scheduler(world);
+
+    scheduler.add_system<talos::fixed_rate<30>>(
+        "source", [](talos::spmc_mut<int, SafeHotAddChannel> out) { out.write(1); });
+    scheduler.add_system<talos::pool_compute>(
+        "sink", [](talos::spmc<int, SafeHotAddChannel> in) { (void)in.read(); });
+
+    auto initial_build = scheduler.build();
+    if (!initial_build) {
+        printf(
+            "  ERROR: Initial build failed: %s\n",
+            fmt::format("{}", initial_build.error()).c_str());
+        return;
+    }
+
+    auto duplicate_writer = [](talos::spmc_mut<int, SafeHotAddChannel> out) { out.write(2); };
+    auto result           = scheduler.hot_add_system(
+        talos::make_system<decltype(duplicate_writer), talos::pool_compute>(
+            "duplicate_writer", std::move(duplicate_writer)));
+
+    if (result) {
+        printf("  ERROR: hot_add_system should have failed with MultipleWritersError\n");
+        return;
+    }
+
+    if (!std::holds_alternative<talos::MultipleWritersError>(result.error())) {
+        printf("  ERROR: Wrong error type: %s\n", fmt::format("{}", result.error()).c_str());
+        return;
+    }
+
+    if (scheduler.lifecycle_state() != talos::Scheduler::LifecycleState::Configuring) {
+        printf(
+            "  ERROR: Scheduler should have remained in Configuring state after failed hot-add\n");
+        return;
+    }
+
+    auto run_result = scheduler.run();
+    if (run_result || run_result.error() != talos::SchedulerError::NotBuilt) {
+        printf("  ERROR: run() should have failed with NotBuilt after failed hot-add\n");
+        return;
+    }
+
+    printf("  Failed Safe Hot-Add Leaves Scheduler Configuring test passed!\n\n");
+}
+
+// ============================================================================
+// Test: Repeated Build Binds Custom System Only Once
+// ============================================================================
+
+class BindCountingFixedRateSystem final : public talos::SystemBase {
+    talos::SystemMeta meta_;
+    std::atomic<int>* bind_count_;
+
+public:
+    explicit BindCountingFixedRateSystem(std::atomic<int>& bind_count) noexcept
+        : bind_count_(&bind_count) {
+        meta_.name   = "bind_counting_fixed_rate";
+        meta_.policy = talos::make_policy_info<talos::fixed_rate_silent<1>>();
+    }
+
+    void bind(talos::World&) noexcept override {
+        bind_count_->fetch_add(1, std::memory_order_relaxed);
+    }
+
+    bool run(talos::World&) noexcept override { return false; }
+
+    const talos::SystemMeta& meta() const noexcept override { return meta_; }
+};
+
+void test_repeated_build_binds_custom_system_once() {
+    printf("=== Test: Repeated Build Binds Custom System Once ===\n");
+
+    talos::World world;
+    talos::Scheduler scheduler(world);
+    std::atomic<int> bind_count{0};
+
+    auto idx_result =
+        scheduler.add_system(std::make_unique<BindCountingFixedRateSystem>(bind_count));
+    if (!idx_result) {
+        printf("  ERROR: add_system failed\n");
+        return;
+    }
+
+    auto first_build = scheduler.build();
+    if (!first_build) {
+        printf("  ERROR: First build failed: %s\n", fmt::format("{}", first_build.error()).c_str());
+        return;
+    }
+
+    auto second_build = scheduler.build();
+    if (!second_build) {
+        printf(
+            "  ERROR: Second build failed: %s\n", fmt::format("{}", second_build.error()).c_str());
+        return;
+    }
+
+    const auto count = bind_count.load(std::memory_order_relaxed);
+    printf("  Bind count: %d\n", count);
+    if (count != 1) {
+        printf("  ERROR: Expected bind() to run exactly once\n\n");
+        return;
+    }
+
+    printf("  Repeated Build Binds Custom System Once test passed!\n\n");
 }
 
 // ============================================================================
@@ -590,7 +764,11 @@ int main() {
     test_orphaned_reader_error();
     test_channel_kind_conflict();
     test_dependency_cycle_error();
+    test_unreachable_compute_error();
+    test_too_many_compute_systems_error();
     test_valid_dependency_chain();
+    test_failed_safe_hot_add_leaves_scheduler_configuring();
+    test_repeated_build_binds_custom_system_once();
     test_custom_system_injection();
 
     printf("==========================================\n");

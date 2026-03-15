@@ -128,25 +128,45 @@ public:
     template <typename T>
     void insert_resource(T&& resource) {
         using U = std::remove_cvref_t<T>;
-        ensure_resource_replacement_allowed<U>();
+        ensure_resource_structure_mutable<U>();
         resources_[typeid(U)] = std::make_shared<Resource<U>>(std::forward<T>(resource));
     }
 
     template <typename T, typename... Args>
     [[nodiscard]] T& emplace_resource(Args&&... args) {
-        ensure_resource_replacement_allowed<T>();
+        ensure_resource_structure_mutable<T>();
         auto storage = std::make_shared<Resource<T>>(std::in_place, std::forward<Args>(args)...);
         auto& value  = storage->value;
         resources_[typeid(T)] = std::move(storage);
         return value;
     }
 
-    void freeze_resource_identity() noexcept {
-        resource_identity_frozen_.store(true, std::memory_order_release);
+    template <typename T>
+    void unsafe_insert_resource(T&& resource) {
+        using U               = std::remove_cvref_t<T>;
+        resources_[typeid(U)] = std::make_shared<Resource<U>>(std::forward<T>(resource));
     }
 
+    template <typename T, typename... Args>
+    [[nodiscard]] T& unsafe_emplace_resource(Args&&... args) {
+        auto storage = std::make_shared<Resource<T>>(std::in_place, std::forward<Args>(args)...);
+        auto& value  = storage->value;
+        resources_[typeid(T)] = std::move(storage);
+        return value;
+    }
+
+    void freeze_resource_structure() noexcept {
+        resource_structure_frozen_.store(true, std::memory_order_release);
+    }
+
+    [[nodiscard]] bool resource_structure_frozen() const noexcept {
+        return resource_structure_frozen_.load(std::memory_order_acquire);
+    }
+
+    void freeze_resource_identity() noexcept { freeze_resource_structure(); }
+
     [[nodiscard]] bool resource_identity_frozen() const noexcept {
-        return resource_identity_frozen_.load(std::memory_order_acquire);
+        return resource_structure_frozen();
     }
 
     template <typename T>
@@ -304,16 +324,17 @@ private:
     std::unordered_map<std::type_index, std::any> resources_;
     std::unordered_map<ChannelKey, std::any, ChannelKeyHash> spsc_storage_;
     std::unordered_map<ChannelKey, std::any, ChannelKeyHash> spmc_storage_;
-    std::atomic<bool> resource_identity_frozen_{false};
+    std::atomic<bool> resource_structure_frozen_{false};
     std::atomic<std::uint32_t> channel_binding_depth_{0};
     std::shared_ptr<WorldLifetimeToken> lifetime_token_ = std::make_shared<WorldLifetimeToken>();
 
     template <typename T>
-    void ensure_resource_replacement_allowed() const noexcept {
-        if (resource_identity_frozen_.load(std::memory_order_acquire)
-            && resources_.contains(typeid(T))) [[unlikely]] {
+    void ensure_resource_structure_mutable() const noexcept {
+        if (resource_structure_frozen_.load(std::memory_order_acquire)) [[unlikely]] {
             panic(
-                "Replacing resource '{}' after build() invalidates bound res/res_mut pointers",
+                "Mutating resource structure for '{}' after build() breaks scheduler invariants; "
+                "use unsafe_insert_resource()/unsafe_emplace_resource() only if you need the "
+                "explicit escape hatch",
                 demangle(typeid(T).name()));
         }
     }

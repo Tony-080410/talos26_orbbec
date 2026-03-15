@@ -15,7 +15,6 @@ namespace talos::scheduler {
  * @brief Scheduler lifecycle errors
  */
 enum class SchedulerError {
-    AlreadyBuilt,   ///< Scheduler was already built
     AlreadyRunning, ///< Scheduler is already running
     NotBuilt,       ///< Scheduler was not built before run
 };
@@ -104,7 +103,7 @@ struct UnreachableComputeSystemsError {
  * @brief All possible build errors
  */
 using BuildError = std::variant<
-    SchedulerError, // Runtime/lifecycle errors (AlreadyBuilt, etc.)
+    SchedulerError, // Runtime/lifecycle errors
     ChannelKindConflict, MultipleWritersError, MultipleReadersError, OrphanedReaderError,
     DependencyCycleError, TooManyComputeSystemsError, UnreachableComputeSystemsError>;
 

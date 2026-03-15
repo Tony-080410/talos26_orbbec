@@ -86,6 +86,7 @@ struct SchedulerConfig {
 struct SystemEntry {
     std::unique_ptr<SystemBase> system;
     PolicyInfo policy;
+    bool bound = false;
 };
 
 using namespace system;
@@ -124,8 +125,9 @@ using namespace system;
  *
  * The scheduler is not thread-safe after construction. Configure and build
  * in a single-threaded context before calling `run()`. A successful `build()`
- * also freezes resource identity: existing resource objects may be mutated,
- * but replacing them invalidates bound `res/res_mut` pointers and is rejected.
+ * also freezes resource structure: existing resource objects may be mutated,
+ * but safe-path insertion or replacement after build is rejected because systems
+ * and accessors may cache raw `res/res_mut` pointers.
  */
 class Scheduler {
 public:
@@ -207,9 +209,9 @@ public:
      * ## Contract
      *
      * Structural mutation of resources should happen before the first successful `build()`.
-     * After that point, replacing an existing resource is rejected to preserve bound pointer
-     * stability. Channel acquisition through `World` is reserved for scheduler bind-time;
-     * external code must not lazily create or claim channel endpoints after build.
+     * After that point, safe-path insertion or replacement is rejected to preserve bound
+     * pointer stability. Channel acquisition through `World` is reserved for scheduler
+     * bind-time; external code must not lazily create or claim channel endpoints after build.
      */
     [[nodiscard]] World& world() noexcept { return world_; }
 
@@ -230,8 +232,9 @@ public:
      *
      * Resources (`res<T>` / `res_mut<T>`) do not participate in dependency analysis
      * or wake-up propagation. Their thread-safety contract is defined by the resource type.
-     * After the first successful build, resource identity is frozen: the value behind an
-     * existing resource may change, but replacing the object is rejected.
+     * After the first successful build, resource structure is frozen on the safe path: the
+     * value behind an existing resource may change, but safe-path insertion or replacement is
+     * rejected.
      *
      * Can be called multiple times for dynamic system addition (idempotent).
      * Each call re-validates all channels and rebuilds wake-up chains.
@@ -266,10 +269,10 @@ public:
     void stop() noexcept;
 
     /**
-     * @brief Hot-add a system while the scheduler is running
+     * @brief Add a system and rebuild on the safe path
      *
-     * Pauses the compute loop, adds the system, rebuilds wake chains,
-     * and resumes execution. Safe to call from any thread.
+     * Safe-path hot-add is only supported before `run()`. Once the scheduler is running,
+     * callers must opt in to the explicitly unsafe escape hatch.
      *
      * ## Parameters
      *
@@ -281,13 +284,28 @@ public:
      *
      * ## Thread safety
      *
-     * Thread-safe. Uses pause/resume protocol to safely modify the graph.
+     * Must be called from a single thread before `run()`.
      *
      * ## Notes
      *
-     * If the scheduler is not running, this behaves like add_system() + build().
+     * Equivalent to `add_system()` + `build()` while not running. Calling this while the
+     * scheduler is active aborts and points callers at `unsafe_hot_add_system()`.
      */
     [[nodiscard]] auto hot_add_system(std::unique_ptr<SystemBase> system) -> BuildResult;
+
+    /**
+     * @brief Experimental runtime hot-add escape hatch
+     *
+     * This preserves the legacy running hot-add path for experiments. It is intentionally
+     * marked unsafe because it does not provide a full scheduler-wide thread-safety proof.
+     *
+     * ## Notes
+     *
+     * - While not running, this behaves like the safe `hot_add_system()`
+     * - While running, it only pauses the compute loop before rebuilding topology
+     * - Callers are responsible for any additional synchronization they require
+     */
+    [[nodiscard]] auto unsafe_hot_add_system(std::unique_ptr<SystemBase> system) -> BuildResult;
 
     /**
      * @brief Check if running
@@ -476,11 +494,19 @@ private:
         std::uint64_t deferred_mask = 0;
     };
 
+    struct TopologySnapshot {
+        std::vector<std::vector<std::size_t>> levels;
+        std::vector<std::uint64_t> fixed_rate_affects;
+        std::vector<std::uint64_t> compute_affects;
+    };
+
     static void run_fixed_rate_thread(FixedRateContext ctx);
     void run_compute_loop();
     [[nodiscard]] ComputeRoundResult run_compute_selective(std::uint64_t ready_mask);
 
-    [[nodiscard]] auto compute_levels() -> BuildResult;
+    [[nodiscard]] auto build_topology_snapshot() const
+        -> std::expected<TopologySnapshot, BuildError>;
+    void commit_topology(TopologySnapshot snapshot) noexcept;
     void bind_external_compute_sources() noexcept;
     static constexpr bool is_running_state(const LifecycleState state) noexcept {
         return state == LifecycleState::Running;
@@ -567,6 +593,7 @@ auto Scheduler::add_system(std::string&& name, F&& func) -> void {
     SystemEntry entry{
         .system = std::move(system),
         .policy = policy,
+        .bound  = false,
     };
 
     if constexpr (is_fixed_rate_policy_v<Policy>) {

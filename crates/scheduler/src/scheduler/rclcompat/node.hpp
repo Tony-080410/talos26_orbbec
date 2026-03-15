@@ -33,14 +33,16 @@ enum class Qos {
  * ## Thread safety
  *
  * - create_publisher() / create_subscription() must be called from a single thread
- * - finalize() may be called before scheduler.run() or while it is running; the running case
- *   uses scheduler hot-add internally and is not atomic across multiple pending systems
+ * - finalize() must be called before scheduler.run()
+ * - unsafe_finalize() keeps the experimental running hot-add path for callers that explicitly opt
+ *   into it
  * - Publisher::publish() is thread-safe after finalize() and wakes the internal publisher system
  *
  * ## Lifetime
  *
  * Publisher slots are shared with scheduler-owned systems, so Publisher handles may outlive
- * the Node object itself. `finalize()` is not transactional across multiple pending systems.
+ * the Node object itself. `unsafe_finalize()` is not transactional across multiple pending
+ * systems.
  */
 class Node {
 public:
@@ -204,8 +206,8 @@ public:
      *
      * ## Contract
      *
-     * Resource values may be mutated after build/finalize, but replacing an existing
-     * resource object after the first successful build is rejected.
+     * Resource values may be mutated after build/finalize, but safe-path structural changes
+     * after the first successful build are rejected.
      *
      * ## Example
      *
@@ -261,12 +263,23 @@ public:
      *
      * ## Contract
      *
-     * Replacing an existing resource after the first successful scheduler build/finalize
+     * Safe-path structural resource mutation after the first successful scheduler build/finalize
      * is rejected because bound systems may cache raw resource pointers.
      */
     template <typename T>
     void insert_resource(T&& resource) {
         scheduler_.world().insert_resource(std::forward<T>(resource));
+    }
+
+    /**
+     * @brief Experimental resource-structure escape hatch
+     *
+     * Bypasses the safe-path post-build resource freeze. Callers are responsible for any
+     * synchronization and pointer-stability consequences.
+     */
+    template <typename T>
+    void unsafe_insert_resource(T&& resource) {
+        scheduler_.world().unsafe_insert_resource(std::forward<T>(resource));
     }
 
     /**
@@ -281,9 +294,7 @@ public:
     /**
      * @brief Finalize and register all systems with the scheduler
      *
-     * Must be called after creating all publishers and subscriptions.
-     * If the scheduler is already running, this will use hot_add_system()
-     * to pause, add, and resume.
+     * Must be called after creating all publishers and subscriptions and before `scheduler.run()`.
      *
      * ## Returns
      *
@@ -296,40 +307,18 @@ public:
      *
      * ## Thread safety
      *
-     * Must be called from a single thread. If the scheduler is running, finalize()
-     * uses hot-add internally; earlier systems may already be registered if a later
-     * pending system fails validation.
+     * Must be called from a single thread. Calling this while the scheduler is running aborts
+     * and points callers at `unsafe_finalize()`.
      */
-    [[nodiscard]] BuildResult finalize() {
-        std::size_t consumed = 0;
-        for (; consumed < pending_systems_.size(); ++consumed) {
-            auto& sys = pending_systems_[consumed];
-            if (scheduler_.is_running()) {
-                // Hot-add: scheduler is running, need to pause/rebuild/resume
-                if (auto result = scheduler_.hot_add_system(std::move(sys)); !result) {
-                    pending_systems_.erase(
-                        pending_systems_.begin(),
-                        pending_systems_.begin() + static_cast<std::ptrdiff_t>(consumed + 1));
-                    return result;
-                }
-            } else {
-                if (auto result = scheduler_.add_system(std::move(sys)); !result) {
-                    pending_systems_.erase(
-                        pending_systems_.begin(),
-                        pending_systems_.begin() + static_cast<std::ptrdiff_t>(consumed + 1));
-                    return std::unexpected(BuildError{result.error()});
-                }
-            }
-        }
-        pending_systems_.clear();
+    [[nodiscard]] BuildResult finalize() { return finalize_impl(false); }
 
-        // If not running, we need to explicitly call build
-        if (!scheduler_.is_running()) {
-            return scheduler_.build();
-        }
-
-        return {};
-    }
+    /**
+     * @brief Experimental finalize escape hatch for runtime hot-add
+     *
+     * Preserves the legacy running finalize path by routing through
+     * `Scheduler::unsafe_hot_add_system()`.
+     */
+    [[nodiscard]] BuildResult unsafe_finalize() { return finalize_impl(true); }
 
     /**
      * @brief Get the ownership registry
@@ -371,6 +360,43 @@ private:
     std::unordered_map<ChannelKey, std::any, ChannelKeyHash> pub_slots_;
 
     std::vector<std::unique_ptr<SystemBase>> pending_systems_;
+
+    [[nodiscard]] BuildResult finalize_impl(const bool allow_running_finalize) {
+        if (scheduler_.is_running() && !allow_running_finalize) {
+            using namespace talos::scheduler;
+            panic(
+                "Node '{}': finalize() while scheduler is running is unsafe; use "
+                "unsafe_finalize() if you need the explicit escape hatch",
+                name_);
+        }
+
+        std::size_t consumed = 0;
+        for (; consumed < pending_systems_.size(); ++consumed) {
+            auto& sys = pending_systems_[consumed];
+            if (scheduler_.is_running()) {
+                if (auto result = scheduler_.unsafe_hot_add_system(std::move(sys)); !result) {
+                    pending_systems_.erase(
+                        pending_systems_.begin(),
+                        pending_systems_.begin() + static_cast<std::ptrdiff_t>(consumed + 1));
+                    return result;
+                }
+            } else {
+                if (auto result = scheduler_.add_system(std::move(sys)); !result) {
+                    pending_systems_.erase(
+                        pending_systems_.begin(),
+                        pending_systems_.begin() + static_cast<std::ptrdiff_t>(consumed + 1));
+                    return std::unexpected(BuildError{result.error()});
+                }
+            }
+        }
+        pending_systems_.clear();
+
+        if (!scheduler_.is_running()) {
+            return scheduler_.build();
+        }
+
+        return {};
+    }
 
     /// Helper: build system name from type, topic, and kind (eliminates duplicate string
     /// construction)

@@ -191,6 +191,7 @@ auto Scheduler::add_system(std::unique_ptr<SystemBase> system)
     SystemEntry entry{
         .system = std::move(system),
         .policy = policy,
+        .bound  = false,
     };
 
     if (policy.is_fixed_rate()) {
@@ -209,10 +210,9 @@ auto Scheduler::build() -> BuildResult {
         return std::unexpected(BuildError{SchedulerError::AlreadyRunning});
     }
 
-    // Compute execution levels for pool_compute systems
-    // This re-validates all channels and rebuilds wake-up chains on each call
-    if (auto result = compute_levels(); !result) {
-        return result;
+    auto topology_result = build_topology_snapshot();
+    if (!topology_result) {
+        return std::unexpected(topology_result.error());
     }
 
     // Create TBB arena only on first call
@@ -229,19 +229,23 @@ auto Scheduler::build() -> BuildResult {
     fixed_rate_stats_.resize(fixed_rate_systems_.size());
     compute_stats_.resize(compute_systems_.size());
 
-    // Bind all systems (pre-create channel readers/writers, single-threaded)
+    // Bind any newly-added systems (pre-create channel readers/writers, single-threaded)
     world_.open_channel_binding();
     auto bind_all_systems = [&](auto& systems) {
         for (auto& entry : systems) {
-            entry.system->bind(world_);
+            if (!entry.bound) {
+                entry.system->bind(world_);
+                entry.bound = true;
+            }
         }
     };
     bind_all_systems(fixed_rate_systems_);
     bind_all_systems(compute_systems_);
     world_.close_channel_binding();
     bind_external_compute_sources();
-    world_.freeze_resource_identity();
+    world_.freeze_resource_structure();
 
+    commit_topology(std::move(*topology_result));
     lifecycle_.store(LifecycleState::Built, std::memory_order_release);
     return {};
 }
@@ -304,23 +308,25 @@ auto Scheduler::hot_add_system(std::unique_ptr<SystemBase> system) -> BuildResul
         std::abort();
     }
 
-    // If not running, just do a regular add + build
+    if (is_running()) {
+        panic(
+            "hot_add_system() while scheduler is running is unsafe; use "
+            "unsafe_hot_add_system() if you need the explicit escape hatch");
+    }
+
+    if (auto result = add_system(std::move(system)); !result) {
+        return std::unexpected(BuildError{result.error()});
+    }
+    return build();
+}
+
+auto Scheduler::unsafe_hot_add_system(std::unique_ptr<SystemBase> system) -> BuildResult {
+    if (!system) {
+        std::abort();
+    }
+
     if (!is_running()) {
-        const auto policy = system->meta().policy;
-        SystemEntry entry{
-            .system = std::move(system),
-            .policy = policy,
-        };
-
-        if (policy.is_fixed_rate()) {
-            fixed_rate_systems_.push_back(std::move(entry));
-        } else if (policy.is_pool() || policy.is_visualization()) {
-            compute_systems_.push_back(std::move(entry));
-        } else {
-            std::unreachable();
-        }
-
-        return build();
+        return hot_add_system(std::move(system));
     }
 
     // Hot-add: request pause
@@ -331,6 +337,7 @@ auto Scheduler::hot_add_system(std::unique_ptr<SystemBase> system) -> BuildResul
     SystemEntry entry{
         .system = std::move(system),
         .policy = policy,
+        .bound  = false,
     };
 
     const bool is_fixed_rate = policy.is_fixed_rate();
@@ -342,9 +349,8 @@ auto Scheduler::hot_add_system(std::unique_ptr<SystemBase> system) -> BuildResul
         std::unreachable();
     }
 
-    // Rebuild wake chains
-    auto result = compute_levels();
-    if (!result) {
+    auto topology_result = build_topology_snapshot();
+    if (!topology_result) {
         // Rollback: remove the just-added system
         if (is_fixed_rate) {
             fixed_rate_systems_.pop_back();
@@ -355,7 +361,7 @@ auto Scheduler::hot_add_system(std::unique_ptr<SystemBase> system) -> BuildResul
         // Resume compute loop
         resume_compute_loop();
 
-        return result;
+        return std::unexpected(topology_result.error());
     }
 
     // Update stats capacity
@@ -366,7 +372,10 @@ auto Scheduler::hot_add_system(std::unique_ptr<SystemBase> system) -> BuildResul
     world_.open_channel_binding();
     if (is_fixed_rate) {
         auto& new_entry = fixed_rate_systems_.back();
-        new_entry.system->bind(world_);
+        if (!new_entry.bound) {
+            new_entry.system->bind(world_);
+            new_entry.bound = true;
+        }
 
         // Launch new fixed_rate thread
         const auto idx = fixed_rate_systems_.size() - 1;
@@ -380,10 +389,15 @@ auto Scheduler::hot_add_system(std::unique_ptr<SystemBase> system) -> BuildResul
         };
         fixed_rate_threads_.emplace_back([ctx]() mutable { run_fixed_rate_thread(ctx); });
     } else {
-        compute_systems_.back().system->bind(world_);
+        auto& new_entry = compute_systems_.back();
+        if (!new_entry.bound) {
+            new_entry.system->bind(world_);
+            new_entry.bound = true;
+        }
     }
     world_.close_channel_binding();
     bind_external_compute_sources();
+    commit_topology(std::move(*topology_result));
 
     // Resume compute loop
     resume_compute_loop();
@@ -397,6 +411,12 @@ auto Scheduler::is_running() const noexcept -> bool {
 
 auto Scheduler::lifecycle_state() const noexcept -> LifecycleState {
     return lifecycle_.load(std::memory_order_acquire);
+}
+
+void Scheduler::commit_topology(TopologySnapshot snapshot) noexcept {
+    levels_             = std::move(snapshot.levels);
+    fixed_rate_affects_ = std::move(snapshot.fixed_rate_affects);
+    compute_affects_    = std::move(snapshot.compute_affects);
 }
 
 // ============================================================================
@@ -500,7 +520,7 @@ void Scheduler::print_systems() const {
         printf("\n");
     }
 
-    std::vector<std::uint64_t> notifying_fixed_rate_affects(fixed_rate_affects_.size(), 0);
+    std::vector<std::uint64_t> notifying_fixed_rate_affects(fixed_rate_systems_.size(), 0);
     for (std::size_t i = 0; i < fixed_rate_systems_.size(); ++i) {
         if (fixed_rate_systems_[i].policy.notifies) {
             notifying_fixed_rate_affects[i] =
@@ -1031,6 +1051,7 @@ void Scheduler::print_mermaid_data_flow() const {
                 label_it->second.c_str());
         }
         printf("    end\n\n");
+        printf("    %% Dashed grey edges below indicate shared resource access only\n\n");
     }
 
     // ========================================================================
@@ -1775,8 +1796,9 @@ auto Scheduler::run_compute_selective(const std::uint64_t ready_mask) -> Compute
 // Dependency Graph
 // ============================================================================
 
-auto Scheduler::compute_levels() -> BuildResult {
+auto Scheduler::build_topology_snapshot() const -> std::expected<TopologySnapshot, BuildError> {
     const auto n = compute_systems_.size();
+    TopologySnapshot snapshot;
 
     // Enforce max 64 compute systems for bitmask scheduling
     if (n > TooManyComputeSystemsError::max_count) {
@@ -1875,10 +1897,10 @@ auto Scheduler::compute_levels() -> BuildResult {
     };
 
     if (auto result = process_system_channels(fixed_rate_systems_, true); !result) {
-        return result;
+        return std::unexpected(result.error());
     }
     if (auto result = process_system_channels(compute_systems_, false); !result) {
-        return result;
+        return std::unexpected(result.error());
     }
 
     // ========================================================================
@@ -1993,7 +2015,7 @@ auto Scheduler::compute_levels() -> BuildResult {
     // Phase 4: Kahn's algorithm for topological sort (by levels)
     // ========================================================================
 
-    levels_.clear();
+    snapshot.levels.clear();
     std::vector<std::size_t> current_level;
 
     // Start with nodes that have no dependencies
@@ -2005,7 +2027,7 @@ auto Scheduler::compute_levels() -> BuildResult {
 
     std::size_t processed = 0;
     while (!current_level.empty()) {
-        levels_.push_back(current_level);
+        snapshot.levels.push_back(current_level);
         processed += current_level.size();
 
         std::vector<std::size_t> next_level;
@@ -2117,7 +2139,7 @@ auto Scheduler::compute_levels() -> BuildResult {
     // Wake chains for fixed_rate systems:
     // fixed_rate_affects_[i] = bitmask of compute systems that directly read this fixed_rate's
     // channels
-    fixed_rate_affects_.assign(fixed_rate_systems_.size(), 0);
+    snapshot.fixed_rate_affects.assign(fixed_rate_systems_.size(), 0);
 
     // Helper lambda: process writer channels and collect direct readers only
     auto collect_direct_readers = [&](const auto& meta_channels, std::uint64_t& affects) {
@@ -2143,13 +2165,13 @@ auto Scheduler::compute_levels() -> BuildResult {
         collect_direct_readers(meta.spsc_channels, affects);
         collect_direct_readers(meta.spmc_channels, affects);
 
-        fixed_rate_affects_[i] = affects;
+        snapshot.fixed_rate_affects[i] = affects;
     }
 
     // Wake chains for compute systems:
     // compute_affects_[i] = bitmask of compute systems that directly depend on system i
     // via channels
-    compute_affects_.assign(n, 0);
+    snapshot.compute_affects.assign(n, 0);
 
     // Channel dependencies
     for (const auto& [key, usage] : channels) {
@@ -2164,12 +2186,12 @@ auto Scheduler::compute_levels() -> BuildResult {
 
         for (const auto reader : usage.readers) {
             if (!reader.is_fixed_rate && writer.index != reader.index) {
-                compute_affects_[writer.index] |= (1UL << reader.index);
+                snapshot.compute_affects[writer.index] |= (1UL << reader.index);
             }
         }
     }
 
-    return {};
+    return snapshot;
 }
 
 } // namespace talos::scheduler
