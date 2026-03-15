@@ -26,6 +26,19 @@ std::expected<void, std::string>
     READ_OPT(tbl, classifier_enable_type_filtering);
     READ_OPT(tbl, classifier_use_softmax);
 
+    // corner refiner configuration (from at_vision)
+    READ_OPT(tbl, enable_corner_refinement);
+    READ_OPT(tbl, corner_refiner_max_brightness);
+    READ_OPT(tbl, corner_refiner_roi_scale);
+    READ_OPT(tbl, corner_refiner_search_start);
+    READ_OPT(tbl, corner_refiner_search_end);
+    READ_OPT(tbl, corner_refiner_min_light_width);
+
+    // PnP sorting configuration (from at_vision)
+    READ_OPT(tbl, enable_pnp_sorting);
+    READ_OPT(tbl, pnp_sort_roll_threshold_rad);
+    READ_OPT(tbl, pnp_sort_reproj_threshold);
+
     return {};
 }
 

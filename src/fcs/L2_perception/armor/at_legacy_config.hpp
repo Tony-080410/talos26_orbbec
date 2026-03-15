@@ -55,6 +55,19 @@ struct AtLegacyTraditionalConfig {
     bool classifier_enable_type_filtering  = true;
     bool classifier_use_softmax            = true; // Legacy networks output logits, need softmax
 
+    // Corner refiner parameters (from at_vision light_corner_corrector)
+    bool enable_corner_refinement        = true; // Enable/disable corner correction
+    double corner_refiner_max_brightness = 25.0; // Brightness normalization upper bound
+    double corner_refiner_roi_scale      = 0.07; // ROI expansion (7%)
+    double corner_refiner_search_start   = 0.4;  // Search start (40% of length)
+    double corner_refiner_search_end     = 0.6;  // Search end (60% of length)
+    int corner_refiner_min_light_width   = 3;    // Minimum width for refinement
+
+    // PnP sorting parameters (from at_vision sortPnPResult)
+    bool enable_pnp_sorting            = true; // Enable/disable IPPE dual solution sorting
+    double pnp_sort_roll_threshold_rad = 10.0 * M_PI / 180.0; // Roll angle threshold (10°)
+    double pnp_sort_reproj_threshold   = 3.0;                 // Reprojection error ratio threshold
+
     std::expected<void, std::string> read_from(const toml::table& tbl) noexcept;
 };
 

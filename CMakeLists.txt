@@ -144,6 +144,8 @@ set(FCS_SOURCES
         src/fcs/L2_perception/rune/rune_systems.cpp
         src/fcs/L2_perception/armor/backends/at_legacy_traditional_backend.cpp
         src/fcs/L2_perception/armor/backends/at_legacy_traditional_classifier.cpp
+        src/fcs/L2_perception/armor/at_legacy_pnp_sort.cpp
+        src/fcs/L2_perception/armor/backends/at_legacy_corner_refiner.cpp
         src/fcs/L3_estimation/tracker_systems.cpp
         src/fcs/L3_estimation/extended_kalman_filter.cpp
         src/fcs/L3_estimation/energy_meter_solver/angle_fitter.cpp
