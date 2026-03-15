@@ -1,7 +1,6 @@
 #include "L2_perception/armor/backends/at_legacy_traditional_backend.hpp"
 
 #include "L2_perception/armor/at_legacy_config.hpp"
-#include "L2_perception/armor/backends/at_legacy_corner_refiner.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -264,14 +263,12 @@ std::vector<AtLegacyArmorDetection> AtLegacyTraditionalBackend::match_lights(
                 continue;
             }
 
-            // NOTE: corner_corrector from at_vision (移植完成)
-            // Refine corners using PCA + gradient search for subpixel accuracy
+            // NOTE: armor_detector_ov does NOT use corner_corrector
+            // corner_corrector_ is available but disabled to match behavior
+
+            // Create detection from lights
             auto detection = make_detection_from_lights(*it1, *it2);
             detection.type = type;
-
-            // Apply corner refinement (from at_vision light_corner_corrector)
-            LightCornerCorrector::correctCorners(detection, gray_img);
-
             detections.emplace_back(detection);
         }
     }

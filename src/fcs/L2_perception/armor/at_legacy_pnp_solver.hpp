@@ -14,7 +14,6 @@
 #include <opencv2/core.hpp>
 #include <opencv2/core/eigen.hpp>
 
-#include "at_legacy_pnp_sort.hpp"
 #include "camera_config.hpp"
 
 namespace fcs::L2 {
@@ -181,42 +180,24 @@ public:
             return std::unexpected(input.error());
         }
 
-        // Step 1: Initial 6DoF PnP using IPPE (完全移植自 at_vision)
-        // at_vision 使用 solvePnPGeneric 返回 vector<cv::Mat>
-        std::vector<cv::Mat> rvecs, tvecs;
-
-        rvecs.clear();
-        tvecs.clear();
-
-        int solutions = cv::solvePnPGeneric(
-            input->obj_points, input->img_points, camera_matrix_, dist_coeffs_, rvecs, tvecs, false,
+        // Step 1: Initial 6DoF PnP using IPPE
+        cv::Mat rvec, tvec;
+        bool success = cv::solvePnP(
+            input->obj_points, input->img_points, camera_matrix_, dist_coeffs_, rvec, tvec, false,
             cv::SOLVEPNP_IPPE);
 
-        if (solutions == 0) {
+        if (!success) {
             return std::unexpected(PnPError::SolveFailed);
         }
 
-        // Step 1.5: Sort IPPE dual solutions (完全移植自 at_vision armor_pose_estimator.cpp:47)
-        // Build K matrix for sorting
-        Eigen::Matrix3d K = Eigen::Matrix3d::Identity();
-        K(0, 0)           = camera_matrix_.at<double>(0, 0);
-        K(1, 1)           = camera_matrix_.at<double>(1, 1);
-        K(0, 2)           = camera_matrix_.at<double>(0, 2);
-        K(1, 2)           = camera_matrix_.at<double>(1, 2);
-
-        // Sort IPPE dual solutions (return value indicates if swap occurred)
-        static_cast<void>(PnPSolutionSorter::sortSolutions(
-            rvecs, tvecs, R_imu_cam, detection, K, input->obj_points));
-
-        // Step 2: Convert rvec/tvec to Eigen (使用 rvecs[0], 可能已被交换)
+        // Step 2: Convert rvec/tvec to Eigen
         cv::Mat R_cv;
-        cv::Rodrigues(rvecs[0], R_cv);
+        cv::Rodrigues(rvec, R_cv);
 
         Eigen::Matrix3d R_cam_armor;
         cv::cv2eigen(R_cv, R_cam_armor);
 
-        Eigen::Vector3d t_cam_armor(
-            tvecs[0].at<double>(0), tvecs[0].at<double>(1), tvecs[0].at<double>(2));
+        Eigen::Vector3d t_cam_armor(tvec.at<double>(0), tvec.at<double>(1), tvec.at<double>(2));
 
         // R_cam_imu = R_imu_cam.transpose()
         Eigen::Matrix3d R_cam_imu = R_imu_cam.transpose();
@@ -250,8 +231,12 @@ public:
             R_pitch << cp, 0.0, sp, 0.0, 1.0, 0.0, -sp, 0.0, cp;
         }
 
-        // Step 5: Prepare 3D model points and 2D observations
-        // NOTE: K matrix is already defined above
+        // Step 5: Camera intrinsic matrix K (without distortion for BA)
+        Eigen::Matrix3d K = Eigen::Matrix3d::Identity();
+        K(0, 0)           = camera_matrix_.at<double>(0, 0);
+        K(1, 1)           = camera_matrix_.at<double>(1, 1);
+        K(0, 2)           = camera_matrix_.at<double>(0, 2);
+        K(1, 2)           = camera_matrix_.at<double>(1, 2);
 
         // Step 6: Prepare 3D model points and 2D observations
         std::vector<Eigen::Vector3d> obj_pts_eigen;
@@ -312,15 +297,15 @@ public:
 
             Eigen::Matrix3d R_cam_armor_refined = R_cam_imu * R_yaw * R_pitch;
 
-            // Write back to rvecs[0] (tvecs[0] unchanged)
+            // Write back to rvec (tvec unchanged)
             cv::Mat R_refined_cv;
             cv::eigen2cv(R_cam_armor_refined, R_refined_cv);
-            cv::Rodrigues(R_refined_cv, rvecs[0]);
+            cv::Rodrigues(R_refined_cv, rvec);
         }
         // If optimization failed, use original PnP result
 
         return AtLegacyCameraArmorMeasurement(
-            detection, rvecs[0], tvecs[0], timestamp_ns, input->dist_to_center);
+            detection, rvec, tvec, timestamp_ns, input->dist_to_center);
     }
 
     /// Solve PnP with BA for multiple detections
