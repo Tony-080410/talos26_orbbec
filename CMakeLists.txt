@@ -19,6 +19,19 @@ if (CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     add_compile_options(-fmacro-prefix-map=${PROJECT_SOURCE_DIR_ABS}/=)
 endif ()
 
+# ============================================================================
+# AddressSanitizer Option (Memory Leak Detection)
+# ============================================================================
+option(ENABLE_ASAN "Enable AddressSanitizer for memory leak detection" OFF)
+
+if(ENABLE_ASAN)
+    message(STATUS "AddressSanitizer: ENABLED")
+    add_compile_options(-fsanitize=address -fno-omit-frame-pointer -g)
+    add_link_options(-fsanitize=address)
+else()
+    message(STATUS "AddressSanitizer: DISABLED")
+endif()
+
 # Add project cmake directory to module search path
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 

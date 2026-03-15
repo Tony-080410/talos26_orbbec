@@ -8,10 +8,11 @@
 #   Linux     | clang-21        | libstdc++ >= 23 | any arch
 #
 # Usage:
-#   ./build.sh [--release] [--calib] [--] [args...]
-#     --release    Build in Release mode (default: Debug)
-#     --calib      Build calibration app (default: main talos app)
-#     --           Separator for app arguments
+#   ./build.sh [--release] [--asan] [--calib] [--] [args...]
+#     --release       Build in Release mode (default: Debug)
+#     --asan          Enable AddressSanitizer (memory leak detection)
+#     --calib         Build calibration app (default: main talos app)
+#     --             Separator for app arguments
 # =============================================================================
 
 set -euo pipefail
@@ -250,15 +251,20 @@ configure_linux() {
 # Main
 main() {
     # Parse arguments
-    BUILD_TYPE="Debug"
+    BUILD_TYPE="Release"
     BUILD_TARGET="talos"
     ENABLE_CALIBRATION="OFF"
+    ENABLE_ASAN="OFF"
     RUN_ARGS=()
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --release)
                 BUILD_TYPE="Release"
+                shift
+                ;;
+            --asan|-fsanitize=address)
+                ENABLE_ASAN="ON"
                 shift
                 ;;
             -c|--calib)
@@ -300,6 +306,7 @@ main() {
 
     status "[i]" "$BLUE" "Platform: $OS ($ARCH)"
     status "[i]" "$BLUE" "Build: $BUILD_TYPE"
+    status "[i]" "$BLUE" "ASAN: $ENABLE_ASAN"
     status "[i]" "$BLUE" "Target: $BUILD_TARGET"
 
     # Configure based on OS
@@ -323,6 +330,7 @@ main() {
     cmake -G Ninja -B build -S . \
         -DCMAKE_BUILD_TYPE="${BUILD_TYPE}" \
         -DENABLE_CALIBRATION="${ENABLE_CALIBRATION}" \
+        -DENABLE_ASAN="${ENABLE_ASAN}" \
         ${CMAKE_COMPILER_ARGS} \
         ${CMAKE_CXX_FLAGS:+-DCMAKE_CXX_FLAGS="$CMAKE_CXX_FLAGS"}
 
