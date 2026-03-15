@@ -10,6 +10,8 @@ namespace fcs::L4 {
 
 std::expected<void, std::string> AimerConfig::read_from(const toml::table& tbl) noexcept {
     READ(tbl, delay);
+    READ(tbl, side_angle);
+    READ(tbl, min_switching_v_yaw);
 
     return {};
 }

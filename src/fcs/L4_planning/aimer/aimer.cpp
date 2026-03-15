@@ -29,77 +29,110 @@ namespace {
 } // namespace
 
 // ============================================================================
+// select_best_armor_index - Angle-based armor selection
+// ============================================================================
+
+int Aimer::select_best_armor_index(
+    const Eigen::Vector3d& target_center, double target_yaw, double target_v_yaw,
+    int armors_num) const noexcept {
+
+    // Angle between the robot's center and the X-axis (odom → center)
+    const double alpha = std::atan2(target_center.y(), target_center.x());
+
+    // Angle between the front of observed armor and the X-axis (odom → armor front)
+    const double beta = target_yaw;
+
+    // clang-format off
+    Eigen::Matrix2d R_odom2center;
+    Eigen::Matrix2d R_odom2armor;
+    R_odom2center << std::cos(alpha), std::sin(alpha),
+                     -std::sin(alpha), std::cos(alpha);
+    R_odom2armor  << std::cos(beta), std::sin(beta),
+                     -std::sin(beta), std::cos(beta);
+    // clang-format on
+
+    // Compute relative rotation: center → armor
+    Eigen::Matrix2d R_center2armor = R_odom2center.transpose() * R_odom2armor;
+
+    // Use full angle to avoid aliasing when |alpha - beta| > 90° (outpost has 3 armors)
+    const double decision_angle = std::atan2(R_center2armor(1, 0), R_center2armor(0, 0));
+
+    // Angle threshold for armor switching (hysteresis)
+    double theta = (target_v_yaw > 0 ? config_.side_angle : -config_.side_angle) * M_PI / 180.0;
+
+    // Avoid frequent switching between two armors when rotation is slow
+    if (std::abs(target_v_yaw) < config_.min_switching_v_yaw) {
+        theta = 0.0;
+    }
+
+    // Quantize to armor slot
+    const double step = 2.0 * M_PI / static_cast<double>(armors_num);
+    double temp_angle = decision_angle + step / 2.0 - theta;
+    temp_angle        = std::fmod(temp_angle + 2.0 * M_PI, 2.0 * M_PI); // Wrap to [0, 2π)
+    int selected_id   = static_cast<int>(temp_angle / step);
+
+    return selected_id;
+}
+
+// ============================================================================
 // predict_position - Robot
 // ============================================================================
 
-Eigen::Vector3d Aimer::predict_position(const L3::RobotTargetState& target, double dt) noexcept {
+Eigen::Vector3d
+    Aimer::predict_position(const L3::RobotTargetState& target, double dt) const noexcept {
     const Eigen::Vector3d center   = target.position;
     const Eigen::Vector3d velocity = target.velocity;
     const double yaw               = target.yaw;
     const double v_yaw             = target.v_yaw;
     const double h                 = target.z1 - center.z();
 
+    // Predict center and yaw
     const Eigen::Vector3d center_pred = center + velocity * dt;
     const double yaw_pred             = yaw + v_yaw * dt;
 
-    const int n                   = target.armors_num;
-    double min_dist_sq            = 1e20;
-    Eigen::Vector3d closest_armor = center_pred;
+    // Select best armor index using angle-based algorithm
+    const int armor_idx = select_best_armor_index(center_pred, yaw_pred, v_yaw, target.armors_num);
 
-    for (int i = 0; i < n; ++i) {
-        const double armor_yaw = yaw_pred + i * (2.0 * std::numbers::pi / n);
-        const double r         = (i % 2 == 0) ? target.radius0 : target.radius1;
+    // Compute selected armor position
+    const double armor_yaw = yaw_pred + armor_idx * (2.0 * std::numbers::pi / target.armors_num);
+    const double r         = (armor_idx % 2 == 0) ? target.radius0 : target.radius1;
 
-        const double armor_x = center_pred.x() - r * std::cos(armor_yaw);
-        const double armor_y = center_pred.y() - r * std::sin(armor_yaw);
-        const double armor_z = center_pred.z() + ((i % 2 == 0) ? 0.0 : h);
+    const double armor_x = center_pred.x() - r * std::cos(armor_yaw);
+    const double armor_y = center_pred.y() - r * std::sin(armor_yaw);
+    const double armor_z = center_pred.z() + ((armor_idx % 2 == 0) ? 0.0 : h);
 
-        // Use squared distance to avoid sqrt in comparison loop
-        const double dist_sq = armor_x * armor_x + armor_y * armor_y + armor_z * armor_z;
-        if (dist_sq < min_dist_sq) {
-            min_dist_sq   = dist_sq;
-            closest_armor = Eigen::Vector3d{armor_x, armor_y, armor_z};
-        }
-    }
-
-    return closest_armor;
+    return Eigen::Vector3d{armor_x, armor_y, armor_z};
 }
 
 // ============================================================================
 // predict_position - Outpost
 // ============================================================================
 
-Eigen::Vector3d Aimer::predict_position(const L3::OutpostTargetState& target, double dt) noexcept {
+Eigen::Vector3d
+    Aimer::predict_position(const L3::OutpostTargetState& target, double dt) const noexcept {
     const Eigen::Vector2d center_2d = target.position;
     const Eigen::Vector3d velocity  = target.velocity;
     const double yaw                = target.yaw;
     const double v_yaw              = target.v_yaw;
     constexpr double r              = L3::OutpostTargetState::radius;
 
+    // Predict center and yaw
     const Eigen::Vector2d center_pred = center_2d + velocity.head<2>() * dt;
+    const double center_x_pred        = center_pred.x();
+    const double center_y_pred        = center_pred.y();
+    const double yaw_pred             = yaw + v_yaw * dt;
 
-    const double center_x_pred = center_pred.x();
-    const double center_y_pred = center_pred.y();
-    const double yaw_pred      = yaw + v_yaw * dt;
+    // Select best armor index using angle-based algorithm
+    const int armor_idx = select_best_armor_index(
+        Eigen::Vector3d{center_x_pred, center_y_pred, target.z[0]}, yaw_pred, v_yaw, 3);
 
-    double min_dist_sq = 1e20;
-    Eigen::Vector3d closest_armor{center_x_pred, center_y_pred, target.z[0]};
+    // Compute selected armor position
+    const double armor_yaw = yaw_pred + armor_idx * (2.0 * std::numbers::pi / 3.0);
+    const double armor_x   = center_x_pred - r * std::cos(armor_yaw);
+    const double armor_y   = center_y_pred - r * std::sin(armor_yaw);
+    const double armor_z   = target.z[armor_idx];
 
-    for (int i = 0; i < 3; ++i) {
-        const double armor_yaw = yaw_pred + i * (2.0 * std::numbers::pi / 3.0);
-        const double armor_x   = center_x_pred - r * std::cos(armor_yaw);
-        const double armor_y   = center_y_pred - r * std::sin(armor_yaw);
-        const double armor_z   = target.z[i];
-
-        // Use squared distance to avoid sqrt in comparison loop
-        const double dist_sq = armor_x * armor_x + armor_y * armor_y + armor_z * armor_z;
-        if (dist_sq < min_dist_sq) {
-            min_dist_sq   = dist_sq;
-            closest_armor = Eigen::Vector3d{armor_x, armor_y, armor_z};
-        }
-    }
-
-    return closest_armor;
+    return Eigen::Vector3d{armor_x, armor_y, armor_z};
 }
 
 // ============================================================================

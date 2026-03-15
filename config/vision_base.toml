@@ -113,6 +113,13 @@ shooting_range_w = 0.135
 # Includes: camera exposure, image processing, communication, gimbal response
 delay = 0.019
 
+# Armor selection (angle-based algorithm from ROS2 auto_aim)
+# Hysteresis angle offset to prevent armor flickering during slow rotation (degrees)
+side_angle = 15.0
+# Minimum target angular velocity to enable armor switching (rad/s)
+# Below this threshold, armor selection locks to prevent oscillation
+min_switching_v_yaw = 1.0
+
 [trajectory]
 type = "LinearDrag"
 

@@ -72,6 +72,23 @@ private:
     [[nodiscard]] static constexpr AimerTargetType get_target_type() noexcept;
 
     // ========================================================================
+    // Armor selection helper
+    // ========================================================================
+
+    /// Select best armor index using angle-based algorithm (from ROS2 auto_aim)
+    /// Computes relative angle between robot center and armor front, applies hysteresis,
+    /// and quantizes to the nearest armor slot.
+    ///
+    /// @param target_center Predicted robot center position (odom frame)
+    /// @param target_yaw Predicted robot yaw (armor 0 direction)
+    /// @param target_v_yaw Robot angular velocity (rad/s)
+    /// @param armors_num Number of armors (3 or 4)
+    /// @return Selected armor index {0, 1, ..., armors_num-1}
+    [[nodiscard]] int select_best_armor_index(
+        const Eigen::Vector3d& target_center, double target_yaw, double target_v_yaw,
+        int armors_num) const noexcept;
+
+    // ========================================================================
     // Common aim angle computation (shared by all target types)
     // ========================================================================
 
@@ -108,12 +125,12 @@ private:
         const core::trajectory::solver::TrajectorySolver& solver) const noexcept;
 
     /// Predict robot target position at future time dt
-    [[nodiscard]] static Eigen::Vector3d
-        predict_position(const L3::RobotTargetState& target, double dt) noexcept;
+    [[nodiscard]] Eigen::Vector3d
+        predict_position(const L3::RobotTargetState& target, double dt) const noexcept;
 
     /// Predict outpost target position at future time dt
-    [[nodiscard]] static Eigen::Vector3d
-        predict_position(const L3::OutpostTargetState& target, double dt) noexcept;
+    [[nodiscard]] Eigen::Vector3d
+        predict_position(const L3::OutpostTargetState& target, double dt) const noexcept;
 
     AimerConfig config_;
 };

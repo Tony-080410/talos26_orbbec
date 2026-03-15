@@ -18,6 +18,14 @@ struct AimerConfig {
     /// Includes: camera exposure, image processing, communication, gimbal response
     double delay{0.01};
 
+    /// Hysteresis angle offset for armor selection (degrees)
+    /// Prevents armor flickering during slow rotation near switching boundaries
+    double side_angle{15.0};
+
+    /// Minimum target angular velocity to enable armor switching (rad/s)
+    /// Below this threshold, armor selection locks to prevent oscillation
+    double min_switching_v_yaw{1.0};
+
     [[nodiscard]] std::expected<void, std::string> read_from(const toml::table& tbl) noexcept;
 };
 
