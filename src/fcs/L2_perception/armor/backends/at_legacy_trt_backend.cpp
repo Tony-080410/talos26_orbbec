@@ -82,7 +82,7 @@ static constexpr std::array<ClassMapping, 64> g_class_mappings = {
      {ArmorColor::Blue, ArmorName::Base},
      // Blue, Large (8-15)
         {ArmorColor::Blue, ArmorName::Sentry},
-     {ArmorColor::Blue, ArmorName::BaseLarge},
+     {ArmorColor::Blue, ArmorName::One},
      {ArmorColor::Blue, ArmorName::Two},
      {ArmorColor::Blue, ArmorName::Three},
      {ArmorColor::Blue, ArmorName::Four},
@@ -100,7 +100,7 @@ static constexpr std::array<ClassMapping, 64> g_class_mappings = {
      {ArmorColor::Red, ArmorName::Base},
      // Red, Large (24-31)
         {ArmorColor::Red, ArmorName::Sentry},
-     {ArmorColor::Red, ArmorName::BaseLarge},
+     {ArmorColor::Red, ArmorName::One},
      {ArmorColor::Red, ArmorName::Two},
      {ArmorColor::Red, ArmorName::Three},
      {ArmorColor::Red, ArmorName::Four},
@@ -118,7 +118,7 @@ static constexpr std::array<ClassMapping, 64> g_class_mappings = {
      {ArmorColor::Neutral, ArmorName::Base},
      // None (Gray), Large (40-47)
         {ArmorColor::Neutral, ArmorName::Sentry},
-     {ArmorColor::Neutral, ArmorName::BaseLarge},
+     {ArmorColor::Neutral, ArmorName::One},
      {ArmorColor::Neutral, ArmorName::Two},
      {ArmorColor::Neutral, ArmorName::Three},
      {ArmorColor::Neutral, ArmorName::Four},
@@ -136,7 +136,7 @@ static constexpr std::array<ClassMapping, 64> g_class_mappings = {
      {ArmorColor::Purple, ArmorName::Base},
      // Purple, Large (56-63)
         {ArmorColor::Purple, ArmorName::Sentry},
-     {ArmorColor::Purple, ArmorName::BaseLarge},
+     {ArmorColor::Purple, ArmorName::One},
      {ArmorColor::Purple, ArmorName::Two},
      {ArmorColor::Purple, ArmorName::Three},
      {ArmorColor::Purple, ArmorName::Four},
