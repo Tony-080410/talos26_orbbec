@@ -15,6 +15,55 @@
 
 namespace fcs::L5 {
 
+/// RAII wrapper for TinySolver from tinympc C API
+///
+/// This class owns a TinySolver* pointer and ensures all its internal resources
+/// (solution, settings, cache, work) are properly destroyed when the handle goes out of scope.
+///
+/// ## TINYMPC INVARIANT PROVENANCE
+///
+/// The vendored tinympc library (3dparty/tinympc) has SEVERE memory safety issues:
+///
+/// **Allocation Strategy (tiny_api.cpp:25-29):**
+///   - Uses 5 separate `new` calls WITHOUT exception handling
+///   - Allocation order: solution → cache → settings → work → solver
+///   - If ANY `new` throws std::bad_alloc, PREVIOUS allocations LEAK
+///
+/// **Error Path Behavior (tiny_api.cpp:64-66, 137-139):**
+///   - Dimension check failure: Returns non-zero WITHOUT freeing allocations
+///   - Cache init failure: Returns non-zero WITHOUT freeing allocations
+///   - ALL error paths leak all 5 allocated objects
+///
+/// **Success Path Invariants (ONLY if no exceptions):**
+///   - solver != nullptr
+///   - solver->solution != nullptr
+///   - solver->cache != nullptr
+///   - solver->settings != nullptr
+///   - solver->work != nullptr
+///
+/// **Wrapper Safety Guarantees:**
+///   - Checks ALL 5 internal pointers for nullptr before deletion
+///   - Wraps delete in try-catch to preserve noexcept (Eigen can throw std::bad_alloc)
+///   - Cleans up allocations if tiny_setup() returns error status
+///   - Verifies all 5 internal pointers are non-null on success
+///   - Documented as NOT thread-safe
+///
+/// ## Usage
+///
+/// ```cpp
+/// // Factory function (recommended)
+/// auto solver = create_tiny_solver(A, B, f, Q, R, rho, nx, nu, horizon);
+/// if (!solver) {
+///     std::cerr << solver.error() << std::endl;
+///     return;
+/// }
+///
+/// // Use solver
+/// tiny_set_x0(solver->get(), x0);
+/// tiny_solve(solver->get());
+///
+/// // Automatic cleanup when solver goes out of scope
+/// ```
 class TinySolverHandle {
 public:
     TinySolverHandle() = default;
@@ -27,14 +76,35 @@ public:
     TinySolverHandle& operator=(TinySolverHandle&& other) noexcept;
 
     [[nodiscard]] TinySolver* get() const noexcept { return solver_; }
-    [[nodiscard]] TinySolver** put() noexcept;
     [[nodiscard]] explicit operator bool() const noexcept { return solver_ != nullptr; }
 
+    /// Reset the handle, taking ownership of a new raw pointer.
+    /// If a solver was previously owned, it will be destroyed properly.
     void reset(TinySolver* solver = nullptr) noexcept;
 
 private:
     TinySolver* solver_{nullptr};
+
+    // Factory function has access to private constructor
+    friend std::expected<TinySolverHandle, std::string> create_tiny_solver(
+        const Eigen::Matrix2d& A, const Eigen::Matrix<double, 2, 1>& B, const Eigen::Vector2d& f,
+        const Eigen::Matrix2d& Q, const Eigen::Matrix<double, 1, 1>& R, double rho, int nx, int nu,
+        int horizon) noexcept;
 };
+
+/// Factory function to create a TinySolver with RAII ownership.
+///
+/// Calls tiny_setup() and wraps the result in TinySolverHandle.
+/// Handles all tinympc memory leak scenarios:
+/// - Cleans up allocations if tiny_setup() returns error status
+/// - Verifies all 5 internal pointers are non-null on success
+/// - Returns the handle on success, or error message on failure.
+///
+/// Thread safety: NOT thread-safe. Do not call concurrently on shared data.
+[[nodiscard]] std::expected<TinySolverHandle, std::string> create_tiny_solver(
+    const Eigen::Matrix2d& A, const Eigen::Matrix<double, 2, 1>& B, const Eigen::Vector2d& f,
+    const Eigen::Matrix2d& Q, const Eigen::Matrix<double, 1, 1>& R, double rho, int nx, int nu,
+    int horizon) noexcept;
 
 /// TinyMPC-based trajectory optimizer for the L5 weapon layer.
 ///

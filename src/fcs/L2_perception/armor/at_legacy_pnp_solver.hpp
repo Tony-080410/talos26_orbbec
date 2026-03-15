@@ -103,6 +103,25 @@ struct YawOnlyReprojError {
         return true;
     }
 
+    // ====================================================================
+    // CERES SOLVER OWNERSHIP TRANSFER (RAII-compliant)
+    // ====================================================================
+    //
+    // Ceres Problem takes ownership of CostFunction and LossFunction pointers
+    // via Problem::AddResidualBlock(). The Problem destructor deletes them.
+    //
+    // Source: ceres-solver/include/ceres/problem.h
+    //   "If set to TAKE_OWNERSHIP (default), the problem object will delete
+    //    the corresponding object on destruction."
+    //
+    // Therefore:
+    //   - We allocate with new (required by Ceres API)
+    //   - We transfer ownership via AddResidualBlock()
+    //   - We DO NOT delete (Ceres Problem destructor handles it)
+    //   - NO LEAKS, NO DOUBLE-FREE
+    //
+    // This is NOT like tinympc - Ceres is RAII-compliant~ ♪
+    // ====================================================================
     static ceres::CostFunction* Create(
         const Eigen::Vector3d& Pw, const Eigen::Vector2d& uv, const Eigen::Matrix3d& R_cam_imu,
         const Eigen::Matrix3d& R_pitch, const Eigen::Vector3d& t_cam_armor,
@@ -250,8 +269,20 @@ public:
         // Step 7: Build Ceres problem - optimize yaw only
         double yaw = yaw_init;
 
+        // ====================================================================
+        // CERES SOLVER OWNERSHIP TRANSFER (RAII-compliant)
+        // ====================================================================
+        //
+        // Ceres Problem takes ownership of CostFunction and LossFunction pointers.
+        // See YawOnlyReprojError::Create() above for full provenance.
+        //
+        // We allocate with new (required by Ceres API), transfer ownership
+        // via AddResidualBlock(), and let Ceres Problem destructor handle cleanup.
+        //
+        // NO manual delete needed - Ceres is RAII-compliant~ ♪
+        // ====================================================================
         ceres::Problem problem;
-        // Huber loss for robustness
+        // Huber loss for robustness (ownership transferred to problem)
         auto* loss_function = new ceres::HuberLoss(1.0);
 
         for (size_t i = 0; i < obj_pts_eigen.size(); ++i) {

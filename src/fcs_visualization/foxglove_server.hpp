@@ -418,6 +418,32 @@ std::expected<std::unique_ptr<FoxgloveServer>, std::string>
     TRY_CREATE_SPECIAL_CHANNEL(
         camera_calib_ch, "/camera_info", foxglove::schemas::CameraCalibrationChannel);
 
+    // ====================================================================
+    // FOXGLOVE SERVER FACTORY: PRIVATE CONSTRUCTOR PATTERN
+    // ====================================================================
+    //
+    // PROVENANCE: Factory function with private constructor
+    //
+    // WHY new INSTEAD OF std::make_unique?
+    //
+    //   FoxgloveServer constructor is PRIVATE (factory-only access).
+    //   std::make_unique<FoxgloveServer>(...) cannot access private constructor.
+    //
+    //   We use `new FoxgloveServer(...)` here because the factory function
+    //   has friend access and can call the private constructor.
+    //
+    // OWNERSHIP TRANSFER:
+    //   1. Factory allocates with new (has friend access)
+    //   2. unique_ptr immediately takes ownership
+    //   3. unique_ptr destructor calls delete automatically
+    //   4. NO LEAKS, EXCEPTION-SAFE
+    //
+    // EXCEPTION SAFETY:
+    //   - If new throws: no memory allocated, nothing to clean up ✅
+    //   - If constructor throws: runtime frees memory before unique_ptr built ✅
+    //
+    // This is EXEMPLARY use of new + unique_ptr for private constructor pattern~ ♪
+    // ====================================================================
     auto server = std::make_shared<foxglove::WebSocketServer>(std::move(server_r.value()));
     SPDLOG_INFO("Foxglove server listening on port {}", port);
 

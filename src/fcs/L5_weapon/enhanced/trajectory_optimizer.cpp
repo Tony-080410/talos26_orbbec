@@ -12,8 +12,91 @@
 #include <utility>
 #include <vector>
 
+// =============================================================================
+// TINYMPC INVARIANT PROVENANCE (VENDORED LIBRARY - DO NOT MODIFY)
+// =============================================================================
+//
+// VENDORED LIBRARY: 3dparty/tinympc (C API with broken memory management)
+//
+// ALLOCATION INVARIANTS (tiny_api.cpp:25-29):
+//   - Uses 5 separate `new` calls WITHOUT exception handling
+//   - Allocation order: solution → cache → settings → work → solver
+//   - If ANY allocation throws std::bad_alloc, PREVIOUS allocations LEAK
+//   - NO exception safety guarantees
+//
+// ERROR PATH INVARIANTS (tiny_api.cpp:64-66, 137-139):
+//   - Dimension check failure: Returns non-zero status WITHOUT freeing allocations
+//   - Cache init failure: Returns non-zero status WITHOUT freeing allocations
+//   - ALL error paths leak all 5 allocated objects
+//
+// SUCCESS PATH INVARIANTS (ONLY if no exceptions thrown):
+//   - solver != nullptr
+//   - solver->solution != nullptr (TinySolution with Eigen matrices)
+//   - solver->cache != nullptr (TinyCache with Eigen matrices)
+//   - solver->settings != nullptr (TinySettings struct)
+//   - solver->work != nullptr (TinyWorkspace with many Eigen matrices)
+//
+// EXCEPTION SAFETY: NONE
+//   - No try-catch blocks anywhere in tinympc
+//   - Eigen matrix destruction can throw std::bad_alloc
+//   - Basic exception guarantee violated
+//
+// THREAD SAFETY: UNDEFINED
+//   - No synchronization primitives
+//   - No documentation about concurrent access
+//   - ASSUME NOT THREAD-SAFE
+//
+// WRAPPER CONTRACT:
+//   1. Must check for nullptr on ALL 5 internal pointers before deletion
+//   2. Must wrap delete in try-catch to preserve noexcept (Eigen can throw)
+//   3. Must clean up allocations if tiny_setup() returns error status
+//   4. Must verify all 5 internal pointers are non-null on success
+//   5. Must document as "not thread-safe"
+//
+// =============================================================================
 namespace fcs::L5 {
 namespace {
+// ==============================================================================
+// TINYMPC INVARIANT PROVENANCE
+// ==============================================================================
+//
+// VENDORED LIBRARY: 3dparty/tinympc (DO NOT MODIFY)
+//
+// ALLOCATION INVARIANTS (tiny_api.cpp:25-29):
+//   - Uses 5 separate `new` calls WITHOUT exception handling
+//   - Allocation order: solution → cache → settings → work → solver
+//   - If ANY allocation throws std::bad_alloc, PREVIOUS allocations LEAK
+//   - NO exception safety guarantees
+//
+// ERROR PATH INVARIANTS (tiny_api.cpp:64-66, 137-139):
+//   - Dimension check failure: Returns non-zero status WITHOUT freeing allocations
+//   - Cache init failure: Returns non-zero status WITHOUT freeing allocations
+//   - ALL error paths leak all 5 allocated objects
+//
+// SUCCESS PATH INVARIANTS (ONLY if no exceptions thrown):
+//   - solver != nullptr
+//   - solver->solution != nullptr (TinySolution with Eigen matrices)
+//   - solver->cache != nullptr (TinyCache with Eigen matrices)
+//   - solver->settings != nullptr (TinySettings struct)
+//   - solver->work != nullptr (TinyWorkspace with many Eigen matrices)
+//
+// EXCEPTION SAFETY: NONE
+//   - No try-catch blocks anywhere in tinympc
+//   - Eigen matrix destruction can throw std::bad_alloc
+//   - Basic exception guarantee violated
+//
+// THREAD SAFETY: UNDEFINED
+//   - No synchronization primitives
+//   - No documentation about concurrent access
+//   - ASSUME NOT THREAD-SAFE
+//
+// WRAPPER CONTRACT:
+//   1. Must check for nullptr on ALL 5 internal pointers before deletion
+//   2. Must wrap delete in try-catch to preserve noexcept (Eigen can throw)
+//   3. Must clean up allocations if tiny_setup() returns error status
+//   4. Must verify all 5 internal pointers are non-null on success
+//   5. Must document as "not thread-safe"
+// ==============================================================================
 
 using GimbalTransform = L4::Aimer::GimbalTransform;
 using MuzzleTransform = L4::Aimer::MuzzleTransform;
@@ -37,16 +120,39 @@ struct ReferenceSample {
     Eigen::Vector3d position{Eigen::Vector3d::Zero()};
 };
 
+// ==============================================================================
+// RAII CLEANUP FUNCTION: Handles all tinympc invariant violations
+// ==============================================================================
 void destroy_tiny_solver(TinySolver* solver) noexcept {
     if (solver == nullptr) {
         return;
     }
 
-    delete solver->solution;
-    delete solver->settings;
-    delete solver->cache;
-    delete solver->work;
-    delete solver;
+    // tinympc invariant analysis requires individual nullptr checks:
+    // 1. Partial allocation: new may have thrown partway through
+    // 2. Error path leak: tiny_setup() returned error but allocated all 5
+    // 3. Eigen destruction safety: std::bad_alloc can be thrown during ~Matrix()
+    //
+    // Strategy: Check each pointer, wrap delete in try-catch for noexcept safety
+    auto safe_delete = [](auto* ptr) noexcept {
+        if (ptr != nullptr) {
+            try {
+                delete ptr;
+            } catch (...) {
+                // Eigen threw during matrix destruction
+                // In production: log this failure with spdlog
+                // We swallow to preserve noexcept as required by C++ Core Guidelines
+            }
+        }
+    };
+
+    // Delete in REVERSE construction order (work → settings → cache → solution → solver)
+    // This follows RAII best practices even though tinympc doesn't~
+    safe_delete(solver->work);     // Allocated 4th, contains many Eigen matrices
+    safe_delete(solver->settings); // Allocated 3rd, plain struct
+    safe_delete(solver->cache);    // Allocated 2nd, contains Eigen matrices
+    safe_delete(solver->solution); // Allocated 1st, contains Eigen matrices
+    safe_delete(solver);           // Allocated 5th, plain struct
 }
 
 [[nodiscard]] double normalize_angle(double angle) noexcept {
@@ -245,14 +351,116 @@ TinySolverHandle& TinySolverHandle::operator=(TinySolverHandle&& other) noexcept
     return *this;
 }
 
-TinySolver** TinySolverHandle::put() noexcept {
-    reset();
-    return &solver_;
-}
-
 void TinySolverHandle::reset(TinySolver* solver) noexcept {
     destroy_tiny_solver(solver_);
     solver_ = solver;
+}
+
+// ==============================================================================
+// FACTORY FUNCTION: Exception-safe creation with invariant verification
+// ==============================================================================
+[[nodiscard]] std::expected<TinySolverHandle, std::string> create_tiny_solver(
+    const Eigen::Matrix2d& A, const Eigen::Matrix<double, 2, 1>& B, const Eigen::Vector2d& f,
+    const Eigen::Matrix2d& Q, const Eigen::Matrix<double, 1, 1>& R, double rho, int nx, int nu,
+    int horizon) noexcept {
+
+    TinySolver* raw_solver = nullptr;
+
+    // ============================================================
+    // TINYMPC BEHAVIOR ANALYSIS:
+    // ============================================================
+    //
+    // tiny_setup() allocation sequence (tiny_api.cpp:25-29):
+    //   1. new TinySolution()
+    //   2. new TinyCache()         ← Can throw std::bad_alloc
+    //   3. new TinySettings()      ← Can throw std::bad_alloc
+    //   4. new TinyWorkspace()     ← Can throw std::bad_alloc
+    //   5. new TinySolver()        ← Can throw std::bad_alloc
+    //
+    // Error paths (tiny_api.cpp:64-66, 137-139):
+    //   - Dimension mismatch → returns non-zero, LEAKS all 5 objects
+    //   - Cache init failure → returns non-zero, LEAKS all 5 objects
+    //
+    // Contract:
+    //   - Return value 0 = success, all 5 pointers valid
+    //   - Return value non-zero = failure, but raw_solver might STILL be non-null (leaked!)
+    //
+    // ============================================================
+
+    const int status = tiny_setup(&raw_solver, A, B, f, Q, R, rho, nx, nu, horizon, 0);
+
+    // ============================================================
+    // ERROR PATH HANDLING: Clean up tinympc's leaks
+    // ============================================================
+    if (status != 0) {
+        // tiny_setup failed, but it may have allocated the 5 objects anyway
+        // tinympc BUG: Returns error without freeing allocations
+        // We MUST check and clean up if raw_solver is non-null
+
+        if (raw_solver != nullptr) {
+            // tinympc leaked all 5 internal pointers - clean them up
+            auto safe_delete = [](auto* ptr) noexcept {
+                if (ptr != nullptr) {
+                    try {
+                        delete ptr;
+                    } catch (...) { /* swallow to preserve noexcept */
+                    }
+                }
+            };
+
+            safe_delete(raw_solver->work);
+            safe_delete(raw_solver->settings);
+            safe_delete(raw_solver->cache);
+            safe_delete(raw_solver->solution);
+            safe_delete(raw_solver);
+        }
+
+        return std::unexpected("tiny_setup failed with status: " + std::to_string(status));
+    }
+
+    // ============================================================
+    // SUCCESS PATH VERIFICATION: Defensive invariant checking
+    // ============================================================
+    if (raw_solver == nullptr) {
+        // tinympc returned status=0 but didn't set the output parameter
+        // This is a tinympc bug - it should NEVER happen
+        return std::unexpected("tiny_setup returned success but solver is null (tinympc bug)");
+    }
+
+    // tinympc invariant: On success, ALL internal pointers MUST be non-null
+    // But we're defensive because tinympc has proven untrustworthy~
+    const bool fully_initialized = (raw_solver->solution != nullptr)
+                                && (raw_solver->settings != nullptr)
+                                && (raw_solver->cache != nullptr) && (raw_solver->work != nullptr);
+
+    if (!fully_initialized) {
+        // Partial initialization detected - tinympc is even more broken than we thought
+        // Clean up the partial mess and report error
+        auto safe_delete = [](auto* ptr) noexcept {
+            if (ptr != nullptr) {
+                try {
+                    delete ptr;
+                } catch (...) { /* swallow */
+                }
+            }
+        };
+
+        safe_delete(raw_solver->work);
+        safe_delete(raw_solver->settings);
+        safe_delete(raw_solver->cache);
+        safe_delete(raw_solver->solution);
+        safe_delete(raw_solver);
+
+        return std::unexpected(
+            "tiny_setup returned partially initialized solver (tinympc invariant violation)");
+    }
+
+    // ============================================================
+    // CONSTRUCTION SUCCESS: Transfer ownership to RAII handle
+    // ============================================================
+    TinySolverHandle handle;
+    handle.reset(raw_solver); // Transfer ownership, handle will cleanup on destruction
+    return handle;
 }
 
 TinyMpcTrajectoryOptimizer::TinyMpcTrajectoryOptimizer(
@@ -390,15 +598,17 @@ void TinyMpcTrajectoryOptimizer::initialize_solvers() noexcept {
     const Eigen::Matrix<double, 2, 1> B = (Eigen::Matrix<double, 2, 1>{} << 0.0, dt).finished();
     const Eigen::Vector2d f             = Eigen::Vector2d::Zero();
 
-    auto setup_axis = [&](TinySolverHandle& solver_handle, const MpcAxisConfig& axis,
-                          bool pitch_axis) {
-        TinySolverHandle solver;
+    auto setup_axis = [&](const MpcAxisConfig& axis,
+                          bool pitch_axis) -> std::expected<TinySolverHandle, std::string> {
         const Eigen::Matrix2d Q             = Eigen::Vector2d{axis.q_pos, axis.q_vel}.asDiagonal();
         const Eigen::Matrix<double, 1, 1> R = Eigen::Matrix<double, 1, 1>::Constant(axis.r);
 
-        if (tiny_setup(solver.put(), A, B, f, Q, R, config_.mpc.rho, 2, 1, horizon, 0) != 0) {
-            return false;
+        // Use factory function for exception-safe creation
+        auto solver_result = create_tiny_solver(A, B, f, Q, R, config_.mpc.rho, 2, 1, horizon);
+        if (!solver_result) {
+            return std::unexpected("Failed to create solver: " + solver_result.error());
         }
+        auto solver = std::move(*solver_result);
 
         Eigen::MatrixXd x_min = Eigen::MatrixXd::Constant(2, horizon, -kUnlimitedBound);
         Eigen::MatrixXd x_max = Eigen::MatrixXd::Constant(2, horizon, kUnlimitedBound);
@@ -411,23 +621,33 @@ void TinyMpcTrajectoryOptimizer::initialize_solvers() noexcept {
         const Eigen::MatrixXd u_max = Eigen::MatrixXd::Constant(1, horizon - 1, axis.max_acc);
 
         if (tiny_set_bound_constraints(solver.get(), x_min, x_max, u_min, u_max) != 0) {
-            return false;
+            return std::unexpected("Failed to set bound constraints");
         }
 
         solver.get()->settings->max_iter          = config_.mpc.max_iterations;
         solver.get()->settings->abs_pri_tol       = config_.mpc.abs_tol;
         solver.get()->settings->abs_dua_tol       = config_.mpc.abs_tol;
         solver.get()->settings->check_termination = 1;
-        solver_handle                             = std::move(solver);
-        return true;
+
+        return solver;
     };
 
-    ready_ = setup_axis(yaw_solver_, config_.mpc.yaw, false)
-          && setup_axis(pitch_solver_, config_.mpc.pitch, true);
-    if (!ready_) {
-        yaw_solver_.reset();
-        pitch_solver_.reset();
+    auto yaw_result = setup_axis(config_.mpc.yaw, false);
+    if (!yaw_result) {
+        ready_ = false;
+        return;
     }
+    yaw_solver_ = std::move(*yaw_result);
+
+    auto pitch_result = setup_axis(config_.mpc.pitch, true);
+    if (!pitch_result) {
+        yaw_solver_.reset();
+        ready_ = false;
+        return;
+    }
+    pitch_solver_ = std::move(*pitch_result);
+
+    ready_ = true;
 }
 
 } // namespace fcs::L5

@@ -27,6 +27,29 @@
 #include <ceres/jet.h>
 
 // Extended Kalman Filter with auto differentiation
+//
+// CERES JET TYPE PROVENANCE (VALUE SEMANTICS - NO MANUAL MEMORY MANAGEMENT)
+//
+// This file uses ceres::Jet<double, N> for automatic differentiation.
+//
+// WHAT IS ceres::Jet?
+//   ceres::Jet<T, N> is a VALUE TYPE containing:
+//     - T a;           // Scalar value (e.g., double)
+//     - T v[N];        // Derivatives (gradient vector)
+//
+// OWNERSHIP MODEL:
+//   - Stack allocation only (no heap)
+//   - Value semantics (no pointers)
+//   - Automatic cleanup when function returns
+//   - NO ownership transfer issues
+//
+// EXAMPLE (see predict() function below):
+//   ceres::Jet<double, N_X> x_e_jet[N_X];  // ← Stack array, automatic storage
+//   f(x_e_jet, x_p_jet);                    // ← User function with autodiff
+//   // Extract derivatives from x_p_jet[i].v
+//
+// This is RAII-compliant - no manual memory management needed~ ♪
+//
 // N_X: state vector dimension
 // N_Z: measurement vector dimension
 // PredicFunc: process nonlinear vector function

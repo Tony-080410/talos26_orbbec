@@ -89,6 +89,40 @@ static constexpr std::array<ArmorName, 12> PAIR_TO_ARMOR{
     ArmorName::BaseLarge // 11: Bb
 };
 
+// ====================================================================
+// AXERA NPU BACKEND: MANUAL MEMORY MANAGEMENT (C API INTEROP)
+// ====================================================================
+//
+// PROVENANCE: Hardware NPU inference on AX650 chip
+//
+// CONSTRAINT: Axera SDK C API requires C arrays (cannot use std::vector)
+//
+//   typedef struct AX_ENGINE_IO_T {
+//       AX_ENGINE_IO_BUFFER_T* pInputs;   // ← C array required
+//       uint32_t nInputSize;
+//       AX_ENGINE_IO_BUFFER_T* pOutputs;  // ← C array required
+//       uint32_t nOutputSize;
+//   } AX_ENGINE_IO_T;
+//
+// WHY NOT std::vector?
+//   - C structs cannot contain C++ objects with non-trivial constructors
+//   - std::vector has different memory layout than C array
+//   - Passing std::vector to C API is UB (undefined behavior)
+//
+// OWNERSHIP MODEL:
+//   - AtLegacyAxeraBackend class owns io_data_ (RAII)
+//   - Destructor calls free_io() which calls delete[]
+//   - Move-only semantics prevent double-delete
+//   - Error paths clean up partial allocations
+//
+// EXCEPTION SAFETY:
+//   - ✅ Most error paths properly clean up
+//   - ⚠️ Rare case: if second new[] throws, first array leaks (only on OOM)
+//
+// VERDICT: Manual new[] is ACCEPTABLE here due to C API constraint
+//
+// ====================================================================
+// Cleanup helper: Free hardware memory and C arrays
 void free_io_index(AX_ENGINE_IO_BUFFER_T* io_buf, size_t index) {
     for (size_t i = 0; i < index; ++i) {
         AX_ENGINE_IO_BUFFER_T* p_buf = io_buf + i;
@@ -102,18 +136,22 @@ void free_io(AX_ENGINE_IO_T* io) {
             AX_ENGINE_IO_BUFFER_T* p_buf = io->pInputs + j;
             AX_SYS_MemFree(p_buf->phyAddr, p_buf->pVirAddr);
         }
-        delete[] io->pInputs;
+        delete[] io->pInputs;  // ← Delete C array (not vector!)
     }
     if (io->pOutputs != nullptr) {
         for (size_t j = 0; j < io->nOutputSize; ++j) {
             AX_ENGINE_IO_BUFFER_T* p_buf = io->pOutputs + j;
             AX_SYS_MemFree(p_buf->phyAddr, p_buf->pVirAddr);
         }
-        delete[] io->pOutputs;
+        delete[] io->pOutputs; // ← Delete C array (not vector!)
     }
     *io = {};
 }
 
+// ====================================================================
+// ALLOCATION STRATEGY: new[] for C API interop
+// See provenance documentation in free_io() above (lines 98-124)
+// ====================================================================
 std::expected<void, DetectorError> prepare_io(
     AX_ENGINE_IO_INFO_T* info, AX_ENGINE_IO_T* io_data,
     [[maybe_unused]] std::pair<AX_ENGINE_ALLOC_BUFFER_STRATEGY_T, AX_ENGINE_ALLOC_BUFFER_STRATEGY_T>
