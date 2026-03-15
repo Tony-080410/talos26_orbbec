@@ -31,8 +31,10 @@ inline CoordinateSystem sentry_new(timestamp_ns_t ts = 0) {
 
     // camera_link -> gimbal_link (static)
     update<camera_link_fuxk_frame>(
-        system, EdgeTransform<camera_link_fuxk_frame>::from_rpy(0.0, 0.0, 0.0, 0.0273, 0, 0.0544),
-        0);
+        system,
+        EdgeTransform<camera_link_fuxk_frame>::from_rpy(
+            0.0, (0.15 / 180.0) * 3.1415, (-1.0 / 180.0) * 3.1415, 0.0273, 0, 0.0544),
+        ts);
 
     // camera_optical -> camera_link (static)
     // xyz="0 0 0" rpy="-pi/2 0 -pi/2"
@@ -40,7 +42,7 @@ inline CoordinateSystem sentry_new(timestamp_ns_t ts = 0) {
         system,
         EdgeTransform<camera_optical_fuxk_frame>::from_rpy(
             -pi / 2.0, 0.0, -pi / 2.0, 0.0, 0.0, 0.0),
-        0);
+        ts);
 
     // muzzle_link -> gimbal_link (static)
     // xyz="0.0874 0.0 -0.0874" rpy="0 0 0"
