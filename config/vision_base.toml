@@ -158,14 +158,14 @@ rho = 2.0
 q_pos = 9e5
 q_vel = 0.0
 r = 10.0
-max_acc = 5.0
+max_acc = 50.0
 
 # MPC pitch axis configuration
 [mpc_weapon.mpc.pitch]
 q_pos = 9e5
 q_vel = 0.0
 r = 100.0
-max_acc = 10.0
+max_acc = 100.0
 
 [rune_detector]
 enabled = false
