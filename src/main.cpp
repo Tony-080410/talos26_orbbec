@@ -1,3 +1,4 @@
+#include "drone.hpp"
 #include "fcs/L2_perception/armor/at_legacy_systems.hpp"
 #include "fcs/L2_perception/rune/rune_systems.hpp"
 #include "fcs/L3_estimation/energy_meter/energy_meter_systems.hpp"
@@ -9,10 +10,12 @@
 #include "fcs/core/trajectory/resource.hpp"
 #include "fcs/runtime/l1_l2_setup.hpp"
 #include "fcs_visualization/foxglove_systems.hpp"
+#include "hero.hpp"
+#include "infantry.hpp"
 #include "magic_enum.hpp"
-#include "robot_factory.hpp"
 #include "scheduler/error_formatter.hpp"
 #include "scheduler/scheduler.hpp"
+#include "sentry.hpp"
 #include "spdlog_hook.hpp"
 #include "toml_helper.hpp"
 #include <chrono>
@@ -165,12 +168,19 @@ int main() {
     talos::Scheduler scheduler(world);
 
     // Create coordinate system for fast_tf lookups (required by IMU and planning systems)
-    auto& tf_buffer = world.emplace_resource<fast_tf::CoordinateSystem>();
     switch (robot) {
-    case fcs::RobotType::Infantry: fast_tf::init_infantry_system(tf_buffer); break;
-    case fcs::RobotType::Hero: fast_tf::init_hero_system(tf_buffer); break;
-    case fcs::RobotType::Sentry: fast_tf::init_sentry_system(tf_buffer); break;
-    case fcs::RobotType::Drone: fast_tf::init_drone_system(tf_buffer); break;
+    case fcs::RobotType::Infantry:
+        world.emplace_resource<fast_tf::CoordinateSystem>(fast_tf::infantry_new(0));
+        break;
+    case fcs::RobotType::Hero:
+        world.emplace_resource<fast_tf::CoordinateSystem>(fast_tf::hero_new(0));
+        break;
+    case fcs::RobotType::Sentry:
+        world.emplace_resource<fast_tf::CoordinateSystem>(fast_tf::sentry_new(0));
+        break;
+    case fcs::RobotType::Drone:
+        world.emplace_resource<fast_tf::CoordinateSystem>(fast_tf::drone_new(0));
+        break;
     }
 
     // Insert config as shared resource (for foxglove and other systems)
