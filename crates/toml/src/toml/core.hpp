@@ -32,10 +32,26 @@ template <typename T>
     return Deserialize<T>::take_optional(table, key);
 }
 
-template <ReadFrom T>
+template <detail::TableReadable T>
+[[nodiscard]] std::expected<void, std::string> read_into(const toml::table& table, T& out) {
+    return detail::read_object_into(table, out);
+}
+
+template <detail::TableReadable T>
+requires(std::default_initializable<T>)
+[[nodiscard]] std::expected<T, std::string> from_table(const toml::table& table) {
+    T value{};
+    auto result = read_into(table, value);
+    if (!result) {
+        return std::unexpected(result.error());
+    }
+    return std::move(value);
+}
+
+template <detail::TableReadable T>
 [[nodiscard]] std::expected<void, std::string>
     read_flatten_into(const toml::table& table, T& out, std::string_view context) noexcept {
-    auto result = out.read_from(table);
+    auto result = read_into(table, out);
     if (result) {
         return {};
     }

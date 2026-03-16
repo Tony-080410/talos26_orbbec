@@ -9,58 +9,6 @@
 namespace toml_helper::detail {
 
 template <typename T>
-inline constexpr bool is_std_optional_v = false;
-
-template <typename T>
-inline constexpr bool is_std_optional_v<std::optional<T>> = true;
-
-template <typename T>
-inline constexpr bool is_std_vector_v = false;
-
-template <typename T>
-inline constexpr bool is_std_vector_v<std::vector<T>> = true;
-
-template <typename T>
-inline constexpr bool is_std_array_v = false;
-
-template <typename T, std::size_t N>
-inline constexpr bool is_std_array_v<std::array<T, N>> = true;
-
-template <typename T>
-struct optional_value;
-
-template <typename T>
-struct optional_value<std::optional<T>> {
-    using type = T;
-};
-
-template <typename T>
-using optional_value_t = typename optional_value<T>::type;
-
-template <typename T>
-struct vector_value;
-
-template <typename T>
-struct vector_value<std::vector<T>> {
-    using type = T;
-};
-
-template <typename T>
-using vector_value_t = typename vector_value<T>::type;
-
-template <typename T>
-struct array_value;
-
-template <typename T, std::size_t N>
-struct array_value<std::array<T, N>> {
-    using type                        = T;
-    static constexpr std::size_t size = N;
-};
-
-template <typename T>
-using array_value_t = typename array_value<T>::type;
-
-template <typename T>
 [[nodiscard]] std::expected<T, std::string>
     parse_value(const toml::node& node, std::string_view context, bool ensure_all_tables_read);
 
@@ -142,8 +90,8 @@ template <typename T>
         return parse_scalar_node<T>(node, context);
     } else if constexpr (std::is_enum_v<T>) {
         return parse_enum_node<T>(node, context);
-    } else if constexpr (ReadFrom<T>) {
-        auto parsed = parse_read_from_node<T>(node, context);
+    } else if constexpr (TableReadable<T>) {
+        auto parsed = parse_object_from_node<T>(node, context);
         if (!parsed) {
             return std::unexpected(parsed.error());
         }

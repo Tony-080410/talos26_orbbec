@@ -1,6 +1,6 @@
 # toml-helper 快速参考
 
-TOML 配置解析 - `READ` 宏, `merge_configs`, `read_from`
+TOML 配置解析 - `READ` 宏, `merge_configs`, `read_from`, `from_table`
 
 ## 30秒速查
 
@@ -9,6 +9,8 @@ TOML 配置解析 - `READ` 宏, `merge_configs`, `read_from`
 | **读取必需字段**     | `READ(tbl, variable);`                           |
 | **读取可选字段**     | `READ_OPT(tbl, variable);`                       |
 | **平铺读取嵌套结构** | `READ_FLATTEN(tbl, nested_struct);`              |
+| **反射式读取对象**   | `auto cfg = toml_helper::from_table<Config>(tbl);` |
+| **写入已有对象**     | `toml_helper::read_into(tbl, cfg);`              |
 | **检查是否有未读键** | `ensure_all_read(tbl, "context");`               |
 | **合并两个配置文件** | `merge_configs(base.table(), override.table());` |
 | **解析 TOML 文件**   | `auto tbl = toml::parse_file("path.toml");`      |
@@ -27,6 +29,40 @@ TOML 配置解析 - `READ` 宏, `merge_configs`, `read_from`
 ```
 
 兼容旧代码时，仍可使用 `toml_helper.hpp`、`toml_helper_containers.hpp`、`toml_helper_eigen.hpp`。
+
+---
+
+## 反射式无样板写法
+
+```cpp
+#include "toml/core.hpp"
+#include "toml/ext/containers.hpp"
+
+struct CameraIntrinsics {
+    double fx = 1000.0;
+    double fy = 1000.0;
+    std::optional<double> cx{};   // default = nullopt -> required
+    std::optional<double> cy = 540.0; // default 已 engaged -> 缺失时保留默认
+};
+
+struct CameraConfig {
+    std::string model = "HIK";
+    toml_helper::flatten<CameraIntrinsics> camera{};
+    std::optional<int> fps = 60;
+};
+
+auto parsed = toml::parse_file("camera.toml");
+auto cfg = toml_helper::from_table<CameraConfig>(parsed.table());
+```
+
+反射模式的缺失键语义：
+
+- plain `T` 缺失时保留当前成员值
+- `std::optional<T>{}` 缺失时报错
+- `std::optional<T>{value}` 缺失时保留默认值
+- `toml_helper::flatten<T>` 从当前表直接消费 `T` 的字段
+
+旧的 `read_from + READ/READ_OPT/READ_FLATTEN` 仍然可用，适合保留特殊解析逻辑的类型。
 
 ---
 

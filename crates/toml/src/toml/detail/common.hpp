@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <concepts>
 #include <cstdint>
 #include <expected>
@@ -9,6 +10,7 @@
 #include <string_view>
 #include <type_traits>
 #include <utility>
+#include <vector>
 
 #ifndef MAGIC_ENUM_RANGE_MIN
 # define MAGIC_ENUM_RANGE_MIN 0
@@ -16,6 +18,7 @@
 #ifndef MAGIC_ENUM_RANGE_MAX
 # define MAGIC_ENUM_RANGE_MAX 16
 #endif
+#include <field_reflection.hpp>
 #include <magic_enum.hpp>
 
 #define TOML_HEADER_ONLY 0
@@ -35,6 +38,37 @@ concept TomlScalarValue = std::is_arithmetic_v<T> || std::is_same_v<T, std::stri
                        || std::is_same_v<T, toml::time> || std::is_same_v<T, toml::date_time>;
 
 template <typename T>
+concept Reflectable = field_reflection::field_referenceable<std::remove_cvref_t<T>>
+                   && field_reflection::field_namable<std::remove_cvref_t<T>>;
+
+template <typename T>
+struct flatten {
+    T value{};
+
+    [[nodiscard]] constexpr T& get() noexcept { return value; }
+    [[nodiscard]] constexpr const T& get() const noexcept { return value; }
+
+    [[nodiscard]] constexpr T* operator->() noexcept { return &value; }
+    [[nodiscard]] constexpr const T* operator->() const noexcept { return &value; }
+
+    [[nodiscard]] constexpr T& operator*() noexcept { return value; }
+    [[nodiscard]] constexpr const T& operator*() const noexcept { return value; }
+
+    constexpr operator T&() noexcept { return value; }
+    constexpr operator const T&() const noexcept { return value; }
+
+    constexpr flatten& operator=(const T& rhs) {
+        value = rhs;
+        return *this;
+    }
+
+    constexpr flatten& operator=(T&& rhs) noexcept(std::is_nothrow_move_assignable_v<T>) {
+        value = std::move(rhs);
+        return *this;
+    }
+};
+
+template <typename T>
 requires(std::is_enum_v<T>) [[nodiscard]] inline std::string enum_options() {
     auto all = magic_enum::enum_names<T>();
     std::string options;
@@ -51,6 +85,75 @@ namespace detail {
 
 template <typename>
 inline constexpr bool always_false_v = false;
+
+template <typename T>
+inline constexpr bool is_flatten_v = false;
+
+template <typename T>
+inline constexpr bool is_flatten_v<flatten<T>> = true;
+
+template <typename T>
+struct flatten_value;
+
+template <typename T>
+struct flatten_value<flatten<T>> {
+    using type = T;
+};
+
+template <typename T>
+using flatten_value_t = typename flatten_value<T>::type;
+
+template <typename T>
+inline constexpr bool is_std_optional_v = false;
+
+template <typename T>
+inline constexpr bool is_std_optional_v<std::optional<T>> = true;
+
+template <typename T>
+struct optional_value;
+
+template <typename T>
+struct optional_value<std::optional<T>> {
+    using type = T;
+};
+
+template <typename T>
+using optional_value_t = typename optional_value<T>::type;
+
+template <typename T>
+inline constexpr bool is_std_vector_v = false;
+
+template <typename T>
+inline constexpr bool is_std_vector_v<std::vector<T>> = true;
+
+template <typename T>
+struct vector_value;
+
+template <typename T>
+struct vector_value<std::vector<T>> {
+    using type = T;
+};
+
+template <typename T>
+using vector_value_t = typename vector_value<T>::type;
+
+template <typename T>
+inline constexpr bool is_std_array_v = false;
+
+template <typename T, std::size_t N>
+inline constexpr bool is_std_array_v<std::array<T, N>> = true;
+
+template <typename T>
+struct array_value;
+
+template <typename T, std::size_t N>
+struct array_value<std::array<T, N>> {
+    using type                        = T;
+    static constexpr std::size_t size = N;
+};
+
+template <typename T>
+using array_value_t = typename array_value<T>::type;
 
 [[nodiscard]] inline const char* node_type_name(toml::node_type t) noexcept {
     switch (t) {
@@ -245,7 +348,7 @@ template <typename T, typename ParseFn>
     return as_optional(std::forward<ParseFn>(parse_fn)(*node));
 }
 
-template <ReadFrom T>
+template <typename T>
 struct parsed_table_value {
     T value;
     const toml::table* parsed_table;

@@ -28,6 +28,10 @@ fetch_dependency(NAME nlohmann_json
                  REPO nlohmann/json
                  VERSION v3.12.0)
 
+fetch_dependency(NAME field_reflection
+                 REPO yosh-matsuda/field-reflection
+                 VERSION v0.2.1)
+
 fetch_dependency(NAME tomlplusplus
                  REPO marzer/tomlplusplus
                  VERSION v3.4.0)
