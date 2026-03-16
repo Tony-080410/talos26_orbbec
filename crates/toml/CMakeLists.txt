@@ -4,4 +4,6 @@ crate(
     DEPS
         toml_impl
         fmt::fmt
+        magic_enum
+        Eigen3::Eigen
 )

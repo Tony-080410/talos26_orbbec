@@ -16,7 +16,6 @@
 #include "talos_gimbal/stm32.hpp"
 
 #include <atomic>
-#include <chrono>
 #include <cstdint>
 #include <memory>
 #include <utility>
@@ -80,6 +79,7 @@ using UsbDevice = talos_gimbal::Stm32Impl<talos_gimbal::Stm32Parser>;
 static talos_gimbal::ReceiveImuData g_imu_data{};
 
 struct UsbImu {
+    McuConfig config;
     std::shared_ptr<UsbDevice> device;
     talos_gimbal::ReceiveImuData* imu_data = nullptr;
 
@@ -94,17 +94,25 @@ struct UsbImu {
             timestamp_ns);
         fast_tf::update_rotate_only<fast_tf::gimbal_pitch_fuxk_frame>(
             *tf_buffer, math_fuxk::rpy<double>(0.0, imu_data->data.pitch, 0.0), timestamp_ns);
-        double new_speed = imu_data->data.bullet_speed;
-        if (new_speed != bullet_speed->bullet_speed) [[unlikely]] {
-            SPDLOG_INFO("bullet speed changed: {} -> {}", bullet_speed->bullet_speed, new_speed);
-            bullet_speed->bullet_speed = new_speed;
+        if (config.dynamic_bullet_speed) {
+            double new_speed = std::clamp(
+                static_cast<double>(imu_data->data.bullet_speed), config.bullet_speed_min,
+                config.bullet_speed_max);
+            if (new_speed != bullet_speed->bullet_speed) [[unlikely]] {
+                SPDLOG_INFO(
+                    "bullet speed changed: {} -> {}", bullet_speed->bullet_speed, new_speed);
+                bullet_speed->bullet_speed = new_speed;
+            }
         }
-        auto new_detecting_color = imu_data->data.self_color == talos_gimbal::Color::Blue
-                                     ? ArmorColor::Red
-                                     : ArmorColor::Blue;
-        if (new_detecting_color != *detecting_color) [[unlikely]] {
-            SPDLOG_INFO("detecting color changed: {} -> {}", *detecting_color, new_detecting_color);
-            *detecting_color = new_detecting_color;
+        if (config.dynamic_self_color) {
+            auto new_detecting_color = imu_data->data.self_color == talos_gimbal::Color::Blue
+                                         ? ArmorColor::Red
+                                         : ArmorColor::Blue;
+            if (new_detecting_color != *detecting_color) [[unlikely]] {
+                SPDLOG_INFO(
+                    "detecting color changed: {} -> {}", *detecting_color, new_detecting_color);
+                *detecting_color = new_detecting_color;
+            }
         }
         imu_state->yaw_vel   = imu_data->data.yaw_vel;
         imu_state->pitch_vel = imu_data->data.pitch_vel;
@@ -167,11 +175,14 @@ std::expected<L1L2SetupResult, std::string> setup_l1(
         const auto& config = *hardware;
 
         auto usb_device = std::make_shared<UsbDevice>();
-        if (config.imu_product_id_opt()) {
+        auto mcu_config = config.mcu;
+        if (mcu_config.mcu_product_id) {
             SPDLOG_INFO(
-                "connecting to USB {:#x}:{:#x}", config.imu_vendor_id, config.imu_product_id);
+                "connecting to USB {:#x}:{:#x}", mcu_config.mcu_vendor_id,
+                mcu_config.mcu_product_id);
         } else {
-            SPDLOG_INFO("connecting to USB {:#x} (product_id unspecified)", config.imu_vendor_id);
+            SPDLOG_INFO(
+                "connecting to USB {:#x} (product_id unspecified)", mcu_config.mcu_vendor_id);
         }
 
         SPDLOG_INFO("initializing hik input interface...");
@@ -182,7 +193,7 @@ std::expected<L1L2SetupResult, std::string> setup_l1(
 
         SPDLOG_INFO("connecting to USB device...");
         auto connect_result =
-            usb_device->connect(config.imu_vendor_id, config.imu_product_id_opt());
+            usb_device->connect(mcu_config.mcu_vendor_id, mcu_config.mcu_product_id);
         if (!connect_result) {
             return std::unexpected(fmt::format("connect USB device: {}", connect_result.error()));
         }
@@ -190,7 +201,7 @@ std::expected<L1L2SetupResult, std::string> setup_l1(
 
         camera    = std::make_shared<fcs::L1::CameraInterface>(std::move(*input_result));
         output    = std::make_shared<fcs::L1::OutputInterface>(fcs::L1::UsbOutput(usb_device));
-        imu->impl = UsbImu{usb_device, &g_imu_data};
+        imu->impl = UsbImu{mcu_config, usb_device, &g_imu_data};
     }
 
     const auto& cam_info = camera->camera_info();

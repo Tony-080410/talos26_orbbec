@@ -17,3 +17,22 @@ invert_image = false
 exposure_time_us = 5000  # 1.5ms in microseconds
 gain = 16.7
 # rotate_angle = "Clockwise270"
+
+# real value
+[extrinsic.gimbal_yaw.gimbal_pitch]
+translation = [-0.06492, 0, 0.164]
+
+camera_link.translation = [0.25391, 0.0735, 0.00639]
+camera_link.roll = 0.0
+camera_link.pitch = -1.0
+camera_link.yaw = -1.0
+
+muzzle_link.translation = [0.17605, 0, -0.03332]
+[mcu]
+untrust_roll = true
+dynamic_self_color = true
+dynamic_bullet_speed = true
+bullet_speed_default = 11.0
+
+bullet_speed_min = 10.0
+bullet_speed_max = 20.0

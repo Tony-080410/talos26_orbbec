@@ -1,13 +1,13 @@
 #pragma once
 
-#include <atomic>
+#include <Eigen/Core>
 #include <cstdint>
 #include <expected>
 #include <fmt/core.h>
-#include <memory>
 #include <optional>
 #include <string>
 
+#include "euler.hpp"
 #include "magic_enum.hpp"
 
 #include "L2_perception/armor/at_legacy_config.hpp"
@@ -33,20 +33,60 @@ struct FoxgloveConfig {
     std::expected<void, std::string> read_from(const toml::table& tbl) noexcept;
 };
 
+using degree = double;
+
+struct RobotExtrinsicConfig {
+    struct gimbal_yaw_t {
+        struct gimbal_pitch_t {
+            struct camera_link_t {
+                Eigen::Vector3d translation;
+                degree roll;
+                degree pitch;
+                degree yaw;
+
+                math_fuxk::Ros2EulerRotd rotation() const noexcept {
+                    return math_fuxk::rpy(roll, pitch, yaw);
+                }
+
+                std::expected<void, std::string> read_from(const toml::table& tbl) noexcept;
+            };
+            struct muzzle_link_t {
+                Eigen::Vector3d translation;
+                std::expected<void, std::string> read_from(const toml::table& tbl) noexcept;
+            };
+            Eigen::Vector3d translation;
+            camera_link_t camera_link;
+            muzzle_link_t muzzle_link;
+            std::expected<void, std::string> read_from(const toml::table& tbl) noexcept;
+        };
+        gimbal_pitch_t gimbal_pitch;
+        std::expected<void, std::string> read_from(const toml::table& tbl) noexcept;
+    };
+
+    gimbal_yaw_t gimbal_yaw;
+
+    std::expected<void, std::string> read_from(const toml::table& tbl) noexcept;
+};
+
 enum class RobotType { Infantry, Hero, Sentry, Drone };
+
+struct McuConfig {
+    uint16_t mcu_vendor_id{0x0483};
+    std::optional<uint16_t> mcu_product_id{0};
+    bool untrust_roll{true};
+    bool dynamic_self_color{true};
+    bool dynamic_bullet_speed{true};
+    double bullet_speed_default{22.0};
+    double bullet_speed_min{25.0};
+    double bullet_speed_max{15.0};
+
+    std::expected<void, std::string> read_from(const toml::table& tbl) noexcept;
+};
 
 struct HardwareConfig {
     CameraConfig camera{};
-    bool untrust_roll{true};
-    uint16_t imu_vendor_id{0x0483};
-    uint16_t imu_product_id{0};
-
-    [[nodiscard]] auto imu_product_id_opt() const noexcept {
-        if (imu_product_id == 0) {
-            return std::optional<uint16_t>{};
-        }
-        return std::optional<uint16_t>{imu_product_id};
-    }
+    McuConfig mcu;
+    RobotExtrinsicConfig extrinsic;
 
     std::expected<void, std::string> read_from(const toml::table& tbl) noexcept;
 };

@@ -18,8 +18,6 @@ using bullet_speed_mut = talos::res_mut<bullet_speed_data>;
 
 constexpr void register_resource(talos::Scheduler& scheduler, TrajectoryConfig&& config) noexcept {
     scheduler.world().insert_resource(config.model);
-    scheduler.world().insert_resource(
-        bullet_speed_data{.bullet_speed = config.default_bullet_speed});
     auto solver = solver::create_solver(config);
     scheduler.world().insert_resource(std::move(solver));
 }

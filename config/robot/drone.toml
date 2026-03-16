@@ -15,3 +15,22 @@ trigger_mode = false
 invert_image = false
 exposure_time_us = 5000  # 3ms in microseconds
 gain = 16.7
+
+# real value
+[extrinsic.gimbal_yaw.gimbal_pitch]
+translation = [-0.005, 0, -0.08364]
+
+camera_link.translation = [0.1521, 0.05096, -0.01642]
+camera_link.roll = 0.0
+camera_link.pitch = 0.0
+camera_link.yaw = 0.0
+
+muzzle_link.translation = [0.07527, 0.0, 0.0]
+
+[mcu]
+untrust_roll = true
+dynamic_self_color = true
+dynamic_bullet_speed = true
+bullet_speed_default = 25.0
+bullet_speed_min = 20
+bullet_speed_max = 25

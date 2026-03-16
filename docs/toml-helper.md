@@ -14,19 +14,27 @@ TOML 配置解析 - `READ` 宏, `merge_configs`, `read_from`
 | **解析 TOML 文件**   | `auto tbl = toml::parse_file("path.toml");`      |
 | **读取嵌套表**       | `READ(tbl, inner_struct);` (自动递归)            |
 | **读取枚举**         | `READ(tbl, enum_var);` (支持字符串/数字)         |
+| **读取 std::optional** | `READ_OPT(tbl, optional_var);` (缺失键时为空) |
+| **读取 std::vector** | `READ(tbl, vector_var);` (动态数组)              |
+| **读取 std::array**  | `READ(tbl, array_var);` (固定大小数组)           |
 
 ## 头文件
 
 ```cpp
-#include "toml_helper.hpp"
+#include "toml/core.hpp"
+#include "toml/ext/containers.hpp" // std::optional / std::vector / std::array
+#include "toml/ext/eigen.hpp"      // 需要 Eigen 扩展时再引入
 ```
+
+兼容旧代码时，仍可使用 `toml_helper.hpp`、`toml_helper_containers.hpp`、`toml_helper_eigen.hpp`。
 
 ---
 
 ## 完整配置系统示例
 
 ```cpp
-#include "toml_helper.hpp"
+#include "toml/core.hpp"
+#include "toml/ext/containers.hpp"
 #include <optional>
 #include <vector>
 
@@ -392,3 +400,198 @@ cy = 540.0
 exposure_time = 8000.0
 gain = 8.0
 ```
+
+---
+
+## 容器类型支持
+
+`toml_helper` 支持以下标准容器类型的自动解析：
+
+### std::optional<T>
+
+表示可选值。对于标准 TOML 配置:
+
+1. **键不存在** → `std::nullopt`
+2. **有效值** → `T`
+
+实现层也会把 `toml::node_type::none` 映射为 `std::nullopt`。
+
+```cpp
+struct CameraConfig {
+    std::optional<std::string> serial_number;  // 可选序列号
+    std::optional<int> exposure;               // 可选曝光时间
+    std::optional<double> gain;                // 可选增益
+
+    std::expected<void, std::string> read_from(const toml::table& tbl) noexcept {
+        READ_OPT(tbl, serial_number);
+        READ_OPT(tbl, exposure);
+        READ_OPT(tbl, gain);
+        return {};
+    }
+};
+```
+
+**对应的 TOML:**
+
+```toml
+# serial_number 缺失 → std::nullopt
+exposure = 8000
+gain = 1.25
+```
+
+### std::vector<T>
+
+动态大小数组,支持任意长度:
+
+```cpp
+struct MultiCameraConfig {
+    std::vector<int> camera_ids;               // 相机 ID 列表
+    std::vector<std::string> camera_models;    // 相机型号列表
+    std::vector<double> exposure_times;        // 曝光时间列表
+
+    std::expected<void, std::string> read_from(const toml::table& tbl) noexcept {
+        READ(tbl, camera_ids);
+        READ(tbl, camera_models);
+        READ(tbl, exposure_times);
+        return {};
+    }
+};
+```
+
+**对应的 TOML:**
+
+```toml
+camera_ids = [0, 1, 2]
+camera_models = ["HIK-2030", "HIK-2030", "Basler"]
+exposure_times = [5000.0, 8000.0, 10000.0]
+```
+
+**嵌套 ReadFrom 对象:**
+
+```cpp
+struct Point {
+    int x, y;
+    std::expected<void, std::string> read_from(const toml::table& tbl) noexcept {
+        READ(tbl, x);
+        READ(tbl, y);
+        return {};
+    }
+};
+
+struct PathConfig {
+    std::vector<Point> waypoints;  // 航点列表
+
+    std::expected<void, std::string> read_from(const toml::table& tbl) noexcept {
+        READ(tbl, waypoints);
+        return {};
+    }
+};
+```
+
+**对应的 TOML:**
+
+```toml
+waypoints = [
+    { x = 0, y = 0 },
+    { x = 1, y = 1 },
+    { x = 2, y = 2 }
+]
+```
+
+### std::array<T, N>
+
+固定大小数组,**严格验证元素数量**:
+
+```cpp
+struct PoseConfig {
+    std::array<double, 3> position;     // [x, y, z] 必须恰好 3 个元素
+    std::array<double, 4> orientation;  // [w, x, y, z] 必须恰好 4 个元素
+    std::array<int, 2> image_size;      // [width, height] 必须恰好 2 个元素
+
+    std::expected<void, std::string> read_from(const toml::table& tbl) noexcept {
+        READ(tbl, position);
+        READ(tbl, orientation);
+        READ(tbl, image_size);
+        return {};
+    }
+};
+```
+
+**对应的 TOML:**
+
+```toml
+position = [1.0, 2.0, 3.0]
+orientation = [1.0, 0.0, 0.0, 0.0]
+image_size = [1920, 1080]
+```
+
+**错误示例:**
+
+```toml
+# ❌ 错误: position 需要恰好 3 个元素,但只有 2 个
+position = [1.0, 2.0]
+
+# ❌ 错误: image_size 需要恰好 2 个元素,但有 3 个
+image_size = [1920, 1080, 30]
+```
+
+### 嵌套容器组合
+
+支持复杂的嵌套容器结构:
+
+```cpp
+struct RobotGroupConfig {
+    std::vector<std::string> names;                       // 机器人名称列表
+    std::vector<std::array<double, 3>> positions;         // 每个机器人的位置
+    std::optional<std::vector<double>> speeds;            // 整组速度配置 (可选)
+
+    std::expected<void, std::string> read_from(const toml::table& tbl) noexcept {
+        READ(tbl, names);
+        READ(tbl, positions);
+        READ_OPT(tbl, speeds);
+        return {};
+    }
+};
+```
+
+**对应的 TOML:**
+
+```toml
+names = ["robot1", "robot2", "robot3"]
+positions = [
+    [0.0, 0.0, 0.0],
+    [1.0, 1.0, 0.0],
+    [2.0, 0.0, 0.0]
+]
+speeds = [1.5, 0.0, 2.0]
+```
+
+### 容器元素的递归支持
+
+所有容器类型都支持递归解析,只要元素类型实现了 `Deserialize`:
+
+- ✅ `std::vector<int>` - 基本类型
+- ✅ `std::vector<std::string>` - 字符串
+- ✅ `std::vector<ReadFromStruct>` - 嵌套结构体
+- ✅ `std::vector<std::optional<int>>` - 嵌套 optional
+- ✅ `std::array<MyConfig, 3>` - 固定数量配置对象
+- ✅ `std::optional<std::vector<int>>` - 可选的向量
+
+---
+
+## 类型支持总结
+
+| 类型               | 支持 | 说明                           |
+| ------------------ | ---- | ------------------------------ |
+| bool               | ✅   | 布尔值                         |
+| 算术类型 (int, float) | ✅ | 数值,支持隐式转换            |
+| std::string        | ✅   | 字符串                         |
+| toml::date/time    | ✅   | 日期时间类型                   |
+| enum class         | ✅   | 枚举,支持字符串/数字           |
+| ReadFrom 结构体    | ✅   | 递归嵌套解析                   |
+| Eigen 矩阵         | ✅   | 固定大小矩阵                   |
+| **std::optional<T>**  | ✅   | **可选值 (缺失键时为空)**      |
+| **std::vector<T>**    | ✅   | **动态数组**                   |
+| **std::array<T, N>**  | ✅   | **固定大小数组 (严格验证)**    |
+| std::variant<...>  | ❌   | 暂不支持 (计划中)              |
+| std::map<K, V>    | ❌   | 暂不支持                       |

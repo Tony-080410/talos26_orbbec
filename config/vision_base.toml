@@ -125,9 +125,11 @@ type = "LinearDrag"
 
 iteration_times = 10
 
-default_bullet_speed = 25.0
 gravity = 9.7997
 resistance = 0.0005
+
+diameter = 0.017
+mass = 0.00312
 
 rho = 1.225
 

@@ -1,6 +1,3 @@
-untrust_roll = true
-debug_usb_raw = false  # 打印 USB 原始接收数据 (调试用)
-
 [camera]
 camera_matrix = [1804.9, 0, 700.121, 0, 1800.17, 635.201, 0, 0, 1]
 distort_coefficient = [-0.0886063, 0.280987, 0.00128406, -0.00286645, -0.603744]
@@ -16,3 +13,21 @@ trigger_mode = false
 invert_image = false
 exposure_time_us = 5000  # 3ms in microseconds
 gain = 16.7
+
+[extrinsic.gimbal_yaw.gimbal_pitch]
+translation = [0.0, 0.0, 0.0]
+
+camera_link.translation = [0, 0, 0]
+camera_link.roll = 0.0
+camera_link.pitch = 0.0
+camera_link.yaw = 0.0
+
+muzzle_link.translation = [0, 0, 0]
+
+[mcu]
+untrust_roll = true
+dynamic_self_color = true
+dynamic_bullet_speed = true
+bullet_speed_default = 22.0
+bullet_speed_min = 20
+bullet_speed_max = 25

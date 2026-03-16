@@ -1,7 +1,0 @@
-# Sentry Vision Configuration
-# extend from vision_base.toml
-
-trajectory.default_bullet_speed = 21.0
-
-trajectory.diameter = 0.017
-trajectory.mass = 0.00312

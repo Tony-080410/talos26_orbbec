@@ -1,4 +1,3 @@
-#include "drone.hpp"
 #include "fcs/L2_perception/armor/at_legacy_systems.hpp"
 #include "fcs/L2_perception/rune/rune_systems.hpp"
 #include "fcs/L3_estimation/energy_meter/energy_meter_systems.hpp"
@@ -10,12 +9,10 @@
 #include "fcs/core/trajectory/resource.hpp"
 #include "fcs/runtime/l1_l2_setup.hpp"
 #include "fcs_visualization/foxglove_systems.hpp"
-#include "hero.hpp"
-#include "infantry.hpp"
+#include "frame.hpp"
 #include "magic_enum.hpp"
 #include "scheduler/error_formatter.hpp"
 #include "scheduler/scheduler.hpp"
-#include "sentry.hpp"
 #include "spdlog_hook.hpp"
 #include "toml_helper.hpp"
 #include <chrono>
@@ -80,6 +77,45 @@ std::string strtolower(std::string_view str) {
     return result;
 }
 
+inline constexpr auto to_rad(double x) { return (x / 180.0) * CV_PI; }
+
+inline fast_tf::CoordinateSystem coord_new(fcs::RobotExtrinsicConfig config) {
+    auto system       = fast_tf::CoordinateSystem();
+    constexpr fp_t pi = std::numbers::pi;
+
+    update<fast_tf::odom>(system, {}, 0);
+    update<fast_tf::gimbal_yaw_fuxk_frame>(system, {}, 0);
+    auto a = config.gimbal_yaw.gimbal_pitch.translation;
+    update<fast_tf::gimbal_pitch_fuxk_frame>(
+        system,
+        fast_tf::EdgeTransform<fast_tf::gimbal_pitch_fuxk_frame>::from_translation(
+            a.x(), a.y(), a.z()),
+        0);
+
+    auto b = config.gimbal_yaw.gimbal_pitch.camera_link.translation;
+    auto c = config.gimbal_yaw.gimbal_pitch.camera_link.rotation();
+
+    update<fast_tf::camera_link_fuxk_frame>(
+        system,
+        fast_tf::EdgeTransform<fast_tf::camera_link_fuxk_frame>::from_rpy(
+            to_rad(c.roll), to_rad(c.pitch), to_rad(c.yaw), b.x(), b.y(), b.z()),
+        0);
+
+    update<fast_tf::camera_optical_fuxk_frame>(
+        system,
+        fast_tf::EdgeTransform<fast_tf::camera_optical_fuxk_frame>::from_rpy(
+            -pi / 2.0, 0.0, -pi / 2.0, 0.0, 0.0, 0.0),
+        0);
+
+    auto d = config.gimbal_yaw.gimbal_pitch.muzzle_link.translation;
+    update<fast_tf::muzzle_link_fuxk_frame>(
+        system,
+        fast_tf::EdgeTransform<fast_tf::muzzle_link_fuxk_frame>::from_translation(
+            d.x(), d.y(), d.z()),
+        0);
+    return system;
+}
+
 std::expected<
     std::tuple<
         fcs::RobotType, bool, std::optional<fcs::HardwareConfig>, fcs::FoxgloveConfig,
@@ -127,13 +163,6 @@ std::expected<
         return std::unexpected(fmt::format("vision config: {}", result.error()));
     }
 
-    // Early return for daedalus mode
-    if (launch_config.daedalus) {
-        return std::tuple(
-            launch_config.robot, true, std::optional<fcs::HardwareConfig>{},
-            std::move(launch_config.foxglove), std::move(vision_config));
-    }
-
     // Load hardware config
     std::string hardware_path = fmt::format("config/robot/{}.toml", robot_name);
     auto hardware_tbl         = toml::parse_file(hardware_path);
@@ -145,6 +174,12 @@ std::expected<
     fcs::HardwareConfig hardware_config;
     if (auto result = hardware_config.read_from(hardware_tbl.table()); !result) {
         return std::unexpected(fmt::format("hardware config: {}", result.error()));
+    }
+
+    if (launch_config.daedalus) {
+        return std::tuple(
+            launch_config.robot, true, std::optional<fcs::HardwareConfig>{},
+            std::move(launch_config.foxglove), std::move(vision_config));
     }
 
     return std::tuple(
@@ -168,27 +203,15 @@ int main() {
     talos::Scheduler scheduler(world);
 
     // Create coordinate system for fast_tf lookups (required by IMU and planning systems)
-    switch (robot) {
-    case fcs::RobotType::Infantry:
-        world.emplace_resource<fast_tf::CoordinateSystem>(fast_tf::infantry_new(0));
-        break;
-    case fcs::RobotType::Hero:
-        world.emplace_resource<fast_tf::CoordinateSystem>(fast_tf::hero_new(0));
-        break;
-    case fcs::RobotType::Sentry:
-        world.emplace_resource<fast_tf::CoordinateSystem>(fast_tf::sentry_new(0));
-        break;
-    case fcs::RobotType::Drone:
-        world.emplace_resource<fast_tf::CoordinateSystem>(fast_tf::drone_new(0));
-        break;
-    }
+    world.emplace_resource<fast_tf::CoordinateSystem>(coord_new(hardware->extrinsic));
 
     // Insert config as shared resource (for foxglove and other systems)
     world.insert_resource(robot);
 
     // Save config values for logging before move
-    const double bullet_speed = vision.trajectory.default_bullet_speed;
+    const double bullet_speed = hardware->mcu.bullet_speed_default;
 
+    world.insert_resource(fcs::core::trajectory::bullet_speed_data{.bullet_speed = bullet_speed});
     world.insert_resource(vision.at_legacy.default_detect_color);
     auto setup_result =
         fcs::runtime::setup_l1(world, scheduler, daedalus, hardware ? &*hardware : nullptr);

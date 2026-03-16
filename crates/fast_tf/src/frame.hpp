@@ -257,15 +257,9 @@ using CoordinateSystem = std::tuple<
     Buffer<
         EdgeTransform<gimbal_pitch_fuxk_frame>, coordinate_history_range_sec,
         coordinate_history_density>,
-    Buffer<
-        EdgeTransform<camera_link_fuxk_frame>, coordinate_history_range_sec,
-        coordinate_history_density>,
-    Buffer<
-        EdgeTransform<camera_optical_fuxk_frame>, coordinate_history_range_sec,
-        coordinate_history_density>,
-    Buffer<
-        EdgeTransform<muzzle_link_fuxk_frame>, coordinate_history_range_sec,
-        coordinate_history_density>>;
+    Buffer<EdgeTransform<camera_link_fuxk_frame>, 1, 1>,
+    Buffer<EdgeTransform<camera_optical_fuxk_frame>, 1, 1>,
+    Buffer<EdgeTransform<muzzle_link_fuxk_frame>, 1, 1>>;
 
 template <non_root_frame Layer, typename System>
 [[nodiscard]] constexpr decltype(auto) buffer_of(System&& system) noexcept {
