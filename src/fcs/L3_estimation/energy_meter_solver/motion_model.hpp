@@ -4,15 +4,6 @@
 #include "L3_estimation/energy_meter_solver/types.hpp"
 
 #include <Eigen/Core>
-#include <expected>
-#include <string>
-
-// Forward declaration to avoid including toml++ in headers.
-namespace toml {
-inline namespace v3 {
-class table;
-}
-} // namespace toml
 
 #include <cassert>
 #include <cmath>
@@ -35,8 +26,6 @@ struct EnergyMeter {
         Scalar radius{0.7};
 
         Scalar meas_dist_k{0.43};
-
-        std::expected<void, std::string> read_from(const toml::table& tbl) noexcept;
     };
 
     int armor_id{0};

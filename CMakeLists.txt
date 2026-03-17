@@ -142,18 +142,14 @@ add_subdirectory(crates/hardware_daedalus)
 # ============================================================================
 
 set(FCS_SOURCES
-        src/fcs/config.cpp
-        src/fcs/camera_config.cpp
         src/fcs/chiral/chiral_collector_system.cpp
         src/fcs/core/trajectory/solver/trajectory_solver.cpp
         src/fcs/L1_sensor/camera_interface.cpp
         src/fcs/L1_sensor/output_interface.cpp
         src/fcs/runtime/l1_l2_setup.cpp
-        src/fcs/L2_perception/armor/at_legacy_config.cpp
         src/fcs/L2_perception/armor/at_legacy_detector_backend.cpp
         src/fcs/L2_perception/armor/at_legacy_systems.cpp
         src/fcs/L2_perception/rune/rune_detector.cpp
-        src/fcs/L2_perception/rune/rune_config.cpp
         src/fcs/L2_perception/rune/rune_systems.cpp
         src/fcs/L2_perception/armor/backends/at_legacy_traditional_backend.cpp
         src/fcs/L2_perception/armor/backends/at_legacy_traditional_classifier.cpp
@@ -162,12 +158,9 @@ set(FCS_SOURCES
         src/fcs/L3_estimation/energy_meter_solver/angle_fitter.cpp
         src/fcs/L3_estimation/energy_meter_solver/energy_meter_tracker.cpp
         src/fcs/L3_estimation/energy_meter/energy_meter_systems.cpp
-        src/fcs/L4_planning/config.cpp
         src/fcs/L4_planning/aimer/aimer.cpp
         src/fcs/L4_planning/aimer/aimer_systems.cpp
-        src/fcs/L4_planning/planning/fire_decision.cpp
         src/fcs/L4_planning/planning_systems.cpp
-        src/fcs/L5_weapon/config.cpp
         src/fcs/L5_weapon/enhanced/trajectory_optimizer.cpp
         src/fcs/L5_weapon/enhanced/weapon_systems.cpp
 )

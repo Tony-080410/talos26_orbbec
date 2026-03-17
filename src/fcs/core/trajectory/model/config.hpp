@@ -1,6 +1,5 @@
 #pragma once
 
-#include "toml_helper.hpp"
 #include <cstdint>
 
 namespace toml::inline v3 {
@@ -34,17 +33,6 @@ struct ModelConfig {
 
     /// Bullet mass (kg), used by RK4Model only.
     double mass{0.0032};
-
-    std::expected<void, std::string> read_from(const toml::table& tbl) noexcept {
-        READ(tbl, type);
-        READ(tbl, iteration_times);
-        READ(tbl, gravity);
-        READ(tbl, resistance);
-        READ(tbl, rho);
-        READ(tbl, diameter);
-        READ(tbl, mass);
-        return {};
-    }
 };
 
 } // namespace fcs::core::trajectory::model

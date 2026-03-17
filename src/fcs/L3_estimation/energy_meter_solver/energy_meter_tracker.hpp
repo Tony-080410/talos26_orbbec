@@ -6,19 +6,11 @@
 #include <Eigen/Core>
 #include <Eigen/Geometry>
 #include <expected>
-#include <string>
 
 #include <array>
 #include <map>
 #include <optional>
 #include <vector>
-
-// Forward declaration to avoid including toml++ in headers.
-namespace toml {
-inline namespace v3 {
-class table;
-}
-} // namespace toml
 
 namespace energy_meter {
 
@@ -28,8 +20,6 @@ struct Tracker {
         int tracking_thres{3};
         double matcher_gate{25.0};
         EnergyMeter::Params energy_params{};
-
-        std::expected<void, std::string> read_from(const toml::table& tbl) noexcept;
     } params;
 
     enum State : uint8_t {

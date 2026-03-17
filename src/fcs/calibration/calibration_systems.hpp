@@ -137,7 +137,7 @@ void register_calibration_systems(
 
             // Get gimbal pose from TF buffer
             auto tf_result = fast_tf::lookup<fast_tf::odom, fast_tf::gimbal>(
-                **tf_buffer, detection->timestamp_ns);
+                *tf_buffer, detection->timestamp_ns);
 
             if (!tf_result) {
                 SPDLOG_WARN("TF lookup failed for handeye sample");

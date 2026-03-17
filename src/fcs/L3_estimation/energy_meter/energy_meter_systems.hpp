@@ -81,8 +81,6 @@ struct AngleFitterConfig {
     ///   In AngleFitter::fitAngleModelLSQ(), returns false if observations.size() < this value.
     ///   Big rune needs at least 3 points for [a, ω, φ, b, c]; small rune needs 2 for [ω, b].
     int min_data_points{15};
-
-    std::expected<void, std::string> read_from(const toml::table& tbl) noexcept;
 };
 
 // ============================================================================
@@ -113,10 +111,6 @@ struct EnergyMeterL3Config {
 
     /// Rune type: true for big rune (sinusoidal), false for small rune (linear).
     bool is_big_rune{true};
-
-    /// Parse configuration from TOML table.
-    /// Uses READ macro for required fields, READ_OPT for optional fields.
-    std::expected<void, std::string> read_from(const toml::table& tbl) noexcept;
 };
 
 /// Register energy meter L3 estimation systems with the talos scheduler.

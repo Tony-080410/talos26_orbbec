@@ -52,17 +52,10 @@ constexpr auto to_string(read_config_error err) -> std::string {
 using namespace std::chrono_literals;
 
 struct LaunchConfig {
-    bool daedalus;
-    fcs::RobotType robot;
-    std::string vision;
-    fcs::FoxgloveConfig foxglove;
-    std::expected<void, std::string> read_from(const toml::table& tbl) noexcept {
-        READ(tbl, daedalus);
-        READ(tbl, robot);
-        READ(tbl, vision);
-        READ(tbl, foxglove);
-        return {};
-    }
+    bool daedalus{};
+    fcs::RobotType robot{};
+    std::string vision{};
+    fcs::FoxgloveConfig foxglove{};
 };
 
 std::string strtolower(std::string_view str) {
@@ -128,13 +121,13 @@ std::expected<
         return std::unexpected(entry_tbl.error());
     }
 
-    LaunchConfig launch_config;
-    if (auto result = launch_config.read_from(entry_tbl.table()); !result) {
-        return std::unexpected(fmt::format("entry config: {}", result.error()));
+    auto launch_config = toml_helper::from_table<LaunchConfig>(entry_tbl.table());
+    if (!launch_config) {
+        return std::unexpected(fmt::format("entry config: {}", launch_config.error()));
     }
 
-    const auto robot_name            = strtolower(magic_enum::enum_name(launch_config.robot));
-    std::string vision_override_path = fmt::format("config/vision/{}.toml", launch_config.vision);
+    const auto robot_name            = strtolower(magic_enum::enum_name(launch_config->robot));
+    std::string vision_override_path = fmt::format("config/vision/{}.toml", launch_config->vision);
 
     // Parse base and override configs
     auto base_tbl = toml::parse_file("config/vision_base.toml");
@@ -158,9 +151,9 @@ std::expected<
         return std::unexpected(merged_vision.error());
     }
 
-    fcs::VisionConfig vision_config;
-    if (auto result = vision_config.read_from(*merged_vision); !result) {
-        return std::unexpected(fmt::format("vision config: {}", result.error()));
+    auto vision_config = toml_helper::from_table<fcs::VisionConfig>(*merged_vision);
+    if (!vision_config) {
+        return std::unexpected(fmt::format("vision config: {}", vision_config.error()));
     }
 
     // Load hardware config
@@ -171,20 +164,22 @@ std::expected<
             fmt::format("{}: {}", hardware_path, to_string(hardware_tbl.error())));
     }
 
-    fcs::HardwareConfig hardware_config;
-    if (auto result = hardware_config.read_from(hardware_tbl.table()); !result) {
-        return std::unexpected(fmt::format("hardware config: {}", result.error()));
+    auto hardware_config = toml_helper::from_table<fcs::HardwareConfig>(hardware_tbl.table());
+    if (!hardware_config) {
+        return std::unexpected(fmt::format("hardware config: {}", hardware_config.error()));
     }
 
-    if (launch_config.daedalus) {
+    if (launch_config->daedalus) {
         return std::tuple(
-            launch_config.robot, true, std::optional<fcs::HardwareConfig>{},
-            std::move(launch_config.foxglove), std::move(vision_config));
+            launch_config->robot, true,
+            std::optional<fcs::HardwareConfig>{std::move(*hardware_config)},
+            std::move(launch_config->foxglove), std::move(*vision_config));
     }
 
     return std::tuple(
-        launch_config.robot, false, std::optional<fcs::HardwareConfig>{std::move(hardware_config)},
-        std::move(launch_config.foxglove), std::move(vision_config));
+        launch_config->robot, false,
+        std::optional<fcs::HardwareConfig>{std::move(*hardware_config)},
+        std::move(launch_config->foxglove), std::move(*vision_config));
 }
 
 int main() {
@@ -212,7 +207,7 @@ int main() {
     const double bullet_speed = hardware->mcu.bullet_speed_default;
 
     world.insert_resource(fcs::core::trajectory::bullet_speed_data{.bullet_speed = bullet_speed});
-    world.insert_resource(vision.at_legacy.default_detect_color);
+    world.insert_resource(vision.at_legacy->default_detect_color);
     auto setup_result =
         fcs::runtime::setup_l1(world, scheduler, daedalus, hardware ? &*hardware : nullptr);
     if (!setup_result) {
@@ -220,7 +215,7 @@ int main() {
         return 3;
     }
 
-    auto backend_handle_result = fcs::L2::create_detector_backend_handle(vision.at_legacy);
+    auto backend_handle_result = fcs::L2::create_detector_backend_handle(vision.at_legacy.get());
     if (!backend_handle_result) {
         SPDLOG_CRITICAL("create detector backend: {}", backend_handle_result.error());
         return 4;
@@ -228,7 +223,7 @@ int main() {
 
     SPDLOG_INFO(
         "detector backend: {} (color={})", backend_handle_result->name,
-        vision.at_legacy.default_detect_color);
+        vision.at_legacy->default_detect_color);
 
     world.insert_resource(std::move(backend_handle_result->backend));
     world.insert_resource(fcs::L2::create_pnp_solver(setup_result.value().camera_config));
@@ -242,14 +237,14 @@ int main() {
     fcs::rune::register_rune_detection_systems(scheduler, std::move(vision.rune_detector));
 
     // Register L3 Tracker pipeline (Measurement -> TrackerOutput)
-    fcs::L3::register_tracker_systems(scheduler, std::move(vision.l3.tracker));
+    fcs::L3::register_tracker_systems(scheduler, std::move(vision.l3->tracker));
     fcs::energy_meter::register_energy_meter_systems(scheduler, std::move(vision.energy_meter));
 
     // Register L4 Planning pipeline (Aimer + Armor Plan Adapter)
-    fcs::L4::register_l4_planning_systems(scheduler, std::move(vision.l4));
+    fcs::L4::register_l4_planning_systems(scheduler, std::move(vision.l4.get()));
 
     // Register L5 MPC Weapon system (consumes GimbalPlan from L4)
-    fcs::L5::register_enhanced_weapon_system(scheduler, std::move(vision.l5.weapon));
+    fcs::L5::register_enhanced_weapon_system(scheduler, std::move(vision.l5->mpc_weapon));
 
     // Register Chiral data collection system (publishes TrackerOutput to shared memory)
     fcs::chiral::register_chiral_collector_system(scheduler);

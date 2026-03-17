@@ -1,13 +1,5 @@
 #pragma once
 
-#include <expected>
-
-// Forward declaration to avoid including toml++ in config headers.
-
-namespace toml::inline v3 {
-class table;
-}
-
 namespace fcs::L5 {
 
 struct MpcAxisConfig {
@@ -15,8 +7,6 @@ struct MpcAxisConfig {
     double q_vel{0.0};
     double r{1.0};
     double max_acc{50.0};
-
-    std::expected<void, std::string> read_from(const toml::table& tbl) noexcept;
 };
 
 struct MpcSolverConfig {
@@ -28,8 +18,6 @@ struct MpcSolverConfig {
     double rho{1.0};
     MpcAxisConfig yaw{9e6, 0.0, 1.0, 50.0};
     MpcAxisConfig pitch{9e6, 0.0, 1.0, 100.0};
-
-    std::expected<void, std::string> read_from(const toml::table& tbl) noexcept;
 };
 
 // ============================================================================
@@ -44,8 +32,6 @@ struct WeaponControllerConfig {
     double pitch_max{0.69813169};
 
     MpcSolverConfig mpc{};
-
-    std::expected<void, std::string> read_from(const toml::table& tbl) noexcept;
 };
 
 // ============================================================================
@@ -53,9 +39,7 @@ struct WeaponControllerConfig {
 // ============================================================================
 
 struct L5Config {
-    WeaponControllerConfig weapon{};
-
-    std::expected<void, std::string> read_from(const toml::table& tbl) noexcept;
+    WeaponControllerConfig mpc_weapon{};
 };
 
 } // namespace fcs::L5

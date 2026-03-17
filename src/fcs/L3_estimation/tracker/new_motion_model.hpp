@@ -2,7 +2,6 @@
 
 #include "util.hpp"
 
-#include "toml_helper.hpp"
 #include <Eigen/Core>
 #include <algorithm>
 #include <cmath>
@@ -63,27 +62,6 @@ struct RobotEkfMotionModel {
         Scalar center_meas_armor_yaw_var_floor = 9e-2;
         Scalar center_meas_armor_yaw_range_k   = 1.0 / 200.0;
         Scalar center_meas_cov_inflation       = 1.2;
-        std::expected<void, std::string> read_from(const toml::table& tbl) noexcept {
-            READ(tbl, sigma_a_xy);
-            READ(tbl, sigma_a_z);
-            READ(tbl, sigma_a_yaw);
-            READ(tbl, sigma_r0);
-            READ(tbl, sigma_r1);
-            READ(tbl, sigma_h);
-            READ_OPT(tbl, meas_yaw_var_floor);
-            READ_OPT(tbl, meas_pitch_var_floor);
-            READ_OPT(tbl, meas_dist_var_floor);
-            READ_OPT(tbl, meas_dist_delta_angle_k);
-            READ_OPT(tbl, meas_armor_yaw_var_floor);
-            READ_OPT(tbl, meas_armor_yaw_range_k);
-            READ_OPT(tbl, center_meas_yaw_var_floor);
-            READ_OPT(tbl, center_meas_pitch_var_floor);
-            READ_OPT(tbl, center_meas_dist_var_floor);
-            READ_OPT(tbl, center_meas_armor_yaw_var_floor);
-            READ_OPT(tbl, center_meas_armor_yaw_range_k);
-            READ_OPT(tbl, center_meas_cov_inflation);
-            return {};
-        }
     };
     Params params{};
 
@@ -226,14 +204,6 @@ struct OutpostEkfMotionModel {
         // 观测噪声（和距离、yaw 误差有关）
         Scalar meas_dist_k = 0.43;  // 距离权重的系数 K
         Scalar yaw_log_k   = 0.005; // yaw 噪声前的系数
-        std::expected<void, std::string> read_from(const toml::table& tbl) noexcept {
-            READ(tbl, sigma_q_xy);
-            READ(tbl, sigma_q_z);
-            READ(tbl, sigma_a_yaw);
-            READ_OPT(tbl, meas_dist_k);
-            READ_OPT(tbl, yaw_log_k);
-            return {};
-        }
     };
     Params params{};
 

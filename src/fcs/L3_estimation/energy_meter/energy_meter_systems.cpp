@@ -7,51 +7,14 @@
 #include "core/channel_topics.hpp"
 #include "core/time.hpp"
 #include "scheduler/scheduler.hpp"
-#include "toml_helper.hpp"
 
 #include <algorithm>
 #include <cmath>
 #include <memory>
 
-namespace fcs::energy_meter {
+namespace fcs::energy_meter {} // namespace fcs::energy_meter
 
-std::expected<void, std::string> EnergyMeterL3Config::read_from(const toml::table& tbl) noexcept {
-    READ_OPT(tbl, angle_fitter);
-    READ_OPT(tbl, tracker);
-    READ_OPT(tbl, control_delay_s);
-    READ_OPT(tbl, is_big_rune);
-    return {};
-}
-
-std::expected<void, std::string> AngleFitterConfig::read_from(const toml::table& tbl) noexcept {
-    READ_OPT(tbl, smooth_alpha);
-    READ_OPT(tbl, min_data_points);
-    return {};
-}
-
-} // namespace fcs::energy_meter
-
-// Define Tracker::Params::read_from in the correct namespace
-namespace energy_meter {
-
-std::expected<void, std::string> Tracker::Params::read_from(const toml::table& tbl) noexcept {
-    READ_OPT(tbl, lost_thres);
-    READ_OPT(tbl, tracking_thres);
-    READ_OPT(tbl, matcher_gate);
-    READ_OPT(tbl, energy_params);
-    return {};
-}
-
-std::expected<void, std::string> EnergyMeter::Params::read_from(const toml::table& tbl) noexcept {
-    READ_OPT(tbl, sigma_xy);
-    READ_OPT(tbl, sigma_z);
-    READ_OPT(tbl, sigma_roll);
-    READ_OPT(tbl, radius);
-    READ_OPT(tbl, meas_dist_k);
-    return {};
-}
-
-} // namespace energy_meter
+namespace energy_meter {}      // namespace energy_meter
 
 namespace fcs::energy_meter {
 

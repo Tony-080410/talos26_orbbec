@@ -3,14 +3,7 @@
 #include "core/armor_types.hpp"
 
 #include <array>
-#include <expected>
 #include <string>
-// Forward declaration to avoid including toml++ in config headers.
-namespace toml {
-inline namespace v3 {
-class table;
-}
-} // namespace toml
 
 namespace fcs::L2 {
 
@@ -33,29 +26,27 @@ enum class AtLegacyBackendTypeConfig : int {
 struct AtLegacyTraditionalConfig {
     bool advanced_binary = false;
     float dark_percentage{0.5};
-    int binary_threshold;
+    int binary_threshold{};
 
     // Light detection parameters
-    double light_min_ratio;
-    double light_max_ratio;
-    double light_max_angle;
-    int light_color_diff_thresh;
+    double light_min_ratio{};
+    double light_max_ratio{};
+    double light_max_angle{};
+    int light_color_diff_thresh{};
 
     // Armor matching parameters
-    double armor_min_light_ratio;
-    double armor_min_small_center_distance;
-    double armor_max_small_center_distance;
-    double armor_min_large_center_distance;
-    double armor_max_large_center_distance;
-    double armor_max_angle;
+    double armor_min_light_ratio{};
+    double armor_min_small_center_distance{};
+    double armor_max_small_center_distance{};
+    double armor_min_large_center_distance{};
+    double armor_max_large_center_distance{};
+    double armor_max_angle{};
 
     // Classifier parameters
-    std::string classifier_model_path;
+    std::string classifier_model_path{};
     double classifier_confidence_threshold = 0.5;
     bool classifier_enable_type_filtering  = true;
     bool classifier_use_softmax            = true; // Legacy networks output logits, need softmax
-
-    std::expected<void, std::string> read_from(const toml::table& tbl) noexcept;
 };
 
 // ============================================================================
@@ -63,17 +54,15 @@ struct AtLegacyTraditionalConfig {
 // ============================================================================
 
 struct AtLegacyNNConfig {
-    std::string model_path;
-    std::string device;
-    std::string device_priorities;
-    bool enable_profiling;
-    bool enable_multi_thread;
+    std::string model_path{};
+    std::string device{};
+    std::string device_priorities{};
+    bool enable_profiling{};
+    bool enable_multi_thread{};
 
-    double confidence_threshold;
-    double nms_threshold;
-    int top_k;
-
-    std::expected<void, std::string> read_from(const toml::table& tbl) noexcept;
+    double confidence_threshold{};
+    double nms_threshold{};
+    int top_k{};
 };
 
 // ============================================================================
@@ -81,17 +70,15 @@ struct AtLegacyNNConfig {
 // ============================================================================
 
 struct AtLegacyNNTupConfig {
-    std::string model_path;
-    std::string device;
-    std::string device_priorities;
-    bool enable_profiling;
-    bool enable_multi_thread;
+    std::string model_path{};
+    std::string device{};
+    std::string device_priorities{};
+    bool enable_profiling{};
+    bool enable_multi_thread{};
 
-    double confidence_threshold;
-    double nms_threshold;
-    int top_k;
-
-    std::expected<void, std::string> read_from(const toml::table& tbl) noexcept;
+    double confidence_threshold{};
+    double nms_threshold{};
+    int top_k{};
 };
 
 #if TALOS_HAS_TENSORRT
@@ -100,9 +87,9 @@ struct AtLegacyNNTupConfig {
 // ============================================================================
 
 struct AtLegacyTrtConfig {
-    std::string engine_path;
-    std::string model_path;
-    std::string engine_cache_dir;
+    std::string engine_path{};
+    std::string model_path{};
+    std::string engine_cache_dir{};
 
     // Device and concurrency
     int device_id                  = 0;
@@ -118,8 +105,6 @@ struct AtLegacyTrtConfig {
     double confidence_threshold = 0.75;
     double nms_threshold        = 0.30;
     int top_k                   = 128;
-
-    std::expected<void, std::string> read_from(const toml::table& tbl) noexcept;
 };
 #endif
 
@@ -129,13 +114,11 @@ struct AtLegacyTrtConfig {
 // ============================================================================
 
 struct AtLegacyAxeraConfig {
-    std::string model_path;
+    std::string model_path{};
 
     // Detection parameters
     double confidence_threshold = 0.25;
     int top_k                   = 128;
-
-    std::expected<void, std::string> read_from(const toml::table& tbl) noexcept;
 };
 #endif
 
@@ -145,7 +128,7 @@ struct AtLegacyAxeraConfig {
 
 struct AtLegacyConfig {
     AtLegacyBackendTypeConfig backend_type = AtLegacyBackendTypeConfig::Traditional;
-    ArmorColor default_detect_color; // 0=BLUE, 1=RED
+    ArmorColor default_detect_color{}; // 0=BLUE, 1=RED
     AtLegacyTraditionalConfig traditional{};
     AtLegacyNNConfig nn{};
     AtLegacyNNTupConfig nn_tup{};
@@ -155,8 +138,6 @@ struct AtLegacyConfig {
 #if TALOS_HAS_AXERA
     AtLegacyAxeraConfig axera{};
 #endif
-
-    std::expected<void, std::string> read_from(const toml::table& tbl) noexcept;
 };
 
 } // namespace fcs::L2

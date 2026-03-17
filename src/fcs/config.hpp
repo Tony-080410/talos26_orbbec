@@ -2,7 +2,6 @@
 
 #include <Eigen/Core>
 #include <cstdint>
-#include <expected>
 #include <fmt/core.h>
 #include <optional>
 #include <string>
@@ -18,19 +17,12 @@
 #include "L5_weapon/config.hpp"
 #include "camera_config.hpp"
 
-// Forward declaration to avoid including toml++/toml_helper in public headers.
-namespace toml::inline v3 {
-class table;
-}
-
 namespace fcs {
 
 struct FoxgloveConfig {
     bool enabled{true};
     std::string host{"0.0.0.0"};
     uint16_t port{8765};
-
-    std::expected<void, std::string> read_from(const toml::table& tbl) noexcept;
 };
 
 using degree = double;
@@ -39,33 +31,26 @@ struct RobotExtrinsicConfig {
     struct gimbal_yaw_t {
         struct gimbal_pitch_t {
             struct camera_link_t {
-                Eigen::Vector3d translation;
-                degree roll;
-                degree pitch;
-                degree yaw;
+                Eigen::Vector3d translation{};
+                degree roll{};
+                degree pitch{};
+                degree yaw{};
 
                 math_fuxk::Ros2EulerRotd rotation() const noexcept {
                     return math_fuxk::rpy(roll, pitch, yaw);
                 }
-
-                std::expected<void, std::string> read_from(const toml::table& tbl) noexcept;
             };
             struct muzzle_link_t {
-                Eigen::Vector3d translation;
-                std::expected<void, std::string> read_from(const toml::table& tbl) noexcept;
+                Eigen::Vector3d translation{};
             };
-            Eigen::Vector3d translation;
-            camera_link_t camera_link;
-            muzzle_link_t muzzle_link;
-            std::expected<void, std::string> read_from(const toml::table& tbl) noexcept;
+            Eigen::Vector3d translation{};
+            camera_link_t camera_link{};
+            muzzle_link_t muzzle_link{};
         };
-        gimbal_pitch_t gimbal_pitch;
-        std::expected<void, std::string> read_from(const toml::table& tbl) noexcept;
+        gimbal_pitch_t gimbal_pitch{};
     };
 
-    gimbal_yaw_t gimbal_yaw;
-
-    std::expected<void, std::string> read_from(const toml::table& tbl) noexcept;
+    gimbal_yaw_t gimbal_yaw{};
 };
 
 enum class RobotType { Infantry, Hero, Sentry, Drone };
@@ -79,36 +64,32 @@ struct McuConfig {
     double bullet_speed_default{22.0};
     double bullet_speed_min{25.0};
     double bullet_speed_max{15.0};
-
-    std::expected<void, std::string> read_from(const toml::table& tbl) noexcept;
 };
 
 struct HardwareConfig {
     CameraConfig camera{};
-    McuConfig mcu;
-    RobotExtrinsicConfig extrinsic;
-
-    std::expected<void, std::string> read_from(const toml::table& tbl) noexcept;
+    McuConfig mcu{};
+    RobotExtrinsicConfig extrinsic{};
 };
 
 struct VisionConfig {
     core::trajectory::TrajectoryConfig trajectory{};
-    L2::AtLegacyConfig at_legacy{};
+    toml_helper::flatten<L2::AtLegacyConfig> at_legacy{};
     rune::RuneDetectorConfig rune_detector{};
 
-    L3::L3Config l3{};
+    toml_helper::flatten<L3::L3Config> l3{};
     energy_meter::EnergyMeterL3Config energy_meter{};
 
-    L4::L4Config l4{};
+    toml_helper::flatten<L4::L4Config> l4{};
 
-    L5::L5Config l5{};
+    toml_helper::flatten<L5::L5Config> l5{};
 
-    [[nodiscard]] const L3::TrackerConfig& tracker() const noexcept { return l3.tracker; }
-    [[nodiscard]] const L5::WeaponControllerConfig& weapon() const noexcept { return l5.weapon; }
-    [[nodiscard]] L3::TrackerConfig& tracker() noexcept { return l3.tracker; }
-    [[nodiscard]] L5::WeaponControllerConfig& weapon() noexcept { return l5.weapon; }
-
-    std::expected<void, std::string> read_from(const toml::table& tbl) noexcept;
+    [[nodiscard]] const L3::TrackerConfig& tracker() const noexcept { return l3->tracker; }
+    [[nodiscard]] const L5::WeaponControllerConfig& weapon() const noexcept {
+        return l5->mpc_weapon;
+    }
+    [[nodiscard]] L3::TrackerConfig& tracker() noexcept { return l3->tracker; }
+    [[nodiscard]] L5::WeaponControllerConfig& weapon() noexcept { return l5->mpc_weapon; }
 };
 
 } // namespace fcs

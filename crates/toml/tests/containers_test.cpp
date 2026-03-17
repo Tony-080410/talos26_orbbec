@@ -14,12 +14,6 @@ using namespace toml_helper;
 struct Point {
     int x = 0;
     int y = 0;
-
-    std::expected<void, std::string> read_from(const toml::table& tbl) noexcept {
-        READ(tbl, x);
-        READ(tbl, y);
-        return {};
-    }
 };
 
 TEST(TomlContainers, OptionalReadRequiresKey) {
@@ -44,18 +38,13 @@ TEST(TomlContainers, OptionalReadParsesValue) {
 TEST(TomlContainers, ReadOptLeavesOptionalDefaultOnMissingKey) {
     struct Config {
         std::optional<int> exposure = 42;
-
-        std::expected<void, std::string> read_from(const toml::table& tbl) noexcept {
-            READ_OPT(tbl, exposure);
-            return {};
-        }
     };
 
     const auto parsed = toml::parse("");
     ASSERT_TRUE(parsed);
 
-    Config config;
-    auto result = config.read_from(parsed.table());
+    Config config{};
+    auto result = read_into(parsed.table(), config);
     ASSERT_TRUE(result);
     ASSERT_TRUE(config.exposure.has_value());
     EXPECT_EQ(*config.exposure, 42);
@@ -64,18 +53,13 @@ TEST(TomlContainers, ReadOptLeavesOptionalDefaultOnMissingKey) {
 TEST(TomlContainers, ReadOptUpdatesOptionalFieldWhenPresent) {
     struct Config {
         std::optional<int> exposure = 42;
-
-        std::expected<void, std::string> read_from(const toml::table& tbl) noexcept {
-            READ_OPT(tbl, exposure);
-            return {};
-        }
     };
 
     const auto parsed = toml::parse("exposure = 7");
     ASSERT_TRUE(parsed);
 
-    Config config;
-    auto result = config.read_from(parsed.table());
+    Config config{};
+    auto result = read_into(parsed.table(), config);
     ASSERT_TRUE(result);
     ASSERT_TRUE(config.exposure.has_value());
     EXPECT_EQ(*config.exposure, 7);

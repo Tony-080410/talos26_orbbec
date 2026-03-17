@@ -2,14 +2,8 @@
 
 #include <algorithm>
 #include <cmath>
-#include <expected>
 #include <numbers>
 #include <string>
-
-// Forward declaration to avoid including toml++ in config headers.
-namespace toml::inline v3 {
-class table;
-}
 
 namespace fcs::L4 {
 
@@ -22,9 +16,6 @@ struct FireDecisionConfig {
     /// Physical window dimensions (meters)
     double shooting_range_h{0.135}; // Height
     double shooting_range_w{0.135}; // Width
-
-    /// Read configuration from TOML table
-    [[nodiscard]] std::expected<void, std::string> read_from(const toml::table& tbl) noexcept;
 };
 
 /// Check if target is within shootable range

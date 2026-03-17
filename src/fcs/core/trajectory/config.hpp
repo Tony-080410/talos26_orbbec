@@ -12,11 +12,7 @@ class table;
 namespace fcs::core::trajectory {
 
 struct TrajectoryConfig {
-    model::ModelConfig model{};
-    std::expected<void, std::string> read_from(const toml::table& tbl) noexcept {
-        READ_FLATTEN(tbl, model);
-        return {};
-    }
+    toml_helper::flatten<model::ModelConfig> model{};
 };
 
 } // namespace fcs::core::trajectory

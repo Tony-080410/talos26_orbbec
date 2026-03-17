@@ -21,7 +21,6 @@
 #include "core/channel_topics.hpp"
 #include "core/time.hpp"
 #include "foxglove_server.hpp"
-#include "robot_factory.hpp"
 #include "runtime/l1_l2_setup.hpp"
 #include "scheduler/scheduler.hpp"
 #include "toml_helper.hpp"
@@ -159,12 +158,12 @@ int main(int argc, char* argv[]) {
         }
 
         if (auto cam = loaded.table()["camera"].as_table()) {
-            fcs::CameraConfig cam_cfg;
-            if (auto res = cam_cfg.read_from(*cam); res) {
-                intrinsic_result->camera_matrix       = cam_cfg.camera_matrix;
-                intrinsic_result->distort_coefficient = cam_cfg.distort_coefficient;
-                intrinsic_result->width               = cam_cfg.width;
-                intrinsic_result->height              = cam_cfg.height;
+            auto cam_cfg = toml_helper::from_table<fcs::CameraConfig>(*cam);
+            if (cam_cfg) {
+                intrinsic_result->camera_matrix       = cam_cfg->camera_matrix;
+                intrinsic_result->distort_coefficient = cam_cfg->distort_coefficient;
+                intrinsic_result->width               = cam_cfg->width;
+                intrinsic_result->height              = cam_cfg->height;
                 SPDLOG_INFO("Loaded intrinsic calibration from {}", intrinsic_path);
             }
         }
@@ -186,8 +185,7 @@ int main(int argc, char* argv[]) {
     talos::Scheduler scheduler(world);
 
     // Create TF buffer
-    auto& tf_buffer = world.emplace_resource<fast_tf::CoordinateSystem>();
-    fast_tf::init_infantry_system(tf_buffer);
+    [[maybe_unused]] auto& tf_buffer = world.emplace_resource<fast_tf::CoordinateSystem>();
 
     // Create hardware config if using real hardware
     fcs::HardwareConfig hardware_config;
