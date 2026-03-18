@@ -1,6 +1,10 @@
 #include <gtest/gtest.h>
 
+#include <fmt/format.h>
+
 #include <optional>
+#include <string>
+#include <utility>
 #include <vector>
 
 #include "toml/core.hpp"
@@ -48,6 +52,11 @@ struct Waypoint {
 
 struct PathConfig {
     std::vector<Waypoint> points;
+};
+
+enum class PowerMode {
+    Off = 0,
+    On  = 1,
 };
 
 TEST(TomlReflection, FromTableReadsRequiredOptionalAndPlainDefaultFields) {
@@ -300,6 +309,352 @@ TEST(TomlReflection, ContainerParsersSupportReflectiveElementTypes) {
 
     auto check = ensure_all_read(parsed.table(), "path");
     ASSERT_TRUE(check);
+}
+
+TEST(TomlReflection, WrappersSupportOperatorsAssignmentsAndFormatting) {
+    required<int> engaged{7};
+    const required<int>& const_engaged = engaged;
+
+    EXPECT_TRUE(engaged.has_value());
+    EXPECT_EQ(engaged.get(), 7);
+    EXPECT_EQ(const_engaged.get(), 7);
+    EXPECT_EQ(*engaged, 7);
+    EXPECT_EQ(*const_engaged, 7);
+
+    int& as_ref             = engaged;
+    const int& as_const_ref = const_engaged;
+    EXPECT_EQ(as_ref, 7);
+    EXPECT_EQ(as_const_ref, 7);
+
+    *engaged.operator->() = 9;
+    EXPECT_EQ(engaged.get(), 9);
+    EXPECT_EQ(fmt::format("{}", engaged), "9");
+
+    required<std::string> moved{std::string("ready")};
+    std::string moved_value = std::move(moved).get();
+    EXPECT_EQ(moved_value, "ready");
+
+    flatten<CameraIntrinsics> intrinsics{};
+    intrinsics->fx                  = 1.5;
+    (*intrinsics).fy                = 2.5;
+    CameraIntrinsics& as_intrinsics = intrinsics;
+    EXPECT_DOUBLE_EQ(as_intrinsics.fx.get(), 1.5);
+    EXPECT_DOUBLE_EQ(as_intrinsics.fy.get(), 2.5);
+
+    CameraIntrinsics replacement{};
+    replacement.fx = 3.5;
+    replacement.fy = 4.5;
+    replacement.cx = 5.5;
+    intrinsics     = replacement;
+    EXPECT_DOUBLE_EQ(intrinsics->fx.get(), 3.5);
+    EXPECT_DOUBLE_EQ(intrinsics->fy.get(), 4.5);
+    ASSERT_TRUE(intrinsics->cx.has_value());
+    EXPECT_DOUBLE_EQ(*intrinsics->cx, 5.5);
+}
+
+TEST(TomlReflection, ReflectiveDeserializeSupportsReadOptionalAndTakeOptional) {
+    const auto parsed_direct = toml::parse(R"(
+        [camera]
+        model = "MV-CA013"
+        fps = 90
+        fx = 800.0
+        fy = 801.0
+
+        [camera.serial]
+        baud = 115200
+    )");
+    ASSERT_TRUE(parsed_direct);
+
+    auto direct = Deserialize<CameraConfig>::read(parsed_direct.table(), "camera");
+    ASSERT_TRUE(direct);
+    EXPECT_EQ(direct->model, "MV-CA013");
+    EXPECT_EQ(direct->fps, 90);
+    EXPECT_EQ(direct->serial.baud.get(), 115200);
+
+    const auto parsed_optional = toml::parse(R"(
+        [camera]
+        model = "MV-CA013"
+        fps = 90
+        fx = 800.0
+        fy = 801.0
+
+        [camera.serial]
+        baud = 115200
+    )");
+    ASSERT_TRUE(parsed_optional);
+
+    auto optional_read =
+        Deserialize<CameraConfig>::read_optional(parsed_optional.table(), "camera");
+    ASSERT_TRUE(optional_read);
+    ASSERT_TRUE(optional_read->has_value());
+    EXPECT_EQ((*optional_read)->serial.baud.get(), 115200);
+
+    const auto parsed_missing = toml::parse("");
+    ASSERT_TRUE(parsed_missing);
+
+    auto missing_optional =
+        Deserialize<CameraConfig>::read_optional(parsed_missing.table(), "missing");
+    ASSERT_TRUE(missing_optional);
+    EXPECT_FALSE(missing_optional->has_value());
+
+    auto parsed_take = toml::parse(R"(
+        [camera]
+        model = "MV-CA013"
+        fx = 800.0
+        fy = 801.0
+
+        [camera.serial]
+        baud = 115200
+    )");
+    ASSERT_TRUE(parsed_take);
+
+    auto taken = Deserialize<CameraConfig>::take_optional(parsed_take.table(), "camera");
+    ASSERT_TRUE(taken);
+    ASSERT_TRUE(taken->has_value());
+    EXPECT_EQ((*taken)->serial.baud.get(), 115200);
+    EXPECT_EQ(parsed_take.table().get("camera"), nullptr);
+}
+
+TEST(TomlReflection, ReflectiveDeserializeRejectsNonTableValues) {
+    const auto parsed = toml::parse("camera = 5");
+    ASSERT_TRUE(parsed);
+
+    auto result = Deserialize<CameraConfig>::read(parsed.table(), "camera");
+    ASSERT_FALSE(result);
+    EXPECT_EQ(result.error(), "Invalid value for key 'camera': expected table");
+}
+
+TEST(TomlReflection, RequiredDeserializerSupportsOptionalForms) {
+    const auto parsed = toml::parse("value = 42");
+    ASSERT_TRUE(parsed);
+
+    auto direct = Deserialize<required<int>>::read(parsed.table(), "value");
+    ASSERT_TRUE(direct);
+    EXPECT_EQ(direct->get(), 42);
+
+    auto optional_read = Deserialize<required<int>>::read_optional(parsed.table(), "value");
+    ASSERT_TRUE(optional_read);
+    ASSERT_TRUE(optional_read->has_value());
+    EXPECT_EQ((*optional_read)->get(), 42);
+
+    auto parsed_take = toml::parse("value = 42");
+    ASSERT_TRUE(parsed_take);
+
+    auto taken = Deserialize<required<int>>::take_optional(parsed_take.table(), "value");
+    ASSERT_TRUE(taken);
+    ASSERT_TRUE(taken->has_value());
+    EXPECT_EQ((*taken)->get(), 42);
+    EXPECT_EQ(parsed_take.table().get("value"), nullptr);
+
+    const auto missing = toml::parse("");
+    ASSERT_TRUE(missing);
+
+    auto missing_optional = Deserialize<required<int>>::read_optional(missing.table(), "value");
+    ASSERT_TRUE(missing_optional);
+    EXPECT_FALSE(missing_optional->has_value());
+}
+
+TEST(TomlReflection, EnumDeserializerAcceptsIntegralValuesAndRejectsInvalidInputs) {
+    const auto parsed_int = toml::parse("mode = 1");
+    ASSERT_TRUE(parsed_int);
+
+    auto int_result = read<PowerMode>(parsed_int.table(), "mode");
+    ASSERT_TRUE(int_result);
+    EXPECT_EQ(*int_result, PowerMode::On);
+
+    const auto parsed_bad_string = toml::parse("mode = 'invalid'");
+    ASSERT_TRUE(parsed_bad_string);
+
+    auto bad_string = read<PowerMode>(parsed_bad_string.table(), "mode");
+    ASSERT_FALSE(bad_string);
+    EXPECT_NE(
+        bad_string.error().find("Invalid enum value for key 'mode': 'invalid'"), std::string::npos);
+
+    const auto parsed_bad_type = toml::parse("mode = [1]");
+    ASSERT_TRUE(parsed_bad_type);
+
+    auto bad_type = read<PowerMode>(parsed_bad_type.table(), "mode");
+    ASSERT_FALSE(bad_type);
+    EXPECT_NE(
+        bad_type.error().find("expected enum as string/integer, got array"), std::string::npos);
+}
+
+TEST(TomlReflection, ReflectiveFieldKindsPropagateDeserializerFailures) {
+    struct RequiredValueConfig {
+        required<int> value{};
+    };
+    struct OptionalValueConfig {
+        std::optional<int> value{};
+    };
+    struct PlainValueConfig {
+        int value{};
+    };
+
+    const auto parsed = toml::parse("value = 'oops'");
+    ASSERT_TRUE(parsed);
+
+    auto required_result = from_table<RequiredValueConfig>(parsed.table());
+    ASSERT_FALSE(required_result);
+    EXPECT_EQ(
+        required_result.error(), "Invalid value for key 'value': expected integer, got string");
+
+    const auto parsed_optional = toml::parse("value = 'oops'");
+    ASSERT_TRUE(parsed_optional);
+
+    auto optional_result = from_table<OptionalValueConfig>(parsed_optional.table());
+    ASSERT_FALSE(optional_result);
+    EXPECT_EQ(
+        optional_result.error(), "Invalid value for key 'value': expected integer, got string");
+
+    const auto parsed_plain = toml::parse("value = 'oops'");
+    ASSERT_TRUE(parsed_plain);
+
+    auto plain_result = from_table<PlainValueConfig>(parsed_plain.table());
+    ASSERT_FALSE(plain_result);
+    EXPECT_EQ(plain_result.error(), "Invalid value for key 'value': expected integer, got string");
+}
+
+TEST(TomlReflection, ReflectiveDeserializeReportsNestedAndMissingTableErrors) {
+    const auto parsed_nested = toml::parse(R"(
+        [camera]
+        fy = 801.0
+
+        [camera.serial]
+        baud = 115200
+    )");
+    ASSERT_TRUE(parsed_nested);
+
+    auto nested_result = read<CameraConfig>(parsed_nested.table(), "camera");
+    ASSERT_FALSE(nested_result);
+    EXPECT_NE(
+        nested_result.error().find("camera: intrinsics: Missing key 'fx'"), std::string::npos);
+
+    const auto parsed_missing = toml::parse("");
+    ASSERT_TRUE(parsed_missing);
+
+    auto missing_result = read<CameraConfig>(parsed_missing.table(), "camera");
+    ASSERT_FALSE(missing_result);
+    EXPECT_EQ(missing_result.error(), "Missing table 'camera'");
+
+    const auto parsed_take = toml::parse("camera = 5");
+    ASSERT_TRUE(parsed_take);
+
+    auto take_result = Deserialize<CameraConfig>::take(parsed_take.table(), "camera");
+    ASSERT_FALSE(take_result);
+    EXPECT_EQ(take_result.error(), "Invalid value for key 'camera': expected table");
+}
+
+TEST(TomlReflection, RequiredDeserializerPropagatesErrorsAndMissingStates) {
+    const auto parsed_invalid = toml::parse("value = 'oops'");
+    ASSERT_TRUE(parsed_invalid);
+
+    auto read_result = Deserialize<required<int>>::read(parsed_invalid.table(), "value");
+    ASSERT_FALSE(read_result);
+    EXPECT_EQ(read_result.error(), "Invalid value for key 'value': expected integer, got string");
+
+    const auto parsed_optional_invalid = toml::parse("value = 'oops'");
+    ASSERT_TRUE(parsed_optional_invalid);
+
+    auto read_optional_result =
+        Deserialize<required<int>>::read_optional(parsed_optional_invalid.table(), "value");
+    ASSERT_FALSE(read_optional_result);
+    EXPECT_EQ(
+        read_optional_result.error(),
+        "Invalid value for key 'value': expected integer, got string");
+
+    const auto parsed_take_invalid = toml::parse("value = 'oops'");
+    ASSERT_TRUE(parsed_take_invalid);
+
+    auto take_optional_result =
+        Deserialize<required<int>>::take_optional(parsed_take_invalid.table(), "value");
+    ASSERT_FALSE(take_optional_result);
+    EXPECT_EQ(
+        take_optional_result.error(),
+        "Invalid value for key 'value': expected integer, got string");
+
+    const auto parsed_missing = toml::parse("");
+    ASSERT_TRUE(parsed_missing);
+
+    auto take_optional_missing =
+        Deserialize<required<int>>::take_optional(parsed_missing.table(), "value");
+    ASSERT_TRUE(take_optional_missing);
+    EXPECT_FALSE(take_optional_missing->has_value());
+}
+
+TEST(TomlReflection, ReflectiveOptionalEntryPointsPropagateUnreadAndParseErrors) {
+    const auto parsed_unread = toml::parse(R"(
+        [camera]
+        model = "MV-CA013"
+        fx = 800.0
+        fy = 801.0
+        extra = 1
+
+        [camera.serial]
+        baud = 115200
+    )");
+    ASSERT_TRUE(parsed_unread);
+
+    auto read_result = Deserialize<CameraConfig>::read(parsed_unread.table(), "camera");
+    ASSERT_FALSE(read_result);
+    EXPECT_NE(read_result.error().find("camera: unread keys"), std::string::npos);
+
+    const auto parsed_optional_unread = toml::parse(R"(
+        [camera]
+        model = "MV-CA013"
+        fx = 800.0
+        fy = 801.0
+        extra = 1
+
+        [camera.serial]
+        baud = 115200
+    )");
+    ASSERT_TRUE(parsed_optional_unread);
+
+    auto read_optional_unread =
+        Deserialize<CameraConfig>::read_optional(parsed_optional_unread.table(), "camera");
+    ASSERT_FALSE(read_optional_unread);
+    EXPECT_NE(read_optional_unread.error().find("camera: unread keys"), std::string::npos);
+
+    const auto parsed_optional_invalid = toml::parse("camera = 5");
+    ASSERT_TRUE(parsed_optional_invalid);
+
+    auto read_optional_invalid =
+        Deserialize<CameraConfig>::read_optional(parsed_optional_invalid.table(), "camera");
+    ASSERT_FALSE(read_optional_invalid);
+    EXPECT_EQ(read_optional_invalid.error(), "Invalid value for key 'camera': expected table");
+
+    const auto parsed_take_unread = toml::parse(R"(
+        [camera]
+        model = "MV-CA013"
+        fx = 800.0
+        fy = 801.0
+        extra = 1
+
+        [camera.serial]
+        baud = 115200
+    )");
+    ASSERT_TRUE(parsed_take_unread);
+
+    auto take_optional_unread =
+        Deserialize<CameraConfig>::take_optional(parsed_take_unread.table(), "camera");
+    ASSERT_FALSE(take_optional_unread);
+    EXPECT_NE(take_optional_unread.error().find("camera: unread keys"), std::string::npos);
+
+    const auto parsed_take_invalid = toml::parse("camera = 5");
+    ASSERT_TRUE(parsed_take_invalid);
+
+    auto take_optional_invalid =
+        Deserialize<CameraConfig>::take_optional(parsed_take_invalid.table(), "camera");
+    ASSERT_FALSE(take_optional_invalid);
+    EXPECT_EQ(take_optional_invalid.error(), "Invalid value for key 'camera': expected table");
+
+    const auto parsed_missing = toml::parse("");
+    ASSERT_TRUE(parsed_missing);
+
+    auto take_optional_missing =
+        Deserialize<CameraConfig>::take_optional(parsed_missing.table(), "camera");
+    ASSERT_TRUE(take_optional_missing);
+    EXPECT_FALSE(take_optional_missing->has_value());
 }
 
 } // namespace

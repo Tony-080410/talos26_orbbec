@@ -120,6 +120,42 @@ TEST(TomlContainers, ReadIntoFailureDoesNotMutateReadFromObject) {
     EXPECT_EQ(config.gain, 42);
 }
 
+TEST(TomlContainers, ReadFromReadPopulatesRequiredAndPlainFieldsOnSuccess) {
+    struct RequiredMacroConfig {
+        required<int> mode{};
+        int gain{7};
+
+        [[nodiscard]] std::expected<void, std::string>
+            read_from(const toml::table& table) noexcept {
+            READ(table, mode);
+            READ(table, gain);
+            return {};
+        }
+    };
+
+    const auto parsed = toml::parse(R"(
+        mode = 3
+        gain = 5
+    )");
+    ASSERT_TRUE(parsed);
+
+    RequiredMacroConfig config{};
+    auto result = read_into(parsed.table(), config);
+    ASSERT_TRUE(result);
+    EXPECT_EQ(config.mode.get(), 3);
+    EXPECT_EQ(config.gain, 5);
+}
+
+TEST(TomlContainers, ReadFromReadPropagatesPlainFieldParseErrors) {
+    const auto parsed = toml::parse("gain = 'oops'");
+    ASSERT_TRUE(parsed);
+
+    MacroConfig config{};
+    auto result = read_into(parsed.table(), config);
+    ASSERT_FALSE(result);
+    EXPECT_EQ(result.error(), "Invalid value for key 'gain': expected integer, got string");
+}
+
 TEST(TomlContainers, VectorReadParsesScalars) {
     const auto parsed = toml::parse("values = [1, 2, 3, 4, 5]");
     ASSERT_TRUE(parsed);
@@ -221,6 +257,88 @@ TEST(TomlContainers, ReadOptionalVectorMissingKeyReturnsOuterNullopt) {
     auto result = Deserialize<std::vector<int>>::read_optional(parsed.table(), "values");
     ASSERT_TRUE(result);
     EXPECT_FALSE(result->has_value());
+}
+
+TEST(TomlContainers, ReadOptionalVectorParsesPresentValue) {
+    const auto parsed = toml::parse("values = [1, 2, 3]");
+    ASSERT_TRUE(parsed);
+
+    auto result = Deserialize<std::vector<int>>::read_optional(parsed.table(), "values");
+    ASSERT_TRUE(result);
+    ASSERT_TRUE(result->has_value());
+    EXPECT_EQ((*result)->size(), 3U);
+    EXPECT_EQ((*result)->at(2), 3);
+}
+
+TEST(TomlContainers, OptionalReadRejectsInvalidInnerType) {
+    const auto parsed = toml::parse("value = 'oops'");
+    ASSERT_TRUE(parsed);
+
+    auto result = Deserialize<std::optional<int>>::read(parsed.table(), "value");
+    ASSERT_FALSE(result);
+    EXPECT_EQ(result.error(), "Invalid value for key 'value': expected integer, got string");
+}
+
+TEST(TomlContainers, VectorReadRejectsNonArrayValue) {
+    const auto parsed = toml::parse("values = 1");
+    ASSERT_TRUE(parsed);
+
+    auto result = Deserialize<std::vector<int>>::read(parsed.table(), "values");
+    ASSERT_FALSE(result);
+    EXPECT_EQ(result.error(), "Invalid value for key 'values': expected array, got integer");
+}
+
+TEST(TomlContainers, VectorTakeOptionalErasesValueOnSuccess) {
+    auto parsed = toml::parse("values = [1, 2, 3]");
+    ASSERT_TRUE(parsed);
+
+    auto result = Deserialize<std::vector<int>>::take_optional(parsed.table(), "values");
+    ASSERT_TRUE(result);
+    ASSERT_TRUE(result->has_value());
+    EXPECT_EQ((*result)->size(), 3U);
+    EXPECT_EQ(parsed.table().get("values"), nullptr);
+}
+
+TEST(TomlContainers, ArrayReadRejectsNonArrayValue) {
+    const auto parsed = toml::parse("triangle = 1");
+    ASSERT_TRUE(parsed);
+
+    auto result = Deserialize<std::array<Point, 3>>::read(parsed.table(), "triangle");
+    ASSERT_FALSE(result);
+    EXPECT_EQ(result.error(), "Invalid value for key 'triangle': expected array, got integer");
+}
+
+TEST(TomlContainers, ArrayReadRejectsNestedElementErrors) {
+    const auto parsed = toml::parse(R"(
+        triangle = [
+            { x = 0, y = 0 },
+            { x = 1, y = 0, extra = 5 },
+            { x = 0, y = 1 }
+        ]
+    )");
+    ASSERT_TRUE(parsed);
+
+    auto result = Deserialize<std::array<Point, 3>>::read(parsed.table(), "triangle");
+    ASSERT_FALSE(result);
+    EXPECT_NE(result.error().find("triangle[1]: unread keys"), std::string::npos);
+    EXPECT_NE(result.error().find("'extra'(integer)"), std::string::npos);
+}
+
+TEST(TomlContainers, ArrayTakeOptionalErasesValueOnSuccess) {
+    auto parsed = toml::parse(R"(
+        triangle = [
+            { x = 0, y = 0 },
+            { x = 1, y = 0 },
+            { x = 0, y = 1 }
+        ]
+    )");
+    ASSERT_TRUE(parsed);
+
+    auto result = Deserialize<std::array<Point, 3>>::take_optional(parsed.table(), "triangle");
+    ASSERT_TRUE(result);
+    ASSERT_TRUE(result->has_value());
+    EXPECT_EQ((*result)->at(1).x, 1);
+    EXPECT_EQ(parsed.table().get("triangle"), nullptr);
 }
 
 } // namespace
