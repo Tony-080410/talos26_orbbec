@@ -125,8 +125,9 @@ std::expected<
     if (!launch_config) {
         return std::unexpected(fmt::format("entry config: {}", launch_config.error()));
     }
+    auto launch = std::move(*launch_config);
 
-    std::string vision_override_path = fmt::format("config/vision/{}.toml", launch_config->vision);
+    std::string vision_override_path = fmt::format("config/vision/{}.toml", launch.vision);
 
     // Parse base and override configs
     auto base_tbl = toml::parse_file("config/vision_base.toml");
@@ -156,7 +157,7 @@ std::expected<
     }
 
     // Load hardware config
-    std::string hardware_path = fmt::format("config/robot/{}.toml", launch_config->robot);
+    std::string hardware_path = fmt::format("config/robot/{}.toml", launch.robot);
     auto hardware_tbl         = toml::parse_file(hardware_path);
     if (hardware_tbl.failed()) {
         return std::unexpected(
@@ -168,17 +169,17 @@ std::expected<
         return std::unexpected(fmt::format("hardware config: {}", hardware_config.error()));
     }
 
-    if (launch_config->daedalus) {
+    if (launch.daedalus) {
         return std::tuple(
             hardware_config->type, true,
             std::optional<fcs::HardwareConfig>{std::move(*hardware_config)},
-            std::move(launch_config->foxglove), std::move(*vision_config));
+            std::move(launch.foxglove), std::move(*vision_config));
     }
 
     return std::tuple(
         hardware_config->type, false,
-        std::optional<fcs::HardwareConfig>{std::move(*hardware_config)},
-        std::move(launch_config->foxglove), std::move(*vision_config));
+        std::optional<fcs::HardwareConfig>{std::move(*hardware_config)}, std::move(launch.foxglove),
+        std::move(*vision_config));
 }
 
 int main() {

@@ -34,6 +34,8 @@ template <ReflectDeserializeCandidate T>
     std::expected<void, std::string> result{};
     field_reflection::for_each_field(out, [&](std::string_view field_name, auto&& field) {
         if (!result) {
+            // field_reflection::for_each_field has no short-circuit hook; once a
+            // field fails, preserve that first error and skip subsequent work.
             return;
         }
         if (auto field_result = parse_reflected_field(table, field_name, field); !field_result) {

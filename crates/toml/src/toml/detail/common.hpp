@@ -72,7 +72,10 @@ struct flatten {
 
 template <typename T>
 struct required {
-    T value{};
+    // Parsing marker for fields that must appear in TOML. Keep the wrapper
+    // default-constructible so reflective configs can still be value-initialized
+    // before parsing, but do not manufacture a dummy T{}.
+    std::optional<T> value{};
 
     constexpr required() = default;
     constexpr required(const T& rhs)
@@ -80,19 +83,39 @@ struct required {
     constexpr required(T&& rhs) noexcept(std::is_nothrow_move_constructible_v<T>)
         : value(std::move(rhs)) {}
 
-    [[nodiscard]] constexpr T& get() noexcept { return value; }
-    [[nodiscard]] constexpr const T& get() const noexcept { return value; }
+    [[nodiscard]] constexpr bool has_value() const noexcept { return value.has_value(); }
 
-    [[nodiscard]] constexpr T* operator->() noexcept { return &value; }
-    [[nodiscard]] constexpr const T* operator->() const noexcept { return &value; }
+    // Access is defined in all builds: std::optional::value() throws
+    // std::bad_optional_access if a required field is touched before parsing.
+    [[nodiscard]] constexpr T& get() & noexcept(false) { return value.value(); }
+    [[nodiscard]] constexpr const T& get() const& noexcept(false) { return value.value(); }
+    [[nodiscard]] constexpr T&& get() && noexcept(false) { return std::move(value).value(); }
+    [[nodiscard]] constexpr const T&& get() const&& noexcept(false) {
+        return std::move(value).value();
+    }
 
-    [[nodiscard]] constexpr T& operator*() noexcept { return value; }
-    [[nodiscard]] constexpr const T& operator*() const noexcept { return value; }
+    [[nodiscard]] constexpr T* operator->() noexcept(false) {
+        if (!value.has_value()) {
+            throw std::bad_optional_access{};
+        }
+        return value.operator->();
+    }
+    [[nodiscard]] constexpr const T* operator->() const noexcept(false) {
+        if (!value.has_value()) {
+            throw std::bad_optional_access{};
+        }
+        return value.operator->();
+    }
 
-    constexpr operator T&() & noexcept { return value; }
-    constexpr operator const T&() const& noexcept { return value; }
-    constexpr operator T&&() && noexcept { return std::move(value); }
-    constexpr operator const T&&() const&& noexcept { return std::move(value); }
+    [[nodiscard]] constexpr T& operator*() & { return get(); }
+    [[nodiscard]] constexpr const T& operator*() const& { return get(); }
+    [[nodiscard]] constexpr T&& operator*() && { return std::move(*this).get(); }
+    [[nodiscard]] constexpr const T&& operator*() const&& { return std::move(*this).get(); }
+
+    constexpr operator T&() & { return get(); }
+    constexpr operator const T&() const& { return get(); }
+    constexpr operator T&&() && { return std::move(get()); }
+    constexpr operator const T&&() const&& { return std::move(get()); }
 
     constexpr required& operator=(const T& rhs) {
         value = rhs;

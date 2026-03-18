@@ -10,6 +10,17 @@ namespace {
 
 using namespace toml_helper;
 
+struct NoDefault {
+    NoDefault() = delete;
+    explicit NoDefault(int value)
+        : value(value) {}
+
+    int value;
+};
+
+static_assert(!std::default_initializable<NoDefault>);
+static_assert(std::default_initializable<required<NoDefault>>);
+
 struct SerialConfig {
     required<int> baud{};
     std::optional<int> port{};
@@ -212,6 +223,18 @@ TEST(TomlReflection, RequiredFieldMustBePresent) {
     auto result = from_table<RequiredConfig>(parsed.table());
     ASSERT_FALSE(result);
     EXPECT_EQ(result.error(), "Missing key 'port'");
+}
+
+TEST(TomlReflection, RequiredWrapperThrowsOnEmptyAccess) {
+    required<int> port{};
+    const required<int>& const_port = port;
+
+    EXPECT_FALSE(port.has_value());
+    EXPECT_THROW((void)port.get(), std::bad_optional_access);
+    EXPECT_THROW((void)const_port.get(), std::bad_optional_access);
+    EXPECT_THROW((void)port.operator->(), std::bad_optional_access);
+    EXPECT_THROW((void)const_port.operator->(), std::bad_optional_access);
+    EXPECT_THROW((void)*port, std::bad_optional_access);
 }
 
 TEST(TomlReflection, OptionalFieldMayBeMissingEvenWithEngagedInitializer) {
