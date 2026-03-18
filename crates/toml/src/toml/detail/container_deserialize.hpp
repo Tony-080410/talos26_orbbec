@@ -101,6 +101,12 @@ template <typename T>
             }
         }
         return std::move(parsed->value);
+    } else if constexpr (is_required_v<T>) {
+        auto parsed = parse_value<required_value_t<T>>(node, context, ensure_all_tables_read);
+        if (!parsed) {
+            return std::unexpected(parsed.error());
+        }
+        return T{std::move(*parsed)};
     } else if constexpr (is_std_optional_v<T>) {
         auto parsed =
             parse_optional_value<optional_value_t<T>>(node, context, ensure_all_tables_read);
@@ -134,7 +140,7 @@ struct Deserialize<std::optional<T>, void> {
             return std::unexpected(detail::missing_key_error(key));
         }
 
-        return detail::parse_optional_value<T>(*node, key, false);
+        return detail::parse_optional_value<T>(*node, key, true);
     }
 
     [[nodiscard]] static std::expected<std::optional<std::optional<T>>, std::string>
@@ -144,7 +150,7 @@ struct Deserialize<std::optional<T>, void> {
             return std::optional<std::optional<T>>{};
         }
 
-        auto result = detail::parse_optional_value<T>(*node, key, false);
+        auto result = detail::parse_optional_value<T>(*node, key, true);
         if (!result) {
             return std::unexpected(result.error());
         }
@@ -193,7 +199,7 @@ struct Deserialize<std::vector<T>, void> {
             return std::unexpected(detail::missing_key_error(key));
         }
 
-        return detail::parse_vector_value<T>(*node, key, false);
+        return detail::parse_vector_value<T>(*node, key, true);
     }
 
     [[nodiscard]] static std::expected<std::optional<std::vector<T>>, std::string>
@@ -203,7 +209,7 @@ struct Deserialize<std::vector<T>, void> {
             return std::optional<std::vector<T>>{};
         }
 
-        auto result = detail::parse_vector_value<T>(*node, key, false);
+        auto result = detail::parse_vector_value<T>(*node, key, true);
         if (!result) {
             return std::unexpected(result.error());
         }
@@ -252,7 +258,7 @@ struct Deserialize<std::array<T, N>, void> {
             return std::unexpected(detail::missing_key_error(key));
         }
 
-        return detail::parse_array_value<T, N>(*node, key, false);
+        return detail::parse_array_value<T, N>(*node, key, true);
     }
 
     [[nodiscard]] static std::expected<std::optional<std::array<T, N>>, std::string>
@@ -262,7 +268,7 @@ struct Deserialize<std::array<T, N>, void> {
             return std::optional<std::array<T, N>>{};
         }
 
-        auto result = detail::parse_array_value<T, N>(*node, key, false);
+        auto result = detail::parse_array_value<T, N>(*node, key, true);
         if (!result) {
             return std::unexpected(result.error());
         }

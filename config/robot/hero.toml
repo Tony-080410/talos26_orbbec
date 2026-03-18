@@ -1,4 +1,4 @@
-untrust_roll = true
+type = "Hero"
 
 # Camera Intrinsic Calibration Result
 # RMS Error: 0.136355 pixels

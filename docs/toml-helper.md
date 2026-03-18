@@ -10,7 +10,7 @@ TOML 配置解析 - `READ` 宏, `merge_configs`, `read_from`, `from_table`
 | **读取可选字段**     | `READ_OPT(tbl, variable);`                       |
 | **平铺读取嵌套结构** | `READ_FLATTEN(tbl, nested_struct);`              |
 | **反射式读取对象**   | `auto cfg = toml_helper::from_table<Config>(tbl);` |
-| **写入已有对象**     | `toml_helper::read_into(tbl, cfg);`              |
+| **写入已有对象**     | `toml_helper::read_into(tbl, cfg);`（完整解析，不是 patch） |
 | **检查是否有未读键** | `ensure_all_read(tbl, "context");`               |
 | **合并两个配置文件** | `merge_configs(base.table(), override.table());` |
 | **解析 TOML 文件**   | `auto tbl = toml::parse_file("path.toml");`      |
@@ -39,28 +39,31 @@ TOML 配置解析 - `READ` 宏, `merge_configs`, `read_from`, `from_table`
 #include "toml/ext/containers.hpp"
 
 struct CameraIntrinsics {
-    double fx = 1000.0;
-    double fy = 1000.0;
-    std::optional<double> cx{};   // default = nullopt -> required
-    std::optional<double> cy = 540.0; // default 已 engaged -> 缺失时保留默认
+    toml_helper::required<double> fx{};
+    toml_helper::required<double> fy{};
+    std::optional<double> cx{};
+    double cy{540.0};
 };
 
 struct CameraConfig {
-    std::string model = "HIK";
+    std::string model{"HIK"};
     toml_helper::flatten<CameraIntrinsics> camera{};
-    std::optional<int> fps = 60;
+    int fps{60};
 };
 
-auto parsed = toml::parse_file("camera.toml");
-auto cfg = toml_helper::from_table<CameraConfig>(parsed.table());
+auto base = toml::parse_file("camera_base.toml");
+auto override_tbl = toml::parse_file("camera_override.toml");
+auto merged = toml_helper::merge_configs(base.table(), override_tbl.table());
+auto cfg = toml_helper::from_table<CameraConfig>(*merged);
 ```
 
 反射模式的缺失键语义：
 
-- plain `T` 缺失时保留当前成员值
-- `std::optional<T>{}` 缺失时报错
-- `std::optional<T>{value}` 缺失时保留默认值
+- plain `T` 缺失时保留成员默认值
+- `toml_helper::required<T>` 缺失时报错
+- `std::optional<T>` 缺失时得到 `nullopt`
 - `toml_helper::flatten<T>` 从当前表直接消费 `T` 的字段
+- 文件级 `merge_configs(base, override)` 仍然适合做 base + override 组合；`required<T>` 适合表达必须显式提供的字段
 
 旧的 `read_from + READ/READ_OPT/READ_FLATTEN` 仍然可用，适合保留特殊解析逻辑的类型。
 

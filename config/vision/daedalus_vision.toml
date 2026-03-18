@@ -2,7 +2,7 @@
 # extend from vision_base.toml
 
 # L4 trajectory compensation overrides
-compensator_type = "Ideal"
+trajectory.type = "Ideal"
 traditional.advanced_binary = true
 
 trajectory.diameter = 0.017

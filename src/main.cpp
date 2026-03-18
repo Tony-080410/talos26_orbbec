@@ -52,10 +52,10 @@ constexpr auto to_string(read_config_error err) -> std::string {
 using namespace std::chrono_literals;
 
 struct LaunchConfig {
-    bool daedalus{};
-    fcs::RobotType robot{};
-    std::string vision{};
-    fcs::FoxgloveConfig foxglove{};
+    bool daedalus;
+    toml_helper::required<std::string> robot;
+    toml_helper::required<std::string> vision;
+    fcs::FoxgloveConfig foxglove;
 };
 
 std::string strtolower(std::string_view str) {
@@ -126,7 +126,6 @@ std::expected<
         return std::unexpected(fmt::format("entry config: {}", launch_config.error()));
     }
 
-    const auto robot_name            = strtolower(magic_enum::enum_name(launch_config->robot));
     std::string vision_override_path = fmt::format("config/vision/{}.toml", launch_config->vision);
 
     // Parse base and override configs
@@ -157,7 +156,7 @@ std::expected<
     }
 
     // Load hardware config
-    std::string hardware_path = fmt::format("config/robot/{}.toml", robot_name);
+    std::string hardware_path = fmt::format("config/robot/{}.toml", launch_config->robot);
     auto hardware_tbl         = toml::parse_file(hardware_path);
     if (hardware_tbl.failed()) {
         return std::unexpected(
@@ -171,13 +170,13 @@ std::expected<
 
     if (launch_config->daedalus) {
         return std::tuple(
-            launch_config->robot, true,
+            hardware_config->type, true,
             std::optional<fcs::HardwareConfig>{std::move(*hardware_config)},
             std::move(launch_config->foxglove), std::move(*vision_config));
     }
 
     return std::tuple(
-        launch_config->robot, false,
+        hardware_config->type, false,
         std::optional<fcs::HardwareConfig>{std::move(*hardware_config)},
         std::move(launch_config->foxglove), std::move(*vision_config));
 }
@@ -204,7 +203,7 @@ int main() {
     world.insert_resource(robot);
 
     // Save config values for logging before move
-    const double bullet_speed = hardware->mcu.bullet_speed_default;
+    const double bullet_speed = hardware->mcu->bullet_speed_default;
 
     world.insert_resource(fcs::core::trajectory::bullet_speed_data{.bullet_speed = bullet_speed});
     world.insert_resource(vision.at_legacy->default_detect_color);

@@ -81,7 +81,6 @@ struct AtLegacyNNTupConfig {
     int top_k{};
 };
 
-#if TALOS_HAS_TENSORRT
 // ============================================================================
 // AT Legacy TRT Backend Config (TensorRT)
 // ============================================================================
@@ -106,9 +105,7 @@ struct AtLegacyTrtConfig {
     double nms_threshold        = 0.30;
     int top_k                   = 128;
 };
-#endif
 
-#if TALOS_HAS_AXERA
 // ============================================================================
 // AT Legacy Axera Backend Config (AX650 NPU)
 // ============================================================================
@@ -120,24 +117,19 @@ struct AtLegacyAxeraConfig {
     double confidence_threshold = 0.25;
     int top_k                   = 128;
 };
-#endif
 
 // ============================================================================
 // AT Legacy Full Config
 // ============================================================================
 
 struct AtLegacyConfig {
-    AtLegacyBackendTypeConfig backend_type = AtLegacyBackendTypeConfig::Traditional;
-    ArmorColor default_detect_color{}; // 0=BLUE, 1=RED
-    AtLegacyTraditionalConfig traditional{};
-    AtLegacyNNConfig nn{};
-    AtLegacyNNTupConfig nn_tup{};
-#if TALOS_HAS_TENSORRT
-    AtLegacyTrtConfig trt{};
-#endif
-#if TALOS_HAS_AXERA
-    AtLegacyAxeraConfig axera{};
-#endif
+    AtLegacyBackendTypeConfig backend_type;
+    ArmorColor default_detect_color; // 0=BLUE, 1=RED
+    AtLegacyTraditionalConfig traditional;
+    AtLegacyNNConfig nn;
+    AtLegacyNNTupConfig nn_tup;
+    AtLegacyTrtConfig trt;
+    AtLegacyAxeraConfig axera;
 };
 
 } // namespace fcs::L2

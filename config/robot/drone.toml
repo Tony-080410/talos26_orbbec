@@ -1,4 +1,4 @@
-untrust_roll = false
+type = "Drone"
 
 [camera]
 camera_matrix = [1804.9, 0, 700.121, 0, 1800.17, 635.201, 0, 0, 1]

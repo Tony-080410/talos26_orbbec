@@ -16,6 +16,17 @@ struct Point {
     int y = 0;
 };
 
+struct MacroConfig {
+    int gain{7};
+    std::optional<int> exposure = 42;
+
+    [[nodiscard]] std::expected<void, std::string> read_from(const toml::table& table) noexcept {
+        READ(table, gain);
+        READ_OPT(table, exposure);
+        return {};
+    }
+};
+
 TEST(TomlContainers, OptionalReadRequiresKey) {
     const auto parsed = toml::parse("");
     ASSERT_TRUE(parsed);
@@ -35,8 +46,9 @@ TEST(TomlContainers, OptionalReadParsesValue) {
     EXPECT_EQ(**result, 42);
 }
 
-TEST(TomlContainers, ReadOptLeavesOptionalDefaultOnMissingKey) {
+TEST(TomlContainers, ReflectiveReadIntoClearsOptionalWhenKeyMissing) {
     struct Config {
+        int gain{7};
         std::optional<int> exposure = 42;
     };
 
@@ -46,23 +58,66 @@ TEST(TomlContainers, ReadOptLeavesOptionalDefaultOnMissingKey) {
     Config config{};
     auto result = read_into(parsed.table(), config);
     ASSERT_TRUE(result);
-    ASSERT_TRUE(config.exposure.has_value());
-    EXPECT_EQ(*config.exposure, 42);
+    EXPECT_EQ(config.gain, 7);
+    EXPECT_FALSE(config.exposure.has_value());
 }
 
-TEST(TomlContainers, ReadOptUpdatesOptionalFieldWhenPresent) {
+TEST(TomlContainers, ReflectiveReadIntoOptionalWhenPresentOverwritesValue) {
     struct Config {
+        int gain{};
         std::optional<int> exposure = 42;
     };
 
-    const auto parsed = toml::parse("exposure = 7");
+    const auto parsed = toml::parse(R"(
+        gain = 7
+        exposure = 5
+    )");
     ASSERT_TRUE(parsed);
 
     Config config{};
     auto result = read_into(parsed.table(), config);
     ASSERT_TRUE(result);
+    EXPECT_EQ(config.gain, 7);
     ASSERT_TRUE(config.exposure.has_value());
-    EXPECT_EQ(*config.exposure, 7);
+    EXPECT_EQ(*config.exposure, 5);
+}
+
+TEST(TomlContainers, ReadFromReadOptClearsOptionalWhenKeyMissing) {
+    const auto parsed = toml::parse("");
+    ASSERT_TRUE(parsed);
+
+    MacroConfig config{};
+    auto result = read_into(parsed.table(), config);
+    ASSERT_TRUE(result);
+    EXPECT_EQ(config.gain, 7);
+    EXPECT_FALSE(config.exposure.has_value());
+}
+
+TEST(TomlContainers, ReadIntoFailureDoesNotMutateReadFromObject) {
+    struct RequiredMacroConfig {
+        required<int> mode{};
+        int gain{7};
+
+        [[nodiscard]] std::expected<void, std::string>
+            read_from(const toml::table& table) noexcept {
+            READ(table, mode);
+            READ(table, gain);
+            return {};
+        }
+    };
+
+    const auto parsed = toml::parse("gain = 5");
+    ASSERT_TRUE(parsed);
+
+    RequiredMacroConfig config{};
+    config.mode = 3;
+    config.gain = 42;
+
+    auto result = read_into(parsed.table(), config);
+    ASSERT_FALSE(result);
+    EXPECT_EQ(result.error(), "Missing key 'mode'");
+    EXPECT_EQ(config.mode.get(), 3);
+    EXPECT_EQ(config.gain, 42);
 }
 
 TEST(TomlContainers, VectorReadParsesScalars) {
@@ -103,6 +158,20 @@ TEST(TomlContainers, VectorTakeRejectsUnreadKeysInNestedTables) {
     ASSERT_TRUE(parsed);
 
     auto result = Deserialize<std::vector<Point>>::take(parsed.table(), "points");
+    ASSERT_FALSE(result);
+    EXPECT_NE(result.error().find("points[0]: unread keys"), std::string::npos);
+    EXPECT_NE(result.error().find("'extra'(integer)"), std::string::npos);
+}
+
+TEST(TomlContainers, VectorReadAlsoRejectsUnreadKeysInNestedTables) {
+    const auto parsed = toml::parse(R"(
+        points = [
+            { x = 1, y = 2, extra = 3 }
+        ]
+    )");
+    ASSERT_TRUE(parsed);
+
+    auto result = Deserialize<std::vector<Point>>::read(parsed.table(), "points");
     ASSERT_FALSE(result);
     EXPECT_NE(result.error().find("points[0]: unread keys"), std::string::npos);
     EXPECT_NE(result.error().find("'extra'(integer)"), std::string::npos);

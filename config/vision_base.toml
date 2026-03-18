@@ -78,6 +78,12 @@ sigma_a_yaw = 20.0              # Aligned with at_vision
 sigma_r0 = 1.0
 sigma_r1 = 1.0
 sigma_h = 0.8                   # Aligned with at_vision (was 0.5)
+meas_yaw_var_floor = 4e-3
+meas_pitch_var_floor = 4e-3
+meas_dist_var_floor = 0.3
+meas_dist_delta_angle_k = 1.0
+meas_armor_yaw_var_floor = 9e-2
+meas_armor_yaw_range_k = 0.005
 
 [tracker.robot_inekf]
 radius0 = 0.23
@@ -93,6 +99,8 @@ tracking_threshold = 4
 sigma_q_xy = 10.0
 sigma_q_z = 2.0
 sigma_a_yaw = 8.0
+meas_dist_k = 0.43
+yaw_log_k = 0.005
 
 # ============================================================================
 # L4 Planning Configuration (Aimer + Planner Architecture)
@@ -175,12 +183,6 @@ detect_color = "Red"
 arrow_threshold = 170
 target_threshold = 130
 rcenter_threshold = 120
-
-[rune_planner]
-enabled = false
-
-[plan_mux]
-mode = "Armor"
 
 [energy_meter]
 # Rune type: true for big rune (sinusoidal model), false for small rune (linear)

@@ -176,13 +176,13 @@ std::expected<L1L2SetupResult, std::string> setup_l1(
 
         auto usb_device = std::make_shared<UsbDevice>();
         auto mcu_config = config.mcu;
-        if (mcu_config.mcu_product_id) {
+        if (mcu_config->mcu_product_id) {
             SPDLOG_INFO(
-                "connecting to USB {:#x}:{:#x}", mcu_config.mcu_vendor_id,
-                mcu_config.mcu_product_id);
+                "connecting to USB {:#x}:{:#x}", mcu_config->mcu_vendor_id,
+                mcu_config->mcu_product_id);
         } else {
             SPDLOG_INFO(
-                "connecting to USB {:#x} (product_id unspecified)", mcu_config.mcu_vendor_id);
+                "connecting to USB {:#x} (product_id unspecified)", mcu_config->mcu_vendor_id);
         }
 
         SPDLOG_INFO("initializing hik input interface...");
@@ -193,7 +193,7 @@ std::expected<L1L2SetupResult, std::string> setup_l1(
 
         SPDLOG_INFO("connecting to USB device...");
         auto connect_result =
-            usb_device->connect(mcu_config.mcu_vendor_id, mcu_config.mcu_product_id);
+            usb_device->connect(mcu_config->mcu_vendor_id, mcu_config->mcu_product_id);
         if (!connect_result) {
             return std::unexpected(fmt::format("connect USB device: {}", connect_result.error()));
         }

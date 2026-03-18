@@ -1,4 +1,4 @@
-untrust_roll = true
+type = "Sentry"
 
 [camera]
 camera_matrix = [1791.69, 0, 757.224, 0, 1785.64, 507.908, 0, 0, 1]

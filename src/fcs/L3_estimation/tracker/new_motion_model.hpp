@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cmath>
 #include <numbers>
+#include <optional>
 
 namespace fcs::L3 {
 
@@ -54,14 +55,6 @@ struct RobotEkfMotionModel {
         Scalar meas_dist_delta_angle_k  = 1.0;
         Scalar meas_armor_yaw_var_floor = 9e-2;
         Scalar meas_armor_yaw_range_k   = 1.0 / 200.0;
-        // Center-space virtual measurement noise parameters (variance domain).
-        // These are independent from armor-space association/update noise parameters.
-        Scalar center_meas_yaw_var_floor       = 4e-3;
-        Scalar center_meas_pitch_var_floor     = 4e-3;
-        Scalar center_meas_dist_var_floor      = 4e-4;
-        Scalar center_meas_armor_yaw_var_floor = 9e-2;
-        Scalar center_meas_armor_yaw_range_k   = 1.0 / 200.0;
-        Scalar center_meas_cov_inflation       = 1.2;
     };
     Params params{};
 

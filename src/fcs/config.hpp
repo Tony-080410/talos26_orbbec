@@ -57,7 +57,7 @@ enum class RobotType { Infantry, Hero, Sentry, Drone };
 
 struct McuConfig {
     uint16_t mcu_vendor_id{0x0483};
-    std::optional<uint16_t> mcu_product_id{0};
+    std::optional<uint16_t> mcu_product_id{};
     bool untrust_roll{true};
     bool dynamic_self_color{true};
     bool dynamic_bullet_speed{true};
@@ -67,9 +67,10 @@ struct McuConfig {
 };
 
 struct HardwareConfig {
-    CameraConfig camera{};
-    McuConfig mcu{};
-    RobotExtrinsicConfig extrinsic{};
+    toml_helper::required<RobotType> type{};
+    toml_helper::required<CameraConfig> camera{};
+    toml_helper::required<McuConfig> mcu{};
+    toml_helper::required<RobotExtrinsicConfig> extrinsic{};
 };
 
 struct VisionConfig {

@@ -12,8 +12,9 @@ namespace detail {
 template <typename T>
 concept ReflectDeserializeCandidate =
     Reflectable<T> && !ReadFrom<T> && !TomlScalarValue<T> && !std::is_enum_v<T>
-    && !is_flatten_v<std::remove_cvref_t<T>> && !is_std_optional_v<std::remove_cvref_t<T>>
-    && !is_std_vector_v<std::remove_cvref_t<T>> && !is_std_array_v<std::remove_cvref_t<T>>;
+    && !is_flatten_v<std::remove_cvref_t<T>> && !is_required_v<std::remove_cvref_t<T>>
+    && !is_std_optional_v<std::remove_cvref_t<T>> && !is_std_vector_v<std::remove_cvref_t<T>>
+    && !is_std_array_v<std::remove_cvref_t<T>>;
 
 template <typename T>
 concept TableReadable = ReadFrom<T> || ReflectDeserializeCandidate<T>;
@@ -63,6 +64,25 @@ template <typename T>
             return std::unexpected(prefixed_error(field_name, result.error()));
         }
         return {};
+    } else if constexpr (is_required_v<field_type>) {
+        using required_type = required_value_t<field_type>;
+
+        static_assert(
+            !is_flatten_v<required_type>,
+            "toml_helper::required<toml_helper::flatten<T>> is not supported");
+
+        const toml::node* node = table.get(field_name);
+        if (!node) {
+            return std::unexpected(missing_key_error(field_name));
+        }
+
+        auto result = Deserialize<required_type>::take(table, field_name);
+        if (!result) {
+            return std::unexpected(result.error());
+        }
+
+        field = std::move(*result);
+        return {};
     } else if constexpr (is_std_optional_v<field_type>) {
         using optional_type = optional_value_t<field_type>;
 
@@ -72,10 +92,8 @@ template <typename T>
 
         const toml::node* node = table.get(field_name);
         if (!node) {
-            if (field.has_value()) {
-                return {};
-            }
-            return std::unexpected(missing_key_error(field_name));
+            field.reset();
+            return {};
         }
 
         auto result = Deserialize<optional_type>::take(table, field_name);
@@ -237,6 +255,51 @@ requires(std::is_enum_v<T>) struct Deserialize<T, void> {
     }
 };
 
+template <typename T>
+struct Deserialize<required<T>, void> {
+    [[nodiscard]] static std::expected<required<T>, std::string>
+        read(const toml::table& table, std::string_view key) {
+        auto parsed = Deserialize<T>::read(table, key);
+        if (!parsed) {
+            return std::unexpected(parsed.error());
+        }
+        return required<T>{std::move(*parsed)};
+    }
+
+    [[nodiscard]] static std::expected<std::optional<required<T>>, std::string>
+        read_optional(const toml::table& table, std::string_view key) {
+        auto parsed = Deserialize<T>::read_optional(table, key);
+        if (!parsed) {
+            return std::unexpected(parsed.error());
+        }
+        if (!*parsed) {
+            return std::optional<required<T>>{};
+        }
+        return std::optional<required<T>>{required<T>{std::move(**parsed)}};
+    }
+
+    [[nodiscard]] static std::expected<required<T>, std::string>
+        take(const toml::table& table, std::string_view key) {
+        auto parsed = Deserialize<T>::take(table, key);
+        if (!parsed) {
+            return std::unexpected(parsed.error());
+        }
+        return required<T>{std::move(*parsed)};
+    }
+
+    [[nodiscard]] static std::expected<std::optional<required<T>>, std::string>
+        take_optional(const toml::table& table, std::string_view key) {
+        auto parsed = Deserialize<T>::take_optional(table, key);
+        if (!parsed) {
+            return std::unexpected(parsed.error());
+        }
+        if (!*parsed) {
+            return std::optional<required<T>>{};
+        }
+        return std::optional<required<T>>{required<T>{std::move(**parsed)}};
+    }
+};
+
 template <ReadFrom T>
 struct Deserialize<T, void> {
     [[nodiscard]] static std::expected<T, std::string>
@@ -244,6 +307,9 @@ struct Deserialize<T, void> {
         auto parsed = detail::parse_read_from_key<T>(table, key);
         if (!parsed) {
             return std::unexpected(parsed.error());
+        }
+        if (auto unread = detail::error_if_unread(*parsed->parsed_table, key); !unread) {
+            return std::unexpected(unread.error());
         }
         return std::move(parsed->value);
     }
@@ -258,6 +324,9 @@ struct Deserialize<T, void> {
         auto parsed = detail::parse_read_from_node<T>(*node, key);
         if (!parsed) {
             return std::unexpected(parsed.error());
+        }
+        if (auto unread = detail::error_if_unread(*parsed->parsed_table, key); !unread) {
+            return std::unexpected(unread.error());
         }
         return std::optional<T>{std::move(parsed->value)};
     }
@@ -306,6 +375,9 @@ struct Deserialize<T, void> {
         if (!parsed) {
             return std::unexpected(parsed.error());
         }
+        if (auto unread = detail::error_if_unread(*parsed->parsed_table, key); !unread) {
+            return std::unexpected(unread.error());
+        }
         return std::move(parsed->value);
     }
 
@@ -319,6 +391,9 @@ struct Deserialize<T, void> {
         auto parsed = detail::parse_reflect_from_node<T>(*node, key);
         if (!parsed) {
             return std::unexpected(parsed.error());
+        }
+        if (auto unread = detail::error_if_unread(*parsed->parsed_table, key); !unread) {
+            return std::unexpected(unread.error());
         }
         return std::optional<T>{std::move(parsed->value)};
     }

@@ -54,8 +54,10 @@ struct flatten {
     [[nodiscard]] constexpr T& operator*() noexcept { return value; }
     [[nodiscard]] constexpr const T& operator*() const noexcept { return value; }
 
-    constexpr operator T&() noexcept { return value; }
-    constexpr operator const T&() const noexcept { return value; }
+    constexpr operator T&() & noexcept { return value; }
+    constexpr operator const T&() const& noexcept { return value; }
+    constexpr operator T&&() && noexcept { return std::move(value); }
+    constexpr operator const T&&() const&& noexcept { return std::move(value); }
 
     constexpr flatten& operator=(const T& rhs) {
         value = rhs;
@@ -63,6 +65,41 @@ struct flatten {
     }
 
     constexpr flatten& operator=(T&& rhs) noexcept(std::is_nothrow_move_assignable_v<T>) {
+        value = std::move(rhs);
+        return *this;
+    }
+};
+
+template <typename T>
+struct required {
+    T value{};
+
+    constexpr required() = default;
+    constexpr required(const T& rhs)
+        : value(rhs) {}
+    constexpr required(T&& rhs) noexcept(std::is_nothrow_move_constructible_v<T>)
+        : value(std::move(rhs)) {}
+
+    [[nodiscard]] constexpr T& get() noexcept { return value; }
+    [[nodiscard]] constexpr const T& get() const noexcept { return value; }
+
+    [[nodiscard]] constexpr T* operator->() noexcept { return &value; }
+    [[nodiscard]] constexpr const T* operator->() const noexcept { return &value; }
+
+    [[nodiscard]] constexpr T& operator*() noexcept { return value; }
+    [[nodiscard]] constexpr const T& operator*() const noexcept { return value; }
+
+    constexpr operator T&() & noexcept { return value; }
+    constexpr operator const T&() const& noexcept { return value; }
+    constexpr operator T&&() && noexcept { return std::move(value); }
+    constexpr operator const T&&() const&& noexcept { return std::move(value); }
+
+    constexpr required& operator=(const T& rhs) {
+        value = rhs;
+        return *this;
+    }
+
+    constexpr required& operator=(T&& rhs) noexcept(std::is_nothrow_move_assignable_v<T>) {
         value = std::move(rhs);
         return *this;
     }
@@ -102,6 +139,23 @@ struct flatten_value<flatten<T>> {
 
 template <typename T>
 using flatten_value_t = typename flatten_value<T>::type;
+
+template <typename T>
+inline constexpr bool is_required_v = false;
+
+template <typename T>
+inline constexpr bool is_required_v<required<T>> = true;
+
+template <typename T>
+struct required_value;
+
+template <typename T>
+struct required_value<required<T>> {
+    using type = T;
+};
+
+template <typename T>
+using required_value_t = typename required_value<T>::type;
 
 template <typename T>
 inline constexpr bool is_std_optional_v = false;
@@ -384,3 +438,15 @@ template <ReadFrom T>
 } // namespace detail
 
 } // namespace toml_helper
+
+namespace fmt {
+
+template <typename T, typename Char>
+struct formatter<toml_helper::required<T>, Char> : formatter<T, Char> {
+    template <typename FormatContext>
+    auto format(const toml_helper::required<T>& value, FormatContext& ctx) const {
+        return formatter<T, Char>::format(value.get(), ctx);
+    }
+};
+
+} // namespace fmt
