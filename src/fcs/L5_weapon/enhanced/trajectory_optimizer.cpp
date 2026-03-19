@@ -323,33 +323,26 @@ template <typename TargetState>
         return status;
     }
 
-    const int sample_index = std::clamp(center_index, 0, horizon - 1);
-    const auto clamp_index = [&](int index) noexcept { return std::clamp(index, 0, horizon - 1); };
+    const int sample_index      = std::clamp(center_index, 0, horizon - 1);
     const auto reference_angles = [&](int index) noexcept {
-        return std::pair{
-            normalize_angle(trajectory.state(0, index) + trajectory.yaw_origin),
-            trajectory.state(2, index),
+        return DelayGateAngles{
+            .yaw   = normalize_angle(trajectory.state(0, index) + trajectory.yaw_origin),
+            .pitch = trajectory.state(2, index),
         };
     };
     const auto optimized_angles = [&](int index) noexcept {
-        return std::pair{
-            normalize_angle(yaw_solver->solution->x(0, index) + trajectory.yaw_origin),
-            pitch_solver->solution->x(0, index),
+        return DelayGateAngles{
+            .yaw   = normalize_angle(yaw_solver->solution->x(0, index) + trajectory.yaw_origin),
+            .pitch = pitch_solver->solution->x(0, index),
         };
-    };
-    const auto delay_error = [&](int index) noexcept {
-        const auto [reference_yaw, reference_pitch] = reference_angles(index);
-        const auto [optimized_yaw, optimized_pitch] = optimized_angles(index);
-        return std::hypot(
-            normalize_angle(reference_yaw - optimized_yaw), reference_pitch - optimized_pitch);
     };
 
     status.delay_steps =
         std::max(0, static_cast<int>(std::lround(aimer_config.delay / std::max(mpc_dt, 1e-6))));
-    const int forward_index          = clamp_index(sample_index + status.delay_steps);
-    const int backward_index         = clamp_index(sample_index - status.delay_steps);
-    status.delay_gate_forward_error  = delay_error(forward_index);
-    status.delay_gate_backward_error = delay_error(backward_index);
+    const DualDelayGateErrors delay_errors = compute_dual_delay_gate_errors(
+        horizon, sample_index, status.delay_steps, reference_angles, optimized_angles);
+    status.delay_gate_forward_error  = delay_errors.forward;
+    status.delay_gate_backward_error = delay_errors.backward;
     status.delay_gate_forward_ok  = status.delay_gate_forward_error < status.delay_gate_threshold;
     status.delay_gate_backward_ok = status.delay_gate_backward_error < status.delay_gate_threshold;
 

@@ -88,8 +88,8 @@ template <size_t N>
 template <size_t N>
 [[nodiscard]] int select_armor_id(
     const std::array<Eigen::Vector4d, N>& armor_poses, double center_yaw,
-    const ArmorAimContext& context, const AimerConfig& config, double target_v_yaw, bool is_outpost,
-    bool higher_pair) noexcept {
+    const ArmorAimContext& context, const AimerConfig& config, double target_v_yaw,
+    bool is_outpost) noexcept {
     const int armors_num = static_cast<int>(N);
     const auto preferred = sanitize_preferred(context.preferred_armor_id, armors_num);
 
@@ -104,6 +104,10 @@ template <size_t N>
     for (int i = 0; i < armors_num; ++i) {
         all_ids.push_back(i);
     }
+
+    const auto fallback_best = [&]() noexcept {
+        return pick_best_by_min_delta(all_ids, delta_angles);
+    };
 
     if (context.phase == ArmorAimPhase::SingleArmor && !is_outpost) {
         const double front_window = config.front_window_deg * std::numbers::pi / 180.0;
@@ -123,7 +127,8 @@ template <size_t N>
         return pick_locked_or_min_delta(candidates, delta_angles, preferred);
     }
 
-    if (context.phase == ArmorAimPhase::WholeCarArmor && !is_outpost) {
+    int active_armor_id = fallback_best();
+    if (!is_outpost) {
         const double coming_angle  = config.coming_angle_deg * std::numbers::pi / 180.0;
         const double leaving_angle = config.leaving_angle_deg * std::numbers::pi / 180.0;
         std::vector<int> candidates;
@@ -140,11 +145,16 @@ template <size_t N>
             }
         }
         if (!candidates.empty()) {
-            return pick_best_by_min_delta(candidates, delta_angles);
+            active_armor_id = pick_best_by_min_delta(candidates, delta_angles);
         }
     }
 
+    if (context.phase == ArmorAimPhase::WholeCarArmor && !is_outpost) {
+        return active_armor_id;
+    }
+
     if (context.phase == ArmorAimPhase::WholeCarPair && !is_outpost) {
+        const bool higher_pair = (active_armor_id == 1 || active_armor_id == 3);
         std::vector<int> pair_ids;
         pair_ids.reserve(3);
         if (higher_pair) {
@@ -166,12 +176,12 @@ template <size_t N>
             }
         }
         if (pair_ids.empty()) {
-            return preferred.value_or(0);
+            return active_armor_id;
         }
         return pick_best_by_min_delta(pair_ids, delta_angles);
     }
 
-    return pick_best_by_min_delta(all_ids, delta_angles);
+    return active_armor_id;
 }
 
 [[nodiscard]] Eigen::Vector3d project_center_aim(
@@ -215,10 +225,10 @@ Aimer::PredictedAimPoint Aimer::predict_aim_point(
 
     const auto armor_poses  = predicted.armor_poses();
     const double center_yaw = center_yaw_from_xy(predicted.position.x(), predicted.position.y());
-    const int armor_id = sanitize_preferred(forced_armor_id, predicted.armors_num)
-                             .value_or(select_armor_id(
-                                 armor_poses, center_yaw, context, config_, predicted.v_yaw, false,
-                                 predicted.z1 > predicted.position.z()));
+    const int armor_id =
+        sanitize_preferred(forced_armor_id, predicted.armors_num)
+            .value_or(
+                select_armor_id(armor_poses, center_yaw, context, config_, predicted.v_yaw, false));
     const Eigen::Vector4d& armor_pose = armor_poses[static_cast<size_t>(armor_id)];
     const double radius               = (armor_id % 2 == 0) ? predicted.radius0 : predicted.radius1;
 
@@ -243,10 +253,9 @@ Aimer::PredictedAimPoint Aimer::predict_aim_point(
 
     const auto armor_poses  = predicted.armor_poses();
     const double center_yaw = center_yaw_from_xy(predicted.position.x(), predicted.position.y());
-    const int armor_id =
-        sanitize_preferred(forced_armor_id, L3::OutpostTargetState::armors_num)
-            .value_or(select_armor_id(
-                armor_poses, center_yaw, context, config_, predicted.v_yaw, true, false));
+    const int armor_id = sanitize_preferred(forced_armor_id, L3::OutpostTargetState::armors_num)
+                             .value_or(select_armor_id(
+                                 armor_poses, center_yaw, context, config_, predicted.v_yaw, true));
     const Eigen::Vector4d& armor_pose = armor_poses[static_cast<size_t>(armor_id)];
 
     PredictedAimPoint result;
@@ -289,16 +298,39 @@ std::expected<TargetPrediction, std::string> Aimer::aim_generic(
     const Eigen::Vector3d muzzle_pos  = muzzle.translation();
     const auto rough_predicted        = predict_aim_point(target, total_delay, context, muzzle_pos);
     const int rough_selected_armor_id = rough_predicted.armor_id;
-    const double total_prediction_time = refine_flying_time(
-        solver,
-        [&](double dt) -> Eigen::Vector3d {
-            return predict_aim_point(target, dt, context, muzzle_pos, rough_selected_armor_id)
-                       .position
-                 - muzzle_pos;
-        },
-        total_delay, bullet_speed);
+    const auto refine_total_prediction_time = [&](int forced_armor_id) noexcept {
+        return refine_flying_time(
+            solver,
+            [&](double dt) -> Eigen::Vector3d {
+                return predict_aim_point(target, dt, context, muzzle_pos, forced_armor_id).position
+                     - muzzle_pos;
+            },
+            total_delay, bullet_speed);
+    };
 
-    const auto predicted = predict_aim_point(target, total_prediction_time, context, muzzle_pos);
+    int refined_armor_id         = rough_selected_armor_id;
+    double total_prediction_time = total_delay;
+    PredictedAimPoint predicted{};
+    bool stabilized = false;
+
+    // Stabilize ballistic refinement across armor handoffs so time-of-flight and aim point
+    // describe the same armor when the final selection changes during iteration.
+    for (int pass = 0; pass < 3; ++pass) {
+        total_prediction_time = refine_total_prediction_time(refined_armor_id);
+        predicted = predict_aim_point(target, total_prediction_time, context, muzzle_pos);
+        if (predicted.armor_id == refined_armor_id) {
+            stabilized = true;
+            break;
+        }
+        refined_armor_id = predicted.armor_id;
+    }
+
+    if (!stabilized) {
+        total_prediction_time = refine_total_prediction_time(refined_armor_id);
+        predicted =
+            predict_aim_point(target, total_prediction_time, context, muzzle_pos, refined_armor_id);
+    }
+
     output.predicted_position      = predicted.position;
     output.predicted_future_ns     = offset_timestamp_ns(measurement_ns, total_prediction_time);
     output.flying_time             = total_prediction_time - total_delay;
