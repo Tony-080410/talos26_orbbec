@@ -50,12 +50,14 @@ template <fast_tf::frame From, fast_tf::frame To>
 void publish_control_snapshot(
     talos::spmc_mut<core::ControlResourceSnapshot, RuntimeControlStateChannelTopic> control_out,
     const fast_tf::CoordinateSystem& tf_buffer, const core::ImuState& imu_state,
-    ArmorColor detecting_color, double bullet_speed, uint64_t sample_timestamp_ns) {
+    ArmorColor detecting_color, double bullet_speed_raw, double bullet_speed,
+    uint64_t sample_timestamp_ns) {
     control_out.write(
         core::ControlResourceSnapshot{
             .sample_timestamp_ns = sample_timestamp_ns,
             .imu                 = imu_state,
             .detecting_color     = detecting_color,
+            .bullet_speed_raw    = bullet_speed_raw,
             .bullet_speed        = bullet_speed,
             .odom_to_gimbal_pitch =
                 capture_control_transform_snapshot<fast_tf::odom, fast_tf::gimbal_pitch_fuxk_frame>(
@@ -143,7 +145,7 @@ struct DaedalusImu {
         if (control_updated) {
             publish_control_snapshot(
                 control_out, *tf_buffer, *imu_state, *detecting_color, bullet_speed->bullet_speed,
-                control_timestamp_ns);
+                bullet_speed->bullet_speed, control_timestamp_ns);
         }
     }
 };
@@ -178,7 +180,7 @@ struct UsbImu {
             timestamp_ns);
         fast_tf::update_rotate_only<fast_tf::gimbal_pitch_fuxk_frame>(
             *tf_buffer, math_fuxk::rpy<double>(0.0, imu_data->data.pitch, 0.0), timestamp_ns);
-        if (config.dynamic_bullet_speed) {
+        if (config.dynamic_bullet_speed && imu_data->data.bullet_speed > 0) {
             double new_speed = std::clamp(
                 static_cast<double>(imu_data->data.bullet_speed), config.bullet_speed_min,
                 config.bullet_speed_max);
@@ -208,8 +210,8 @@ struct UsbImu {
         imu_state->attitude_valid         = true;
         imu_state->angular_velocity_valid = true;
         publish_control_snapshot(
-            control_out, *tf_buffer, *imu_state, *detecting_color, bullet_speed->bullet_speed,
-            timestamp_ns);
+            control_out, *tf_buffer, *imu_state, *detecting_color, imu_data->data.bullet_speed,
+            bullet_speed->bullet_speed, timestamp_ns);
     }
 };
 

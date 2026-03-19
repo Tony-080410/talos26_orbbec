@@ -29,6 +29,7 @@ struct ControlResourceSnapshot {
     uint64_t sample_timestamp_ns{0};
     ImuState imu{};
     ArmorColor detecting_color{ArmorColor::Blue};
+    double bullet_speed_raw{0.0};
     double bullet_speed{0.0};
     ControlTransformSnapshot odom_to_gimbal_pitch{};
     ControlTransformSnapshot gimbal_to_camera_link{};

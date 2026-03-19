@@ -103,7 +103,7 @@ struct ControlSampleRecord {
     float imu_pitch_vel{0.0F};
     float imu_yaw_vel{0.0F};
 
-    float bullet_speed{0.0F};
+    float bullet_speed_raw{0.0F};
     uint8_t detecting_color{0};
     uint8_t imu_attitude_valid{0};
     uint8_t imu_angular_velocity_valid{0};
@@ -214,7 +214,7 @@ auto serialize_control_chunk(
         append_le_float32(bytes, sample.imu_roll_vel);
         append_le_float32(bytes, sample.imu_pitch_vel);
         append_le_float32(bytes, sample.imu_yaw_vel);
-        append_le_float32(bytes, sample.bullet_speed);
+        append_le_float32(bytes, sample.bullet_speed_raw);
 
         append_le_uint<uint8_t>(bytes, sample.detecting_color);
         append_le_uint<uint8_t>(bytes, sample.imu_attitude_valid);
@@ -857,28 +857,29 @@ public:
 
             snapshot["streams"] = std::move(streams);
             json resources      = json{
-                {          "present",         control_state.present()},
-                {"updated_this_tick", control_state.updated_this_tick},
-                {            "stale",           control_state.stale()},
+                     {          "present",         control_state.present()},
+                     {"updated_this_tick", control_state.updated_this_tick},
+                     {            "stale",           control_state.stale()},
             };
             json tf = json::object();
             if (control_state.value) {
                 const auto& imu                  = control_state.value->imu;
                 resources["sample_timestamp_ns"] = control_state.value->sample_timestamp_ns;
                 resources["imu_state"]           = json{
-                    {          "timestamp_ns",           imu.timestamp_ns},
-                    {                   "yaw",                    imu.yaw},
-                    {                 "pitch",                  imu.pitch},
-                    {                  "roll",                   imu.roll},
-                    {               "yaw_vel",                imu.yaw_vel},
-                    {             "pitch_vel",              imu.pitch_vel},
-                    {              "roll_vel",               imu.roll_vel},
-                    {        "attitude_valid",         imu.attitude_valid},
-                    {"angular_velocity_valid", imu.angular_velocity_valid},
+                              {          "timestamp_ns",           imu.timestamp_ns},
+                              {                   "yaw",                    imu.yaw},
+                              {                 "pitch",                  imu.pitch},
+                              {                  "roll",                   imu.roll},
+                              {               "yaw_vel",                imu.yaw_vel},
+                              {             "pitch_vel",              imu.pitch_vel},
+                              {              "roll_vel",               imu.roll_vel},
+                              {        "attitude_valid",         imu.attitude_valid},
+                              {"angular_velocity_valid", imu.angular_velocity_valid},
                 };
                 resources["detecting_color"] =
                     magic_enum::enum_name(control_state.value->detecting_color);
-                resources["bullet_speed"] = control_state.value->bullet_speed;
+                resources["bullet_speed_raw"] = control_state.value->bullet_speed_raw;
+                resources["bullet_speed"]     = control_state.value->bullet_speed;
                 tf["odom_to_gimbal_pitch"] =
                     to_json_control_transform_snapshot(control_state.value->odom_to_gimbal_pitch);
                 tf["gimbal_to_camera_link"] =
@@ -894,7 +895,7 @@ public:
                 resources["detecting_color"] = nullptr;
                 resources["bullet_speed"]    = nullptr;
                 tf["odom_to_gimbal_pitch"]   = json{
-                    {"present", false}
+                      {"present", false}
                 };
                 tf["gimbal_to_camera_link"] = json{
                     {"present", false}
@@ -942,8 +943,8 @@ public:
             sample.imu_yaw_vel                = static_cast<float>(imu.yaw_vel);
             sample.imu_attitude_valid         = imu.attitude_valid ? 1 : 0;
             sample.imu_angular_velocity_valid = imu.angular_velocity_valid ? 1 : 0;
-            sample.bullet_speed    = static_cast<float>(control_state.value->bullet_speed);
-            sample.detecting_color = static_cast<uint8_t>(control_state.value->detecting_color);
+            sample.bullet_speed_raw = static_cast<float>(control_state.value->bullet_speed_raw);
+            sample.detecting_color  = static_cast<uint8_t>(control_state.value->detecting_color);
             sample.odom_to_gimbal_pitch =
                 to_control_transform(control_state.value->odom_to_gimbal_pitch);
             sample.gimbal_to_camera_link =
