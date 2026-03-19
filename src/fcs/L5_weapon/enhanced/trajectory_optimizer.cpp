@@ -107,6 +107,7 @@ constexpr double kUnlimitedBound = 1e17;
 struct ReferenceTrajectory {
     ReferenceMatrix state;
     std::vector<double> distances;
+    std::vector<double> diff_yaws;
     std::vector<double> time_of_flights;
     std::vector<Eigen::Vector3d> positions;
     double yaw_origin{0.0};
@@ -116,8 +117,10 @@ struct ReferenceSample {
     double yaw{0.0};
     double pitch{0.0};
     double distance{0.0};
+    double diff_yaw{0.0};
     double time_of_flight{0.0};
     Eigen::Vector3d position{Eigen::Vector3d::Zero()};
+    int selected_armor_id{0};
 };
 
 // ==============================================================================
@@ -200,23 +203,25 @@ void destroy_tiny_solver(TinySolver* solver) noexcept {
 
 template <typename TargetState>
 [[nodiscard]] std::expected<ReferenceSample, std::string> build_reference_sample(
-    const L4::Aimer& aimer, const TargetState& state, uint64_t state_timestamp_ns,
-    uint64_t current_ns, double sample_offset_s, const GimbalTransform& gimbal,
-    const MuzzleTransform& muzzle, const core::trajectory::solver::TrajectorySolver& solver,
-    double bullet_speed) noexcept {
+    const L4::Aimer& aimer, const TargetState& state, L4::ArmorAimContext context,
+    uint64_t state_timestamp_ns, uint64_t current_ns, double sample_offset_s,
+    const GimbalTransform& gimbal, const MuzzleTransform& muzzle,
+    const core::trajectory::solver::TrajectorySolver& solver, double bullet_speed) noexcept {
     const auto prediction = aimer.aim(
-        state, gimbal, muzzle, state_timestamp_ns, current_ns, sample_offset_s, bullet_speed,
-        solver);
+        state, context, gimbal, muzzle, state_timestamp_ns, current_ns, sample_offset_s,
+        bullet_speed, solver);
     if (!prediction) {
         return std::unexpected(prediction.error());
     }
 
     return ReferenceSample{
-        .yaw            = prediction->aim_yaw,
-        .pitch          = prediction->aim_pitch,
-        .distance       = prediction->distance,
-        .time_of_flight = prediction->flying_time,
-        .position       = prediction->predicted_position,
+        .yaw               = prediction->aim_yaw,
+        .pitch             = prediction->aim_pitch,
+        .distance          = prediction->distance,
+        .diff_yaw          = prediction->diff_yaw,
+        .time_of_flight    = prediction->flying_time,
+        .position          = prediction->predicted_position,
+        .selected_armor_id = prediction->selected_armor_id,
     };
 }
 
@@ -229,12 +234,17 @@ template <typename TargetState>
     ReferenceTrajectory trajectory{
         .state           = ReferenceMatrix(4, horizon),
         .distances       = std::vector<double>(horizon, 0.0),
+        .diff_yaws       = std::vector<double>(horizon, 0.0),
         .time_of_flights = std::vector<double>(horizon, 0.0),
         .positions       = std::vector<Eigen::Vector3d>(horizon, Eigen::Vector3d::Zero()),
     };
 
     std::vector<double> yaw_samples(horizon, 0.0);
     std::vector<double> pitch_samples(horizon, 0.0);
+    L4::ArmorAimContext context;
+    context.target_jumped      = seed.target_jumped;
+    context.phase              = seed.aim_phase;
+    context.preferred_armor_id = seed.selected_armor_id;
 
     for (int k = 0; k < horizon; ++k) {
         const double sample_offset =
@@ -243,21 +253,24 @@ template <typename TargetState>
         std::expected<ReferenceSample, std::string> sample = std::unexpected("empty planner seed");
         if (const auto* robot = seed.robot_state()) {
             sample = build_reference_sample(
-                aimer, *robot, seed.state_timestamp_ns, current_ns, sample_offset, gimbal, muzzle,
-                solver, bullet_speed);
+                aimer, *robot, context, seed.state_timestamp_ns, current_ns, sample_offset, gimbal,
+                muzzle, solver, bullet_speed);
         } else if (const auto* outpost = seed.outpost_state()) {
             sample = build_reference_sample(
-                aimer, *outpost, seed.state_timestamp_ns, current_ns, sample_offset, gimbal, muzzle,
-                solver, bullet_speed);
+                aimer, *outpost, context, seed.state_timestamp_ns, current_ns, sample_offset,
+                gimbal, muzzle, solver, bullet_speed);
         }
 
         if (!sample) {
             return std::unexpected(sample.error());
         }
 
+        context.preferred_armor_id = sample->selected_armor_id;
+
         yaw_samples[k]          = sample->yaw;
         pitch_samples[k]        = std::clamp(sample->pitch, config.pitch_min, config.pitch_max);
         trajectory.distances[k] = sample->distance;
+        trajectory.diff_yaws[k] = sample->diff_yaw;
         trajectory.time_of_flights[k] = sample->time_of_flight;
         trajectory.positions[k]       = sample->position;
     }
@@ -279,8 +292,9 @@ template <typename TargetState>
 }
 
 [[nodiscard]] bool compute_fire_gate(
-    const L4::FireDecisionConfig& fire_decision, double current_yaw, double current_pitch,
-    int center_index, const ReferenceTrajectory& trajectory, const TinySolver* yaw_solver,
+    const L4::FireDecisionConfig& fire_decision, const L4::AimerConfig& aimer_config,
+    const L4::GimbalPlan& plan, double current_yaw, double current_pitch, int center_index,
+    const ReferenceTrajectory& trajectory, const TinySolver* yaw_solver,
     const TinySolver* pitch_solver) noexcept {
     const int sample_index =
         std::min(center_index, static_cast<int>(trajectory.distances.size()) - 1);
@@ -290,9 +304,12 @@ template <typename TargetState>
     // convention.
     const double optimized_pitch = -pitch_solver->solution->x(0, sample_index);
     const double distance        = std::max(trajectory.distances[sample_index], 1e-6);
+    const double diff_yaw        = trajectory.diff_yaws[sample_index];
 
-    return L4::is_on_target(
-        fire_decision, current_yaw, current_pitch, optimized_yaw, optimized_pitch, distance);
+    return L4::is_on_target_phase_aware(
+        fire_decision, plan.aim_phase, diff_yaw, aimer_config.yaw_limit_deg,
+        aimer_config.min_enable_yaw_deg, current_yaw, current_pitch, optimized_yaw, optimized_pitch,
+        distance);
 }
 
 [[nodiscard]] WeaponVisualizationDebugData build_debug_data(
@@ -571,8 +588,8 @@ std::expected<WeaponCommand, std::string> TinyMpcTrajectoryOptimizer::optimize(
     cmd.tof         = reference->time_of_flights[center_index];
     cmd.fire        = plan.fire_advice
                    && compute_fire_gate(
-                          fire_decision, current_yaw, current_pitch, center_index, *reference, yaw_solver,
-                          pitch_solver);
+                          fire_decision, aimer.config(), plan, current_yaw, current_pitch, center_index,
+                          *reference, yaw_solver, pitch_solver);
     if (config_.enable_debug) {
         cmd.viz_debug = build_debug_data(config_, *reference, yaw_solver, pitch_solver);
     }

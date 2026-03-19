@@ -106,32 +106,60 @@ void register_l3_estimation_systems(App& app) {
             target_json["timestamp"]["nsec"] = output->timestamp_ns % 1000000000L;
             target_json["status"]            = magic_enum::enum_name(output->status);
             target_json["tracking"]          = output->is_tracking();
+            target_json["target_name"]       = magic_enum::enum_name(output->target_name);
+            target_json["target_jumped"]     = output->target_jumped;
+            target_json["last_armor_id"]     = output->last_armor_id
+                                                 ? nlohmann::json(*output->last_armor_id)
+                                                 : nlohmann::json(nullptr);
 
             std::string type                        = "unknown";
             std::optional<Eigen::Vector3d> position = std::nullopt, velocity = std::nullopt;
             std::optional<double> yaw = std::nullopt, v_yaw = std::nullopt;
+            nlohmann::json armor_poses = nlohmann::json::array();
 
             if (output->is_robot()) {
-                const auto& state     = *output->robot_state();
-                type                  = "robot";
-                position              = state.position;
-                velocity              = state.velocity;
-                yaw                   = state.yaw;
-                v_yaw                 = state.v_yaw;
-                target_json["radius"] = {state.radius0, state.radius1};
-                target_json["z"]      = state.z1;
+                const auto& state         = *output->robot_state();
+                type                      = "robot";
+                position                  = state.position;
+                velocity                  = state.velocity;
+                yaw                       = state.yaw;
+                v_yaw                     = state.v_yaw;
+                target_json["radius"]     = {state.radius0, state.radius1};
+                target_json["z"]          = state.z1;
+                target_json["armors_num"] = state.armors_num;
+
+                const auto armors = state.armor_poses();
+                for (size_t i = 0; i < armors.size(); ++i) {
+                    armor_poses.push_back({
+                        {      "id",                        static_cast<int>(i)},
+                        {"position", {armors[i][0], armors[i][1], armors[i][2]}},
+                        {     "yaw",                               armors[i][3]},
+                    });
+                }
             } else if (output->is_outpost()) {
                 const auto& state = *output->outpost_state();
                 type              = "outpost";
                 position          = {
                     state.position.x(), state.position.y(),
                     (state.z[0] + state.z[1] + state.z[2]) / 3.0};
-                velocity         = state.velocity;
-                yaw              = state.yaw;
-                v_yaw            = state.v_yaw;
-                target_json["z"] = {state.z[0], state.z[1], state.z[2]};
+                velocity                  = state.velocity;
+                yaw                       = state.yaw;
+                v_yaw                     = state.v_yaw;
+                target_json["z"]          = {state.z[0], state.z[1], state.z[2]};
+                target_json["radius"]     = state.radius;
+                target_json["armors_num"] = state.armors_num;
+
+                const auto armors = state.armor_poses();
+                for (size_t i = 0; i < armors.size(); ++i) {
+                    armor_poses.push_back({
+                        {      "id",                        static_cast<int>(i)},
+                        {"position", {armors[i][0], armors[i][1], armors[i][2]}},
+                        {     "yaw",                               armors[i][3]},
+                    });
+                }
             }
-            target_json["type"] = type;
+            target_json["type"]        = type;
+            target_json["armor_poses"] = std::move(armor_poses);
             if (velocity) {
                 target_json["velocity"]      = {velocity->x(), velocity->y(), velocity->z()};
                 target_json["velocity_norm"] = velocity->norm();

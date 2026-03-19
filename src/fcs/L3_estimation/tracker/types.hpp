@@ -75,6 +75,8 @@ struct TrackerOutput {
     uint64_t timestamp_ns{0};
     TrackerStatus status{TrackerStatus::Idle};
     ArmorName target_name{ArmorName::Invalid};
+    bool target_jumped{false};
+    std::optional<int> last_armor_id{};
 
     // Variant: empty, robot, or outpost
     std::variant<std::monostate, RobotTargetState, OutpostTargetState> state;

@@ -2,8 +2,22 @@
 
 #include <Eigen/Dense>
 #include <cstdint>
+#include <optional>
 
 namespace fcs::L4 {
+
+enum class ArmorAimPhase : uint8_t {
+    SingleArmor    = 0,
+    WholeCarArmor  = 1,
+    WholeCarPair   = 2,
+    WholeCarCenter = 3,
+};
+
+struct ArmorAimContext {
+    bool target_jumped{false};
+    ArmorAimPhase phase{ArmorAimPhase::SingleArmor};
+    std::optional<int> preferred_armor_id{};
+};
 
 /// Aimer target type enumeration
 enum class AimerTargetType : uint8_t {
@@ -49,6 +63,9 @@ struct TargetPrediction {
     // ========================================================================
     Eigen::Vector3d target_velocity; ///< Target velocity [vx, vy, vz] (m/s)
     double target_v_yaw{0.0};        ///< Target angular velocity (rad/s)
+    ArmorAimPhase aim_phase{ArmorAimPhase::SingleArmor};
+    int selected_armor_id{0};
+    double diff_yaw{0.0};
 
     // ========================================================================
     // Simple Fire Advice (is target in shooting window?)

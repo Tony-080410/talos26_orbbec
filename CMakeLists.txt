@@ -279,6 +279,9 @@ if(BUILD_TESTING)
     foreach(test_file ${FCS_TESTS})
         get_filename_component(test_name ${test_file} NAME_WE)
         add_executable(${test_name} ${test_file})
+        target_compile_definitions(${test_name} PRIVATE
+            TALOS_SOURCE_DIR="${PROJECT_SOURCE_DIR_ABS}"
+        )
         target_link_libraries(${test_name} PRIVATE
             GTest::gtest_main
             Threads::Threads

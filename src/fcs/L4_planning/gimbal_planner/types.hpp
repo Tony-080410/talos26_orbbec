@@ -1,6 +1,7 @@
 #pragma once
 
 #include "L3_estimation/tracker/types.hpp"
+#include "L4_planning/aimer/types.hpp"
 #include "core/channel_topics.hpp"
 
 #include <Eigen/Core>
@@ -39,6 +40,10 @@ struct PlannerSeed {
 
     uint64_t state_timestamp_ns{0};
     State state{};
+    bool target_jumped{false};
+    std::optional<int> tracker_last_armor_id{};
+    ArmorAimPhase aim_phase{ArmorAimPhase::SingleArmor};
+    int selected_armor_id{0};
 
     [[nodiscard]] bool is_robot() const noexcept {
         return std::holds_alternative<L3::RobotTargetState>(state);
@@ -80,6 +85,9 @@ struct GimbalPlan {
     // ========================================================================
     double yaw{0.0};
     double pitch{0.0};
+    double diff_yaw{0.0};
+    ArmorAimPhase aim_phase{ArmorAimPhase::SingleArmor};
+    int selected_armor_id{0};
     double yaw_vel{0.0};
     double pitch_vel{0.0};
     double yaw_acc{0.0};

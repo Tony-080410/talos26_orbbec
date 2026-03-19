@@ -173,6 +173,7 @@ public:
         outpost_target_.reset();
         robot_last_armor_id_.reset();
         outpost_last_armor_id_.reset();
+        target_jumped_ = false;
 
         if (is_outpost) {
             const double x0 = pos.x() + OutpostEkfMotionModel::OUTPOST_RADIUS * std::cos(armor_yaw);
@@ -225,29 +226,32 @@ public:
 
     [[nodiscard]] TrackerOutput get_output() const noexcept {
         TrackerOutput output;
-        output.status      = status_;
-        output.target_name = target_name_;
+        output.status        = status_;
+        output.target_name   = target_name_;
+        output.target_jumped = target_jumped_;
 
         if (robot_target_.has_value()) {
             const auto& x = robot_target_->x();
             RobotTargetState state;
-            state.position   = {x[XC], x[YC], x[Z0]};
-            state.velocity   = {x[VX], x[VY], x[VZ]};
-            state.yaw        = x[YAW];
-            state.v_yaw      = x[V_YAW];
-            state.radius0    = x[R_0];
-            state.radius1    = x[R_1];
-            state.z1         = x[Z0] + x[H];
-            state.armors_num = RobotEkfMotionModel::ARMORS_NUM;
-            output.state     = state;
+            state.position       = {x[XC], x[YC], x[Z0]};
+            state.velocity       = {x[VX], x[VY], x[VZ]};
+            state.yaw            = x[YAW];
+            state.v_yaw          = x[V_YAW];
+            state.radius0        = x[R_0];
+            state.radius1        = x[R_1];
+            state.z1             = x[Z0] + x[H];
+            state.armors_num     = RobotEkfMotionModel::ARMORS_NUM;
+            output.state         = state;
+            output.last_armor_id = robot_last_armor_id_;
         } else if (outpost_target_.has_value()) {
             const auto& x = outpost_target_->x();
             OutpostTargetState state;
-            state.position = {x[O_XC], x[O_YC]};
-            state.yaw      = x[O_YAW];
-            state.v_yaw    = x[O_VYAW];
-            state.z        = {x[O_Z0], x[O_Z1], x[O_Z2]};
-            output.state   = state;
+            state.position       = {x[O_XC], x[O_YC]};
+            state.yaw            = x[O_YAW];
+            state.v_yaw          = x[O_VYAW];
+            state.z              = {x[O_Z0], x[O_Z1], x[O_Z2]};
+            output.state         = state;
+            output.last_armor_id = outpost_last_armor_id_;
         }
 
         return output;
@@ -258,7 +262,8 @@ public:
         outpost_target_.reset();
         robot_last_armor_id_.reset();
         outpost_last_armor_id_.reset();
-        target_name_ = ArmorName::Invalid;
+        target_jumped_ = false;
+        target_name_   = ArmorName::Invalid;
         measurement_.fill(0.0);
         detecting_count_ = 0;
         last_dt_         = 0.0;
@@ -368,7 +373,13 @@ private:
         }
 
         state_machine(true);
-        last_armor_id = selected.front().armor_id;
+        last_armor_id                     = selected.front().armor_id;
+        const bool observed_nonzero_armor = std::any_of(
+            selected.begin(), selected.end(),
+            [](const MatchCandidate<TargetInfo>& candidate) { return candidate.armor_id != 0; });
+        if (observed_nonzero_armor) {
+            target_jumped_ = true;
+        }
 
         for (const auto& candidate : selected) {
             target.update(candidate.z_update, candidate.armor_id);
@@ -554,6 +565,7 @@ private:
     std::array<double, RobotEkfMotionModel::NZ * 2> measurement_{};
     std::optional<int> robot_last_armor_id_{};
     std::optional<int> outpost_last_armor_id_{};
+    bool target_jumped_{false};
 };
 
 } // namespace fcs::L3

@@ -178,8 +178,20 @@ TEST(ConfigParse, VisionBaseTomlMatchesExpectedSemanticsAndValues) {
     EXPECT_DOUBLE_EQ(config.l4->fire_decision.shooting_range_h, 0.135);
     EXPECT_DOUBLE_EQ(config.l4->fire_decision.shooting_range_w, 0.135);
     EXPECT_DOUBLE_EQ(config.l4->aimer.delay, 0.019);
-    EXPECT_DOUBLE_EQ(config.l4->aimer.side_angle, 15.0);
-    EXPECT_DOUBLE_EQ(config.l4->aimer.min_switching_v_yaw, 1.0);
+    EXPECT_DOUBLE_EQ(config.l4->aimer.single_whole_up, 2.5);
+    EXPECT_DOUBLE_EQ(config.l4->aimer.single_whole_down, 1.0);
+    EXPECT_DOUBLE_EQ(config.l4->aimer.whole_pair_up, 7.5);
+    EXPECT_DOUBLE_EQ(config.l4->aimer.whole_pair_down, 6.5);
+    EXPECT_DOUBLE_EQ(config.l4->aimer.pair_center_up, 16.5);
+    EXPECT_DOUBLE_EQ(config.l4->aimer.pair_center_down, 15.0);
+    EXPECT_EQ(config.l4->aimer.transfer_threshold, 50);
+    EXPECT_DOUBLE_EQ(config.l4->aimer.front_window_deg, 90.0);
+    EXPECT_DOUBLE_EQ(config.l4->aimer.coming_angle_deg, 60.0);
+    EXPECT_DOUBLE_EQ(config.l4->aimer.leaving_angle_deg, 20.0);
+    EXPECT_DOUBLE_EQ(config.l4->aimer.outpost_coming_angle_deg, 70.0);
+    EXPECT_DOUBLE_EQ(config.l4->aimer.outpost_leaving_angle_deg, 30.0);
+    EXPECT_DOUBLE_EQ(config.l4->aimer.yaw_limit_deg, 40.0);
+    EXPECT_DOUBLE_EQ(config.l4->aimer.min_enable_yaw_deg, 0.25);
 
     EXPECT_EQ(config.trajectory.model->type, fcs::core::trajectory::model::ModelType::LinearDrag);
     EXPECT_EQ(config.trajectory.model->iteration_times, 10u);
