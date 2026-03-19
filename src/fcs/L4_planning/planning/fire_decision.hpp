@@ -15,6 +15,9 @@ struct FireDecisionConfig {
     /// Default aligned with sp_vision_25 planner
     double fire_thresh{0.003};
 
+    /// Maximum yaw/pitch mismatch allowed by the L5 dual-delay consistency gate.
+    double delay_gate_error_rad{0.0035};
+
     /// Physical window dimensions (meters)
     double shooting_range_h{0.135}; // Height
     double shooting_range_w{0.135}; // Width

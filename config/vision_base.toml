@@ -111,6 +111,8 @@ yaw_log_k = 0.005
 # Minimum shooting threshold (radians), used for long distances
 # Shared fire gate threshold for L4/L5
 fire_thresh = 0.01744444
+# L5 dual-delay gate mismatch threshold (radians)
+delay_gate_error_rad = 0.0035
 # Physical window dimensions (meters)
 shooting_range_h = 0.135
 shooting_range_w = 0.135
@@ -132,6 +134,8 @@ transfer_threshold = 50
 
 # Armor selection windows (degrees)
 front_window_deg = 90.0
+coming_angle_deg = 60.0
+leaving_angle_deg = 20.0
 
 # Phase-aware fire gate shaping
 yaw_limit_deg = 40.0

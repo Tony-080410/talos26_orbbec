@@ -25,6 +25,10 @@ struct AimerConfig {
     /// Front-window limit for single-armor locking (degrees).
     double front_window_deg{90.0};
 
+    /// Robot whole-car directional armor windows (degrees), aligned with WUST semantics.
+    double coming_angle_deg{60.0};
+    double leaving_angle_deg{20.0};
+
     /// Phase-aware fire gate shaping, aligned with WUST semantics.
     double yaw_limit_deg{40.0};
     double min_enable_yaw_deg{0.25};

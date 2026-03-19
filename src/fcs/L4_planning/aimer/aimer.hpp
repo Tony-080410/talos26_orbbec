@@ -99,18 +99,27 @@ private:
     // Common aim angle computation (shared by all target types)
     // ========================================================================
 
-    /// Common gimbal-based aim angle computation for all target types
-    [[nodiscard]] static std::pair<double, double> compute_gimbal_aim_angles(
-        const Eigen::Vector3d& predicted_pos, const GimbalTransform& gimbal,
-        const MuzzleTransform& muzzle, const core::trajectory::solver::TrajectorySolver& solver,
-        double bullet_speed) noexcept {
-        const Eigen::Vector2d aim_angles =
-            compute_aim_point(solver, predicted_pos - muzzle.translation(), bullet_speed);
-        const auto desired_muzzle = math_fuxk::rpy(0.0, aim_angles.y(), aim_angles.x()).so3();
+    [[nodiscard]] static std::pair<double, double> compose_gimbal_aim_angles(
+        const core::trajectory::solver::AimSolution& solution, const GimbalTransform& gimbal,
+        const MuzzleTransform& muzzle) noexcept {
+        const auto desired_muzzle = math_fuxk::rpy(0.0, solution.pitch, solution.yaw).so3();
         const auto muzzle_delta   = muzzle.so3().inv() * desired_muzzle;
         const auto desired_gimbal = gimbal.so3() * muzzle_delta;
         const auto [r, p, y]      = math_fuxk::rpy(desired_gimbal).rpy();
         return {y, p};
+    }
+
+    /// Common gimbal-based aim angle computation for all target types.
+    [[nodiscard]] static std::expected<std::pair<double, double>, std::string>
+        compute_gimbal_aim_angles(
+            const Eigen::Vector3d& predicted_pos, const GimbalTransform& gimbal,
+            const MuzzleTransform& muzzle, const core::trajectory::solver::TrajectorySolver& solver,
+            double bullet_speed) noexcept {
+        const auto solution = solver.solve(predicted_pos - muzzle.translation(), bullet_speed);
+        if (!solution.is_valid()) {
+            return std::unexpected("ballistic solver failed to produce a valid aim solution");
+        }
+        return compose_gimbal_aim_angles(solution, gimbal, muzzle);
     }
 
     // ========================================================================
@@ -141,12 +150,14 @@ private:
         predict_position(const L3::OutpostTargetState& target, double dt) const noexcept;
 
     [[nodiscard]] PredictedAimPoint predict_aim_point(
-        const L3::RobotTargetState& target, double dt,
-        const ArmorAimContext& context) const noexcept;
+        const L3::RobotTargetState& target, double dt, const ArmorAimContext& context,
+        const Eigen::Vector3d& muzzle_pos,
+        std::optional<int> forced_armor_id = std::nullopt) const noexcept;
 
     [[nodiscard]] PredictedAimPoint predict_aim_point(
-        const L3::OutpostTargetState& target, double dt,
-        const ArmorAimContext& context) const noexcept;
+        const L3::OutpostTargetState& target, double dt, const ArmorAimContext& context,
+        const Eigen::Vector3d& muzzle_pos,
+        std::optional<int> forced_armor_id = std::nullopt) const noexcept;
 
     AimerConfig config_;
 };

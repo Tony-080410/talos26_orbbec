@@ -110,6 +110,8 @@ struct ReferenceTrajectory {
     std::vector<double> diff_yaws;
     std::vector<double> time_of_flights;
     std::vector<Eigen::Vector3d> positions;
+    std::vector<int> selected_armor_ids;
+    std::vector<int> rough_selected_armor_ids;
     double yaw_origin{0.0};
 };
 
@@ -121,6 +123,18 @@ struct ReferenceSample {
     double time_of_flight{0.0};
     Eigen::Vector3d position{Eigen::Vector3d::Zero()};
     int selected_armor_id{0};
+    int rough_selected_armor_id{0};
+};
+
+struct FireGateStatus {
+    int delay_steps{0};
+    double delay_gate_threshold{0.0};
+    double delay_gate_forward_error{0.0};
+    double delay_gate_backward_error{0.0};
+    bool delay_gate_forward_ok{false};
+    bool delay_gate_backward_ok{false};
+    bool phase_gate_ok{false};
+    bool final_fire_gate_ok{false};
 };
 
 // ==============================================================================
@@ -215,13 +229,14 @@ template <typename TargetState>
     }
 
     return ReferenceSample{
-        .yaw               = prediction->aim_yaw,
-        .pitch             = prediction->aim_pitch,
-        .distance          = prediction->distance,
-        .diff_yaw          = prediction->diff_yaw,
-        .time_of_flight    = prediction->flying_time,
-        .position          = prediction->predicted_position,
-        .selected_armor_id = prediction->selected_armor_id,
+        .yaw                     = prediction->aim_yaw,
+        .pitch                   = prediction->aim_pitch,
+        .distance                = prediction->distance,
+        .diff_yaw                = prediction->diff_yaw,
+        .time_of_flight          = prediction->flying_time,
+        .position                = prediction->predicted_position,
+        .selected_armor_id       = prediction->selected_armor_id,
+        .rough_selected_armor_id = prediction->rough_selected_armor_id,
     };
 }
 
@@ -232,11 +247,13 @@ template <typename TargetState>
     const int horizon = config.mpc.horizon_ahead + config.mpc.horizon_back + 1;
 
     ReferenceTrajectory trajectory{
-        .state           = ReferenceMatrix(4, horizon),
-        .distances       = std::vector<double>(horizon, 0.0),
-        .diff_yaws       = std::vector<double>(horizon, 0.0),
-        .time_of_flights = std::vector<double>(horizon, 0.0),
-        .positions       = std::vector<Eigen::Vector3d>(horizon, Eigen::Vector3d::Zero()),
+        .state                    = ReferenceMatrix(4, horizon),
+        .distances                = std::vector<double>(horizon, 0.0),
+        .diff_yaws                = std::vector<double>(horizon, 0.0),
+        .time_of_flights          = std::vector<double>(horizon, 0.0),
+        .positions                = std::vector<Eigen::Vector3d>(horizon, Eigen::Vector3d::Zero()),
+        .selected_armor_ids       = std::vector<int>(horizon, 0),
+        .rough_selected_armor_ids = std::vector<int>(horizon, 0),
     };
 
     std::vector<double> yaw_samples(horizon, 0.0);
@@ -271,8 +288,10 @@ template <typename TargetState>
         pitch_samples[k]        = std::clamp(sample->pitch, config.pitch_min, config.pitch_max);
         trajectory.distances[k] = sample->distance;
         trajectory.diff_yaws[k] = sample->diff_yaw;
-        trajectory.time_of_flights[k] = sample->time_of_flight;
-        trajectory.positions[k]       = sample->position;
+        trajectory.time_of_flights[k]          = sample->time_of_flight;
+        trajectory.positions[k]                = sample->position;
+        trajectory.selected_armor_ids[k]       = sample->selected_armor_id;
+        trajectory.rough_selected_armor_ids[k] = sample->rough_selected_armor_id;
     }
 
     trajectory.yaw_origin = yaw_samples[config.mpc.horizon_back];
@@ -291,13 +310,49 @@ template <typename TargetState>
     return solver && status == 0 && solver->solution && solver->solution->solved == 1;
 }
 
-[[nodiscard]] bool compute_fire_gate(
+[[nodiscard]] FireGateStatus compute_fire_gate(
     const L4::FireDecisionConfig& fire_decision, const L4::AimerConfig& aimer_config,
-    const L4::GimbalPlan& plan, double current_yaw, double current_pitch, int center_index,
-    const ReferenceTrajectory& trajectory, const TinySolver* yaw_solver,
+    const L4::GimbalPlan& plan, double current_yaw, double current_pitch, double mpc_dt,
+    int center_index, const ReferenceTrajectory& trajectory, const TinySolver* yaw_solver,
     const TinySolver* pitch_solver) noexcept {
-    const int sample_index =
-        std::min(center_index, static_cast<int>(trajectory.distances.size()) - 1);
+    FireGateStatus status;
+    status.delay_gate_threshold = fire_decision.delay_gate_error_rad;
+
+    const int horizon = static_cast<int>(trajectory.distances.size());
+    if (horizon <= 0) {
+        return status;
+    }
+
+    const int sample_index = std::clamp(center_index, 0, horizon - 1);
+    const auto clamp_index = [&](int index) noexcept { return std::clamp(index, 0, horizon - 1); };
+    const auto reference_angles = [&](int index) noexcept {
+        return std::pair{
+            normalize_angle(trajectory.state(0, index) + trajectory.yaw_origin),
+            trajectory.state(2, index),
+        };
+    };
+    const auto optimized_angles = [&](int index) noexcept {
+        return std::pair{
+            normalize_angle(yaw_solver->solution->x(0, index) + trajectory.yaw_origin),
+            pitch_solver->solution->x(0, index),
+        };
+    };
+    const auto delay_error = [&](int index) noexcept {
+        const auto [reference_yaw, reference_pitch] = reference_angles(index);
+        const auto [optimized_yaw, optimized_pitch] = optimized_angles(index);
+        return std::hypot(
+            normalize_angle(reference_yaw - optimized_yaw), reference_pitch - optimized_pitch);
+    };
+
+    status.delay_steps =
+        std::max(0, static_cast<int>(std::lround(aimer_config.delay / std::max(mpc_dt, 1e-6))));
+    const int forward_index          = clamp_index(sample_index + status.delay_steps);
+    const int backward_index         = clamp_index(sample_index - status.delay_steps);
+    status.delay_gate_forward_error  = delay_error(forward_index);
+    status.delay_gate_backward_error = delay_error(backward_index);
+    status.delay_gate_forward_ok  = status.delay_gate_forward_error < status.delay_gate_threshold;
+    status.delay_gate_backward_ok = status.delay_gate_backward_error < status.delay_gate_threshold;
+
     const double optimized_yaw =
         normalize_angle(yaw_solver->solution->x(0, sample_index) + trajectory.yaw_origin);
     // is_on_target compares against TF pitch convention; optimizer pitch follows command
@@ -306,30 +361,44 @@ template <typename TargetState>
     const double distance        = std::max(trajectory.distances[sample_index], 1e-6);
     const double diff_yaw        = trajectory.diff_yaws[sample_index];
 
-    return L4::is_on_target_phase_aware(
+    status.phase_gate_ok = L4::is_on_target_phase_aware(
         fire_decision, plan.aim_phase, diff_yaw, aimer_config.yaw_limit_deg,
         aimer_config.min_enable_yaw_deg, current_yaw, current_pitch, optimized_yaw, optimized_pitch,
         distance);
+    status.final_fire_gate_ok =
+        status.delay_gate_forward_ok && status.delay_gate_backward_ok && status.phase_gate_ok;
+    return status;
 }
 
 [[nodiscard]] WeaponVisualizationDebugData build_debug_data(
     const WeaponControllerConfig& config, const ReferenceTrajectory& trajectory,
-    const TinySolver* yaw_solver, const TinySolver* pitch_solver) {
+    const TinySolver* yaw_solver, const TinySolver* pitch_solver, const FireGateStatus& fire_gate) {
     WeaponVisualizationDebugData debug;
-    const int horizon     = static_cast<int>(trajectory.distances.size());
-    debug.center_index    = config.mpc.horizon_back;
-    debug.lookahead_index = debug.center_index;
+    const int horizon               = static_cast<int>(trajectory.distances.size());
+    debug.center_index              = config.mpc.horizon_back;
+    debug.lookahead_index           = debug.center_index;
+    debug.delay_steps               = fire_gate.delay_steps;
+    debug.delay_gate_threshold      = fire_gate.delay_gate_threshold;
+    debug.delay_gate_forward_error  = fire_gate.delay_gate_forward_error;
+    debug.delay_gate_backward_error = fire_gate.delay_gate_backward_error;
+    debug.delay_gate_forward_ok     = fire_gate.delay_gate_forward_ok;
+    debug.delay_gate_backward_ok    = fire_gate.delay_gate_backward_ok;
+    debug.phase_gate_ok             = fire_gate.phase_gate_ok;
+    debug.final_fire_gate_ok        = fire_gate.final_fire_gate_ok;
     debug.reference_plan.reserve(horizon);
     debug.optimized_plan.reserve(horizon);
 
     for (int k = 0; k < horizon; ++k) {
         debug.reference_plan.push_back(
             TrajectoryPlanSample{
-                .yaw            = normalize_angle(trajectory.state(0, k) + trajectory.yaw_origin),
-                .pitch          = trajectory.state(2, k),
-                .distance       = trajectory.distances[k],
-                .tof            = trajectory.time_of_flights[k],
-                .world_position = trajectory.positions[k],
+                .yaw      = normalize_angle(trajectory.state(0, k) + trajectory.yaw_origin),
+                .pitch    = trajectory.state(2, k),
+                .distance = trajectory.distances[k],
+                .tof      = trajectory.time_of_flights[k],
+                .diff_yaw = trajectory.diff_yaws[k],
+                .selected_armor_id       = trajectory.selected_armor_ids[k],
+                .rough_selected_armor_id = trajectory.rough_selected_armor_ids[k],
+                .world_position          = trajectory.positions[k],
             });
 
         const Eigen::Vector3d reconstructed_reference = spherical_to_cartesian(
@@ -343,11 +412,14 @@ template <typename TargetState>
             spherical_to_cartesian(trajectory.distances[k], optimized_yaw, optimized_pitch);
         debug.optimized_plan.push_back(
             TrajectoryPlanSample{
-                .yaw            = optimized_yaw,
-                .pitch          = optimized_pitch,
-                .distance       = trajectory.distances[k],
-                .tof            = trajectory.time_of_flights[k],
-                .world_position = reconstructed_optimized + world_bias,
+                .yaw                     = optimized_yaw,
+                .pitch                   = optimized_pitch,
+                .distance                = trajectory.distances[k],
+                .tof                     = trajectory.time_of_flights[k],
+                .diff_yaw                = trajectory.diff_yaws[k],
+                .selected_armor_id       = trajectory.selected_armor_ids[k],
+                .rough_selected_armor_id = trajectory.rough_selected_armor_ids[k],
+                .world_position          = reconstructed_optimized + world_bias,
             });
     }
 
@@ -580,18 +652,18 @@ std::expected<WeaponCommand, std::string> TinyMpcTrajectoryOptimizer::optimize(
     cmd.yaw   = normalize_angle(yaw_solver->solution->x(0, center_index) + reference->yaw_origin);
     cmd.pitch = std::clamp(
         pitch_solver->solution->x(0, center_index), config_.pitch_min, config_.pitch_max);
-    cmd.yaw_vel     = yaw_solver->solution->x(1, center_index);
-    cmd.pitch_vel   = pitch_solver->solution->x(1, center_index);
-    cmd.yaw_accel   = yaw_solver->solution->u(0, control_index);
-    cmd.pitch_accel = pitch_solver->solution->u(0, control_index);
-    cmd.distance    = reference->distances[center_index];
-    cmd.tof         = reference->time_of_flights[center_index];
-    cmd.fire        = plan.fire_advice
-                   && compute_fire_gate(
-                          fire_decision, aimer.config(), plan, current_yaw, current_pitch, center_index,
-                          *reference, yaw_solver, pitch_solver);
+    cmd.yaw_vel                    = yaw_solver->solution->x(1, center_index);
+    cmd.pitch_vel                  = pitch_solver->solution->x(1, center_index);
+    cmd.yaw_accel                  = yaw_solver->solution->u(0, control_index);
+    cmd.pitch_accel                = pitch_solver->solution->u(0, control_index);
+    cmd.distance                   = reference->distances[center_index];
+    cmd.tof                        = reference->time_of_flights[center_index];
+    const FireGateStatus fire_gate = compute_fire_gate(
+        fire_decision, aimer.config(), plan, current_yaw, current_pitch, config_.mpc.dt,
+        center_index, *reference, yaw_solver, pitch_solver);
+    cmd.fire = plan.fire_advice && fire_gate.final_fire_gate_ok;
     if (config_.enable_debug) {
-        cmd.viz_debug = build_debug_data(config_, *reference, yaw_solver, pitch_solver);
+        cmd.viz_debug = build_debug_data(config_, *reference, yaw_solver, pitch_solver, fire_gate);
     }
 
     const auto finite = [](double value) noexcept { return std::isfinite(value); };

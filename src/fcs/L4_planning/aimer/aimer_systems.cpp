@@ -182,22 +182,23 @@ void register_aimer_systems(talos::Scheduler& scheduler, L4Config&& config) {
                 }
 
                 GimbalPlan plan;
-                plan.timestamp_ns       = aim_result->timestamp_ns;
-                plan.yaw                = aim_result->aim_yaw;
-                plan.pitch              = aim_result->aim_pitch;
-                plan.diff_yaw           = aim_result->diff_yaw;
-                plan.aim_phase          = aim_result->aim_phase;
-                plan.selected_armor_id  = aim_result->selected_armor_id;
-                plan.aim_yaw            = aim_result->aim_yaw;
-                plan.aim_pitch          = aim_result->aim_pitch;
-                plan.distance           = aim_result->distance;
-                plan.aimer_fire_advice  = aim_result->aimer_fire_advice;
-                plan.fire_advice        = aim_result->aimer_fire_advice;
-                plan.predicted_future   = aim_result->predicted_future_ns;
-                plan.predicted_position = aim_result->predicted_position;
-                plan.source             = (aim_result->target_type == AimerTargetType::Rune)
-                                            ? GimbalPlanSource::Rune
-                                            : GimbalPlanSource::Armor;
+                plan.timestamp_ns            = aim_result->timestamp_ns;
+                plan.yaw                     = aim_result->aim_yaw;
+                plan.pitch                   = aim_result->aim_pitch;
+                plan.diff_yaw                = aim_result->diff_yaw;
+                plan.aim_phase               = aim_result->aim_phase;
+                plan.selected_armor_id       = aim_result->selected_armor_id;
+                plan.rough_selected_armor_id = aim_result->rough_selected_armor_id;
+                plan.aim_yaw                 = aim_result->aim_yaw;
+                plan.aim_pitch               = aim_result->aim_pitch;
+                plan.distance                = aim_result->distance;
+                plan.aimer_fire_advice       = aim_result->aimer_fire_advice;
+                plan.fire_advice             = aim_result->aimer_fire_advice;
+                plan.predicted_future        = aim_result->predicted_future_ns;
+                plan.predicted_position      = aim_result->predicted_position;
+                plan.source                  = (aim_result->target_type == AimerTargetType::Rune)
+                                                 ? GimbalPlanSource::Rune
+                                                 : GimbalPlanSource::Armor;
                 if (tracker_output && tracker_output->is_tracking()) {
                     PlannerSeed seed;
                     seed.state_timestamp_ns    = tracker_output->timestamp_ns;

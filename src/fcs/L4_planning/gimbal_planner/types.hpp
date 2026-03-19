@@ -88,6 +88,7 @@ struct GimbalPlan {
     double diff_yaw{0.0};
     ArmorAimPhase aim_phase{ArmorAimPhase::SingleArmor};
     int selected_armor_id{0};
+    int rough_selected_armor_id{0};
     double yaw_vel{0.0};
     double pitch_vel{0.0};
     double yaw_acc{0.0};

@@ -43,12 +43,42 @@ public:
     }
 };
 
+class InvalidTrajectorySolver final : public fcs::core::trajectory::solver::TrajectorySolver {
+public:
+    [[nodiscard]] fcs::core::trajectory::solver::AimSolution
+        solve(const Eigen::Vector3d&, double) const noexcept override {
+        return {
+            .yaw            = 0.0,
+            .pitch          = 0.0,
+            .time_of_flight = 0.0,
+            .converged      = false,
+            .iterations     = 1,
+        };
+    }
+
+    [[nodiscard]] std::vector<std::pair<double, double>>
+        generate_trajectory(double, double, double) const noexcept override {
+        return {};
+    }
+
+    [[nodiscard]] std::string_view solver_name() const noexcept override { return "invalid"; }
+
+    [[nodiscard]] const fcs::core::trajectory::model::BallisticModel*
+        get_model() const noexcept override {
+        return nullptr;
+    }
+};
+
 fcs::L4::Aimer::GimbalTransform make_gimbal() {
     return fcs::L4::Aimer::GimbalTransform::from_rpy(0.0, 0.0, 0.0);
 }
 
 fcs::L4::Aimer::MuzzleTransform make_muzzle() {
     return fcs::L4::Aimer::MuzzleTransform::from_translation(0.0, 0.0, 0.0);
+}
+
+fcs::L4::Aimer::MuzzleTransform make_muzzle(double x, double y, double z) {
+    return fcs::L4::Aimer::MuzzleTransform::from_translation(x, y, z);
 }
 
 fcs::L3::RobotTargetState make_robot_target(double yaw, double v_yaw = 0.0) {
@@ -61,6 +91,16 @@ fcs::L3::RobotTargetState make_robot_target(double yaw, double v_yaw = 0.0) {
     target.radius1    = 0.3;
     target.z1         = 0.4;
     target.armors_num = 4;
+    return target;
+}
+
+fcs::L3::OutpostTargetState make_outpost_target(double yaw, double v_yaw = 0.0) {
+    fcs::L3::OutpostTargetState target;
+    target.position = Eigen::Vector2d(1.0, 0.0);
+    target.velocity = Eigen::Vector3d::Zero();
+    target.yaw      = yaw;
+    target.v_yaw    = v_yaw;
+    target.z        = {0.0, 0.0, 0.0};
     return target;
 }
 
@@ -147,7 +187,26 @@ TEST(AimerPhase, WholeCarArmorFallbackStaysWithinValidCandidates) {
         fcs::L4::AimerConfig{}.coming_angle_deg * std::numbers::pi / 180.0);
 }
 
-TEST(AimerPhase, WholeCarPairReselectsLegacySubsetWithoutLocking) {
+TEST(AimerPhase, WholeCarPairLowLayerUsesZeroTwoSubset) {
+    fcs::L4::Aimer aimer(fcs::L4::AimerConfig{});
+    MockTrajectorySolver solver;
+    const auto gimbal = make_gimbal();
+    const auto muzzle = make_muzzle();
+
+    fcs::L4::ArmorAimContext context;
+    context.target_jumped      = true;
+    context.phase              = fcs::L4::ArmorAimPhase::WholeCarPair;
+    context.preferred_armor_id = 0;
+
+    auto target = make_robot_target(std::numbers::pi, 12.0);
+    target.z1   = target.position.z();
+
+    const auto prediction = aimer.aim(target, context, gimbal, muzzle, 0, 0, 0.0, 30.0, solver);
+    ASSERT_TRUE(prediction.has_value()) << prediction.error();
+    EXPECT_EQ(prediction->selected_armor_id, 2);
+}
+
+TEST(AimerPhase, WholeCarPairHighLayerUsesOneThreeZeroSubset) {
     fcs::L4::Aimer aimer(fcs::L4::AimerConfig{});
     MockTrajectorySolver solver;
     const auto gimbal = make_gimbal();
@@ -159,18 +218,42 @@ TEST(AimerPhase, WholeCarPairReselectsLegacySubsetWithoutLocking) {
     context.preferred_armor_id = 0;
 
     const auto prediction = aimer.aim(
-        make_robot_target(std::numbers::pi, 12.0), context, gimbal, muzzle, 0, 0, 0.0, 30.0,
+        make_robot_target(-std::numbers::pi / 2.0, 12.0), context, gimbal, muzzle, 0, 0, 0.0, 30.0,
         solver);
     ASSERT_TRUE(prediction.has_value()) << prediction.error();
-    EXPECT_EQ(prediction->selected_armor_id, 2);
+    EXPECT_EQ(prediction->selected_armor_id, 1);
 }
 
-TEST(AimerPhase, WholeCarCenterProjectsCenterAim) {
+TEST(AimerPhase, WholeCarPairOutpostUsesAllArmors) {
     fcs::L4::Aimer aimer(fcs::L4::AimerConfig{});
     MockTrajectorySolver solver;
     const auto gimbal = make_gimbal();
     const auto muzzle = make_muzzle();
-    const auto target = make_robot_target(-std::numbers::pi / 8.0);
+
+    fcs::L4::ArmorAimContext context;
+    context.target_jumped      = true;
+    context.phase              = fcs::L4::ArmorAimPhase::WholeCarPair;
+    context.preferred_armor_id = 0;
+
+    const auto prediction = aimer.aim(
+        make_outpost_target(-2.0 * std::numbers::pi / 3.0, 12.0), context, gimbal, muzzle, 0, 0,
+        0.0, 30.0, solver);
+    ASSERT_TRUE(prediction.has_value()) << prediction.error();
+    EXPECT_EQ(prediction->selected_armor_id, 1);
+}
+
+TEST(AimerPhase, WholeCarCenterProjectsAlongMuzzleRay) {
+    fcs::L4::Aimer aimer(fcs::L4::AimerConfig{});
+    MockTrajectorySolver solver;
+    const auto gimbal = make_gimbal();
+    const auto muzzle = make_muzzle(1.0, 0.0, 0.0);
+
+    auto target     = make_robot_target(std::atan2(5.0, 1.0));
+    target.position = Eigen::Vector3d(1.0, 5.0, 0.0);
+    target.velocity = Eigen::Vector3d::Zero();
+    target.radius0  = 0.2;
+    target.radius1  = 0.3;
+    target.z1       = 0.4;
 
     fcs::L4::ArmorAimContext context;
     context.target_jumped      = true;
@@ -180,8 +263,8 @@ TEST(AimerPhase, WholeCarCenterProjectsCenterAim) {
     const auto prediction = aimer.aim(target, context, gimbal, muzzle, 0, 0, 0.0, 30.0, solver);
     ASSERT_TRUE(prediction.has_value()) << prediction.error();
     EXPECT_EQ(prediction->selected_armor_id, 0);
-    EXPECT_NEAR(prediction->predicted_position.x(), 0.8, 1e-6);
-    EXPECT_NEAR(prediction->predicted_position.y(), 0.0, 1e-6);
+    EXPECT_NEAR(prediction->predicted_position.x(), 1.0, 1e-6);
+    EXPECT_NEAR(prediction->predicted_position.y(), 4.8, 1e-6);
     EXPECT_NEAR(prediction->predicted_position.z(), target.position.z(), 1e-6);
 }
 
@@ -221,4 +304,20 @@ TEST(AimerPhase, TrackerJumpedLatchesWhenAnyVisibleArmorIsNonZero) {
     const auto output = tracker.get_output();
     ASSERT_TRUE(output.robot_state() != nullptr);
     EXPECT_TRUE(output.target_jumped);
+}
+
+TEST(AimerPhase, BallisticFailureFailsClosed) {
+    fcs::L4::Aimer aimer(fcs::L4::AimerConfig{});
+    InvalidTrajectorySolver solver;
+    const auto gimbal = make_gimbal();
+    const auto muzzle = make_muzzle();
+
+    fcs::L4::ArmorAimContext context;
+    context.target_jumped = true;
+    context.phase         = fcs::L4::ArmorAimPhase::SingleArmor;
+
+    const auto prediction = aimer.aim(
+        make_robot_target(-std::numbers::pi / 4.0), context, gimbal, muzzle, 0, 0, 0.0, 30.0,
+        solver);
+    EXPECT_FALSE(prediction.has_value());
 }

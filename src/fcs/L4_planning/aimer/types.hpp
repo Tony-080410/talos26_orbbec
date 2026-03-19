@@ -65,6 +65,7 @@ struct TargetPrediction {
     double target_v_yaw{0.0};        ///< Target angular velocity (rad/s)
     ArmorAimPhase aim_phase{ArmorAimPhase::SingleArmor};
     int selected_armor_id{0};
+    int rough_selected_armor_id{0};
     double diff_yaw{0.0};
 
     // ========================================================================

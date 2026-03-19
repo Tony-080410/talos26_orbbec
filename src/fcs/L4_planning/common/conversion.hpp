@@ -35,12 +35,13 @@ inline void copy_prediction_to_gimbal_plan(
     plan_out.predicted_future   = prediction.predicted_future_ns;
 
     // Preserve aimer's original advice
-    plan_out.aimer_fire_advice = prediction.aimer_fire_advice;
-    plan_out.aim_yaw           = prediction.aim_yaw;
-    plan_out.aim_pitch         = prediction.aim_pitch;
-    plan_out.diff_yaw          = prediction.diff_yaw;
-    plan_out.aim_phase         = prediction.aim_phase;
-    plan_out.selected_armor_id = prediction.selected_armor_id;
+    plan_out.aimer_fire_advice       = prediction.aimer_fire_advice;
+    plan_out.aim_yaw                 = prediction.aim_yaw;
+    plan_out.aim_pitch               = prediction.aim_pitch;
+    plan_out.diff_yaw                = prediction.diff_yaw;
+    plan_out.aim_phase               = prediction.aim_phase;
+    plan_out.selected_armor_id       = prediction.selected_armor_id;
+    plan_out.rough_selected_armor_id = prediction.rough_selected_armor_id;
 }
 
 } // namespace fcs::L4
