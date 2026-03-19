@@ -17,19 +17,26 @@ exposure_time_us = 5000  # 3ms in microseconds
 gain = 16.7
 
 [extrinsic.gimbal_yaw.gimbal_pitch]
-translation = [0.0, 0.0, 0.0]
+translation = [-0.00563, 0, 0.08139]
 
-camera_link.translation = [0, 0, 0]
+camera_link.translation = [0.05925, 0, 0.04313]
 camera_link.roll = 0.0
-camera_link.pitch = 0.0
-camera_link.yaw = 0.0
+# camera_link.pitch = 1.5
+# camera_link.yaw = 0.2
 
-muzzle_link.translation = [0, 0, 0]
+# 偏高就+n 偏低就-n
+# 压低 +n 抬高 -n
+#camera_link.pitch = -0.25
+camera_link.pitch = 0.6
+#
+camera_link.yaw = -2.3
+
+muzzle_link.translation = [0.04624, 0.0, 0.0]
 
 [mcu]
 untrust_roll = true
 dynamic_self_color = true
 dynamic_bullet_speed = true
-bullet_speed_default = 22.0
-bullet_speed_min = 20
-bullet_speed_max = 25
+bullet_speed_default = 24.0
+bullet_speed_min = 20.0
+bullet_speed_max = 25.0

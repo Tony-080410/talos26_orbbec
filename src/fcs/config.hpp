@@ -63,7 +63,7 @@ enum class RobotType { Infantry, Hero, Sentry, Drone };
 
 struct McuConfig {
     uint16_t mcu_vendor_id{0x0483};
-    std::optional<uint16_t> mcu_product_id{};
+    std::optional<uint16_t> mcu_product_id{std::nullopt};
     bool untrust_roll{true};
     bool dynamic_self_color{true};
     bool dynamic_bullet_speed{true};
