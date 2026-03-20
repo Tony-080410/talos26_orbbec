@@ -1,8 +1,10 @@
 #include <gtest/gtest.h>
 
+#include <array>
 #include <chrono>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <limits>
 #include <string>
 #include <thread>
@@ -62,6 +64,11 @@ auto read_json_file(const fs::path& path) -> json {
     return json::parse(in);
 }
 
+auto read_text_file(const fs::path& path) -> std::string {
+    std::ifstream in(path);
+    return std::string(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+}
+
 auto find_run_dir(const fs::path& output_dir) -> fs::path {
     for (const auto& entry : fs::directory_iterator(output_dir)) {
         if (entry.is_directory()) {
@@ -70,6 +77,8 @@ auto find_run_dir(const fs::path& output_dir) -> fs::path {
     }
     return {};
 }
+
+auto source_root() -> fs::path { return fs::path(TALOS_SOURCE_DIR); }
 
 void register_test_producer(talos::Scheduler& scheduler, ProducerMode mode) {
     scheduler.add_system<talos::fixed_rate<20>>(
@@ -233,6 +242,56 @@ TEST(Capturer, LowDiskStillWritesSnapshotRows) {
 
     for (const auto& row : rows) {
         EXPECT_EQ(row.at("capture_status"), "low_disk");
+    }
+
+    fs::remove_all(output_dir);
+}
+
+TEST(Capturer, RunMetadataStoresConfigSnapshotCopies) {
+    const fs::path output_dir = make_temp_dir("config-snapshot");
+
+    talos::World world;
+    talos::Scheduler scheduler(world);
+    seed_runtime_resources(world);
+
+    fcs::CapturerConfig config;
+    config.enabled             = true;
+    config.output_dir          = output_dir.string();
+    config.reserved_free_bytes = 0;
+
+    fcs::runtime::register_runtime_capturer_system(
+        scheduler, config, {.daedalus = false, .robot = "hero", .vision = "std"},
+        fcs::RobotType::Hero, fcs::CameraConfig{});
+
+    const fs::path run_dir = find_run_dir(output_dir);
+    ASSERT_FALSE(run_dir.empty());
+
+    const auto run_json = read_json_file(run_dir / "run.json");
+    ASSERT_TRUE(run_json.contains("config_snapshot"));
+
+    const auto& config_snapshot = run_json.at("config_snapshot");
+    EXPECT_EQ(config_snapshot.at("dir").get<std::string>(), "config");
+
+    const auto& files = config_snapshot.at("files");
+    const std::array<std::pair<std::string_view, fs::path>, 4> expected_files{
+        {
+         {"entry", "at_vision.toml"},
+         {"vision_base", "config/vision_base.toml"},
+         {"vision_override", "config/vision/std.toml"},
+         {"hardware", "config/robot/hero.toml"},
+         }
+    };
+
+    for (const auto& [key, source_path] : expected_files) {
+        ASSERT_TRUE(files.contains(std::string(key)));
+        const auto& file = files.at(std::string(key));
+
+        EXPECT_EQ(file.at("source_path").get<std::string>(), source_path.generic_string());
+        ASSERT_TRUE(file.at("snapshot_path").is_string());
+
+        const fs::path snapshot_path = run_dir / file.at("snapshot_path").get<std::string>();
+        ASSERT_TRUE(fs::exists(snapshot_path));
+        EXPECT_EQ(read_text_file(snapshot_path), read_text_file(source_root() / source_path));
     }
 
     fs::remove_all(output_dir);

@@ -347,6 +347,28 @@ auto serialize_control_chunk(
     };
 }
 
+struct ConfigSnapshotSource {
+    std::string_view key;
+    fs::path source_path;
+    fs::path destination_relative_path;
+};
+
+[[nodiscard]] auto resolve_existing_path(const fs::path& path) -> fs::path {
+    if (fs::exists(path)) {
+        return path;
+    }
+
+#ifdef TALOS_SOURCE_DIR
+    const fs::path source_root = TALOS_SOURCE_DIR;
+    const fs::path rooted_path = source_root / path;
+    if (fs::exists(rooted_path)) {
+        return rooted_path;
+    }
+#endif
+
+    return path;
+}
+
 [[nodiscard]] auto to_json_robot_state(const L3::RobotTargetState& state) -> json {
     return json{
         {  "position", to_json_vec3(state.position)},
@@ -689,6 +711,11 @@ public:
             return std::unexpected(
                 fmt::format("create capturer control dir {}: {}", run_dir.string(), ec.message()));
         }
+        fs::create_directories(run_dir / "config", ec);
+        if (ec) {
+            return std::unexpected(
+                fmt::format("create capturer config dir {}: {}", run_dir.string(), ec.message()));
+        }
 
         auto capturer = std::shared_ptr<RuntimeCapturer>(new RuntimeCapturer(config, run_dir));
         if (!capturer->jsonl_.is_open()) {
@@ -696,19 +723,25 @@ public:
                 fmt::format("open snapshots.jsonl: {}", capturer->jsonl_path_.string()));
         }
 
+        auto config_snapshot = capturer->copy_config_snapshot(launch);
+        if (!config_snapshot) {
+            return std::unexpected(config_snapshot.error());
+        }
+
         json run_json{
-            {   "created_ns",fcs::clock::now_ns()                             },
-            {      "run_dir",                     run_dir.string()},
-            {   "robot_type",    magic_enum::enum_name(robot_type)},
-            {"camera_config", to_json_camera_config(camera_config)},
-            {     "capturer",      to_json_capturer_config(config)},
-            {       "launch",
+            {     "created_ns",fcs::clock::now_ns()                               },
+            {        "run_dir",                     run_dir.string()},
+            {     "robot_type",    magic_enum::enum_name(robot_type)},
+            {  "camera_config", to_json_camera_config(camera_config)},
+            {       "capturer",      to_json_capturer_config(config)},
+            {"config_snapshot",                     *config_snapshot},
+            {         "launch",
              json{
              {"daedalus", launch.daedalus},
              {"robot", launch.robot},
              {"vision", launch.vision},
-             }                                                    },
-            {      "control",
+             }                                                      },
+            {        "control",
              json{
              {"dir", capturer->relative_path_or_null(capturer->control_dir_)},
              {"schema_version", kControlSchemaVersion},
@@ -716,7 +749,7 @@ public:
              {"sample_size", kControlSampleWireSize},
              {"chunk_header_size", kControlChunkHeaderWireSize},
              {"encoding", "little_endian_explicit"},
-             }                                                    },
+             }                                                      },
         };
 
         if (!capturer->write_file(run_dir / "run.json", run_json.dump(2))) {
@@ -857,24 +890,24 @@ public:
 
             snapshot["streams"] = std::move(streams);
             json resources      = json{
-                     {          "present",         control_state.present()},
-                     {"updated_this_tick", control_state.updated_this_tick},
-                     {            "stale",           control_state.stale()},
+                {          "present",         control_state.present()},
+                {"updated_this_tick", control_state.updated_this_tick},
+                {            "stale",           control_state.stale()},
             };
             json tf = json::object();
             if (control_state.value) {
                 const auto& imu                  = control_state.value->imu;
                 resources["sample_timestamp_ns"] = control_state.value->sample_timestamp_ns;
                 resources["imu_state"]           = json{
-                              {          "timestamp_ns",           imu.timestamp_ns},
-                              {                   "yaw",                    imu.yaw},
-                              {                 "pitch",                  imu.pitch},
-                              {                  "roll",                   imu.roll},
-                              {               "yaw_vel",                imu.yaw_vel},
-                              {             "pitch_vel",              imu.pitch_vel},
-                              {              "roll_vel",               imu.roll_vel},
-                              {        "attitude_valid",         imu.attitude_valid},
-                              {"angular_velocity_valid", imu.angular_velocity_valid},
+                    {          "timestamp_ns",           imu.timestamp_ns},
+                    {                   "yaw",                    imu.yaw},
+                    {                 "pitch",                  imu.pitch},
+                    {                  "roll",                   imu.roll},
+                    {               "yaw_vel",                imu.yaw_vel},
+                    {             "pitch_vel",              imu.pitch_vel},
+                    {              "roll_vel",               imu.roll_vel},
+                    {        "attitude_valid",         imu.attitude_valid},
+                    {"angular_velocity_valid", imu.angular_velocity_valid},
                 };
                 resources["detecting_color"] =
                     magic_enum::enum_name(control_state.value->detecting_color);
@@ -895,7 +928,7 @@ public:
                 resources["detecting_color"] = nullptr;
                 resources["bullet_speed"]    = nullptr;
                 tf["odom_to_gimbal_pitch"]   = json{
-                      {"present", false}
+                    {"present", false}
                 };
                 tf["gimbal_to_camera_link"] = json{
                     {"present", false}
@@ -1002,6 +1035,7 @@ private:
         : run_dir_(std::move(run_dir))
         , images_dir_(run_dir_ / "images")
         , control_dir_(run_dir_ / "control")
+        , config_dir_(run_dir_ / "config")
         , jsonl_path_(run_dir_ / "snapshots.jsonl")
         , jsonl_(jsonl_path_, std::ios::out | std::ios::app)
         , reserved_free_bytes_(config.reserved_free_bytes) {}
@@ -1022,6 +1056,77 @@ private:
                 && timestamp_ns == other_timestamp_ns;
         }
     };
+
+    [[nodiscard]] auto config_snapshot_sources(const CapturerLaunchContext& launch) const
+        -> std::array<ConfigSnapshotSource, 4> {
+        return {
+            {
+             ConfigSnapshotSource{
+                    .key                       = "entry",
+                    .source_path               = "at_vision.toml",
+                    .destination_relative_path = "at_vision.toml",
+                }, ConfigSnapshotSource{
+                    .key                       = "vision_base",
+                    .source_path               = fs::path("config") / "vision_base.toml",
+                    .destination_relative_path = "vision_base.toml",
+                }, ConfigSnapshotSource{
+                    .key = "vision_override",
+                    .source_path =
+                        fs::path("config") / "vision" / fmt::format("{}.toml", launch.vision),
+                    .destination_relative_path =
+                        fs::path("vision") / fmt::format("{}.toml", launch.vision),
+                }, ConfigSnapshotSource{
+                    .key = "hardware",
+                    .source_path =
+                        fs::path("config") / "robot" / fmt::format("{}.toml", launch.robot),
+                    .destination_relative_path =
+                        fs::path("robot") / fmt::format("{}.toml", launch.robot),
+                }, }
+        };
+    }
+
+    [[nodiscard]] auto copy_config_snapshot(const CapturerLaunchContext& launch)
+        -> std::expected<json, std::string> {
+        json files = json::object();
+
+        for (const auto& source : config_snapshot_sources(launch)) {
+            const fs::path resolved_source = resolve_existing_path(source.source_path);
+            if (!fs::exists(resolved_source)) {
+                return std::unexpected(
+                    fmt::format(
+                        "capturer config snapshot missing source file {}",
+                        source.source_path.generic_string()));
+            }
+
+            const fs::path destination = config_dir_ / source.destination_relative_path;
+            std::error_code ec;
+            fs::create_directories(destination.parent_path(), ec);
+            if (ec) {
+                return std::unexpected(
+                    fmt::format(
+                        "capturer create config snapshot dir {}: {}",
+                        destination.parent_path().string(), ec.message()));
+            }
+
+            fs::copy_file(resolved_source, destination, fs::copy_options::overwrite_existing, ec);
+            if (ec) {
+                return std::unexpected(
+                    fmt::format(
+                        "capturer copy config snapshot {} -> {}: {}", resolved_source.string(),
+                        destination.string(), ec.message()));
+            }
+
+            files[std::string(source.key)] = json{
+                {  "source_path", source.source_path.generic_string()},
+                {"snapshot_path",  relative_path_or_null(destination)},
+            };
+        }
+
+        return json{
+            {  "dir", relative_path_or_null(config_dir_)},
+            {"files",                   std::move(files)},
+        };
+    }
 
     [[nodiscard]] auto
         flush_control_window(uint64_t tick_index, uint64_t tick_timestamp_ns, bool allow_sidecars)
@@ -1223,6 +1328,7 @@ private:
     fs::path run_dir_;
     fs::path images_dir_;
     fs::path control_dir_;
+    fs::path config_dir_;
     fs::path jsonl_path_;
     std::ofstream jsonl_;
     uint64_t reserved_free_bytes_{0};
