@@ -18,9 +18,9 @@ translation = [0, 0, 0.0791]
 camera_link.translation = [0.0273, 0, 0.0544]
 camera_link.roll = 0.0
 camera_link.pitch = 0.15
-camera_link.yaw = -1.0
+camera_link.yaw = -1.45
 
-muzzle_link.translation = [0.06, 0, 0]
+muzzle_link.translation = [0.06, 0.0, 0.0]
 
 [mcu]
 untrust_roll = true
