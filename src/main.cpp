@@ -7,6 +7,7 @@
 #include "fcs/chiral/chiral_collector_system.hpp"
 #include "fcs/config.hpp"
 #include "fcs/core/trajectory/resource.hpp"
+#include "fcs/runtime/capturer.hpp"
 #include "fcs/runtime/l1_l2_setup.hpp"
 #include "fcs_visualization/foxglove_systems.hpp"
 #include "frame.hpp"
@@ -56,6 +57,16 @@ struct LaunchConfig {
     toml_helper::required<std::string> robot;
     toml_helper::required<std::string> vision;
     fcs::FoxgloveConfig foxglove;
+    fcs::CapturerConfig capturer;
+};
+
+struct RuntimeConfig {
+    fcs::RobotType robot_type;
+    std::optional<fcs::HardwareConfig> hardware;
+    fcs::FoxgloveConfig foxglove;
+    fcs::CapturerConfig capturer;
+    fcs::VisionConfig vision;
+    fcs::runtime::CapturerLaunchContext launch;
 };
 
 std::string strtolower(std::string_view str) {
@@ -109,12 +120,7 @@ inline fast_tf::CoordinateSystem coord_new(fcs::RobotExtrinsicConfig config) {
     return system;
 }
 
-std::expected<
-    std::tuple<
-        fcs::RobotType, bool, std::optional<fcs::HardwareConfig>, fcs::FoxgloveConfig,
-        fcs::VisionConfig>,
-    read_config_error>
-    read_config() {
+std::expected<RuntimeConfig, read_config_error> read_config() {
     // Parse entry config
     auto entry_tbl = toml::parse_file("at_vision.toml");
     if (entry_tbl.failed()) {
@@ -126,6 +132,10 @@ std::expected<
         return std::unexpected(fmt::format("entry config: {}", launch_config.error()));
     }
     auto launch = std::move(*launch_config);
+    if (launch.capturer.enabled && launch.capturer.output_dir.empty()) {
+        return std::unexpected(
+            "entry config: capturer.output_dir is required when capturer.enabled=true");
+    }
 
     std::string vision_override_path = fmt::format("config/vision/{}.toml", launch.vision);
 
@@ -169,19 +179,22 @@ std::expected<
         return std::unexpected(fmt::format("hardware config: {}", hardware_config.error()));
     }
 
-    if (launch.daedalus) {
-        return std::tuple(
-            hardware_config->type, true,
-            std::optional<fcs::HardwareConfig>{std::move(*hardware_config)},
-            std::move(launch.foxglove), std::move(*vision_config));
-    }
-
-    return std::tuple(
-        hardware_config->type, false,
-        std::optional<fcs::HardwareConfig>{std::move(*hardware_config)}, std::move(launch.foxglove),
-        std::move(*vision_config));
+    return RuntimeConfig{
+        .robot_type = hardware_config->type,
+        .hardware   = std::optional<fcs::HardwareConfig>{std::move(*hardware_config)},
+        .foxglove   = std::move(launch.foxglove),
+        .capturer   = std::move(launch.capturer),
+        .vision     = std::move(*vision_config),
+        .launch =
+            fcs::runtime::CapturerLaunchContext{
+                                                         .daedalus = launch.daedalus,
+                                                         .robot    = launch.robot.get(),
+                                                         .vision   = launch.vision.get(),
+                                                         },
+    };
 }
 
+#ifndef TALOS_DISABLE_PROGRAM_MAIN
 int main() {
     init_logger();
     SPDLOG_INFO("talos is initializing...");
@@ -193,29 +206,30 @@ int main() {
         return 1;
     }
 
-    auto [robot, daedalus, hardware, foxglove, vision] = config_result.value();
+    auto config = std::move(config_result.value());
     talos::World world;
     talos::Scheduler scheduler(world);
 
     // Create coordinate system for fast_tf lookups (required by IMU and planning systems)
-    world.emplace_resource<fast_tf::CoordinateSystem>(coord_new(hardware->extrinsic));
+    (void)world.emplace_resource<fast_tf::CoordinateSystem>(coord_new(config.hardware->extrinsic));
 
     // Insert config as shared resource (for foxglove and other systems)
-    world.insert_resource(robot);
+    world.insert_resource(config.robot_type);
 
     // Save config values for logging before move
-    const double bullet_speed = hardware->mcu->bullet_speed_default;
+    const double bullet_speed = config.hardware->mcu->bullet_speed_default;
 
     world.insert_resource(fcs::core::trajectory::bullet_speed_data{.bullet_speed = bullet_speed});
-    world.insert_resource(vision.at_legacy->default_detect_color);
-    auto setup_result =
-        fcs::runtime::setup_l1(world, scheduler, daedalus, hardware ? &*hardware : nullptr);
+    world.insert_resource(config.vision.at_legacy->default_detect_color);
+    auto setup_result = fcs::runtime::setup_l1(
+        world, scheduler, config.launch.daedalus, config.hardware ? &*config.hardware : nullptr);
     if (!setup_result) {
         SPDLOG_CRITICAL("setup l1: {}", setup_result.error());
         return 3;
     }
 
-    auto backend_handle_result = fcs::L2::create_detector_backend_handle(vision.at_legacy.get());
+    auto backend_handle_result =
+        fcs::L2::create_detector_backend_handle(config.vision.at_legacy.get());
     if (!backend_handle_result) {
         SPDLOG_CRITICAL("create detector backend: {}", backend_handle_result.error());
         return 4;
@@ -223,39 +237,47 @@ int main() {
 
     SPDLOG_INFO(
         "detector backend: {} (color={})", backend_handle_result->name,
-        vision.at_legacy->default_detect_color);
+        config.vision.at_legacy->default_detect_color);
 
     world.insert_resource(std::move(backend_handle_result->backend));
     world.insert_resource(fcs::L2::create_pnp_solver(setup_result.value().camera_config));
 
     // Register trajectory solver resource (used by L4/L5)
-    fcs::core::trajectory::register_resource(scheduler, std::move(vision.trajectory));
+    fcs::core::trajectory::register_resource(scheduler, std::move(config.vision.trajectory));
     SPDLOG_INFO("Trajectory resources configured (bullet_speed={:.1f}m/s)", bullet_speed);
 
     // Register AT Legacy detection pipeline systems
     fcs::L2::register_at_legacy_detection_systems(scheduler);
-    fcs::rune::register_rune_detection_systems(scheduler, std::move(vision.rune_detector));
+    fcs::rune::register_rune_detection_systems(scheduler, std::move(config.vision.rune_detector));
 
     // Register L3 Tracker pipeline (Measurement -> TrackerOutput)
-    fcs::L3::register_tracker_systems(scheduler, std::move(vision.l3->tracker));
-    fcs::energy_meter::register_energy_meter_systems(scheduler, std::move(vision.energy_meter));
+    fcs::L3::register_tracker_systems(scheduler, std::move(config.vision.l3->tracker));
+    fcs::energy_meter::register_energy_meter_systems(
+        scheduler, std::move(config.vision.energy_meter));
 
     // Register L4 Planning pipeline (Aimer + Armor Plan Adapter)
-    fcs::L4::register_l4_planning_systems(scheduler, std::move(vision.l4.get()));
+    fcs::L4::register_l4_planning_systems(scheduler, std::move(config.vision.l4.get()));
 
     // Register L5 MPC Weapon system (consumes GimbalPlan from L4)
-    fcs::L5::register_enhanced_weapon_system(scheduler, std::move(vision.l5->mpc_weapon));
+    fcs::L5::register_enhanced_weapon_system(scheduler, std::move(config.vision.l5->mpc_weapon));
 
     // Register Chiral data collection system (publishes TrackerOutput to shared memory)
     fcs::chiral::register_chiral_collector_system(scheduler);
     SPDLOG_INFO("Chiral data collection system registered");
 
-    if (foxglove.enabled) {
-        auto foxglove_server = fcs::try_create_foxglove_server(foxglove.port, foxglove.host);
+    fcs::runtime::register_runtime_capturer_system(
+        scheduler, config.capturer, config.launch, config.robot_type,
+        setup_result.value().camera_config);
+
+    if (config.foxglove.enabled) {
+        auto foxglove_server =
+            fcs::try_create_foxglove_server(config.foxglove.port, config.foxglove.host);
         if (foxglove_server) {
             world.insert_resource(std::move(foxglove_server));
             fcs::register_foxglove_systems(scheduler, &scheduler);
-            SPDLOG_INFO("Foxglove server enabled on ws://{}:{}", foxglove.host, foxglove.port);
+            SPDLOG_INFO(
+                "Foxglove server enabled on ws://{}:{}", config.foxglove.host,
+                config.foxglove.port);
         } else {
             SPDLOG_WARN("Foxglove server failed to initialize, visualization disabled");
         }
@@ -278,3 +300,4 @@ int main() {
         SPDLOG_CRITICAL("run scheduler: {}", result.error());
     }
 }
+#endif

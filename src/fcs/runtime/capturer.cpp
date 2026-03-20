@@ -1,0 +1,1290 @@
+#include "runtime/capturer.hpp"
+
+#include "L2_perception/rune/types.hpp"
+#include "L3_estimation/energy_meter/types.hpp"
+#include "L3_estimation/tracker/types.hpp"
+#include "L4_planning/gimbal_planner/types.hpp"
+#include "L5_weapon/fire_control.hpp"
+#include "core/channel_topics.hpp"
+#include "core/runtime.hpp"
+#include "core/time.hpp"
+#include "core/trajectory/resource.hpp"
+#include "core/types.hpp"
+#include "frame.hpp"
+#include "scheduler/scheduler.hpp"
+
+#include <fmt/format.h>
+#include <magic_enum.hpp>
+#include <nlohmann/json.hpp>
+#include <opencv2/imgcodecs.hpp>
+#include <spdlog/spdlog.h>
+
+#include <array>
+#include <bit>
+#include <filesystem>
+#include <fstream>
+#include <memory>
+#include <mutex>
+#include <optional>
+#include <string>
+#include <string_view>
+#include <system_error>
+#include <type_traits>
+#include <utility>
+#include <vector>
+
+namespace fcs::runtime {
+namespace {
+
+namespace fs = std::filesystem;
+using json   = nlohmann::json;
+
+constexpr uint64_t kErrorLogThrottleNs   = 10'000'000'000ULL;
+constexpr uint32_t kControlChunkMagic    = 0x4C525443U; // CTRL
+constexpr uint16_t kControlSchemaVersion = 2;
+constexpr uint32_t kControlFrequencyHz   = 250;
+
+constexpr uint32_t kControlTransformWireSize = sizeof(uint8_t) + sizeof(uint8_t) + sizeof(uint16_t)
+                                             + (3U * sizeof(float)) + (4U * sizeof(float));
+constexpr uint32_t kControlChunkHeaderWireSize =
+    sizeof(uint32_t) + sizeof(uint16_t) + sizeof(uint16_t) + sizeof(uint32_t) + sizeof(uint32_t)
+    + sizeof(uint64_t) + sizeof(uint64_t);
+constexpr uint32_t kControlSampleWireSize =
+    (2U * sizeof(uint64_t)) + (7U * sizeof(float)) + (5U * sizeof(uint8_t)) + sizeof(uint64_t)
+    + (8U * sizeof(float)) + (4U * sizeof(uint8_t)) + (2U * sizeof(int32_t))
+    + (2U * sizeof(uint64_t)) + (2U * sizeof(float)) + (2U * sizeof(uint8_t)) + sizeof(uint16_t)
+    + (10U * sizeof(float)) + (4U * kControlTransformWireSize);
+static_assert(kControlTransformWireSize == 32U);
+static_assert(kControlChunkHeaderWireSize == 32U);
+
+template <typename T>
+struct ChannelSnapshot {
+    bool updated_this_tick{false};
+    std::optional<T> value{};
+
+    [[nodiscard]] bool present() const noexcept { return value.has_value(); }
+    [[nodiscard]] bool stale() const noexcept { return value.has_value() && !updated_this_tick; }
+};
+
+template <typename T, typename Topic>
+[[nodiscard]] auto sample_channel(talos::spmc<T, Topic>& reader) -> ChannelSnapshot<T> {
+    ChannelSnapshot<T> snapshot;
+    const auto previous_generation = reader.last_generation();
+    snapshot.value                 = reader.read_current();
+    snapshot.updated_this_tick =
+        snapshot.value.has_value() && reader.last_generation() > previous_generation;
+    return snapshot;
+}
+
+[[nodiscard]] auto make_channel_meta(bool present, bool updated_this_tick) -> json {
+    return json{
+        {          "present",                       present},
+        {"updated_this_tick",             updated_this_tick},
+        {            "stale", present && !updated_this_tick},
+    };
+}
+
+struct ControlTransformRecord {
+    uint8_t present{0};
+    uint8_t reserved0{0};
+    uint16_t reserved1{0};
+    std::array<float, 3> translation{};
+    std::array<float, 4> quaternion{};
+};
+
+struct ControlSampleRecord {
+    uint64_t sample_timestamp_ns{0};
+    uint64_t imu_timestamp_ns{0};
+
+    float imu_roll{0.0F};
+    float imu_pitch{0.0F};
+    float imu_yaw{0.0F};
+    float imu_roll_vel{0.0F};
+    float imu_pitch_vel{0.0F};
+    float imu_yaw_vel{0.0F};
+
+    float bullet_speed{0.0F};
+    uint8_t detecting_color{0};
+    uint8_t imu_attitude_valid{0};
+    uint8_t imu_angular_velocity_valid{0};
+    uint8_t plan_present{0};
+    uint8_t weapon_present{0};
+
+    uint64_t plan_timestamp_ns{0};
+    float plan_distance{0.0F};
+    float plan_yaw{0.0F};
+    float plan_pitch{0.0F};
+    float plan_diff_yaw{0.0F};
+    float plan_yaw_vel{0.0F};
+    float plan_pitch_vel{0.0F};
+    float plan_yaw_acc{0.0F};
+    float plan_pitch_acc{0.0F};
+    uint8_t plan_source{0};
+    uint8_t plan_aim_phase{0};
+    uint8_t plan_fire_advice{0};
+    uint8_t plan_aimer_fire_advice{0};
+    int32_t plan_selected_armor_id{0};
+    int32_t plan_rough_selected_armor_id{0};
+
+    uint64_t weapon_timestamp_ns{0};
+    uint64_t weapon_plan_timestamp_ns{0};
+    float weapon_plan_yaw{0.0F};
+    float weapon_plan_pitch{0.0F};
+    uint8_t weapon_plan_fire{0};
+    uint8_t weapon_fire{0};
+    uint16_t reserved2{0};
+    float weapon_yaw{0.0F};
+    float weapon_pitch{0.0F};
+    float weapon_ref_yaw{0.0F};
+    float weapon_ref_pitch{0.0F};
+    float weapon_yaw_vel{0.0F};
+    float weapon_pitch_vel{0.0F};
+    float weapon_yaw_accel{0.0F};
+    float weapon_pitch_accel{0.0F};
+    float weapon_tof{0.0F};
+    float weapon_distance{0.0F};
+
+    ControlTransformRecord odom_to_gimbal_pitch{};
+    ControlTransformRecord gimbal_to_camera_link{};
+    ControlTransformRecord odom_to_camera_optical{};
+    ControlTransformRecord odom_to_muzzle{};
+};
+
+struct ControlChunkHeaderRecord {
+    uint32_t magic{kControlChunkMagic};
+    uint16_t schema_version{kControlSchemaVersion};
+    uint16_t header_size{static_cast<uint16_t>(kControlChunkHeaderWireSize)};
+    uint32_t sample_size{kControlSampleWireSize};
+    uint32_t sample_count{0};
+    uint64_t tick_index{0};
+    uint64_t tick_timestamp_ns{0};
+};
+
+template <typename UInt>
+void append_le_uint(std::vector<char>& out, UInt value) {
+    static_assert(std::is_unsigned_v<UInt>);
+    for (size_t i = 0; i < sizeof(UInt); ++i) {
+        out.push_back(static_cast<char>((value >> (i * 8U)) & 0xFFU));
+    }
+}
+
+void append_le_int32(std::vector<char>& out, int32_t value) {
+    append_le_uint<uint32_t>(out, std::bit_cast<uint32_t>(value));
+}
+
+void append_le_float32(std::vector<char>& out, float value) {
+    append_le_uint<uint32_t>(out, std::bit_cast<uint32_t>(value));
+}
+
+void append_control_transform(std::vector<char>& out, const ControlTransformRecord& tf) {
+    append_le_uint<uint8_t>(out, tf.present);
+    append_le_uint<uint8_t>(out, tf.reserved0);
+    append_le_uint<uint16_t>(out, tf.reserved1);
+    for (float value : tf.translation) {
+        append_le_float32(out, value);
+    }
+    for (float value : tf.quaternion) {
+        append_le_float32(out, value);
+    }
+}
+
+auto serialize_control_chunk(
+    const ControlChunkHeaderRecord& header, const std::vector<ControlSampleRecord>& samples)
+    -> std::vector<char> {
+    std::vector<char> bytes;
+    bytes.reserve(
+        static_cast<size_t>(kControlChunkHeaderWireSize)
+        + (samples.size() * static_cast<size_t>(kControlSampleWireSize)));
+
+    append_le_uint<uint32_t>(bytes, header.magic);
+    append_le_uint<uint16_t>(bytes, header.schema_version);
+    append_le_uint<uint16_t>(bytes, header.header_size);
+    append_le_uint<uint32_t>(bytes, header.sample_size);
+    append_le_uint<uint32_t>(bytes, header.sample_count);
+    append_le_uint<uint64_t>(bytes, header.tick_index);
+    append_le_uint<uint64_t>(bytes, header.tick_timestamp_ns);
+
+    for (const auto& sample : samples) {
+        append_le_uint<uint64_t>(bytes, sample.sample_timestamp_ns);
+        append_le_uint<uint64_t>(bytes, sample.imu_timestamp_ns);
+
+        append_le_float32(bytes, sample.imu_roll);
+        append_le_float32(bytes, sample.imu_pitch);
+        append_le_float32(bytes, sample.imu_yaw);
+        append_le_float32(bytes, sample.imu_roll_vel);
+        append_le_float32(bytes, sample.imu_pitch_vel);
+        append_le_float32(bytes, sample.imu_yaw_vel);
+        append_le_float32(bytes, sample.bullet_speed);
+
+        append_le_uint<uint8_t>(bytes, sample.detecting_color);
+        append_le_uint<uint8_t>(bytes, sample.imu_attitude_valid);
+        append_le_uint<uint8_t>(bytes, sample.imu_angular_velocity_valid);
+        append_le_uint<uint8_t>(bytes, sample.plan_present);
+        append_le_uint<uint8_t>(bytes, sample.weapon_present);
+
+        append_le_uint<uint64_t>(bytes, sample.plan_timestamp_ns);
+        append_le_float32(bytes, sample.plan_distance);
+        append_le_float32(bytes, sample.plan_yaw);
+        append_le_float32(bytes, sample.plan_pitch);
+        append_le_float32(bytes, sample.plan_diff_yaw);
+        append_le_float32(bytes, sample.plan_yaw_vel);
+        append_le_float32(bytes, sample.plan_pitch_vel);
+        append_le_float32(bytes, sample.plan_yaw_acc);
+        append_le_float32(bytes, sample.plan_pitch_acc);
+        append_le_uint<uint8_t>(bytes, sample.plan_source);
+        append_le_uint<uint8_t>(bytes, sample.plan_aim_phase);
+        append_le_uint<uint8_t>(bytes, sample.plan_fire_advice);
+        append_le_uint<uint8_t>(bytes, sample.plan_aimer_fire_advice);
+        append_le_int32(bytes, sample.plan_selected_armor_id);
+        append_le_int32(bytes, sample.plan_rough_selected_armor_id);
+
+        append_le_uint<uint64_t>(bytes, sample.weapon_timestamp_ns);
+        append_le_uint<uint64_t>(bytes, sample.weapon_plan_timestamp_ns);
+        append_le_float32(bytes, sample.weapon_plan_yaw);
+        append_le_float32(bytes, sample.weapon_plan_pitch);
+        append_le_uint<uint8_t>(bytes, sample.weapon_plan_fire);
+        append_le_uint<uint8_t>(bytes, sample.weapon_fire);
+        append_le_uint<uint16_t>(bytes, sample.reserved2);
+        append_le_float32(bytes, sample.weapon_yaw);
+        append_le_float32(bytes, sample.weapon_pitch);
+        append_le_float32(bytes, sample.weapon_ref_yaw);
+        append_le_float32(bytes, sample.weapon_ref_pitch);
+        append_le_float32(bytes, sample.weapon_yaw_vel);
+        append_le_float32(bytes, sample.weapon_pitch_vel);
+        append_le_float32(bytes, sample.weapon_yaw_accel);
+        append_le_float32(bytes, sample.weapon_pitch_accel);
+        append_le_float32(bytes, sample.weapon_tof);
+        append_le_float32(bytes, sample.weapon_distance);
+
+        append_control_transform(bytes, sample.odom_to_gimbal_pitch);
+        append_control_transform(bytes, sample.gimbal_to_camera_link);
+        append_control_transform(bytes, sample.odom_to_camera_optical);
+        append_control_transform(bytes, sample.odom_to_muzzle);
+    }
+
+    return bytes;
+}
+
+[[nodiscard]] auto to_json_vec3(const Eigen::Vector3d& v) -> json {
+    return json::array({v.x(), v.y(), v.z()});
+}
+
+[[nodiscard]] auto to_json_vec2(const Eigen::Vector2d& v) -> json {
+    return json::array({v.x(), v.y()});
+}
+
+[[nodiscard]] auto to_json_quat(const Eigen::Quaterniond& q) -> json {
+    return json{
+        {"x", q.x()},
+        {"y", q.y()},
+        {"z", q.z()},
+        {"w", q.w()}
+    };
+}
+
+[[nodiscard]] auto to_json_rpy(const math_fuxk::Ros2EulerRotd& rpy) -> json {
+    const auto [roll, pitch, yaw] = rpy.rpy();
+    return json::array({roll, pitch, yaw});
+}
+
+[[nodiscard]] auto to_json_rect(const cv::Rect2f& rect) -> json {
+    return json{
+        {"x",      rect.x},
+        {"y",      rect.y},
+        {"w",  rect.width},
+        {"h", rect.height}
+    };
+}
+
+[[nodiscard]] auto to_json_rect(const rune::RectF& rect) -> json {
+    return json{
+        {"x", rect.x},
+        {"y", rect.y},
+        {"w", rect.w},
+        {"h", rect.h}
+    };
+}
+
+[[nodiscard]] auto to_json_point(const cv::Point2f& point) -> json {
+    return json::array({point.x, point.y});
+}
+
+[[nodiscard]] auto to_json_camera_profile(const CameraProfileConfig& profile) -> json {
+    return json{
+        {    "trigger_mode",                        profile.trigger_mode},
+        {    "invert_image",                        profile.invert_image},
+        {"exposure_time_us",                    profile.exposure_time_us},
+        {            "gain",                                profile.gain},
+        {    "rotate_angle", magic_enum::enum_name(profile.rotate_angle)},
+    };
+}
+
+[[nodiscard]] auto to_json_camera_config(const CameraConfig& config) -> json {
+    json camera_matrix = json::array();
+    for (Eigen::Index i = 0; i < config.camera_matrix.size(); ++i) {
+        camera_matrix.push_back(config.camera_matrix(i));
+    }
+
+    json distortion = json::array();
+    for (Eigen::Index i = 0; i < config.distort_coefficient.size(); ++i) {
+        distortion.push_back(config.distort_coefficient(i));
+    }
+
+    return json{
+        {      "camera_matrix",               std::move(camera_matrix)},
+        {"distort_coefficient",                  std::move(distortion)},
+        {              "width",                           config.width},
+        {             "height",                          config.height},
+        {            "profile", to_json_camera_profile(config.profile)},
+    };
+}
+
+[[nodiscard]] auto to_json_capturer_config(const CapturerConfig& config) -> json {
+    return json{
+        {            "enabled",             config.enabled},
+        {         "output_dir",          config.output_dir},
+        {"reserved_free_bytes", config.reserved_free_bytes},
+    };
+}
+
+[[nodiscard]] auto to_json_robot_state(const L3::RobotTargetState& state) -> json {
+    return json{
+        {  "position", to_json_vec3(state.position)},
+        {  "velocity", to_json_vec3(state.velocity)},
+        {       "yaw",                    state.yaw},
+        {     "v_yaw",                  state.v_yaw},
+        {   "radius0",                state.radius0},
+        {   "radius1",                state.radius1},
+        {        "z1",                     state.z1},
+        {"armors_num",             state.armors_num},
+    };
+}
+
+[[nodiscard]] auto to_json_outpost_state(const L3::OutpostTargetState& state) -> json {
+    json z = json::array();
+    for (double value : state.z) {
+        z.push_back(value);
+    }
+
+    return json{
+        {  "position", to_json_vec2(state.position)},
+        {  "velocity", to_json_vec3(state.velocity)},
+        {       "yaw",                    state.yaw},
+        {     "v_yaw",                  state.v_yaw},
+        {         "z",                 std::move(z)},
+        {    "radius",                 state.radius},
+        {"armors_num",             state.armors_num},
+    };
+}
+
+[[nodiscard]] auto to_json_tracker_output(const L3::TrackerOutput& output) -> json {
+    json result{
+        { "timestamp_ns",                                                output.timestamp_ns},
+        {       "status",                               magic_enum::enum_name(output.status)},
+        {  "target_name",                          magic_enum::enum_name(output.target_name)},
+        {"target_jumped",                                               output.target_jumped},
+        {"last_armor_id", output.last_armor_id ? json(*output.last_armor_id) : json(nullptr)},
+        {   "state_kind",                                                            "empty"},
+    };
+
+    if (const auto* robot = output.robot_state()) {
+        result["state_kind"] = "robot";
+        result["state"]      = to_json_robot_state(*robot);
+    } else if (const auto* outpost = output.outpost_state()) {
+        result["state_kind"] = "outpost";
+        result["state"]      = to_json_outpost_state(*outpost);
+    } else {
+        result["state"] = json::object();
+    }
+
+    return result;
+}
+
+[[nodiscard]] auto to_json_planner_seed(const L4::PlannerSeed& seed) -> json {
+    json result{
+        {   "state_timestamp_ns",seed.state_timestamp_ns                                 },
+        {        "target_jumped",                                    seed.target_jumped},
+        {"tracker_last_armor_id",
+         seed.tracker_last_armor_id ? json(*seed.tracker_last_armor_id) : json(nullptr)},
+        {            "aim_phase",                 magic_enum::enum_name(seed.aim_phase)},
+        {    "selected_armor_id",                                seed.selected_armor_id},
+        {           "state_kind",                                               "empty"},
+    };
+
+    if (const auto* robot = seed.robot_state()) {
+        result["state_kind"] = "robot";
+        result["state"]      = to_json_robot_state(*robot);
+    } else if (const auto* outpost = seed.outpost_state()) {
+        result["state_kind"] = "outpost";
+        result["state"]      = to_json_outpost_state(*outpost);
+    } else {
+        result["state"] = json::object();
+    }
+
+    return result;
+}
+
+[[nodiscard]] auto to_json_gimbal_plan(const L4::GimbalPlan& plan) -> json {
+    json result{
+        {           "timestamp_ns",        plan.timestamp_ns                                   },
+        {               "distance",                                               plan.distance},
+        {     "predicted_position",
+         plan.predicted_position ? json(to_json_vec3(*plan.predicted_position)) : json(nullptr)},
+        {       "predicted_future",                                       plan.predicted_future},
+        {                 "source",                          magic_enum::enum_name(plan.source)},
+        {                    "yaw",                                                    plan.yaw},
+        {                  "pitch",                                                  plan.pitch},
+        {               "diff_yaw",                                               plan.diff_yaw},
+        {              "aim_phase",                       magic_enum::enum_name(plan.aim_phase)},
+        {      "selected_armor_id",                                      plan.selected_armor_id},
+        {"rough_selected_armor_id",                                plan.rough_selected_armor_id},
+        {                "yaw_vel",                                                plan.yaw_vel},
+        {              "pitch_vel",                                              plan.pitch_vel},
+        {                "yaw_acc",                                                plan.yaw_acc},
+        {              "pitch_acc",                                              plan.pitch_acc},
+        {            "fire_advice",                                            plan.fire_advice},
+        {         "tracking_error",                                         plan.tracking_error},
+        {      "aimer_fire_advice",                                      plan.aimer_fire_advice},
+        {                "aim_yaw",                                                plan.aim_yaw},
+        {              "aim_pitch",                                              plan.aim_pitch},
+        {           "planner_seed",
+         plan.planner_seed ? json(to_json_planner_seed(*plan.planner_seed)) : json(nullptr)    },
+    };
+
+    if (plan.viz_debug) {
+        json trajectory = json::array();
+        for (const auto& [x, z] : plan.viz_debug->trajectory) {
+            trajectory.push_back(json::array({x, z}));
+        }
+        result["viz_debug"] = json{
+            {"trajectory", std::move(trajectory)}
+        };
+    } else {
+        result["viz_debug"] = nullptr;
+    }
+
+    return result;
+}
+
+[[nodiscard]] auto to_json_trajectory_plan_sample(const L5::TrajectoryPlanSample& sample) -> json {
+    return json{
+        {                    "yaw",               sample.yaw                                   },
+        {                  "pitch",                                                sample.pitch},
+        {               "distance",                                             sample.distance},
+        {                    "tof",                                                  sample.tof},
+        {               "diff_yaw",                                             sample.diff_yaw},
+        {      "selected_armor_id",
+         sample.selected_armor_id ? json(*sample.selected_armor_id) : json(nullptr)            },
+        {"rough_selected_armor_id",
+         sample.rough_selected_armor_id ? json(*sample.rough_selected_armor_id) : json(nullptr)},
+        {         "world_position",                         to_json_vec3(sample.world_position)},
+    };
+}
+
+[[nodiscard]] auto to_json_weapon_command(const L5::WeaponCommand& cmd) -> json {
+    json result{
+        {     "timestamp_ns",      cmd.timestamp_ns},
+        {"plan_timestamp_ns", cmd.plan_timestamp_ns},
+        {         "plan_yaw",          cmd.plan_yaw},
+        {       "plan_pitch",        cmd.plan_pitch},
+        {        "plan_fire",         cmd.plan_fire},
+        {              "yaw",               cmd.yaw},
+        {            "pitch",             cmd.pitch},
+        {          "ref_yaw",           cmd.ref_yaw},
+        {        "ref_pitch",         cmd.ref_pitch},
+        {          "yaw_vel",           cmd.yaw_vel},
+        {        "pitch_vel",         cmd.pitch_vel},
+        {        "yaw_accel",         cmd.yaw_accel},
+        {      "pitch_accel",       cmd.pitch_accel},
+        {             "fire",              cmd.fire},
+        {              "tof",               cmd.tof},
+        {         "distance",          cmd.distance},
+    };
+
+    if (!cmd.viz_debug) {
+        result["viz_debug"] = nullptr;
+        return result;
+    }
+
+    json reference_plan = json::array();
+    for (const auto& sample : cmd.viz_debug->reference_plan) {
+        reference_plan.push_back(to_json_trajectory_plan_sample(sample));
+    }
+
+    json optimized_plan = json::array();
+    for (const auto& sample : cmd.viz_debug->optimized_plan) {
+        optimized_plan.push_back(to_json_trajectory_plan_sample(sample));
+    }
+
+    result["viz_debug"] = json{
+        {           "reference_plan",                std::move(reference_plan)},
+        {           "optimized_plan",                std::move(optimized_plan)},
+        {             "center_index",              cmd.viz_debug->center_index},
+        {          "lookahead_index",           cmd.viz_debug->lookahead_index},
+        {              "delay_steps",               cmd.viz_debug->delay_steps},
+        {     "delay_gate_threshold",      cmd.viz_debug->delay_gate_threshold},
+        { "delay_gate_forward_error",  cmd.viz_debug->delay_gate_forward_error},
+        {"delay_gate_backward_error", cmd.viz_debug->delay_gate_backward_error},
+        {    "delay_gate_forward_ok",     cmd.viz_debug->delay_gate_forward_ok},
+        {   "delay_gate_backward_ok",    cmd.viz_debug->delay_gate_backward_ok},
+        {            "phase_gate_ok",             cmd.viz_debug->phase_gate_ok},
+        {       "final_fire_gate_ok",        cmd.viz_debug->final_fire_gate_ok},
+    };
+    return result;
+}
+
+[[nodiscard]] auto to_json_detection_batch(const AtLegacyArmorDetectionBatch& batch) -> json {
+    json detections = json::array();
+    for (const auto& det : batch.detections) {
+        json corners = json::array();
+        for (const auto& corner : det.corners) {
+            corners.push_back(to_json_point(corner));
+        }
+
+        detections.push_back(
+            json{
+                {   "corners",               std::move(corners)},
+                {      "rect",           to_json_rect(det.rect)},
+                {      "name",  magic_enum::enum_name(det.name)},
+                {     "color", magic_enum::enum_name(det.color)},
+                {      "type",  magic_enum::enum_name(det.type)},
+                {"confidence",                   det.confidence},
+                {      "area",                         det.area},
+        });
+    }
+
+    return json{
+        {"timestamp_ns",    batch.timestamp_ns},
+        {    "frame_id",        batch.frame_id},
+        {  "detections", std::move(detections)},
+    };
+}
+
+template <fast_tf::frame Frame>
+[[nodiscard]] auto to_json_measurement_batch(const AtLegacyArmorMeasurementBatchT<Frame>& batch)
+    -> json {
+    json measurements = json::array();
+    for (const auto& measurement : batch.measurements) {
+        measurements.push_back(
+            json{
+                {            "timestamp_ns",                          measurement.timestamp_ns},
+                {                    "name",           magic_enum::enum_name(measurement.name)},
+                {                   "color",          magic_enum::enum_name(measurement.color)},
+                {                    "type",           magic_enum::enum_name(measurement.type)},
+                {              "confidence",                            measurement.confidence},
+                {"distance_to_image_center",              measurement.distance_to_image_center},
+                {                "position", to_json_vec3(measurement.transform.translation())},
+                {              "quaternion",  to_json_quat(measurement.transform.quaternion())},
+                {                     "rpy",    to_json_rpy(measurement.transform.euler_rot())},
+        });
+    }
+
+    return json{
+        {"timestamp_ns",      batch.timestamp_ns},
+        {    "frame_id",          batch.frame_id},
+        {"measurements", std::move(measurements)},
+    };
+}
+
+[[nodiscard]] auto to_json_rune_observation(const rune::RuneObservation& observation) -> json {
+    json positions = json::array();
+    for (const auto& position : observation.target_positions_odom) {
+        positions.push_back(to_json_vec3(position));
+    }
+
+    json quats = json::array();
+    for (const auto& quat : observation.target_quats_odom) {
+        quats.push_back(to_json_quat(quat));
+    }
+
+    return json{
+        {         "timestamp_ns",                observation.timestamp_ns},
+        {             "frame_id",                    observation.frame_id},
+        {                "valid",                       observation.valid},
+        {        "r_center_odom", to_json_vec3(observation.r_center_odom)},
+        {"target_positions_odom",                    std::move(positions)},
+        {    "target_quats_odom",                        std::move(quats)},
+    };
+}
+
+[[nodiscard]] auto to_json_energy_meter_state(const energy_meter::EnergyMeterState& state) -> json {
+    return json{
+        {           "timestamp_ns",                          state.timestamp_ns},
+        {         "tracking_valid",                        state.tracking_valid},
+        {          "r_center_odom",           to_json_vec3(state.r_center_odom)},
+        {                 "radius",                                state.radius},
+        {                   "roll",                                  state.roll},
+        {                 "v_roll",                                state.v_roll},
+        {               "blade_id",                              state.blade_id},
+        {"predicted_position_odom", to_json_vec3(state.predicted_position_odom)},
+        {    "predicted_future_ns",                   state.predicted_future_ns},
+        {            "is_big_rune",                           state.is_big_rune},
+        {            "model_valid",                           state.model_valid},
+        {              "fit_error",                             state.fit_error},
+    };
+}
+
+[[nodiscard]] auto to_json_control_transform_snapshot(const core::ControlTransformSnapshot& tf)
+    -> json {
+    if (!tf.present) {
+        return json{
+            {"present", false}
+        };
+    }
+
+    const Eigen::Quaterniond quaternion(
+        tf.quaternion[3], tf.quaternion[0], tf.quaternion[1], tf.quaternion[2]);
+    return json{
+        {    "present",                                            true                       },
+        {"translation", json::array({tf.translation[0], tf.translation[1], tf.translation[2]})},
+        { "quaternion",
+         json{
+         {"x", tf.quaternion[0]},
+         {"y", tf.quaternion[1]},
+         {"z", tf.quaternion[2]},
+         {"w", tf.quaternion[3]}}                                                             },
+        {        "rpy",                                to_json_rpy(math_fuxk::rpy(quaternion))},
+    };
+}
+
+[[nodiscard]] auto to_control_transform(const core::ControlTransformSnapshot& tf)
+    -> ControlTransformRecord {
+    ControlTransformRecord result;
+    if (!tf.present) {
+        return result;
+    }
+
+    result.present     = 1;
+    result.translation = {
+        static_cast<float>(tf.translation[0]), static_cast<float>(tf.translation[1]),
+        static_cast<float>(tf.translation[2])};
+    result.quaternion = {
+        static_cast<float>(tf.quaternion[0]), static_cast<float>(tf.quaternion[1]),
+        static_cast<float>(tf.quaternion[2]), static_cast<float>(tf.quaternion[3])};
+    return result;
+}
+
+class RuntimeCapturer {
+public:
+    static auto create(
+        const CapturerConfig& config, const CapturerLaunchContext& launch, RobotType robot_type,
+        const CameraConfig& camera_config)
+        -> std::expected<std::shared_ptr<RuntimeCapturer>, std::string> {
+        std::error_code ec;
+        fs::path base_dir(config.output_dir);
+        fs::create_directories(base_dir, ec);
+        if (ec) {
+            return std::unexpected(
+                fmt::format("create capturer base dir {}: {}", base_dir.string(), ec.message()));
+        }
+
+        const fs::path run_dir = base_dir / fmt::format("run_{}", fcs::clock::now_ns());
+        fs::create_directories(run_dir / "images", ec);
+        if (ec) {
+            return std::unexpected(
+                fmt::format("create capturer run dir {}: {}", run_dir.string(), ec.message()));
+        }
+        fs::create_directories(run_dir / "control", ec);
+        if (ec) {
+            return std::unexpected(
+                fmt::format("create capturer control dir {}: {}", run_dir.string(), ec.message()));
+        }
+
+        auto capturer = std::shared_ptr<RuntimeCapturer>(new RuntimeCapturer(config, run_dir));
+        if (!capturer->jsonl_.is_open()) {
+            return std::unexpected(
+                fmt::format("open snapshots.jsonl: {}", capturer->jsonl_path_.string()));
+        }
+
+        json run_json{
+            {   "created_ns",fcs::clock::now_ns()                             },
+            {      "run_dir",                     run_dir.string()},
+            {   "robot_type",    magic_enum::enum_name(robot_type)},
+            {"camera_config", to_json_camera_config(camera_config)},
+            {     "capturer",      to_json_capturer_config(config)},
+            {       "launch",
+             json{
+             {"daedalus", launch.daedalus},
+             {"robot", launch.robot},
+             {"vision", launch.vision},
+             }                                                    },
+            {      "control",
+             json{
+             {"dir", capturer->relative_path_or_null(capturer->control_dir_)},
+             {"schema_version", kControlSchemaVersion},
+             {"frequency_hz", kControlFrequencyHz},
+             {"sample_size", kControlSampleWireSize},
+             {"chunk_header_size", kControlChunkHeaderWireSize},
+             {"encoding", "little_endian_explicit"},
+             }                                                    },
+        };
+
+        if (!capturer->write_file(run_dir / "run.json", run_json.dump(2))) {
+            return std::unexpected(
+                fmt::format("write run metadata: {}", (run_dir / "run.json").string()));
+        }
+
+        return capturer;
+    }
+
+    void capture_tick(
+        uint64_t tick_timestamp_ns, const ChannelSnapshot<AtLegacyImageFrame>& image,
+        const ChannelSnapshot<AtLegacyArmorDetectionBatch>& detection,
+        const ChannelSnapshot<AtLegacyArmorMeasurementBatch>& measurement,
+        const ChannelSnapshot<L3::TrackerOutput>& tracker,
+        const ChannelSnapshot<rune::RuneObservation>& rune_observation,
+        const ChannelSnapshot<rune::RuneDebugFrame>& rune_debug,
+        const ChannelSnapshot<energy_meter::EnergyMeterState>& energy_meter,
+        const ChannelSnapshot<L4::GimbalPlan>& gimbal_plan,
+        const ChannelSnapshot<L5::WeaponCommand>& weapon_command,
+        const ChannelSnapshot<core::ControlResourceSnapshot>& control_state) noexcept {
+        try {
+            const uint64_t tick_index = ++tick_index_;
+            const auto sidecar_policy = evaluate_sidecar_policy();
+
+            json snapshot{
+                {       "tick_index",            tick_index},
+                {"tick_timestamp_ns",     tick_timestamp_ns},
+                {   "capture_status", sidecar_policy.status},
+            };
+
+            json streams = json::object();
+
+            json camera_json = make_channel_meta(image.present(), image.updated_this_tick);
+            if (image.value) {
+                camera_json["timestamp_ns"] = image.value->timestamp_ns;
+                camera_json["frame_id"]     = image.value->frame_id;
+                camera_json["width"]        = image.value->image.cols;
+                camera_json["height"]       = image.value->image.rows;
+                camera_json["channels"]     = image.value->image.channels();
+                camera_json["image_path"]   = ensure_mat_sidecar(
+                    image.value->image, "camera", image.value->frame_id, image.value->timestamp_ns,
+                    tick_index, tick_timestamp_ns, last_camera_image_,
+                    sidecar_policy.allow_sidecars);
+            }
+            streams["camera"] = std::move(camera_json);
+
+            json detection_json =
+                make_channel_meta(detection.present(), detection.updated_this_tick);
+            if (detection.value) {
+                detection_json.update(to_json_detection_batch(*detection.value));
+                detection_json["image_path"] = resolve_detection_image_path(
+                    *detection.value, tick_index, tick_timestamp_ns, sidecar_policy.allow_sidecars);
+            }
+            streams["detector"] = std::move(detection_json);
+
+            json measurement_json =
+                make_channel_meta(measurement.present(), measurement.updated_this_tick);
+            if (measurement.value) {
+                measurement_json.update(to_json_measurement_batch(*measurement.value));
+            }
+            streams["measurement"] = std::move(measurement_json);
+
+            json tracker_json = make_channel_meta(tracker.present(), tracker.updated_this_tick);
+            if (tracker.value) {
+                tracker_json.update(to_json_tracker_output(*tracker.value));
+            }
+            streams["tracker"] = std::move(tracker_json);
+
+            json rune_obs_json =
+                make_channel_meta(rune_observation.present(), rune_observation.updated_this_tick);
+            if (rune_observation.value) {
+                rune_obs_json.update(to_json_rune_observation(*rune_observation.value));
+            }
+            streams["rune_observation"] = std::move(rune_obs_json);
+
+            json rune_debug_json =
+                make_channel_meta(rune_debug.present(), rune_debug.updated_this_tick);
+            if (rune_debug.value) {
+                rune_debug_json["timestamp_ns"]      = rune_debug.value->timestamp_ns;
+                rune_debug_json["frame_id"]          = rune_debug.value->frame_id;
+                rune_debug_json["enabled"]           = rune_debug.value->enabled;
+                rune_debug_json["detect_reversed"]   = rune_debug.value->detect_reversed;
+                rune_debug_json["tf_ok"]             = rune_debug.value->tf_ok;
+                rune_debug_json["solve_ok"]          = rune_debug.value->solve_ok;
+                rune_debug_json["observation_valid"] = rune_debug.value->observation_valid;
+                rune_debug_json["status_code"]       = rune_debug.value->status_code;
+                rune_debug_json["arrows_count"]      = rune_debug.value->arrows_count;
+                rune_debug_json["targets_count"]     = rune_debug.value->targets_count;
+                rune_debug_json["global_roi"]        = to_json_rect(rune_debug.value->global_roi);
+                rune_debug_json["center_roi"]        = to_json_rect(rune_debug.value->center_roi);
+
+                json target_rois = json::array();
+                for (const auto& roi : rune_debug.value->target_rois) {
+                    target_rois.push_back(to_json_rect(roi));
+                }
+                rune_debug_json["target_rois"] = std::move(target_rois);
+                rune_debug_json["arrow_jpeg_path"] =
+                    sidecar_policy.allow_sidecars ? save_bytes(
+                                                        rune_debug.value->arrow_jpeg, "rune_arrow",
+                                                        tick_index, tick_timestamp_ns)
+                                                  : json(nullptr);
+                rune_debug_json["target_jpeg_path"] =
+                    sidecar_policy.allow_sidecars
+                        ? save_bytes(
+                              rune_debug.value->target_jpeg, "rune_target", tick_index,
+                              tick_timestamp_ns)
+                        : json(nullptr);
+                rune_debug_json["rcenter_jpeg_path"] =
+                    sidecar_policy.allow_sidecars
+                        ? save_bytes(
+                              rune_debug.value->rcenter_jpeg, "rune_rcenter", tick_index,
+                              tick_timestamp_ns)
+                        : json(nullptr);
+            }
+            streams["rune_debug"] = std::move(rune_debug_json);
+
+            json energy_json =
+                make_channel_meta(energy_meter.present(), energy_meter.updated_this_tick);
+            if (energy_meter.value) {
+                energy_json.update(to_json_energy_meter_state(*energy_meter.value));
+            }
+            streams["energy_meter"] = std::move(energy_json);
+
+            json gimbal_json =
+                make_channel_meta(gimbal_plan.present(), gimbal_plan.updated_this_tick);
+            if (gimbal_plan.value) {
+                gimbal_json.update(to_json_gimbal_plan(*gimbal_plan.value));
+            }
+            streams["gimbal_plan"] = std::move(gimbal_json);
+
+            json weapon_json =
+                make_channel_meta(weapon_command.present(), weapon_command.updated_this_tick);
+            if (weapon_command.value) {
+                weapon_json.update(to_json_weapon_command(*weapon_command.value));
+            }
+            streams["weapon_command"] = std::move(weapon_json);
+
+            snapshot["streams"] = std::move(streams);
+            json resources      = json{
+                {          "present",         control_state.present()},
+                {"updated_this_tick", control_state.updated_this_tick},
+                {            "stale",           control_state.stale()},
+            };
+            json tf = json::object();
+            if (control_state.value) {
+                const auto& imu                  = control_state.value->imu;
+                resources["sample_timestamp_ns"] = control_state.value->sample_timestamp_ns;
+                resources["imu_state"]           = json{
+                    {          "timestamp_ns",           imu.timestamp_ns},
+                    {                   "yaw",                    imu.yaw},
+                    {                 "pitch",                  imu.pitch},
+                    {                  "roll",                   imu.roll},
+                    {               "yaw_vel",                imu.yaw_vel},
+                    {             "pitch_vel",              imu.pitch_vel},
+                    {              "roll_vel",               imu.roll_vel},
+                    {        "attitude_valid",         imu.attitude_valid},
+                    {"angular_velocity_valid", imu.angular_velocity_valid},
+                };
+                resources["detecting_color"] =
+                    magic_enum::enum_name(control_state.value->detecting_color);
+                resources["bullet_speed"] = control_state.value->bullet_speed;
+                tf["odom_to_gimbal_pitch"] =
+                    to_json_control_transform_snapshot(control_state.value->odom_to_gimbal_pitch);
+                tf["gimbal_to_camera_link"] =
+                    to_json_control_transform_snapshot(control_state.value->gimbal_to_camera_link);
+                tf["odom_to_camera_optical"] =
+                    to_json_control_transform_snapshot(control_state.value->odom_to_camera_optical);
+                tf["odom_to_muzzle"] =
+                    to_json_control_transform_snapshot(control_state.value->odom_to_muzzle);
+            } else {
+                resources["imu_state"] = json{
+                    {"present", false}
+                };
+                resources["detecting_color"] = nullptr;
+                resources["bullet_speed"]    = nullptr;
+                tf["odom_to_gimbal_pitch"]   = json{
+                    {"present", false}
+                };
+                tf["gimbal_to_camera_link"] = json{
+                    {"present", false}
+                };
+                tf["odom_to_camera_optical"] = json{
+                    {"present", false}
+                };
+                tf["odom_to_muzzle"] = json{
+                    {"present", false}
+                };
+            }
+            snapshot["resources"] = std::move(resources);
+            snapshot["tf"]        = std::move(tf);
+            snapshot["control_window"] =
+                flush_control_window(tick_index, tick_timestamp_ns, sidecar_policy.allow_sidecars);
+
+            jsonl_ << snapshot.dump() << '\n';
+            jsonl_.flush();
+            if (!jsonl_) {
+                jsonl_.clear();
+                log_error_throttled(
+                    last_write_error_log_ns_, "capturer failed to append snapshot to {}",
+                    jsonl_path_.string());
+            }
+        } catch (const std::exception& e) {
+            log_error_throttled(last_write_error_log_ns_, "capturer tick failed: {}", e.what());
+        }
+    }
+
+    void record_control_sample(
+        uint64_t sample_timestamp_ns, const ChannelSnapshot<L4::GimbalPlan>& gimbal_plan,
+        const ChannelSnapshot<L5::WeaponCommand>& weapon_command,
+        const ChannelSnapshot<core::ControlResourceSnapshot>& control_state) noexcept {
+        ControlSampleRecord sample;
+        sample.sample_timestamp_ns = sample_timestamp_ns;
+        if (control_state.value) {
+            const auto& imu                   = control_state.value->imu;
+            sample.sample_timestamp_ns        = control_state.value->sample_timestamp_ns;
+            sample.imu_timestamp_ns           = imu.timestamp_ns;
+            sample.imu_roll                   = static_cast<float>(imu.roll);
+            sample.imu_pitch                  = static_cast<float>(imu.pitch);
+            sample.imu_yaw                    = static_cast<float>(imu.yaw);
+            sample.imu_roll_vel               = static_cast<float>(imu.roll_vel);
+            sample.imu_pitch_vel              = static_cast<float>(imu.pitch_vel);
+            sample.imu_yaw_vel                = static_cast<float>(imu.yaw_vel);
+            sample.imu_attitude_valid         = imu.attitude_valid ? 1 : 0;
+            sample.imu_angular_velocity_valid = imu.angular_velocity_valid ? 1 : 0;
+            sample.bullet_speed    = static_cast<float>(control_state.value->bullet_speed);
+            sample.detecting_color = static_cast<uint8_t>(control_state.value->detecting_color);
+            sample.odom_to_gimbal_pitch =
+                to_control_transform(control_state.value->odom_to_gimbal_pitch);
+            sample.gimbal_to_camera_link =
+                to_control_transform(control_state.value->gimbal_to_camera_link);
+            sample.odom_to_camera_optical =
+                to_control_transform(control_state.value->odom_to_camera_optical);
+            sample.odom_to_muzzle = to_control_transform(control_state.value->odom_to_muzzle);
+        }
+
+        if (gimbal_plan.value) {
+            sample.plan_present           = 1;
+            sample.plan_timestamp_ns      = gimbal_plan.value->timestamp_ns;
+            sample.plan_distance          = static_cast<float>(gimbal_plan.value->distance);
+            sample.plan_yaw               = static_cast<float>(gimbal_plan.value->yaw);
+            sample.plan_pitch             = static_cast<float>(gimbal_plan.value->pitch);
+            sample.plan_diff_yaw          = static_cast<float>(gimbal_plan.value->diff_yaw);
+            sample.plan_yaw_vel           = static_cast<float>(gimbal_plan.value->yaw_vel);
+            sample.plan_pitch_vel         = static_cast<float>(gimbal_plan.value->pitch_vel);
+            sample.plan_yaw_acc           = static_cast<float>(gimbal_plan.value->yaw_acc);
+            sample.plan_pitch_acc         = static_cast<float>(gimbal_plan.value->pitch_acc);
+            sample.plan_source            = static_cast<uint8_t>(gimbal_plan.value->source);
+            sample.plan_aim_phase         = static_cast<uint8_t>(gimbal_plan.value->aim_phase);
+            sample.plan_fire_advice       = gimbal_plan.value->fire_advice ? 1 : 0;
+            sample.plan_aimer_fire_advice = gimbal_plan.value->aimer_fire_advice ? 1 : 0;
+            sample.plan_selected_armor_id = gimbal_plan.value->selected_armor_id;
+            sample.plan_rough_selected_armor_id = gimbal_plan.value->rough_selected_armor_id;
+        }
+
+        if (weapon_command.value) {
+            sample.weapon_present           = 1;
+            sample.weapon_timestamp_ns      = weapon_command.value->timestamp_ns;
+            sample.weapon_plan_timestamp_ns = weapon_command.value->plan_timestamp_ns;
+            sample.weapon_plan_yaw          = static_cast<float>(weapon_command.value->plan_yaw);
+            sample.weapon_plan_pitch        = static_cast<float>(weapon_command.value->plan_pitch);
+            sample.weapon_plan_fire         = weapon_command.value->plan_fire ? 1 : 0;
+            sample.weapon_fire              = weapon_command.value->fire ? 1 : 0;
+            sample.weapon_yaw               = static_cast<float>(weapon_command.value->yaw);
+            sample.weapon_pitch             = static_cast<float>(weapon_command.value->pitch);
+            sample.weapon_ref_yaw           = static_cast<float>(weapon_command.value->ref_yaw);
+            sample.weapon_ref_pitch         = static_cast<float>(weapon_command.value->ref_pitch);
+            sample.weapon_yaw_vel           = static_cast<float>(weapon_command.value->yaw_vel);
+            sample.weapon_pitch_vel         = static_cast<float>(weapon_command.value->pitch_vel);
+            sample.weapon_yaw_accel         = static_cast<float>(weapon_command.value->yaw_accel);
+            sample.weapon_pitch_accel       = static_cast<float>(weapon_command.value->pitch_accel);
+            sample.weapon_tof               = static_cast<float>(weapon_command.value->tof);
+            sample.weapon_distance          = static_cast<float>(weapon_command.value->distance);
+        }
+
+        std::scoped_lock lock(control_mutex_);
+        pending_control_samples_.push_back(sample);
+    }
+
+private:
+    RuntimeCapturer(const CapturerConfig& config, fs::path run_dir)
+        : run_dir_(std::move(run_dir))
+        , images_dir_(run_dir_ / "images")
+        , control_dir_(run_dir_ / "control")
+        , jsonl_path_(run_dir_ / "snapshots.jsonl")
+        , jsonl_(jsonl_path_, std::ios::out | std::ios::app)
+        , reserved_free_bytes_(config.reserved_free_bytes) {}
+
+    struct SidecarPolicy {
+        bool allow_sidecars{true};
+        std::string_view status{"ok"};
+    };
+
+    struct CachedSidecar {
+        uint64_t frame_id{0};
+        uint64_t timestamp_ns{0};
+        std::string relative_path{};
+
+        [[nodiscard]] bool
+            matches(uint64_t other_frame_id, uint64_t other_timestamp_ns) const noexcept {
+            return !relative_path.empty() && frame_id == other_frame_id
+                && timestamp_ns == other_timestamp_ns;
+        }
+    };
+
+    [[nodiscard]] auto
+        flush_control_window(uint64_t tick_index, uint64_t tick_timestamp_ns, bool allow_sidecars)
+            -> json {
+        std::vector<ControlSampleRecord> samples;
+        {
+            std::scoped_lock lock(control_mutex_);
+            samples.swap(pending_control_samples_);
+        }
+
+        json result{
+            {             "path",                     nullptr},
+            {   "schema_version",       kControlSchemaVersion},
+            {     "frequency_hz",         kControlFrequencyHz},
+            {      "sample_size",      kControlSampleWireSize},
+            {"chunk_header_size", kControlChunkHeaderWireSize},
+            {         "encoding",    "little_endian_explicit"},
+            {     "sample_count",              samples.size()},
+            {          "written",                       false},
+            {          "dropped",                       false},
+        };
+
+        if (samples.empty()) {
+            return result;
+        }
+
+        if (!allow_sidecars) {
+            result["dropped"] = true;
+            return result;
+        }
+
+        const fs::path path =
+            control_dir_ / fmt::format("control_{}_{}.bin", tick_index, tick_timestamp_ns);
+        const ControlChunkHeaderRecord header{
+            .sample_count      = static_cast<uint32_t>(samples.size()),
+            .tick_index        = tick_index,
+            .tick_timestamp_ns = tick_timestamp_ns,
+        };
+        std::ofstream out(path, std::ios::out | std::ios::binary | std::ios::trunc);
+        if (!out.is_open()) {
+            log_error_throttled(
+                last_write_error_log_ns_, "capturer failed to open control sidecar {}",
+                path.string());
+            result["dropped"] = true;
+            return result;
+        }
+        const auto bytes = serialize_control_chunk(header, samples);
+        out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+        out.flush();
+        if (!out) {
+            log_error_throttled(
+                last_write_error_log_ns_, "capturer failed to write control sidecar {}",
+                path.string());
+            result["dropped"] = true;
+            return result;
+        }
+
+        result["path"]    = relative_path_or_null(path);
+        result["written"] = true;
+        return result;
+    }
+
+    [[nodiscard]] auto evaluate_sidecar_policy() -> SidecarPolicy {
+        std::error_code ec;
+        const auto space = fs::space(run_dir_, ec);
+        if (ec) {
+            log_error_throttled(
+                last_write_error_log_ns_, "capturer failed to query disk space for {}: {}",
+                run_dir_.string(), ec.message());
+            return SidecarPolicy{.allow_sidecars = false, .status = "space_query_failed"};
+        }
+
+        if (space.available <= reserved_free_bytes_) {
+            log_error_throttled(
+                last_low_disk_log_ns_,
+                "capturer disabled sidecar writes because available disk space {} <= reserved {} "
+                "under {}",
+                space.available, reserved_free_bytes_, run_dir_.string());
+            return SidecarPolicy{.allow_sidecars = false, .status = "low_disk"};
+        }
+        return SidecarPolicy{};
+    }
+
+    [[nodiscard]] bool write_file(const fs::path& path, std::string_view contents) {
+        std::ofstream out(path, std::ios::out | std::ios::trunc);
+        if (!out.is_open()) {
+            return false;
+        }
+        out << contents;
+        out.flush();
+        return static_cast<bool>(out);
+    }
+
+    [[nodiscard]] auto relative_path_or_null(const fs::path& path) const -> json {
+        return path.lexically_relative(run_dir_).generic_string();
+    }
+
+    [[nodiscard]] auto ensure_mat_sidecar(
+        const cv::Mat& image, std::string_view prefix, uint64_t frame_id,
+        uint64_t source_timestamp_ns, uint64_t tick_index, uint64_t tick_ns, CachedSidecar& cache,
+        bool allow_sidecars) -> json {
+        if (cache.matches(frame_id, source_timestamp_ns)) {
+            return cache.relative_path;
+        }
+        if (!allow_sidecars || image.empty()) {
+            return nullptr;
+        }
+
+        auto path = save_mat_as_jpeg(image, prefix, tick_index, tick_ns, source_timestamp_ns);
+        if (path.is_string()) {
+            cache = CachedSidecar{
+                .frame_id      = frame_id,
+                .timestamp_ns  = source_timestamp_ns,
+                .relative_path = path.get<std::string>(),
+            };
+        }
+        return path;
+    }
+
+    [[nodiscard]] auto resolve_detection_image_path(
+        const AtLegacyArmorDetectionBatch& batch, uint64_t tick_index, uint64_t tick_ns,
+        bool allow_sidecars) -> json {
+        if (last_camera_image_.matches(batch.frame_id, batch.timestamp_ns)) {
+            return last_camera_image_.relative_path;
+        }
+        if (last_detector_image_.matches(batch.frame_id, batch.timestamp_ns)) {
+            return last_detector_image_.relative_path;
+        }
+        return ensure_mat_sidecar(
+            batch.image, "detector", batch.frame_id, batch.timestamp_ns, tick_index, tick_ns,
+            last_detector_image_, allow_sidecars);
+    }
+
+    [[nodiscard]] auto save_mat_as_jpeg(
+        const cv::Mat& image, std::string_view prefix, uint64_t tick_index, uint64_t tick_ns,
+        uint64_t source_timestamp_ns) -> json {
+        if (image.empty()) {
+            return nullptr;
+        }
+
+        const fs::path path =
+            images_dir_
+            / fmt::format("{}_{}_{}_{}.jpg", prefix, tick_index, tick_ns, source_timestamp_ns);
+        try {
+            std::vector<int> params{cv::IMWRITE_JPEG_QUALITY, 90};
+            if (!cv::imwrite(path.string(), image, params)) {
+                log_error_throttled(
+                    last_write_error_log_ns_, "capturer failed to write image {}", path.string());
+                return nullptr;
+            }
+            return relative_path_or_null(path);
+        } catch (const std::exception& e) {
+            log_error_throttled(
+                last_write_error_log_ns_, "capturer failed to write image {}: {}", path.string(),
+                e.what());
+            return nullptr;
+        }
+    }
+
+    [[nodiscard]] auto save_bytes(
+        const std::vector<uint8_t>& bytes, std::string_view prefix, uint64_t tick_index,
+        uint64_t tick_ns) -> json {
+        if (bytes.empty()) {
+            return nullptr;
+        }
+
+        const fs::path path =
+            images_dir_ / fmt::format("{}_{}_{}.jpg", prefix, tick_index, tick_ns);
+        std::ofstream out(path, std::ios::out | std::ios::binary | std::ios::trunc);
+        if (!out.is_open()) {
+            log_error_throttled(
+                last_write_error_log_ns_, "capturer failed to open sidecar {}", path.string());
+            return nullptr;
+        }
+
+        out.write(
+            reinterpret_cast<const char*>(bytes.data()),
+            static_cast<std::streamsize>(bytes.size()));
+        out.flush();
+        if (!out) {
+            log_error_throttled(
+                last_write_error_log_ns_, "capturer failed to write sidecar {}", path.string());
+            return nullptr;
+        }
+        return relative_path_or_null(path);
+    }
+
+    template <typename... Args>
+    void log_error_throttled(
+        uint64_t& last_log_ns, fmt::format_string<Args...> fmt_str, Args&&... args) const {
+        const uint64_t now_ns = fcs::clock::now_ns();
+        if (now_ns - last_log_ns < kErrorLogThrottleNs) {
+            return;
+        }
+        last_log_ns = now_ns;
+        SPDLOG_ERROR(fmt_str, std::forward<Args>(args)...);
+    }
+
+    fs::path run_dir_;
+    fs::path images_dir_;
+    fs::path control_dir_;
+    fs::path jsonl_path_;
+    std::ofstream jsonl_;
+    uint64_t reserved_free_bytes_{0};
+    uint64_t tick_index_{0};
+    std::mutex control_mutex_;
+    std::vector<ControlSampleRecord> pending_control_samples_{};
+    CachedSidecar last_camera_image_{};
+    CachedSidecar last_detector_image_{};
+    mutable uint64_t last_low_disk_log_ns_{0};
+    mutable uint64_t last_write_error_log_ns_{0};
+};
+
+} // namespace
+
+void register_runtime_capturer_system(
+    talos::Scheduler& scheduler, const CapturerConfig& config, const CapturerLaunchContext& launch,
+    RobotType robot_type, const CameraConfig& camera_config) {
+    if (!config.enabled) {
+        return;
+    }
+
+    auto capturer_result = RuntimeCapturer::create(config, launch, robot_type, camera_config);
+    if (!capturer_result) {
+        SPDLOG_ERROR("runtime capturer disabled: {}", capturer_result.error());
+        return;
+    }
+
+    SPDLOG_INFO("runtime capturer enabled: {}", config.output_dir);
+    scheduler.add_system<talos::fixed_rate_silent<250>>(
+        "runtime_control_recorder",
+        [capturer = *capturer_result](
+            talos::spmc<L4::GimbalPlan, GimbalPlanChannelTopic> gimbal_plan_in,
+            talos::spmc<L5::WeaponCommand, WeaponCommandChannelTopic> weapon_command_in,
+            talos::spmc<core::ControlResourceSnapshot, RuntimeControlStateChannelTopic>
+                control_state_in) mutable {
+            capturer->record_control_sample(
+                fcs::clock::now_ns(), sample_channel(gimbal_plan_in),
+                sample_channel(weapon_command_in), sample_channel(control_state_in));
+        });
+    scheduler.add_system<talos::fixed_rate_silent<1>>(
+        "runtime_capturer",
+        [capturer = std::move(*capturer_result)](
+            talos::spmc<AtLegacyImageFrame, AtLegacyImageChannelTopic> image_in,
+            talos::spmc<AtLegacyArmorDetectionBatch, AtLegacyDetectionChannelTopic> detection_in,
+            talos::spmc<AtLegacyArmorMeasurementBatch, AtLegacyMeasurementChannelTopic>
+                measurement_in,
+            talos::spmc<L3::TrackerOutput, TrackerOutputChannelTopic> tracker_in,
+            talos::spmc<rune::RuneObservation, RuneObservationChannelTopic> rune_observation_in,
+            talos::spmc<rune::RuneDebugFrame, RuneDebugFrameChannelTopic> rune_debug_in,
+            talos::spmc<energy_meter::EnergyMeterState, EnergyMeterStateChannelTopic>
+                energy_meter_in,
+            talos::spmc<L4::GimbalPlan, GimbalPlanChannelTopic> gimbal_plan_in,
+            talos::spmc<L5::WeaponCommand, WeaponCommandChannelTopic> weapon_command_in,
+            talos::spmc<core::ControlResourceSnapshot, RuntimeControlStateChannelTopic>
+                control_state_in) mutable {
+            const auto tick_timestamp_ns = fcs::clock::now_ns();
+            capturer->capture_tick(
+                tick_timestamp_ns, sample_channel(image_in), sample_channel(detection_in),
+                sample_channel(measurement_in), sample_channel(tracker_in),
+                sample_channel(rune_observation_in), sample_channel(rune_debug_in),
+                sample_channel(energy_meter_in), sample_channel(gimbal_plan_in),
+                sample_channel(weapon_command_in), sample_channel(control_state_in));
+        });
+}
+
+} // namespace fcs::runtime

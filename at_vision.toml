@@ -1,9 +1,14 @@
 daedalus = true
 
-robot = 'infantry_4'          # any of: 'infantry', 'hero', 'sentry'
-vision = 'daedalus_vision'
+robot = "infantry_4"  # any of: 'infantry', 'hero', 'sentry'
+vision = "daedalus_vision"
 
 [foxglove]
 enabled = true
 host = "0.0.0.0"
 port = 8765
+
+[capturer]
+enabled = true
+output_dir = "record"
+reserved_free_bytes = 2097152

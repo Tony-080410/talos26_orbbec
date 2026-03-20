@@ -15,9 +15,11 @@
 #include "talos_gimbal/packet.hpp"
 #include "talos_gimbal/stm32.hpp"
 
+#include <algorithm>
 #include <atomic>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <utility>
 
 #include <fmt/format.h>
@@ -26,6 +28,48 @@
 namespace fcs::runtime {
 namespace {
 
+template <fast_tf::frame From, fast_tf::frame To>
+[[nodiscard]] auto capture_control_transform_snapshot(
+    const fast_tf::CoordinateSystem& tf_buffer, uint64_t timestamp_ns)
+    -> core::ControlTransformSnapshot {
+    core::ControlTransformSnapshot snapshot;
+    auto tf = fast_tf::lookup_clamped<From, To>(tf_buffer, timestamp_ns);
+    if (!tf) {
+        return snapshot;
+    }
+
+    snapshot.present       = true;
+    const auto translation = tf->translation();
+    snapshot.translation   = {translation.x(), translation.y(), translation.z()};
+
+    const auto quaternion = tf->quaternion();
+    snapshot.quaternion   = {quaternion.x(), quaternion.y(), quaternion.z(), quaternion.w()};
+    return snapshot;
+}
+
+void publish_control_snapshot(
+    talos::spmc_mut<core::ControlResourceSnapshot, RuntimeControlStateChannelTopic> control_out,
+    const fast_tf::CoordinateSystem& tf_buffer, const core::ImuState& imu_state,
+    ArmorColor detecting_color, double bullet_speed, uint64_t sample_timestamp_ns) {
+    control_out.write(
+        core::ControlResourceSnapshot{
+            .sample_timestamp_ns = sample_timestamp_ns,
+            .imu                 = imu_state,
+            .detecting_color     = detecting_color,
+            .bullet_speed        = bullet_speed,
+            .odom_to_gimbal_pitch =
+                capture_control_transform_snapshot<fast_tf::odom, fast_tf::gimbal_pitch_fuxk_frame>(
+                    tf_buffer, sample_timestamp_ns),
+            .gimbal_to_camera_link = capture_control_transform_snapshot<
+                fast_tf::gimbal, fast_tf::camera_link_fuxk_frame>(tf_buffer, sample_timestamp_ns),
+            .odom_to_camera_optical = capture_control_transform_snapshot<
+                fast_tf::odom, fast_tf::camera_optical_fuxk_frame>(tf_buffer, sample_timestamp_ns),
+            .odom_to_muzzle =
+                capture_control_transform_snapshot<fast_tf::odom, fast_tf::muzzle_link_fuxk_frame>(
+                    tf_buffer, sample_timestamp_ns),
+        });
+}
+
 struct DaedalusImu {
     std::shared_ptr<ipc::ShmClient> ipc_device;
 
@@ -33,9 +77,20 @@ struct DaedalusImu {
         talos::res_mut<fast_tf::CoordinateSystem> tf_buffer,
         [[maybe_unused]] core::trajectory::bullet_speed_mut bullet_speed,
         [[maybe_unused]] core::detecting_color_mut detecting_color,
-        [[maybe_unused]] core::imu_state_mut imu_state) noexcept {
+        [[maybe_unused]] core::imu_state_mut imu_state,
+        talos::spmc_mut<core::ControlResourceSnapshot, RuntimeControlStateChannelTopic>
+            control_out) noexcept {
+        bool control_updated           = false;
+        uint64_t control_timestamp_ns  = 0;
+        const auto note_control_update = [&](uint64_t timestamp_ns) {
+            control_updated      = true;
+            control_timestamp_ns = std::max(control_timestamp_ns, timestamp_ns);
+        };
+
         if (const auto pose = ipc_device->recv_pose(ipc::POSE_GIMBAL)) {
             const Eigen::Quaterniond q(pose->qw, pose->qx, pose->qy, pose->qz);
+            const auto euler              = math_fuxk::rpy(q);
+            const auto [roll, pitch, yaw] = euler.rpy();
             // const Eigen::Quaterniond q(1.0, 0, 0, 0);
             fast_tf::update(
                 *tf_buffer,
@@ -46,12 +101,23 @@ struct DaedalusImu {
                 *tf_buffer,
                 fast_tf::EdgeTransform<fast_tf::gimbal_pitch_fuxk_frame>::from_rpy(0, 0, 0),
                 pose->timestamp_ns);
+            imu_state->timestamp_ns           = pose->timestamp_ns;
+            imu_state->yaw                    = yaw;
+            imu_state->pitch                  = pitch;
+            imu_state->roll                   = roll;
+            imu_state->yaw_vel                = 0.0;
+            imu_state->pitch_vel              = 0.0;
+            imu_state->roll_vel               = 0.0;
+            imu_state->attitude_valid         = true;
+            imu_state->angular_velocity_valid = false;
+            note_control_update(pose->timestamp_ns);
         }
         if (const auto pose = ipc_device->recv_pose(ipc::POSE_ODOM)) {
             fast_tf::update(
                 *tf_buffer,
                 fast_tf::EdgeTransform<fast_tf::odom>::from_translation(pose->x, pose->y, pose->z),
                 pose->timestamp_ns);
+            note_control_update(pose->timestamp_ns);
         }
         if (const auto pose = ipc_device->recv_pose(ipc::POSE_CAMERA)) {
             const Eigen::Quaterniond q(pose->qw, pose->qx, pose->qy, pose->qz);
@@ -60,6 +126,7 @@ struct DaedalusImu {
                 fast_tf::EdgeTransform<fast_tf::camera_link_fuxk_frame>::from_quaternion_xyz(
                     q, pose->x, pose->y, pose->z),
                 pose->timestamp_ns);
+            note_control_update(pose->timestamp_ns);
         }
         if (const auto pose = ipc_device->recv_pose(ipc::POSE_MUZZLE)) {
             const Eigen::Quaterniond q(pose->qw, pose->qx, pose->qy, pose->qz);
@@ -68,9 +135,15 @@ struct DaedalusImu {
                 fast_tf::EdgeTransform<fast_tf::muzzle_link_fuxk_frame>::from_quaternion_xyz(
                     q, pose->x, pose->y, pose->z),
                 pose->timestamp_ns);
+            note_control_update(pose->timestamp_ns);
         }
         if (const auto obs = ipc_device->recv_chassis_observation()) {
             // TODO
+        }
+        if (control_updated) {
+            publish_control_snapshot(
+                control_out, *tf_buffer, *imu_state, *detecting_color, bullet_speed->bullet_speed,
+                control_timestamp_ns);
         }
     }
 };
@@ -82,12 +155,23 @@ struct UsbImu {
     McuConfig config;
     std::shared_ptr<UsbDevice> device;
     talos_gimbal::ReceiveImuData* imu_data = nullptr;
+    std::optional<uint32_t> last_mcu_timestamp_ms{};
 
     void system(
         talos::res_mut<fast_tf::CoordinateSystem> tf_buffer,
         core::trajectory::bullet_speed_mut bullet_speed, core::detecting_color_mut detecting_color,
-        core::imu_state_mut imu_state) noexcept {
+        core::imu_state_mut imu_state,
+        talos::spmc_mut<core::ControlResourceSnapshot, RuntimeControlStateChannelTopic>
+            control_out) noexcept {
         device->handle_events();
+        if (imu_data->header.sof != talos_gimbal::HeaderFrame::SoF()
+            || imu_data->eof != talos_gimbal::HeaderFrame::EoF()) {
+            return;
+        }
+        if (last_mcu_timestamp_ms.has_value() && *last_mcu_timestamp_ms == imu_data->time_stamp) {
+            return;
+        }
+        last_mcu_timestamp_ms       = imu_data->time_stamp;
         const uint64_t timestamp_ns = fcs::clock::now_ns();
         fast_tf::update_rotate_only<fast_tf::gimbal_yaw_fuxk_frame>(
             *tf_buffer, math_fuxk::rpy<double>(imu_data->data.roll, 0.0, imu_data->data.yaw),
@@ -114,9 +198,18 @@ struct UsbImu {
                 *detecting_color = new_detecting_color;
             }
         }
-        imu_state->yaw_vel   = imu_data->data.yaw_vel;
-        imu_state->pitch_vel = imu_data->data.pitch_vel;
-        imu_state->roll_vel  = imu_data->data.roll_vel;
+        imu_state->timestamp_ns           = timestamp_ns;
+        imu_state->yaw                    = imu_data->data.yaw;
+        imu_state->pitch                  = imu_data->data.pitch;
+        imu_state->roll                   = imu_data->data.roll;
+        imu_state->yaw_vel                = imu_data->data.yaw_vel;
+        imu_state->pitch_vel              = imu_data->data.pitch_vel;
+        imu_state->roll_vel               = imu_data->data.roll_vel;
+        imu_state->attitude_valid         = true;
+        imu_state->angular_velocity_valid = true;
+        publish_control_snapshot(
+            control_out, *tf_buffer, *imu_state, *detecting_color, bullet_speed->bullet_speed,
+            timestamp_ns);
     }
 };
 
@@ -126,9 +219,13 @@ struct Imu {
     void system(
         talos::res_mut<fast_tf::CoordinateSystem> tf_buffer,
         core::trajectory::bullet_speed_mut bullet_speed, core::detecting_color_mut detecting_color,
-        core::imu_state_mut imu_state) noexcept {
+        core::imu_state_mut imu_state,
+        talos::spmc_mut<core::ControlResourceSnapshot, RuntimeControlStateChannelTopic>
+            control_out) noexcept {
         std::visit(
-            [&](auto& inner) { inner.system(tf_buffer, bullet_speed, detecting_color, imu_state); },
+            [&](auto& inner) {
+                inner.system(tf_buffer, bullet_speed, detecting_color, imu_state, control_out);
+            },
             impl);
     }
 };
@@ -213,8 +310,10 @@ std::expected<L1L2SetupResult, std::string> setup_l1(
         [imu = std::move(imu)](
             talos::res_mut<fast_tf::CoordinateSystem> tf_buffer,
             core::trajectory::bullet_speed_mut bullet_speed,
-            core::detecting_color_mut detecting_color, core::imu_state_mut imu_state) {
-            imu->system(tf_buffer, bullet_speed, detecting_color, imu_state);
+            core::detecting_color_mut detecting_color, core::imu_state_mut imu_state,
+            talos::spmc_mut<core::ControlResourceSnapshot, RuntimeControlStateChannelTopic>
+                control_out) {
+            imu->system(tf_buffer, bullet_speed, detecting_color, imu_state, control_out);
         });
 
     // Camera: 160Hz, notify (triggers compute)

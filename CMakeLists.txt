@@ -146,6 +146,7 @@ set(FCS_SOURCES
         src/fcs/core/trajectory/solver/trajectory_solver.cpp
         src/fcs/L1_sensor/camera_interface.cpp
         src/fcs/L1_sensor/output_interface.cpp
+        src/fcs/runtime/capturer.cpp
         src/fcs/runtime/l1_l2_setup.cpp
         src/fcs/L2_perception/armor/at_legacy_detector_backend.cpp
         src/fcs/L2_perception/armor/at_legacy_systems.cpp
@@ -287,6 +288,7 @@ if(BUILD_TESTING)
             Threads::Threads
             fcs
             fast_tf
+            nlohmann_json::nlohmann_json
         )
         add_test(NAME ${test_name} COMMAND ${test_name})
     endforeach()

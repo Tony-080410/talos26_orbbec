@@ -51,21 +51,24 @@ TEST(ReadConfig, RepositoryLaunchConfigLoadsAndMergesOverrideSemantics) {
     auto result = read_config();
     ASSERT_TRUE(result.has_value()) << to_string(result.error());
 
-    auto [robot, daedalus, hardware, foxglove, vision] = std::move(*result);
-    EXPECT_EQ(robot, fcs::RobotType::Infantry);
-    EXPECT_TRUE(daedalus);
-    ASSERT_TRUE(hardware.has_value());
-    EXPECT_EQ(hardware->type.get(), fcs::RobotType::Infantry);
-    EXPECT_DOUBLE_EQ(hardware->mcu->bullet_speed_default, 22.0);
+    auto config = std::move(*result);
+    EXPECT_EQ(config.robot_type, fcs::RobotType::Infantry);
+    EXPECT_TRUE(config.launch.daedalus);
+    ASSERT_TRUE(config.hardware.has_value());
+    EXPECT_EQ(config.hardware->type.get(), fcs::RobotType::Infantry);
+    EXPECT_DOUBLE_EQ(config.hardware->mcu->bullet_speed_default, 22.0);
 
-    EXPECT_TRUE(foxglove.enabled);
-    EXPECT_EQ(foxglove.host, "0.0.0.0");
-    EXPECT_EQ(foxglove.port, 8765);
+    EXPECT_TRUE(config.foxglove.enabled);
+    EXPECT_EQ(config.foxglove.host, "0.0.0.0");
+    EXPECT_EQ(config.foxglove.port, 8765);
 
-    EXPECT_EQ(vision.trajectory.model->type, fcs::core::trajectory::model::ModelType::Ideal);
-    EXPECT_DOUBLE_EQ(vision.trajectory.model->gravity, 9.81);
-    EXPECT_TRUE(vision.at_legacy->traditional.advanced_binary);
-    EXPECT_EQ(vision.at_legacy->default_detect_color, fcs::ArmorColor::Blue);
+    EXPECT_TRUE(config.capturer.enabled);
+    EXPECT_EQ(config.capturer.output_dir, "record");
+
+    EXPECT_EQ(config.vision.trajectory.model->type, fcs::core::trajectory::model::ModelType::Ideal);
+    EXPECT_DOUBLE_EQ(config.vision.trajectory.model->gravity, 9.81);
+    EXPECT_TRUE(config.vision.at_legacy->traditional.advanced_binary);
+    EXPECT_EQ(config.vision.at_legacy->default_detect_color, fcs::ArmorColor::Blue);
 }
 
 TEST(ReadConfig, MissingRequiredLaunchFieldReturnsEntryConfigError) {
@@ -94,14 +97,37 @@ TEST(ReadConfig, NonDaedalusLaunchReturnsHardwareAndMergedBaseVision) {
         auto result = read_config();
         ASSERT_TRUE(result.has_value()) << to_string(result.error());
 
-        auto [robot, daedalus, hardware, foxglove, vision] = std::move(*result);
-        EXPECT_EQ(robot, fcs::RobotType::Hero);
-        EXPECT_FALSE(daedalus);
-        ASSERT_TRUE(hardware.has_value());
-        EXPECT_EQ(hardware->type.get(), fcs::RobotType::Hero);
-        EXPECT_TRUE(foxglove.enabled);
+        auto config = std::move(*result);
+        EXPECT_EQ(config.robot_type, fcs::RobotType::Hero);
+        EXPECT_FALSE(config.launch.daedalus);
+        ASSERT_TRUE(config.hardware.has_value());
+        EXPECT_EQ(config.hardware->type.get(), fcs::RobotType::Hero);
+        EXPECT_TRUE(config.foxglove.enabled);
         EXPECT_EQ(
-            vision.trajectory.model->type, fcs::core::trajectory::model::ModelType::LinearDrag);
+            config.vision.trajectory.model->type,
+            fcs::core::trajectory::model::ModelType::LinearDrag);
+    }
+
+    std::filesystem::remove_all(temp_dir);
+}
+
+TEST(ReadConfig, CapturerRequiresOutputDirWhenEnabled) {
+    const auto temp_dir = make_temp_dir("capturer-missing-output-dir");
+    copy_file_from_repo("config/vision_base.toml", temp_dir / "config/vision_base.toml");
+    copy_file_from_repo("config/robot/hero.toml", temp_dir / "config/robot/hero.toml");
+    write_file(temp_dir / "config/vision/std.toml", "");
+    write_file(
+        temp_dir / "at_vision.toml",
+        "daedalus = false\nrobot = 'hero'\nvision = 'std'\n[capturer]\nenabled = true\n");
+
+    {
+        const ScopedCurrentPath cwd(temp_dir);
+        auto result = read_config();
+        ASSERT_FALSE(result.has_value());
+        ASSERT_TRUE(std::holds_alternative<std::string>(result.error()));
+        EXPECT_EQ(
+            std::get<std::string>(result.error()),
+            "entry config: capturer.output_dir is required when capturer.enabled=true");
     }
 
     std::filesystem::remove_all(temp_dir);

@@ -25,6 +25,12 @@ struct FoxgloveConfig {
     uint16_t port{8765};
 };
 
+struct CapturerConfig {
+    bool enabled{false};
+    std::string output_dir{};
+    uint64_t reserved_free_bytes{5ULL * 1024ULL * 1024ULL * 1024ULL};
+};
+
 using degree = double;
 
 struct RobotExtrinsicConfig {

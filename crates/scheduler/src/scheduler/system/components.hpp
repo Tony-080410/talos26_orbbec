@@ -66,6 +66,11 @@ struct basic_channel {
     [[nodiscard]] auto read_current() noexcept { return ptr_->read_current(); }
 
     [[nodiscard]] bool has_new() const noexcept requires HasNew { return ptr_->has_new(); }
+
+    [[nodiscard]] auto last_generation() const noexcept
+        requires requires(const UnderlyingChannel& channel) { channel.last_generation(); } {
+        return ptr_->last_generation();
+    }
 };
 
 /**

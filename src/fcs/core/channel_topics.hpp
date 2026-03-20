@@ -53,4 +53,9 @@ struct GimbalPlanChannelTopic {};
 /// Mode: SPMC (single producer, multiple consumers)
 struct WeaponCommandChannelTopic {};
 
+/// @brief Runtime control-resource snapshot channel (IMU/resource owner -> capturer)
+/// Data type: fcs::core::ControlResourceSnapshot
+/// Mode: SPMC (single producer, multiple consumers)
+struct RuntimeControlStateChannelTopic {};
+
 } // namespace fcs
