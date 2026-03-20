@@ -112,7 +112,7 @@ yaw_log_k = 0.005
 # Shared fire gate threshold for L4/L5
 fire_thresh = 0.01744444
 # L5 dual-delay gate mismatch threshold (radians)
-delay_gate_error_rad = 0.0035
+delay_gate_error_rad = 0.01744444
 # Physical window dimensions (meters)
 shooting_range_h = 0.135
 shooting_range_w = 0.135
