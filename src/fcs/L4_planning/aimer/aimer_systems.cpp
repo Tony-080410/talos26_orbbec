@@ -35,7 +35,7 @@ void update_phase_fsm(
     switch (phase) {
     case ArmorAimPhase::SingleArmor:
         overflow_count = (abs_v_yaw > cfg.single_whole_up) ? overflow_count + 1 : 0;
-        if (overflow_count > cfg.transfer_threshold) {
+        if (overflow_count > cfg.transfer_threshold_single_whole) {
             phase          = ArmorAimPhase::WholeCarArmor;
             overflow_count = 0;
         }

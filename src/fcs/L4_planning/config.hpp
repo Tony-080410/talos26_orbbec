@@ -20,6 +20,9 @@ struct AimerConfig {
     double pair_center_down{15.0};
 
     /// Consecutive frames required to transfer between aim phases.
+    int transfer_threshold_single_whole{50};
+
+    /// Consecutive frames required to transfer between aim phases.
     int transfer_threshold{50};
 
     /// Front-window limit for single-armor locking (degrees).

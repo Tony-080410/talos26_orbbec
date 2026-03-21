@@ -77,7 +77,7 @@ sigma_a_z = 2.0                 # Aligned with at_vision (was 1.0)
 sigma_a_yaw = 20.0              # Aligned with at_vision
 sigma_r0 = 1.0
 sigma_r1 = 1.0
-sigma_h = 0.1                   # Aligned with at_vision (was 0.5)
+sigma_h = 0.8                   # Aligned with at_vision (was 0.5)
 meas_yaw_var_floor = 4e-3
 meas_pitch_var_floor = 4e-3
 meas_dist_var_floor = 0.3
@@ -88,7 +88,7 @@ meas_armor_yaw_range_k = 0.005
 [tracker.robot_inekf]
 radius0 = 0.23
 radius1 = 0.23
-height = 0.1
+height = 0.05
 
 [tracker.outpost]
 matcher_gate = 4.0
@@ -112,7 +112,7 @@ yaw_log_k = 0.005
 # Shared fire gate threshold for L4/L5
 fire_thresh = 0.01744444
 # L5 dual-delay gate mismatch threshold (radians)
-delay_gate_error_rad = 0.01744444
+delay_gate_error_rad = 3.1744444
 # Physical window dimensions (meters)
 shooting_range_h = 0.135
 shooting_range_w = 0.135
@@ -121,7 +121,9 @@ shooting_range_w = 0.135
 [aimer]
 # System delay compensation (seconds)
 # Includes: camera exposure, image processing, communication, gimbal response
-delay = 0.019
+# 第三场：提前量疑似太小，0.019 -> 0.04
+# 对于 3.6 rad/s +0.021 用于 补偿 5度
+delay = 0.04
 
 # Aim phase FSM thresholds (rad/s), aligned with prior implementations
 single_whole_up = 2.5
@@ -131,7 +133,7 @@ whole_pair_down = 6.5
 pair_center_up = 16.5
 pair_center_down = 15.0
 transfer_threshold = 50
-
+transfer_threshold_single_whole = 20
 # Armor selection windows (degrees)
 front_window_deg = 90.0
 coming_angle_deg = 60.0
