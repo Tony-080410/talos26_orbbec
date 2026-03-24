@@ -899,6 +899,7 @@ public:
                 const auto& imu                  = control_state.value->imu;
                 resources["sample_timestamp_ns"] = control_state.value->sample_timestamp_ns;
                 resources["imu_state"]           = json{
+                    {               "present",                       true},
                     {          "timestamp_ns",           imu.timestamp_ns},
                     {                   "yaw",                    imu.yaw},
                     {                 "pitch",                  imu.pitch},
@@ -925,9 +926,10 @@ public:
                 resources["imu_state"] = json{
                     {"present", false}
                 };
-                resources["detecting_color"] = nullptr;
-                resources["bullet_speed"]    = nullptr;
-                tf["odom_to_gimbal_pitch"]   = json{
+                resources["detecting_color"]  = nullptr;
+                resources["bullet_speed_raw"] = nullptr;
+                resources["bullet_speed"]     = nullptr;
+                tf["odom_to_gimbal_pitch"]    = json{
                     {"present", false}
                 };
                 tf["gimbal_to_camera_link"] = json{
@@ -1368,7 +1370,7 @@ void register_runtime_capturer_system(
                 fcs::clock::now_ns(), sample_channel(gimbal_plan_in),
                 sample_channel(weapon_command_in), sample_channel(control_state_in));
         });
-    scheduler.add_system<talos::fixed_rate_silent<1>>(
+    scheduler.add_system<talos::fixed_rate_silent<4>>(
         "runtime_capturer",
         [capturer = std::move(*capturer_result)](
             talos::spmc<AtLegacyImageFrame, AtLegacyImageChannelTopic> image_in,

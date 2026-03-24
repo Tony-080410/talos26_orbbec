@@ -464,6 +464,52 @@ TEST(Capturer, ControlResourcesGoStaleWhenPublisherIdles) {
     fs::remove_all(output_dir);
 }
 
+TEST(Capturer, ControlResourcesExposeImuPresenceBitWhenPresent) {
+    const fs::path output_dir = make_temp_dir("control-imu-present");
+
+    talos::World world;
+    talos::Scheduler scheduler(world);
+    seed_runtime_resources(world);
+
+    register_test_producer(scheduler, ProducerMode::Continuous);
+
+    fcs::CapturerConfig config;
+    config.enabled             = true;
+    config.output_dir          = output_dir.string();
+    config.reserved_free_bytes = 0;
+
+    fcs::runtime::register_runtime_capturer_system(
+        scheduler, config, {.daedalus = false, .robot = "hero", .vision = "std"},
+        fcs::RobotType::Hero, fcs::CameraConfig{});
+
+    run_scheduler_for(scheduler, 2200ms);
+
+    const fs::path run_dir = find_run_dir(output_dir);
+    ASSERT_FALSE(run_dir.empty());
+
+    const auto rows = read_jsonl(run_dir / "snapshots.jsonl");
+    ASSERT_FALSE(rows.empty());
+
+    bool found_resources_row = false;
+    for (const auto& row : rows) {
+        const auto& resources = row.at("resources");
+        if (!resources.value("present", false)) {
+            continue;
+        }
+
+        found_resources_row = true;
+        ASSERT_TRUE(resources.contains("imu_state"));
+        const auto& imu_state = resources.at("imu_state");
+        ASSERT_TRUE(imu_state.contains("present"));
+        EXPECT_TRUE(imu_state.at("present").get<bool>());
+        EXPECT_TRUE(imu_state.at("timestamp_ns").is_number_unsigned());
+        break;
+    }
+
+    EXPECT_TRUE(found_resources_row);
+    fs::remove_all(output_dir);
+}
+
 TEST(Capturer, ChannelGenerationSamplingTracksUpdatedAndStale) {
     struct TestTopic {};
 
