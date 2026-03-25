@@ -92,7 +92,8 @@ void register_l1_sensor_systems(App& app) {
 
                 // Line 1: name and type (e.g., "Sentry Small")
                 std::string name_type = fmt::format(
-                    "{} {}", magic_enum::enum_name(det.name), magic_enum::enum_name(det.type));
+                    "{} {} {}", magic_enum::enum_name(det.name), magic_enum::enum_name(det.type),
+                    magic_enum::enum_name(det.color));
                 cv::putText(
                     img_bgr, name_type, text_pos, cv::FONT_HERSHEY_SIMPLEX, 0.5, box_color, 1);
 
