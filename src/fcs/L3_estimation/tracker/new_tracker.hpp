@@ -167,6 +167,7 @@ public:
         constexpr double v0    = 0.0;
 
         target_name_          = target.name;
+        target_color_         = target.color;
         const bool is_outpost = (target_name_ == ArmorName::Outpost);
 
         robot_target_.reset();
@@ -228,6 +229,7 @@ public:
         TrackerOutput output;
         output.status        = status_;
         output.target_name   = target_name_;
+        output.target_color  = target_color_;
         output.target_jumped = target_jumped_;
 
         if (robot_target_.has_value()) {
@@ -264,6 +266,7 @@ public:
         outpost_last_armor_id_.reset();
         target_jumped_ = false;
         target_name_   = ArmorName::Invalid;
+        target_color_  = ArmorColor::Neutral;
         measurement_.fill(0.0);
         detecting_count_ = 0;
         last_dt_         = 0.0;
@@ -550,6 +553,7 @@ private:
     TrackerConfig config_{};
     TrackerStatus status_{TrackerStatus::Idle};
     ArmorName target_name_{ArmorName::Invalid};
+    ArmorColor target_color_{ArmorColor::Neutral};
 
     std::optional<EkfTargetInfo<RobotEkfMotionModel>> robot_target_{};
     std::optional<EkfTargetInfo<OutpostEkfMotionModel>> outpost_target_{};
