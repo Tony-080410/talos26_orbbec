@@ -188,7 +188,8 @@ struct OutpostEkfMotionModel {
     using MatXX = Eigen::Matrix<Scalar, NX, NX>;
     using MatZZ = Eigen::Matrix<Scalar, NZ, NZ>;
 
-    static constexpr Scalar OUTPOST_RADIUS = 0.2765; // 详见机械图纸
+    static constexpr Scalar OUTPOST_RADIUS = 0.2765;     // 详见机械图纸
+    static constexpr Scalar OUTPOST_V_YAW  = 2.51327412; // 详见规则
     struct Params {
         Scalar sigma_q_xy  = 10.0;
         Scalar sigma_q_z   = 1.0;
