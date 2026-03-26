@@ -166,9 +166,11 @@ public:
         const double armor_yaw = target.yaw();
         constexpr double v0    = 0.0;
 
-        target_name_          = target.name;
-        target_color_         = target.color;
-        const bool is_outpost = (target_name_ == ArmorName::Outpost);
+        target_name_                   = target.name;
+        target_color_                  = target.color;
+        last_image_center_distance_px_ = target.distance_to_image_center;
+        last_observation_timestamp_ns_ = target.timestamp_ns;
+        const bool is_outpost          = (target_name_ == ArmorName::Outpost);
 
         robot_target_.reset();
         outpost_target_.reset();
@@ -227,10 +229,12 @@ public:
 
     [[nodiscard]] TrackerOutput get_output() const noexcept {
         TrackerOutput output;
-        output.status        = status_;
-        output.target_name   = target_name_;
-        output.target_color  = target_color_;
-        output.target_jumped = target_jumped_;
+        output.status                        = status_;
+        output.target_name                   = target_name_;
+        output.target_color                  = target_color_;
+        output.target_jumped                 = target_jumped_;
+        output.last_image_center_distance_px = last_image_center_distance_px_;
+        output.last_observation_timestamp_ns = last_observation_timestamp_ns_;
 
         if (robot_target_.has_value()) {
             const auto& x = robot_target_->x();
@@ -268,10 +272,12 @@ public:
         target_name_   = ArmorName::Invalid;
         target_color_  = ArmorColor::Neutral;
         measurement_.fill(0.0);
-        detecting_count_ = 0;
-        last_dt_         = 0.0;
-        lost_time_       = 0.0;
-        status_          = TrackerStatus::Idle;
+        last_image_center_distance_px_ = std::numeric_limits<double>::infinity();
+        last_observation_timestamp_ns_ = 0;
+        detecting_count_               = 0;
+        last_dt_                       = 0.0;
+        lost_time_                     = 0.0;
+        status_                        = TrackerStatus::Idle;
     }
 
     [[nodiscard]] TrackerStatus status() const noexcept { return status_; }
@@ -377,6 +383,9 @@ private:
 
         state_machine(true);
         last_armor_id                     = selected.front().armor_id;
+        const auto& primary_measurement   = measurements.measurements[selected.front().obs_index];
+        last_image_center_distance_px_    = primary_measurement.distance_to_image_center;
+        last_observation_timestamp_ns_    = primary_measurement.timestamp_ns;
         const bool observed_nonzero_armor = std::any_of(
             selected.begin(), selected.end(),
             [](const MatchCandidate<TargetInfo>& candidate) { return candidate.armor_id != 0; });
@@ -567,6 +576,8 @@ private:
     double lost_time_{0.0};
 
     std::array<double, RobotEkfMotionModel::NZ * 2> measurement_{};
+    double last_image_center_distance_px_{std::numeric_limits<double>::infinity()};
+    uint64_t last_observation_timestamp_ns_{0};
     std::optional<int> robot_last_armor_id_{};
     std::optional<int> outpost_last_armor_id_{};
     bool target_jumped_{false};

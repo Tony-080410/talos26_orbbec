@@ -6,6 +6,7 @@
 #include <fstream>
 #include <iterator>
 #include <limits>
+#include <optional>
 #include <string>
 #include <thread>
 #include <vector>
@@ -17,6 +18,8 @@
 #include "L3_estimation/energy_meter/types.hpp"
 #include "L3_estimation/tracker/types.hpp"
 #include "L4_planning/gimbal_planner/types.hpp"
+#include "L4_planning/selected_target_snapshot.hpp"
+#include "L4_planning/target_selection_trace.hpp"
 #include "L5_weapon/fire_control.hpp"
 #include "config.hpp"
 #include "core/channel_topics.hpp"
@@ -90,13 +93,18 @@ void register_test_producer(talos::Scheduler& scheduler, ProducerMode mode) {
             talos::spmc_mut<
                 fcs::AtLegacyArmorMeasurementBatch, fcs::AtLegacyMeasurementChannelTopic>
                 measurement_out,
-            talos::spmc_mut<fcs::L3::TrackerOutput, fcs::TrackerOutputChannelTopic> tracker_out,
+            talos::spmc_mut<fcs::L3::TrackerOutputs, fcs::TrackerOutputChannelTopic> tracker_out,
             talos::spmc_mut<fcs::rune::RuneObservation, fcs::RuneObservationChannelTopic>
                 rune_observation_out,
             talos::spmc_mut<fcs::rune::RuneDebugFrame, fcs::RuneDebugFrameChannelTopic>
                 rune_debug_out,
             talos::spmc_mut<fcs::energy_meter::EnergyMeterState, fcs::EnergyMeterStateChannelTopic>
                 energy_meter_out,
+            talos::spmc_mut<
+                fcs::L4::SelectedTargetSnapshot, fcs::SelectedTargetSnapshotChannelTopic>
+                selected_target_out,
+            talos::spmc_mut<fcs::L4::TargetSelectionTrace, fcs::TargetSelectionTraceChannelTopic>
+                target_selection_trace_out,
             talos::spmc_mut<fcs::L4::GimbalPlan, fcs::GimbalPlanChannelTopic> gimbal_plan_out,
             talos::spmc_mut<fcs::L5::WeaponCommand, fcs::WeaponCommandChannelTopic> weapon_out,
             talos::spmc_mut<
@@ -121,17 +129,21 @@ void register_test_producer(talos::Scheduler& scheduler, ProducerMode mode) {
                 return false;
             }();
 
+            std::optional<fcs::L3::TrackerOutput> selected_tracker;
             if (publish_detector) {
                 detection_out.write(
                     fcs::AtLegacyArmorDetectionBatch{{}, image.clone(), now_ns, camera_frame});
                 measurement_out.write(fcs::AtLegacyArmorMeasurementBatch{{}, now_ns, camera_frame});
 
+                fcs::L3::TrackerOutputs trackers;
                 fcs::L3::TrackerOutput tracker;
                 tracker.timestamp_ns = now_ns;
                 tracker.status       = stale_phase ? fcs::L3::TrackerStatus::Tracking
                                                    : fcs::L3::TrackerStatus::Detecting;
                 tracker.target_name  = stale_phase ? fcs::ArmorName::Two : fcs::ArmorName::One;
-                tracker_out.write(tracker);
+                selected_tracker     = tracker;
+                trackers.push_back(tracker);
+                tracker_out.write(trackers);
             }
 
             fcs::rune::RuneObservation rune_observation;
@@ -148,6 +160,20 @@ void register_test_producer(talos::Scheduler& scheduler, ProducerMode mode) {
             fcs::energy_meter::EnergyMeterState energy_meter;
             energy_meter.timestamp_ns = now_ns;
             energy_meter_out.write(energy_meter);
+
+            fcs::L4::SelectedTargetSnapshot selected_target;
+            selected_target.timestamp_ns = now_ns;
+            if (selected_tracker) {
+                selected_target.distance            = 1.0;
+                selected_target.predicted_future_ns = now_ns + 10'000'000ULL;
+                selected_target.source              = fcs::L4::GimbalPlanSource::Armor;
+                selected_target.tracker             = *selected_tracker;
+            }
+            selected_target_out.write(selected_target);
+
+            fcs::L4::TargetSelectionTrace target_selection_trace;
+            target_selection_trace.timestamp_ns = now_ns;
+            target_selection_trace_out.write(target_selection_trace);
 
             fcs::L4::GimbalPlan gimbal_plan;
             gimbal_plan.timestamp_ns = now_ns;
@@ -242,6 +268,7 @@ TEST(Capturer, LowDiskStillWritesSnapshotRows) {
 
     for (const auto& row : rows) {
         EXPECT_EQ(row.at("capture_status"), "low_disk");
+        ASSERT_TRUE(row.at("streams").contains("selected_target"));
     }
 
     fs::remove_all(output_dir);

@@ -75,6 +75,9 @@ FOXGLOVE_JSON_MESSAGE(MeasurementMessage)
 /// 跟踪目标消息 (JSON)
 FOXGLOVE_JSON_MESSAGE(TargetMessage)
 
+/// 目标选择追踪消息 (JSON)
+FOXGLOVE_JSON_MESSAGE(TargetSelectionTraceMessage)
+
 /// 云台指令消息 (JSON)
 FOXGLOVE_JSON_MESSAGE(GimbalCmdMessage)
 
@@ -139,8 +142,8 @@ using FoxgloveMessage = std::variant<
     ImageMessage, SceneMessage, TrackSceneMessage, TfMessage, ArmorDataMessage, BinaryImageMessage,
     PatternImageMessage, DebugLightsMessage, DebugArmorsMessage, RuneArrowImageMessage,
     RuneTargetImageMessage, RuneCenterImageMessage, RuneDebugMessage, RuneSceneMessage,
-    MeasurementMessage, TargetMessage, GimbalCmdMessage, GimbalSceneMessage, PerfStatsMessage,
-    MpcTrajectoryMessage,
+    MeasurementMessage, TargetMessage, TargetSelectionTraceMessage, GimbalCmdMessage,
+    GimbalSceneMessage, PerfStatsMessage, MpcTrajectoryMessage,
     // L2 Debug
     PnPSolverMessage, NNConfidenceMessage,
     // L3 Debug

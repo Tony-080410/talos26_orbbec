@@ -61,6 +61,7 @@ struct FoxgloveChannels {
     FOXGLOVE_JSON_CHANNEL(debug_armors_ch)
     FOXGLOVE_JSON_CHANNEL(measurement_ch)
     FOXGLOVE_JSON_CHANNEL(target_ch)
+    FOXGLOVE_JSON_CHANNEL(target_selection_trace_ch)
     FOXGLOVE_JSON_CHANNEL(cmd_gimbal_ch)
     FOXGLOVE_JSON_CHANNEL(perf_stats_ch)
     FOXGLOVE_JSON_CHANNEL(mpc_traj_ch)
@@ -115,6 +116,7 @@ FOXGLOVE_JSON_TRAIT(DebugArmorsMessage, debug_armors_ch)
 FOXGLOVE_JSON_TRAIT(RuneDebugMessage, rune_debug_ch)
 FOXGLOVE_JSON_TRAIT(MeasurementMessage, measurement_ch)
 FOXGLOVE_JSON_TRAIT(TargetMessage, target_ch)
+FOXGLOVE_JSON_TRAIT(TargetSelectionTraceMessage, target_selection_trace_ch)
 FOXGLOVE_JSON_TRAIT(GimbalCmdMessage, cmd_gimbal_ch)
 FOXGLOVE_JSON_TRAIT(PerfStatsMessage, perf_stats_ch)
 FOXGLOVE_JSON_TRAIT(MpcTrajectoryMessage, mpc_traj_ch)
@@ -400,6 +402,7 @@ std::expected<std::unique_ptr<FoxgloveServer>, std::string>
     TRY_CREATE_JSON_CHANNEL(debug_armors_ch, "/debug/armors");
     TRY_CREATE_JSON_CHANNEL(measurement_ch, "/solver/measurement");
     TRY_CREATE_JSON_CHANNEL(target_ch, "/solver/target");
+    TRY_CREATE_JSON_CHANNEL(target_selection_trace_ch, "/solver/target_selection");
     TRY_CREATE_JSON_CHANNEL(cmd_gimbal_ch, "/solver/cmd_gimbal");
     TRY_CREATE_JSON_CHANNEL(perf_stats_ch, "/perf_stats");
     TRY_CREATE_JSON_CHANNEL(mpc_traj_ch, "/mpc/trajectory");

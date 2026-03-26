@@ -1,20 +1,36 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <iostream>
+#include <memory>
+#include <mutex>
 #include <numbers>
+#include <optional>
 #include <string_view>
+#include <thread>
 #include <utility>
 #include <vector>
 
+#include "L3_estimation/energy_meter/types.hpp"
 #include "L3_estimation/tracker/new_tracker.hpp"
 #include "L3_estimation/tracker/types.hpp"
 #include "L4_planning/aimer/aimer.hpp"
+#include "L4_planning/aimer/aimer_systems.hpp"
+#include "L4_planning/gimbal_planner/types.hpp"
 #include "L4_planning/planning/fire_decision.hpp"
+#include "L4_planning/selected_target_snapshot.hpp"
+#include "L4_planning/target_selection_trace.hpp"
+#include "core/time.hpp"
+#include "core/trajectory/resource.hpp"
 #include "core/trajectory/solver/solver_interfaces.hpp"
+#include "frame.hpp"
+#include "scheduler/scheduler.hpp"
 
 namespace {
+
+using namespace std::chrono_literals;
 
 class MockTrajectorySolver final : public fcs::core::trajectory::solver::TrajectorySolver {
 public:
@@ -118,6 +134,301 @@ fcs::AtLegacyArmorMeasurement make_measurement(
     measurement.timestamp_ns             = 0;
     return measurement;
 }
+
+fast_tf::CoordinateSystem make_test_coordinate_system() {
+    auto system = fast_tf::CoordinateSystem();
+    fast_tf::update<fast_tf::odom>(system, {}, 0);
+    fast_tf::update<fast_tf::gimbal_yaw_fuxk_frame>(system, {}, 0);
+    fast_tf::update(
+        system, fast_tf::EdgeTransform<fast_tf::gimbal_pitch_fuxk_frame>::from_translation(0, 0, 0),
+        0);
+    fast_tf::update(
+        system, fast_tf::EdgeTransform<fast_tf::muzzle_link_fuxk_frame>::from_translation(0, 0, 0),
+        0);
+    return system;
+}
+
+fcs::L3::TrackerOutput make_robot_tracker_output(
+    fcs::ArmorName name, fcs::L3::TrackerStatus status, const Eigen::Vector3d& position,
+    double image_center_distance_px, fcs::ArmorColor color = fcs::ArmorColor::Blue,
+    uint64_t last_observation_timestamp_ns = 0) {
+    fcs::L3::TrackerOutput tracker;
+    tracker.status                        = status;
+    tracker.target_name                   = name;
+    tracker.target_color                  = color;
+    tracker.target_jumped                 = false;
+    tracker.last_armor_id                 = 0;
+    tracker.last_image_center_distance_px = image_center_distance_px;
+    tracker.last_observation_timestamp_ns = last_observation_timestamp_ns;
+
+    fcs::L3::RobotTargetState state;
+    state.position   = position;
+    state.velocity   = Eigen::Vector3d::Zero();
+    state.yaw        = 0.0;
+    state.v_yaw      = 0.0;
+    state.radius0    = 0.2;
+    state.radius1    = 0.2;
+    state.z1         = position.z();
+    state.armors_num = 4;
+    tracker.state    = state;
+    return tracker;
+}
+
+class AimerSystemHarness {
+public:
+    explicit AimerSystemHarness(fcs::L4::L4Config config = {}) {
+        scheduler_.world().insert_resource(make_test_coordinate_system());
+        scheduler_.world().insert_resource(
+            std::unique_ptr<fcs::core::trajectory::solver::TrajectorySolver>(
+                std::make_unique<MockTrajectorySolver>()));
+        scheduler_.world().insert_resource(
+            fcs::core::trajectory::bullet_speed_data{.bullet_speed = 30.0});
+
+        fcs::L4::register_aimer_systems(scheduler_, std::move(config));
+
+        scheduler_.add_system<talos::fixed_rate<200>>(
+            "aimer_system_test_tracker_producer",
+            [tracker_state = tracker_state_](
+                talos::spmc_mut<fcs::L3::TrackerOutputs, fcs::TrackerOutputChannelTopic>
+                    tracker_out) {
+                fcs::L3::TrackerOutputs trackers;
+                {
+                    std::scoped_lock lock(tracker_state->mutex);
+                    trackers = tracker_state->trackers;
+                }
+
+                const uint64_t now_ns = fcs::clock::now_ns();
+                for (auto& tracker : trackers) {
+                    tracker.timestamp_ns = now_ns;
+                    if (tracker.status == fcs::L3::TrackerStatus::Tracking) {
+                        tracker.last_observation_timestamp_ns = now_ns;
+                    } else if (tracker.last_observation_timestamp_ns == 0) {
+                        tracker.last_observation_timestamp_ns = now_ns;
+                    }
+                }
+                tracker_out.write(std::move(trackers));
+            });
+
+        scheduler_.add_system<talos::fixed_rate<200>>(
+            "aimer_system_test_rune_producer",
+            [](talos::spmc_mut<
+                fcs::energy_meter::EnergyMeterState, fcs::EnergyMeterStateChannelTopic>
+                   rune_out) {
+                fcs::energy_meter::EnergyMeterState state;
+                state.timestamp_ns   = fcs::clock::now_ns();
+                state.tracking_valid = false;
+                rune_out.write(std::move(state));
+            });
+
+        scheduler_.add_system<talos::fixed_rate<200>>(
+            "aimer_system_test_plan_consumer",
+            [plan_state = plan_state_](
+                talos::spmc<fcs::L4::GimbalPlan, fcs::GimbalPlanChannelTopic> plan_in) {
+                const auto plan = plan_in.read_current();
+                if (!plan) {
+                    return;
+                }
+                std::scoped_lock lock(plan_state->mutex);
+                plan_state->plan = *plan;
+            });
+
+        scheduler_.add_system<talos::fixed_rate<200>>(
+            "aimer_system_test_selected_target_consumer",
+            [selected_target_state = selected_target_state_](
+                talos::spmc<
+                    fcs::L4::SelectedTargetSnapshot, fcs::SelectedTargetSnapshotChannelTopic>
+                    selected_target_in) {
+                const auto selected_target = selected_target_in.read_current();
+                if (!selected_target) {
+                    return;
+                }
+                std::scoped_lock lock(selected_target_state->mutex);
+                selected_target_state->snapshot = *selected_target;
+            });
+
+        scheduler_.add_system<talos::fixed_rate<200>>(
+            "aimer_system_test_trace_consumer",
+            [trace_state = trace_state_](
+                talos::spmc<fcs::L4::TargetSelectionTrace, fcs::TargetSelectionTraceChannelTopic>
+                    trace_in) {
+                const auto trace = trace_in.read_current();
+                if (!trace) {
+                    return;
+                }
+                std::scoped_lock lock(trace_state->mutex);
+                trace_state->trace = *trace;
+            });
+    }
+
+    void start() {
+        const auto build_result = scheduler_.build();
+        ASSERT_TRUE(build_result.has_value()) << "scheduler build failed";
+
+        scheduler_thread_ = std::thread([this]() {
+            if (const auto result = scheduler_.run(); !result) {
+                run_error_ = result.error();
+            }
+        });
+    }
+
+    void stop() {
+        scheduler_.stop();
+        if (scheduler_thread_.joinable()) {
+            scheduler_thread_.join();
+        }
+        ASSERT_FALSE(run_error_.has_value());
+    }
+
+    ~AimerSystemHarness() {
+        scheduler_.stop();
+        if (scheduler_thread_.joinable()) {
+            scheduler_thread_.join();
+        }
+    }
+
+    void set_trackers(fcs::L3::TrackerOutputs trackers) {
+        {
+            std::scoped_lock lock(tracker_state_->mutex);
+            tracker_state_->trackers = std::move(trackers);
+        }
+        {
+            std::scoped_lock lock(plan_state_->mutex);
+            plan_state_->plan.reset();
+        }
+        {
+            std::scoped_lock lock(selected_target_state_->mutex);
+            selected_target_state_->snapshot.reset();
+        }
+        {
+            std::scoped_lock lock(trace_state_->mutex);
+            trace_state_->trace.reset();
+        }
+    }
+
+    std::optional<fcs::L4::GimbalPlan>
+        wait_for_plan(std::chrono::milliseconds timeout = 500ms) const {
+        const auto deadline = std::chrono::steady_clock::now() + timeout;
+        while (std::chrono::steady_clock::now() < deadline) {
+            {
+                std::scoped_lock lock(plan_state_->mutex);
+                if (plan_state_->plan.has_value()) {
+                    return plan_state_->plan;
+                }
+            }
+            std::this_thread::sleep_for(10ms);
+        }
+        return std::nullopt;
+    }
+
+    std::optional<fcs::L4::SelectedTargetSnapshot> wait_for_target(
+        fcs::ArmorName target_name, std::chrono::milliseconds timeout = 750ms) const {
+        const auto deadline = std::chrono::steady_clock::now() + timeout;
+        std::optional<fcs::L4::SelectedTargetSnapshot> last_snapshot;
+        while (std::chrono::steady_clock::now() < deadline) {
+            {
+                std::scoped_lock lock(selected_target_state_->mutex);
+                if (selected_target_state_->snapshot.has_value()) {
+                    last_snapshot = selected_target_state_->snapshot;
+                    if (selected_target_state_->snapshot->has_target()
+                        && selected_target_state_->snapshot->tracker.target_name == target_name) {
+                        return selected_target_state_->snapshot;
+                    }
+                }
+            }
+            std::this_thread::sleep_for(10ms);
+        }
+        return last_snapshot;
+    }
+
+    std::optional<fcs::L4::SelectedTargetSnapshot> wait_for_selected_target_after(
+        uint64_t min_timestamp_ns, std::chrono::milliseconds timeout = 750ms) const {
+        const auto deadline = std::chrono::steady_clock::now() + timeout;
+        std::optional<fcs::L4::SelectedTargetSnapshot> last_snapshot;
+        while (std::chrono::steady_clock::now() < deadline) {
+            {
+                std::scoped_lock lock(selected_target_state_->mutex);
+                if (selected_target_state_->snapshot.has_value()
+                    && selected_target_state_->snapshot->timestamp_ns > min_timestamp_ns) {
+                    last_snapshot = selected_target_state_->snapshot;
+                    return selected_target_state_->snapshot;
+                }
+            }
+            std::this_thread::sleep_for(10ms);
+        }
+        return last_snapshot;
+    }
+
+    std::optional<fcs::L4::GimbalPlan> wait_for_armor_plan_after(
+        uint64_t min_timestamp_ns, std::chrono::milliseconds timeout = 750ms) const {
+        const auto deadline = std::chrono::steady_clock::now() + timeout;
+        std::optional<fcs::L4::GimbalPlan> last_plan;
+        while (std::chrono::steady_clock::now() < deadline) {
+            {
+                std::scoped_lock lock(plan_state_->mutex);
+                if (plan_state_->plan.has_value()
+                    && plan_state_->plan->timestamp_ns > min_timestamp_ns) {
+                    if (plan_state_->plan->source == fcs::L4::GimbalPlanSource::Armor
+                        && plan_state_->plan->distance >= 0.0) {
+                        last_plan = plan_state_->plan;
+                    }
+                }
+            }
+            std::this_thread::sleep_for(10ms);
+        }
+        return last_plan;
+    }
+
+    std::optional<fcs::L4::TargetSelectionTrace> wait_for_selection_trace_after(
+        uint64_t min_timestamp_ns, std::chrono::milliseconds timeout = 750ms) const {
+        const auto deadline = std::chrono::steady_clock::now() + timeout;
+        std::optional<fcs::L4::TargetSelectionTrace> last_trace;
+        while (std::chrono::steady_clock::now() < deadline) {
+            {
+                std::scoped_lock lock(trace_state_->mutex);
+                if (trace_state_->trace.has_value()
+                    && trace_state_->trace->timestamp_ns > min_timestamp_ns) {
+                    last_trace = trace_state_->trace;
+                    if (!trace_state_->trace->candidates.empty()) {
+                        return trace_state_->trace;
+                    }
+                }
+            }
+            std::this_thread::sleep_for(10ms);
+        }
+        return last_trace;
+    }
+
+private:
+    struct TrackerState {
+        mutable std::mutex mutex;
+        fcs::L3::TrackerOutputs trackers;
+    };
+
+    struct PlanState {
+        mutable std::mutex mutex;
+        std::optional<fcs::L4::GimbalPlan> plan;
+    };
+
+    struct SelectedTargetState {
+        mutable std::mutex mutex;
+        std::optional<fcs::L4::SelectedTargetSnapshot> snapshot;
+    };
+
+    struct TraceState {
+        mutable std::mutex mutex;
+        std::optional<fcs::L4::TargetSelectionTrace> trace;
+    };
+
+    talos::World world_;
+    talos::Scheduler scheduler_{world_};
+    std::shared_ptr<TrackerState> tracker_state_{std::make_shared<TrackerState>()};
+    std::shared_ptr<PlanState> plan_state_{std::make_shared<PlanState>()};
+    std::shared_ptr<SelectedTargetState> selected_target_state_{
+        std::make_shared<SelectedTargetState>()};
+    std::shared_ptr<TraceState> trace_state_{std::make_shared<TraceState>()};
+    std::optional<talos::SchedulerError> run_error_;
+    std::thread scheduler_thread_;
+};
 
 } // namespace
 
@@ -795,4 +1106,222 @@ TEST(AimerPhase, TrackerArmorIdealFireHitRateOnTwoSecondAbsSinBurst) {
     EXPECT_GT(total_hit_rate, 0.95);
     EXPECT_GT(burst_hit_rate, 0.95);
     EXPECT_GT(settled_hit_rate, 0.98);
+}
+
+TEST(AimerSystemsTargetSelection, PrefersSmallerOpticalOffsetOverCloserTarget) {
+    AimerSystemHarness harness;
+    harness.start();
+
+    harness.set_trackers({
+        make_robot_tracker_output(
+            fcs::ArmorName::One, fcs::L3::TrackerStatus::Tracking, Eigen::Vector3d(2.5, 0.8, 0.0),
+            280.0),
+        make_robot_tracker_output(
+            fcs::ArmorName::Two, fcs::L3::TrackerStatus::Tracking, Eigen::Vector3d(5.0, 0.0, 0.0),
+            10.0),
+    });
+
+    const auto selected_target = harness.wait_for_target(fcs::ArmorName::Two);
+    const auto trace           = harness.wait_for_selection_trace_after(0);
+    ASSERT_TRUE(selected_target.has_value());
+    ASSERT_TRUE(trace.has_value());
+    ASSERT_FALSE(trace->candidates.empty());
+    EXPECT_EQ(selected_target->tracker.target_name, fcs::ArmorName::Two);
+    EXPECT_TRUE(trace->candidates.front().selected);
+    EXPECT_EQ(trace->candidates.front().target_name, fcs::ArmorName::Two);
+
+    harness.stop();
+}
+
+TEST(AimerSystemsTargetSelection, TrackingTargetBeatsTempLostFallback) {
+    AimerSystemHarness harness;
+    harness.start();
+
+    harness.set_trackers({
+        make_robot_tracker_output(
+            fcs::ArmorName::One, fcs::L3::TrackerStatus::TempLost, Eigen::Vector3d(2.5, 0.0, 0.0),
+            10.0, fcs::ArmorColor::Blue, 1),
+        make_robot_tracker_output(
+            fcs::ArmorName::Two, fcs::L3::TrackerStatus::Tracking, Eigen::Vector3d(3.0, 0.15, 0.0),
+            120.0),
+    });
+
+    const auto selected_target = harness.wait_for_target(fcs::ArmorName::Two);
+    const auto trace           = harness.wait_for_selection_trace_after(0);
+    ASSERT_TRUE(selected_target.has_value());
+    ASSERT_TRUE(trace.has_value());
+    ASSERT_FALSE(trace->candidates.empty());
+    EXPECT_EQ(selected_target->tracker.target_name, fcs::ArmorName::Two);
+    EXPECT_EQ(trace->candidates.front().track_status, fcs::L3::TrackerStatus::Tracking);
+
+    harness.stop();
+}
+
+TEST(AimerSystemsTargetSelection, KeepsCurrentTargetWhenScoreGainIsWithinSwitchMargin) {
+    fcs::L4::L4Config config;
+    config.aimer.target_selection.switch_margin = 1.0;
+    AimerSystemHarness harness(config);
+    harness.start();
+
+    harness.set_trackers({
+        make_robot_tracker_output(
+            fcs::ArmorName::One, fcs::L3::TrackerStatus::Tracking, Eigen::Vector3d(3.0, 0.0, 0.0),
+            80.0),
+    });
+    const auto initial_target = harness.wait_for_target(fcs::ArmorName::One);
+    ASSERT_TRUE(initial_target.has_value());
+
+    harness.set_trackers({
+        make_robot_tracker_output(
+            fcs::ArmorName::One, fcs::L3::TrackerStatus::Tracking, Eigen::Vector3d(3.0, 0.0, 0.0),
+            80.0),
+        make_robot_tracker_output(
+            fcs::ArmorName::Two, fcs::L3::TrackerStatus::Tracking, Eigen::Vector3d(3.0, 0.0, 0.0),
+            70.0),
+    });
+
+    const auto selected_target =
+        harness.wait_for_selected_target_after(initial_target->timestamp_ns);
+    const auto plan  = harness.wait_for_armor_plan_after(initial_target->timestamp_ns);
+    const auto trace = harness.wait_for_selection_trace_after(initial_target->timestamp_ns);
+    ASSERT_TRUE(selected_target.has_value());
+    ASSERT_TRUE(plan.has_value());
+    ASSERT_TRUE(trace.has_value());
+    ASSERT_GE(trace->candidates.size(), 2u);
+    const auto selected_it =
+        std::find_if(trace->candidates.begin(), trace->candidates.end(), [](const auto& candidate) {
+            return candidate.selected;
+        });
+    const auto runner_up_it =
+        std::find_if(trace->candidates.begin(), trace->candidates.end(), [](const auto& candidate) {
+            return candidate.runner_up;
+        });
+    ASSERT_NE(selected_it, trace->candidates.end());
+    ASSERT_NE(runner_up_it, trace->candidates.end());
+    EXPECT_EQ(selected_target->tracker.target_name, fcs::ArmorName::One);
+    EXPECT_TRUE(trace->kept_current_target);
+    EXPECT_EQ(selected_it->target_name, fcs::ArmorName::One);
+    EXPECT_EQ(runner_up_it->target_name, fcs::ArmorName::Two);
+
+    harness.stop();
+}
+
+TEST(AimerSystemsTargetSelection, SwitchesWhenNewTargetClearlyWins) {
+    AimerSystemHarness harness;
+    harness.start();
+
+    harness.set_trackers({
+        make_robot_tracker_output(
+            fcs::ArmorName::One, fcs::L3::TrackerStatus::Tracking, Eigen::Vector3d(3.0, 0.0, 0.0),
+            120.0),
+    });
+    const auto initial_target = harness.wait_for_target(fcs::ArmorName::One);
+    ASSERT_TRUE(initial_target.has_value());
+
+    harness.set_trackers({
+        make_robot_tracker_output(
+            fcs::ArmorName::One, fcs::L3::TrackerStatus::Tracking, Eigen::Vector3d(3.0, 0.0, 0.0),
+            220.0),
+        make_robot_tracker_output(
+            fcs::ArmorName::Two, fcs::L3::TrackerStatus::Tracking, Eigen::Vector3d(3.0, 0.0, 0.0),
+            10.0),
+    });
+
+    const auto selected_target =
+        harness.wait_for_selected_target_after(initial_target->timestamp_ns);
+    const auto plan  = harness.wait_for_armor_plan_after(initial_target->timestamp_ns);
+    const auto trace = harness.wait_for_selection_trace_after(initial_target->timestamp_ns);
+    ASSERT_TRUE(selected_target.has_value());
+    ASSERT_TRUE(plan.has_value());
+    ASSERT_TRUE(trace.has_value());
+    ASSERT_FALSE(trace->candidates.empty());
+    EXPECT_EQ(selected_target->tracker.target_name, fcs::ArmorName::Two);
+    EXPECT_FALSE(trace->kept_current_target);
+    EXPECT_TRUE(trace->candidates.front().selected);
+    EXPECT_EQ(trace->candidates.front().target_name, fcs::ArmorName::Two);
+
+    harness.stop();
+}
+
+TEST(AimerSystemsTargetSelection, EmitsRankedTraceForAllCandidates) {
+    AimerSystemHarness harness;
+    harness.start();
+
+    harness.set_trackers({
+        make_robot_tracker_output(
+            fcs::ArmorName::One, fcs::L3::TrackerStatus::Tracking, Eigen::Vector3d(3.0, 0.0, 0.0),
+            220.0),
+        make_robot_tracker_output(
+            fcs::ArmorName::Two, fcs::L3::TrackerStatus::Tracking, Eigen::Vector3d(3.0, 0.0, 0.0),
+            10.0),
+    });
+
+    const auto trace = harness.wait_for_selection_trace_after(0);
+    ASSERT_TRUE(trace.has_value());
+    ASSERT_EQ(trace->candidates.size(), 2u);
+
+    EXPECT_EQ(trace->candidates[0].rank, 1);
+    EXPECT_TRUE(trace->candidates[0].selected);
+    EXPECT_EQ(trace->candidates[0].target_name, fcs::ArmorName::Two);
+    EXPECT_TRUE(trace->candidates[0].aim_valid);
+
+    EXPECT_EQ(trace->candidates[1].rank, 2);
+    EXPECT_TRUE(trace->candidates[1].runner_up);
+    EXPECT_EQ(trace->candidates[1].target_name, fcs::ArmorName::One);
+    EXPECT_TRUE(trace->candidates[1].aim_valid);
+    EXPECT_GT(trace->candidates[0].total_score, trace->candidates[1].total_score);
+
+    harness.stop();
+}
+
+TEST(AimerSystemsTargetSelection, EmitsInvalidSnapshotWhenNoArmorTargetAvailable) {
+    AimerSystemHarness harness;
+    harness.start();
+
+    harness.set_trackers({});
+
+    const auto selected_target = harness.wait_for_selected_target_after(0);
+    ASSERT_TRUE(selected_target.has_value());
+    EXPECT_FALSE(selected_target->has_target());
+    EXPECT_EQ(selected_target->tracker.target_name, fcs::ArmorName::Invalid);
+    EXPECT_EQ(selected_target->source, fcs::L4::GimbalPlanSource::Armor);
+
+    harness.stop();
+}
+
+TEST(AimerSystemsTargetSelection, TempLostRetainsLastOpticalMeasurement) {
+    fcs::L3::TrackerConfig config;
+    config.robot.model              = fcs::L3::RobotEkfMotionModel::Params{};
+    config.robot.lost_threshold     = 1.0;
+    config.robot.tracking_threshold = 0;
+    config.robot.matcher_gate       = 10.0;
+    config.robot_inekf.radius0      = 0.2;
+    config.robot_inekf.radius1      = 0.2;
+    config.robot_inekf.height       = 0.0;
+
+    fcs::L3::TrackerNew tracker(config);
+
+    fcs::AtLegacyArmorMeasurementBatch batch;
+    batch.timestamp_ns = 100;
+    batch.measurements.push_back(
+        make_measurement(Eigen::Vector4d(1.0, 0.0, 0.0, 0.0), fcs::ArmorName::Three, 42.0f));
+    batch.measurements.front().timestamp_ns = 100;
+
+    ASSERT_TRUE(tracker.first_meet(batch).has_value());
+    tracker.predict(0.01);
+    ASSERT_TRUE(tracker.update(batch));
+
+    const auto tracking_output = tracker.get_output();
+    EXPECT_DOUBLE_EQ(tracking_output.last_image_center_distance_px, 42.0);
+    EXPECT_EQ(tracking_output.last_observation_timestamp_ns, 100u);
+
+    fcs::AtLegacyArmorMeasurementBatch empty_batch;
+    empty_batch.timestamp_ns = 200;
+    tracker.predict(0.01);
+    ASSERT_FALSE(tracker.update(empty_batch));
+
+    const auto temp_lost_output = tracker.get_output();
+    EXPECT_EQ(temp_lost_output.status, fcs::L3::TrackerStatus::TempLost);
+    EXPECT_DOUBLE_EQ(temp_lost_output.last_image_center_distance_px, 42.0);
+    EXPECT_EQ(temp_lost_output.last_observation_timestamp_ns, 100u);
 }

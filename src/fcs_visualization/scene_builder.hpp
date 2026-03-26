@@ -454,11 +454,12 @@ inline foxglove::schemas::SceneEntity measurement_cube(
 /// @param status Tracker status (determines color)
 /// @param timestamp_ns Entity timestamp for TF interpolation
 template <fast_tf::frame Frame>
-inline foxglove::schemas::SceneEntity
-    tracker_target(const Eigen::Vector3d& pos, int status_int, uint64_t timestamp_ns) noexcept {
+inline foxglove::schemas::SceneEntity tracker_target(
+    const Eigen::Vector3d& pos, int status_int, uint64_t timestamp_ns,
+    std::string entity_id = "target") noexcept {
     using namespace tactical;
 
-    return EntityBuilder::create<Frame>("l3", "target")
+    return EntityBuilder::create<Frame>("l3", std::move(entity_id))
         .position(pos)
         .size(L3::TARGET_SIZE)
         .color(tracker_status_color(status_int))
@@ -472,11 +473,16 @@ inline foxglove::schemas::SceneEntity
 /// @param armor_id Armor index (0-3 for robot, 0-2 for outpost)
 /// @param timestamp_ns Entity timestamp for TF interpolation
 template <fast_tf::frame Frame>
-inline foxglove::schemas::SceneEntity
-    predicted_armor(const Eigen::Vector3d& pos, int armor_id, uint64_t timestamp_ns) noexcept {
+inline foxglove::schemas::SceneEntity predicted_armor(
+    const Eigen::Vector3d& pos, int armor_id, uint64_t timestamp_ns,
+    std::string entity_id = {}) noexcept {
     using namespace tactical;
 
-    return EntityBuilder::create<Frame>("l3", fmt::format("armor_{}", armor_id))
+    if (entity_id.empty()) {
+        entity_id = fmt::format("armor_{}", armor_id);
+    }
+
+    return EntityBuilder::create<Frame>("l3", std::move(entity_id))
         .position(pos)
         .size(L3::ARMOR_PLATE_SIZE)
         .color(L3::PREDICTION_AMBER)
@@ -702,12 +708,13 @@ inline std::optional<foxglove::schemas::ArrowPrimitive>
 template <fast_tf::frame Frame>
 inline foxglove::schemas::SceneEntity velocity_arrows(
     const Eigen::Vector3d& pos, const Eigen::Vector3d& linear_vel, double angular_vel_yaw,
-    uint64_t timestamp_ns) noexcept {
+    uint64_t timestamp_ns, std::string entity_id = "velocity") noexcept {
     using namespace tactical;
 
     const auto vec3_pos = make_vector3(pos);
 
-    auto entity = EntityBuilder::create<Frame>("l3", "velocity").timestamp(timestamp_ns).build();
+    auto entity =
+        EntityBuilder::create<Frame>("l3", std::move(entity_id)).timestamp(timestamp_ns).build();
 
     if (auto linear_arrow = Vel::linear_arrow(vec3_pos, linear_vel)) {
         entity.arrows.push_back(*linear_arrow);

@@ -1,9 +1,65 @@
 #pragma once
 
 #include "L4_planning/planning/fire_decision.hpp"
+#include "core/armor_types.hpp"
 #include "core/trajectory/config.hpp"
 
 namespace fcs::L4 {
+
+struct TargetSelectionWeights {
+    double image_center{5.0};
+    double track_state{3.0};
+    double tof{1.5};
+    double distance{1.0};
+    double gimbal_effort{1.0};
+    double armor_name{0.5};
+};
+
+struct TargetSelectionRefs {
+    double image_center_ref_px{300.0};
+    double tof_ref_s{0.35};
+    double distance_ref_m{10.0};
+    double yaw_effort_ref_deg{20.0};
+    double pitch_effort_ref_deg{10.0};
+};
+
+struct TargetSelectionArmorNameScore {
+    double sentry{0.5};
+    double one{0.5};
+    double two{0.5};
+    double three{0.5};
+    double four{0.5};
+    double five{0.5};
+    double outpost{0.5};
+    double base{0.5};
+    double base_large{0.5};
+    double invalid{0.0};
+
+    [[nodiscard]] double score(ArmorName name) const noexcept {
+        switch (name) {
+        case ArmorName::Sentry: return sentry;
+        case ArmorName::One: return one;
+        case ArmorName::Two: return two;
+        case ArmorName::Three: return three;
+        case ArmorName::Four: return four;
+        case ArmorName::Five: return five;
+        case ArmorName::Outpost: return outpost;
+        case ArmorName::Base: return base;
+        case ArmorName::BaseLarge: return base_large;
+        case ArmorName::Invalid: return invalid;
+        }
+        return invalid;
+    }
+};
+
+struct TargetSelectionConfig {
+    double temp_lost_state_score{0.05};
+    double optical_stale_timeout_s{0.25};
+    double switch_margin{0.08};
+    TargetSelectionWeights weights{};
+    TargetSelectionRefs refs{};
+    TargetSelectionArmorNameScore armor_name_score{};
+};
 
 /// Aimer configuration (shared by all target types)
 struct AimerConfig {
@@ -35,6 +91,9 @@ struct AimerConfig {
     /// Phase-aware fire gate shaping, aligned with WUST semantics.
     double yaw_limit_deg{40.0};
     double min_enable_yaw_deg{0.25};
+
+    /// Weighted multi-target selection configuration.
+    TargetSelectionConfig target_selection{};
 };
 
 /// L4 planning configuration (Aimer + plan adapter architecture)

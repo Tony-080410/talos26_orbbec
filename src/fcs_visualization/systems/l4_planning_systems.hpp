@@ -1,5 +1,7 @@
 #pragma once
 
+#include "L4_planning/selected_target_snapshot.hpp"
+#include "L4_planning/target_selection_trace.hpp"
 #include "L5_weapon/fire_control.hpp"
 #include "base.hpp"
 #include "foxglove_types.hpp"
@@ -18,6 +20,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <vector>
 
 namespace fcs::foxglove::systems {
@@ -33,6 +36,25 @@ struct FutureArmorSnapshot {
 
 [[nodiscard]] inline std::string yes_no(bool value) { return value ? "YES" : "NO"; }
 
+[[nodiscard]] inline std::string tracker_identity(const ::fcs::L3::TrackerOutput& target) {
+    return fmt::format(
+        "{}/{}", magic_enum::enum_name(target.target_color),
+        magic_enum::enum_name(target.target_name));
+}
+
+[[nodiscard]] inline std::string
+    selection_identity(const ::fcs::L4::TargetSelectionTraceEntry& entry) {
+    return fmt::format(
+        "{}/{}", magic_enum::enum_name(entry.target_color),
+        magic_enum::enum_name(entry.target_name));
+}
+
+[[nodiscard]] inline std::string format_score(double value) { return fmt::format("{:.3f}", value); }
+
+[[nodiscard]] inline std::string format_image_center_px(double value) {
+    return std::isfinite(value) ? fmt::format("{:.1f}", value) : "n/a";
+}
+
 [[nodiscard]] inline std::string planner_seed_tracker_last_text(const ::fcs::L4::GimbalPlan& plan) {
     if (!plan.planner_seed || !plan.planner_seed->tracker_last_armor_id.has_value()) {
         return "none";
@@ -45,6 +67,111 @@ struct FutureArmorSnapshot {
         "{} {}\nSelected {}\nRough {}\n{}", magic_enum::enum_name(plan.source),
         magic_enum::enum_name(plan.aim_phase), plan.selected_armor_id, plan.rough_selected_armor_id,
         plan.fire_advice ? "Fire" : "Hold");
+}
+
+[[nodiscard]] inline std::string
+    selection_trace_entity_id(const ::fcs::L4::TargetSelectionTraceEntry& entry) {
+    return fmt::format(
+        "selection_candidate_{}_{}", magic_enum::enum_name(entry.target_color),
+        magic_enum::enum_name(entry.target_name));
+}
+
+[[nodiscard]] inline ::foxglove::schemas::Color
+    selection_trace_color(const ::fcs::L4::TargetSelectionTraceEntry& entry) {
+    if (!entry.aim_valid) {
+        return tac::Text::SECONDARY;
+    }
+    if (entry.selected) {
+        return tac::L4::GIMBAL_AIM_HOLD;
+    }
+    if (entry.runner_up) {
+        return tac::L4::MPC_REFERENCE;
+    }
+    if (entry.was_previously_selected) {
+        return tac::L3::PREDICTION_AMBER;
+    }
+    return tac::Text::PRIMARY;
+}
+
+[[nodiscard]] inline std::string
+    selection_trace_entity_label(const ::fcs::L4::TargetSelectionTraceEntry& entry) {
+    const std::string prefix = fmt::format(
+        "#{}{}{} {}", entry.rank, entry.selected ? "*" : "",
+        entry.was_previously_selected ? "P" : "", selection_identity(entry));
+    if (!entry.aim_valid) {
+        return fmt::format(
+            "{}\n{}\n{}", prefix, magic_enum::enum_name(entry.track_status),
+            entry.aim_error.empty() ? "aim_failed" : entry.aim_error);
+    }
+    return fmt::format(
+        "{}\n{} {:.3f}\nC {:.2f} S {:.2f} T {:.2f} D {:.2f} E {:.2f} N {:.2f}", prefix,
+        magic_enum::enum_name(entry.track_status), entry.total_score, entry.image_center_score,
+        entry.track_state_score, entry.tof_score, entry.distance_score, entry.gimbal_effort_score,
+        entry.armor_name_score);
+}
+
+inline void append_selection_trace_metadata(
+    viz::EntityBuilder& builder, const ::fcs::L4::TargetSelectionTrace& trace,
+    const ::fcs::L4::TargetSelectionTraceEntry& entry) {
+    builder.metadata("target_selection.identity", selection_identity(entry))
+        .metadata("target_selection.rank", std::to_string(entry.rank))
+        .metadata("target_selection.selected", yes_no(entry.selected))
+        .metadata("target_selection.runner_up", yes_no(entry.runner_up))
+        .metadata("target_selection.was_previously_selected", yes_no(entry.was_previously_selected))
+        .metadata("target_selection.aim_valid", yes_no(entry.aim_valid))
+        .metadata(
+            "target_selection.track_status", std::string(magic_enum::enum_name(entry.track_status)))
+        .metadata("target_selection.total_score", format_score(entry.total_score))
+        .metadata("target_selection.image_center_score", format_score(entry.image_center_score))
+        .metadata("target_selection.track_state_score", format_score(entry.track_state_score))
+        .metadata("target_selection.tof_score", format_score(entry.tof_score))
+        .metadata("target_selection.distance_score", format_score(entry.distance_score))
+        .metadata("target_selection.gimbal_effort_score", format_score(entry.gimbal_effort_score))
+        .metadata("target_selection.armor_name_score", format_score(entry.armor_name_score))
+        .metadata(
+            "target_selection.image_center_weighted", format_score(entry.image_center_weighted))
+        .metadata("target_selection.track_state_weighted", format_score(entry.track_state_weighted))
+        .metadata("target_selection.tof_weighted", format_score(entry.tof_weighted))
+        .metadata("target_selection.distance_weighted", format_score(entry.distance_weighted))
+        .metadata(
+            "target_selection.gimbal_effort_weighted", format_score(entry.gimbal_effort_weighted))
+        .metadata("target_selection.armor_name_weighted", format_score(entry.armor_name_weighted))
+        .metadata("target_selection.weighted_sum", format_score(entry.weighted_sum))
+        .metadata("target_selection.total_weight", format_score(entry.total_weight))
+        .metadata(
+            "target_selection.image_center_distance_px",
+            format_image_center_px(entry.image_center_distance_px))
+        .metadata("target_selection.optical_age_s", format_score(entry.optical_age_s))
+        .metadata(
+            "target_selection.tof_s",
+            std::isfinite(entry.tof_s) ? format_score(entry.tof_s) : "n/a")
+        .metadata(
+            "target_selection.distance_m",
+            std::isfinite(entry.distance_m) ? format_score(entry.distance_m) : "n/a")
+        .metadata(
+            "target_selection.yaw_effort_deg",
+            std::isfinite(entry.yaw_effort_deg) ? format_score(entry.yaw_effort_deg) : "n/a")
+        .metadata(
+            "target_selection.pitch_effort_deg",
+            std::isfinite(entry.pitch_effort_deg) ? format_score(entry.pitch_effort_deg) : "n/a")
+        .metadata("target_selection.kept_current_target", yes_no(trace.kept_current_target))
+        .metadata("target_selection.switch_margin", format_score(trace.switch_margin))
+        .metadata(
+            "target_selection.previous_target",
+            trace.had_previous_target
+                ? fmt::format(
+                      "{}/{}", magic_enum::enum_name(trace.previous_target_color),
+                      magic_enum::enum_name(trace.previous_target_name))
+                : "none")
+        .metadata("target_selection.aim_error", entry.aim_error.empty() ? "none" : entry.aim_error);
+
+    if (entry.target_center) {
+        builder.metadata(
+            "target_selection.target_center",
+            fmt::format(
+                "{:.3f}, {:.3f}, {:.3f}", entry.target_center->x(), entry.target_center->y(),
+                entry.target_center->z()));
+    }
 }
 
 [[nodiscard]] inline double prediction_dt_s(const ::fcs::L4::GimbalPlan& plan) noexcept {
@@ -179,6 +306,99 @@ struct FutureArmorSnapshot {
     return state_json;
 }
 
+[[nodiscard]] inline nlohmann::json json_tracker_output(const ::fcs::L3::TrackerOutput& output) {
+    nlohmann::json target_json = {
+        {                 "timestamp_ns",           output.timestamp_ns                                         },
+        {                       "status",                                   magic_enum::enum_name(output.status)},
+        {                  "target_name",                              magic_enum::enum_name(output.target_name)},
+        {                 "target_color",                             magic_enum::enum_name(output.target_color)},
+        {                "target_jumped",                                                   output.target_jumped},
+        {                "last_armor_id",
+         output.last_armor_id ? nlohmann::json(*output.last_armor_id) : nlohmann::json(nullptr)                 },
+        {"last_image_center_distance_px", std::isfinite(output.last_image_center_distance_px)
+ ? nlohmann::json(output.last_image_center_distance_px)
+ : nlohmann::json(nullptr)                                             },
+        {"last_observation_timestamp_ns",                                   output.last_observation_timestamp_ns},
+        {                   "state_kind",                                                                "empty"},
+    };
+
+    if (const auto* robot = output.robot_state()) {
+        target_json["state_kind"] = "robot";
+        target_json["state"]      = json_robot_state(*robot);
+    } else if (const auto* outpost = output.outpost_state()) {
+        target_json["state_kind"] = "outpost";
+        target_json["state"]      = json_outpost_state(*outpost);
+    } else {
+        target_json["state"] = nlohmann::json::object();
+    }
+
+    return target_json;
+}
+
+[[nodiscard]] inline nlohmann::json
+    json_target_selection_trace_entry(const ::fcs::L4::TargetSelectionTraceEntry& entry) {
+    return nlohmann::json{
+        {                    "rank",                                  entry.rank                                    },
+        {             "target_name",                           std::string(magic_enum::enum_name(entry.target_name))},
+        {            "target_color",                          std::string(magic_enum::enum_name(entry.target_color))},
+        {            "track_status",                          std::string(magic_enum::enum_name(entry.track_status))},
+        {               "aim_valid",                                                                 entry.aim_valid},
+        { "was_previously_selected",                                                   entry.was_previously_selected},
+        {                "selected",                                                                  entry.selected},
+        {               "runner_up",                                                                 entry.runner_up},
+        {               "aim_error",                                                                 entry.aim_error},
+        {           "target_center",          entry.target_center ? nlohmann::json(json_vec3(*entry.target_center))
+          : nlohmann::json(nullptr)                                             },
+        {"image_center_distance_px",               std::isfinite(entry.image_center_distance_px)
+               ? nlohmann::json(entry.image_center_distance_px)
+               : nlohmann::json(nullptr)                                        },
+        {           "optical_age_s",                                                             entry.optical_age_s},
+        {                   "tof_s",
+         std::isfinite(entry.tof_s) ? nlohmann::json(entry.tof_s) : nlohmann::json(nullptr)                         },
+        {              "distance_m", std::isfinite(entry.distance_m) ? nlohmann::json(entry.distance_m)
+ : nlohmann::json(nullptr)                                                      },
+        {          "yaw_effort_deg",                         std::isfinite(entry.yaw_effort_deg)
+                         ? nlohmann::json(entry.yaw_effort_deg)
+                         : nlohmann::json(nullptr)                              },
+        {        "pitch_effort_deg",                       std::isfinite(entry.pitch_effort_deg)
+                       ? nlohmann::json(entry.pitch_effort_deg)
+                       : nlohmann::json(nullptr)                                },
+        {      "image_center_score",                                                        entry.image_center_score},
+        {       "track_state_score",                                                         entry.track_state_score},
+        {               "tof_score",                                                                 entry.tof_score},
+        {          "distance_score",                                                            entry.distance_score},
+        {     "gimbal_effort_score",                                                       entry.gimbal_effort_score},
+        {        "armor_name_score",                                                          entry.armor_name_score},
+        {   "image_center_weighted",                                                     entry.image_center_weighted},
+        {    "track_state_weighted",                                                      entry.track_state_weighted},
+        {            "tof_weighted",                                                              entry.tof_weighted},
+        {       "distance_weighted",                                                         entry.distance_weighted},
+        {  "gimbal_effort_weighted",                                                    entry.gimbal_effort_weighted},
+        {     "armor_name_weighted",                                                       entry.armor_name_weighted},
+        {            "weighted_sum",                                                              entry.weighted_sum},
+        {            "total_weight",                                                              entry.total_weight},
+        {             "total_score",                                                               entry.total_score},
+    };
+}
+
+[[nodiscard]] inline nlohmann::json
+    json_target_selection_trace(const ::fcs::L4::TargetSelectionTrace& trace) {
+    nlohmann::json candidates = nlohmann::json::array();
+    for (const auto& candidate : trace.candidates) {
+        candidates.push_back(json_target_selection_trace_entry(candidate));
+    }
+
+    return nlohmann::json{
+        {         "timestamp_ns",                                              trace.timestamp_ns},
+        {  "had_previous_target",                                       trace.had_previous_target},
+        { "previous_target_name",  std::string(magic_enum::enum_name(trace.previous_target_name))},
+        {"previous_target_color", std::string(magic_enum::enum_name(trace.previous_target_color))},
+        {  "kept_current_target",                                       trace.kept_current_target},
+        {        "switch_margin",                                             trace.switch_margin},
+        {           "candidates",                                           std::move(candidates)},
+    };
+}
+
 [[nodiscard]] inline nlohmann::json json_planner_seed(const ::fcs::L4::PlannerSeed& seed) {
     nlohmann::json seed_json = {
         {   "state_timestamp_ns",                                        seed.state_timestamp_ns},
@@ -246,19 +466,47 @@ struct FutureArmorSnapshot {
          plan.planner_seed ? json_planner_seed(*plan.planner_seed) : nlohmann::json(nullptr)    },
         {   "ballistic_trajectory",                              json_ballistic_trajectory(plan)},
     };
+
     return plan_json;
 }
 
-template <typename PlanPtr>
-[[nodiscard]] inline const ::fcs::L4::GimbalPlan*
-    matched_plan(const PlanPtr& plan, uint64_t plan_timestamp_ns) {
-    if (!plan || plan->timestamp_ns != plan_timestamp_ns) {
-        return nullptr;
-    }
-    return std::addressof(*plan);
+[[nodiscard]] inline nlohmann::json
+    json_solver_target(const ::fcs::L4::SelectedTargetSnapshot& snapshot) {
+    nlohmann::json target_json             = json_tracker_output(snapshot.tracker);
+    target_json["timestamp_ns"]            = snapshot.timestamp_ns;
+    target_json["timestamp"]               = nlohmann::json::object();
+    target_json["timestamp"]["sec"]        = snapshot.timestamp_ns / 1000000000L;
+    target_json["timestamp"]["nsec"]       = snapshot.timestamp_ns % 1000000000L;
+    target_json["tracking"]                = snapshot.tracker.is_tracking();
+    target_json["valid"]                   = snapshot.has_target();
+    target_json["optimal_target"]          = target_json["valid"];
+    target_json["source"]                  = std::string(magic_enum::enum_name(snapshot.source));
+    target_json["plan_distance"]           = snapshot.distance;
+    target_json["predicted_future_ns"]     = snapshot.predicted_future_ns;
+    target_json["aim_phase"]               = std::string(magic_enum::enum_name(snapshot.aim_phase));
+    target_json["selected_armor_id"]       = snapshot.selected_armor_id;
+    target_json["rough_selected_armor_id"] = snapshot.rough_selected_armor_id;
+    target_json["fire_advice"]             = snapshot.fire_advice;
+    target_json["aimer_fire_advice"]       = snapshot.aimer_fire_advice;
+
+    return target_json;
 }
 
-inline void append_plan_metadata(viz::EntityBuilder& builder, const ::fcs::L4::GimbalPlan& plan) {
+inline void append_selected_target_metadata(
+    viz::EntityBuilder& builder, const ::fcs::L4::SelectedTargetSnapshot& snapshot) {
+    builder.metadata("target.identity", tracker_identity(snapshot.tracker))
+        .metadata("target.status", std::string(magic_enum::enum_name(snapshot.tracker.status)))
+        .metadata(
+            "target.last_image_center_distance_px",
+            format_image_center_px(snapshot.tracker.last_image_center_distance_px))
+        .metadata(
+            "target.last_observation_timestamp_ns",
+            std::to_string(snapshot.tracker.last_observation_timestamp_ns));
+}
+
+inline void append_plan_metadata(
+    viz::EntityBuilder& builder, const ::fcs::L4::GimbalPlan& plan,
+    const ::fcs::L4::SelectedTargetSnapshot* selected_target = nullptr) {
     builder.metadata("source", std::string(magic_enum::enum_name(plan.source)))
         .metadata("aim_phase", std::string(magic_enum::enum_name(plan.aim_phase)))
         .metadata("selected_armor_id", std::to_string(plan.selected_armor_id))
@@ -266,6 +514,10 @@ inline void append_plan_metadata(viz::EntityBuilder& builder, const ::fcs::L4::G
         .metadata("fire_advice", yes_no(plan.fire_advice))
         .metadata("aimer_fire_advice", yes_no(plan.aimer_fire_advice))
         .metadata("predicted_future_ns", std::to_string(plan.predicted_future));
+
+    if (selected_target) {
+        append_selected_target_metadata(builder, *selected_target);
+    }
 
     if (plan.planner_seed) {
         builder.metadata("planner_seed.target_jumped", yes_no(plan.planner_seed->target_jumped))
@@ -278,12 +530,49 @@ inline void append_plan_metadata(viz::EntityBuilder& builder, const ::fcs::L4::G
 /// @brief Register L4 planning layer systems (gimbal, MPC)
 ///
 /// This includes:
+/// - foxglove_solver_target_pub: Publishes the current optimal target JSON
+/// - foxglove_target_selection_pub: Publishes full choose-optimal trace JSON
 /// - foxglove_l4_gimbal_cmd_pub: Publishes gimbal command JSON
 /// - foxglove_l4_gimbal_scene: Publishes gimbal scene (selection, prediction, trajectory)
 /// - foxglove_l4_mpc_trajectory_pub: Publishes MPC trajectory JSON
 /// - foxglove_l4_mpc_prediction_scene: Publishes full MPC horizon visualization
 template <typename App>
 void register_l4_planning_systems(App& app) {
+    app.template add_system<talos::pool_compute>(
+        "foxglove_solver_target_pub",
+        [](talos::spmc<::fcs::L4::SelectedTargetSnapshot, SelectedTargetSnapshotChannelTopic>
+               selected_target_in,
+           talos::res<std::shared_ptr<FoxgloveServer>> server) {
+            if (!detail::foxglove_ready(*server, selected_target_in)) {
+                return;
+            }
+
+            auto selected_target = selected_target_in.read();
+            if (!selected_target) {
+                return;
+            }
+
+            detail::publish_json_message<TargetMessage>(
+                *server, l4_detail::json_solver_target(*selected_target));
+        });
+
+    app.template add_system<talos::pool_compute>(
+        "foxglove_target_selection_pub",
+        [](talos::spmc<::fcs::L4::TargetSelectionTrace, TargetSelectionTraceChannelTopic> trace_in,
+           talos::res<std::shared_ptr<FoxgloveServer>> server) {
+            if (!detail::foxglove_ready(*server, trace_in)) {
+                return;
+            }
+
+            auto trace = trace_in.read();
+            if (!trace) {
+                return;
+            }
+
+            detail::publish_json_message<TargetSelectionTraceMessage>(
+                *server, l4_detail::json_target_selection_trace(*trace));
+        });
+
     // =========================================================================
     // GIMBAL COMMAND PUBLISHER
     // =========================================================================
@@ -301,8 +590,11 @@ void register_l4_planning_systems(App& app) {
             if (!cmd || cmd->distance < 0) {
                 return;
             }
-            const auto plan =
-                l4_detail::matched_plan(plan_in.read_current(), cmd->plan_timestamp_ns);
+            const auto plan_snapshot = plan_in.read_current();
+            const auto* plan =
+                (plan_snapshot && plan_snapshot->timestamp_ns == cmd->plan_timestamp_ns)
+                    ? std::addressof(*plan_snapshot)
+                    : nullptr;
 
             nlohmann::json cmd_json;
             cmd_json["timestamp_ns"]      = cmd->timestamp_ns;
@@ -369,8 +661,11 @@ void register_l4_planning_systems(App& app) {
             if (!cmd || !cmd->viz_debug) {
                 return;
             }
-            const auto plan =
-                l4_detail::matched_plan(plan_in.read_current(), cmd->plan_timestamp_ns);
+            const auto plan_snapshot = plan_in.read_current();
+            const auto* plan =
+                (plan_snapshot && plan_snapshot->timestamp_ns == cmd->plan_timestamp_ns)
+                    ? std::addressof(*plan_snapshot)
+                    : nullptr;
 
             nlohmann::json traj_json;
             traj_json["timestamp_ns"]      = cmd->timestamp_ns;
@@ -445,12 +740,26 @@ void register_l4_planning_systems(App& app) {
     app.template add_system<talos::pool_compute>(
         "foxglove_l4_gimbal_scene",
         [](talos::spmc<::fcs::L4::GimbalPlan, GimbalPlanChannelTopic> plan_in,
+           talos::spmc<::fcs::L4::SelectedTargetSnapshot, SelectedTargetSnapshotChannelTopic>
+               selected_target_in,
+           talos::spmc<::fcs::L4::TargetSelectionTrace, TargetSelectionTraceChannelTopic> trace_in,
            talos::res<std::shared_ptr<FoxgloveServer>> server) {
             if (!detail::foxglove_ready(*server, plan_in))
                 return;
             auto plan = plan_in.read();
             if (!plan || plan->distance <= 0)
                 return;
+            const auto selected_target_snapshot = selected_target_in.read_current();
+            const auto* selected_target =
+                (selected_target_snapshot
+                 && selected_target_snapshot->timestamp_ns == plan->timestamp_ns)
+                    ? std::addressof(*selected_target_snapshot)
+                    : nullptr;
+            const auto trace_snapshot = trace_in.read_current();
+            const auto* trace =
+                (trace_snapshot && trace_snapshot->timestamp_ns == plan->timestamp_ns)
+                    ? std::addressof(*trace_snapshot)
+                    : nullptr;
 
             std::vector<::foxglove::schemas::SceneEntity> entities;
 
@@ -546,7 +855,7 @@ void register_l4_planning_systems(App& app) {
                                                          : tac::L3::PREDICTION_AMBER)
                                    .sphere();
 
-                l4_detail::append_plan_metadata(builder, *plan);
+                l4_detail::append_plan_metadata(builder, *plan, selected_target);
 
                 builder.color(tac::Text::PRIMARY)
                     .text_with_offset(
@@ -557,6 +866,34 @@ void register_l4_planning_systems(App& app) {
                         tac::L3::LABEL_OFFSET_Z + tac::L4::PREDICTION_SIZE, tac::Text::SIZE_SMALL);
 
                 entities.push_back(builder.build());
+            }
+
+            if (trace) {
+                for (const auto& candidate : trace->candidates) {
+                    if (!candidate.target_center) {
+                        continue;
+                    }
+
+                    auto builder = viz::EntityBuilder::create<fast_tf::odom>(
+                                       "l4", l4_detail::selection_trace_entity_id(candidate))
+                                       .timestamp(trace->timestamp_ns)
+                                       .position(*candidate.target_center)
+                                       .size(
+                                           tac::L4::SELECTION_SIZE
+                                           * (candidate.selected    ? 1.25
+                                              : candidate.runner_up ? 1.0
+                                                                    : 0.85))
+                                       .color(l4_detail::selection_trace_color(candidate))
+                                       .alpha(candidate.aim_valid ? 0.95 : 0.65)
+                                       .sphere()
+                                       .text_with_offset(
+                                           l4_detail::selection_trace_entity_label(candidate),
+                                           tac::L4::SELECTION_SIZE * 1.5, 0.0,
+                                           tac::L3::LABEL_OFFSET_Z, tac::Text::SIZE_SMALL);
+
+                    l4_detail::append_selection_trace_metadata(builder, *trace, candidate);
+                    entities.push_back(builder.build());
+                }
             }
 
             // Bullet trajectory

@@ -1,5 +1,6 @@
 #include "chiral/chiral_collector_system.hpp"
 #include "L3_estimation/tracker/types.hpp"
+#include "L4_planning/selected_target_snapshot.hpp"
 #include "chiral/chrial.hpp"
 #include "chiral/talos_triple_buffer_shm.hpp"
 #include "core/channel_topics.hpp"
@@ -8,6 +9,7 @@
 
 #include <magic_enum.hpp>
 #include <spdlog/spdlog.h>
+#include <vector>
 
 namespace fcs::chiral {
 
@@ -72,27 +74,36 @@ void register_chiral_collector_system(talos::Scheduler& scheduler) {
         "chiral_collector",
         [writer_storage =
              std::make_shared<talos::chiral::ipc::TalosDataWriter>(std::move(*writer))](
-            talos::spmc<L3::TrackerOutput, TrackerOutputChannelTopic> tracker_in,
+            talos::spmc<L4::SelectedTargetSnapshot, SelectedTargetSnapshotChannelTopic>
+                selected_target_in,
             talos::res<fast_tf::CoordinateSystem> tf_buffer) mutable {
-            // Check for new tracker data
-            if (!tracker_in.has_new()) {
+            if (!selected_target_in.has_new()) {
                 return;
             }
 
-            auto tracker_output = tracker_in.read();
-            if (!tracker_output) {
+            auto selected_target = selected_target_in.read();
+            if (!selected_target) {
                 return;
             }
 
-            // Prepare TalosData
             talos::chrial::TalosData talos_data{};
+            talos_data.state_kind   = talos::chrial::TargetStateKind::Robot;
+            talos_data.state.status = talos::chrial::TrackerStatus::Idle;
+            talos_data.state.color  = talos::chrial::ArmorColor::Neutral;
+            talos_data.state.name   = talos::chrial::ArmorName::Invalid;
 
-            // Fill target state
-            talos_data.state.status = to_chiral_tracker_status(tracker_output->status);
-            talos_data.state.name   = to_chrial_armor_name(tracker_output->target_name);
+            const bool has_valid_armor_target =
+                selected_target->has_target() && selected_target->tracker.is_tracking();
+            const L3::TrackerOutput* tracker_output =
+                has_valid_armor_target ? std::addressof(selected_target->tracker) : nullptr;
 
-            // Fill RobotState or OutpostState based on variant
-            if (tracker_output->is_robot()) {
+            if (tracker_output) {
+                talos_data.state.status = to_chiral_tracker_status(tracker_output->status);
+                talos_data.state.color  = to_chrial_armor_color(tracker_output->target_color);
+                talos_data.state.name   = to_chrial_armor_name(tracker_output->target_name);
+            }
+
+            if (tracker_output && tracker_output->is_robot()) {
                 talos_data.state_kind   = talos::chrial::TargetStateKind::Robot;
                 const auto* robot_state = tracker_output->robot_state();
                 if (robot_state) {
@@ -108,7 +119,7 @@ void register_chiral_collector_system(talos::Scheduler& scheduler) {
                     talos_data.state.robot.armor_num =
                         static_cast<uint32_t>(robot_state->armors_num);
                 }
-            } else if (tracker_output->is_outpost()) {
+            } else if (tracker_output && tracker_output->is_outpost()) {
                 talos_data.state_kind     = talos::chrial::TargetStateKind::Outpost;
                 const auto* outpost_state = tracker_output->outpost_state();
                 if (outpost_state) {
@@ -121,13 +132,9 @@ void register_chiral_collector_system(talos::Scheduler& scheduler) {
                     talos_data.state.outpost.v_yaw = outpost_state->v_yaw;
                     talos_data.state.outpost.z     = outpost_state->z;
                 }
-            } else {
-                talos_data.state_kind  = talos::chrial::TargetStateKind::Robot;
-                talos_data.state.color = talos::chrial::ArmorColor::Neutral;
             }
 
-            // Lookup transforms from tf buffer
-            const uint64_t current_ns = tracker_output->timestamp_ns;
+            const uint64_t current_ns = selected_target->timestamp_ns;
             using namespace fast_tf;
 
             // Lookup gimbal transform (odom -> gimbal)
@@ -182,7 +189,6 @@ void register_chiral_collector_system(talos::Scheduler& scheduler) {
                 SPDLOG_WARN("Failed to lookup muzzle transform: {}", muzzle_tf.error());
             }
 
-            // Write to shared memory
             writer_storage->write(talos_data);
         });
 }

@@ -4,8 +4,10 @@
 #include <Eigen/Geometry>
 #include <array>
 #include <cstdint>
+#include <limits>
 #include <optional>
 #include <variant>
+#include <vector>
 
 #include "core/channel_topics.hpp"
 #include "core/types.hpp"
@@ -78,6 +80,8 @@ struct TrackerOutput {
     ArmorColor target_color{ArmorColor::Neutral};
     bool target_jumped{false};
     std::optional<int> last_armor_id{};
+    double last_image_center_distance_px{std::numeric_limits<double>::infinity()};
+    uint64_t last_observation_timestamp_ns{0};
 
     // Variant: empty, robot, or outpost
     std::variant<std::monostate, RobotTargetState, OutpostTargetState> state;
@@ -103,12 +107,14 @@ struct TrackerOutput {
     }
 };
 
+using TrackerOutputs = std::vector<TrackerOutput>;
+
 // ============================================================================
 // Channel Topics
 // ============================================================================
 
 // Channel topics are defined in fcs/core/channel_topics.hpp:
-// - fcs::TrackerOutputChannelTopic
+// - fcs::TrackerOutputChannelTopic (payload: TrackerOutputs)
 // - fcs::SolverOutputChannelTopic
 
 // Re-export for convenience

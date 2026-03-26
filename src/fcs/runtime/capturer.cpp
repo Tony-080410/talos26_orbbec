@@ -4,6 +4,8 @@
 #include "L3_estimation/energy_meter/types.hpp"
 #include "L3_estimation/tracker/types.hpp"
 #include "L4_planning/gimbal_planner/types.hpp"
+#include "L4_planning/selected_target_snapshot.hpp"
+#include "L4_planning/target_selection_trace.hpp"
 #include "L5_weapon/fire_control.hpp"
 #include "core/channel_topics.hpp"
 #include "core/runtime.hpp"
@@ -401,12 +403,17 @@ struct ConfigSnapshotSource {
 
 [[nodiscard]] auto to_json_tracker_output(const L3::TrackerOutput& output) -> json {
     json result{
-        { "timestamp_ns",                                                output.timestamp_ns},
-        {       "status",                               magic_enum::enum_name(output.status)},
-        {  "target_name",                          magic_enum::enum_name(output.target_name)},
-        {"target_jumped",                                               output.target_jumped},
-        {"last_armor_id", output.last_armor_id ? json(*output.last_armor_id) : json(nullptr)},
-        {   "state_kind",                                                            "empty"},
+        {                 "timestamp_ns",                                                output.timestamp_ns},
+        {                       "status",                               magic_enum::enum_name(output.status)},
+        {                  "target_name",                          magic_enum::enum_name(output.target_name)},
+        {                 "target_color",                         magic_enum::enum_name(output.target_color)},
+        {                "target_jumped",                                               output.target_jumped},
+        {                "last_armor_id", output.last_armor_id ? json(*output.last_armor_id) : json(nullptr)},
+        {"last_image_center_distance_px",       std::isfinite(output.last_image_center_distance_px)
+       ? json(output.last_image_center_distance_px)
+       : json(nullptr)                                             },
+        {"last_observation_timestamp_ns",                               output.last_observation_timestamp_ns},
+        {                   "state_kind",                                                            "empty"},
     };
 
     if (const auto* robot = output.robot_state()) {
@@ -420,6 +427,65 @@ struct ConfigSnapshotSource {
     }
 
     return result;
+}
+
+[[nodiscard]] auto to_json_target_selection_trace_entry(const L4::TargetSelectionTraceEntry& entry)
+    -> json {
+    return json{
+        {                    "rank",                           entry.rank                                    },
+        {             "target_name",                                 magic_enum::enum_name(entry.target_name)},
+        {            "target_color",                                magic_enum::enum_name(entry.target_color)},
+        {            "track_status",                                magic_enum::enum_name(entry.track_status)},
+        {               "aim_valid",                                                          entry.aim_valid},
+        { "was_previously_selected",                                            entry.was_previously_selected},
+        {                "selected",                                                           entry.selected},
+        {               "runner_up",                                                          entry.runner_up},
+        {               "aim_error",                                                          entry.aim_error},
+        {           "target_center",
+         entry.target_center ? json(to_json_vec3(*entry.target_center)) : json(nullptr)                      },
+        {"image_center_distance_px",                  std::isfinite(entry.image_center_distance_px)
+                  ? json(entry.image_center_distance_px)
+                  : json(nullptr)                                        },
+        {           "optical_age_s",                                                      entry.optical_age_s},
+        {                   "tof_s",           std::isfinite(entry.tof_s) ? json(entry.tof_s) : json(nullptr)},
+        {              "distance_m", std::isfinite(entry.distance_m) ? json(entry.distance_m) : json(nullptr)},
+        {          "yaw_effort_deg",
+         std::isfinite(entry.yaw_effort_deg) ? json(entry.yaw_effort_deg) : json(nullptr)                    },
+        {        "pitch_effort_deg",
+         std::isfinite(entry.pitch_effort_deg) ? json(entry.pitch_effort_deg) : json(nullptr)                },
+        {      "image_center_score",                                                 entry.image_center_score},
+        {       "track_state_score",                                                  entry.track_state_score},
+        {               "tof_score",                                                          entry.tof_score},
+        {          "distance_score",                                                     entry.distance_score},
+        {     "gimbal_effort_score",                                                entry.gimbal_effort_score},
+        {        "armor_name_score",                                                   entry.armor_name_score},
+        {   "image_center_weighted",                                              entry.image_center_weighted},
+        {    "track_state_weighted",                                               entry.track_state_weighted},
+        {            "tof_weighted",                                                       entry.tof_weighted},
+        {       "distance_weighted",                                                  entry.distance_weighted},
+        {  "gimbal_effort_weighted",                                             entry.gimbal_effort_weighted},
+        {     "armor_name_weighted",                                                entry.armor_name_weighted},
+        {            "weighted_sum",                                                       entry.weighted_sum},
+        {            "total_weight",                                                       entry.total_weight},
+        {             "total_score",                                                        entry.total_score},
+    };
+}
+
+[[nodiscard]] auto to_json_target_selection_trace(const L4::TargetSelectionTrace& trace) -> json {
+    json candidates = json::array();
+    for (const auto& candidate : trace.candidates) {
+        candidates.push_back(to_json_target_selection_trace_entry(candidate));
+    }
+
+    return json{
+        {         "timestamp_ns",                                 trace.timestamp_ns},
+        {  "had_previous_target",                          trace.had_previous_target},
+        { "previous_target_name",  magic_enum::enum_name(trace.previous_target_name)},
+        {"previous_target_color", magic_enum::enum_name(trace.previous_target_color)},
+        {  "kept_current_target",                          trace.kept_current_target},
+        {        "switch_margin",                                trace.switch_margin},
+        {           "candidates",                              std::move(candidates)},
+    };
 }
 
 [[nodiscard]] auto to_json_planner_seed(const L4::PlannerSeed& seed) -> json {
@@ -485,6 +551,24 @@ struct ConfigSnapshotSource {
         result["viz_debug"] = nullptr;
     }
 
+    return result;
+}
+
+[[nodiscard]] auto to_json_selected_target_snapshot(const L4::SelectedTargetSnapshot& snapshot)
+    -> json {
+    json result                       = to_json_tracker_output(snapshot.tracker);
+    result["timestamp_ns"]            = snapshot.timestamp_ns;
+    result["tracking"]                = snapshot.tracker.is_tracking();
+    result["valid"]                   = snapshot.has_target();
+    result["optimal_target"]          = result["valid"];
+    result["source"]                  = magic_enum::enum_name(snapshot.source);
+    result["plan_distance"]           = snapshot.distance;
+    result["predicted_future_ns"]     = snapshot.predicted_future_ns;
+    result["aim_phase"]               = magic_enum::enum_name(snapshot.aim_phase);
+    result["selected_armor_id"]       = snapshot.selected_armor_id;
+    result["rough_selected_armor_id"] = snapshot.rough_selected_armor_id;
+    result["fire_advice"]             = snapshot.fire_advice;
+    result["aimer_fire_advice"]       = snapshot.aimer_fire_advice;
     return result;
 }
 
@@ -764,10 +848,12 @@ public:
         uint64_t tick_timestamp_ns, const ChannelSnapshot<AtLegacyImageFrame>& image,
         const ChannelSnapshot<AtLegacyArmorDetectionBatch>& detection,
         const ChannelSnapshot<AtLegacyArmorMeasurementBatch>& measurement,
-        const ChannelSnapshot<L3::TrackerOutput>& tracker,
+        const ChannelSnapshot<L3::TrackerOutputs>& tracker,
         const ChannelSnapshot<rune::RuneObservation>& rune_observation,
         const ChannelSnapshot<rune::RuneDebugFrame>& rune_debug,
         const ChannelSnapshot<energy_meter::EnergyMeterState>& energy_meter,
+        const ChannelSnapshot<L4::SelectedTargetSnapshot>& selected_target,
+        const ChannelSnapshot<L4::TargetSelectionTrace>& target_selection_trace,
         const ChannelSnapshot<L4::GimbalPlan>& gimbal_plan,
         const ChannelSnapshot<L5::WeaponCommand>& weapon_command,
         const ChannelSnapshot<core::ControlResourceSnapshot>& control_state) noexcept {
@@ -815,7 +901,12 @@ public:
 
             json tracker_json = make_channel_meta(tracker.present(), tracker.updated_this_tick);
             if (tracker.value) {
-                tracker_json.update(to_json_tracker_output(*tracker.value));
+                json trackers_array = json::array();
+                for (const auto& output : *tracker.value) {
+                    trackers_array.push_back(to_json_tracker_output(output));
+                }
+                tracker_json["trackers"] = std::move(trackers_array);
+                tracker_json["count"]    = tracker.value->size();
             }
             streams["tracker"] = std::move(tracker_json);
 
@@ -873,6 +964,22 @@ public:
                 energy_json.update(to_json_energy_meter_state(*energy_meter.value));
             }
             streams["energy_meter"] = std::move(energy_json);
+
+            json selected_target_json =
+                make_channel_meta(selected_target.present(), selected_target.updated_this_tick);
+            if (selected_target.value) {
+                selected_target_json.update(
+                    to_json_selected_target_snapshot(*selected_target.value));
+            }
+            streams["selected_target"] = std::move(selected_target_json);
+
+            json target_selection_json = make_channel_meta(
+                target_selection_trace.present(), target_selection_trace.updated_this_tick);
+            if (target_selection_trace.value) {
+                target_selection_json.update(
+                    to_json_target_selection_trace(*target_selection_trace.value));
+            }
+            streams["target_selection"] = std::move(target_selection_json);
 
             json gimbal_json =
                 make_channel_meta(gimbal_plan.present(), gimbal_plan.updated_this_tick);
@@ -1377,11 +1484,15 @@ void register_runtime_capturer_system(
             talos::spmc<AtLegacyArmorDetectionBatch, AtLegacyDetectionChannelTopic> detection_in,
             talos::spmc<AtLegacyArmorMeasurementBatch, AtLegacyMeasurementChannelTopic>
                 measurement_in,
-            talos::spmc<L3::TrackerOutput, TrackerOutputChannelTopic> tracker_in,
+            talos::spmc<L3::TrackerOutputs, TrackerOutputChannelTopic> tracker_in,
             talos::spmc<rune::RuneObservation, RuneObservationChannelTopic> rune_observation_in,
             talos::spmc<rune::RuneDebugFrame, RuneDebugFrameChannelTopic> rune_debug_in,
             talos::spmc<energy_meter::EnergyMeterState, EnergyMeterStateChannelTopic>
                 energy_meter_in,
+            talos::spmc<L4::SelectedTargetSnapshot, SelectedTargetSnapshotChannelTopic>
+                selected_target_in,
+            talos::spmc<L4::TargetSelectionTrace, TargetSelectionTraceChannelTopic>
+                target_selection_trace_in,
             talos::spmc<L4::GimbalPlan, GimbalPlanChannelTopic> gimbal_plan_in,
             talos::spmc<L5::WeaponCommand, WeaponCommandChannelTopic> weapon_command_in,
             talos::spmc<core::ControlResourceSnapshot, RuntimeControlStateChannelTopic>
@@ -1391,7 +1502,8 @@ void register_runtime_capturer_system(
                 tick_timestamp_ns, sample_channel(image_in), sample_channel(detection_in),
                 sample_channel(measurement_in), sample_channel(tracker_in),
                 sample_channel(rune_observation_in), sample_channel(rune_debug_in),
-                sample_channel(energy_meter_in), sample_channel(gimbal_plan_in),
+                sample_channel(energy_meter_in), sample_channel(selected_target_in),
+                sample_channel(target_selection_trace_in), sample_channel(gimbal_plan_in),
                 sample_channel(weapon_command_in), sample_channel(control_state_in));
         });
 }

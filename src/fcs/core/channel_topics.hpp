@@ -26,7 +26,7 @@ struct AtLegacyMeasurementChannelTopic {};
 // ============================================================================
 
 /// @brief Tracker output channel (Tracker → Solver)
-/// Data type: fcs::L3::TrackerOutput
+/// Data type: fcs::L3::TrackerOutputs
 /// Mode: SPMC (single producer, multiple consumers)
 struct TrackerOutputChannelTopic {};
 
@@ -43,6 +43,16 @@ struct EnergyMeterStateChannelTopic {};
 /// Data type: fcs::L4::GimbalPlan
 /// Mode: SPMC (single producer, multiple consumers)
 struct GimbalPlanChannelTopic {};
+
+/// @brief L4-selected target snapshot channel (Aimer -> Viz/Chiral/Capturer)
+/// Data type: fcs::L4::SelectedTargetSnapshot
+/// Mode: SPMC (single producer, multiple consumers)
+struct SelectedTargetSnapshotChannelTopic {};
+
+/// @brief Target-selection diagnostics channel (Aimer -> Viz/Capturer)
+/// Data type: fcs::L4::TargetSelectionTrace
+/// Mode: SPMC (single producer, multiple consumers)
+struct TargetSelectionTraceChannelTopic {};
 
 // ============================================================================
 // L5 Weapon System Channel Topics

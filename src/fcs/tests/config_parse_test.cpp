@@ -163,7 +163,7 @@ TEST(ConfigParse, VisionBaseTomlMatchesExpectedSemanticsAndValues) {
 
     EXPECT_DOUBLE_EQ(config.tracker().robot_inekf.radius0, 0.23);
     EXPECT_DOUBLE_EQ(config.tracker().robot_inekf.radius1, 0.23);
-    EXPECT_DOUBLE_EQ(config.tracker().robot_inekf.height, 0.1);
+    EXPECT_DOUBLE_EQ(config.tracker().robot_inekf.height, 0.05);
 
     EXPECT_DOUBLE_EQ(config.tracker().outpost.matcher_gate, 4.0);
     EXPECT_DOUBLE_EQ(config.tracker().outpost.lost_threshold, 2.0);
@@ -175,10 +175,10 @@ TEST(ConfigParse, VisionBaseTomlMatchesExpectedSemanticsAndValues) {
     EXPECT_DOUBLE_EQ(config.tracker().outpost.model.yaw_log_k, 0.005);
 
     EXPECT_DOUBLE_EQ(config.l4->fire_decision.fire_thresh, 0.01744444);
-    EXPECT_DOUBLE_EQ(config.l4->fire_decision.delay_gate_error_rad, 0.0035);
+    EXPECT_DOUBLE_EQ(config.l4->fire_decision.delay_gate_error_rad, 3.1744444);
     EXPECT_DOUBLE_EQ(config.l4->fire_decision.shooting_range_h, 0.135);
     EXPECT_DOUBLE_EQ(config.l4->fire_decision.shooting_range_w, 0.135);
-    EXPECT_DOUBLE_EQ(config.l4->aimer.delay, 0.019);
+    EXPECT_DOUBLE_EQ(config.l4->aimer.delay, 0.04);
     EXPECT_DOUBLE_EQ(config.l4->aimer.single_whole_up, 2.5);
     EXPECT_DOUBLE_EQ(config.l4->aimer.single_whole_down, 1.0);
     EXPECT_DOUBLE_EQ(config.l4->aimer.whole_pair_up, 7.5);
@@ -191,6 +191,30 @@ TEST(ConfigParse, VisionBaseTomlMatchesExpectedSemanticsAndValues) {
     EXPECT_DOUBLE_EQ(config.l4->aimer.leaving_angle_deg, 20.0);
     EXPECT_DOUBLE_EQ(config.l4->aimer.yaw_limit_deg, 40.0);
     EXPECT_DOUBLE_EQ(config.l4->aimer.min_enable_yaw_deg, 0.25);
+    EXPECT_DOUBLE_EQ(config.l4->aimer.target_selection.temp_lost_state_score, 0.05);
+    EXPECT_DOUBLE_EQ(config.l4->aimer.target_selection.optical_stale_timeout_s, 0.25);
+    EXPECT_DOUBLE_EQ(config.l4->aimer.target_selection.switch_margin, 0.08);
+    EXPECT_DOUBLE_EQ(config.l4->aimer.target_selection.weights.image_center, 1.0);
+    EXPECT_DOUBLE_EQ(config.l4->aimer.target_selection.weights.track_state, 3.0);
+    EXPECT_DOUBLE_EQ(config.l4->aimer.target_selection.weights.tof, 1.5);
+    EXPECT_DOUBLE_EQ(config.l4->aimer.target_selection.weights.distance, 1.0);
+    EXPECT_DOUBLE_EQ(config.l4->aimer.target_selection.weights.gimbal_effort, 1.0);
+    EXPECT_DOUBLE_EQ(config.l4->aimer.target_selection.weights.armor_name, 6.5);
+    EXPECT_DOUBLE_EQ(config.l4->aimer.target_selection.refs.image_center_ref_px, 300.0);
+    EXPECT_DOUBLE_EQ(config.l4->aimer.target_selection.refs.tof_ref_s, 0.35);
+    EXPECT_DOUBLE_EQ(config.l4->aimer.target_selection.refs.distance_ref_m, 10.0);
+    EXPECT_DOUBLE_EQ(config.l4->aimer.target_selection.refs.yaw_effort_ref_deg, 20.0);
+    EXPECT_DOUBLE_EQ(config.l4->aimer.target_selection.refs.pitch_effort_ref_deg, 10.0);
+    EXPECT_DOUBLE_EQ(config.l4->aimer.target_selection.armor_name_score.sentry, 0.5);
+    EXPECT_DOUBLE_EQ(config.l4->aimer.target_selection.armor_name_score.one, 1.0);
+    EXPECT_DOUBLE_EQ(config.l4->aimer.target_selection.armor_name_score.two, 0.5);
+    EXPECT_DOUBLE_EQ(config.l4->aimer.target_selection.armor_name_score.three, 0.5);
+    EXPECT_DOUBLE_EQ(config.l4->aimer.target_selection.armor_name_score.four, 0.5);
+    EXPECT_DOUBLE_EQ(config.l4->aimer.target_selection.armor_name_score.five, 0.5);
+    EXPECT_DOUBLE_EQ(config.l4->aimer.target_selection.armor_name_score.outpost, 0.5);
+    EXPECT_DOUBLE_EQ(config.l4->aimer.target_selection.armor_name_score.base, 0.5);
+    EXPECT_DOUBLE_EQ(config.l4->aimer.target_selection.armor_name_score.base_large, 0.5);
+    EXPECT_DOUBLE_EQ(config.l4->aimer.target_selection.armor_name_score.invalid, 0.0);
 
     EXPECT_EQ(config.trajectory.model->type, fcs::core::trajectory::model::ModelType::LinearDrag);
     EXPECT_EQ(config.trajectory.model->iteration_times, 10u);

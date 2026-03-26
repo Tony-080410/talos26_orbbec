@@ -2,11 +2,13 @@
 
 #include "L3_estimation/tracker/types.hpp"
 #include "L4_planning/aimer/types.hpp"
+#include "L4_planning/plan_source.hpp"
 #include "core/channel_topics.hpp"
 
 #include <Eigen/Core>
 #include <cstdint>
 #include <optional>
+#include <utility>
 #include <variant>
 #include <vector>
 
@@ -23,12 +25,6 @@ namespace fcs::L4 {
 /// is enabled.
 struct VisualizationDebugData {
     std::vector<std::pair<double, double>> trajectory; ///< Ballistic trajectory (x, z)
-};
-
-/// Source of gimbal plan.
-enum class GimbalPlanSource : uint8_t {
-    Armor = 1,
-    Rune  = 2,
 };
 
 /// L4 planner seed passed to L5 for trajectory generation.
@@ -117,8 +113,6 @@ struct GimbalPlan {
 // L4 Channel Topics
 // ============================================================================
 
-// Re-export L3 types for convenience
-using fcs::L3::TrackerOutput;
 using fcs::L3::TrackerOutputChannelTopic;
 
 } // namespace fcs::L4

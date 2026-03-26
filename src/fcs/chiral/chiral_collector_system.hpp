@@ -7,9 +7,9 @@ namespace fcs::chiral {
 /// Register chiral data collection system
 ///
 /// Pipeline:
-///   TrackerOutput [SPMC] -> ChiralCollectorSystem [pool_compute]
-///                                ↓
-///                         Shared Memory (TalosData)
+///   SelectedTargetSnapshot [SPMC] -> ChiralCollectorSystem [pool_compute]
+///                                      ↓
+///                               Shared Memory (TalosData)
 ///
 /// ## Parameters
 ///
