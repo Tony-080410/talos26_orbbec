@@ -1,6 +1,6 @@
 crate(
     NAME fast_tf
-    TYPE SHARED
+    TYPE INTERFACE
     DEPS
         magic_enum
         talos_math

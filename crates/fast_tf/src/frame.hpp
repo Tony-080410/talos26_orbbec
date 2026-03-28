@@ -84,21 +84,25 @@ constexpr size_t _base = __COUNTER__;
         using ancestor                             = parent##_fuxk_frame;     \
     };
 
+#define DECL_WITH_ID(name, parent, id)                                        \
+    struct name##_fuxk_frame {                                                \
+        static constexpr std::string_view frame_id = id;                      \
+        static constexpr size_t index              = __COUNTER__ - _base - 1; \
+        using ancestor                             = parent##_fuxk_frame;     \
+    };
+
 DECL_ROOT(world);
 DECL(odom, world);
 DECL(gimbal_yaw, odom);
 DECL(gimbal_pitch, gimbal_yaw);
 DECL(camera_link, gimbal_pitch);
-struct camera_optical_fuxk_frame {
-    static constexpr std::string_view frame_id = "camera_optical_frame";
-    static constexpr size_t index              = __COUNTER__ - _base - 1;
-    using ancestor                             = camera_link_fuxk_frame;
-};
+DECL_WITH_ID(camera_optical, camera_link, "camera_optical_frame");
 DECL(muzzle_link, gimbal_pitch);
 
 // 防止外部使用
 #undef DECL_ROOT
 #undef DECL
+#undef DECL_WITH_ID
 
 using odom           = odom_fuxk_frame;
 using gimbal         = gimbal_yaw_fuxk_frame;
@@ -184,7 +188,7 @@ struct [[nodiscard]] Fuck {
     }
 
     template <typename Self, frame OtherCoord>
-    [[nodiscard]] constexpr auto
+    requires std::is_same_v<Coordinate, OtherCoord> [[nodiscard]] constexpr auto
         operator+(this Self&& self, const Fuck<OtherCoord, T>& other) noexcept
         -> Fuck<Coordinate, decltype(stdx::forward_like<Self>(self.val) + (*other))> {
         return Fuck<Coordinate, decltype(stdx::forward_like<Self>(self.val) + (*other))>(
@@ -192,7 +196,7 @@ struct [[nodiscard]] Fuck {
     }
 
     template <typename Self, frame OtherCoord>
-    [[nodiscard]] constexpr auto
+    requires std::is_same_v<Coordinate, OtherCoord> [[nodiscard]] constexpr auto
         operator-(this Self&& self, const Fuck<OtherCoord, T>& other) noexcept
         -> Fuck<Coordinate, decltype(stdx::forward_like<Self>(self.val) - (*other))> {
         return Fuck<Coordinate, decltype(stdx::forward_like<Self>(self.val) - (*other))>(
