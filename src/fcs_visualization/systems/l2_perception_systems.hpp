@@ -109,18 +109,7 @@ void register_l2_perception_systems(App& app) {
                         .timestamp(m.timestamp_ns)
                         .build();
 
-                // Also add a sphere at same position
-                auto sphere =
-                    viz::EntityBuilder::create<fast_tf::odom>("l2", fmt::format("sphere_{}", i))
-                        .position(t.x(), t.y(), t.z())
-                        .size(tac::L2::ARMOR_SIZE)
-                        .color(tac::L2::MEASUREMENT_GHOST)
-                        .sphere()
-                        .timestamp(m.timestamp_ns)
-                        .build();
-
                 entities.push_back(std::move(entity));
-                entities.push_back(std::move(sphere));
             }
 
             // Publish to semantic channel

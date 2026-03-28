@@ -76,40 +76,6 @@ struct FutureArmorSnapshot {
         magic_enum::enum_name(entry.target_name));
 }
 
-[[nodiscard]] inline ::foxglove::schemas::Color
-    selection_trace_color(const ::fcs::L4::TargetSelectionTraceEntry& entry) {
-    if (!entry.aim_valid) {
-        return tac::Text::SECONDARY;
-    }
-    if (entry.selected) {
-        return tac::L4::GIMBAL_AIM_HOLD;
-    }
-    if (entry.runner_up) {
-        return tac::L4::MPC_REFERENCE;
-    }
-    if (entry.was_previously_selected) {
-        return tac::L3::PREDICTION_AMBER;
-    }
-    return tac::Text::PRIMARY;
-}
-
-[[nodiscard]] inline std::string
-    selection_trace_entity_label(const ::fcs::L4::TargetSelectionTraceEntry& entry) {
-    const std::string prefix = fmt::format(
-        "#{}{}{} {}", entry.rank, entry.selected ? "*" : "",
-        entry.was_previously_selected ? "P" : "", selection_identity(entry));
-    if (!entry.aim_valid) {
-        return fmt::format(
-            "{}\n{}\n{}", prefix, magic_enum::enum_name(entry.track_status),
-            entry.aim_error.empty() ? "aim_failed" : entry.aim_error);
-    }
-    return fmt::format(
-        "{}\n{} {:.3f}\nC {:.2f} S {:.2f} T {:.2f} D {:.2f} E {:.2f} N {:.2f}", prefix,
-        magic_enum::enum_name(entry.track_status), entry.total_score, entry.image_center_score,
-        entry.track_state_score, entry.tof_score, entry.distance_score, entry.gimbal_effort_score,
-        entry.armor_name_score);
-}
-
 inline void append_selection_trace_metadata(
     viz::EntityBuilder& builder, const ::fcs::L4::TargetSelectionTrace& trace,
     const ::fcs::L4::TargetSelectionTraceEntry& entry) {
@@ -764,9 +730,10 @@ void register_l4_planning_systems(App& app) {
             std::vector<::foxglove::schemas::SceneEntity> entities;
 
             if (const auto snapshot = l4_detail::future_armor_snapshot(*plan)) {
+                // ── Target center ──────────────────────────────────────────
                 entities.push_back(
                     viz::EntityBuilder::create<fast_tf::odom>("l4", "target_center")
-                        .timestamp(plan->predicted_future)
+                        .timestamp(plan->timestamp_ns)
                         .position(snapshot->center)
                         .size(tac::L3::ROBOT_CENTER_SIZE * 0.75)
                         .color(tac::L4::MPC_PRESENT)
@@ -777,22 +744,25 @@ void register_l4_planning_systems(App& app) {
                             tac::Text::SIZE_SMALL)
                         .build());
 
+                // ── Velocity arrows ────────────────────────────────────────
                 entities.push_back(
                     viz::patterns::velocity_arrows<fast_tf::odom>(
                         snapshot->center, snapshot->linear_velocity, snapshot->angular_velocity,
-                        plan->predicted_future));
+                        plan->timestamp_ns));
 
+                // ── Future armor plates (clearly visible) ──────────────────
+                std::vector<::foxglove::schemas::Point3> armor_link_points;
+                const auto center_pt = viz::make_point3(snapshot->center);
                 for (int i = 0; i < static_cast<int>(snapshot->armors.size()); ++i) {
                     const auto& armor_pose          = snapshot->armors[static_cast<size_t>(i)];
                     const Eigen::Vector3d armor_pos = armor_pose.head<3>();
                     entities.push_back(
                         viz::EntityBuilder::create<fast_tf::odom>(
                             "l4", fmt::format("future_armor_{}", i))
-                            .timestamp(plan->predicted_future)
+                            .timestamp(plan->timestamp_ns)
                             .position(armor_pos)
                             .orientation(l4_detail::armor_orientation(armor_pose[3]))
-                            .color(tac::L4::GIMBAL_AIM_HOLD)
-                            .alpha(0.18)
+                            .color(tac::L4::FUTURE_ARMOR)
                             .cube(
                                 tac::Geometry::ARMOR_THICKNESS, tac::Geometry::ARMOR_HEIGHT_SMALL,
                                 tac::Geometry::ARMOR_WIDTH)
@@ -801,8 +771,23 @@ void register_l4_planning_systems(App& app) {
                                 tac::Text::SIZE_SMALL)
                             .metadata("armor_id", std::to_string(i))
                             .build());
+                    // Collect points for connecting lines
+                    armor_link_points.push_back(center_pt);
+                    armor_link_points.push_back(viz::make_point3(armor_pos));
                 }
 
+                // ── Target center → armors connecting lines ────────────────
+                if (armor_link_points.size() >= 4) {
+                    entities.push_back(
+                        viz::EntityBuilder::create<fast_tf::odom>("l4", "armor_links")
+                            .timestamp(plan->timestamp_ns)
+                            .line_list(
+                                std::move(armor_link_points), tac::L4::SPATIAL_LINK,
+                                tac::L4::SPATIAL_LINK_THICKNESS)
+                            .build());
+                }
+
+                // ── Selection overlay (primary visual) ─────────────────────
                 const auto add_overlay =
                     [&](int armor_id, const std::string& entity_id, const std::string& label,
                         const ::foxglove::schemas::Color& color, double size_scale) {
@@ -813,7 +798,7 @@ void register_l4_planning_systems(App& app) {
                             snapshot->armors[static_cast<size_t>(armor_id)].head<3>();
                         entities.push_back(
                             viz::EntityBuilder::create<fast_tf::odom>("l4", entity_id)
-                                .timestamp(plan->predicted_future)
+                                .timestamp(plan->timestamp_ns)
                                 .position(armor_pos)
                                 .size(tac::L4::SELECTION_SIZE * size_scale)
                                 .color(color)
@@ -828,7 +813,7 @@ void register_l4_planning_systems(App& app) {
                 if (plan->selected_armor_id == plan->rough_selected_armor_id) {
                     add_overlay(
                         plan->selected_armor_id, "selected_rough_armor",
-                        fmt::format("Selected and Rough {}", plan->selected_armor_id),
+                        fmt::format("Selected {}", plan->selected_armor_id),
                         plan->fire_advice ? tac::L4::GIMBAL_AIM_FIRE : tac::L4::GIMBAL_AIM_HOLD,
                         1.25);
                 } else {
@@ -846,21 +831,22 @@ void register_l4_planning_systems(App& app) {
 
             // Predicted position marker (at bullet impact time for verification)
             if (plan->predicted_position) {
+                const auto aim_color =
+                    plan->fire_advice ? tac::L4::GIMBAL_AIM_FIRE : tac::L4::GIMBAL_AIM_HOLD;
+
                 auto builder = viz::EntityBuilder::create<fast_tf::odom>("l4", "predicted")
                                    .timestamp(plan->predicted_future)
                                    .position(*plan->predicted_position)
                                    .size(tac::L4::PREDICTION_SIZE)
-                                   .color(
-                                       plan->fire_advice ? tac::L4::GIMBAL_AIM_FIRE
-                                                         : tac::L3::PREDICTION_AMBER)
+                                   .color(aim_color)
                                    .sphere();
 
                 l4_detail::append_plan_metadata(builder, *plan, selected_target);
 
                 builder.color(tac::Text::PRIMARY)
                     .text_with_offset(
-                        "Aim Point", 0.0, 0.0, tac::L3::LABEL_OFFSET_Z + tac::L4::PREDICTION_SIZE,
-                        tac::Text::SIZE_SMALL)
+                        plan->fire_advice ? "● FIRE" : "○ HOLD", 0.0, 0.0,
+                        tac::L3::LABEL_OFFSET_Z + tac::L4::PREDICTION_SIZE, tac::Text::SIZE_SMALL)
                     .text_with_offset(
                         l4_detail::short_plan_label(*plan), tac::L4::SELECTION_SIZE * 1.8, 0.0,
                         tac::L3::LABEL_OFFSET_Z + tac::L4::PREDICTION_SIZE, tac::Text::SIZE_SMALL);
@@ -868,28 +854,47 @@ void register_l4_planning_systems(App& app) {
                 entities.push_back(builder.build());
             }
 
+            // ── Selection trace — visual hierarchy ─────────────────────────
             if (trace) {
                 for (const auto& candidate : trace->candidates) {
                     if (!candidate.target_center) {
                         continue;
                     }
 
+                    // Visual hierarchy: selected > runner_up > eliminated
+                    const bool is_selected  = candidate.selected;
+                    const bool is_runner_up = candidate.runner_up;
+                    const bool show_label   = is_selected || is_runner_up;
+
+                    // Size & alpha by tier
+                    const double size_scale = is_selected ? 1.25 : is_runner_up ? 1.0 : 0.7;
+                    const double alpha_val  = is_selected ? 0.95 : is_runner_up ? 0.75 : 0.25;
+
+                    // Color by tier
+                    const auto tier_color = is_selected
+                                              ? (plan->fire_advice ? tac::L4::GIMBAL_AIM_FIRE
+                                                                   : tac::L4::GIMBAL_AIM_HOLD)
+                                          : is_runner_up ? tac::L4::CANDIDATE_RUNNER_UP
+                                                         : tac::L4::CANDIDATE_ELIMINATED;
+
                     auto builder = viz::EntityBuilder::create<fast_tf::odom>(
                                        "l4", l4_detail::selection_trace_entity_id(candidate))
                                        .timestamp(trace->timestamp_ns)
                                        .position(*candidate.target_center)
-                                       .size(
-                                           tac::L4::SELECTION_SIZE
-                                           * (candidate.selected    ? 1.25
-                                              : candidate.runner_up ? 1.0
-                                                                    : 0.85))
-                                       .color(l4_detail::selection_trace_color(candidate))
-                                       .alpha(candidate.aim_valid ? 0.95 : 0.65)
-                                       .sphere()
-                                       .text_with_offset(
-                                           l4_detail::selection_trace_entity_label(candidate),
-                                           tac::L4::SELECTION_SIZE * 1.5, 0.0,
-                                           tac::L3::LABEL_OFFSET_Z, tac::Text::SIZE_SMALL);
+                                       .size(tac::L4::SELECTION_SIZE * size_scale)
+                                       .color(tier_color)
+                                       .alpha(alpha_val)
+                                       .sphere();
+
+                    // Simplified label — identity + rank only, scores in metadata
+                    if (show_label) {
+                        builder.text_with_offset(
+                            fmt::format(
+                                "#{}{} {}", candidate.rank, is_selected ? "*" : "",
+                                l4_detail::selection_identity(candidate)),
+                            tac::L4::SELECTION_SIZE * 1.5, 0.0, tac::L3::LABEL_OFFSET_Z,
+                            tac::Text::SIZE_SMALL);
+                    }
 
                     l4_detail::append_selection_trace_metadata(builder, *trace, candidate);
                     entities.push_back(builder.build());
@@ -943,6 +948,38 @@ void register_l4_planning_systems(App& app) {
                     viz::patterns::mpc_trajectory_point<fast_tf::odom>(
                         optimized.world_position, i - cmd->viz_debug->center_index, false,
                         cmd->timestamp_ns));
+            }
+
+            // ── Reference trajectory connecting line ─────────────────────
+            if (cmd->viz_debug->reference_plan.size() >= 2) {
+                std::vector<::foxglove::schemas::Point3> ref_line_points;
+                ref_line_points.reserve(cmd->viz_debug->reference_plan.size());
+                for (const auto& sample : cmd->viz_debug->reference_plan) {
+                    ref_line_points.push_back(viz::make_point3(sample.world_position));
+                }
+                entities.push_back(
+                    viz::EntityBuilder::create<fast_tf::odom>("l4", "mpc_ref_line")
+                        .timestamp(cmd->timestamp_ns)
+                        .line_strip(
+                            std::move(ref_line_points), tac::L4::MPC_REFERENCE,
+                            tac::L4::TRAJECTORY_LINE_THICKNESS)
+                        .build());
+            }
+
+            // ── Optimized trajectory connecting line ─────────────────────
+            if (cmd->viz_debug->optimized_plan.size() >= 2) {
+                std::vector<::foxglove::schemas::Point3> opt_line_points;
+                opt_line_points.reserve(cmd->viz_debug->optimized_plan.size());
+                for (const auto& sample : cmd->viz_debug->optimized_plan) {
+                    opt_line_points.push_back(viz::make_point3(sample.world_position));
+                }
+                entities.push_back(
+                    viz::EntityBuilder::create<fast_tf::odom>("l4", "mpc_opt_line")
+                        .timestamp(cmd->timestamp_ns)
+                        .line_strip(
+                            std::move(opt_line_points), tac::L4::MPC_PRESENT,
+                            tac::L4::TRAJECTORY_LINE_THICKNESS)
+                        .build());
             }
 
             const int center_index = std::clamp(

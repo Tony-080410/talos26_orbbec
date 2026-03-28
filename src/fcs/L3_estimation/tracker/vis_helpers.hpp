@@ -64,8 +64,8 @@ namespace tac = visualization::tactical;
 // ============================================================================
 
 /// @brief Add armor cubes to scene entity for outpost target
-inline void add_outpost_armor_cubes(
-    ::foxglove::schemas::SceneEntity& entity, const OutpostTargetState& state) noexcept {
+inline void
+    add_outpost_armor_cubes(viz::EntityBuilder& builder, const OutpostTargetState& state) noexcept {
     const auto armor_poses = state.armor_poses();
     static_assert(armor_poses.size() == 3);
 
@@ -74,22 +74,21 @@ inline void add_outpost_armor_cubes(
             Eigen::AngleAxisd(armor_pose[3], Eigen::Vector3d::UnitZ())
             * Eigen::AngleAxisd(-tac::Geometry::ARMOR_TILT_ANGLE, Eigen::Vector3d::UnitY());
 
-        entity.cubes.push_back(
-            viz::EntityBuilder::create<fast_tf::odom>("l3", "outpost_armor")
-                .position(armor_pose[0], armor_pose[1], armor_pose[2])
-                .orientation(q)
-                .cube(
-                    tac::Geometry::ARMOR_THICKNESS, tac::Geometry::ARMOR_HEIGHT_SMALL,
-                    tac::Geometry::ARMOR_WIDTH)
-                .build()
-                .cubes.back());
+        ::foxglove::schemas::CubePrimitive cube;
+        cube.pose = viz::make_pose(
+            viz::make_vector3(armor_pose[0], armor_pose[1], armor_pose[2]),
+            viz::make_quaternion(q));
+        cube.size = {
+            tac::Geometry::ARMOR_THICKNESS, tac::Geometry::ARMOR_HEIGHT_SMALL,
+            tac::Geometry::ARMOR_WIDTH};
+        cube.color = viz::make_color(0.75, 0.75, 0.75, 0.25);
+        builder.add_cube(std::move(cube));
     }
 }
 
 /// @brief Add armor cubes to scene entity for robot target
 inline void add_robot_armor_cubes(
-    ::foxglove::schemas::SceneEntity& entity, const RobotTargetState& state,
-    ArmorName target_name) noexcept {
+    viz::EntityBuilder& builder, const RobotTargetState& state, ArmorName target_name) noexcept {
     const bool is_big_armor = target_name == ArmorName::One || target_name == ArmorName::Base;
     const auto armor_poses  = state.armor_poses();
     static_assert(armor_poses.size() == 4);
@@ -99,21 +98,27 @@ inline void add_robot_armor_cubes(
             Eigen::AngleAxisd(armor_poses[i][3], Eigen::Vector3d::UnitZ())
             * Eigen::AngleAxisd(tac::Geometry::ARMOR_TILT_ANGLE, Eigen::Vector3d::UnitY());
 
-        const auto armor_entity =
-            viz::EntityBuilder::create<fast_tf::odom>("l3", fmt::format("armor_{}", i))
-                .position(armor_poses[i][0], armor_poses[i][1], armor_poses[i][2])
-                .orientation(q)
-                .cube(
-                    tac::Geometry::ARMOR_THICKNESS,
-                    is_big_armor ? tac::Geometry::ARMOR_HEIGHT_BIG
-                                 : tac::Geometry::ARMOR_HEIGHT_SMALL,
-                    tac::Geometry::ARMOR_WIDTH)
-                .text_with_offset(
-                    fmt::format("{}", i), 0, 0, tac::L3::LABEL_OFFSET_Z, tac::Text::SIZE_SMALL)
-                .build();
+        ::foxglove::schemas::CubePrimitive cube;
+        cube.pose = viz::make_pose(
+            viz::make_vector3(armor_poses[i][0], armor_poses[i][1], armor_poses[i][2]),
+            viz::make_quaternion(q));
+        cube.size = {
+            tac::Geometry::ARMOR_THICKNESS,
+            is_big_armor ? tac::Geometry::ARMOR_HEIGHT_BIG : tac::Geometry::ARMOR_HEIGHT_SMALL,
+            tac::Geometry::ARMOR_WIDTH};
+        cube.color = viz::make_color(0.75, 0.75, 0.75, 0.25);
+        builder.add_cube(std::move(cube));
 
-        entity.cubes.push_back(armor_entity.cubes.back());
-        entity.texts.push_back(armor_entity.texts.back());
+        ::foxglove::schemas::TextPrimitive text;
+        text.text = fmt::format("{}", i);
+        text.pose = cube.pose;
+        if (text.pose->position.has_value()) {
+            text.pose->position->z += tac::L3::LABEL_OFFSET_Z;
+        }
+        text.font_size = tac::Text::SIZE_SMALL;
+        text.color     = tac::Text::PRIMARY;
+        text.billboard = tac::Text::BILLBOARD_ENABLED;
+        builder.add_text(std::move(text));
     }
 }
 

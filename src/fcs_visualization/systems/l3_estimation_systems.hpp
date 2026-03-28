@@ -25,9 +25,8 @@ namespace fcs::foxglove::systems {
 
 [[nodiscard]] inline std::string tracker_label(const ::fcs::L3::TrackerOutput& output) {
     return fmt::format(
-        "{}/{}\n{}\nOpt {} px", magic_enum::enum_name(output.target_color),
-        magic_enum::enum_name(output.target_name), magic_enum::enum_name(output.status),
-        tracker_image_center_text(output.last_image_center_distance_px));
+        "{}/{} · {}", magic_enum::enum_name(output.target_color),
+        magic_enum::enum_name(output.target_name), magic_enum::enum_name(output.status));
 }
 
 /// @brief Register L3 estimation layer systems (tracking, association)
@@ -104,25 +103,21 @@ void register_l3_estimation_systems(App& app) {
 
                 // Armor cubes
                 if (output.is_robot()) {
-                    ::foxglove::schemas::SceneEntity armor_entity =
-                        viz::EntityBuilder::create<fast_tf::odom>(
-                            "l3",
-                            fmt::format(
-                                "robot_armors_{}_{}", output.target_color, output.target_name))
-                            .timestamp(output.timestamp_ns)
-                            .build();
+                    auto builder = viz::EntityBuilder::create<fast_tf::odom>(
+                                       "l3", fmt::format(
+                                                 "robot_armors_{}_{}", output.target_color,
+                                                 output.target_name))
+                                       .timestamp(output.timestamp_ns);
 
-                    add_robot_armor_cubes(armor_entity, *output.robot_state(), output.target_name);
-                    entities.push_back(std::move(armor_entity));
+                    add_robot_armor_cubes(builder, *output.robot_state(), output.target_name);
+                    entities.push_back(std::move(builder).build());
                 } else if (output.is_outpost()) {
-                    ::foxglove::schemas::SceneEntity armor_entity =
-                        viz::EntityBuilder::create<fast_tf::odom>(
-                            "l3", fmt::format("outpost_armors_{}", output.target_color))
-                            .timestamp(output.timestamp_ns)
-                            .build();
+                    auto builder = viz::EntityBuilder::create<fast_tf::odom>(
+                                       "l3", fmt::format("outpost_armors_{}", output.target_color))
+                                       .timestamp(output.timestamp_ns);
 
-                    add_outpost_armor_cubes(armor_entity, *output.outpost_state());
-                    entities.push_back(std::move(armor_entity));
+                    add_outpost_armor_cubes(builder, *output.outpost_state());
+                    entities.push_back(std::move(builder).build());
                 }
             }
 

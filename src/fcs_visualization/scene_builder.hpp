@@ -56,6 +56,25 @@ inline foxglove::schemas::Vector3 make_vector3(const Eigen::Vector3d& vec) noexc
     return make_vector3(vec.x(), vec.y(), vec.z());
 }
 
+/// @brief Create Point3 from components
+inline foxglove::schemas::Point3 make_point3(double x, double y, double z) noexcept {
+    foxglove::schemas::Point3 p;
+    p.x = x;
+    p.y = y;
+    p.z = z;
+    return p;
+}
+
+/// @brief Create Point3 from Eigen::Vector3d
+inline foxglove::schemas::Point3 make_point3(const Eigen::Vector3d& vec) noexcept {
+    return make_point3(vec.x(), vec.y(), vec.z());
+}
+
+/// @brief Create Point3 from Vector3
+inline foxglove::schemas::Point3 make_point3(const foxglove::schemas::Vector3& v) noexcept {
+    return make_point3(v.x, v.y, v.z);
+}
+
 /// @brief Create Quaternion from components
 inline foxglove::schemas::Quaternion
     make_quaternion(double x, double y, double z, double w) noexcept {
@@ -277,6 +296,134 @@ public:
         prim.color     = current_color_.value_or(tactical::Text::PRIMARY);
         prim.billboard = tactical::Text::BILLBOARD_ENABLED;
         entity_.texts.push_back(prim);
+        return *this;
+    }
+
+    // ========================================================================
+    // LINES & CYLINDERS
+    // ========================================================================
+
+    /// @brief Add a line strip connecting sequential points (0→1→2→...→N)
+    /// @param points Points along the line (at least 2)
+    /// @param color Line color
+    /// @param thickness Line thickness in world coordinates
+    EntityBuilder& line_strip(
+        std::vector<foxglove::schemas::Point3> points, const foxglove::schemas::Color& color,
+        double thickness = 0.01) {
+        if (points.size() < 2)
+            return *this;
+        foxglove::schemas::LinePrimitive line;
+        line.type      = foxglove::schemas::LinePrimitive::LineType::LINE_STRIP;
+        line.pose      = current_pose_;
+        line.thickness = thickness;
+        line.points    = std::move(points);
+        line.color     = color;
+        entity_.lines.push_back(std::move(line));
+        return *this;
+    }
+
+    /// @brief Add individual line segments: 0→1, 2→3, 4→5, ...
+    /// @param points Point pairs (must be even count, at least 4)
+    /// @param color Line color
+    /// @param thickness Line thickness in world coordinates
+    EntityBuilder& line_list(
+        std::vector<foxglove::schemas::Point3> points, const foxglove::schemas::Color& color,
+        double thickness = 0.01) {
+        if (points.size() < 4)
+            return *this;
+        foxglove::schemas::LinePrimitive line;
+        line.type      = foxglove::schemas::LinePrimitive::LineType::LINE_LIST;
+        line.pose      = current_pose_;
+        line.thickness = thickness;
+        line.points    = std::move(points);
+        line.color     = color;
+        entity_.lines.push_back(std::move(line));
+        return *this;
+    }
+
+    /// @brief Add a closed polygon: 0→1→...→N→0
+    EntityBuilder& line_loop(
+        std::vector<foxglove::schemas::Point3> points, const foxglove::schemas::Color& color,
+        double thickness = 0.01) {
+        if (points.size() < 3)
+            return *this;
+        foxglove::schemas::LinePrimitive line;
+        line.type      = foxglove::schemas::LinePrimitive::LineType::LINE_LOOP;
+        line.pose      = current_pose_;
+        line.thickness = thickness;
+        line.points    = std::move(points);
+        line.color     = color;
+        entity_.lines.push_back(std::move(line));
+        return *this;
+    }
+
+    /// @brief Add a cylinder primitive (usable as ring indicator)
+    /// @param diameter Cylinder diameter
+    /// @param height Cylinder height (use small value for ring/disc)
+    EntityBuilder& cylinder(double diameter, double height) {
+        foxglove::schemas::CylinderPrimitive prim;
+        prim.pose         = current_pose_;
+        prim.size         = foxglove::schemas::Vector3{diameter, diameter, height};
+        prim.color        = current_color_.value_or(tactical::L3::TRACKING_LOCKED);
+        prim.bottom_scale = 1.0;
+        prim.top_scale    = 1.0;
+        entity_.cylinders.push_back(std::move(prim));
+        return *this;
+    }
+
+    // ========================================================================
+    // PRIMITIVE MERGING (encapsulation-safe)
+    // ========================================================================
+
+    /// @brief Add a pre-built cube primitive directly
+    EntityBuilder& add_cube(foxglove::schemas::CubePrimitive cube) {
+        entity_.cubes.push_back(std::move(cube));
+        return *this;
+    }
+
+    /// @brief Add a pre-built sphere primitive directly
+    EntityBuilder& add_sphere(foxglove::schemas::SpherePrimitive sphere) {
+        entity_.spheres.push_back(std::move(sphere));
+        return *this;
+    }
+
+    /// @brief Add a pre-built text primitive directly
+    EntityBuilder& add_text(foxglove::schemas::TextPrimitive text) {
+        entity_.texts.push_back(std::move(text));
+        return *this;
+    }
+
+    /// @brief Add a pre-built arrow primitive directly
+    EntityBuilder& add_arrow(foxglove::schemas::ArrowPrimitive arrow) {
+        entity_.arrows.push_back(std::move(arrow));
+        return *this;
+    }
+
+    /// @brief Add a pre-built line primitive directly
+    EntityBuilder& add_line(foxglove::schemas::LinePrimitive line) {
+        entity_.lines.push_back(std::move(line));
+        return *this;
+    }
+
+    /// @brief Add a pre-built cylinder primitive directly
+    EntityBuilder& add_cylinder(foxglove::schemas::CylinderPrimitive cyl) {
+        entity_.cylinders.push_back(std::move(cyl));
+        return *this;
+    }
+
+    /// @brief Merge all primitives from another SceneEntity into this builder
+    /// Preserves this builder's id, frame_id, timestamp, lifetime, metadata.
+    EntityBuilder& merge_primitives(const foxglove::schemas::SceneEntity& other) {
+        entity_.spheres.insert(entity_.spheres.end(), other.spheres.begin(), other.spheres.end());
+        entity_.cubes.insert(entity_.cubes.end(), other.cubes.begin(), other.cubes.end());
+        entity_.texts.insert(entity_.texts.end(), other.texts.begin(), other.texts.end());
+        entity_.arrows.insert(entity_.arrows.end(), other.arrows.begin(), other.arrows.end());
+        entity_.lines.insert(entity_.lines.end(), other.lines.begin(), other.lines.end());
+        entity_.triangles.insert(
+            entity_.triangles.end(), other.triangles.begin(), other.triangles.end());
+        entity_.cylinders.insert(
+            entity_.cylinders.end(), other.cylinders.begin(), other.cylinders.end());
+        entity_.models.insert(entity_.models.end(), other.models.begin(), other.models.end());
         return *this;
     }
 
@@ -545,42 +692,6 @@ inline foxglove::schemas::SceneEntity
 // L4: GIMBAL VISUALIZATION
 // ============================================================================
 
-/// @brief Create gimbal selection marker (fire decision aware)
-/// @param pos Selection position (spherical coordinates converted to Cartesian)
-/// @param can_fire Whether fire is permitted (affects color)
-/// @param timestamp_ns Entity timestamp for TF interpolation
-template <fast_tf::frame Frame>
-inline foxglove::schemas::SceneEntity
-    selection_marker(const Eigen::Vector3d& pos, bool can_fire, uint64_t timestamp_ns) noexcept {
-    using namespace tactical;
-
-    const auto color = can_fire ? L4::GIMBAL_AIM_FIRE : L4::GIMBAL_AIM_HOLD;
-
-    return EntityBuilder::create<Frame>("l4", "selection")
-        .position(pos)
-        .size(L4::SELECTION_SIZE)
-        .color(color)
-        .sphere()
-        .metadata("fire_decision", can_fire ? "YES" : "NO")
-        .timestamp(timestamp_ns)
-        .build();
-}
-
-/// @brief Create predicted position marker
-template <fast_tf::frame Frame>
-inline foxglove::schemas::SceneEntity
-    predicted_position(const Eigen::Vector3d& pos, uint64_t timestamp_ns) noexcept {
-    using namespace tactical;
-
-    return EntityBuilder::create<Frame>("l4", "prediction")
-        .position(pos)
-        .size(L4::PREDICTION_SIZE)
-        .color(L3::PREDICTION_AMBER)
-        .timestamp(timestamp_ns)
-        .sphere()
-        .build();
-}
-
 /// @brief Create MPC trajectory point with temporal fade
 /// @param pos Point position
 /// @param temporal_distance Distance from present (0 = now)
@@ -629,6 +740,20 @@ inline std::vector<foxglove::schemas::SceneEntity> bullet_trajectory(
                 .color(color)
                 .sphere()
                 .timestamp(timestamp_ns)
+                .build());
+    }
+
+    // Connect trajectory dots with a visible line strip
+    if (points.size() >= 2) {
+        std::vector<foxglove::schemas::Point3> line_points;
+        line_points.reserve(points.size());
+        for (const auto& p : points) {
+            line_points.push_back(make_point3(p));
+        }
+        entities.push_back(
+            EntityBuilder::create<fast_tf::muzzle>("l4", "bullet_traj_line")
+                .timestamp(timestamp_ns)
+                .line_strip(std::move(line_points), color, L4::TRAJECTORY_LINE_THICKNESS)
                 .build());
     }
 
