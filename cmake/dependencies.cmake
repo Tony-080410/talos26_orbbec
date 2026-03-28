@@ -12,13 +12,15 @@ fetch_dependency(NAME Eigen3
                  REPO gitlab.com/libeigen/eigen
                  VERSION 5.0.1)
 
+set(BUILD_SHARED_LIBS ON CACHE BOOL "" FORCE)
 fetch_dependency(NAME fmt
                  REPO fmtlib/fmt
                  VERSION 12.1.0)
+set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
 
 set(SPDLOG_FMT_EXTERNAL ON CACHE BOOL "" FORCE)
 set(SPDLOG_ENABLE_PCH ON CACHE BOOL "" FORCE)
-set(SPDLOG_BUILD_PIC ON CACHE BOOL "" FORCE)
+set(SPDLOG_BUILD_SHARED ON CACHE BOOL "" FORCE)
 
 fetch_dependency(NAME spdlog
                  REPO gabime/spdlog

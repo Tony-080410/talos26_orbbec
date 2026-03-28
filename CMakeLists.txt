@@ -146,7 +146,9 @@ set(FCS_SOURCES
         src/fcs/core/trajectory/solver/trajectory_solver.cpp
         src/fcs/L1_sensor/camera_interface.cpp
         src/fcs/L1_sensor/output_interface.cpp
+        src/fcs/runtime/boot.cpp
         src/fcs/runtime/capturer.cpp
+        src/fcs/runtime/config_loader.cpp
         src/fcs/runtime/l1_l2_setup.cpp
         src/fcs/L2_perception/armor/at_legacy_detector_backend.cpp
         src/fcs/L2_perception/armor/at_legacy_systems.cpp
