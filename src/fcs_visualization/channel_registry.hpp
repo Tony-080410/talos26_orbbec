@@ -29,6 +29,7 @@ namespace fcs::detail {
     std::optional<foxglove::schemas::FrameTransformsChannel> MemberName;
 #define FOXGLOVE_CALIB_CHANNEL(MemberName) \
     std::optional<foxglove::schemas::CameraCalibrationChannel> MemberName;
+#define FOXGLOVE_LOG_CHANNEL(MemberName) std::optional<foxglove::schemas::LogChannel> MemberName;
 
 // ---------------------------------------------------------------------------
 // Channel Traits Macros - 生成 ChannelTraits 特化
@@ -91,6 +92,14 @@ namespace fcs::detail {
 #define TRY_CREATE_SPECIAL_CHANNEL(ChName, Topic, ChType)                           \
     do {                                                                            \
         auto ch = detail::try_create_channel<ChType>(Topic);                        \
+        if (!ch)                                                                    \
+            return std::unexpected(fmt::format("{} channel create failed", Topic)); \
+        channels.ChName = std::move(*ch);                                           \
+    } while (0)
+
+#define TRY_CREATE_LOG_CHANNEL(ChName, Topic)                                       \
+    do {                                                                            \
+        auto ch = detail::try_create_channel<foxglove::schemas::LogChannel>(Topic); \
         if (!ch)                                                                    \
             return std::unexpected(fmt::format("{} channel create failed", Topic)); \
         channels.ChName = std::move(*ch);                                           \

@@ -1,4 +1,5 @@
 #include "fcs/runtime/boot.hpp"
+#include "fcs_visualization/foxglove_sink.hpp"
 #include "fcs_visualization/foxglove_systems.hpp"
 #include "scheduler/error_formatter.hpp"
 #include "scheduler/scheduler.hpp"
@@ -29,6 +30,7 @@ int main() {
     if (foxglove_cfg.enabled) {
         auto server = fcs::try_create_foxglove_server(foxglove_cfg.port, foxglove_cfg.host);
         if (server) {
+            fcs::attach_foxglove_sink(*server);
             world.insert_resource(std::move(server));
             fcs::register_foxglove_systems(scheduler, &scheduler);
             SPDLOG_INFO(

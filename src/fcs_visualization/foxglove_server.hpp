@@ -35,6 +35,7 @@ namespace fcs {
     std::optional<foxglove::schemas::FrameTransformsChannel> MemberName;
 #define FOXGLOVE_CALIB_CHANNEL(MemberName) \
     std::optional<foxglove::schemas::CameraCalibrationChannel> MemberName;
+#define FOXGLOVE_LOG_CHANNEL(MemberName) std::optional<foxglove::schemas::LogChannel> MemberName;
 
 // ============================================================================
 // Channel Registry - 所有 channel 的统一管理
@@ -45,7 +46,6 @@ struct FoxgloveChannels {
     FOXGLOVE_SCENE_CHANNEL(track_scene_ch)
     FOXGLOVE_SCENE_CHANNEL(gimbal_scene_ch)
     FOXGLOVE_SCENE_CHANNEL(association_scene_ch)
-    FOXGLOVE_SCENE_CHANNEL(filter_covariance_scene_ch)
     FOXGLOVE_SCENE_CHANNEL(mpc_prediction_scene_ch)
     FOXGLOVE_SCENE_CHANNEL(rune_scene_ch)
 
@@ -56,7 +56,6 @@ struct FoxgloveChannels {
     FOXGLOVE_IMAGE_CHANNEL(rune_target_img_ch)
     FOXGLOVE_IMAGE_CHANNEL(rune_center_img_ch)
 
-    FOXGLOVE_JSON_CHANNEL(armor_ch)
     FOXGLOVE_JSON_CHANNEL(debug_lights_ch)
     FOXGLOVE_JSON_CHANNEL(debug_armors_ch)
     FOXGLOVE_JSON_CHANNEL(measurement_ch)
@@ -70,14 +69,11 @@ struct FoxgloveChannels {
     FOXGLOVE_JSON_CHANNEL(pnp_solver_ch)
     FOXGLOVE_JSON_CHANNEL(nn_confidence_ch)
 
-    FOXGLOVE_JSON_CHANNEL(mpc_horizon_ch)
-    FOXGLOVE_JSON_CHANNEL(mpc_cost_ch)
-    FOXGLOVE_JSON_CHANNEL(mpc_constraint_ch)
-
     FOXGLOVE_JSON_CHANNEL(energy_meter_ch)
 
     FOXGLOVE_TF_CHANNEL(tf_ch)
     FOXGLOVE_CALIB_CHANNEL(camera_calib_ch)
+    FOXGLOVE_LOG_CHANNEL(log_ch)
 };
 
 #undef FOXGLOVE_SCENE_CHANNEL
@@ -85,6 +81,7 @@ struct FoxgloveChannels {
 #undef FOXGLOVE_JSON_CHANNEL
 #undef FOXGLOVE_TF_CHANNEL
 #undef FOXGLOVE_CALIB_CHANNEL
+#undef FOXGLOVE_LOG_CHANNEL
 
 // ============================================================================
 // Forward declarations
@@ -110,7 +107,6 @@ struct ChannelTraits;
         }                                                                                        \
     };
 
-FOXGLOVE_JSON_TRAIT(ArmorDataMessage, armor_ch)
 FOXGLOVE_JSON_TRAIT(DebugLightsMessage, debug_lights_ch)
 FOXGLOVE_JSON_TRAIT(DebugArmorsMessage, debug_armors_ch)
 FOXGLOVE_JSON_TRAIT(RuneDebugMessage, rune_debug_ch)
@@ -122,9 +118,7 @@ FOXGLOVE_JSON_TRAIT(PerfStatsMessage, perf_stats_ch)
 FOXGLOVE_JSON_TRAIT(MpcTrajectoryMessage, mpc_traj_ch)
 FOXGLOVE_JSON_TRAIT(PnPSolverMessage, pnp_solver_ch)
 FOXGLOVE_JSON_TRAIT(NNConfidenceMessage, nn_confidence_ch)
-FOXGLOVE_JSON_TRAIT(MpcHorizonMessage, mpc_horizon_ch)
-FOXGLOVE_JSON_TRAIT(MpcCostMessage, mpc_cost_ch)
-FOXGLOVE_JSON_TRAIT(MpcConstraintMessage, mpc_constraint_ch)
+
 FOXGLOVE_JSON_TRAIT(EnergyMeterMessage, energy_meter_ch)
 #undef FOXGLOVE_JSON_TRAIT
 
@@ -162,6 +156,18 @@ FOXGLOVE_IMAGE_TRAIT(RuneTargetImageMessage, rune_target_img_ch)
 FOXGLOVE_IMAGE_TRAIT(RuneCenterImageMessage, rune_center_img_ch)
 #undef FOXGLOVE_IMAGE_TRAIT
 
+#define FOXGLOVE_LOG_TRAIT(MsgType, ChMember)                  \
+    template <>                                                \
+    struct ChannelTraits<MsgType> {                            \
+        static auto get(FoxgloveChannels& ch) noexcept         \
+            -> std::optional<foxglove::schemas::LogChannel>* { \
+            return std::addressof(ch.ChMember);                \
+        }                                                      \
+    };
+
+FOXGLOVE_LOG_TRAIT(LogMessage, log_ch)
+#undef FOXGLOVE_LOG_TRAIT
+
 template <>
 struct ChannelTraits<TfMessage> {
     static auto get(FoxgloveChannels& ch) noexcept
@@ -192,6 +198,11 @@ public:
 class FoxgloveServer {
 public:
     ~FoxgloveServer() noexcept {
+        bool expected = false;
+        if (!shutdown_done_.compare_exchange_strong(expected, true, std::memory_order_acq_rel))
+            return;
+
+        sink_alive_->store(false, std::memory_order_release);
         should_stop_ = true;
         if (sender_thread_.joinable())
             sender_thread_.join();
@@ -205,6 +216,9 @@ public:
 
     [[nodiscard]] bool is_initialized() const noexcept { return server_initialized_; }
     void enqueue_message(FoxgloveMessage msg) noexcept { message_queue_.push(std::move(msg)); }
+    [[nodiscard]] std::shared_ptr<std::atomic<bool>> sink_alive() const noexcept {
+        return sink_alive_;
+    }
 
     void publish_camera_calibration(
         uint32_t width, uint32_t height, const std::array<double, 9>& camera_matrix,
@@ -276,6 +290,8 @@ private:
             ch->log(m.scene);
         } else if constexpr (requires { m.img; }) {
             ch->log(m.img);
+        } else if constexpr (requires { m.log_msg; }) {
+            ch->log(m.log_msg);
         }
     }
 
@@ -298,11 +314,12 @@ private:
             }
             dispatch_message(msg);
         }
-        SPDLOG_INFO("Foxglove message sender thread stopped");
     }
 
     bool server_initialized_{false};
     std::atomic<bool> should_stop_{false};
+    std::atomic<bool> shutdown_done_{false};
+    std::shared_ptr<std::atomic<bool>> sink_alive_{std::make_shared<std::atomic<bool>>(true)};
     std::shared_ptr<foxglove::WebSocketServer> server_;
     FoxgloveChannels channels_;
     std::optional<fast_tf::FoxgloveExporter> tf_exporter_;
@@ -341,6 +358,14 @@ private:
 #define TRY_CREATE_SPECIAL_CHANNEL(ChName, Topic, ChType)                           \
     do {                                                                            \
         auto ch = detail::try_create_channel<ChType>(Topic);                        \
+        if (!ch)                                                                    \
+            return std::unexpected(fmt::format("{} channel create failed", Topic)); \
+        channels.ChName = std::move(*ch);                                           \
+    } while (0)
+
+#define TRY_CREATE_LOG_CHANNEL(ChName, Topic)                                       \
+    do {                                                                            \
+        auto ch = detail::try_create_channel<foxglove::schemas::LogChannel>(Topic); \
         if (!ch)                                                                    \
             return std::unexpected(fmt::format("{} channel create failed", Topic)); \
         channels.ChName = std::move(*ch);                                           \
@@ -386,7 +411,6 @@ std::expected<std::unique_ptr<FoxgloveServer>, std::string>
     TRY_CREATE_SCENE_CHANNEL(track_scene_ch, "/track/scene");
     TRY_CREATE_SCENE_CHANNEL(gimbal_scene_ch, "/solver/scene");
     TRY_CREATE_SCENE_CHANNEL(association_scene_ch, "/debug/association_scene");
-    TRY_CREATE_SCENE_CHANNEL(filter_covariance_scene_ch, "/debug/filter_covariance_scene");
     TRY_CREATE_SCENE_CHANNEL(mpc_prediction_scene_ch, "/debug/mpc_prediction_scene");
     TRY_CREATE_SCENE_CHANNEL(rune_scene_ch, "/rune/scene");
 
@@ -397,7 +421,6 @@ std::expected<std::unique_ptr<FoxgloveServer>, std::string>
     TRY_CREATE_IMAGE_CHANNEL(rune_target_img_ch, "/rune/target_img");
     TRY_CREATE_IMAGE_CHANNEL(rune_center_img_ch, "/rune/center_img");
 
-    TRY_CREATE_JSON_CHANNEL(armor_ch, "/armor_data");
     TRY_CREATE_JSON_CHANNEL(debug_lights_ch, "/debug/lights");
     TRY_CREATE_JSON_CHANNEL(debug_armors_ch, "/debug/armors");
     TRY_CREATE_JSON_CHANNEL(measurement_ch, "/solver/measurement");
@@ -411,15 +434,12 @@ std::expected<std::unique_ptr<FoxgloveServer>, std::string>
     TRY_CREATE_JSON_CHANNEL(pnp_solver_ch, "/debug/pnp_solver");
     TRY_CREATE_JSON_CHANNEL(nn_confidence_ch, "/debug/nn_confidence");
 
-    TRY_CREATE_JSON_CHANNEL(mpc_horizon_ch, "/debug/mpc_horizon");
-    TRY_CREATE_JSON_CHANNEL(mpc_cost_ch, "/debug/mpc_cost");
-    TRY_CREATE_JSON_CHANNEL(mpc_constraint_ch, "/debug/mpc_constraint");
-
     TRY_CREATE_JSON_CHANNEL(energy_meter_ch, "/energy_meter/state");
 
     TRY_CREATE_SPECIAL_CHANNEL(tf_ch, "/tf", foxglove::schemas::FrameTransformsChannel);
     TRY_CREATE_SPECIAL_CHANNEL(
         camera_calib_ch, "/camera_info", foxglove::schemas::CameraCalibrationChannel);
+    TRY_CREATE_LOG_CHANNEL(log_ch, "/log");
 
     // ====================================================================
     // FOXGLOVE SERVER FACTORY: PRIVATE CONSTRUCTOR PATTERN
@@ -458,6 +478,7 @@ std::expected<std::unique_ptr<FoxgloveServer>, std::string>
 #undef TRY_CREATE_IMAGE_CHANNEL
 #undef TRY_CREATE_JSON_CHANNEL
 #undef TRY_CREATE_SPECIAL_CHANNEL
+#undef TRY_CREATE_LOG_CHANNEL
 
 [[nodiscard]] inline std::expected<std::unique_ptr<FoxgloveServer>, std::string>
     create_foxglove_server(uint16_t port, std::string host) noexcept {

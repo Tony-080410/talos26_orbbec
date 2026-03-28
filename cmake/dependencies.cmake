@@ -129,7 +129,7 @@ endif ()
 
 message(STATUS "Foxglove platform: ${FOXGLOVE_PLATFORM}")
 
-set(FOXGLOVE_VERSION "v0.17.1")
+set(FOXGLOVE_VERSION "v0.21.0")
 
 # Fetch foxglove (custom URL + ZIP_NAME)
 fetch_dependency(NAME foxglove
@@ -141,8 +141,8 @@ FetchContent_GetProperties(foxglove SOURCE_DIR foxglove_SOURCE_DIR)
 
 # Foxglove SDK sources
 #
-# Avoid `file(GLOB ... CONFIGURE_DEPENDS ...)` here: on some setups it forces Ninja to run the
-# glob-check + CMake regeneration on *every* incremental build, which hurts edit/compile iteration.
+# Avoid `file(GLOB ... CONFIGURE_DEPENDS ...)`: on some setups it forces Ninja
+# to run the glob-check + CMake regeneration on *every* incremental build.
 #
 # This list is stable for the pinned SDK version above; update it only when bumping Foxglove.
 set(FOXGLOVE_SOURCES
@@ -151,7 +151,7 @@ set(FOXGLOVE_SOURCES
     "${foxglove_SOURCE_DIR}/src/error.cpp"
     "${foxglove_SOURCE_DIR}/src/foxglove.cpp"
     "${foxglove_SOURCE_DIR}/src/mcap.cpp"
-    "${foxglove_SOURCE_DIR}/src/schemas.cpp"
+    "${foxglove_SOURCE_DIR}/src/messages.cpp"
     "${foxglove_SOURCE_DIR}/src/server.cpp"
     "${foxglove_SOURCE_DIR}/src/server/connection_graph.cpp"
     "${foxglove_SOURCE_DIR}/src/server/fetch_asset.cpp"

@@ -48,9 +48,6 @@ struct TfMessage {
     foxglove::schemas::FrameTransforms tf;
 };
 
-/// 装甲板数据消息 (JSON)
-FOXGLOVE_JSON_MESSAGE(ArmorDataMessage)
-
 /// 二值化图像消息
 FOXGLOVE_IMAGE_MESSAGE(BinaryImageMessage)
 
@@ -100,32 +97,8 @@ FOXGLOVE_JSON_MESSAGE(PnPSolverMessage)
 // L2 Debug: NN confidence scores
 FOXGLOVE_JSON_MESSAGE(NNConfidenceMessage)
 
-// L3 Debug: Association phase probabilities
-FOXGLOVE_JSON_MESSAGE(AssociationPhaseMessage)
-
-// L3 Debug: Association permutation rankings
-FOXGLOVE_JSON_MESSAGE(AssociationPermutationMessage)
-
-// L3 Debug: Filter innovation vectors
-FOXGLOVE_JSON_MESSAGE(FilterInnovationMessage)
-
-// L3 Debug: Filter covariance trace
-FOXGLOVE_JSON_MESSAGE(FilterCovarianceMessage)
-
-// L3 Debug: State machine status
-FOXGLOVE_JSON_MESSAGE(StateMachineMessage)
-
 // L3 Debug: 3D scene for association visualization
 FOXGLOVE_SCENE_MESSAGE(AssociationSceneMessage)
-
-// L4 Debug: Full MPC prediction horizon
-FOXGLOVE_JSON_MESSAGE(MpcHorizonMessage)
-
-// L4 Debug: MPC cost evolution
-FOXGLOVE_JSON_MESSAGE(MpcCostMessage)
-
-// L4 Debug: MPC constraint margins
-FOXGLOVE_JSON_MESSAGE(MpcConstraintMessage)
 
 // L4 Debug: 3D scene for MPC prediction visualization
 FOXGLOVE_SCENE_MESSAGE(MpcPredictionSceneMessage)
@@ -137,9 +110,14 @@ FOXGLOVE_JSON_MESSAGE(EnergyMeterMessage)
 // Foxglove Message Variant
 // ============================================================================
 
+/// Log message (Foxglove Log panel)
+struct LogMessage {
+    foxglove::schemas::Log log_msg;
+};
+
 /// Foxglove 消息联合类型
 using FoxgloveMessage = std::variant<
-    ImageMessage, SceneMessage, TrackSceneMessage, TfMessage, ArmorDataMessage, BinaryImageMessage,
+    ImageMessage, SceneMessage, TrackSceneMessage, TfMessage, BinaryImageMessage,
     PatternImageMessage, DebugLightsMessage, DebugArmorsMessage, RuneArrowImageMessage,
     RuneTargetImageMessage, RuneCenterImageMessage, RuneDebugMessage, RuneSceneMessage,
     MeasurementMessage, TargetMessage, TargetSelectionTraceMessage, GimbalCmdMessage,
@@ -149,9 +127,11 @@ using FoxgloveMessage = std::variant<
     // L3 Debug
     AssociationSceneMessage,
     // L4 Debug
-    MpcHorizonMessage, MpcCostMessage, MpcConstraintMessage, MpcPredictionSceneMessage,
+    MpcPredictionSceneMessage,
     // Energy Meter
-    EnergyMeterMessage>;
+    EnergyMeterMessage,
+    // Log
+    LogMessage>;
 
 // ============================================================================
 // Utility Functions

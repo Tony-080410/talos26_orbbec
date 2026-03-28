@@ -21,6 +21,7 @@
 #include "core/channel_topics.hpp"
 #include "core/time.hpp"
 #include "foxglove_server.hpp"
+#include "foxglove_sink.hpp"
 #include "runtime/l1_l2_setup.hpp"
 #include "scheduler/scheduler.hpp"
 #include "toml_helper.hpp"
@@ -210,6 +211,7 @@ int main(int argc, char* argv[]) {
             SPDLOG_WARN("Foxglove server failed to initialize: {}", server_result.error());
         } else {
             foxglove_server = std::move(*server_result);
+            fcs::attach_foxglove_sink(*foxglove_server);
             world.insert_resource(foxglove_server);
             SPDLOG_INFO(
                 "Foxglove server started on {}:{}", config->foxglove.host, config->foxglove.port);
