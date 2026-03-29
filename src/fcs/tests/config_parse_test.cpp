@@ -154,12 +154,18 @@ TEST(ConfigParse, VisionBaseTomlMatchesExpectedSemanticsAndValues) {
     EXPECT_DOUBLE_EQ(config.tracker().robot.model.sigma_r0, 1.0);
     EXPECT_DOUBLE_EQ(config.tracker().robot.model.sigma_r1, 1.0);
     EXPECT_DOUBLE_EQ(config.tracker().robot.model.sigma_h, 0.8);
-    EXPECT_DOUBLE_EQ(config.tracker().robot.model.meas_yaw_var_floor, 4e-3);
-    EXPECT_DOUBLE_EQ(config.tracker().robot.model.meas_pitch_var_floor, 4e-3);
-    EXPECT_DOUBLE_EQ(config.tracker().robot.model.meas_dist_var_floor, 0.3);
-    EXPECT_DOUBLE_EQ(config.tracker().robot.model.meas_dist_delta_angle_k, 1.0);
-    EXPECT_DOUBLE_EQ(config.tracker().robot.model.meas_armor_yaw_var_floor, 9e-2);
-    EXPECT_DOUBLE_EQ(config.tracker().robot.model.meas_armor_yaw_range_k, 0.005);
+    EXPECT_DOUBLE_EQ(config.tracker().robot.model.r_yaw.base, 2e-3);
+    EXPECT_DOUBLE_EQ(config.tracker().robot.model.r_yaw.z, 2e-3);
+    EXPECT_DOUBLE_EQ(config.tracker().robot.model.r_pitch.base, 2e-3);
+    EXPECT_DOUBLE_EQ(config.tracker().robot.model.r_pitch.z, 2e-3);
+    EXPECT_DOUBLE_EQ(config.tracker().robot.model.r_dist.base, 0.15);
+    EXPECT_DOUBLE_EQ(config.tracker().robot.model.r_dist.z, 0.15);
+    EXPECT_DOUBLE_EQ(config.tracker().robot.model.r_armor_yaw.base, 0.045);
+    EXPECT_DOUBLE_EQ(config.tracker().robot.model.r_armor_yaw.z, 0.045);
+
+    EXPECT_DOUBLE_EQ(config.tracker().pnp_quality.sigma_ref, 0.002);
+    EXPECT_DOUBLE_EQ(config.tracker().pnp_quality.scale_min, 0.5);
+    EXPECT_DOUBLE_EQ(config.tracker().pnp_quality.scale_max, 5.0);
 
     EXPECT_DOUBLE_EQ(config.tracker().robot_inekf.radius0, 0.23);
     EXPECT_DOUBLE_EQ(config.tracker().robot_inekf.radius1, 0.23);
@@ -171,8 +177,10 @@ TEST(ConfigParse, VisionBaseTomlMatchesExpectedSemanticsAndValues) {
     EXPECT_DOUBLE_EQ(config.tracker().outpost.model.sigma_q_xy, 10.0);
     EXPECT_DOUBLE_EQ(config.tracker().outpost.model.sigma_q_z, 2.0);
     EXPECT_DOUBLE_EQ(config.tracker().outpost.model.sigma_a_yaw, 8.0);
-    EXPECT_DOUBLE_EQ(config.tracker().outpost.model.meas_dist_k, 0.43);
-    EXPECT_DOUBLE_EQ(config.tracker().outpost.model.yaw_log_k, 0.005);
+    EXPECT_DOUBLE_EQ(config.tracker().outpost.model.r_yaw.base, 2e-3);
+    EXPECT_DOUBLE_EQ(config.tracker().outpost.model.r_pitch.base, 2e-3);
+    EXPECT_DOUBLE_EQ(config.tracker().outpost.model.r_dist.base, 0.15);
+    EXPECT_DOUBLE_EQ(config.tracker().outpost.model.r_armor_yaw.base, 0.045);
 
     EXPECT_DOUBLE_EQ(config.l4->fire_decision.fire_thresh, 0.01744444);
     EXPECT_DOUBLE_EQ(config.l4->fire_decision.delay_gate_error_rad, 3.1744444);
@@ -286,7 +294,7 @@ TEST(ConfigParse, InlineHelpersAndFormattersBehaveAsExpected) {
     const auto tracker_ptr = vision.l3->tracker_ptr();
     ASSERT_TRUE(tracker_ptr);
     EXPECT_DOUBLE_EQ(tracker_ptr->robot.matcher_gate, vision.tracker().robot.matcher_gate);
-    EXPECT_DOUBLE_EQ(tracker_ptr->outpost.model.yaw_log_k, 0.005);
+    EXPECT_DOUBLE_EQ(tracker_ptr->outpost.model.r_armor_yaw.base, 0.045);
 
     EXPECT_TRUE(fcs::L4::is_on_target(vision.l4->fire_decision, 0.0, 0.0, 0.001, 0.001, 100.0));
     EXPECT_FALSE(fcs::L4::is_on_target(vision.l4->fire_decision, 0.0, 0.0, 0.2, 0.2, 100.0));

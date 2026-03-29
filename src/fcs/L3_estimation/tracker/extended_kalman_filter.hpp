@@ -134,6 +134,29 @@ public:
         return x_post;
     }
 
+    // Update with externally provided measurement noise covariance
+    MatrixX1 update(const MatrixZ1& z, const MatrixZZ& R_ext) noexcept {
+        ceres::Jet<double, N_X> x_p_jet[N_X];
+        for (int i = 0; i < N_X; i++) {
+            x_p_jet[i].a    = x_pri[i];
+            x_p_jet[i].v[i] = 1;
+        }
+        ceres::Jet<double, N_X> z_p_jet[N_Z];
+        h(x_p_jet, z_p_jet);
+
+        MatrixZ1 z_pri;
+        for (int i = 0; i < N_Z; i++) {
+            z_pri[i]              = z_p_jet[i].a;
+            H.block(i, 0, 1, N_X) = z_p_jet[i].v.transpose();
+        }
+
+        R      = R_ext;
+        K      = P_pri * H.transpose() * (H * P_pri * H.transpose() + R).inverse();
+        x_post = x_post + K * (z - z_pri);
+        P_post = (MatrixXX::Identity() - K * H) * P_pri;
+        return x_post;
+    }
+
 private:
     // Process nonlinear vector function
     PredicFunc f;

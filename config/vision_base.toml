@@ -78,12 +78,12 @@ sigma_a_yaw = 20.0              # Aligned with at_vision
 sigma_r0 = 1.0
 sigma_r1 = 1.0
 sigma_h = 0.8                   # Aligned with at_vision (was 0.5)
-meas_yaw_var_floor = 4e-3
-meas_pitch_var_floor = 4e-3
-meas_dist_var_floor = 0.3
-meas_dist_delta_angle_k = 1.0
-meas_armor_yaw_var_floor = 9e-2
-meas_armor_yaw_range_k = 0.005
+# Distance-dependent observation noise: R(i) = coeff.at(d, d_ref)
+r_dist_ref = 5.0                # Reference distance (meters)
+r_yaw = { base = 2e-3, z = 2e-3 }
+r_pitch = { base = 2e-3, z = 2e-3 }
+r_dist = { base = 0.15, z = 0.15 }
+r_armor_yaw = { base = 0.045, z = 0.045 }
 
 [tracker.robot_inekf]
 radius0 = 0.23
@@ -99,8 +99,20 @@ tracking_threshold = 4
 sigma_q_xy = 10.0
 sigma_q_z = 2.0
 sigma_a_yaw = 8.0
-meas_dist_k = 0.43
-yaw_log_k = 0.005
+# Distance-dependent observation noise: R(i) = coeff.at(d, d_ref)
+r_dist_ref = 5.0
+r_yaw = { base = 2e-3, z = 2e-3 }
+r_pitch = { base = 2e-3, z = 2e-3 }
+r_dist = { base = 0.15, z = 0.15 }
+r_armor_yaw = { base = 0.045, z = 0.045 }
+
+[tracker.pnp_quality]
+# PnP reprojection quality modulation for observation noise.
+# sigma_ref: reference reprojection RMSE; below → tighter, above → more conservative.
+# scale_min/max: clamp bounds for R scaling factor.
+sigma_ref = 0.002
+scale_min = 0.5
+scale_max = 5.0
 
 # ============================================================================
 # L4 Planning Configuration (Aimer + Planner Architecture)

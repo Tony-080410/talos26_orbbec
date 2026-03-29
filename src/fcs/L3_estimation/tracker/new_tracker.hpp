@@ -78,6 +78,14 @@ public:
         x_        = ekf_.update(z);
     }
 
+    void update(const VecZ& z, int armor_id, const MatZZ& R) noexcept {
+        if (!active_) {
+            return;
+        }
+        armor_id_ = Model::clamp_armor_id(armor_id);
+        x_        = ekf_.update(z, R);
+    }
+
     [[nodiscard]] bool active() const noexcept { return active_; }
 
     [[nodiscard]] const VecX& x() const noexcept { return x_; }
@@ -296,6 +304,7 @@ private:
         int armor_id{0};
         double cost{0.0};
         typename TargetInfo::VecZ z_update{};
+        typename TargetInfo::MatZZ R_update{};
     };
 
     template <typename TargetInfo>
@@ -330,10 +339,21 @@ private:
         for (const size_t obs_index : obs_indices) {
             const auto& meas = measurements.measurements[obs_index];
             const VecZ z_raw = measurement_to_z_(meas);
+
+            // Distance-dependent R with PnP quality modulation.
+            MatZZ R = target.model().R(z_raw);
+
+            // Modulate by PnP quality: worse reprojection → larger R → less trust.
+            if (meas.pnp_sigma_obs > 0.0) {
+                const double q = std::clamp(
+                    meas.pnp_sigma_obs / config_.pnp_quality.sigma_ref,
+                    config_.pnp_quality.scale_min, config_.pnp_quality.scale_max);
+                R *= q * q;
+            }
+
             for (int id = 0; id < armors_num; ++id) {
                 const VecZ z_pred = target.model().h(target.x(), id);
                 const VecZ nu     = innovation_(z_pred, z_raw);
-                const MatZZ R     = target.model().R(z_raw);
                 const double d2   = mahalanobis_diag_(nu, R);
                 if (!std::isfinite(d2) || d2 >= matcher_gate_) {
                     continue;
@@ -349,6 +369,7 @@ private:
                 candidate.armor_id  = id;
                 candidate.cost      = cost;
                 candidate.z_update  = wrap_measurement_(z_pred, z_raw);
+                candidate.R_update  = R;
                 candidates.push_back(candidate);
             }
         }
@@ -394,7 +415,7 @@ private:
         }
 
         for (const auto& candidate : selected) {
-            target.update(candidate.z_update, candidate.armor_id);
+            target.update(candidate.z_update, candidate.armor_id, candidate.R_update);
             const bool another_pair =
                 enable_robot_pair_measure && (candidate.armor_id == 1 || candidate.armor_id == 3);
             set_measurement_(candidate.z_update, another_pair);
@@ -495,6 +516,38 @@ private:
             d2 += nu[i] * nu[i] / var;
         }
         return d2;
+    }
+
+    /// Full Mahalanobis distance with LDLT decomposition for non-diagonal R.
+    template <typename VecZ, typename MatZZ>
+    static double mahalanobis_(const VecZ& nu, const MatZZ& R) noexcept {
+        Eigen::LDLT<MatZZ> ldlt(R);
+        if (ldlt.info() != Eigen::Success) {
+            return 1e9;
+        }
+        return static_cast<double>(nu.transpose() * ldlt.solve(nu));
+    }
+
+    /// Propagate PnP parameter covariance to observation-space R.
+    /// Σ_params is [yaw, tx, ty, tz] in odom frame.
+    /// J maps params → [armor_yaw_obs, armor_pitch_obs, armor_dist_obs, armor_yaw_armor_obs]:
+    ///   J.block<3,3>(0,1) = xyz2ypd_jacobian(pos_odom)
+    ///   J(3,0) = 1.0  (armor_yaw_obs ≈ yaw_param)
+    static RobotEkfMotionModel::MatZZ
+        propagate_R_(const Eigen::Matrix4d& Sigma, const Eigen::Vector3d& pos_odom) noexcept {
+        const Eigen::Matrix3d J_sph = xyz2ypd_jacobian(pos_odom);
+
+        Eigen::Matrix4d J   = Eigen::Matrix4d::Zero();
+        J.block<3, 3>(0, 1) = J_sph; // ∂(yaw,pitch,dist)/∂(tx,ty,tz)_odom
+        J(3, 0)             = 1.0;   // ∂armor_yaw_obs/∂yaw_param
+
+        RobotEkfMotionModel::MatZZ R = (J * Sigma * J.transpose());
+        // Enforce symmetry and positive diagonals
+        R = (R + R.transpose()) / 2.0;
+        for (int i = 0; i < R.rows(); ++i) {
+            R(i, i) = std::max(R(i, i), 1e-9);
+        }
+        return R;
     }
 
     void state_machine(bool found) noexcept {
