@@ -90,6 +90,8 @@ public:
 
     [[nodiscard]] const VecX& x() const noexcept { return x_; }
 
+    [[nodiscard]] void set_state_unsafe(VecX x) noexcept { ekf_.setState(x); }
+
     [[nodiscard]] const Model& model() const noexcept { return model_; }
 
     [[nodiscard]] Model& model() noexcept { return model_; }
@@ -134,9 +136,25 @@ public:
             if (!outpost_target_.has_value()) {
                 return false;
             }
-            return update_target_(
+            auto d = update_target_(
                 *outpost_target_, measurements, OutpostEkfMotionModel::ARMORS_NUM,
                 outpost_last_armor_id_, false);
+
+            auto x           = outpost_target_->x();
+            auto v_yaw       = x[O_VYAW];
+            auto ref         = OutpostEkfMotionModel::OUTPOST_V_YAW;
+            auto std         = 0.6 * OutpostEkfMotionModel::OUTPOST_V_YAW;
+            constexpr auto K = 0.5; // Magic that auto stick to ground truth vyaw
+            v_yaw            = OutpostEkfMotionModel::OUTPOST_V_YAW * std::tanh(K * v_yaw);
+            if (v_yaw > std) {
+                v_yaw = ref;
+            } else if (v_yaw < -std) {
+                v_yaw = -ref;
+            }
+            x[O_VYAW] = v_yaw;
+
+            outpost_target_->set_state_unsafe(x);
+            return d;
         }
 
         if (!robot_target_.has_value()) {
@@ -172,7 +190,6 @@ public:
         const auto& target     = measurements.measurements[static_cast<size_t>(min_idx)];
         const auto& pos        = target.transform.translation();
         const double armor_yaw = target.yaw();
-        constexpr double v0    = 0.0;
 
         target_name_                   = target.name;
         target_color_                  = target.color;
@@ -192,9 +209,17 @@ public:
             const double z0 = pos.z();
 
             OutpostEkfMotionModel::VecX xp0;
-            xp0 << x0, y0, armor_yaw, v0, z0, z0, z0;
+            xp0 << x0, y0, armor_yaw, 0.0, z0, z0, z0;
             OutpostEkfMotionModel::MatXX P0 = OutpostEkfMotionModel::MatXX::Identity();
 
+            P0(O_XC, O_XC) = 1e-9;
+            P0(O_YC, O_YC) = 1e-9;
+
+            P0(V_YAW, V_YAW) = 1e9;
+
+            P0(O_Z0, O_Z0) = 1e9;
+            P0(O_Z1, O_Z1) = 1e9;
+            P0(O_Z2, O_Z2) = 1e9;
             outpost_target_.emplace();
             outpost_target_->initialize(config_.outpost.model, xp0, P0);
             outpost_last_armor_id_ = 0;
@@ -212,15 +237,22 @@ public:
             const double z0       = pos.z() - 0.5 * h_prior;
 
             RobotEkfMotionModel::VecX xp0;
+            auto v0 = 0.0;
             xp0 << x0, v0, y0, v0, z0, v0, armor_yaw, v0, r0_prior, r1_prior, h_prior;
             RobotEkfMotionModel::MatXX P0 = RobotEkfMotionModel::MatXX::Identity();
-            P0(VX, VX)                    = 9.0;
-            P0(VY, VY)                    = 9.0;
-            P0(VZ, VZ)                    = 1.0;
-            P0(V_YAW, V_YAW)              = 36.0;
-            P0(R_0, R_0)                  = 1e-6;
-            P0(R_1, R_1)                  = 1e-6;
-            P0(H, H)                      = 1e-6;
+
+            P0(XC, XC) = 1e9;
+            P0(YC, YC) = 1e9;
+
+            P0(VX, VX) = 1e9;
+            P0(VY, VY) = 1e9;
+            P0(VZ, VZ) = 1e9;
+
+            P0(V_YAW, V_YAW) = 1e9;
+
+            P0(R_0, R_0) = 1e-5;
+            P0(R_1, R_1) = 1e-5;
+            P0(H, H)     = 1e-5;
 
             robot_target_.emplace();
             robot_target_->initialize(config_.robot.model, xp0, P0);
@@ -526,28 +558,6 @@ private:
             return 1e9;
         }
         return static_cast<double>(nu.transpose() * ldlt.solve(nu));
-    }
-
-    /// Propagate PnP parameter covariance to observation-space R.
-    /// Σ_params is [yaw, tx, ty, tz] in odom frame.
-    /// J maps params → [armor_yaw_obs, armor_pitch_obs, armor_dist_obs, armor_yaw_armor_obs]:
-    ///   J.block<3,3>(0,1) = xyz2ypd_jacobian(pos_odom)
-    ///   J(3,0) = 1.0  (armor_yaw_obs ≈ yaw_param)
-    static RobotEkfMotionModel::MatZZ
-        propagate_R_(const Eigen::Matrix4d& Sigma, const Eigen::Vector3d& pos_odom) noexcept {
-        const Eigen::Matrix3d J_sph = xyz2ypd_jacobian(pos_odom);
-
-        Eigen::Matrix4d J   = Eigen::Matrix4d::Zero();
-        J.block<3, 3>(0, 1) = J_sph; // ∂(yaw,pitch,dist)/∂(tx,ty,tz)_odom
-        J(3, 0)             = 1.0;   // ∂armor_yaw_obs/∂yaw_param
-
-        RobotEkfMotionModel::MatZZ R = (J * Sigma * J.transpose());
-        // Enforce symmetry and positive diagonals
-        R = (R + R.transpose()) / 2.0;
-        for (int i = 0; i < R.rows(); ++i) {
-            R(i, i) = std::max(R(i, i), 1e-9);
-        }
-        return R;
     }
 
     void state_machine(bool found) noexcept {
