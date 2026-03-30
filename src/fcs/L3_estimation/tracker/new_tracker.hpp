@@ -78,14 +78,6 @@ public:
         x_        = ekf_.update(z);
     }
 
-    void update(const VecZ& z, int armor_id, const MatZZ& R) noexcept {
-        if (!active_) {
-            return;
-        }
-        armor_id_ = Model::clamp_armor_id(armor_id);
-        x_        = ekf_.update(z, R);
-    }
-
     [[nodiscard]] bool active() const noexcept { return active_; }
 
     [[nodiscard]] const VecX& x() const noexcept { return x_; }
@@ -351,7 +343,6 @@ private:
         int armor_id{0};
         double cost{0.0};
         typename TargetInfo::VecZ z_update{};
-        typename TargetInfo::MatZZ R_update{};
     };
 
     template <typename TargetInfo>
@@ -386,21 +377,10 @@ private:
         for (const size_t obs_index : obs_indices) {
             const auto& meas = measurements.measurements[obs_index];
             const VecZ z_raw = measurement_to_z_(meas);
-
-            // Distance-dependent R with PnP quality modulation.
-            MatZZ R = target.model().R(z_raw);
-
-            // Modulate by PnP quality: worse reprojection → larger R → less trust.
-            if (meas.pnp_sigma_obs > 0.0) {
-                const double q = std::clamp(
-                    meas.pnp_sigma_obs / config_.pnp_quality.sigma_ref,
-                    config_.pnp_quality.scale_min, config_.pnp_quality.scale_max);
-                R *= q * q;
-            }
-
             for (int id = 0; id < armors_num; ++id) {
                 const VecZ z_pred = target.model().h(target.x(), id);
                 const VecZ nu     = innovation_(z_pred, z_raw);
+                const MatZZ R     = target.model().R(z_raw);
                 const double d2   = mahalanobis_diag_(nu, R);
                 if (!std::isfinite(d2) || d2 >= matcher_gate_) {
                     continue;
@@ -416,7 +396,6 @@ private:
                 candidate.armor_id  = id;
                 candidate.cost      = cost;
                 candidate.z_update  = wrap_measurement_(z_pred, z_raw);
-                candidate.R_update  = R;
                 candidates.push_back(candidate);
             }
         }
@@ -462,7 +441,7 @@ private:
         }
 
         for (const auto& candidate : selected) {
-            target.update(candidate.z_update, candidate.armor_id, candidate.R_update);
+            target.update(candidate.z_update, candidate.armor_id);
             const bool another_pair =
                 enable_robot_pair_measure && (candidate.armor_id == 1 || candidate.armor_id == 3);
             set_measurement_(candidate.z_update, another_pair);

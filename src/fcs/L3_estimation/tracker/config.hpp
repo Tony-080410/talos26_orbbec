@@ -28,24 +28,11 @@ struct RobotInEKFConfig {
     double height{0.0};   // z1 - z0 (armor 1,3 height offset)
 };
 
-struct PnpQualityConfig {
-    /// Reference σ_obs for quality modulation scaling.
-    /// PnP reprojection RMSE below this → tighter tracking; above → more conservative.
-    double sigma_ref{0.002};
-    /// Minimum quality scale factor (clamp lower bound).
-    double scale_min{0.5};
-    /// Maximum quality scale factor (clamp upper bound).
-    double scale_max{5.0};
-};
-
 struct TrackerConfig {
     /// Robot target parameters
     TargetConfig<RobotEkfMotionModel::Params> robot;
     /// Outpost target parameters
     TargetConfig<OutpostEkfMotionModel::Params> outpost;
-
-    /// PnP observation quality modulation
-    PnpQualityConfig pnp_quality;
 
     /// InEKF parameters
     RobotInEKFConfig robot_inekf;

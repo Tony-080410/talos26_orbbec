@@ -102,16 +102,12 @@ struct AtLegacyArmorMeasurementT {
     using Transform = fast_tf::TransformMatrixd<at_legacy_armor_frame, Frame>;
 
     Transform transform{};
-    /// 4×4 parameter covariance from PnP refinement: [yaw, tx, ty, tz].
-    /// Zero when unavailable (triggers heuristic R fallback in tracker).
-    Eigen::Matrix4d pose_covariance = Eigen::Matrix4d::Zero();
-    ArmorName name                  = ArmorName::Invalid;
-    ArmorColor color                = ArmorColor::Neutral;
-    ArmorType type                  = ArmorType::Small;
-    float confidence                = 0.0f;
-    float distance_to_image_center  = 0.0f; // Pixel distance from armor center to image center
-    uint64_t timestamp_ns           = 0;
-    double pnp_sigma_obs = 0.0; // PnP reprojection RMSE (quality indicator, 0 = unavailable)
+    ArmorName name                 = ArmorName::Invalid;
+    ArmorColor color               = ArmorColor::Neutral;
+    ArmorType type                 = ArmorType::Small;
+    float confidence               = 0.0f;
+    float distance_to_image_center = 0.0f; // Pixel distance from armor center to image center
+    uint64_t timestamp_ns          = 0;
 
     AtLegacyArmorMeasurementT() = default;
 
@@ -158,24 +154,6 @@ struct AtLegacyArmorMeasurementT {
         reframed.confidence               = confidence;
         reframed.distance_to_image_center = distance_to_image_center;
         reframed.timestamp_ns             = timestamp_ns;
-        reframed.pnp_sigma_obs            = pnp_sigma_obs;
-
-        // Rotate pose_covariance from camera to odom frame.
-        // Parameter order: [yaw, tx, ty, tz].  Only position block (rows/cols 1-3) is affected.
-        if (!pose_covariance.isZero()) {
-            const Eigen::Matrix3d R = frame_transform.rotation();
-            // Position-position block
-            reframed.pose_covariance.template block<3, 3>(1, 1) =
-                R * pose_covariance.template block<3, 3>(1, 1) * R.transpose();
-            // Position-yaw cross-covariance
-            reframed.pose_covariance.template block<3, 1>(1, 0) =
-                R * pose_covariance.template block<3, 1>(1, 0);
-            reframed.pose_covariance.template block<1, 3>(0, 1) =
-                reframed.pose_covariance.template block<3, 1>(1, 0).transpose();
-            // Yaw variance (scalar, rotation-invariant)
-            reframed.pose_covariance(0, 0) = pose_covariance(0, 0);
-        }
-
         return reframed;
     }
 };

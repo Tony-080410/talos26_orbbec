@@ -10,18 +10,6 @@
 
 namespace fcs::L3 {
 
-/// Per-dimension distance-dependent noise coefficient.
-/// R(i) = base + z_coeff * (d / d_ref)^2
-struct DistanceNoiseCoeff {
-    double base = 0.0;
-    double z    = 0.0;
-
-    [[nodiscard]] double at(double d, double d_ref) const noexcept {
-        const double dr2 = (d / d_ref) * (d / d_ref);
-        return std::max(1e-8, base + z * dr2);
-    }
-};
-
 /// Concept for motion models compatible with SRUKF/ISRCKF
 template <typename M>
 concept MotionModel = requires(M m, typename M::VecX x, typename M::Scalar dt, int id) {
@@ -60,13 +48,13 @@ struct RobotEkfMotionModel {
         Scalar sigma_r0    = 1.0;  // Radius R0 drift noise
         Scalar sigma_r1    = 1.0;  // Radius R1 drift noise (note: reference uses sigma_r0 for R_1)
         Scalar sigma_h     = 0.5;  // Height H drift noise
-        // Distance-dependent observation noise: R(i) = coeff.at(d, d_ref)
-        // Calibrated at d_ref = 5 m to match previous heuristic performance.
-        Scalar r_dist_ref = 5.0; // Reference distance (meters)
-        DistanceNoiseCoeff r_yaw{2e-3, 2e-3};
-        DistanceNoiseCoeff r_pitch{2e-3, 2e-3};
-        DistanceNoiseCoeff r_dist{0.15, 0.15};
-        DistanceNoiseCoeff r_armor_yaw{0.045, 0.045};
+        // Measurement noise parameters (variance domain).
+        Scalar meas_yaw_var_floor       = 4e-3;
+        Scalar meas_pitch_var_floor     = 4e-3;
+        Scalar meas_dist_var_floor      = 0.3;
+        Scalar meas_dist_delta_angle_k  = 1.0;
+        Scalar meas_armor_yaw_var_floor = 9e-2;
+        Scalar meas_armor_yaw_range_k   = 1.0 / 200.0;
     };
     Params params{};
 
@@ -161,24 +149,30 @@ struct RobotEkfMotionModel {
     }
 
     [[nodiscard]] MatZZ R(const VecZ& z) const noexcept {
-        const double d    = z[ARMOR_DISTANCE];
-        const double dref = params.r_dist_ref;
-        MatZZ R           = MatZZ::Zero();
-        R(0, 0)           = params.r_yaw.at(d, dref);
-        R(1, 1)           = params.r_pitch.at(d, dref);
-        R(2, 2)           = params.r_dist.at(d, dref);
-        R(3, 3)           = params.r_armor_yaw.at(d, dref);
+        MatZZ R                  = MatZZ::Zero();
+        const double delta_angle = shortest_rad(z[ARMOR_YAW], z[ARMOR_YAW_ARMOR]);
+        R(0, 0)                  = std::max(1e-8, params.meas_yaw_var_floor);
+        R(1, 1)                  = std::max(1e-8, params.meas_pitch_var_floor);
+        R(2, 2)                  = std::max(
+            1e-8, params.meas_dist_var_floor
+                      + params.meas_dist_delta_angle_k * std::log(std::abs(delta_angle) + 1.0));
+        R(3, 3) = std::max(
+            1e-8,
+            params.meas_armor_yaw_var_floor
+                + params.meas_armor_yaw_range_k * std::log(std::abs(z[ARMOR_DISTANCE]) + 1.0));
         return R;
     }
 
-    /// Measurement noise diagonal
+    /// Measurement noise diagonal (match reference: +0.3 not +1.0)
     [[nodiscard]] Eigen::Matrix<Scalar, NZ, 1> R_diag(const VecZ& z) const noexcept {
-        const double d    = z[ARMOR_DISTANCE];
-        const double dref = params.r_dist_ref;
-        Eigen::Matrix<Scalar, NZ, 1> r;
-        r << params.r_yaw.at(d, dref), params.r_pitch.at(d, dref), params.r_dist.at(d, dref),
-            params.r_armor_yaw.at(d, dref);
-        return r;
+        const Scalar delta_angle = shortest_rad(z[ARMOR_YAW], z[ARMOR_YAW_ARMOR]);
+        Eigen::Matrix<Scalar, NZ, 1> R_dig;
+        R_dig << params.meas_yaw_var_floor, params.meas_pitch_var_floor,
+            params.meas_dist_var_floor
+                + params.meas_dist_delta_angle_k * std::log(std::abs(delta_angle) + 1.0),
+            params.meas_armor_yaw_var_floor
+                + params.meas_armor_yaw_range_k * std::log(std::abs(z[ARMOR_DISTANCE]) + 1.0);
+        return R_dig;
     }
 };
 
@@ -201,12 +195,9 @@ struct OutpostEkfMotionModel {
         Scalar sigma_q_z   = 1.0;
         Scalar sigma_a_yaw = 1.0;
 
-        // Distance-dependent observation noise: R(i) = coeff.at(d, d_ref)
-        Scalar r_dist_ref = 5.0;
-        DistanceNoiseCoeff r_yaw{2e-3, 2e-3};
-        DistanceNoiseCoeff r_pitch{2e-3, 2e-3};
-        DistanceNoiseCoeff r_dist{0.15, 0.15};
-        DistanceNoiseCoeff r_armor_yaw{0.045, 0.045};
+        // 观测噪声（和距离、yaw 误差有关）
+        Scalar meas_dist_k = 0.43;  // 距离权重的系数 K
+        Scalar yaw_log_k   = 0.005; // yaw 噪声前的系数
     };
     Params params{};
 
@@ -293,23 +284,22 @@ struct OutpostEkfMotionModel {
     }
 
     [[nodiscard]] MatZZ R(const VecZ& z) const noexcept {
-        const double d    = z[ARMOR_DISTANCE];
-        const double dref = params.r_dist_ref;
-        MatZZ R           = MatZZ::Zero();
-        R(0, 0)           = params.r_yaw.at(d, dref);
-        R(1, 1)           = params.r_pitch.at(d, dref);
-        R(2, 2)           = params.r_dist.at(d, dref);
-        R(3, 3)           = params.r_armor_yaw.at(d, dref);
+        MatZZ R                  = MatZZ::Zero();
+        const double delta_angle = shortest_rad(z[ARMOR_YAW], z[ARMOR_YAW_ARMOR]);
+        // Keep measurement model aligned with ISRCKF OutpostModel::R_diag.
+        R(0, 0) = 4e-3;
+        R(1, 1) = 4e-3;
+        R(2, 2) = std::log(std::abs(delta_angle) + 1.0) + 0.3;
+        R(3, 3) = std::log(std::abs(z[ARMOR_DISTANCE]) + 1.0) / 200.0 + 9e-2;
         return R;
     }
 
     Eigen::Matrix<Scalar, NZ, 1> R_diag(const VecZ& z) const {
-        const double d    = z[ARMOR_DISTANCE];
-        const double dref = params.r_dist_ref;
-        Eigen::Matrix<Scalar, NZ, 1> r;
-        r << params.r_yaw.at(d, dref), params.r_pitch.at(d, dref), params.r_dist.at(d, dref),
-            params.r_armor_yaw.at(d, dref);
-        return r;
+        const double delta_angle = shortest_rad(z[0], z[3]);
+        Eigen::Matrix<Scalar, NZ, 1> R_dig;
+        R_dig << 4e-3, 4e-3, std::log(std::abs(delta_angle) + 1.0) + 0.3,
+            std::log(std::abs(z[ARMOR_DISTANCE]) + 1.0) / 200.0 + 9e-2;
+        return R_dig;
     }
 };
 
