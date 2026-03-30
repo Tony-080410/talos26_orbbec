@@ -103,6 +103,9 @@ FOXGLOVE_SCENE_MESSAGE(AssociationSceneMessage)
 // L4 Debug: 3D scene for MPC prediction visualization
 FOXGLOVE_SCENE_MESSAGE(MpcPredictionSceneMessage)
 
+// L3 Debug: EKF matrix heatmap
+FOXGLOVE_IMAGE_MESSAGE(EkfHeatmapMessage)
+
 /// Energy meter state message (JSON)
 FOXGLOVE_JSON_MESSAGE(EnergyMeterMessage)
 
@@ -125,7 +128,7 @@ using FoxgloveMessage = std::variant<
     // L2 Debug
     PnPSolverMessage, NNConfidenceMessage,
     // L3 Debug
-    AssociationSceneMessage,
+    AssociationSceneMessage, EkfHeatmapMessage,
     // L4 Debug
     MpcPredictionSceneMessage,
     // Energy Meter

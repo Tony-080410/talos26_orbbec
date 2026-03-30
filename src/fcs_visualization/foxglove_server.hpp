@@ -71,6 +71,8 @@ struct FoxgloveChannels {
 
     FOXGLOVE_JSON_CHANNEL(energy_meter_ch)
 
+    FOXGLOVE_IMAGE_CHANNEL(ekf_heatmap_ch)
+
     FOXGLOVE_TF_CHANNEL(tf_ch)
     FOXGLOVE_CALIB_CHANNEL(camera_calib_ch)
     FOXGLOVE_LOG_CHANNEL(log_ch)
@@ -154,6 +156,7 @@ FOXGLOVE_IMAGE_TRAIT(PatternImageMessage, pattern_img_ch)
 FOXGLOVE_IMAGE_TRAIT(RuneArrowImageMessage, rune_arrow_img_ch)
 FOXGLOVE_IMAGE_TRAIT(RuneTargetImageMessage, rune_target_img_ch)
 FOXGLOVE_IMAGE_TRAIT(RuneCenterImageMessage, rune_center_img_ch)
+FOXGLOVE_IMAGE_TRAIT(EkfHeatmapMessage, ekf_heatmap_ch)
 #undef FOXGLOVE_IMAGE_TRAIT
 
 #define FOXGLOVE_LOG_TRAIT(MsgType, ChMember)                  \
@@ -420,6 +423,7 @@ std::expected<std::unique_ptr<FoxgloveServer>, std::string>
     TRY_CREATE_IMAGE_CHANNEL(rune_arrow_img_ch, "/rune/arrow_img");
     TRY_CREATE_IMAGE_CHANNEL(rune_target_img_ch, "/rune/target_img");
     TRY_CREATE_IMAGE_CHANNEL(rune_center_img_ch, "/rune/center_img");
+    TRY_CREATE_IMAGE_CHANNEL(ekf_heatmap_ch, "/debug/ekf_heatmap");
 
     TRY_CREATE_JSON_CHANNEL(debug_lights_ch, "/debug/lights");
     TRY_CREATE_JSON_CHANNEL(debug_armors_ch, "/debug/armors");

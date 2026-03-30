@@ -4,7 +4,10 @@
 #include <array>
 #include <cmath>
 #include <numbers>
+#include <string>
 #include <vector>
+
+#include <magic_enum.hpp>
 
 namespace fcs::L3 {
 
@@ -48,6 +51,25 @@ enum Measure : uint8_t {
     ARMOR_YAW_ARMOR,
     MEASURE_MAX,
 };
+
+// ============================================================================
+// Enum Label Helpers (magic_enum backed)
+// ============================================================================
+
+/// Get label for a single RoboState index
+[[nodiscard]] inline std::string_view robo_state_label(int i) noexcept {
+    return magic_enum::enum_name(static_cast<RoboState>(i));
+}
+
+/// Get label for a single OutpostState index
+[[nodiscard]] inline std::string_view outpost_state_label(int i) noexcept {
+    return magic_enum::enum_name(static_cast<OutpostState>(i));
+}
+
+/// Get label for a single Measure index
+[[nodiscard]] inline std::string_view measure_label(int i) noexcept {
+    return magic_enum::enum_name(static_cast<Measure>(i));
+}
 
 // ============================================================================
 // Coordinate Transforms

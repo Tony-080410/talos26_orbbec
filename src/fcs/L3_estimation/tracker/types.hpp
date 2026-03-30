@@ -47,6 +47,12 @@ struct RobotTargetState {
 
     int armors_num{4};
 
+    // EKF internal matrices (for visualization only)
+    Eigen::MatrixXd P; // Posterior covariance (11×11)
+    Eigen::MatrixXd K; // Kalman gain (11×4)
+    Eigen::MatrixXd Q; // Process noise covariance (11×11)
+    Eigen::MatrixXd R; // Measurement noise covariance (4×4)
+
     /// Calculate all armor poses [x, y, z, yaw]
     [[nodiscard]] std::array<Eigen::Vector4d, 4> armor_poses() const noexcept;
 };
@@ -64,6 +70,12 @@ struct OutpostTargetState {
 
     static constexpr double radius  = 0.2765;
     static constexpr int armors_num = 3;
+
+    // EKF internal matrices (for visualization only)
+    Eigen::MatrixXd P; // Posterior covariance (7×7)
+    Eigen::MatrixXd K; // Kalman gain (7×4)
+    Eigen::MatrixXd Q; // Process noise covariance (7×7)
+    Eigen::MatrixXd R; // Measurement noise covariance (4×4)
 
     /// Calculate all armor poses [x, y, z, yaw]
     [[nodiscard]] std::array<Eigen::Vector4d, 3> armor_poses() const noexcept;

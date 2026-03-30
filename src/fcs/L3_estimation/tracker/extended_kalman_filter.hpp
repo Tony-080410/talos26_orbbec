@@ -84,6 +84,13 @@ public:
     // Set the initial state
     void setState(const MatrixX1& x0) noexcept { x_post = x0; }
 
+    // Read-only access for visualization
+    [[nodiscard]] const MatrixX1& X() const noexcept { return x_post; }
+    [[nodiscard]] const MatrixXX& P() const noexcept { return P_post; }
+    [[nodiscard]] const MatrixXZ& K_gain() const noexcept { return K_; }
+    [[nodiscard]] const MatrixXX& Q_mat() const noexcept { return Q; }
+    [[nodiscard]] const MatrixZZ& R_mat() const noexcept { return R; }
+
     void setPredictFunc(const PredicFunc& f) noexcept { this->f = f; }
 
     void setMeasureFunc(const MeasureFunc& h) noexcept { this->h = h; }
@@ -128,9 +135,9 @@ public:
         }
 
         R      = update_R(z);
-        K      = P_pri * H.transpose() * (H * P_pri * H.transpose() + R).inverse();
-        x_post = x_post + K * (z - z_pri);
-        P_post = (MatrixXX::Identity() - K * H) * P_pri;
+        K_     = P_pri * H.transpose() * (H * P_pri * H.transpose() + R).inverse();
+        x_post = x_post + K_ * (z - z_pri);
+        P_post = (MatrixXX::Identity() - K_ * H) * P_pri;
         return x_post;
     }
 
@@ -151,9 +158,9 @@ public:
         }
 
         R      = R_ext;
-        K      = P_pri * H.transpose() * (H * P_pri * H.transpose() + R).inverse();
-        x_post = x_post + K * (z - z_pri);
-        P_post = (MatrixXX::Identity() - K * H) * P_pri;
+        K_     = P_pri * H.transpose() * (H * P_pri * H.transpose() + R).inverse();
+        x_post = x_post + K_ * (z - z_pri);
+        P_post = (MatrixXX::Identity() - K_ * H) * P_pri;
         return x_post;
     }
 
@@ -177,7 +184,7 @@ private:
     MatrixXX P_post;
 
     // Kalman gain
-    MatrixXZ K;
+    MatrixXZ K_;
 
     // Priori state
     MatrixX1 x_pri;

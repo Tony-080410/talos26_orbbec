@@ -90,7 +90,14 @@ public:
 
     [[nodiscard]] const VecX& x() const noexcept { return x_; }
 
-    [[nodiscard]] void set_state_unsafe(VecX x) noexcept { ekf_.setState(x); }
+    [[nodiscard]] const MatXX& P() const noexcept { return ekf_.P(); }
+
+    using MatXZ = Eigen::Matrix<double, NX, NZ>;
+    [[nodiscard]] const MatXZ& K_gain() const noexcept { return ekf_.K_gain(); }
+    [[nodiscard]] const MatXX& Q_mat() const noexcept { return ekf_.Q_mat(); }
+    [[nodiscard]] const MatZZ& R_mat() const noexcept { return ekf_.R_mat(); }
+
+    void set_state_unsafe(VecX x) noexcept { ekf_.setState(x); }
 
     [[nodiscard]] const Model& model() const noexcept { return model_; }
 
@@ -287,6 +294,10 @@ public:
             state.radius1        = x[R_1];
             state.z1             = x[Z0] + x[H];
             state.armors_num     = RobotEkfMotionModel::ARMORS_NUM;
+            state.P              = robot_target_->P();
+            state.K              = robot_target_->K_gain();
+            state.Q              = robot_target_->Q_mat();
+            state.R              = robot_target_->R_mat();
             output.state         = state;
             output.last_armor_id = robot_last_armor_id_;
         } else if (outpost_target_.has_value()) {
@@ -296,6 +307,10 @@ public:
             state.yaw            = x[O_YAW];
             state.v_yaw          = x[O_VYAW];
             state.z              = {x[O_Z0], x[O_Z1], x[O_Z2]};
+            state.P              = outpost_target_->P();
+            state.K              = outpost_target_->K_gain();
+            state.Q              = outpost_target_->Q_mat();
+            state.R              = outpost_target_->R_mat();
             output.state         = state;
             output.last_armor_id = outpost_last_armor_id_;
         }
