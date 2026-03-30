@@ -83,9 +83,9 @@ struct YawOnlyReprojError {
         const T& Yc               = Pc(1);
         const T& Zc               = Pc(2);
 
-        if (Zc <= T(0)) {
-            // residuals[0] = T(0);
-            // residuals[1] = T(0);
+        // Reject points behind camera or too close (avoids division by ~0 → NaN)
+        constexpr double kMinDepth = 1e-3; // 1mm minimum depth
+        if (Zc < T(kMinDepth)) {
             return false;
         }
 
@@ -199,6 +199,17 @@ public:
 
         Eigen::Vector3d t_cam_armor(tvec.at<double>(0), tvec.at<double>(1), tvec.at<double>(2));
 
+        // Bail out on degenerate PnP (NaN/Inf from IPPE with bad geometry)
+        {
+            const double* rd = rvec.ptr<double>();
+            const double* td = tvec.ptr<double>();
+            for (int i = 0; i < 3; ++i) {
+                if (!std::isfinite(rd[i]) || !std::isfinite(td[i])) {
+                    return std::unexpected(PnPError::SolveFailed);
+                }
+            }
+        }
+
         // R_cam_imu = R_imu_cam.transpose()
         Eigen::Matrix3d R_cam_imu = R_imu_cam.transpose();
 
@@ -207,14 +218,17 @@ public:
 
         // Step 3: Extract initial yaw from R_imu_armor
         // Yaw is rotation around Z axis in IMU frame
-        double theta_by_sin = std::asin(-R_imu_armor(0, 1));
-        double theta_by_cos = std::acos(R_imu_armor(1, 1));
+        // Clamp to [-1, 1] — noisy PnP can produce slightly non-orthogonal R
+        const double r01    = std::clamp(-R_imu_armor(0, 1), -1.0, 1.0);
+        const double r11    = std::clamp(R_imu_armor(1, 1), -1.0, 1.0);
+        double theta_by_sin = std::asin(r01);
+        double theta_by_cos = std::acos(r11);
         double yaw_init     = 0.0;
 
         if (std::abs(theta_by_sin) > 1e-5) {
             yaw_init = (theta_by_sin > 0.0) ? theta_by_cos : -theta_by_cos;
         } else {
-            yaw_init = (R_imu_armor(1, 1) > 0.0) ? 0.0 : std::numbers::pi;
+            yaw_init = (r11 > 0.0) ? 0.0 : std::numbers::pi;
         }
 
         // Step 4: Armor pitch constraint (15 deg, negative for outpost)
