@@ -74,46 +74,32 @@ void update_phase_fsm(
 
     switch (phase) {
     case ArmorAimPhase::SingleArmor:
-        overflow_count = (abs_v_yaw > cfg.single_whole_up) ? overflow_count + 1 : 0;
-        if (overflow_count > cfg.transfer_threshold_single_whole) {
+        overflow_count = (abs_v_yaw > cfg.single_whole_armor_high_v_yaw()) ? overflow_count + 1 : 0;
+        if (overflow_count > cfg.single_to_whole_armor_frames) {
             phase          = ArmorAimPhase::WholeCarArmor;
             overflow_count = 0;
         }
         break;
 
     case ArmorAimPhase::WholeCarArmor:
-        if (abs_v_yaw > cfg.whole_pair_up) {
+        if (abs_v_yaw > cfg.whole_armor_center_high_v_yaw()) {
             ++overflow_count;
-        } else if (abs_v_yaw < cfg.single_whole_down) {
+        } else if (abs_v_yaw < cfg.single_whole_armor_low_v_yaw()) {
             --overflow_count;
         } else {
             overflow_count = 0;
         }
-        if (std::abs(overflow_count) > cfg.transfer_threshold) {
-            phase = (overflow_count > 0) ? ArmorAimPhase::WholeCarPair : ArmorAimPhase::SingleArmor;
-            overflow_count = 0;
-        }
-        break;
-
-    case ArmorAimPhase::WholeCarPair:
-        if (abs_v_yaw > cfg.pair_center_up) {
-            ++overflow_count;
-        } else if (abs_v_yaw < cfg.whole_pair_down) {
-            --overflow_count;
-        } else {
-            overflow_count = 0;
-        }
-        if (std::abs(overflow_count) > cfg.transfer_threshold) {
+        if (std::abs(overflow_count) > cfg.phase_transition_frames) {
             phase =
-                (overflow_count > 0) ? ArmorAimPhase::WholeCarCenter : ArmorAimPhase::WholeCarArmor;
+                (overflow_count > 0) ? ArmorAimPhase::WholeCarCenter : ArmorAimPhase::SingleArmor;
             overflow_count = 0;
         }
         break;
 
     case ArmorAimPhase::WholeCarCenter:
-        overflow_count = (abs_v_yaw < cfg.pair_center_down) ? overflow_count + 1 : 0;
-        if (overflow_count > cfg.transfer_threshold) {
-            phase          = ArmorAimPhase::WholeCarPair;
+        overflow_count = (abs_v_yaw < cfg.whole_armor_center_low_v_yaw()) ? overflow_count + 1 : 0;
+        if (overflow_count > cfg.phase_transition_frames) {
+            phase          = ArmorAimPhase::WholeCarArmor;
             overflow_count = 0;
         }
         break;

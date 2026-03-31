@@ -153,34 +153,6 @@ template <size_t N>
         return active_armor_id;
     }
 
-    if (context.phase == ArmorAimPhase::WholeCarPair && !is_outpost) {
-        const bool higher_pair = (active_armor_id == 1 || active_armor_id == 3);
-        std::vector<int> pair_ids;
-        pair_ids.reserve(3);
-        if (higher_pair) {
-            if (armors_num > 1) {
-                pair_ids.push_back(1);
-            }
-            if (armors_num > 3) {
-                pair_ids.push_back(3);
-            }
-            if (armors_num > 0) {
-                pair_ids.push_back(0);
-            }
-        } else {
-            if (armors_num > 0) {
-                pair_ids.push_back(0);
-            }
-            if (armors_num > 2) {
-                pair_ids.push_back(2);
-            }
-        }
-        if (pair_ids.empty()) {
-            return active_armor_id;
-        }
-        return pick_best_by_min_delta(pair_ids, delta_angles);
-    }
-
     return active_armor_id;
 }
 

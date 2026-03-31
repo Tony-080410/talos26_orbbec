@@ -125,15 +125,11 @@ shooting_range_w = 0.135
 # 对于 3.6 rad/s +0.021 用于 补偿 5度
 delay = 0.04
 
-# Aim phase FSM thresholds (rad/s), aligned with prior implementations
-single_whole_up = 2.5
-single_whole_down = 1.0
-whole_pair_up = 7.5
-whole_pair_down = 6.5
-pair_center_up = 16.5
-pair_center_down = 15.0
-transfer_threshold = 50
-transfer_threshold_single_whole = 20
+# Aim phase FSM hysteresis ranges [low, high] in rad/s
+single_whole_armor_v_yaw_range = [1.0, 2.5]
+whole_armor_center_v_yaw_range = [6.5, 7.5]
+phase_transition_frames = 50
+single_to_whole_armor_frames = 20
 # Armor selection windows (degrees)
 front_window_deg = 90.0
 coming_angle_deg = 60.0

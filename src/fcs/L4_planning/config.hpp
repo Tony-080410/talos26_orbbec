@@ -3,6 +3,9 @@
 #include "L4_planning/planning/fire_decision.hpp"
 #include "core/armor_types.hpp"
 #include "core/trajectory/config.hpp"
+#include "toml_helper_containers.hpp"
+
+#include <array>
 
 namespace fcs::L4 {
 
@@ -67,19 +70,15 @@ struct AimerConfig {
     /// Includes: camera exposure, image processing, communication, gimbal response
     double delay{0.01};
 
-    /// Phase-FSM thresholds (rad/s), aligned with prior implementations.
-    double single_whole_up{2.5};
-    double single_whole_down{1.0};
-    double whole_pair_up{7.5};
-    double whole_pair_down{6.5};
-    double pair_center_up{16.5};
-    double pair_center_down{15.0};
+    /// Phase-FSM hysteresis ranges [low, high] in rad/s.
+    std::array<double, 2> single_whole_armor_v_yaw_range{1.0, 2.5};
+    std::array<double, 2> whole_armor_center_v_yaw_range{6.5, 7.5};
 
-    /// Consecutive frames required to transfer between aim phases.
-    int transfer_threshold_single_whole{50};
+    /// Consecutive frames required to enter WholeCarArmor from SingleArmor.
+    int single_to_whole_armor_frames{50};
 
-    /// Consecutive frames required to transfer between aim phases.
-    int transfer_threshold{50};
+    /// Consecutive frames required for other phase transitions.
+    int phase_transition_frames{50};
 
     /// Front-window limit for single-armor locking (degrees).
     double front_window_deg{90.0};
@@ -91,6 +90,22 @@ struct AimerConfig {
     /// Phase-aware fire gate shaping, aligned with WUST semantics.
     double yaw_limit_deg{40.0};
     double min_enable_yaw_deg{0.25};
+
+    [[nodiscard]] double single_whole_armor_low_v_yaw() const noexcept {
+        return single_whole_armor_v_yaw_range[0];
+    }
+
+    [[nodiscard]] double single_whole_armor_high_v_yaw() const noexcept {
+        return single_whole_armor_v_yaw_range[1];
+    }
+
+    [[nodiscard]] double whole_armor_center_low_v_yaw() const noexcept {
+        return whole_armor_center_v_yaw_range[0];
+    }
+
+    [[nodiscard]] double whole_armor_center_high_v_yaw() const noexcept {
+        return whole_armor_center_v_yaw_range[1];
+    }
 
     /// Weighted multi-target selection configuration.
     TargetSelectionConfig target_selection{};

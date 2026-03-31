@@ -9,8 +9,7 @@ namespace fcs::L4 {
 enum class ArmorAimPhase : uint8_t {
     SingleArmor    = 0,
     WholeCarArmor  = 1,
-    WholeCarPair   = 2,
-    WholeCarCenter = 3,
+    WholeCarCenter = 2,
 };
 
 struct ArmorAimContext {

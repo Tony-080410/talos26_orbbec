@@ -65,7 +65,7 @@ struct FireDecisionConfig {
     shooting_range_yaw   = std::max(shooting_range_yaw, max_error);
     shooting_range_pitch = std::max(shooting_range_pitch, max_error);
 
-    if (phase == ArmorAimPhase::WholeCarPair || phase == ArmorAimPhase::WholeCarCenter) {
+    if (phase == ArmorAimPhase::WholeCarCenter) {
         const double yaw_limit  = yaw_limit_deg * std::numbers::pi / 180.0;
         const double min_enable = min_enable_yaw_deg * std::numbers::pi / 180.0;
         if (std::abs(diff_yaw) > yaw_limit) {
