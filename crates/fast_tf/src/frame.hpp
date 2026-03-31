@@ -8,6 +8,7 @@
 #include <tuple>
 #include <type_traits>
 #include <utility>
+#include <variant>
 
 namespace stdx {
 
@@ -68,27 +69,22 @@ constexpr forward_like_t<Like, T&&> forward_like(T&& x) noexcept {
 } // namespace stdx
 namespace fast_tf {
 
-constexpr size_t _base = __COUNTER__;
-
-#define DECL_ROOT(name)                                                       \
-    struct name##_fuxk_frame {                                                \
-        static constexpr std::string_view frame_id = #name;                   \
-        static constexpr size_t index              = __COUNTER__ - _base - 1; \
-        using ancestor                             = void;                    \
+#define DECL_ROOT(name)                                     \
+    struct name##_fuxk_frame {                              \
+        static constexpr std::string_view frame_id = #name; \
+        using ancestor                             = void;  \
     };
 
-#define DECL(name, parent)                                                    \
-    struct name##_fuxk_frame {                                                \
-        static constexpr std::string_view frame_id = #name;                   \
-        static constexpr size_t index              = __COUNTER__ - _base - 1; \
-        using ancestor                             = parent##_fuxk_frame;     \
+#define DECL(name, parent)                                                \
+    struct name##_fuxk_frame {                                            \
+        static constexpr std::string_view frame_id = #name;               \
+        using ancestor                             = parent##_fuxk_frame; \
     };
 
-#define DECL_WITH_ID(name, parent, id)                                        \
-    struct name##_fuxk_frame {                                                \
-        static constexpr std::string_view frame_id = id;                      \
-        static constexpr size_t index              = __COUNTER__ - _base - 1; \
-        using ancestor                             = parent##_fuxk_frame;     \
+#define DECL_WITH_ID(name, parent, id)                                    \
+    struct name##_fuxk_frame {                                            \
+        static constexpr std::string_view frame_id = id;                  \
+        using ancestor                             = parent##_fuxk_frame; \
     };
 
 DECL_ROOT(world);
@@ -110,12 +106,9 @@ using camera         = camera_link_fuxk_frame;
 using camera_optical = camera_optical_fuxk_frame;
 using muzzle         = muzzle_link_fuxk_frame;
 
-constexpr size_t frame_count = __COUNTER__ - _base - 1;
-
 template <typename T>
 concept frame = requires {
     { T::frame_id } -> std::convertible_to<std::string_view>;
-    { T::index } -> std::convertible_to<size_t>;
     typename T::ancestor;
 };
 
@@ -245,44 +238,62 @@ using FuckIntrinsicEulerRotd = Fuck<Coordinate, math_fuxk::Ros2EulerRotd>;
 template <frame Coordinate>
 using FuckIntrinsicEulerRotf = Fuck<Coordinate, math_fuxk::Ros2EulerRotf>;
 
-inline constexpr sec coordinate_history_range_sec          = 5;
-inline constexpr sample_per_sec coordinate_history_density = 500;
-
-using coordinate_buffer_frames = std::tuple<
-    odom_fuxk_frame, gimbal_yaw_fuxk_frame, gimbal_pitch_fuxk_frame, camera_link_fuxk_frame,
-    camera_optical_fuxk_frame, muzzle_link_fuxk_frame>;
+template <typename T>
+using EphemeralBuffer = Buffer<EdgeTransform<T>, 5, 500>;
 
 using CoordinateSystem = std::tuple<
-    Buffer<
-        EdgeTransform<odom_fuxk_frame>, coordinate_history_range_sec, coordinate_history_density>,
-    Buffer<
-        EdgeTransform<gimbal_yaw_fuxk_frame>, coordinate_history_range_sec,
-        coordinate_history_density>,
-    Buffer<
-        EdgeTransform<gimbal_pitch_fuxk_frame>, coordinate_history_range_sec,
-        coordinate_history_density>,
-    Buffer<EdgeTransform<camera_link_fuxk_frame>, 1, 1>,
-    Buffer<EdgeTransform<camera_optical_fuxk_frame>, 1, 1>,
-    Buffer<EdgeTransform<muzzle_link_fuxk_frame>, 1, 1>>;
+    EphemeralBuffer<odom_fuxk_frame>, EphemeralBuffer<gimbal_yaw_fuxk_frame>,
+    EphemeralBuffer<gimbal_pitch_fuxk_frame>, EphemeralBuffer<camera_link_fuxk_frame>,
+    EphemeralBuffer<camera_optical_fuxk_frame>, EphemeralBuffer<muzzle_link_fuxk_frame>>;
 
-template <non_root_frame Layer, typename System>
+template <typename Layer>
+struct buffer_coord_of;
+
+template <typename Layer>
+using buffer_coord_t = buffer_coord_of<Layer>::type;
+
+template <typename Scalar, frame From, frame To, sec Range, sample_per_sec Density>
+struct buffer_coord_of<Buffer<TransformMatrix<Scalar, From, To>, Range, Density>> {
+    using type = From;
+};
+
+template <non_root_frame Layer, typename System, size_t I = 0>
 [[nodiscard]] constexpr decltype(auto) buffer_of(System&& system) noexcept {
-    return std::get<Layer::index - 1>(std::forward<System>(system));
+    using tuple_t = std::remove_cvref_t<System>;
+
+    static_assert(I < std::tuple_size_v<tuple_t>, "Layer not found in CoordinateSystem");
+
+    using buffer_coord =
+        typename buffer_coord_of<std::remove_cvref_t<std::tuple_element_t<I, tuple_t>>>::type;
+
+    if constexpr (std::is_same_v<Layer, buffer_coord>) {
+        return std::get<I>(std::forward<System>(system));
+    } else {
+        return buffer_of<Layer, System, I + 1>(std::forward<System>(system));
+    }
 }
 
-template <typename System, typename Fn, std::size_t... Is>
-constexpr void
-    for_each_coordinate_buffer_impl(System&& system, Fn&& fn, std::index_sequence<Is...>) {
-    (fn(std::type_identity<std::tuple_element_t<Is, coordinate_buffer_frames>>{},
-        std::get<Is>(std::forward<System>(system))),
-     ...);
-}
+template <typename System>
+struct coordinate_of;
+
+template <typename... Buffers>
+struct coordinate_of<std::tuple<Buffers...>> {
+    using type = std::tuple<typename buffer_coord_of<std::remove_cvref_t<Buffers>>::type...>;
+};
+
+template <typename System>
+using coordinate_of_t = typename coordinate_of<std::remove_cvref_t<System>>::type;
 
 template <typename System, typename Fn>
 constexpr void for_each_coordinate_buffer(System&& system, Fn&& fn) {
-    for_each_coordinate_buffer_impl(
-        std::forward<System>(system), std::forward<Fn>(fn),
-        std::make_index_sequence<std::tuple_size_v<coordinate_buffer_frames>>{});
+    std::apply(
+        [&](auto&&... xs) {
+            (fn(std::type_identity<
+                    typename buffer_coord_of<std::remove_cvref_t<decltype(xs)>>::type>{},
+                std::forward<decltype(xs)>(xs)),
+             ...);
+        },
+        std::forward<System>(system));
 }
 
 template <non_root_frame Layer>
@@ -350,45 +361,6 @@ template <frame To, frame From>
 constexpr auto lookup_clamped(const CoordinateSystem& system, timestamp_ns_t ns) noexcept
     -> std::expected<FrameTransform<From, To>, TransformError> {
     return lookup_clamped<To, From, From>(system, I<From>(), ns);
-}
-
-// ============================================================================
-// Frame Metadata Accessors (for Foxglove export)
-// ============================================================================
-
-/**
- * @brief 获取 frame_id by index（编译期优化为跳转表）
- * @warning 添加新 frame 时需要在此函数中添加对应的 case
- */
-constexpr std::string_view frame_id_by_index(std::size_t index) noexcept {
-    switch (index) {
-    case world_fuxk_frame::index: return world_fuxk_frame::frame_id;
-    case odom_fuxk_frame::index: return odom_fuxk_frame::frame_id;
-    case gimbal_yaw_fuxk_frame::index: return gimbal_yaw_fuxk_frame::frame_id;
-    case gimbal_pitch_fuxk_frame::index: return gimbal_pitch_fuxk_frame::frame_id;
-    case camera_link_fuxk_frame::index: return camera_link_fuxk_frame::frame_id;
-    case camera_optical_fuxk_frame::index: return camera_optical_fuxk_frame::frame_id;
-    case muzzle_link_fuxk_frame::index: return muzzle_link_fuxk_frame::frame_id;
-    default: return "unknown";
-    }
-}
-
-/**
- * @brief 获取 parent_frame_id by index（编译期优化为跳转表）
- * @warning 添加新 frame 时需要在此函数中添加对应的 case
- * @return root frame 返回空字符串，非 root frame 返回其父节点的 frame_id
- */
-constexpr std::string_view parent_frame_id_by_index(std::size_t index) noexcept {
-    switch (index) {
-    case world_fuxk_frame::index: return ""; // root 无父节点
-    case odom_fuxk_frame::index: return odom_fuxk_frame::ancestor::frame_id;
-    case gimbal_yaw_fuxk_frame::index: return gimbal_yaw_fuxk_frame::ancestor::frame_id;
-    case gimbal_pitch_fuxk_frame::index: return gimbal_pitch_fuxk_frame::ancestor::frame_id;
-    case camera_link_fuxk_frame::index: return camera_link_fuxk_frame::ancestor::frame_id;
-    case camera_optical_fuxk_frame::index: return camera_optical_fuxk_frame::ancestor::frame_id;
-    case muzzle_link_fuxk_frame::index: return muzzle_link_fuxk_frame::ancestor::frame_id;
-    default: return "";
-    }
 }
 
 } // namespace fast_tf

@@ -352,4 +352,7 @@ private:
     mutable mutex_type mutex_;
 };
 
+template <typename T, typename Ops = BufferOps<T>>
+using StaticBuffer = Buffer<T, 0, 1, Ops>;
+
 } // namespace fast_tf
