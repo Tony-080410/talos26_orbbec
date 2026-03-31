@@ -4,24 +4,32 @@
 # Talos Cross-Platform Build Script
 # =============================================================================
 # Supported configurations:
-#   macOS     | Apple Clang 17+ | libSystem   | any arch
-#   Linux     | clang-21        | libstdc++ >= 23 | any arch
+#   macOS  | Apple Clang 17+ | libc++   | any arch
+#   Linux  | clang 21+       | libstdc++ (via GCC 13+ toolchain) | x86_64/arm64
 #
 # Usage:
-#   ./build.sh [--release] [--asan] [--calib] [--] [args...]
-#     --release       Build in Release mode (default: Debug)
-#     --asan          Enable AddressSanitizer (memory leak detection)
-#     --calib         Build calibration app (default: main talos app)
-#     --             Separator for app arguments
+#   ./build.sh [--debug|--release] [--asan] [--calib|--playground] [--] [app args...]
+#
+# Examples:
+#   ./build.sh
+#   ./build.sh --debug
+#   ./build.sh --asan
+#   ./build.sh --calib -- --camera 0
+#   ./build.sh --no-run
+#   ./build.sh --verbose
+#   ./build.sh --no-redact-build-output
 # =============================================================================
 
-set -euo pipefail
+set -Eeuo pipefail
 
+# -----------------------------------------------------------------------------
 # Colors
+# -----------------------------------------------------------------------------
 YELLOW='\033[33m'
 GREEN='\033[32m'
 RED='\033[31m'
 BLUE='\033[34m'
+DIM='\033[2m'
 RESET='\033[0m'
 
 status() {
@@ -31,236 +39,371 @@ status() {
     echo -e "${color}${symbol} ${msg}${RESET}"
 }
 
-error() {
+info() {
+    status "[i]" "$BLUE" "$1"
+}
+
+ok() {
+    status "[o]" "$GREEN" "$1"
+}
+
+warn() {
+    status "[!]" "$YELLOW" "$1"
+}
+
+die() {
     status "[x]" "$RED" "$1"
     exit 1
 }
 
-# Detect OS
+# -----------------------------------------------------------------------------
+# Defaults
+# -----------------------------------------------------------------------------
+BUILD_TYPE="Release"
+BUILD_TARGET="talos"
+ENABLE_CALIBRATION="OFF"
+ENABLE_ASAN="OFF"
+RUN_AFTER_BUILD="ON"
+VERBOSE="OFF"
+REDACT_BUILD_OUTPUT="ON"
+GENERATOR="Ninja"
+RUN_ARGS=()
+
+OS=""
+ARCH=""
+BUILD_JOBS=""
+CC=""
+CXX=""
+CMAKE_EXTRA_ARGS=()
+CMAKE_CONFIGURE_ARGS=()
+CMAKE_BUILD_ARGS=()
+CMAKE_ENV_VARS=()
+
+# -----------------------------------------------------------------------------
+# Helpers
+# -----------------------------------------------------------------------------
+command_exists() {
+    command -v "$1" >/dev/null 2>&1
+}
+
 detect_os() {
     local os
     os="$(uname -s)"
     case "$os" in
-        Darwin)
-            echo "macos"
-            ;;
-        Linux)
-            echo "linux"
-            ;;
-        *)
-            echo "unknown"
-            ;;
+        Darwin) echo "macos" ;;
+        Linux)  echo "linux" ;;
+        *)      echo "unknown" ;;
     esac
 }
 
-# Detect architecture
 detect_arch() {
     local arch
     arch="$(uname -m)"
     case "$arch" in
-        x86_64|aarch64|arm64)
-            echo "$arch"
-            ;;
-        *)
-            echo "unknown"
-            ;;
+        x86_64)         echo "x86_64" ;;
+        aarch64|arm64)  echo "arm64" ;;
+        *)              echo "unknown" ;;
     esac
 }
 
-# Check compiler availability
-check_compiler() {
-    command -v "$1" &> /dev/null
+get_first_line() {
+    "$@" 2>/dev/null | head -n1 || true
 }
 
-# Get compiler version
-get_compiler_version() {
-    "$1" --version 2>/dev/null | head -n1 || echo "unknown"
-}
-
-# Validate libstdc++ version on Linux
-check_libstdcpp_version() {
-    local required_major="$1"
-    local output
-    local version_major
-
-    if command -v g++ &> /dev/null; then
-        output="$(g++ -v 2>&1 | grep "libstdc++" || true)"
-        if [[ "$output" =~ libstdc\+\+[\ \(]*([0-9]+) ]]; then
-            version_major="${BASH_REMATCH[1]}"
-            if [[ "$version_major" -ge "$required_major" ]]; then
-                return 0
-            fi
-        fi
-    fi
-
-    local libstdcpp_path
-    libstdcpp_path="$(ldd $(command -v ls) 2>/dev/null | grep libstdc++ | awk '{print $3}' | head -n1 || true)"
-    if [[ -n "$libstdcpp_path" && -f "$libstdcpp_path" ]]; then
-        local version_str
-        version_str="$("$libstdcpp_path" --version 2>/dev/null | head -n1 || true)"
-        if [[ "$version_str" =~ libstdc\+\+.*([0-9]+)\.([0-9]+) ]]; then
-            local major="${BASH_REMATCH[1]}"
-            if [[ "$major" -ge "$required_major" ]]; then
-                return 0
-            fi
-        fi
-    fi
-
-    return 1
-}
-
-# Configure build environment for macOS
-configure_macos() {
-    status "[+]" "$BLUE" "Configuring for macOS..."
-
-    if ! check_compiler "clang++"; then
-        error "clang++ not found. Install Xcode Command Line Tools."
-    fi
-
-    local clang_version
-    clang_version="$(get_compiler_version "clang++")"
-    status "[i]" "$BLUE" "Compiler: $clang_version"
-
-    # macOS uses libSystem by default
-    export CC=cc
-    export CXX=c++
-
-    # Build flags for macOS
-    CMAKE_COMPILER_ARGS=""
-    BUILD_JOBS="$(sysctl -n hw.ncpu)"
-
-    status "[o]" "$GREEN" "macOS ready (Apple Clang + libSystem)"
-}
-
-# Find latest libstdc++ library path
-find_latest_libstdcpp() {
-    local lib_dir
-    local latest_lib=""
-    local latest_ver="0"
-
-    # Common library directories
-    for lib_dir in /usr/lib/x86_64-linux-gnu /usr/lib/aarch64-linux-gnu /usr/lib64 /usr/lib; do
-        if [[ ! -d "$lib_dir" ]]; then
-            continue
-        fi
-
-        # Find all libstdc++.so.* files and extract version numbers
-        while IFS= read -r lib; do
-            if [[ "$lib" =~ libstdc\+\+\.so\.([0-9]+)\.([0-9]+) ]]; then
-                local major="${BASH_REMATCH[1]}"
-                local minor="${BASH_REMATCH[2]}"
-                local ver_num="$((major * 1000 + minor))"
-
-                if [[ "$ver_num" -gt "$latest_ver" ]]; then
-                    latest_ver="$ver_num"
-                    latest_lib="$lib"
-                fi
-            fi
-        done < <(find "$lib_dir" -maxdepth 1 -name "libstdc++.so.*" 2>/dev/null)
-    done
-
-    if [[ -n "$latest_lib" ]]; then
-        echo "$latest_lib"
-    fi
-}
-
-# Check compiler version
-get_compiler_major_version() {
+get_clang_major_version() {
     local version_str
-    version_str="$("$1" --version 2>/dev/null | head -n1 || echo "")"
+    version_str="$(get_first_line "$1" --version)"
 
-    # Extract version number (handles formats like "clang version 21.0.0" or "Ubuntu clang version 21.0.0")
-    if [[ "$version_str" =~ clang[[:space:]]version[[:space:]]([0-9]+) ]]; then
+    # Handles:
+    #   Apple clang version 17.0.0 ...
+    #   clang version 21.0.0 ...
+    #   Ubuntu clang version 21.0.0 ...
+    if [[ "$version_str" =~ Apple[[:space:]]clang[[:space:]]version[[:space:]]([0-9]+) ]]; then
         echo "${BASH_REMATCH[1]}"
-    elif [[ "$version_str" =~ version[[:space:]]([0-9]+) ]]; then
+    elif [[ "$version_str" =~ clang[[:space:]]version[[:space:]]([0-9]+) ]]; then
         echo "${BASH_REMATCH[1]}"
     else
         echo "0"
     fi
 }
 
-# Configure build environment for Linux
-configure_linux() {
-    status "[+]" "$BLUE" "Configuring for Linux..."
-
-    local selected_cc="clang-21"
-    local selected_cxx="clang++-21"
-    local clang_version
-
-    # Try clang-21 first
-    if check_compiler "clang++-21"; then
-        clang_version="$(get_compiler_version "clang++-21")"
-        status "[i]" "$BLUE" "Compiler: $clang_version"
-    else
-        # Fallback to clang/clang++ and check version
-        if check_compiler "clang++"; then
-            local major_version
-            major_version="$(get_compiler_major_version "clang++")"
-
-            if [[ "$major_version" -ge 21 ]]; then
-                selected_cc="clang"
-                selected_cxx="clang++"
-                clang_version="$(get_compiler_version "clang++")"
-                status "[i]" "$BLUE" "Compiler: $clang_version"
-            else
-                status "[x]" "$RED" "clang++ version $major_version is too old (requires 21+)"
-                status "[i]" "$YELLOW" "Install: sudo apt install clang-21 clang++-21"
-                error "Required compiler version not available."
-            fi
-        else
-            status "[x]" "$RED" "clang++-21 not found and clang++ not available!"
-            status "[i]" "$YELLOW" "Install: sudo apt install clang-21 clang++-21"
-            error "Required compiler not available."
-        fi
-    fi
-
-    # Find latest libstdc++
-    local latest_libstdcpp
-    latest_libstdcpp="$(find_latest_libstdcpp)"
-
-    if [[ -z "$latest_libstdcpp" ]]; then
-        status "[x]" "$RED" "libstdc++ not found in system paths!"
-        error "Required stdlib not available."
-    fi
-
-    local libstdcpp_dir
-    libstdcpp_dir="$(dirname "$latest_libstdcpp")"
-    status "[i]" "$BLUE" "Latest libstdc++: $latest_libstdcpp"
-
-    # Get version info
-    local libstdcpp_version
-    libstdcpp_version="$("$latest_libstdcpp" --version 2>/dev/null | head -n1 || echo "unknown")"
-    status "[i]" "$BLUE" "Stdlib: $libstdcpp_version"
-
-    export CC="$selected_cc"
-    export CXX="$selected_cxx"
-
-    # Explicit compiler flags for Linux - force latest libstdc++
-    CMAKE_COMPILER_ARGS="-DCMAKE_CXX_COMPILER=$CXX -DCMAKE_C_COMPILER=$CC"
-    CMAKE_LIBRARY_PATH="$libstdcpp_dir:${CMAKE_LIBRARY_PATH:-}"
-    export CMAKE_LIBRARY_PATH
-
-    # Add rpath to ensure runtime uses the correct libstdc++
-    CMAKE_CXX_FLAGS="-stdlib=libstdc++"
-
-    BUILD_JOBS="$(nproc)"
-
-    status "[o]" "$GREEN" "Linux ready ($selected_cxx + latest libstdc++)"
+is_apple_clang() {
+    local version_str
+    version_str="$(get_first_line "$1" --version)"
+    [[ "$version_str" == Apple\ clang* ]]
 }
 
-# Main
-main() {
-    # Parse arguments
-    BUILD_TYPE="Release"
-    BUILD_TARGET="talos"
-    ENABLE_CALIBRATION="OFF"
-    ENABLE_ASAN="OFF"
-    RUN_ARGS=()
+get_gcc_major_version() {
+    local version_str
+    version_str="$(get_first_line "$1" --version)"
+    if [[ "$version_str" =~ ([0-9]+)\.[0-9]+\.[0-9]+ ]]; then
+        echo "${BASH_REMATCH[1]}"
+    else
+        echo "0"
+    fi
+}
 
+num_cpus() {
+    case "$OS" in
+        macos) sysctl -n hw.ncpu ;;
+        linux) nproc ;;
+        *) echo 4 ;;
+    esac
+}
+
+join_by() {
+    local IFS="$1"
+    shift
+    echo "$*"
+}
+
+ensure_generator() {
+    if ! command_exists ninja; then
+        die "Ninja not found. Please install ninja."
+    fi
+}
+
+# -----------------------------------------------------------------------------
+# Toolchain selection
+# -----------------------------------------------------------------------------
+select_macos_compiler() {
+    local clangxx
+    local clangc
+
+    if command_exists xcrun; then
+        clangxx="$(xcrun --find clang++ 2>/dev/null || true)"
+        clangc="$(xcrun --find clang 2>/dev/null || true)"
+    else
+        clangxx="$(command -v clang++ || true)"
+        clangc="$(command -v clang || true)"
+    fi
+
+    [[ -n "$clangxx" && -x "$clangxx" ]] || die "clang++ not found. Install Xcode Command Line Tools."
+    [[ -n "$clangc"  && -x "$clangc"  ]] || die "clang not found. Install Xcode Command Line Tools."
+
+    local major
+    major="$(get_clang_major_version "$clangxx")"
+
+    if ! is_apple_clang "$clangxx"; then
+        warn "Detected non-Apple clang on macOS: $(get_first_line "$clangxx" --version)"
+        warn "This script officially supports Apple Clang on macOS."
+    fi
+
+    (( major >= 17 )) || die "Apple Clang 17+ required on macOS. Found: $(get_first_line "$clangxx" --version)"
+
+    CC="$clangc"
+    CXX="$clangxx"
+
+    # On macOS, libc++ is the natural/default stdlib for Apple Clang.
+    CMAKE_EXTRA_ARGS+=(
+        "-DCMAKE_C_COMPILER=${CC}"
+        "-DCMAKE_CXX_COMPILER=${CXX}"
+    )
+}
+
+select_linux_clang() {
+    local candidates=(
+        clang++-22
+        clang++-21
+        clang++
+    )
+
+    local cxx_candidate=""
+    local cc_candidate=""
+    local major="0"
+
+    for c in "${candidates[@]}"; do
+        if command_exists "$c"; then
+            major="$(get_clang_major_version "$c")"
+            if (( major >= 21 )); then
+                cxx_candidate="$(command -v "$c")"
+                break
+            fi
+        fi
+    done
+
+    [[ -n "$cxx_candidate" ]] || die "clang++ 21+ not found. Please install clang-21 or newer."
+
+    cc_candidate="${cxx_candidate/clang++/clang}"
+    [[ -x "$cc_candidate" ]] || cc_candidate="$(command -v clang || true)"
+    [[ -n "$cc_candidate" && -x "$cc_candidate" ]] || die "Matching clang not found for ${cxx_candidate}."
+
+    CC="$cc_candidate"
+    CXX="$cxx_candidate"
+}
+
+select_linux_gcc_toolchain() {
+    local gcc_candidates=(
+        g++-15
+        g++-14
+        g++-13
+        g++
+    )
+
+    local gxx=""
+    local gcc_major="0"
+
+    for c in "${gcc_candidates[@]}"; do
+        if command_exists "$c"; then
+            gcc_major="$(get_gcc_major_version "$c")"
+            if (( gcc_major >= 13 )); then
+                gxx="$( command -v "$c")"
+                break
+            fi
+        fi
+    done
+
+    [[ -n "$gxx" ]] || die "GCC/G++ 13+ toolchain required on Linux for a recent libstdc++."
+
+    local gcc_root
+    gcc_root="$(cd "$(dirname "$gxx")/.." && pwd)"
+
+    info "Using GCC toolchain: $gxx"
+    info "GCC version: $(get_first_line "$gxx" --version)"
+
+    # Try to locate libstdc++.so as seen by clang / system
+    local libstdcpp_path=""
+    libstdcpp_path="$("$CXX" -print-file-name=libstdc++.so 2>/dev/null || true)"
+
+    if [[ -z "$libstdcpp_path" || "$libstdcpp_path" == "libstdc++.so" ]]; then
+        # fallback via g++
+        libstdcpp_path="$("$gxx" -print-file-name=libstdc++.so 2>/dev/null || true)"
+    fi
+
+    local libstdcpp_dir=""
+    if [[ -n "$libstdcpp_path" && "$libstdcpp_path" != "libstdc++.so" ]]; then
+        libstdcpp_dir="$(dirname "$libstdcpp_path")"
+        info "libstdc++: $libstdcpp_path"
+    else
+        warn "Could not resolve libstdc++.so path directly; relying on GCC toolchain discovery."
+    fi
+
+    # Make clang use the intended GCC toolchain explicitly.
+    CMAKE_EXTRA_ARGS+=(
+        "-DCMAKE_C_COMPILER=${CC}"
+        "-DCMAKE_CXX_COMPILER=${CXX}"
+        "-DCMAKE_C_FLAGS=--gcc-toolchain=${gcc_root}"
+        "-DCMAKE_CXX_FLAGS=--gcc-toolchain=${gcc_root} -stdlib=libstdc++"
+    )
+
+    if [[ -n "$libstdcpp_dir" ]]; then
+        export CMAKE_LIBRARY_PATH="${libstdcpp_dir}:${CMAKE_LIBRARY_PATH:-}"
+    fi
+}
+
+# -----------------------------------------------------------------------------
+# Platform configuration
+# -----------------------------------------------------------------------------
+configure_macos() {
+    info "Configuring for macOS..."
+    select_macos_compiler
+    BUILD_JOBS="$(num_cpus)"
+    ok "macOS ready (Apple Clang + libc++)"
+}
+
+configure_linux() {
+    info "Configuring for Linux..."
+    select_linux_clang
+    info "Compiler: $(get_first_line "$CXX" --version)"
+    select_linux_gcc_toolchain
+    BUILD_JOBS="$(num_cpus)"
+    ok "Linux ready ($(basename "$CXX") + libstdc++ via GCC toolchain)"
+}
+
+# -----------------------------------------------------------------------------
+# Third-party runtime paths
+# -----------------------------------------------------------------------------
+setup_runtime_env() {
+    case "$OS" in
+        linux)
+            local hik_arch_dir=""
+            case "$ARCH" in
+                arm64)  hik_arch_dir="arm64" ;;
+                x86_64) hik_arch_dir="x86_64" ;;
+                *)      hik_arch_dir="" ;;
+            esac
+
+            if [[ -n "$hik_arch_dir" ]]; then
+                local hik_lib
+                hik_lib="$(pwd)/3dparty/hik_sdk/lib/${hik_arch_dir}"
+                if [[ -d "$hik_lib" ]]; then
+                    export LD_LIBRARY_PATH="${hik_lib}:${LD_LIBRARY_PATH:-}"
+                    info "LD_LIBRARY_PATH += $hik_lib"
+                else
+                    warn "HIK SDK runtime path not found for arch ${ARCH}: $hik_lib"
+                fi
+            fi
+            ;;
+        macos)
+            # If you ever need runtime dylib injection, add DYLD_LIBRARY_PATH here carefully.
+            ;;
+    esac
+}
+
+# -----------------------------------------------------------------------------
+# CMake / build / run
+# -----------------------------------------------------------------------------
+configure_cmake() {
+    CMAKE_CONFIGURE_ARGS=(
+        -G "$GENERATOR"
+        -B build
+        -S .
+        "-DCMAKE_BUILD_TYPE=${BUILD_TYPE}"
+        "-DENABLE_CALIBRATION=${ENABLE_CALIBRATION}"
+        "-DENABLE_ASAN=${ENABLE_ASAN}"
+        "${CMAKE_EXTRA_ARGS[@]}"
+    )
+
+    info "Configuring CMake..."
+    cmake "${CMAKE_CONFIGURE_ARGS[@]}"
+}
+
+build_target() {
+    export CMAKE_BUILD_PARALLEL_LEVEL="${BUILD_JOBS}"
+
+    CMAKE_BUILD_ARGS=(
+        --build build
+        --target "${BUILD_TARGET}"
+    )
+
+    if [[ "$VERBOSE" == "ON" ]]; then
+        CMAKE_BUILD_ARGS+=(--verbose)
+    fi
+
+    info "Building ${BUILD_TARGET} (${BUILD_TYPE})..."
+    cmake "${CMAKE_BUILD_ARGS[@]}"
+
+    ok "Build complete!"
+}
+
+run_target() {
+    [[ "$RUN_AFTER_BUILD" == "ON" ]] || return 0
+
+    setup_runtime_env
+
+    local exe="./build/bin/${BUILD_TARGET}"
+    [[ -x "$exe" ]] || die "Built executable not found: $exe"
+
+    info "Starting ${BUILD_TARGET}..."
+    if [[ "${#RUN_ARGS[@]}" -gt 0 ]]; then
+        info "App args: $(join_by ' ' "${RUN_ARGS[@]}")"
+    fi
+
+    exec "$exe"
+}
+
+# -----------------------------------------------------------------------------
+# Args
+# -----------------------------------------------------------------------------
+parse_args() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --release)
                 BUILD_TYPE="Release"
+                shift
+                ;;
+            --debug)
+                BUILD_TYPE="Debug"
                 shift
                 ;;
             --asan|-fsanitize=address)
@@ -276,6 +419,22 @@ main() {
                 BUILD_TARGET="talos-playground"
                 shift
                 ;;
+            --no-run)
+                RUN_AFTER_BUILD="OFF"
+                shift
+                ;;
+            --verbose)
+                VERBOSE="ON"
+                shift
+                ;;
+            --no-redact-build-output)
+                REDACT_BUILD_OUTPUT="OFF"
+                shift
+                ;;
+            --redact-build-output)
+                REDACT_BUILD_OUTPUT="ON"
+                shift
+                ;;
             --)
                 shift
                 RUN_ARGS+=("$@")
@@ -287,74 +446,46 @@ main() {
                 ;;
         esac
     done
+}
+
+# -----------------------------------------------------------------------------
+# Main
+# -----------------------------------------------------------------------------
+main() {
+    parse_args "$@"
 
     echo ""
     status "🤖" "$BLUE" "Talos Build & Run"
     echo ""
 
-    # Detect platform
     OS="$(detect_os)"
     ARCH="$(detect_arch)"
 
-    if [[ "$OS" == "unknown" ]]; then
-        error "Unsupported OS: $(uname -s)"
-    fi
+    [[ "$OS"   != "unknown" ]] || die "Unsupported OS: $(uname -s)"
+    [[ "$ARCH" != "unknown" ]] || die "Unsupported architecture: $(uname -m)"
 
-    if [[ "$ARCH" == "unknown" ]]; then
-        error "Unsupported architecture: $(uname -m)"
-    fi
+    ensure_generator
 
-    status "[i]" "$BLUE" "Platform: $OS ($ARCH)"
-    status "[i]" "$BLUE" "Build: $BUILD_TYPE"
-    status "[i]" "$BLUE" "ASAN: $ENABLE_ASAN"
-    status "[i]" "$BLUE" "Target: $BUILD_TARGET"
+    info "Platform: ${OS} (${ARCH})"
+    info "Build type: ${BUILD_TYPE}"
+    info "ASAN: ${ENABLE_ASAN}"
+    info "Target: ${BUILD_TARGET}"
+    info "Run after build: ${RUN_AFTER_BUILD}"
+    info "Build log redaction: ${REDACT_BUILD_OUTPUT}"
 
-    # Configure based on OS
     case "$OS" in
-        macos)
-            configure_macos
-            ;;
-        linux)
-            configure_linux
-            ;;
-        *)
-            error "Unsupported platform"
-            ;;
+        macos) configure_macos ;;
+        linux) configure_linux ;;
+        *) die "Unsupported platform" ;;
     esac
 
-    status "[i]" "$BLUE" "CC  = $CC"
-    status "[i]" "$BLUE" "CXX = $CXX"
+    info "CC  = ${CC}"
+    info "CXX = ${CXX}"
+    info "Jobs = ${BUILD_JOBS}"
 
-    # Configure CMake
-    status "[>]" "$GREEN" "Configuring CMake..."
-    cmake -G Ninja -B build -S . \
-        -DCMAKE_BUILD_TYPE="${BUILD_TYPE}" \
-        -DENABLE_CALIBRATION="${ENABLE_CALIBRATION}" \
-        -DENABLE_ASAN="${ENABLE_ASAN}" \
-        ${CMAKE_COMPILER_ARGS} \
-        ${CMAKE_CXX_FLAGS:+-DCMAKE_CXX_FLAGS="$CMAKE_CXX_FLAGS"}
-
-    # Build
-    status "[>]" "$GREEN" "Building $BUILD_TARGET ($BUILD_TYPE)..."
-    cmake --build build -- "$BUILD_TARGET" -j"${BUILD_JOBS}"
-
-    status "[o]" "$GREEN" "Build complete!"
-
-    # Platform-specific run setup
-    case "$OS" in
-        linux)
-            # Set HIK SDK library path for Linux
-            HIK_LIB="$(pwd)/3dparty/hik_sdk/lib/arm64"
-            if [[ -d "$HIK_LIB" ]]; then
-                export LD_LIBRARY_PATH="$HIK_LIB:$LD_LIBRARY_PATH"
-                status "[i]" "$BLUE" "LD_LIBRARY_PATH=$HIK_LIB"
-            fi
-            ;;
-    esac
-
-    # Run
-    status "[>]" "$GREEN" "Starting $BUILD_TARGET..."
-    exec "./build/bin/$BUILD_TARGET"
+    configure_cmake
+    build_target
+    run_target
 }
 
 main "$@"
