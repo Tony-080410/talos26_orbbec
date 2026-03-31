@@ -118,8 +118,11 @@ public:
         return x_pri;
     }
 
-    // Update the estimated state based on measurement
-    MatrixX1 update(const MatrixZ1& z) noexcept {
+    // Update the estimated state based on measurement.
+    // gain_mask: per-state binary vector (1 = allow update, 0 = freeze).
+    // Prevents unobservable states from receiving information through
+    // cross-correlations in P, while preserving those correlations.
+    MatrixX1 update(const MatrixZ1& z, const MatrixX1& gain_mask = MatrixX1::Ones()) noexcept {
         ceres::Jet<double, N_X> x_p_jet[N_X];
         for (int i = 0; i < N_X; i++) {
             x_p_jet[i].a    = x_pri[i];
@@ -134,8 +137,10 @@ public:
             H.block(i, 0, 1, N_X) = z_p_jet[i].v.transpose();
         }
 
-        R      = update_R(z);
-        K_     = P_pri * H.transpose() * (H * P_pri * H.transpose() + R).inverse();
+        R  = update_R(z);
+        K_ = P_pri * H.transpose() * (H * P_pri * H.transpose() + R).inverse();
+        // Zero out gains for unobservable states
+        K_     = gain_mask.asDiagonal() * K_;
         x_post = x_post + K_ * (z - z_pri);
         P_post = (MatrixXX::Identity() - K_ * H) * P_pri;
         return x_post;
