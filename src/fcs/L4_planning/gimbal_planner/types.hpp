@@ -4,6 +4,7 @@
 #include "L4_planning/aimer/types.hpp"
 #include "L4_planning/plan_source.hpp"
 #include "core/channel_topics.hpp"
+#include "core/trajectory/reference_trajectory.hpp"
 
 #include <Eigen/Core>
 #include <cstdint>
@@ -27,10 +28,10 @@ struct VisualizationDebugData {
     std::vector<std::pair<double, double>> trajectory; ///< Ballistic trajectory (x, z)
 };
 
-/// L4 planner seed passed to L5 for trajectory generation.
+/// L4 planner seed used for reference trajectory generation.
 ///
-/// L5 uses the raw target state to rebuild a future reference horizon without
-/// re-implementing the entire L4 planner pipeline.
+/// Contains the raw L3 target state, used by L4 to build the full MPC
+/// reference trajectory before passing it to L5.
 struct PlannerSeed {
     using State = std::variant<std::monostate, L3::RobotTargetState, L3::OutpostTargetState>;
 
@@ -75,6 +76,10 @@ struct GimbalPlan {
     uint64_t predicted_future{0};
     GimbalPlanSource source{GimbalPlanSource::Armor};
     std::optional<PlannerSeed> planner_seed;
+
+    /// Pre-built MPC reference trajectory (optional).
+    /// When populated by L4, L5 skips trajectory reconstruction and uses this directly.
+    std::optional<core::trajectory::ReferenceTrajectory> reference_trajectory;
 
     // ========================================================================
     // Target Angles

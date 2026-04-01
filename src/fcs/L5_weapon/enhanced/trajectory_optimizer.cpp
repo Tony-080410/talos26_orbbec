@@ -2,15 +2,14 @@
 
 #include "L4_planning/common/transform_utils.hpp"
 #include "L4_planning/planning/fire_decision.hpp"
+#include "core/math/normalize.hpp"
 #include "tiny_api.hpp"
 
 #include <Eigen/Dense>
 
 #include <algorithm>
 #include <cmath>
-#include <numbers>
 #include <utility>
-#include <vector>
 
 // =============================================================================
 // TINYMPC INVARIANT PROVENANCE (VENDORED LIBRARY - DO NOT MODIFY)
@@ -96,35 +95,11 @@ namespace {
 //   3. Must clean up allocations if tiny_setup() returns error status
 //   4. Must verify all 5 internal pointers are non-null on success
 //   5. Must document as "not thread-safe"
-// ==============================================================================
+using fcs::core::math::normalize_angle;
 
-using GimbalTransform = L4::Aimer::GimbalTransform;
-using MuzzleTransform = L4::Aimer::MuzzleTransform;
-using ReferenceMatrix = Eigen::Matrix<double, 4, Eigen::Dynamic>;
+using ReferenceTrajectory = core::trajectory::ReferenceTrajectory;
 
 constexpr double kUnlimitedBound = 1e17;
-
-struct ReferenceTrajectory {
-    ReferenceMatrix state;
-    std::vector<double> distances;
-    std::vector<double> diff_yaws;
-    std::vector<double> time_of_flights;
-    std::vector<Eigen::Vector3d> positions;
-    std::vector<int> selected_armor_ids;
-    std::vector<int> rough_selected_armor_ids;
-    double yaw_origin{0.0};
-};
-
-struct ReferenceSample {
-    double yaw{0.0};
-    double pitch{0.0};
-    double distance{0.0};
-    double diff_yaw{0.0};
-    double time_of_flight{0.0};
-    Eigen::Vector3d position{Eigen::Vector3d::Zero()};
-    int selected_armor_id{0};
-    int rough_selected_armor_id{0};
-};
 
 struct FireGateStatus {
     int delay_steps{0};
@@ -172,10 +147,6 @@ void destroy_tiny_solver(TinySolver* solver) noexcept {
     safe_delete(solver);           // Allocated 5th, plain struct
 }
 
-[[nodiscard]] double normalize_angle(double angle) noexcept {
-    return std::remainder(angle, 2.0 * std::numbers::pi);
-}
-
 [[nodiscard]] Eigen::Vector3d
     spherical_to_cartesian(double distance, double yaw, double pitch) noexcept {
     return Eigen::Vector3d{
@@ -183,127 +154,6 @@ void destroy_tiny_solver(TinySolver* solver) noexcept {
         distance * std::cos(pitch) * std::sin(yaw),
         distance * std::sin(pitch),
     };
-}
-
-[[nodiscard]] double
-    finite_difference(const std::vector<double>& samples, int index, double dt) noexcept {
-    const int size = static_cast<int>(samples.size());
-    if (size <= 1) {
-        return 0.0;
-    }
-    if (index <= 0) {
-        return (samples[1] - samples[0]) / dt;
-    }
-    if (index >= size - 1) {
-        return (samples[size - 1] - samples[size - 2]) / dt;
-    }
-    return (samples[index + 1] - samples[index - 1]) / (2.0 * dt);
-}
-
-[[nodiscard]] double
-    finite_difference_angle(const std::vector<double>& samples, int index, double dt) noexcept {
-    const int size = static_cast<int>(samples.size());
-    if (size <= 1) {
-        return 0.0;
-    }
-    if (index <= 0) {
-        return normalize_angle(samples[1] - samples[0]) / dt;
-    }
-    if (index >= size - 1) {
-        return normalize_angle(samples[size - 1] - samples[size - 2]) / dt;
-    }
-    return normalize_angle(samples[index + 1] - samples[index - 1]) / (2.0 * dt);
-}
-
-template <typename TargetState>
-[[nodiscard]] std::expected<ReferenceSample, std::string> build_reference_sample(
-    const L4::Aimer& aimer, const TargetState& state, L4::ArmorAimContext context,
-    uint64_t state_timestamp_ns, uint64_t current_ns, double sample_offset_s,
-    const GimbalTransform& gimbal, const MuzzleTransform& muzzle,
-    const core::trajectory::solver::TrajectorySolver& solver, double bullet_speed) noexcept {
-    const auto prediction = aimer.aim(
-        state, context, gimbal, muzzle, state_timestamp_ns, current_ns, sample_offset_s,
-        bullet_speed, solver);
-    if (!prediction) {
-        return std::unexpected(prediction.error());
-    }
-
-    return ReferenceSample{
-        .yaw                     = prediction->aim_yaw,
-        .pitch                   = prediction->aim_pitch,
-        .distance                = prediction->distance,
-        .diff_yaw                = prediction->diff_yaw,
-        .time_of_flight          = prediction->flying_time,
-        .position                = prediction->predicted_position,
-        .selected_armor_id       = prediction->selected_armor_id,
-        .rough_selected_armor_id = prediction->rough_selected_armor_id,
-    };
-}
-
-[[nodiscard]] std::expected<ReferenceTrajectory, std::string> build_reference_trajectory(
-    const WeaponControllerConfig& config, const L4::Aimer& aimer, const L4::PlannerSeed& seed,
-    uint64_t current_ns, const GimbalTransform& gimbal, const MuzzleTransform& muzzle,
-    const core::trajectory::solver::TrajectorySolver& solver, double bullet_speed) noexcept {
-    const int horizon = config.mpc.horizon_ahead + config.mpc.horizon_back + 1;
-
-    ReferenceTrajectory trajectory{
-        .state                    = ReferenceMatrix(4, horizon),
-        .distances                = std::vector<double>(horizon, 0.0),
-        .diff_yaws                = std::vector<double>(horizon, 0.0),
-        .time_of_flights          = std::vector<double>(horizon, 0.0),
-        .positions                = std::vector<Eigen::Vector3d>(horizon, Eigen::Vector3d::Zero()),
-        .selected_armor_ids       = std::vector<int>(horizon, 0),
-        .rough_selected_armor_ids = std::vector<int>(horizon, 0),
-    };
-
-    std::vector<double> yaw_samples(horizon, 0.0);
-    std::vector<double> pitch_samples(horizon, 0.0);
-    L4::ArmorAimContext context;
-    context.target_jumped      = seed.target_jumped;
-    context.phase              = seed.aim_phase;
-    context.preferred_armor_id = seed.selected_armor_id;
-
-    for (int k = 0; k < horizon; ++k) {
-        const double sample_offset =
-            (static_cast<double>(k) - config.mpc.horizon_back) * config.mpc.dt;
-
-        std::expected<ReferenceSample, std::string> sample = std::unexpected("empty planner seed");
-        if (const auto* robot = seed.robot_state()) {
-            sample = build_reference_sample(
-                aimer, *robot, context, seed.state_timestamp_ns, current_ns, sample_offset, gimbal,
-                muzzle, solver, bullet_speed);
-        } else if (const auto* outpost = seed.outpost_state()) {
-            sample = build_reference_sample(
-                aimer, *outpost, context, seed.state_timestamp_ns, current_ns, sample_offset,
-                gimbal, muzzle, solver, bullet_speed);
-        }
-
-        if (!sample) {
-            return std::unexpected(sample.error());
-        }
-
-        context.preferred_armor_id = sample->selected_armor_id;
-
-        yaw_samples[k]          = sample->yaw;
-        pitch_samples[k]        = std::clamp(sample->pitch, config.pitch_min, config.pitch_max);
-        trajectory.distances[k] = sample->distance;
-        trajectory.diff_yaws[k] = sample->diff_yaw;
-        trajectory.time_of_flights[k]          = sample->time_of_flight;
-        trajectory.positions[k]                = sample->position;
-        trajectory.selected_armor_ids[k]       = sample->selected_armor_id;
-        trajectory.rough_selected_armor_ids[k] = sample->rough_selected_armor_id;
-    }
-
-    trajectory.yaw_origin = yaw_samples[config.mpc.horizon_back];
-
-    for (int k = 0; k < horizon; ++k) {
-        trajectory.state(0, k) = normalize_angle(yaw_samples[k] - trajectory.yaw_origin);
-        trajectory.state(1, k) = finite_difference_angle(yaw_samples, k, config.mpc.dt);
-        trajectory.state(2, k) = pitch_samples[k];
-        trajectory.state(3, k) = finite_difference(pitch_samples, k, config.mpc.dt);
-    }
-
-    return trajectory;
 }
 
 [[nodiscard]] bool solved_ok(const TinySolver* solver, int status) noexcept {
@@ -477,25 +327,8 @@ void TinySolverHandle::reset(TinySolver* solver) noexcept {
     if (status != 0) {
         // tiny_setup failed, but it may have allocated the 5 objects anyway
         // tinympc BUG: Returns error without freeing allocations
-        // We MUST check and clean up if raw_solver is non-null
-
-        if (raw_solver != nullptr) {
-            // tinympc leaked all 5 internal pointers - clean them up
-            auto safe_delete = [](auto* ptr) noexcept {
-                if (ptr != nullptr) {
-                    try {
-                        delete ptr;
-                    } catch (...) { /* swallow to preserve noexcept */
-                    }
-                }
-            };
-
-            safe_delete(raw_solver->work);
-            safe_delete(raw_solver->settings);
-            safe_delete(raw_solver->cache);
-            safe_delete(raw_solver->solution);
-            safe_delete(raw_solver);
-        }
+        // destroy_tiny_solver handles nullptr checks + safe deletion
+        destroy_tiny_solver(raw_solver);
 
         return std::unexpected("tiny_setup failed with status: " + std::to_string(status));
     }
@@ -517,21 +350,7 @@ void TinySolverHandle::reset(TinySolver* solver) noexcept {
 
     if (!fully_initialized) {
         // Partial initialization detected - tinympc is even more broken than we thought
-        // Clean up the partial mess and report error
-        auto safe_delete = [](auto* ptr) noexcept {
-            if (ptr != nullptr) {
-                try {
-                    delete ptr;
-                } catch (...) { /* swallow */
-                }
-            }
-        };
-
-        safe_delete(raw_solver->work);
-        safe_delete(raw_solver->settings);
-        safe_delete(raw_solver->cache);
-        safe_delete(raw_solver->solution);
-        safe_delete(raw_solver);
+        destroy_tiny_solver(raw_solver);
 
         return std::unexpected(
             "tiny_setup returned partially initialized solver (tinympc invariant violation)");
@@ -575,9 +394,8 @@ WeaponCommand TinyMpcTrajectoryOptimizer::passthrough(
 }
 
 std::expected<WeaponCommand, std::string> TinyMpcTrajectoryOptimizer::optimize(
-    const L4::GimbalPlan& plan, const L4::Aimer& aimer, const L4::FireDecisionConfig& fire_decision,
-    const fast_tf::CoordinateSystem& tf_buffer,
-    const core::trajectory::solver::TrajectorySolver& solver, double bullet_speed,
+    const L4::GimbalPlan& plan, const L4::FireDecisionConfig& fire_decision,
+    const L4::AimerConfig& aimer_config, const fast_tf::CoordinateSystem& tf_buffer,
     uint64_t command_timestamp_ns) noexcept {
     if (!config_.enabled) {
         return std::unexpected("mpc_weapon disabled");
@@ -588,75 +406,71 @@ std::expected<WeaponCommand, std::string> TinyMpcTrajectoryOptimizer::optimize(
     if (plan.source != L4::GimbalPlanSource::Armor) {
         return std::unexpected("only armor planner seeds are supported");
     }
-    if (!plan.planner_seed) {
-        return std::unexpected("planner seed is missing");
-    }
-    if (bullet_speed <= 1e-6) {
-        return std::unexpected("invalid bullet speed");
+    if (!plan.reference_trajectory) {
+        return std::unexpected("reference trajectory is missing");
     }
 
-    const uint64_t current_ns = command_timestamp_ns;
+    const ReferenceTrajectory& reference = *plan.reference_trajectory;
 
-    auto transforms = L4::lookup_gimbal_muzzle_transforms(tf_buffer, current_ns);
+    auto transforms = L4::lookup_gimbal_muzzle_transforms(tf_buffer, command_timestamp_ns);
     if (!transforms) {
         return std::unexpected(transforms.error());
-    }
-
-    auto reference = build_reference_trajectory(
-        config_, aimer, *plan.planner_seed, current_ns, transforms->gimbal, transforms->muzzle,
-        solver, bullet_speed);
-    if (!reference) {
-        return std::unexpected(reference.error());
-    }
-
-    TinySolver* const yaw_solver   = yaw_solver_.get();
-    TinySolver* const pitch_solver = pitch_solver_.get();
-
-    Eigen::Vector2d x0;
-    x0 << reference->state(0, 0), reference->state(1, 0);
-    if (tiny_set_x0(yaw_solver, x0) != 0) {
-        return std::unexpected("failed to set yaw MPC initial condition");
-    }
-    yaw_solver->work->Xref = reference->state.block(0, 0, 2, reference->state.cols());
-    const int yaw_status   = tiny_solve(yaw_solver);
-    if (!solved_ok(yaw_solver, yaw_status)) {
-        return std::unexpected("yaw MPC did not converge");
-    }
-
-    x0 << reference->state(2, 0), reference->state(3, 0);
-    if (tiny_set_x0(pitch_solver, x0) != 0) {
-        return std::unexpected("failed to set pitch MPC initial condition");
-    }
-    pitch_solver->work->Xref = reference->state.block(2, 0, 2, reference->state.cols());
-    const int pitch_status   = tiny_solve(pitch_solver);
-    if (!solved_ok(pitch_solver, pitch_status)) {
-        return std::unexpected("pitch MPC did not converge");
     }
 
     const auto current_gimbal  = transforms->gimbal.euler_rot();
     const double current_yaw   = normalize_angle(current_gimbal.yaw);
     const double current_pitch = current_gimbal.pitch;
-    const int center_index     = config_.mpc.horizon_back;
-    const int control_index = std::min(center_index, static_cast<int>(reference->state.cols()) - 2);
 
-    WeaponCommand cmd = passthrough(plan, current_ns);
-    cmd.ref_yaw       = normalize_angle(reference->state(0, center_index) + reference->yaw_origin);
-    cmd.ref_pitch     = reference->state(2, center_index);
-    cmd.yaw   = normalize_angle(yaw_solver->solution->x(0, center_index) + reference->yaw_origin);
+    TinySolver* const yaw_solver   = yaw_solver_.get();
+    TinySolver* const pitch_solver = pitch_solver_.get();
+
+    Eigen::Vector2d x0;
+    x0 << reference.state(0, 0), reference.state(1, 0);
+    if (tiny_set_x0(yaw_solver, x0) != 0) {
+        return std::unexpected("failed to set yaw MPC initial condition");
+    }
+    yaw_solver->work->Xref = reference.state.block(0, 0, 2, reference.state.cols());
+    const int yaw_status   = tiny_solve(yaw_solver);
+    if (!solved_ok(yaw_solver, yaw_status)) {
+        return std::unexpected("yaw MPC did not converge");
+    }
+
+    x0 << reference.state(2, 0), reference.state(3, 0);
+    if (tiny_set_x0(pitch_solver, x0) != 0) {
+        return std::unexpected("failed to set pitch MPC initial condition");
+    }
+    pitch_solver->work->Xref = reference.state.block(2, 0, 2, reference.state.cols());
+    const int pitch_status   = tiny_solve(pitch_solver);
+    if (!solved_ok(pitch_solver, pitch_status)) {
+        return std::unexpected("pitch MPC did not converge");
+    }
+
+    const int center_index  = config_.mpc.horizon_back;
+    const int control_index = std::min(center_index, reference.horizon() - 2);
+
+    WeaponCommand cmd;
+    cmd.timestamp_ns      = command_timestamp_ns;
+    cmd.plan_timestamp_ns = plan.timestamp_ns;
+    cmd.plan_yaw          = plan.yaw;
+    cmd.plan_pitch        = plan.pitch;
+    cmd.plan_fire         = plan.fire_advice;
+    cmd.ref_yaw   = normalize_angle(reference.state(0, center_index) + reference.yaw_origin);
+    cmd.ref_pitch = reference.state(2, center_index);
+    cmd.yaw   = normalize_angle(yaw_solver->solution->x(0, center_index) + reference.yaw_origin);
     cmd.pitch = std::clamp(
         pitch_solver->solution->x(0, center_index), config_.pitch_min, config_.pitch_max);
     cmd.yaw_vel                    = yaw_solver->solution->x(1, center_index);
     cmd.pitch_vel                  = pitch_solver->solution->x(1, center_index);
     cmd.yaw_accel                  = yaw_solver->solution->u(0, control_index);
     cmd.pitch_accel                = pitch_solver->solution->u(0, control_index);
-    cmd.distance                   = reference->distances[center_index];
-    cmd.tof                        = reference->time_of_flights[center_index];
+    cmd.distance                   = reference.distances[center_index];
+    cmd.tof                        = reference.time_of_flights[center_index];
     const FireGateStatus fire_gate = compute_fire_gate(
-        fire_decision, aimer.config(), plan, current_yaw, current_pitch, config_.mpc.dt,
-        center_index, *reference, yaw_solver, pitch_solver);
+        fire_decision, aimer_config, plan, current_yaw, current_pitch, config_.mpc.dt, center_index,
+        reference, yaw_solver, pitch_solver);
     cmd.fire = plan.fire_advice && fire_gate.final_fire_gate_ok;
     if (config_.enable_debug) {
-        cmd.viz_debug = build_debug_data(config_, *reference, yaw_solver, pitch_solver, fire_gate);
+        cmd.viz_debug = build_debug_data(config_, reference, yaw_solver, pitch_solver, fire_gate);
     }
 
     const auto finite = [](double value) noexcept { return std::isfinite(value); };

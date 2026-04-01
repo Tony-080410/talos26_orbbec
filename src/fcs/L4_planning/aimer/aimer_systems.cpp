@@ -11,6 +11,8 @@
 #include "L4_planning/planning/fire_decision.hpp"
 #include "L4_planning/selected_target_snapshot.hpp"
 #include "L4_planning/target_selection_trace.hpp"
+#include "L4_planning/trajectory_builder.hpp"
+#include "L5_weapon/config.hpp"
 #include "camera_config.hpp"
 #include "core/channel_topics.hpp"
 #include "core/target_key.hpp"
@@ -425,6 +427,7 @@ void register_aimer_systems(talos::Scheduler& scheduler, L4Config&& config) {
             talos::res<L4Config> cfg, talos::res<Aimer> aimer,
             core::trajectory::trajectory_solver solver,
             core::trajectory::bullet_speed bullet_speed_,
+            talos::res<L5::WeaponControllerConfig> weapon_cfg,
             talos::spmc<L3::TrackerOutputs, TrackerOutputChannelTopic> tracker_in,
             talos::spmc<energy_meter::EnergyMeterState, EnergyMeterStateChannelTopic> rune_in,
             talos::res<fast_tf::CoordinateSystem> tf_buffer,
@@ -680,6 +683,19 @@ void register_aimer_systems(talos::Scheduler& scheduler, L4Config&& config) {
                     }
                     if (!std::holds_alternative<std::monostate>(seed.state)) {
                         plan.planner_seed = std::move(seed);
+
+                        // Build reference trajectory for L5 MPC consumption
+                        const auto& mpc = weapon_cfg->mpc;
+                        auto ref_traj   = build_reference_trajectory(
+                            *plan.planner_seed, *aimer, mpc.horizon_ahead, mpc.horizon_back, mpc.dt,
+                            weapon_cfg->pitch_min, weapon_cfg->pitch_max, current_ns, gimbal,
+                            muzzle, solver_ref, bullet_speed);
+                        if (ref_traj) {
+                            plan.reference_trajectory = std::move(*ref_traj);
+                        } else {
+                            SPDLOG_WARN(
+                                "Failed to build reference trajectory: {}", ref_traj.error());
+                        }
                     }
                 }
                 VisualizationDebugData viz_debug;

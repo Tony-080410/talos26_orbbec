@@ -138,7 +138,7 @@ whole_armor_center_v_yaw_range = [6.5, 7.5]
 phase_transition_frames = 50
 single_to_whole_armor_frames = 20
 # Armor selection windows (degrees)
-front_window_deg = 90.0
+front_window_deg = 60.0
 coming_angle_deg = 60.0
 leaving_angle_deg = 20.0
 

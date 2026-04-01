@@ -1,4 +1,5 @@
 #include "L4_planning/aimer/aimer.hpp"
+#include "core/math/normalize.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -9,6 +10,8 @@
 
 namespace fcs::L4 {
 namespace {
+
+using fcs::core::math::normalize_angle;
 
 [[nodiscard]] uint64_t offset_timestamp_ns(uint64_t base_ns, double offset_s) noexcept {
     if (!std::isfinite(offset_s)) {
@@ -27,10 +30,6 @@ namespace {
     }
 
     return static_cast<uint64_t>(std::llround(shifted_ns));
-}
-
-[[nodiscard]] double normalize_angle(double angle) noexcept {
-    return std::remainder(angle, 2.0 * std::numbers::pi);
 }
 
 [[nodiscard]] double center_yaw_from_xy(double x, double y) noexcept { return std::atan2(y, x); }

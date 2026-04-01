@@ -164,6 +164,7 @@ set(FCS_SOURCES
         src/fcs/L4_planning/aimer/aimer.cpp
         src/fcs/L4_planning/aimer/aimer_systems.cpp
         src/fcs/L4_planning/planning_systems.cpp
+        src/fcs/L4_planning/trajectory_builder.cpp
         src/fcs/L5_weapon/enhanced/trajectory_optimizer.cpp
         src/fcs/L5_weapon/enhanced/weapon_systems.cpp
 )
