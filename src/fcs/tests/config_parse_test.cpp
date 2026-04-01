@@ -89,7 +89,7 @@ TEST(ConfigParse, VisionBaseTomlMatchesExpectedSemanticsAndValues) {
     ASSERT_TRUE(result.has_value()) << result.error();
     const auto& config = *result;
 
-    EXPECT_EQ(config.at_legacy->backend_type, fcs::L2::AtLegacyBackendTypeConfig::Traditional);
+    EXPECT_EQ(config.at_legacy->backend_type, fcs::L2::AtLegacyBackendTypeConfig::NeuralNetworkTup);
     EXPECT_EQ(config.at_legacy->default_detect_color, fcs::ArmorColor::Blue);
 
     EXPECT_FALSE(config.at_legacy->traditional.advanced_binary);
@@ -144,6 +144,13 @@ TEST(ConfigParse, VisionBaseTomlMatchesExpectedSemanticsAndValues) {
     EXPECT_EQ(config.at_legacy->axera.model_path, "models/compiled.axmodel");
     EXPECT_DOUBLE_EQ(config.at_legacy->axera.confidence_threshold, 0.15);
     EXPECT_EQ(config.at_legacy->axera.top_k, 128);
+    EXPECT_TRUE(config.at_legacy->readback_roi.enabled);
+    EXPECT_DOUBLE_EQ(config.at_legacy->readback_roi.stale_timeout_s, 0.20);
+    EXPECT_DOUBLE_EQ(config.at_legacy->readback_roi.margin_ratio_x, 0.20);
+    EXPECT_DOUBLE_EQ(config.at_legacy->readback_roi.margin_ratio_y, 0.20);
+    EXPECT_DOUBLE_EQ(config.at_legacy->readback_roi.box_size_m[0], 1.0);
+    EXPECT_DOUBLE_EQ(config.at_legacy->readback_roi.box_size_m[1], 1.0);
+    EXPECT_DOUBLE_EQ(config.at_legacy->readback_roi.box_size_m[2], 0.6);
 
     EXPECT_DOUBLE_EQ(config.tracker().robot.matcher_gate, 10.0);
     EXPECT_DOUBLE_EQ(config.tracker().robot.lost_threshold, 1.0);

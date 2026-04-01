@@ -659,11 +659,16 @@ struct ConfigSnapshotSource {
         });
     }
 
-    return json{
-        {"timestamp_ns",    batch.timestamp_ns},
-        {    "frame_id",        batch.frame_id},
-        {  "detections", std::move(detections)},
+    json result{
+        {"timestamp_ns",               batch.timestamp_ns},
+        {    "frame_id",                   batch.frame_id},
+        {  "detections",            std::move(detections)},
+        {"detector_roi", to_json_rect(batch.detector_roi)},
     };
+
+    result["has_detector_roi"] = batch.has_detector_roi;
+
+    return result;
 }
 
 template <fast_tf::frame Frame>

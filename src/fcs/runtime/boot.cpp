@@ -1,5 +1,6 @@
 #include "runtime/boot.hpp"
 
+#include "L2_perception/armor/at_legacy_readback_roi.hpp"
 #include "L2_perception/armor/at_legacy_systems.hpp"
 #include "L2_perception/rune/rune_systems.hpp"
 #include "L3_estimation/energy_meter/energy_meter_systems.hpp"
@@ -79,6 +80,8 @@ fast_tf::CoordinateSystem init_coordinate_system(const RobotExtrinsicConfig& con
 
     world.insert_resource(core::trajectory::bullet_speed_data{.bullet_speed = bullet_speed});
     world.insert_resource(config.vision.at_legacy->default_detect_color);
+    world.insert_resource(config.vision.at_legacy->readback_roi);
+    world.insert_resource(L2::AtLegacyReadbackRoiCache{});
 
     // Setup L1 sensor systems
     auto setup_result = runtime::setup_l1(

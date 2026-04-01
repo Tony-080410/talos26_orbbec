@@ -1,5 +1,6 @@
 #pragma once
 
+#include "L2_perception/armor/at_legacy_readback_roi.hpp"
 #include "core/armor_types.hpp"
 
 #include <array>
@@ -130,6 +131,7 @@ struct AtLegacyConfig {
     AtLegacyNNTupConfig nn_tup;
     AtLegacyTrtConfig trt;
     AtLegacyAxeraConfig axera;
+    AtLegacyReadbackRoiConfig readback_roi;
 };
 
 } // namespace fcs::L2

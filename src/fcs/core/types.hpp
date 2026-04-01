@@ -81,14 +81,19 @@ struct AtLegacyArmorDetection {
 struct AtLegacyArmorDetectionBatch {
     std::vector<AtLegacyArmorDetection> detections;
     cv::Mat image; ///< Source image (shared reference for visualization)
+    bool has_detector_roi = false;
+    cv::Rect detector_roi{};
     uint64_t timestamp_ns = 0;
     uint64_t frame_id     = 0;
 
     AtLegacyArmorDetectionBatch() = default;
     AtLegacyArmorDetectionBatch(
-        std::vector<AtLegacyArmorDetection> dets, cv::Mat img, uint64_t ts, uint64_t fid)
+        std::vector<AtLegacyArmorDetection> dets, cv::Mat img, uint64_t ts, uint64_t fid,
+        bool has_roi = false, cv::Rect roi = {})
         : detections(std::move(dets))
         , image(std::move(img))
+        , has_detector_roi(has_roi)
+        , detector_roi(std::move(roi))
         , timestamp_ns(ts)
         , frame_id(fid) {}
 

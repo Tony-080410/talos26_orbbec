@@ -3,6 +3,7 @@
 #include "L2_perception/armor/at_legacy_config.hpp"
 #include "L2_perception/armor/at_legacy_detector_backend.hpp"
 #include "L2_perception/armor/at_legacy_pnp_solver.hpp"
+#include "L2_perception/armor/at_legacy_readback_roi.hpp"
 #include "core/armor_types.hpp"
 #include "core/channel_topics.hpp"
 #include "core/runtime.hpp"
@@ -15,7 +16,50 @@
 
 namespace fcs::L2 {
 
+namespace {
+
+[[nodiscard]] bool snapshot_is_fresh(
+    const AtLegacyReadbackRoiSnapshot& snapshot, const AtLegacyReadbackRoiConfig& config,
+    uint64_t image_timestamp_ns) noexcept {
+    if (!snapshot.valid || snapshot.timestamp_ns == 0
+        || image_timestamp_ns < snapshot.timestamp_ns) {
+        return false;
+    }
+
+    const auto max_age_ns = static_cast<uint64_t>(std::max(0.0, config.stale_timeout_s) * 1e9);
+    return image_timestamp_ns - snapshot.timestamp_ns <= max_age_ns;
+}
+
+void offset_detections(std::vector<AtLegacyArmorDetection>& detections, const cv::Point& offset) {
+    if (offset.x == 0 && offset.y == 0) {
+        return;
+    }
+
+    const cv::Point2f offset_f(static_cast<float>(offset.x), static_cast<float>(offset.y));
+    for (auto& detection : detections) {
+        for (auto& corner : detection.corners) {
+            corner += offset_f;
+        }
+        detection.rect.x += static_cast<float>(offset.x);
+        detection.rect.y += static_cast<float>(offset.y);
+    }
+}
+
+[[nodiscard]] bool is_sub_frame_roi(const cv::Rect& roi, const cv::Size& frame_size) noexcept {
+    return roi.x > 0 || roi.y > 0 || roi.width < frame_size.width || roi.height < frame_size.height;
+}
+
+} // namespace
+
 void register_at_legacy_detection_systems(talos::Scheduler& scheduler) {
+    auto& world = scheduler.world();
+    if (!world.has_resource<AtLegacyReadbackRoiConfig>()) {
+        world.insert_resource(AtLegacyReadbackRoiConfig{});
+    }
+    if (!world.has_resource<AtLegacyReadbackRoiCache>()) {
+        world.insert_resource(AtLegacyReadbackRoiCache{});
+    }
+
     scheduler.add_system<talos::fixed_rate<200>>(
         "at_legacy_armor_detector_pnp_solver",
         [](talos::spmc<AtLegacyImageFrame, AtLegacyImageChannelTopic> image_in,
@@ -26,6 +70,8 @@ void register_at_legacy_detection_systems(talos::Scheduler& scheduler) {
            talos::res_mut<std::shared_ptr<AtLegacyDetectorBackend>> backend_ptr,
            talos::res<std::shared_ptr<AtLegacyPnPSolver>> solver_ptr,
            talos::res<fast_tf::CoordinateSystem> tf_system,
+           talos::res<AtLegacyReadbackRoiConfig> readback_roi_config,
+           talos::res<AtLegacyReadbackRoiCache> readback_roi_cache,
            core::detecting_color detecting_color_) mutable {
             if (!image_in.has_new()) {
                 return;
@@ -44,15 +90,37 @@ void register_at_legacy_detection_systems(talos::Scheduler& scheduler) {
             // Re-apply detect color before each detection and enforce color before PnP.
             backend->set_detect_color(detect_color);
 
-            auto result = backend->detect(frame->image);
+            cv::Rect detector_roi(0, 0, frame->image.cols, frame->image.rows);
+            cv::Mat detector_input = frame->image;
+            if (readback_roi_config->enabled && backend->supports_readback_roi()) {
+                const auto snapshot = readback_roi_cache->load();
+                if (snapshot_is_fresh(snapshot, *readback_roi_config, frame->timestamp_ns)) {
+                    const auto maybe_roi = resolve_readback_roi(
+                        frame->image.size(), snapshot.raw_roi, *readback_roi_config,
+                        backend->input_resolution());
+                    if (maybe_roi) {
+                        detector_roi   = *maybe_roi;
+                        detector_input = frame->image(detector_roi);
+                    }
+                }
+            }
+            const bool has_detector_roi = is_sub_frame_roi(detector_roi, frame->image.size());
+
+            auto result = backend->detect(detector_input);
             if (!result) {
                 detection_out.write(
                     AtLegacyArmorDetectionBatch{
-                        {}, frame->image, frame->timestamp_ns, frame->frame_id});
+                        {},
+                        frame->image,
+                        frame->timestamp_ns,
+                        frame->frame_id,
+                        has_detector_roi,
+                        detector_roi});
                 return;
             }
 
             auto detections = std::move(*result);
+            offset_detections(detections, detector_roi.tl());
             std::vector<AtLegacyArmorDetection> detections_for_pnp;
             detections_for_pnp.reserve(detections.size());
             std::copy_if(
@@ -63,7 +131,8 @@ void register_at_legacy_detection_systems(talos::Scheduler& scheduler) {
 
             detection_out.write(
                 AtLegacyArmorDetectionBatch{
-                    std::move(detections), frame->image, frame->timestamp_ns, frame->frame_id});
+                    std::move(detections), frame->image, frame->timestamp_ns, frame->frame_id,
+                    has_detector_roi, detector_roi});
 
             auto tf_camera_odom = fast_tf::lookup_clamped<fast_tf::odom, fast_tf::camera_optical>(
                 *tf_system, frame->timestamp_ns);

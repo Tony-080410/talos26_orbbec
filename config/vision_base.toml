@@ -65,6 +65,13 @@ model_path = "models/compiled.axmodel"  # Path to AX650 .axmodel file
 confidence_threshold = 0.15
 top_k = 128 # works when o2m
 
+[readback_roi]
+enabled = true
+stale_timeout_s = 0.20
+margin_ratio_x = 0.20
+margin_ratio_y = 0.00
+box_size_m = [0.6, 0.6, 0.6]
+
 [tracker]
 [tracker.robot]
 matcher_gate = 10.0             # Aligned with at_vision rm_bringup config

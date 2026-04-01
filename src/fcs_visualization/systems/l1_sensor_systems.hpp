@@ -53,6 +53,10 @@ void register_l1_sensor_systems(App& app) {
             // Clone image and draw detection boxes
             cv::Mat img_bgr = batch->image.clone();
 
+            const cv::Scalar roi_color =
+                batch->has_detector_roi ? cv::Scalar(0, 255, 255) : cv::Scalar(0, 0, 255);
+            cv::rectangle(img_bgr, batch->detector_roi, roi_color, 2, cv::LINE_AA);
+
             // Determine ally color from config (opposite of detect_color)
             // detect_color is enemy color, so ally is the opposite
             const cv::Scalar ally_color =

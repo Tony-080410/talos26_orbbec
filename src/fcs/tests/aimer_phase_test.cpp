@@ -13,6 +13,7 @@
 #include <utility>
 #include <vector>
 
+#include "L2_perception/armor/at_legacy_readback_roi.hpp"
 #include "L3_estimation/energy_meter/types.hpp"
 #include "L3_estimation/tracker/new_tracker.hpp"
 #include "L3_estimation/tracker/types.hpp"
@@ -22,6 +23,7 @@
 #include "L4_planning/planning/fire_decision.hpp"
 #include "L4_planning/selected_target_snapshot.hpp"
 #include "L4_planning/target_selection_trace.hpp"
+#include "camera_config.hpp"
 #include "core/time.hpp"
 #include "core/trajectory/resource.hpp"
 #include "core/trajectory/solver/solver_interfaces.hpp"
@@ -143,9 +145,21 @@ fast_tf::CoordinateSystem make_test_coordinate_system() {
         system, fast_tf::EdgeTransform<fast_tf::gimbal_pitch_fuxk_frame>::from_translation(0, 0, 0),
         0);
     fast_tf::update(
+        system, fast_tf::EdgeTransform<fast_tf::camera_link_fuxk_frame>::from_translation(0, 0, 0),
+        0);
+    fast_tf::update(
+        system,
+        fast_tf::EdgeTransform<fast_tf::camera_optical_fuxk_frame>::from_translation(0, 0, 0), 0);
+    fast_tf::update(
         system, fast_tf::EdgeTransform<fast_tf::muzzle_link_fuxk_frame>::from_translation(0, 0, 0),
         0);
     return system;
+}
+
+fcs::CameraConfig make_test_camera_config() {
+    fcs::CameraConfig config;
+    config.camera_matrix << 100.0, 0.0, 50.0, 0.0, 100.0, 60.0, 0.0, 0.0, 1.0;
+    return config;
 }
 
 fcs::L3::TrackerOutput make_robot_tracker_output(
@@ -176,8 +190,12 @@ fcs::L3::TrackerOutput make_robot_tracker_output(
 
 class AimerSystemHarness {
 public:
-    explicit AimerSystemHarness(fcs::L4::L4Config config = {}) {
+    explicit AimerSystemHarness(
+        fcs::L4::L4Config config                               = {},
+        fcs::L2::AtLegacyReadbackRoiConfig readback_roi_config = {}) {
         scheduler_.world().insert_resource(make_test_coordinate_system());
+        scheduler_.world().insert_resource(make_test_camera_config());
+        scheduler_.world().insert_resource(readback_roi_config);
         scheduler_.world().insert_resource(
             std::unique_ptr<fcs::core::trajectory::solver::TrajectorySolver>(
                 std::make_unique<MockTrajectorySolver>()));
@@ -396,6 +414,20 @@ public:
             std::this_thread::sleep_for(10ms);
         }
         return last_trace;
+    }
+
+    std::optional<fcs::L2::AtLegacyReadbackRoiSnapshot>
+        wait_for_readback_roi(std::chrono::milliseconds timeout = 750ms) {
+        const auto deadline = std::chrono::steady_clock::now() + timeout;
+        while (std::chrono::steady_clock::now() < deadline) {
+            const auto snapshot =
+                scheduler_.world().get_res<fcs::L2::AtLegacyReadbackRoiCache>()->load();
+            if (snapshot.valid) {
+                return snapshot;
+            }
+            std::this_thread::sleep_for(10ms);
+        }
+        return std::nullopt;
     }
 
 private:
@@ -1353,4 +1385,30 @@ TEST(AimerSystemsTargetSelection, TempLostRetainsLastOpticalMeasurement) {
     EXPECT_EQ(temp_lost_output.status, fcs::L3::TrackerStatus::TempLost);
     EXPECT_DOUBLE_EQ(temp_lost_output.last_image_center_distance_px, 42.0);
     EXPECT_EQ(temp_lost_output.last_observation_timestamp_ns, 100u);
+}
+
+TEST(AimerSystemsTargetSelection, ReadbackRoiFreshnessUsesLastObservationTimestampDuringTempLost) {
+    fcs::L2::AtLegacyReadbackRoiConfig readback_roi_config;
+    readback_roi_config.enabled         = true;
+    readback_roi_config.stale_timeout_s = 0.20;
+
+    AimerSystemHarness harness({}, readback_roi_config);
+    harness.start();
+
+    constexpr uint64_t kLastObservationTimestampNs = 123456u;
+    harness.set_trackers({make_robot_tracker_output(
+        fcs::ArmorName::One, fcs::L3::TrackerStatus::TempLost, Eigen::Vector3d(0.0, 0.0, 10.0),
+        12.0, fcs::ArmorColor::Blue, kLastObservationTimestampNs)});
+
+    const auto selected_target = harness.wait_for_selected_target_after(0);
+    ASSERT_TRUE(selected_target.has_value());
+    EXPECT_GT(selected_target->tracker.timestamp_ns, kLastObservationTimestampNs);
+    EXPECT_EQ(selected_target->tracker.last_observation_timestamp_ns, kLastObservationTimestampNs);
+
+    const auto roi_snapshot = harness.wait_for_readback_roi();
+    ASSERT_TRUE(roi_snapshot.has_value());
+    EXPECT_TRUE(roi_snapshot->valid);
+    EXPECT_EQ(roi_snapshot->timestamp_ns, kLastObservationTimestampNs);
+
+    harness.stop();
 }

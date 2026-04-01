@@ -110,6 +110,37 @@ void AtLegacyDetectorBackend::set_detect_color(ArmorColor color) noexcept {
         backend_);
 }
 
+bool AtLegacyDetectorBackend::supports_readback_roi() const noexcept {
+    return std::visit(
+        [](const auto& backend) -> bool {
+            using BackendPtr = std::decay_t<decltype(backend)>;
+            using Backend    = typename BackendPtr::element_type;
+            if (!backend) {
+                return false;
+            }
+
+            return true;
+        },
+        backend_);
+}
+
+AtLegacyBackendInputResolution AtLegacyDetectorBackend::input_resolution() const noexcept {
+    return std::visit(
+        [](const auto& backend) -> AtLegacyBackendInputResolution {
+            using BackendPtr = std::decay_t<decltype(backend)>;
+            using Backend    = typename BackendPtr::element_type;
+            if (!backend) {
+                return {};
+            }
+            if constexpr (std::is_same_v<Backend, AtLegacyTraditionalBackend>) {
+                return {.width = 480, .height = 270};
+            } else {
+                return {.width = Backend::INPUT_W, .height = Backend::INPUT_H};
+            }
+        },
+        backend_);
+}
+
 // ============================================================================
 // Factory Function
 // ============================================================================

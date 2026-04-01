@@ -1,6 +1,7 @@
 #include "L4_planning/aimer/aimer_systems.hpp"
 #include "L4_planning/aimer/aimer.hpp"
 
+#include "L2_perception/armor/at_legacy_readback_roi.hpp"
 #include "L3_estimation/energy_meter/types.hpp"
 #include "L3_estimation/tracker/types.hpp"
 #include "L4_planning/aimer/types.hpp"
@@ -10,6 +11,7 @@
 #include "L4_planning/planning/fire_decision.hpp"
 #include "L4_planning/selected_target_snapshot.hpp"
 #include "L4_planning/target_selection_trace.hpp"
+#include "camera_config.hpp"
 #include "core/channel_topics.hpp"
 #include "core/target_key.hpp"
 #include "core/time.hpp"
@@ -61,6 +63,11 @@ struct GimbalEffortMetrics {
     double yaw_delta_rad{std::numeric_limits<double>::infinity()};
     double pitch_delta_rad{std::numeric_limits<double>::infinity()};
     double score{0.0};
+};
+
+struct ReadbackRoiTimestamps {
+    uint64_t projection_timestamp_ns{0};
+    uint64_t freshness_timestamp_ns{0};
 };
 
 void update_phase_fsm(
@@ -125,6 +132,77 @@ void update_phase_fsm(
 
 [[nodiscard]] core::TargetKey make_target_key(const L3::TrackerOutput& tracker) noexcept {
     return core::TargetKey{tracker.target_name, tracker.target_color};
+}
+
+[[nodiscard]] bool tracker_supports_readback_roi(const L3::TrackerOutput& tracker) noexcept {
+    return tracker.is_tracking() && tracker.target_name != ArmorName::Invalid
+        && (tracker.is_robot() || tracker.is_outpost());
+}
+
+[[nodiscard]] std::optional<L3::TrackerOutput> pick_readback_tracker_fallback(
+    const std::optional<L3::TrackerOutputs>& trackers,
+    const std::optional<core::TargetKey>& preferred_key) noexcept {
+    if (!trackers) {
+        return std::nullopt;
+    }
+
+    if (preferred_key.has_value()) {
+        for (const auto& tracker : *trackers) {
+            if (tracker_supports_readback_roi(tracker)
+                && make_target_key(tracker) == *preferred_key) {
+                return tracker;
+            }
+        }
+    }
+
+    const L3::TrackerOutput* best = nullptr;
+    for (const auto& tracker : *trackers) {
+        if (!tracker_supports_readback_roi(tracker)) {
+            continue;
+        }
+
+        if (best == nullptr) {
+            best = &tracker;
+            continue;
+        }
+
+        const bool tracker_has_finite = std::isfinite(tracker.last_image_center_distance_px);
+        const bool best_has_finite    = std::isfinite(best->last_image_center_distance_px);
+        if (tracker_has_finite != best_has_finite) {
+            if (tracker_has_finite) {
+                best = &tracker;
+            }
+            continue;
+        }
+
+        if (tracker_has_finite
+            && tracker.last_image_center_distance_px < best->last_image_center_distance_px) {
+            best = &tracker;
+            continue;
+        }
+
+        if (tracker.last_observation_timestamp_ns > best->last_observation_timestamp_ns) {
+            best = &tracker;
+        }
+    }
+
+    if (best == nullptr) {
+        return std::nullopt;
+    }
+    return *best;
+}
+
+[[nodiscard]] ReadbackRoiTimestamps
+    resolve_readback_roi_timestamps(const SelectedTargetSnapshot& snapshot) noexcept {
+    const uint64_t projection_timestamp_ns =
+        snapshot.tracker.timestamp_ns != 0 ? snapshot.tracker.timestamp_ns : snapshot.timestamp_ns;
+    const uint64_t freshness_timestamp_ns = snapshot.tracker.last_observation_timestamp_ns != 0
+                                              ? snapshot.tracker.last_observation_timestamp_ns
+                                              : projection_timestamp_ns;
+    return {
+        .projection_timestamp_ns = projection_timestamp_ns,
+        .freshness_timestamp_ns  = freshness_timestamp_ns,
+    };
 }
 
 [[nodiscard]] std::optional<Eigen::Vector3d>
@@ -325,8 +403,19 @@ void update_phase_fsm(
 } // namespace
 
 void register_aimer_systems(talos::Scheduler& scheduler, L4Config&& config) {
-    scheduler.world().insert_resource(Aimer(config.aimer));
-    scheduler.world().insert_resource(std::move(config));
+    auto& world = scheduler.world();
+    if (!world.has_resource<L2::AtLegacyReadbackRoiConfig>()) {
+        world.insert_resource(L2::AtLegacyReadbackRoiConfig{});
+    }
+    if (!world.has_resource<L2::AtLegacyReadbackRoiCache>()) {
+        world.insert_resource(L2::AtLegacyReadbackRoiCache{});
+    }
+    if (!world.has_resource<CameraConfig>()) {
+        world.insert_resource(CameraConfig{});
+    }
+
+    world.insert_resource(Aimer(config.aimer));
+    world.insert_resource(std::move(config));
 
     scheduler.add_system<talos::pool_compute>(
         "l4_aimer",
@@ -369,6 +458,8 @@ void register_aimer_systems(talos::Scheduler& scheduler, L4Config&& config) {
 
             // Try Robot/Outpost from tracker (multi-target)
             const auto tracker_vec = tracker_in.read_current();
+            const auto fallback_readback_tracker =
+                pick_readback_tracker_fallback(tracker_vec, previous_selected_key);
             std::vector<core::TargetKey> active_target_keys;
             std::vector<CandidateEvaluation> candidates;
             std::vector<TargetSelectionTraceEntry> rejected_candidates;
@@ -501,7 +592,7 @@ void register_aimer_systems(talos::Scheduler& scheduler, L4Config&& config) {
                     entry.runner_up = runner_up_index.has_value() && i == *runner_up_index;
                     target_selection_trace.candidates.push_back(std::move(entry));
                 }
-            } else {
+            } else if (!fallback_readback_tracker.has_value()) {
                 selected_target_key.reset();
             }
 
@@ -608,6 +699,13 @@ void register_aimer_systems(talos::Scheduler& scheduler, L4Config&& config) {
                 const uint64_t output_timestamp_ns = fcs::clock::now_ns();
                 SelectedTargetSnapshot selected_target;
                 selected_target.timestamp_ns = output_timestamp_ns;
+                if (fallback_readback_tracker.has_value()) {
+                    selected_target.source  = GimbalPlanSource::Armor;
+                    selected_target.tracker = *fallback_readback_tracker;
+                    selected_target_key     = make_target_key(*fallback_readback_tracker);
+                } else {
+                    selected_target_key.reset();
+                }
                 GimbalPlan plan;
                 plan.timestamp_ns = output_timestamp_ns;
                 plan.distance     = -1;
@@ -615,6 +713,48 @@ void register_aimer_systems(talos::Scheduler& scheduler, L4Config&& config) {
                 target_selection_out.write(std::move(target_selection_trace));
                 aimer_out.write(std::move(plan));
             }
+        });
+
+    scheduler.add_system<talos::pool_compute>(
+        "l4_optimal_target_readback_roi",
+        [](talos::spmc<SelectedTargetSnapshot, SelectedTargetSnapshotChannelTopic>
+               selected_target_in,
+           talos::res<fast_tf::CoordinateSystem> tf_buffer, talos::res<CameraConfig> camera_config,
+           talos::res<L2::AtLegacyReadbackRoiConfig> readback_roi_config,
+           talos::res_mut<L2::AtLegacyReadbackRoiCache> readback_roi_cache) {
+            auto has_readback_tracker = [](const SelectedTargetSnapshot& snapshot) noexcept {
+                return snapshot.source == GimbalPlanSource::Armor
+                    && tracker_supports_readback_roi(snapshot.tracker);
+            };
+            if (!selected_target_in.has_new()) {
+                return;
+            }
+
+            const auto selected_target = selected_target_in.read();
+            if (!selected_target) {
+                return;
+            }
+
+            if (!readback_roi_config->enabled || !has_readback_tracker(*selected_target)) {
+                readback_roi_cache->invalidate(selected_target->timestamp_ns);
+                return;
+            }
+
+            const auto roi_timestamps = resolve_readback_roi_timestamps(*selected_target);
+            const auto roi            = L2::project_tracker_box_to_image(
+                selected_target->tracker, roi_timestamps.projection_timestamp_ns, *tf_buffer,
+                *camera_config, readback_roi_config->box_size_m);
+            if (!roi) {
+                readback_roi_cache->invalidate(roi_timestamps.freshness_timestamp_ns);
+                return;
+            }
+
+            readback_roi_cache->store(
+                L2::AtLegacyReadbackRoiSnapshot{
+                    .valid        = true,
+                    .timestamp_ns = roi_timestamps.freshness_timestamp_ns,
+                    .raw_roi      = *roi,
+                });
         });
 }
 

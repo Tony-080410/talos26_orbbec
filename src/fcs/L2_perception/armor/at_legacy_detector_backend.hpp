@@ -1,5 +1,6 @@
 #pragma once
 
+#include "L2_perception/armor/at_legacy_readback_roi.hpp"
 #include "core/types.hpp"
 
 #include <expected>
@@ -118,6 +119,12 @@ public:
 
     /// Set detection color for all backends
     void set_detect_color(ArmorColor color) noexcept;
+
+    /// Whether the active backend supports readback ROI crop.
+    [[nodiscard]] bool supports_readback_roi() const noexcept;
+
+    /// Input resolution used to derive ROI aspect ratio and minimum crop size.
+    [[nodiscard]] AtLegacyBackendInputResolution input_resolution() const noexcept;
 
     /// Switch to a different backend
     void set_backend(std::unique_ptr<AtLegacyTraditionalBackend> backend);
