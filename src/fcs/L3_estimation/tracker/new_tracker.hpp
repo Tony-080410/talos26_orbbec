@@ -211,14 +211,16 @@ public:
             xp0 << x0, y0, armor_yaw, 0.0, z0, z0, z0;
             OutpostEkfMotionModel::MatXX P0 = OutpostEkfMotionModel::MatXX::Identity();
 
-            P0(O_XC, O_XC) = 1e-9;
-            P0(O_YC, O_YC) = 1e-9;
+            P0(O_XC, O_XC) = 0.5 * 0.5;
+            P0(O_YC, O_YC) = 0.5 * 0.5;
 
-            P0(V_YAW, V_YAW) = 1e9;
+            P0(V_YAW, V_YAW) = 3.14 * 3.14;
+            P0(YAW, V_YAW)   = 3.14;
+            P0(V_YAW, YAW)   = 3.14;
 
-            P0(O_Z0, O_Z0) = 1e9;
-            P0(O_Z1, O_Z1) = 1e9;
-            P0(O_Z2, O_Z2) = 1e9;
+            P0(O_Z0, O_Z0) = 0.5 * 0.5;
+            P0(O_Z1, O_Z1) = 0.5 * 0.5;
+            P0(O_Z2, O_Z2) = 0.5 * 0.5;
             outpost_target_.emplace();
             outpost_target_->initialize(config_.outpost.model, xp0, P0);
             outpost_last_armor_id_ = 0;
@@ -240,18 +242,20 @@ public:
             xp0 << x0, v0, y0, v0, z0, v0, armor_yaw, v0, r0_prior, r1_prior, h_prior;
             RobotEkfMotionModel::MatXX P0 = RobotEkfMotionModel::MatXX::Identity();
 
-            P0(XC, XC) = 1e9;
-            P0(YC, YC) = 1e9;
+            P0(XC, XC) = 0.5 * 0.5;
+            P0(YC, YC) = 0.5 * 0.5;
 
-            P0(VX, VX) = 1e9;
-            P0(VY, VY) = 1e9;
-            P0(VZ, VZ) = 1e9;
+            P0(VX, VX) = 0.5 * 0.5;
+            P0(VY, VY) = 0.5 * 0.5;
+            P0(VZ, VZ) = 0.5 * 0.5;
 
-            P0(V_YAW, V_YAW) = 1e9;
+            P0(V_YAW, V_YAW) = 3.14 * 3.14;
+            P0(YAW, V_YAW)   = 3.14;
+            P0(V_YAW, YAW)   = 3.14;
 
-            P0(R_0, R_0) = 1e-5;
-            P0(R_1, R_1) = 1e-5;
-            P0(H, H)     = 1e-5;
+            P0(R_0, R_0) = 2e-1 * 2e-1;
+            P0(R_1, R_1) = 2e-1 * 2e-1;
+            P0(H, H)     = 1e-1 * 1e-1;
 
             robot_target_.emplace();
             robot_target_->initialize(config_.robot.model, xp0, P0);
