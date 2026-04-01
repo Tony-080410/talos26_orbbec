@@ -62,20 +62,6 @@ struct RobotEkfMotionModel {
         return std::clamp(id, 0, ARMORS_NUM - 1);
     }
 
-    /// Observability mask: which states are observable from the given armor.
-    /// 1 = observable, 0 = frozen (prevents cross-correlation information leak).
-    [[nodiscard]] static VecX gain_mask(int armor_id) noexcept {
-        VecX mask    = VecX::Ones();
-        const int id = clamp_armor_id(armor_id);
-        if (id == kHighArmorIdA || id == kHighArmorIdB) {
-            mask[R_0] = 0.0; // R_0 not in measurement for high armors
-        } else {
-            mask[R_1] = 0.0; // R_1 not in measurement for low armors
-            mask[H]   = 0.0; // H not in measurement for low armors
-        }
-        return mask;
-    }
-
     template <typename T>
     static void predict_state(const T* x, const T& dt, T* xp) noexcept {
         xp[XC]    = x[XC] + x[VX] * dt;
@@ -218,9 +204,6 @@ struct OutpostEkfMotionModel {
     [[nodiscard]] static int clamp_armor_id(int id) noexcept {
         return std::clamp(id, 0, ARMORS_NUM - 1);
     }
-
-    /// All states observable from any armor — no masking needed.
-    [[nodiscard]] static VecX gain_mask(int /*armor_id*/) noexcept { return VecX::Ones(); }
 
     template <typename T>
     static void predict_state(const T* x, const T& dt, T* xp) noexcept {

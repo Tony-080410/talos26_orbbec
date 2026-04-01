@@ -75,7 +75,7 @@ public:
             return;
         }
         armor_id_ = Model::clamp_armor_id(armor_id);
-        x_        = ekf_.update(z, Model::gain_mask(armor_id_));
+        x_        = ekf_.update(z);
     }
 
     [[nodiscard]] bool active() const noexcept { return active_; }
