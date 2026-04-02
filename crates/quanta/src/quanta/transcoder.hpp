@@ -48,7 +48,7 @@ struct EncodeParams {
     int max_height     = 300;    // auto-downscale if taller
     int gop_size       = 15;     // keyframe interval (short GOP = more I-frames = less drift)
     int framerate      = 30;     // target output framerate
-    const char* preset = "fast"; // original working preset
+    const char* preset = "fast"; // keep the original rate allocation baseline
     const char* tune   = "stillimage";
 
     // CRF + VBV rate control (original working approach)

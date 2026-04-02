@@ -216,10 +216,12 @@ inline std::expected<CodecCtxPtr, std::string> create_encoder_context(
     // Let VBV grow toward a 1.0-1.5s smoothing window, but never beyond the crate's
     // 120kbps * 250ms link/latency budget.
     // deblock=1,0: luma deblocking ON (strength 1), chroma deblocking OFF — preserves luma edges
-    // while smoothing block boundaries in luma only.
+    // while smoothing block boundaries in luma only. Keep the original stillimage allocation,
+    // but spend more CPU on reference selection, partition search, and motion estimation.
     std::string x264_opts = std::format(
         "crf={}:vbv-maxrate={}:vbv-bufsize={}:"
         "rc-lookahead={}:bframes=0:"
+        "ref=8:me=umh:merange=24:subme=10:trellis=2:partitions=all:"
         "deblock=1,0:chroma-qp-offset={}:"
         "aq-mode=3:aq-strength={}:"
         "psy-rd={},{}",
