@@ -150,7 +150,7 @@ int main(int argc, char* argv[]) {
 
     // ---- Setup encoder ----
     quanta::EncodeParams params;
-    // Use optimized defaults (placebo, CRF=10, GOP=30, etc.)
+    // Use the shared library defaults so the debug path matches Transcoder behavior.
     quanta::StreamEncoder encoder(params);
 
     auto init_result = encoder.init(src_width, src_height, framerate);

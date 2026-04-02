@@ -5,14 +5,15 @@
 #include <string>
 
 int main(int argc, char* argv[]) {
+    quanta::EncodeParams params;
+
     if (argc < 3) {
         std::fprintf(stderr, "Usage: %s <input> <output>\n", argv[0]);
-        std::fprintf(stderr, "  Encodes input video to H.264 @ 50kbps ultra-low bitrate.\n");
+        std::fprintf(
+            stderr, "  Encodes input video to H.264 @ %.1f kbps ultra-low bitrate.\n",
+            static_cast<double>(params.target_bitrate) / 1000.0);
         return 1;
     }
-
-    quanta::EncodeParams params;
-    params.target_bitrate = 35'000;
 
     quanta::Transcoder t(params);
     auto result = t.run(argv[1], argv[2]);

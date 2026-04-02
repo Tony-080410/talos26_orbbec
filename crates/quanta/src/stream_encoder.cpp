@@ -67,14 +67,15 @@ public:
 
         // Build filter chain: BGR24 input -> format=yuv420p -> filters -> scale -> output
         auto filter_result = build_filter_chain(
-            src_width, src_height, {1, 1}, time_base, frame_rate, AV_PIX_FMT_BGR24, out_w, out_h,
-            params_.filter);
+            src_width, src_height, {1, 1}, time_base, frame_rate, {0, 1}, AV_PIX_FMT_BGR24, out_w,
+            out_h, params_.filter);
         if (!filter_result)
             return std::unexpected("Cannot build filter chain: " + filter_result.error());
         chain_ = std::move(filter_result.value());
 
         // Create encoder
-        auto enc_result = create_encoder_context(out_w, out_h, time_base, frame_rate, params_);
+        auto enc_result =
+            create_encoder_context(out_w, out_h, time_base, frame_rate, params_, {1, 1});
         if (!enc_result)
             return std::unexpected(enc_result.error());
         enc_ctx_ = std::move(enc_result.value());
@@ -168,7 +169,9 @@ public:
 
 private:
     std::expected<void, std::string> encode_filtered_frame(AVFrame* frame) {
-        int ret = avcodec_send_frame(enc_ctx_.get(), frame);
+        frame->flags &= ~AV_FRAME_FLAG_KEY;
+        frame->pict_type = AV_PICTURE_TYPE_NONE;
+        int ret          = avcodec_send_frame(enc_ctx_.get(), frame);
         if (ret < 0)
             return std::unexpected("Encode send: " + averr(ret));
 

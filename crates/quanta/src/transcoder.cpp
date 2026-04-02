@@ -27,6 +27,7 @@ using detail::alloc_packet;
 using detail::averr;
 using detail::build_filter_chain;
 using detail::CodecCtxPtr;
+using detail::ColorParams;
 using detail::create_encoder_context;
 using detail::FilterChain;
 using detail::fit_dimensions;
@@ -48,6 +49,8 @@ std::expected<TranscodeStats, std::string>
 
     const std::string in{input_path};
     const std::string out{output_path};
+    if (params_.framerate <= 0)
+        return std::unexpected("Target framerate must be positive");
 
     // ---- Open input ----
     auto fmt_ctx = open_input(in.c_str());
@@ -72,6 +75,7 @@ std::expected<TranscodeStats, std::string>
     if (avcodec_parameters_to_context(dec_ctx.get(), in_codec_par) < 0) {
         return std::unexpected("Cannot copy decoder params");
     }
+    dec_ctx->pkt_timebase = in_stream->time_base;
     if (avcodec_open2(dec_ctx.get(), dec_codec, nullptr) < 0) {
         return std::unexpected("Cannot open decoder");
     }
@@ -82,27 +86,22 @@ std::expected<TranscodeStats, std::string>
         in_codec_par->width, in_codec_par->height, params_.max_width, params_.max_height, out_w,
         out_h);
 
-    // Cap framerate
-    AVRational in_fps = in_stream->r_frame_rate;
-    int out_fps_num   = in_fps.num;
-    int out_fps_den   = in_fps.den;
-    if (in_fps.num > 0 && in_fps.den > 0) {
-        double fps = static_cast<double>(in_fps.num) / in_fps.den;
-        if (fps > params_.max_framerate) {
-            out_fps_num = params_.max_framerate;
-            out_fps_den = 1;
-        }
-    } else {
-        out_fps_num = 15;
-        out_fps_den = 1;
-    }
+    AVRational in_fps = av_guess_frame_rate(fmt_ctx.get(), in_stream, nullptr);
+    if (in_fps.num <= 0 || in_fps.den <= 0)
+        in_fps = in_stream->avg_frame_rate;
+    if (in_fps.num <= 0 || in_fps.den <= 0)
+        in_fps = in_stream->r_frame_rate;
+    if (in_fps.num <= 0 || in_fps.den <= 0)
+        in_fps = {params_.framerate, 1};
+
+    const AVRational out_fps = {params_.framerate, 1};
 
     const char* filter_mode = params_.filter.enable ? "denoise+sharpen" : "passthrough";
     std::fprintf(
         stderr, "[quanta] %dx%d @ %.0ffps -> %dx%d @ %.0ffps, %s, target %d bps\n",
         in_codec_par->width, in_codec_par->height,
         static_cast<double>(in_fps.num) / (in_fps.den ? in_fps.den : 1), out_w, out_h,
-        static_cast<double>(out_fps_num) / out_fps_den, filter_mode, params_.target_bitrate);
+        static_cast<double>(out_fps.num) / out_fps.den, filter_mode, params_.target_bitrate);
 
     // ---- Build filter chain ----
     // If filters disabled, zero out all filter params (chain still used for scale+format).
@@ -126,22 +125,31 @@ std::expected<TranscodeStats, std::string>
     if (sar.num == 0)
         sar = {1, 1};
 
+    const ColorParams color = {
+        .colorspace      = dec_ctx->colorspace,
+        .range           = dec_ctx->color_range,
+        .color_primaries = dec_ctx->color_primaries,
+        .color_trc       = dec_ctx->color_trc,
+        .chroma_location = dec_ctx->chroma_sample_location,
+    };
+
     // Filter chain needs a valid time_base; decoder may leave it as {0,1}.
     AVRational filter_tb = in_stream->time_base;
     if (filter_tb.num == 0 || filter_tb.den == 0) {
-        filter_tb = {out_fps_den, out_fps_num};
+        filter_tb = in_fps.num > 0 && in_fps.den > 0 ? AVRational{in_fps.den, in_fps.num}
+                                                     : AVRational{1, params_.framerate};
     }
 
     auto filter_result = build_filter_chain(
-        dec_ctx->width, dec_ctx->height, sar, filter_tb, {out_fps_num, out_fps_den},
-        dec_ctx->pix_fmt, out_w, out_h, effective_fp);
+        dec_ctx->width, dec_ctx->height, sar, filter_tb, in_fps, out_fps, dec_ctx->pix_fmt, out_w,
+        out_h, effective_fp, color);
     if (!filter_result)
         return std::unexpected(filter_result.error());
     auto& chain = filter_result.value();
 
     // ---- Open encoder (shared config via encode_common) ----
     auto enc_result = create_encoder_context(
-        out_w, out_h, in_stream->time_base, {out_fps_num, out_fps_den}, params_);
+        out_w, out_h, {out_fps.den, out_fps.num}, out_fps, params_, sar, color);
     if (!enc_result)
         return std::unexpected(enc_result.error());
     auto enc_ctx = std::move(enc_result.value());
@@ -160,7 +168,10 @@ std::expected<TranscodeStats, std::string>
     ret = avcodec_parameters_from_context(out_stream->codecpar, enc_ctx.get());
     if (ret < 0)
         return std::unexpected("Cannot copy encoder params: " + averr(ret));
-    out_stream->time_base = enc_ctx->time_base;
+    out_stream->time_base           = enc_ctx->time_base;
+    out_stream->avg_frame_rate      = out_fps;
+    out_stream->r_frame_rate        = out_fps;
+    out_stream->sample_aspect_ratio = sar;
 
     if (!(out_fmt->oformat->flags & AVFMT_NOFILE)) {
         ret = avio_open(&out_fmt->pb, out.c_str(), AVIO_FLAG_WRITE);
@@ -174,6 +185,8 @@ std::expected<TranscodeStats, std::string>
     // After write_header, the muxer may have changed the stream time_base.
     // Use this for rescaling — NOT enc_ctx->time_base.
     const AVRational out_tb = out_stream->time_base;
+    const int64_t frame_duration_out =
+        std::max<int64_t>(1, av_rescale_q(1, enc_ctx->time_base, out_tb));
 
     // ---- Frame buffers ----
     auto dec_frame  = alloc_frame();
@@ -185,8 +198,17 @@ std::expected<TranscodeStats, std::string>
 
     // ---- Transcode loop ----
     TranscodeStats stats{};
+    int64_t next_output_pts      = 0;
+    int64_t first_packet_pts_out = AV_NOPTS_VALUE;
+    int64_t last_packet_end_out  = AV_NOPTS_VALUE;
 
     auto encode_frame = [&](AVFrame* frame) -> std::expected<void, std::string> {
+        if (frame) {
+            frame->pts      = next_output_pts++;
+            frame->duration = 1;
+            frame->flags &= ~AV_FRAME_FLAG_KEY;
+            frame->pict_type = AV_PICTURE_TYPE_NONE;
+        }
         ret = avcodec_send_frame(enc_ctx.get(), frame);
         if (ret < 0)
             return std::unexpected("Encode send: " + averr(ret));
@@ -200,12 +222,39 @@ std::expected<TranscodeStats, std::string>
             stats.frames_out++;
             stats.bytes_out += pkt->size;
             av_packet_rescale_ts(pkt.get(), enc_ctx->time_base, out_tb);
+            if (pkt->pts != AV_NOPTS_VALUE) {
+                const int64_t pkt_duration = pkt->duration > 0 ? pkt->duration : frame_duration_out;
+                if (first_packet_pts_out == AV_NOPTS_VALUE)
+                    first_packet_pts_out = pkt->pts;
+                last_packet_end_out = pkt->pts + pkt_duration;
+            }
             ret = av_interleaved_write_frame(out_fmt.get(), pkt.get());
             if (ret < 0)
                 return std::unexpected("Write: " + averr(ret));
             av_packet_unref(pkt.get());
         }
         return {};
+    };
+
+    auto drain_filter = [&]() -> std::expected<void, std::string> {
+        while (true) {
+            ret = av_buffersink_get_frame(chain.sink_ctx, filt_frame.get());
+            if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF)
+                break;
+            if (ret < 0)
+                return std::unexpected("Filter pull failed: " + averr(ret));
+            if (auto r = encode_frame(filt_frame.get()); !r)
+                return std::unexpected(r.error());
+            av_frame_unref(filt_frame.get());
+        }
+        return {};
+    };
+
+    auto push_filter_frame = [&](AVFrame* frame) -> std::expected<void, std::string> {
+        ret = av_buffersrc_add_frame_flags(chain.src_ctx, frame, AV_BUFFERSRC_FLAG_KEEP_REF);
+        if (ret < 0)
+            return std::unexpected("Filter push failed: " + averr(ret));
+        return drain_filter();
     };
 
     while (av_read_frame(fmt_ctx.get(), pkt.get()) >= 0) {
@@ -227,18 +276,8 @@ std::expected<TranscodeStats, std::string>
 
             stats.frames_in++;
 
-            // Push through filter graph: denoise → sharpen → scale
-            if (av_buffersrc_add_frame_flags(
-                    chain.src_ctx, dec_frame.get(), AV_BUFFERSRC_FLAG_KEEP_REF)
-                < 0) {
-                continue;
-            }
-            while (av_buffersink_get_frame(chain.sink_ctx, filt_frame.get()) >= 0) {
-                if (auto r = encode_frame(filt_frame.get()); !r) {
-                    return std::unexpected(r.error());
-                }
-                av_frame_unref(filt_frame.get());
-            }
+            if (auto r = push_filter_frame(dec_frame.get()); !r)
+                return std::unexpected(r.error());
         }
     }
 
@@ -246,28 +285,34 @@ std::expected<TranscodeStats, std::string>
     avcodec_send_packet(dec_ctx.get(), nullptr);
     while (avcodec_receive_frame(dec_ctx.get(), dec_frame.get()) >= 0) {
         stats.frames_in++;
-        if (av_buffersrc_add_frame_flags(chain.src_ctx, dec_frame.get(), AV_BUFFERSRC_FLAG_KEEP_REF)
-            < 0) {
-            continue;
-        }
-        while (av_buffersink_get_frame(chain.sink_ctx, filt_frame.get()) >= 0) {
-            if (auto r = encode_frame(filt_frame.get()); !r) {
-                return std::unexpected(r.error());
-            }
-            av_frame_unref(filt_frame.get());
-        }
+        if (auto r = push_filter_frame(dec_frame.get()); !r)
+            return std::unexpected(r.error());
     }
+
+    ret = av_buffersrc_add_frame_flags(chain.src_ctx, nullptr, 0);
+    if (ret < 0)
+        return std::unexpected("Filter flush failed: " + averr(ret));
+    if (auto r = drain_filter(); !r)
+        return std::unexpected(r.error());
 
     // Flush encoder
     if (auto r = encode_frame(nullptr); !r) {
         return std::unexpected(r.error());
     }
 
+    if (stats.frames_out == 0)
+        return std::unexpected("No output frames produced");
+
     av_write_trailer(out_fmt.get());
 
     // Stats
-    if (out_fps_num > 0 && out_fps_den > 0) {
-        stats.duration_sec = static_cast<double>(stats.frames_out) * out_fps_den / out_fps_num;
+    if (out_stream->duration > 0) {
+        stats.duration_sec = static_cast<double>(out_stream->duration) * av_q2d(out_tb);
+    } else if (
+        first_packet_pts_out != AV_NOPTS_VALUE && last_packet_end_out != AV_NOPTS_VALUE
+        && last_packet_end_out > first_packet_pts_out) {
+        stats.duration_sec =
+            static_cast<double>(last_packet_end_out - first_packet_pts_out) * av_q2d(out_tb);
     }
     if (stats.duration_sec > 0) {
         stats.avg_bitrate =
