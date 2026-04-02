@@ -215,22 +215,37 @@ inline std::expected<CodecCtxPtr, std::string> create_encoder_context(
     if (params.preset && params.preset[0] != '\0')
         av_opt_set(enc_ctx->priv_data, "preset", params.preset, 0);
 
-    const auto min_keyint = std::max(1, params.gop_size / 2);
+    const auto min_keyint      = std::max(1, params.gop_size / 2);
+    const bool realtime_stream = repeat_headers && !global_header;
+    const int lookahead   = realtime_stream ? std::min(params.lookahead, 20) : params.lookahead;
+    const int ref_count   = realtime_stream ? 3 : 4;
+    const int limit_refs  = 3;
+    const char* me_mode   = realtime_stream ? "hex" : "star";
+    const int subme_level = realtime_stream ? 4 : 7;
+    const int rd_level    = realtime_stream ? 3 : 5;
+    const int rdoq_level  = realtime_stream ? 1 : 2;
+    const int amp_enabled = realtime_stream ? 0 : 1;
+    const double psy_rdoq =
+        realtime_stream ? std::min(params.psy_trellis, 2.0) : params.psy_trellis;
+    const int cb_qp_offset = std::max(0, params.chroma_qp_offset - 3);
+    const int cr_qp_offset = std::max(0, params.chroma_qp_offset - 5);
 
     // Keep the same short-GOP / low-latency shape as the x264 path, but drive libx265 with
-    // explicit CRF + VBV limits so bitrate stays bounded instead of ballooning. Disable SAO to
-    // avoid smearing thin edges at very low bitrate, repeat headers for raw Annex B packets, and
-    // keep B-frames off to match the current latency budget.
+    // explicit CRF + VBV limits so bitrate stays bounded instead of ballooning. Protect thin
+    // moving targets by biasing Cr less aggressively than Cb and keeping rectangular partitions,
+    // but use a materially lighter search budget on the Annex B realtime path so throughput stays
+    // above the target framerate.
     std::string x265_opts = std::format(
         "crf={}:vbv-maxrate={}:vbv-bufsize={}:"
         "keyint={}:min-keyint={}:scenecut=5:open-gop=0:rc-lookahead={}:bframes=0:"
-        "ref=4:limit-refs=3:me=star:subme=7:rd=5:rdoq-level=2:"
+        "ref={}:limit-refs={}:me={}:subme={}:rd={}:rdoq-level={}:"
+        "rect=1:amp={}:"
         "aq-mode=3:aq-strength={}:aq-motion=1:cutree=1:"
         "cbqpoffs={}:crqpoffs={}:psy-rd={}:psy-rdoq={}:"
         "deblock=1,0:no-sao=1:repeat-headers={}",
-        params.crf, kbps, vbv_bufsize, params.gop_size, min_keyint, params.lookahead,
-        params.aq_strength, params.chroma_qp_offset, params.chroma_qp_offset, params.psy_rd,
-        params.psy_trellis, repeat_headers ? 1 : 0);
+        params.crf, kbps, vbv_bufsize, params.gop_size, min_keyint, lookahead, ref_count,
+        limit_refs, me_mode, subme_level, rd_level, rdoq_level, amp_enabled, params.aq_strength,
+        cb_qp_offset, cr_qp_offset, params.psy_rd, psy_rdoq, repeat_headers ? 1 : 0);
     av_opt_set(enc_ctx->priv_data, "x265-params", x265_opts.c_str(), 0);
 
     if (avcodec_open2(enc_ctx.get(), enc_codec, nullptr) < 0)

@@ -80,9 +80,20 @@ public:
             return std::unexpected(enc_result.error());
         enc_ctx_ = std::move(enc_result.value());
 
+        bgr_frame_  = alloc_frame();
         filt_frame_ = alloc_frame();
-        if (!filt_frame_)
-            return std::unexpected("Cannot allocate filtered frame");
+        enc_pkt_    = alloc_packet();
+        if (!bgr_frame_ || !filt_frame_ || !enc_pkt_)
+            return std::unexpected("Cannot allocate reusable frame/packet");
+
+        bgr_frame_->format = AV_PIX_FMT_BGR24;
+        bgr_frame_->width  = src_width_;
+        bgr_frame_->height = src_height_;
+        int ret            = av_frame_get_buffer(bgr_frame_.get(), 0);
+        if (ret < 0)
+            return std::unexpected("Cannot allocate BGR frame buffer: " + averr(ret));
+
+        input_row_bytes_ = src_width_ * 3;
 
         initialized_ = true;
 
@@ -96,28 +107,27 @@ public:
         if (!initialized_)
             return std::unexpected("StreamEncoder not initialized");
 
-        // Allocate BGR24 frame and copy input data
-        auto bgr = alloc_frame();
-        if (!bgr)
-            return std::unexpected("Cannot allocate BGR frame");
-
-        bgr->format = AV_PIX_FMT_BGR24;
-        bgr->width  = src_width_;
-        bgr->height = src_height_;
-        bgr->pts    = pts;
-
-        int ret = av_frame_get_buffer(bgr.get(), 0);
+        int ret = av_frame_make_writable(bgr_frame_.get());
         if (ret < 0)
-            return std::unexpected("Cannot allocate frame buffer: " + averr(ret));
+            return std::unexpected("Cannot make BGR frame writable: " + averr(ret));
+
+        bgr_frame_->pts = pts;
 
         // Copy BGR data row-by-row
-        const int row_bytes = src_width_ * 3;
-        for (int y = 0; y < src_height_; ++y) {
-            std::memcpy(bgr->data[0] + y * bgr->linesize[0], data + y * linesize, row_bytes);
+        if (linesize == input_row_bytes_ && bgr_frame_->linesize[0] == input_row_bytes_) {
+            std::memcpy(
+                bgr_frame_->data[0], data, static_cast<size_t>(input_row_bytes_) * src_height_);
+        } else {
+            for (int y = 0; y < src_height_; ++y) {
+                std::memcpy(
+                    bgr_frame_->data[0] + y * bgr_frame_->linesize[0], data + y * linesize,
+                    input_row_bytes_);
+            }
         }
 
         // Push through filter graph
-        ret = av_buffersrc_add_frame_flags(chain_.src_ctx, bgr.get(), AV_BUFFERSRC_FLAG_KEEP_REF);
+        ret = av_buffersrc_add_frame_flags(
+            chain_.src_ctx, bgr_frame_.get(), AV_BUFFERSRC_FLAG_KEEP_REF);
         if (ret < 0)
             return std::unexpected("Filter push failed: " + averr(ret));
 
@@ -149,16 +159,15 @@ public:
         if (ret < 0)
             return std::unexpected("Flush send failed: " + averr(ret));
 
-        auto pkt = alloc_packet();
         while (true) {
-            ret = avcodec_receive_packet(enc_ctx_.get(), pkt.get());
+            ret = avcodec_receive_packet(enc_ctx_.get(), enc_pkt_.get());
             if (ret == AVERROR_EOF || ret == AVERROR(EAGAIN))
                 break;
             if (ret < 0)
                 return std::unexpected("Flush recv failed: " + averr(ret));
 
-            enqueue_packet(pkt.get());
-            av_packet_unref(pkt.get());
+            enqueue_packet(enc_pkt_.get());
+            av_packet_unref(enc_pkt_.get());
         }
 
         return {};
@@ -175,24 +184,25 @@ private:
         if (ret < 0)
             return std::unexpected("Encode send: " + averr(ret));
 
-        auto pkt = alloc_packet();
         while (ret >= 0) {
-            ret = avcodec_receive_packet(enc_ctx_.get(), pkt.get());
+            ret = avcodec_receive_packet(enc_ctx_.get(), enc_pkt_.get());
             if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF)
                 break;
             if (ret < 0)
                 return std::unexpected("Encode recv: " + averr(ret));
 
-            enqueue_packet(pkt.get());
-            av_packet_unref(pkt.get());
+            enqueue_packet(enc_pkt_.get());
+            av_packet_unref(enc_pkt_.get());
         }
         return {};
     }
 
     void enqueue_packet(const AVPacket* pkt) {
         EncodedPacket encoded;
-        encoded.data = std::unique_ptr<uint8_t[]>(new uint8_t[pkt->size]);
-        std::copy_n(pkt->data, pkt->size, encoded.data.get());
+        if (pkt->size > 0) {
+            encoded.data = std::unique_ptr<uint8_t[]>(new uint8_t[pkt->size]);
+            std::copy_n(pkt->data, pkt->size, encoded.data.get());
+        }
         encoded.size     = static_cast<size_t>(pkt->size);
         encoded.pts      = pkt->pts;
         encoded.keyframe = (pkt->flags & AV_PKT_FLAG_KEY) != 0;
@@ -211,8 +221,11 @@ private:
 
     FilterChain chain_;
     CodecCtxPtr enc_ctx_;
+    FramePtr bgr_frame_;
     FramePtr filt_frame_;
+    PacketPtr enc_pkt_;
     std::deque<EncodedPacket> packet_queue_;
+    int input_row_bytes_ = 0;
 };
 
 // ===========================================================================

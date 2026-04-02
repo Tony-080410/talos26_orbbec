@@ -46,15 +46,15 @@ struct EncodeParams {
     int target_bitrate = 24'500;   // bps
     int max_width      = 300;      // auto-downscale if wider
     int max_height     = 300;      // auto-downscale if taller
-    int gop_size       = 30;       // keyframe interval (short GOP = more I-frames = less drift)
-    int framerate      = 60;       // target output framerate
+    int gop_size       = 15;       // keyframe interval (short GOP = more I-frames = less drift)
+    int framerate      = 30;       // target output framerate
     const char* preset = "faster"; // keep the original rate allocation baseline
     const char* tune   = "stillimage";
 
     // CRF + VBV rate control (original working approach)
     int crf              = 18;  // quality target; VBV caps actual bitrate
     int lookahead        = 40;  // rc-lookahead
-    int chroma_qp_offset = 5;   // keep chroma edges sharp (user wants color boundaries clear)
+    int chroma_qp_offset = 5;   // base chroma penalty; encoder internally protects Cr over Cb
     double aq_strength   = 0.8; // max AQ — pump bits into edge macroblocks
     double psy_rd        = 0.5; // extreme: dynamic→outlines only, discard all texture
     double psy_trellis   = 3.0; // match: edge-biased quantization, flatten interiors
