@@ -12,54 +12,14 @@
 #include <utility>
 
 // =============================================================================
-// TINYMPC INVARIANT PROVENANCE (VENDORED LIBRARY - DO NOT MODIFY)
-// =============================================================================
-//
-// VENDORED LIBRARY: 3dparty/tinympc (C API with broken memory management)
-//
-// ALLOCATION INVARIANTS (tiny_api.cpp:25-29):
-//   - Uses 5 separate `new` calls WITHOUT exception handling
-//   - Allocation order: solution → cache → settings → work → solver
-//   - If ANY allocation throws std::bad_alloc, PREVIOUS allocations LEAK
-//   - NO exception safety guarantees
-//
-// ERROR PATH INVARIANTS (tiny_api.cpp:64-66, 137-139):
-//   - Dimension check failure: Returns non-zero status WITHOUT freeing allocations
-//   - Cache init failure: Returns non-zero status WITHOUT freeing allocations
-//   - ALL error paths leak all 5 allocated objects
-//
-// SUCCESS PATH INVARIANTS (ONLY if no exceptions thrown):
-//   - solver != nullptr
-//   - solver->solution != nullptr (TinySolution with Eigen matrices)
-//   - solver->cache != nullptr (TinyCache with Eigen matrices)
-//   - solver->settings != nullptr (TinySettings struct)
-//   - solver->work != nullptr (TinyWorkspace with many Eigen matrices)
-//
-// EXCEPTION SAFETY: NONE
-//   - No try-catch blocks anywhere in tinympc
-//   - Eigen matrix destruction can throw std::bad_alloc
-//   - Basic exception guarantee violated
-//
-// THREAD SAFETY: UNDEFINED
-//   - No synchronization primitives
-//   - No documentation about concurrent access
-//   - ASSUME NOT THREAD-SAFE
-//
-// WRAPPER CONTRACT:
-//   1. Must check for nullptr on ALL 5 internal pointers before deletion
-//   2. Must wrap delete in try-catch to preserve noexcept (Eigen can throw)
-//   3. Must clean up allocations if tiny_setup() returns error status
-//   4. Must verify all 5 internal pointers are non-null on success
-//   5. Must document as "not thread-safe"
-//
+// TinyMPC: Vendored C library (3dparty/tinympc) with broken memory management.
+// See destroy_tiny_solver() and create_tiny_solver() for full invariant documentation.
 // =============================================================================
 namespace fcs::L5 {
 namespace {
 // ==============================================================================
-// TINYMPC INVARIANT PROVENANCE
+// TinyMPC invariant provenance (vendored library - do not modify)
 // ==============================================================================
-//
-// VENDORED LIBRARY: 3dparty/tinympc (DO NOT MODIFY)
 //
 // ALLOCATION INVARIANTS (tiny_api.cpp:25-29):
 //   - Uses 5 separate `new` calls WITHOUT exception handling
@@ -214,11 +174,11 @@ void destroy_tiny_solver(TinySolver* solver) noexcept {
 }
 
 [[nodiscard]] WeaponVisualizationDebugData build_debug_data(
-    const WeaponControllerConfig& config, const ReferenceTrajectory& trajectory,
-    const TinySolver* yaw_solver, const TinySolver* pitch_solver, const FireGateStatus& fire_gate) {
+    int horizon_back, const ReferenceTrajectory& trajectory, const TinySolver* yaw_solver,
+    const TinySolver* pitch_solver, const FireGateStatus& fire_gate) {
     WeaponVisualizationDebugData debug;
     const int horizon               = static_cast<int>(trajectory.distances.size());
-    debug.center_index              = config.mpc.horizon_back;
+    debug.center_index              = horizon_back;
     debug.lookahead_index           = debug.center_index;
     debug.delay_steps               = fire_gate.delay_steps;
     debug.delay_gate_threshold      = fire_gate.delay_gate_threshold;
@@ -365,8 +325,10 @@ void TinySolverHandle::reset(TinySolver* solver) noexcept {
 }
 
 TinyMpcTrajectoryOptimizer::TinyMpcTrajectoryOptimizer(
-    const WeaponControllerConfig& config) noexcept
-    : config_(config) {
+    const WeaponControllerConfig& config,
+    const L4::ReferenceTrajectoryConfig& trajectory_cfg) noexcept
+    : config_(config)
+    , trajectory_cfg_(trajectory_cfg) {
     if (config_.enabled) {
         initialize_solvers();
     }
@@ -410,6 +372,17 @@ std::expected<WeaponCommand, std::string> TinyMpcTrajectoryOptimizer::optimize(
         return std::unexpected("reference trajectory is missing");
     }
 
+    // Reject stale reference trajectories to avoid solving on outdated data.
+    const double reference_age_s =
+        static_cast<double>(
+            static_cast<int64_t>(command_timestamp_ns) - static_cast<int64_t>(plan.timestamp_ns))
+        * 1e-9;
+    if (reference_age_s > config_.reference_age_threshold_s) {
+        return std::unexpected(
+            "reference trajectory is stale (" + std::to_string(reference_age_s) + "s > "
+            + std::to_string(config_.reference_age_threshold_s) + "s)");
+    }
+
     const ReferenceTrajectory& reference = *plan.reference_trajectory;
 
     auto transforms = L4::lookup_gimbal_muzzle_transforms(tf_buffer, command_timestamp_ns);
@@ -445,7 +418,7 @@ std::expected<WeaponCommand, std::string> TinyMpcTrajectoryOptimizer::optimize(
         return std::unexpected("pitch MPC did not converge");
     }
 
-    const int center_index  = config_.mpc.horizon_back;
+    const int center_index  = trajectory_cfg_.horizon_back;
     const int control_index = std::min(center_index, reference.horizon() - 2);
 
     WeaponCommand cmd;
@@ -466,11 +439,12 @@ std::expected<WeaponCommand, std::string> TinyMpcTrajectoryOptimizer::optimize(
     cmd.distance                   = reference.distances[center_index];
     cmd.tof                        = reference.time_of_flights[center_index];
     const FireGateStatus fire_gate = compute_fire_gate(
-        fire_decision, aimer_config, plan, current_yaw, current_pitch, config_.mpc.dt, center_index,
-        reference, yaw_solver, pitch_solver);
+        fire_decision, aimer_config, plan, current_yaw, current_pitch, trajectory_cfg_.dt,
+        center_index, reference, yaw_solver, pitch_solver);
     cmd.fire = plan.fire_advice && fire_gate.final_fire_gate_ok;
     if (config_.enable_debug) {
-        cmd.viz_debug = build_debug_data(config_, reference, yaw_solver, pitch_solver, fire_gate);
+        cmd.viz_debug = build_debug_data(
+            trajectory_cfg_.horizon_back, reference, yaw_solver, pitch_solver, fire_gate);
     }
 
     const auto finite = [](double value) noexcept { return std::isfinite(value); };
@@ -487,8 +461,8 @@ void TinyMpcTrajectoryOptimizer::initialize_solvers() noexcept {
     yaw_solver_.reset();
     pitch_solver_.reset();
 
-    const int horizon = config_.mpc.horizon_ahead + config_.mpc.horizon_back + 1;
-    const double dt   = config_.mpc.dt;
+    const int horizon = trajectory_cfg_.horizon_ahead + trajectory_cfg_.horizon_back + 1;
+    const double dt   = trajectory_cfg_.dt;
 
     const Eigen::Matrix2d A             = (Eigen::Matrix2d{} << 1.0, dt, 0.0, 1.0).finished();
     const Eigen::Matrix<double, 2, 1> B = (Eigen::Matrix<double, 2, 1>{} << 0.0, dt).finished();

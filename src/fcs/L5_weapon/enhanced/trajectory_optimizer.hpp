@@ -155,7 +155,9 @@ private:
 /// L5 fire gate.
 class TinyMpcTrajectoryOptimizer {
 public:
-    explicit TinyMpcTrajectoryOptimizer(const WeaponControllerConfig& config) noexcept;
+    explicit TinyMpcTrajectoryOptimizer(
+        const WeaponControllerConfig& config,
+        const L4::ReferenceTrajectoryConfig& trajectory_cfg) noexcept;
     ~TinyMpcTrajectoryOptimizer() noexcept = default;
 
     TinyMpcTrajectoryOptimizer(const TinyMpcTrajectoryOptimizer&)            = delete;
@@ -175,6 +177,7 @@ public:
 
 private:
     WeaponControllerConfig config_;
+    L4::ReferenceTrajectoryConfig trajectory_cfg_;
     TinySolverHandle yaw_solver_;
     TinySolverHandle pitch_solver_;
     bool ready_{false};

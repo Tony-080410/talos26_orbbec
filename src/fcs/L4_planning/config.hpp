@@ -111,6 +111,17 @@ struct AimerConfig {
     TargetSelectionConfig target_selection{};
 };
 
+/// Reference trajectory generation parameters.
+///
+/// Owned by L4 (planning), consumed by L5 (weapon) for solver initialization.
+/// These define the horizon structure of the reference trajectory, NOT solver
+/// constraints — pitch limits belong to L5's WeaponControllerConfig.
+struct ReferenceTrajectoryConfig {
+    int horizon_ahead{50};
+    int horizon_back{50};
+    double dt{0.01};
+};
+
 /// L4 planning configuration (Aimer + plan adapter architecture)
 struct L4Config {
     // Fire decision configuration shared by L4 aiming and L5 fire gating.
@@ -118,6 +129,9 @@ struct L4Config {
 
     // Shared aimer configuration (used for Robot/Outpost/Rune)
     AimerConfig aimer{};
+
+    // Reference trajectory generation parameters (shared with L5)
+    ReferenceTrajectoryConfig reference_trajectory{};
 };
 
 } // namespace fcs::L4

@@ -13,7 +13,9 @@
 
 namespace fcs::L5 {
 void register_enhanced_weapon_system(talos::Scheduler& scheduler, WeaponControllerConfig&& config) {
-    auto optimizer = std::make_shared<TinyMpcTrajectoryOptimizer>(config);
+    // Read trajectory config from L4 config resource for horizon/pitch parameters
+    const auto& trajectory_cfg = scheduler.world().get_res<L4::L4Config>()->reference_trajectory;
+    auto optimizer = std::make_shared<TinyMpcTrajectoryOptimizer>(config, trajectory_cfg);
     scheduler.world().insert_resource(std::move(config));
     scheduler.add_system<talos::fixed_rate<250>>(
         "enhanced_weapon_control",

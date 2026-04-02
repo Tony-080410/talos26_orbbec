@@ -178,6 +178,11 @@ base = 0.5
 base_large = 0.5
 invalid = 0.0
 
+[reference_trajectory]
+horizon_ahead = 50
+horizon_back = 50
+dt = 0.01
+
 [trajectory]
 type = "LinearDrag"
 
@@ -206,9 +211,6 @@ pitch_max = 0.69813169 # 40deg
 
 # MPC core parameters
 [mpc_weapon.mpc]
-horizon_ahead = 50
-horizon_back = 50
-dt = 0.01
 max_iterations = 10
 abs_tol = 0.001
 rho = 2.0

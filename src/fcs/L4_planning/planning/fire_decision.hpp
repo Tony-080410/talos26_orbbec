@@ -5,7 +5,6 @@
 #include <algorithm>
 #include <cmath>
 #include <numbers>
-#include <string>
 
 namespace fcs::L4 {
 
@@ -27,7 +26,7 @@ struct FireDecisionConfig {
 ///
 /// Converts physical window (meters) to angular tolerance and checks if current gimbal
 /// attitude is within range. This is the unified fire decision logic used by L4 aimers
-/// and the L5 MPC fire gate.
+/// and the L5 fire gate.
 ///
 /// @param cfg Fire decision configuration
 /// @param cur_yaw Current gimbal yaw (radians)

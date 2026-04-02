@@ -6,7 +6,7 @@
 
 namespace fcs::core::trajectory {
 
-/// Reference trajectory for MPC-based weapon control.
+/// Reference trajectory for weapon control.
 ///
 /// Contains the state matrix [yaw, yaw_rate, pitch, pitch_rate] × horizon,
 /// plus metadata needed for fire gate computation and debug visualization.

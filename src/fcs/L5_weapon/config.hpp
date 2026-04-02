@@ -10,9 +10,6 @@ struct MpcAxisConfig {
 };
 
 struct MpcSolverConfig {
-    int horizon_ahead{50};
-    int horizon_back{50};
-    double dt{0.01};
     int max_iterations{10};
     double abs_tol{1e-3};
     double rho{1.0};
@@ -30,6 +27,11 @@ struct WeaponControllerConfig {
 
     double pitch_min{-0.69813169};
     double pitch_max{0.69813169};
+
+    /// Maximum age of L4 reference trajectory before L5 rejects it (seconds).
+    /// If the reference trajectory is older than this threshold, L5 falls back
+    /// to passthrough instead of solving on stale data.
+    double reference_age_threshold_s{0.02};
 
     MpcSolverConfig mpc{};
 };

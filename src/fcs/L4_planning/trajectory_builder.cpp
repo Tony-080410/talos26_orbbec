@@ -1,7 +1,6 @@
 #include "L4_planning/trajectory_builder.hpp"
 #include "core/math/normalize.hpp"
 
-#include <algorithm>
 #include <vector>
 
 namespace fcs::L4 {
@@ -81,13 +80,12 @@ template <typename TargetState>
 } // namespace
 
 [[nodiscard]] std::expected<ReferenceTrajectory, std::string> build_reference_trajectory(
-    const PlannerSeed& seed, const Aimer& aimer, int horizon_ahead, int horizon_back, double dt,
-    double pitch_min, double pitch_max, uint64_t current_ns, const Aimer::GimbalTransform& gimbal,
-    const Aimer::MuzzleTransform& muzzle,
-    const core::trajectory::solver::TrajectorySolver& trajectory_solver,
-    double bullet_speed) noexcept {
+    const PlannerSeed& seed, const Aimer& aimer, const ReferenceTrajectoryConfig& horizon_cfg,
+    const TrajectoryBuildContext& ctx) noexcept {
 
-    const int horizon = horizon_ahead + horizon_back + 1;
+    const int horizon      = horizon_cfg.horizon_ahead + horizon_cfg.horizon_back + 1;
+    const int horizon_back = horizon_cfg.horizon_back;
+    const double dt        = horizon_cfg.dt;
 
     ReferenceTrajectory trajectory{
         .state                    = StateMatrix(4, horizon),
@@ -107,20 +105,26 @@ template <typename TargetState>
     context.phase              = seed.aim_phase;
     context.preferred_armor_id = seed.selected_armor_id;
 
-    for (int k = 0; k < horizon; ++k) {
+    // Resolve the target variant once before the loop.
+    // If the seed has no valid state, fail immediately rather than
+    // allocating "empty planner seed" strings inside the hot loop.
+    const auto build_sample = [&](int k) -> std::expected<ReferenceSample, std::string> {
         const double sample_offset = (static_cast<double>(k) - horizon_back) * dt;
-
-        std::expected<ReferenceSample, std::string> sample = std::unexpected("empty planner seed");
         if (const auto* robot = seed.robot_state()) {
-            sample = build_reference_sample(
-                aimer, *robot, context, seed.state_timestamp_ns, current_ns, sample_offset, gimbal,
-                muzzle, trajectory_solver, bullet_speed);
-        } else if (const auto* outpost = seed.outpost_state()) {
-            sample = build_reference_sample(
-                aimer, *outpost, context, seed.state_timestamp_ns, current_ns, sample_offset,
-                gimbal, muzzle, trajectory_solver, bullet_speed);
+            return build_reference_sample(
+                aimer, *robot, context, seed.state_timestamp_ns, ctx.current_ns, sample_offset,
+                ctx.gimbal, ctx.muzzle, *ctx.trajectory_solver, ctx.bullet_speed);
         }
+        if (const auto* outpost = seed.outpost_state()) {
+            return build_reference_sample(
+                aimer, *outpost, context, seed.state_timestamp_ns, ctx.current_ns, sample_offset,
+                ctx.gimbal, ctx.muzzle, *ctx.trajectory_solver, ctx.bullet_speed);
+        }
+        return std::unexpected("empty planner seed");
+    };
 
+    for (int k = 0; k < horizon; ++k) {
+        auto sample = build_sample(k);
         if (!sample) {
             return std::unexpected(sample.error());
         }
@@ -128,7 +132,7 @@ template <typename TargetState>
         context.preferred_armor_id = sample->selected_armor_id;
 
         yaw_samples[k]                         = sample->yaw;
-        pitch_samples[k]                       = std::clamp(sample->pitch, pitch_min, pitch_max);
+        pitch_samples[k]                       = sample->pitch;
         trajectory.distances[k]                = sample->distance;
         trajectory.diff_yaws[k]                = sample->diff_yaw;
         trajectory.time_of_flights[k]          = sample->time_of_flight;

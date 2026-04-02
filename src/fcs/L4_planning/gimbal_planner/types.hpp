@@ -30,8 +30,8 @@ struct VisualizationDebugData {
 
 /// L4 planner seed used for reference trajectory generation.
 ///
-/// Contains the raw L3 target state, used by L4 to build the full MPC
-/// reference trajectory before passing it to L5.
+/// Contains the raw L3 target state, used by L4 to build the full reference
+/// trajectory before passing it to L5.
 struct PlannerSeed {
     using State = std::variant<std::monostate, L3::RobotTargetState, L3::OutpostTargetState>;
 
@@ -65,7 +65,7 @@ struct PlannerSeed {
 
 /// Gimbal plan - final L4 output consumed by L5.
 ///
-/// L4 (Aimer + plan adapter) -> GimbalPlan -> L5 (reference trajectory + MPC) -> WeaponCommand
+/// L4 (Aimer + plan adapter) -> GimbalPlan -> L5 (reference trajectory + solver) -> WeaponCommand
 struct GimbalPlan {
     // ========================================================================
     // Basic Information
@@ -77,7 +77,7 @@ struct GimbalPlan {
     GimbalPlanSource source{GimbalPlanSource::Armor};
     std::optional<PlannerSeed> planner_seed;
 
-    /// Pre-built MPC reference trajectory (optional).
+    /// Pre-built reference trajectory (optional).
     /// When populated by L4, L5 skips trajectory reconstruction and uses this directly.
     std::optional<core::trajectory::ReferenceTrajectory> reference_trajectory;
 

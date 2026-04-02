@@ -9,7 +9,7 @@ namespace fcs::L4 {
 /// L4-selected target snapshot for observability consumers.
 ///
 /// This is the decision-layer view of the currently selected armor target.
-/// It intentionally excludes execution-only data needed by L5/MPC.
+/// It intentionally excludes execution-only data needed by L5.
 struct SelectedTargetSnapshot {
     uint64_t timestamp_ns{0};
     GimbalPlanSource source{GimbalPlanSource::Armor};
