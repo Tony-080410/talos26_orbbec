@@ -75,7 +75,7 @@ public:
 
         // Create encoder
         auto enc_result =
-            create_encoder_context(out_w, out_h, time_base, frame_rate, params_, {1, 1});
+            create_encoder_context(out_w, out_h, time_base, frame_rate, params_, {1, 1}, {}, true);
         if (!enc_result)
             return std::unexpected(enc_result.error());
         enc_ctx_ = std::move(enc_result.value());

@@ -10,7 +10,7 @@ int main(int argc, char* argv[]) {
     if (argc < 3) {
         std::fprintf(stderr, "Usage: %s <input> <output>\n", argv[0]);
         std::fprintf(
-            stderr, "  Encodes input video to H.264 @ %.1f kbps ultra-low bitrate.\n",
+            stderr, "  Encodes input video to H.265/HEVC @ %.1f kbps ultra-low bitrate.\n",
             static_cast<double>(params.target_bitrate) / 1000.0);
         return 1;
     }

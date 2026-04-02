@@ -147,13 +147,6 @@ std::expected<TranscodeStats, std::string>
         return std::unexpected(filter_result.error());
     auto& chain = filter_result.value();
 
-    // ---- Open encoder (shared config via encode_common) ----
-    auto enc_result = create_encoder_context(
-        out_w, out_h, {out_fps.den, out_fps.num}, out_fps, params_, sar, color);
-    if (!enc_result)
-        return std::unexpected(enc_result.error());
-    auto enc_ctx = std::move(enc_result.value());
-
     // ---- Open output ----
     AVFormatContext* out_fmt_raw = nullptr;
     int ret = avformat_alloc_output_context2(&out_fmt_raw, nullptr, nullptr, out.c_str());
@@ -161,6 +154,15 @@ std::expected<TranscodeStats, std::string>
         return std::unexpected("Cannot alloc output context: " + averr(ret));
     }
     FmtOutPtr out_fmt(out_fmt_raw);
+
+    // ---- Open encoder (shared config via encode_common) ----
+    const bool needs_global_header = (out_fmt->oformat->flags & AVFMT_GLOBALHEADER) != 0;
+    auto enc_result                = create_encoder_context(
+        out_w, out_h, {out_fps.den, out_fps.num}, out_fps, params_, sar, color, false,
+        needs_global_header);
+    if (!enc_result)
+        return std::unexpected(enc_result.error());
+    auto enc_ctx = std::move(enc_result.value());
 
     auto* out_stream = avformat_new_stream(out_fmt.get(), nullptr);
     if (!out_stream)

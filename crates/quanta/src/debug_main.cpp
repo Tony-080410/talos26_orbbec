@@ -135,7 +135,7 @@ struct FileWriter {
 } // namespace
 
 int main(int argc, char* argv[]) {
-    const char* output_path = "test_stream.h264";
+    const char* output_path = "test_stream.h265";
     int num_frames          = 300; // 10 seconds at 30fps
     int src_width           = 640;
     int src_height          = 480;

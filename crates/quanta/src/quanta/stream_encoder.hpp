@@ -13,7 +13,7 @@
 namespace quanta {
 
 // ---------------------------------------------------------------------------
-// Encoded H.264 NAL unit (Annex B format)
+// Encoded HEVC NAL unit (Annex B format)
 // ---------------------------------------------------------------------------
 struct EncodedPacket {
     std::unique_ptr<uint8_t[]> data; // Owned byte buffer
@@ -32,7 +32,7 @@ struct EncodedPacket {
 };
 
 // ---------------------------------------------------------------------------
-// StreamEncoder: realtime H.264 encoding with BGR24 frame input
+// StreamEncoder: realtime HEVC encoding with BGR24 frame input
 // ---------------------------------------------------------------------------
 class StreamEncoder {
 public:

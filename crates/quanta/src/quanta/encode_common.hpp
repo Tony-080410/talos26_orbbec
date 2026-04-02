@@ -159,16 +159,17 @@ inline std::expected<FilterChain, std::string> build_filter_chain(
 }
 
 // ---------------------------------------------------------------------------
-// libx264 encoder context (CRF + VBV)
+// libx265 encoder context (CRF + VBV)
 // ---------------------------------------------------------------------------
 
 inline std::expected<CodecCtxPtr, std::string> create_encoder_context(
     int width, int height, AVRational time_base, AVRational frame_rate, const EncodeParams& params,
-    AVRational sample_aspect_ratio = {1, 1}, const ColorParams& color = {}) {
+    AVRational sample_aspect_ratio = {1, 1}, const ColorParams& color = {},
+    bool repeat_headers = false, bool global_header = false) {
 
-    const auto* enc_codec = avcodec_find_encoder_by_name("libx264");
+    const auto* enc_codec = avcodec_find_encoder_by_name("libx265");
     if (!enc_codec)
-        return std::unexpected("libx264 encoder not found");
+        return std::unexpected("libx265 encoder not found");
 
     auto enc_ctx = alloc_codec_ctx(enc_codec);
     if (!enc_ctx)
@@ -184,13 +185,15 @@ inline std::expected<CodecCtxPtr, std::string> create_encoder_context(
     enc_ctx->gop_size               = params.gop_size;
     enc_ctx->max_b_frames           = 0;
     enc_ctx->pix_fmt                = AV_PIX_FMT_YUV420P;
-    enc_ctx->profile                = AV_PROFILE_H264_HIGH;
+    enc_ctx->profile                = AV_PROFILE_HEVC_MAIN;
     enc_ctx->sample_aspect_ratio    = sample_aspect_ratio;
     enc_ctx->colorspace             = color.colorspace;
     enc_ctx->color_range            = color.range;
     enc_ctx->color_primaries        = color.color_primaries;
     enc_ctx->color_trc              = color.color_trc;
     enc_ctx->chroma_sample_location = color.chroma_location;
+    if (global_header)
+        enc_ctx->flags |= AV_CODEC_FLAG_GLOBAL_HEADER;
 
     constexpr int kPhysicalLinkBudgetKbps  = 120;
     constexpr double kLatencyBudgetSeconds = 0.25;
@@ -209,25 +212,26 @@ inline std::expected<CodecCtxPtr, std::string> create_encoder_context(
         1, static_cast<int>(std::lround(static_cast<double>(kbps) * desired_vbv_window_seconds)));
     const auto vbv_bufsize = std::min(desired_vbv_bufsize, link_safe_vbv_bufsize);
 
-    av_opt_set(enc_ctx->priv_data, "preset", params.preset, 0);
-    av_opt_set(enc_ctx->priv_data, "tune", params.tune, 0);
+    if (params.preset && params.preset[0] != '\0')
+        av_opt_set(enc_ctx->priv_data, "preset", params.preset, 0);
 
-    // CRF quality target + VBV hard cap + strong in-loop deblocking.
-    // Let VBV grow toward a 1.0-1.5s smoothing window, but never beyond the crate's
-    // 120kbps * 250ms link/latency budget.
-    // deblock=1,0: luma deblocking ON (strength 1), chroma deblocking OFF — preserves luma edges
-    // while smoothing block boundaries in luma only. Keep the original stillimage allocation,
-    // but spend more CPU on reference selection, partition search, and motion estimation.
-    std::string x264_opts = std::format(
+    const auto min_keyint = std::max(1, params.gop_size / 2);
+
+    // Keep the same short-GOP / low-latency shape as the x264 path, but drive libx265 with
+    // explicit CRF + VBV limits so bitrate stays bounded instead of ballooning. Disable SAO to
+    // avoid smearing thin edges at very low bitrate, repeat headers for raw Annex B packets, and
+    // keep B-frames off to match the current latency budget.
+    std::string x265_opts = std::format(
         "crf={}:vbv-maxrate={}:vbv-bufsize={}:"
-        "rc-lookahead={}:bframes=0:"
-        "ref=8:me=umh:merange=24:subme=10:trellis=2:partitions=all:"
-        "deblock=1,0:chroma-qp-offset={}:"
-        "aq-mode=3:aq-strength={}:"
-        "psy-rd={},{}",
-        params.crf, kbps, vbv_bufsize, params.lookahead, params.chroma_qp_offset,
-        params.aq_strength, params.psy_rd, params.psy_trellis);
-    av_opt_set(enc_ctx->priv_data, "x264-params", x264_opts.c_str(), 0);
+        "keyint={}:min-keyint={}:scenecut=5:open-gop=0:rc-lookahead={}:bframes=0:"
+        "ref=4:limit-refs=3:me=star:subme=7:rd=5:rdoq-level=2:"
+        "aq-mode=3:aq-strength={}:aq-motion=1:cutree=1:"
+        "cbqpoffs={}:crqpoffs={}:psy-rd={}:psy-rdoq={}:"
+        "deblock=1,0:no-sao=1:repeat-headers={}",
+        params.crf, kbps, vbv_bufsize, params.gop_size, min_keyint, params.lookahead,
+        params.aq_strength, params.chroma_qp_offset, params.chroma_qp_offset, params.psy_rd,
+        params.psy_trellis, repeat_headers ? 1 : 0);
+    av_opt_set(enc_ctx->priv_data, "x265-params", x265_opts.c_str(), 0);
 
     if (avcodec_open2(enc_ctx.get(), enc_codec, nullptr) < 0)
         return std::unexpected("Cannot open encoder");
