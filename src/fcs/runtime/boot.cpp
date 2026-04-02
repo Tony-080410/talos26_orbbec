@@ -24,8 +24,7 @@ namespace {
 
 inline constexpr auto to_rad(double x) noexcept { return (x / 180.0) * std::numbers::pi_v<double>; }
 
-fast_tf::CoordinateSystem init_coordinate_system(const RobotExtrinsicConfig& config) {
-    auto system       = fast_tf::CoordinateSystem();
+void init_coordinate_system(fast_tf::CoordinateSystem& system, const RobotExtrinsicConfig& config) {
     constexpr fp_t pi = std::numbers::pi;
 
     fast_tf::update<fast_tf::odom>(system, {}, 0);
@@ -59,18 +58,19 @@ fast_tf::CoordinateSystem init_coordinate_system(const RobotExtrinsicConfig& con
         fast_tf::EdgeTransform<fast_tf::muzzle_link_fuxk_frame>::from_translation(
             d.x(), d.y(), d.z()),
         0);
-
-    return system;
 }
 
 } // namespace
 
 [[nodiscard]] std::expected<void, std::string>
     boot(talos::World& world, talos::Scheduler& scheduler, RuntimeConfig&& config) {
+    if (!config.hardware) {
+        return std::unexpected("runtime config missing hardware section");
+    }
 
-    // Create coordinate system for fast_tf lookups (required by IMU and planning systems)
-    (void)world.emplace_resource<fast_tf::CoordinateSystem>(
-        init_coordinate_system(config.hardware->extrinsic));
+    // Build the TF buffer in place to avoid moving the large tuple of buffers during startup.
+    auto& coordinate_system = world.emplace_resource<fast_tf::CoordinateSystem>();
+    init_coordinate_system(coordinate_system, config.hardware->extrinsic);
 
     // Insert config as shared resource (for foxglove and other systems)
     world.insert_resource(config.robot_type);
