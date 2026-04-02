@@ -129,6 +129,9 @@ add_subdirectory(crates/fast_tf)
 add_subdirectory(crates/primitive)
 add_subdirectory(crates/scheduler)
 
+# Ultra-low bitrate image transmission
+add_subdirectory(crates/quanta)
+
 # Chiral bidirectional communication
 add_subdirectory(crates/chiral)
 
