@@ -159,7 +159,7 @@ inline std::expected<FilterChain, std::string> build_filter_chain(
 }
 
 // ---------------------------------------------------------------------------
-// libx265 encoder context (CRF + VBV)
+// libx265 encoder context
 // ---------------------------------------------------------------------------
 
 inline std::expected<CodecCtxPtr, std::string> create_encoder_context(
@@ -175,9 +175,13 @@ inline std::expected<CodecCtxPtr, std::string> create_encoder_context(
     if (!enc_ctx)
         return std::unexpected("Cannot allocate encoder context");
 
-    // CRF + VBV rate control (original working approach).
-    // bit_rate=0 = CRF mode; VBV caps peak bitrate.
-    enc_ctx->bit_rate               = 0;
+    const bool realtime_stream = repeat_headers && !global_header;
+    const auto bitrate_bps     = std::max<int64_t>(1'000, params.target_bitrate);
+    const auto bitrate_kbps =
+        std::max(1, static_cast<int>(std::lround(static_cast<double>(bitrate_bps) / 1000.0)));
+    enc_ctx->bit_rate               = realtime_stream ? bitrate_bps : 0;
+    enc_ctx->rc_max_rate            = realtime_stream ? bitrate_bps : 0;
+    enc_ctx->rc_min_rate            = realtime_stream ? bitrate_bps : 0;
     enc_ctx->width                  = width;
     enc_ctx->height                 = height;
     enc_ctx->time_base              = time_base;
@@ -195,59 +199,71 @@ inline std::expected<CodecCtxPtr, std::string> create_encoder_context(
     if (global_header)
         enc_ctx->flags |= AV_CODEC_FLAG_GLOBAL_HEADER;
 
-    constexpr int kPhysicalLinkBudgetKbps  = 120;
     constexpr double kLatencyBudgetSeconds = 0.25;
 
-    const auto kbps = std::max(1, params.target_bitrate / 1000);
     const double frame_rate_fps =
         frame_rate.num > 0 && frame_rate.den > 0
             ? static_cast<double>(frame_rate.num) / static_cast<double>(frame_rate.den)
             : static_cast<double>(params.framerate);
     const double gop_seconds =
         frame_rate_fps > 0.0 ? static_cast<double>(params.gop_size) / frame_rate_fps : 0.0;
-    const double desired_vbv_window_seconds = std::clamp(gop_seconds, 1.0, 1.5);
-    const auto link_safe_vbv_bufsize =
-        std::max(1, static_cast<int>(std::floor(kPhysicalLinkBudgetKbps * kLatencyBudgetSeconds)));
-    const auto desired_vbv_bufsize = std::max(
-        1, static_cast<int>(std::lround(static_cast<double>(kbps) * desired_vbv_window_seconds)));
-    const auto vbv_bufsize = std::min(desired_vbv_bufsize, link_safe_vbv_bufsize);
+    const double desired_vbv_window_seconds =
+        realtime_stream ? kLatencyBudgetSeconds : std::clamp(gop_seconds, 1.0, 1.5);
+    const auto vbv_bufsize = std::max(
+        1, static_cast<int>(
+               std::lround(static_cast<double>(bitrate_kbps) * desired_vbv_window_seconds)));
+    enc_ctx->rc_buffer_size = realtime_stream ? vbv_bufsize * 1000 : 0;
 
     if (params.preset && params.preset[0] != '\0')
         av_opt_set(enc_ctx->priv_data, "preset", params.preset, 0);
+    if (realtime_stream)
+        av_opt_set(enc_ctx->priv_data, "tune", "zerolatency", 0);
 
-    const auto min_keyint      = std::max(1, params.gop_size / 2);
-    const bool realtime_stream = repeat_headers && !global_header;
-    const int lookahead     = realtime_stream ? std::min(params.lookahead, 20) : params.lookahead;
-    const int frame_threads = realtime_stream ? 2 : 0;
-    const int ref_count     = realtime_stream ? 3 : 4;
-    const int limit_refs    = 3;
-    const char* me_mode     = realtime_stream ? "hex" : "star";
-    const int subme_level   = realtime_stream ? 4 : 7;
-    const int rd_level      = realtime_stream ? 3 : 5;
-    const int rdoq_level    = realtime_stream ? 1 : 2;
+    const auto min_keyint   = std::max(1, params.gop_size / 2);
+    const int lookahead     = realtime_stream ? 0 : params.lookahead;
+    const int frame_threads = realtime_stream ? 1 : 0;
+    const int ref_count     = realtime_stream ? 1 : 4;
+    const int limit_refs    = realtime_stream ? 1 : 3;
+    const char* me_mode     = realtime_stream ? "dia" : "star";
+    const int subme_level   = realtime_stream ? 7 : 7;
+    const int rd_level      = realtime_stream ? 2 : 5;
+    const int rdoq_level    = realtime_stream ? 0 : 2;
     const int amp_enabled   = realtime_stream ? 0 : 1;
-    const double psy_rdoq =
-        realtime_stream ? std::min(params.psy_trellis, 2.0) : params.psy_trellis;
-    const int cb_qp_offset = std::max(0, params.chroma_qp_offset - 3);
-    const int cr_qp_offset = std::max(0, params.chroma_qp_offset - 5);
+    const int rect_enabled  = realtime_stream ? 0 : 1;
+    const double psy_rdoq   = realtime_stream ? 0.0 : params.psy_trellis;
+    const int cb_qp_offset  = std::max(0, params.chroma_qp_offset - 3);
+    const int cr_qp_offset  = std::max(0, params.chroma_qp_offset - 5);
 
-    // Keep the same short-GOP / low-latency shape as the x264 path, but drive libx265 with
-    // explicit CRF + VBV limits so bitrate stays bounded instead of ballooning. Protect thin
-    // moving targets by biasing Cr less aggressively than Cb and keeping rectangular partitions,
-    // but use a materially lighter search budget on the Annex B realtime path so throughput stays
-    // above the target framerate.
-    std::string x265_opts = std::format(
-        "crf={}:vbv-maxrate={}:vbv-bufsize={}:"
-        "keyint={}:min-keyint={}:scenecut=5:open-gop=0:rc-lookahead={}:bframes=0:frame-threads={}:"
-        "ref={}:limit-refs={}:me={}:subme={}:rd={}:rdoq-level={}:"
-        "rect=1:amp={}:"
-        "aq-mode=3:aq-strength={}:aq-motion=1:cutree=1:"
-        "cbqpoffs={}:crqpoffs={}:psy-rd={}:psy-rdoq={}:"
-        "deblock=1,0:no-sao=1:repeat-headers={}",
-        params.crf, kbps, vbv_bufsize, params.gop_size, min_keyint, lookahead, frame_threads,
-        ref_count, limit_refs, me_mode, subme_level, rd_level, rdoq_level, amp_enabled,
-        params.aq_strength, cb_qp_offset, cr_qp_offset, params.psy_rd, psy_rdoq,
-        repeat_headers ? 1 : 0);
+    std::string x265_opts;
+    if (realtime_stream) {
+        // Realtime stream path: hold wire rate close to target instead of letting CRF overshoot.
+        x265_opts = std::format(
+            "bitrate={}:vbv-maxrate={}:vbv-bufsize={}:vbv-init=0.9:strict-cbr=1:"
+            "keyint={}:min-keyint={}:scenecut=0:open-gop=0:rc-lookahead=0:bframes=0:frame-threads={"
+            "}:"
+            "ref={}:limit-refs={}:me={}:subme=1:rd={}:rdoq-level={}:"
+            "rect={}:amp={}:aq-mode=1:aq-strength=0.4:aq-motion=0:cutree=0:"
+            "cbqpoffs={}:crqpoffs={}:psy-rd=0.0:psy-rdoq=0.0:qcomp=0.5:qpstep=8:"
+            "deblock=0,0:no-sao=1:info=0:vui-timing-info=0:vui-hrd-info=0:repeat-headers={}",
+            bitrate_kbps, bitrate_kbps, vbv_bufsize, params.gop_size, min_keyint, frame_threads,
+            ref_count, limit_refs, me_mode, rd_level, rdoq_level, rect_enabled, amp_enabled,
+            cb_qp_offset, cr_qp_offset, repeat_headers ? 1 : 0);
+    } else {
+        // File transcode path: keep the original CRF-driven behavior.
+        x265_opts = std::format(
+            "crf={}:vbv-maxrate={}:vbv-bufsize={}:"
+            "keyint={}:min-keyint={}:scenecut=5:open-gop=0:rc-lookahead={}:bframes=0:frame-threads="
+            "{}:"
+            "ref={}:limit-refs={}:me={}:subme={}:rd={}:rdoq-level={}:"
+            "rect={}:amp={}:"
+            "aq-mode=3:aq-strength={}:aq-motion=1:cutree=1:"
+            "cbqpoffs={}:crqpoffs={}:psy-rd={}:psy-rdoq={}:"
+            "deblock=1,0:no-sao=1:repeat-headers={}",
+            params.crf, bitrate_kbps, vbv_bufsize, params.gop_size, min_keyint, lookahead,
+            frame_threads, ref_count, limit_refs, me_mode, subme_level, rd_level, rdoq_level,
+            rect_enabled, amp_enabled, params.aq_strength, cb_qp_offset, cr_qp_offset,
+            params.psy_rd, psy_rdoq, repeat_headers ? 1 : 0);
+    }
     av_opt_set(enc_ctx->priv_data, "x265-params", x265_opts.c_str(), 0);
 
     if (avcodec_open2(enc_ctx.get(), enc_codec, nullptr) < 0)

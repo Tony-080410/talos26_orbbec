@@ -11,6 +11,7 @@ crate(
     SOURCES
         src/transcoder.cpp
         src/stream_encoder.cpp
+        src/stream_transport.cpp
     DEPS
         PkgConfig::AVCODEC
         PkgConfig::AVFORMAT
@@ -23,6 +24,14 @@ crate(
 add_executable(quanta-transcode src/main.cpp)
 target_link_libraries(quanta-transcode PRIVATE quanta)
 
-# Stream encoder debug tool: generates test pattern -> H.264 file
+# Stream encoder debug tool: generates test pattern -> HEVC Annex-B file
 add_executable(quanta-stream-test src/debug_main.cpp)
 target_link_libraries(quanta-stream-test PRIVATE quanta)
+
+# Loopback transport benchmark: sender -> 50Hz MTU simulation -> receiver
+add_executable(quanta-stream-loopback src/loopback_main.cpp)
+target_link_libraries(quanta-stream-loopback PRIVATE quanta)
+
+# Visual demo: encoder input and decoder output side-by-side in a live window
+add_executable(quanta-stream-demo src/window_demo.cpp)
+target_link_libraries(quanta-stream-demo PRIVATE quanta opencv_core opencv_imgproc opencv_highgui)

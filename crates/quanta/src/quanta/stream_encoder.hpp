@@ -13,7 +13,7 @@
 namespace quanta {
 
 // ---------------------------------------------------------------------------
-// Encoded HEVC NAL unit (Annex B format)
+// Encoded HEVC access unit (Annex B format)
 // ---------------------------------------------------------------------------
 struct EncodedPacket {
     std::unique_ptr<uint8_t[]> data; // Owned byte buffer
