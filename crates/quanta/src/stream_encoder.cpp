@@ -3,6 +3,7 @@
 #include "quanta/ffmpeg_raii.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cstdio>
 #include <cstring>
 #include <deque>
@@ -39,6 +40,9 @@ using detail::PacketPtr;
 
 class StreamEncoder::Impl {
 public:
+    static constexpr size_t kInputFramePoolSize = 3;
+    static constexpr int kBufferSrcFlags        = AV_BUFFERSRC_FLAG_KEEP_REF;
+
     explicit Impl(EncodeParams params)
         : params_(params) {}
     ~Impl() = default;
@@ -80,18 +84,22 @@ public:
             return std::unexpected(enc_result.error());
         enc_ctx_ = std::move(enc_result.value());
 
-        bgr_frame_  = alloc_frame();
         filt_frame_ = alloc_frame();
         enc_pkt_    = alloc_packet();
-        if (!bgr_frame_ || !filt_frame_ || !enc_pkt_)
+        if (!filt_frame_ || !enc_pkt_)
             return std::unexpected("Cannot allocate reusable frame/packet");
 
-        bgr_frame_->format = AV_PIX_FMT_BGR24;
-        bgr_frame_->width  = src_width_;
-        bgr_frame_->height = src_height_;
-        int ret            = av_frame_get_buffer(bgr_frame_.get(), 0);
-        if (ret < 0)
-            return std::unexpected("Cannot allocate BGR frame buffer: " + averr(ret));
+        for (auto& frame : bgr_frames_) {
+            frame = alloc_frame();
+            if (!frame)
+                return std::unexpected("Cannot allocate reusable BGR frame");
+            frame->format = AV_PIX_FMT_BGR24;
+            frame->width  = src_width_;
+            frame->height = src_height_;
+            int ret       = av_frame_get_buffer(frame.get(), 0);
+            if (ret < 0)
+                return std::unexpected("Cannot allocate BGR frame buffer: " + averr(ret));
+        }
 
         input_row_bytes_ = src_width_ * 3;
 
@@ -107,27 +115,29 @@ public:
         if (!initialized_)
             return std::unexpected("StreamEncoder not initialized");
 
-        int ret = av_frame_make_writable(bgr_frame_.get());
+        AVFrame* bgr_frame = bgr_frames_[next_bgr_frame_].get();
+        next_bgr_frame_    = (next_bgr_frame_ + 1) % bgr_frames_.size();
+
+        int ret = av_frame_make_writable(bgr_frame);
         if (ret < 0)
             return std::unexpected("Cannot make BGR frame writable: " + averr(ret));
 
-        bgr_frame_->pts = pts;
+        bgr_frame->pts = pts;
 
         // Copy BGR data row-by-row
-        if (linesize == input_row_bytes_ && bgr_frame_->linesize[0] == input_row_bytes_) {
+        if (linesize == input_row_bytes_ && bgr_frame->linesize[0] == input_row_bytes_) {
             std::memcpy(
-                bgr_frame_->data[0], data, static_cast<size_t>(input_row_bytes_) * src_height_);
+                bgr_frame->data[0], data, static_cast<size_t>(input_row_bytes_) * src_height_);
         } else {
             for (int y = 0; y < src_height_; ++y) {
                 std::memcpy(
-                    bgr_frame_->data[0] + y * bgr_frame_->linesize[0], data + y * linesize,
+                    bgr_frame->data[0] + y * bgr_frame->linesize[0], data + y * linesize,
                     input_row_bytes_);
             }
         }
 
         // Push through filter graph
-        ret = av_buffersrc_add_frame_flags(
-            chain_.src_ctx, bgr_frame_.get(), AV_BUFFERSRC_FLAG_KEEP_REF);
+        ret = av_buffersrc_add_frame_flags(chain_.src_ctx, bgr_frame, kBufferSrcFlags);
         if (ret < 0)
             return std::unexpected("Filter push failed: " + averr(ret));
 
@@ -221,11 +231,12 @@ private:
 
     FilterChain chain_;
     CodecCtxPtr enc_ctx_;
-    FramePtr bgr_frame_;
+    std::array<FramePtr, kInputFramePoolSize> bgr_frames_;
     FramePtr filt_frame_;
     PacketPtr enc_pkt_;
     std::deque<EncodedPacket> packet_queue_;
-    int input_row_bytes_ = 0;
+    int input_row_bytes_   = 0;
+    size_t next_bgr_frame_ = 0;
 };
 
 // ===========================================================================

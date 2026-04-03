@@ -177,14 +177,18 @@ int main(int argc, char* argv[]) {
     }
 
     // ---- Encode loop ----
-    int64_t total_bytes    = 0;
-    int total_packets      = 0;
-    double total_encode_ms = 0.0;
-    int frames_encoded     = 0;
+    int64_t total_bytes      = 0;
+    int total_packets        = 0;
+    double total_encode_ms   = 0.0;
+    double total_generate_ms = 0.0;
+    double total_poll_ms     = 0.0;
+    int frames_encoded       = 0;
 
     for (int i = 0; i < num_frames; ++i) {
         // Generate test pattern
+        auto t_gen0 = std::chrono::high_resolution_clock::now();
         generate_color_bars(frame_buf.data(), src_width, src_height, linesize, i);
+        auto t_gen1 = std::chrono::high_resolution_clock::now();
 
         // Encode
         auto t0 = std::chrono::high_resolution_clock::now();
@@ -199,6 +203,7 @@ int main(int argc, char* argv[]) {
         auto t1 = std::chrono::high_resolution_clock::now();
 
         // Drain packets
+        auto t_poll0 = std::chrono::high_resolution_clock::now();
         while (auto pkt = encoder.poll_packet()) {
             auto bytes = pkt->bytes();
             if (!writer.write(bytes.data(), bytes.size())) {
@@ -208,9 +213,14 @@ int main(int argc, char* argv[]) {
             total_bytes += static_cast<int64_t>(bytes.size());
             total_packets++;
         }
+        auto t_poll1 = std::chrono::high_resolution_clock::now();
 
-        double encode_ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
+        double encode_ms   = std::chrono::duration<double, std::milli>(t1 - t0).count();
+        double generate_ms = std::chrono::duration<double, std::milli>(t_gen1 - t_gen0).count();
+        double poll_ms     = std::chrono::duration<double, std::milli>(t_poll1 - t_poll0).count();
+        total_generate_ms += generate_ms;
         total_encode_ms += encode_ms;
+        total_poll_ms += poll_ms;
         frames_encoded++;
 
         // Progress indicator every 30 frames
@@ -218,9 +228,12 @@ int main(int argc, char* argv[]) {
             double elapsed_sec  = static_cast<double>(i + 1) / framerate;
             double current_kbps = elapsed_sec > 0 ? (total_bytes * 8.0 / elapsed_sec / 1000.0) : 0;
             std::fprintf(
-                stderr, "[debug] Frame %d/%d | avg %.1f ms/frame | %lld bytes | %.1f kbps\n", i + 1,
-                num_frames, total_encode_ms / frames_encoded, static_cast<long long>(total_bytes),
-                current_kbps);
+                stderr,
+                "[debug] Frame %d/%d | gen %.1f ms | push %.1f ms | poll %.1f ms | %lld bytes | "
+                "%.1f kbps\n",
+                i + 1, num_frames, total_generate_ms / frames_encoded,
+                total_encode_ms / frames_encoded, total_poll_ms / frames_encoded,
+                static_cast<long long>(total_bytes), current_kbps);
         }
     }
 
@@ -243,7 +256,9 @@ int main(int argc, char* argv[]) {
     // ---- Stats ----
     double duration_sec = static_cast<double>(num_frames) / framerate;
     double avg_kbps     = duration_sec > 0 ? (total_bytes * 8.0 / duration_sec / 1000.0) : 0;
-    double avg_ms       = frames_encoded > 0 ? (total_encode_ms / frames_encoded) : 0;
+    double avg_push_ms  = frames_encoded > 0 ? (total_encode_ms / frames_encoded) : 0;
+    double avg_gen_ms   = frames_encoded > 0 ? (total_generate_ms / frames_encoded) : 0;
+    double avg_poll_ms  = frames_encoded > 0 ? (total_poll_ms / frames_encoded) : 0;
 
     std::fprintf(stderr, "\n[debug] === Results ===\n");
     std::fprintf(stderr, "  Output:     %s\n", output_path);
@@ -251,9 +266,11 @@ int main(int argc, char* argv[]) {
     std::fprintf(stderr, "  Duration:   %.2f sec\n", duration_sec);
     std::fprintf(stderr, "  Size:       %.1f KB\n", static_cast<double>(total_bytes) / 1024.0);
     std::fprintf(stderr, "  Avg bitrate: %.1f kbps (target %d)\n", avg_kbps, params.target_bitrate);
+    std::fprintf(stderr, "  Avg generate: %.1f ms/frame\n", avg_gen_ms);
     std::fprintf(
-        stderr, "  Avg latency: %.1f ms/frame (budget %.1f ms for %d fps)\n", avg_ms,
+        stderr, "  Avg push:     %.1f ms/frame (budget %.1f ms for %d fps)\n", avg_push_ms,
         1000.0 / framerate, framerate);
+    std::fprintf(stderr, "  Avg poll:     %.1f ms/frame\n", avg_poll_ms);
     std::fprintf(stderr, "\n[debug] Play with: ffplay %s\n", output_path);
 
     return 0;
