@@ -69,7 +69,7 @@ void draw_lines(
 
 cv::Mat build_canvas(
     const cv::Mat& source_bgr, const cv::Mat& decoded_bgr,
-    const quanta::StreamSenderStats& sender_stats,
+    const quanta::StreamTransportConfig& config, const quanta::StreamSenderStats& sender_stats,
     const quanta::StreamReceiverStats& receiver_stats, uint64_t started_ns, int generated_frames,
     int decoded_frames, double source_fps, cv::Size encoded_size) {
     cv::Mat source_panel;
@@ -128,11 +128,11 @@ cv::Mat build_canvas(
         canvas,
         {
             std::format(
-                "gen={} dec={} drop={}", generated_frames, decoded_frames,
+                "gen={} dec={} drp={}", generated_frames, decoded_frames,
                 sender_stats.frames_dropped),
-            std::format("queued_chunks={} link={:.1f} kbps", sender_stats.queued_chunks, link_kbps),
+            std::format("queue={} link={:.1f} kbps", sender_stats.queued_chunks, link_kbps),
             std::format(
-                "last={:.1f} ms avg={:.1f} ms", receiver_stats.last_latency_ns / 1'000'000.0,
+                "lst={:.1f} ms avg={:.1f} ms", receiver_stats.last_latency_ns / 1'000'000.0,
                 receiver_stats.avg_latency_ms),
             std::format(
                 "max={:.1f} ms rst={} dec_err={}", receiver_stats.max_latency_ns / 1'000'000.0,
@@ -143,9 +143,11 @@ cv::Mat build_canvas(
     draw_lines(
         canvas,
         {
-            std::format("300B@50Hz {}x{}", encoded_size.width, encoded_size.height),
             std::format(
-                "emit={} reasm={} dec={:.1f}", sender_stats.chunks_emitted,
+                "{}B@{}Hz {}x{}", config.mtu_bytes, config.transport_hz, encoded_size.width,
+                encoded_size.height),
+            std::format(
+                "emit={} asm={} dec={:.1f}", sender_stats.chunks_emitted,
                 receiver_stats.frames_reassembled, displayed_fps),
             std::format("src={:.2f} ctrl: q / esc", source_fps),
         },
@@ -268,8 +270,8 @@ int main(int argc, char* argv[]) {
         }
 
         cv::Mat canvas = build_canvas(
-            latest_source, latest_decoded, sender.stats(), receiver.stats(), started_ns,
-            generated_frames, decoded_frames, source_fps, encoded_size);
+            latest_source, latest_decoded, transport_config, sender.stats(), receiver.stats(),
+            started_ns, generated_frames, decoded_frames, source_fps, encoded_size);
         cv::imshow("quanta-stream-demo", canvas);
 
         const int key = cv::waitKey(1);

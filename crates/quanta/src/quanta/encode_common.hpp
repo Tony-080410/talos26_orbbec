@@ -220,19 +220,17 @@ inline std::expected<CodecCtxPtr, std::string> create_encoder_context(
         av_opt_set(enc_ctx->priv_data, "tune", "zerolatency", 0);
 
     const auto min_keyint   = std::max(1, params.gop_size / 2);
-    const int lookahead     = realtime_stream ? 0 : params.lookahead;
     const int frame_threads = realtime_stream ? 1 : 0;
-    const int ref_count     = realtime_stream ? 1 : 4;
-    const int limit_refs    = realtime_stream ? 1 : 3;
-    const char* me_mode     = realtime_stream ? "dia" : "star";
-    const int subme_level   = realtime_stream ? 7 : 7;
-    const int rd_level      = realtime_stream ? 2 : 5;
-    const int rdoq_level    = realtime_stream ? 0 : 2;
-    const int amp_enabled   = realtime_stream ? 0 : 1;
-    const int rect_enabled  = realtime_stream ? 0 : 1;
-    const double psy_rdoq   = realtime_stream ? 0.0 : params.psy_trellis;
-    const int cb_qp_offset  = std::max(0, params.chroma_qp_offset - 3);
-    const int cr_qp_offset  = std::max(0, params.chroma_qp_offset - 5);
+    const int ref_count     = 10;
+    const int limit_refs    = 3;
+    const char* me_mode     = "star";
+    const int subme_level   = 7;
+    const int rd_level      = 3;
+    const int rdoq_level    = 2;
+    const int amp_enabled   = 1;
+    const int rect_enabled  = 1;
+    const int cb_qp_offset  = std::max(0, params.chroma_qp_offset);
+    const int cr_qp_offset  = std::max(0, params.chroma_qp_offset);
 
     std::string x265_opts;
     if (realtime_stream) {
@@ -241,14 +239,17 @@ inline std::expected<CodecCtxPtr, std::string> create_encoder_context(
             "bitrate={}:vbv-maxrate={}:vbv-bufsize={}:vbv-init=0.9:strict-cbr=1:"
             "keyint={}:min-keyint={}:scenecut=0:open-gop=0:rc-lookahead=0:bframes=0:frame-threads={"
             "}:"
-            "ref={}:limit-refs={}:me={}:subme=1:rd={}:rdoq-level={}:"
+            "ref={}:limit-refs={}:me={}:subme={}:rd={}:rdoq-level={}:"
             "rect={}:amp={}:aq-mode=1:aq-strength=0.4:aq-motion=0:cutree=0:"
-            "cbqpoffs={}:crqpoffs={}:psy-rd=0.0:psy-rdoq=0.0:qcomp=0.5:qpstep=8:"
+            "cbqpoffs={}:crqpoffs={}:psy-rd={}:psy-rdoq={}:qcomp=0.5:qpstep=8:"
             "deblock=0,0:no-sao=1:info=0:vui-timing-info=0:vui-hrd-info=0:repeat-headers={}",
             bitrate_kbps, bitrate_kbps, vbv_bufsize, params.gop_size, min_keyint, frame_threads,
-            ref_count, limit_refs, me_mode, rd_level, rdoq_level, rect_enabled, amp_enabled,
-            cb_qp_offset, cr_qp_offset, repeat_headers ? 1 : 0);
+            ref_count, limit_refs, me_mode, subme_level, rd_level, rdoq_level, rect_enabled,
+            amp_enabled, cb_qp_offset, cr_qp_offset, params.psy_rd, params.psy_trellis,
+            repeat_headers ? 1 : 0);
     } else {
+        const int lookahead = params.lookahead;
+
         // File transcode path: keep the original CRF-driven behavior.
         x265_opts = std::format(
             "crf={}:vbv-maxrate={}:vbv-bufsize={}:"
@@ -262,7 +263,7 @@ inline std::expected<CodecCtxPtr, std::string> create_encoder_context(
             params.crf, bitrate_kbps, vbv_bufsize, params.gop_size, min_keyint, lookahead,
             frame_threads, ref_count, limit_refs, me_mode, subme_level, rd_level, rdoq_level,
             rect_enabled, amp_enabled, params.aq_strength, cb_qp_offset, cr_qp_offset,
-            params.psy_rd, psy_rdoq, repeat_headers ? 1 : 0);
+            params.psy_rd, params.psy_trellis, repeat_headers ? 1 : 0);
     }
     av_opt_set(enc_ctx->priv_data, "x265-params", x265_opts.c_str(), 0);
 
