@@ -21,7 +21,7 @@ _如同守卫克里特岛的青铜巨人，永不疲倦地守护着机器人视�
 - **🎯 多种检测后端**：支持传统视觉、OpenVINO、TensorRT，按需选择
 - **📊 实时可视化**：集成 Foxglove WebSocket 服务器
 - **🎮 模拟器友好**：与 [daedalus](https://github.com/Blackjack200/bevy_robomaster_simulator) 协同工作
-- **🖥️ 跨平台支持**：支持 x86_64 PC、NVIDIA Jetson Orin NX、Horizon AX650、Apple Silicon Mac
+- **🖥️ 跨平台支持**：支持 x86_64 PC、NVIDIA Jetson Orin NX、Axera AX650n、Apple Silicon Mac
 
 ## 🏗️ 系统架构
 
