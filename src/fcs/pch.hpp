@@ -1,42 +1,73 @@
 #pragma once
 
-// ============================================================================
-// Precompiled Header for FCS Library
-// ============================================================================
-// This file contains commonly-used heavy headers that rarely change.
-// Precompiling this reduces compilation time by 50-70%.
+#pragma once
 
-// C++ Standard Library
-#include <algorithm>
-#include <array>
-#include <atomic>
-#include <chrono>
-#include <cmath>
+#include <cstddef>
 #include <cstdint>
-#include <cstring>
-#include <expected>
+
+#include <algorithm>
+#include <filesystem>
+
+#include <array>
+#include <chrono>
+#include <fstream>
+#include <iostream>
 #include <memory>
-#include <optional>
+#include <streambuf>
 #include <string>
-#include <string_view>
 #include <utility>
-#include <variant>
 #include <vector>
 
-// Third-party libraries (heavy dependencies)
-#include <Eigen/Core>
-#include <Eigen/Geometry>
+#include <string_view>
+
+#include <bit>
+#include <expected>
+#include <optional>
+#include <variant>
+
+#include <atomic>
+#include <cmath>
+#include <functional>
+#include <iterator>
+#include <mutex>
+#include <system_error>
+#include <thread>
+#include <type_traits>
+#include <unordered_map>
+
+#include <spdlog/spdlog.h>
+
+#include <limits>
+#include <numbers>
+#include <sys/mman.h>
+#include <sys/stat.h>
+#include <unistd.h>
+
+#include <fmt/core.h>
+#include <fmt/format.h>
+#include <fmt/std.h>
+
 #include <magic_enum.hpp>
+
 #include <opencv2/calib3d.hpp>
 #include <opencv2/core.hpp>
+#include <opencv2/core/mat.hpp>
+#include <opencv2/imgcodecs.hpp>
 #include <opencv2/imgproc.hpp>
-#include <spdlog/spdlog.h>
-#include <toml++/toml.hpp>
 
-// Conditionally include OpenVINO (only on platforms where it's available)
-#if __has_include(<openvino/openvino.hpp>)
-# include <openvino/openvino.hpp>
-#endif
-// NOTE: Keep this PCH limited to stable/rarely-changing headers.
-// Project headers (and wrappers like toml/magic_enum helpers) are intentionally excluded to avoid
-// PCH invalidation cascades on normal development edits.
+#include <Eigen/Core>
+#include <Eigen/Dense>
+#include <Eigen/Geometry>
+#include <opencv2/core/eigen.hpp>
+
+#include <scheduler/error_formatter.hpp>
+#include <scheduler/scheduler.hpp>
+
+#include <toml_helper.hpp>
+
+#include <ceres/ceres.h>
+#include <magic_enum.hpp>
+#include <nlohmann/json.hpp>
+#include <tiny_api.hpp>
+
+#include <ceres/jet.h>
