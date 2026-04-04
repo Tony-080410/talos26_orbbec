@@ -214,7 +214,7 @@ public:
             P0(O_XC, O_XC) = 1e-9;
             P0(O_YC, O_YC) = 1e-9;
 
-            P0(V_YAW, V_YAW) = 1e9;
+            P0(O_VYAW, O_VYAW) = 1e9;
 
             P0(O_Z0, O_Z0) = 1e9;
             P0(O_Z1, O_Z1) = 1e9;
