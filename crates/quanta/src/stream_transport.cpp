@@ -37,20 +37,23 @@ using detail::SwsCtxPtr;
 
 namespace {
 
-constexpr uint8_t kFlagKeyframe              = 1u << 0;
-constexpr uint8_t kFlagStart                 = 1u << 1;
-constexpr uint8_t kFlagEnd                   = 1u << 2;
-constexpr uint8_t kHeaderTag                 = 0xA0;
-constexpr uint8_t kHeaderFlagMask            = 0x0F;
-constexpr size_t kWireContinuationHeaderSize = 1;
-constexpr size_t kWireStartHeaderSize =
-    kWireContinuationHeaderSize + sizeof(uint32_t) + sizeof(uint64_t);
+constexpr uint8_t kFlagKeyframe   = 1u << 0;
+constexpr uint8_t kFlagStart      = 1u << 1;
+constexpr uint8_t kFlagEnd        = 1u << 2;
+constexpr uint8_t kHeaderTag      = 0xA0;
+constexpr uint8_t kHeaderFlagMask = 0x0F;
+constexpr size_t kWireCommonHeaderSize =
+    sizeof(uint8_t) + sizeof(uint32_t) + sizeof(uint8_t) + sizeof(uint8_t);
+constexpr size_t kWireStartHeaderSize = kWireCommonHeaderSize + sizeof(uint32_t) + sizeof(uint64_t);
 
 struct WireHeader {
     uint8_t flags                 = 0;
+    uint32_t frame_seq            = 0;
+    uint8_t fragment_index        = 0;
+    uint8_t fragment_count        = 0;
     int32_t pts                   = 0;
     uint64_t capture_timestamp_ns = 0;
-    size_t header_size            = kWireContinuationHeaderSize;
+    size_t header_size            = kWireCommonHeaderSize;
 };
 
 template <class UInt>
@@ -95,7 +98,7 @@ template <class UInt>
     if (config.mtu_bytes <= kWireStartHeaderSize) {
         return std::unexpected(
             std::format(
-                "MTU {} is too small for {}-byte transport start header", config.mtu_bytes,
+                "MTU {} is too small for {}-byte transport header", config.mtu_bytes,
                 kWireStartHeaderSize));
     }
     if (config.transport_hz <= 0)
@@ -115,34 +118,71 @@ template <class UInt>
 
 void serialize_header(std::span<uint8_t> bytes, const WireHeader& header) {
     bytes[0] = static_cast<uint8_t>(kHeaderTag | (header.flags & kHeaderFlagMask));
+    write_le<uint32_t>(bytes.data() + 1, header.frame_seq);
+    bytes[5] = header.fragment_index;
+    bytes[6] = header.fragment_count;
     if ((header.flags & kFlagStart) == 0)
         return;
 
-    write_le<uint32_t>(bytes.data() + 1, static_cast<uint32_t>(header.pts));
-    write_le<uint64_t>(bytes.data() + 5, header.capture_timestamp_ns);
+    write_le<uint32_t>(bytes.data() + 7, static_cast<uint32_t>(header.pts));
+    write_le<uint64_t>(bytes.data() + 11, header.capture_timestamp_ns);
 }
 
 [[nodiscard]] std::expected<WireHeader, std::string> parse_header(std::span<const uint8_t> bytes) {
-    if (bytes.size() < kWireContinuationHeaderSize)
-        return std::unexpected("chunk smaller than transport continuation header");
+    if (bytes.size() < kWireCommonHeaderSize)
+        return std::unexpected("chunk smaller than transport header");
     if ((bytes[0] & 0xF0u) != kHeaderTag)
         return std::unexpected("invalid quanta transport header tag");
 
     WireHeader header;
-    header.flags       = static_cast<uint8_t>(bytes[0] & kHeaderFlagMask);
-    header.header_size = kWireContinuationHeaderSize;
-    if ((header.flags & kFlagStart) == 0)
+    header.flags          = static_cast<uint8_t>(bytes[0] & kHeaderFlagMask);
+    header.frame_seq      = read_le<uint32_t>(bytes.data() + 1);
+    header.fragment_index = bytes[5];
+    header.fragment_count = bytes[6];
+    header.header_size    = kWireCommonHeaderSize;
+
+    if (header.fragment_count == 0)
+        return std::unexpected("transport header fragment_count must be positive");
+    if (header.fragment_index >= header.fragment_count) {
+        return std::unexpected("transport header fragment_index exceeds fragment_count");
+    }
+
+    const bool start = (header.flags & kFlagStart) != 0;
+    const bool end   = (header.flags & kFlagEnd) != 0;
+    if (start && header.fragment_index != 0)
+        return std::unexpected("start chunk must carry fragment index 0");
+    if (end && header.fragment_index + 1 != header.fragment_count) {
+        return std::unexpected("end chunk must carry the last fragment index");
+    }
+
+    if (!start)
         return header;
 
     if (bytes.size() < kWireStartHeaderSize)
         return std::unexpected("chunk smaller than transport start header");
-    header.pts                  = static_cast<int32_t>(read_le<uint32_t>(bytes.data() + 1));
-    header.capture_timestamp_ns = read_le<uint64_t>(bytes.data() + 5);
+    header.pts                  = static_cast<int32_t>(read_le<uint32_t>(bytes.data() + 7));
+    header.capture_timestamp_ns = read_le<uint64_t>(bytes.data() + 11);
     header.header_size          = kWireStartHeaderSize;
     return header;
 }
 
 [[nodiscard]] bool flag_set(uint8_t flags, uint8_t bit) { return (flags & bit) != 0; }
+
+[[nodiscard]] bool sequence_less(uint32_t lhs, uint32_t rhs) {
+    return lhs != rhs && static_cast<int32_t>(lhs - rhs) < 0;
+}
+
+[[nodiscard]] double percentile_ms(const std::vector<uint64_t>& samples_ns, double q) {
+    if (samples_ns.empty())
+        return 0.0;
+
+    std::vector<uint64_t> ordered(samples_ns.begin(), samples_ns.end());
+    const size_t idx =
+        static_cast<size_t>(std::clamp(q, 0.0, 1.0) * static_cast<double>(ordered.size() - 1));
+    std::nth_element(
+        ordered.begin(), ordered.begin() + static_cast<std::ptrdiff_t>(idx), ordered.end());
+    return static_cast<double>(ordered[idx]) / 1'000'000.0;
+}
 
 } // namespace
 
@@ -297,7 +337,7 @@ private:
 
         const size_t first_payload_bytes = transport_config_.mtu_bytes - kWireStartHeaderSize;
         const size_t continuation_payload_bytes =
-            transport_config_.mtu_bytes - kWireContinuationHeaderSize;
+            transport_config_.mtu_bytes - kWireCommonHeaderSize;
         size_t fragment_count = 1;
         if (packet.size > first_payload_bytes) {
             const size_t remaining_bytes = packet.size - first_payload_bytes;
@@ -314,7 +354,7 @@ private:
         for (size_t i = 0; i < fragment_count; ++i) {
             const bool start_of_frame = i == 0;
             const size_t header_size =
-                start_of_frame ? kWireStartHeaderSize : kWireContinuationHeaderSize;
+                start_of_frame ? kWireStartHeaderSize : kWireCommonHeaderSize;
             const size_t max_payload_bytes = transport_config_.mtu_bytes - header_size;
             const size_t payload_size      = std::min(max_payload_bytes, bytes.size() - offset);
             const bool end_of_frame        = offset + payload_size >= bytes.size();
@@ -333,6 +373,9 @@ private:
                 .flags = static_cast<uint8_t>(
                     (packet.keyframe && start_of_frame ? kFlagKeyframe : 0)
                     | (start_of_frame ? kFlagStart : 0) | (end_of_frame ? kFlagEnd : 0)),
+                .frame_seq            = next_frame_seq_,
+                .fragment_index       = static_cast<uint8_t>(i),
+                .fragment_count       = static_cast<uint8_t>(fragment_count),
                 .pts                  = static_cast<int32_t>(packet.pts),
                 .capture_timestamp_ns = capture_timestamp_ns,
                 .header_size          = header_size,
@@ -390,27 +433,62 @@ public:
 
         const bool start = flag_set(header.flags, kFlagStart);
         const bool end   = flag_set(header.flags, kFlagEnd);
-        const bool key   = flag_set(header.flags, kFlagKeyframe);
 
-        if (start) {
-            if (assembly_.active) {
+        if (is_duplicate_or_stale_completed_frame(header.frame_seq)) {
+            record_duplicate_or_stale_chunk(header.frame_seq);
+            return {};
+        }
+
+        if (!assembly_.active) {
+            if (!start) {
+                stats_.out_of_order_chunks++;
                 stats_.frames_dropped++;
                 stats_.assembly_resets++;
+                return {};
             }
-            reset_assembly();
-            assembly_.active               = true;
-            assembly_.frame_seq            = next_frame_seq_++;
-            assembly_.pts                  = header.pts;
-            assembly_.capture_timestamp_ns = header.capture_timestamp_ns;
-            assembly_.keyframe             = key;
-        } else if (!assembly_.active) {
+            start_assembly_from_header(header);
+        } else if (header.frame_seq != assembly_.frame_seq) {
+            if (sequence_less(header.frame_seq, assembly_.frame_seq)) {
+                record_duplicate_or_stale_chunk(header.frame_seq);
+                return {};
+            }
+
             stats_.frames_dropped++;
             stats_.assembly_resets++;
-            return {};
+            reset_assembly();
+
+            if (!start) {
+                stats_.out_of_order_chunks++;
+                return {};
+            }
+
+            start_assembly_from_header(header);
+        } else {
+            if (header.fragment_count != assembly_.expected_fragment_count) {
+                stats_.out_of_order_chunks++;
+                stats_.frames_dropped++;
+                stats_.assembly_resets++;
+                reset_assembly();
+                return {};
+            }
+
+            if (header.fragment_index < assembly_.next_fragment_index) {
+                stats_.duplicate_chunks++;
+                return {};
+            }
+
+            if (header.fragment_index > assembly_.next_fragment_index) {
+                stats_.out_of_order_chunks++;
+                stats_.frames_dropped++;
+                stats_.assembly_resets++;
+                reset_assembly();
+                return {};
+            }
         }
 
         const auto payload = bytes.subspan(header.header_size);
         assembly_.bytes.insert(assembly_.bytes.end(), payload.begin(), payload.end());
+        assembly_.next_fragment_index++;
 
         if (!end)
             return {};
@@ -419,6 +497,12 @@ public:
         const uint64_t receive_ns =
             receive_timestamp_ns != 0 ? receive_timestamp_ns : transport_config_.now_ns();
         auto decode_result = decode_current_frame(receive_ns);
+        if (!decode_result) {
+            reset_assembly();
+            return decode_result;
+        }
+        has_completed_frame_seq_  = true;
+        last_completed_frame_seq_ = assembly_.frame_seq;
         reset_assembly();
         return decode_result;
     }
@@ -440,15 +524,47 @@ public:
 
 private:
     struct AssemblyState {
-        bool active                   = false;
-        uint32_t frame_seq            = 0;
-        int64_t pts                   = 0;
-        uint64_t capture_timestamp_ns = 0;
-        bool keyframe                 = false;
+        bool active                     = false;
+        uint32_t frame_seq              = 0;
+        uint8_t expected_fragment_count = 0;
+        uint8_t next_fragment_index     = 0;
+        int64_t pts                     = 0;
+        uint64_t capture_timestamp_ns   = 0;
+        bool keyframe                   = false;
         std::vector<uint8_t> bytes;
     };
 
     void reset_assembly() { assembly_ = {}; }
+
+    [[nodiscard]] bool is_duplicate_or_stale_completed_frame(uint32_t frame_seq) const {
+        if (!has_completed_frame_seq_)
+            return false;
+        return frame_seq == last_completed_frame_seq_
+            || sequence_less(frame_seq, last_completed_frame_seq_);
+    }
+
+    void record_duplicate_or_stale_chunk(uint32_t frame_seq) {
+        if (has_completed_frame_seq_ && frame_seq == last_completed_frame_seq_) {
+            stats_.duplicate_chunks++;
+            return;
+        }
+        if (assembly_.active && frame_seq == assembly_.frame_seq) {
+            stats_.duplicate_chunks++;
+            return;
+        }
+        stats_.stale_chunks++;
+    }
+
+    void start_assembly_from_header(const WireHeader& header) {
+        assembly_.active                  = true;
+        assembly_.frame_seq               = header.frame_seq;
+        assembly_.expected_fragment_count = header.fragment_count;
+        assembly_.next_fragment_index     = 0;
+        assembly_.pts                     = header.pts;
+        assembly_.capture_timestamp_ns    = header.capture_timestamp_ns;
+        assembly_.keyframe                = flag_set(header.flags, kFlagKeyframe);
+        assembly_.bytes.clear();
+    }
 
     std::expected<void, std::string> ensure_decoder() {
         if (dec_ctx_ && dec_frame_)
@@ -501,8 +617,9 @@ private:
         if (ret < 0)
             return std::unexpected("Cannot allocate decode packet bytes: " + ffmpeg_error(ret));
         std::memcpy(packet->data, assembly_.bytes.data(), assembly_.bytes.size());
-        packet->pts = assembly_.pts;
-        packet->dts = assembly_.pts;
+        packet->pts                      = assembly_.pts;
+        packet->dts                      = assembly_.pts;
+        uint64_t decode_stage_started_ns = transport_config_.now_ns();
 
         ret = avcodec_send_packet(dec_ctx_.get(), packet.get());
         if (ret < 0) {
@@ -528,8 +645,12 @@ private:
             frame.linesize  = frame.width * 3;
             frame.pts       = dec_frame_->pts != AV_NOPTS_VALUE ? dec_frame_->pts : assembly_.pts;
             frame.frame_seq = assembly_.frame_seq;
-            frame.capture_timestamp_ns  = assembly_.capture_timestamp_ns;
-            frame.decode_timestamp_ns   = transport_config_.now_ns();
+            const uint64_t decode_finished_ns = transport_config_.now_ns();
+            const uint64_t decode_elapsed_ns  = decode_finished_ns >= decode_stage_started_ns
+                                                  ? decode_finished_ns - decode_stage_started_ns
+                                                  : 0;
+            frame.capture_timestamp_ns        = assembly_.capture_timestamp_ns;
+            frame.decode_timestamp_ns         = decode_finished_ns;
             frame.end_to_end_latency_ns = frame.decode_timestamp_ns >= frame.capture_timestamp_ns
                                             ? frame.decode_timestamp_ns - frame.capture_timestamp_ns
                                             : 0;
@@ -548,13 +669,15 @@ private:
                 || frame.end_to_end_latency_ns < stats_.min_latency_ns) {
                 stats_.min_latency_ns = frame.end_to_end_latency_ns;
             }
-            stats_.max_latency_ns  = std::max(stats_.max_latency_ns, frame.end_to_end_latency_ns);
-            const double sample_ms = static_cast<double>(frame.end_to_end_latency_ns) / 1'000'000.0;
-            stats_.avg_latency_ms +=
-                (sample_ms - stats_.avg_latency_ms) / static_cast<double>(stats_.latency_samples);
+            stats_.max_latency_ns = std::max(stats_.max_latency_ns, frame.end_to_end_latency_ns);
+            latency_samples_ns_.push_back(frame.end_to_end_latency_ns);
+            stats_.p75_latency_ms = percentile_ms(latency_samples_ns_, 0.75);
+            decode_samples_ns_.push_back(decode_elapsed_ns);
+            stats_.p75_decode_ms = percentile_ms(decode_samples_ns_, 0.75);
 
             frame_queue_.push_back(std::move(frame));
             av_frame_unref(dec_frame_.get());
+            decode_stage_started_ns = decode_finished_ns;
         }
 
         return {};
@@ -569,8 +692,11 @@ private:
     AVPixelFormat sws_pix_fmt_ = AV_PIX_FMT_NONE;
     int sws_width_             = 0;
     int sws_height_            = 0;
+    std::vector<uint64_t> latency_samples_ns_;
+    std::vector<uint64_t> decode_samples_ns_;
     std::deque<DecodedFrame> frame_queue_;
-    uint32_t next_frame_seq_ = 0;
+    bool has_completed_frame_seq_      = false;
+    uint32_t last_completed_frame_seq_ = 0;
 };
 
 StreamSender::StreamSender(EncodeParams encode_params, StreamTransportConfig transport_config)

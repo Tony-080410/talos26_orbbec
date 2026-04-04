@@ -209,9 +209,11 @@ int main(int argc, char* argv[]) {
                   / ((next_transport_ns - sim_start_ns) / static_cast<double>(transport_period_ns))
             : 0.0);
     std::fprintf(
-        stderr, "[loopback] Latency p50=%.1f ms p95=%.1f ms max=%.1f ms avg=%.1f ms\n",
-        percentile_ms(latencies_ms, 0.50), percentile_ms(latencies_ms, 0.95),
-        receiver_stats.max_latency_ns / 1'000'000.0, receiver_stats.avg_latency_ms);
+        stderr,
+        "[loopback] Latency p50=%.1f ms p75=%.1f ms p95=%.1f ms max=%.1f ms dec_p75=%.1f ms\n",
+        percentile_ms(latencies_ms, 0.50), receiver_stats.p75_latency_ms,
+        percentile_ms(latencies_ms, 0.95), receiver_stats.max_latency_ns / 1'000'000.0,
+        receiver_stats.p75_decode_ms);
 
     return frames_decoded > 0 ? 0 : 1;
 }

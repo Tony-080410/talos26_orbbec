@@ -225,7 +225,7 @@ inline std::expected<CodecCtxPtr, std::string> create_encoder_context(
     const int limit_refs    = 3;
     const char* me_mode     = "star";
     const int subme_level   = 7;
-    const int rd_level      = 3;
+    const int rd_level      = 5;
     const int rdoq_level    = 2;
     const int amp_enabled   = 1;
     const int rect_enabled  = 1;
@@ -235,10 +235,12 @@ inline std::expected<CodecCtxPtr, std::string> create_encoder_context(
     std::string x265_opts;
     if (realtime_stream) {
         // Realtime stream path: hold wire rate close to target instead of letting CRF overshoot.
+        // Use periodic intra refresh so the reference picture is refreshed progressively instead
+        // of spending the whole GOP budget on a single hard IDR.
         x265_opts = std::format(
             "bitrate={}:vbv-maxrate={}:vbv-bufsize={}:vbv-init=0.9:strict-cbr=1:"
-            "keyint={}:min-keyint={}:scenecut=0:open-gop=0:rc-lookahead=0:bframes=0:frame-threads={"
-            "}:"
+            "keyint={}:min-keyint={}:scenecut=0:open-gop=0:intra-refresh=1:"
+            "rc-lookahead=0:bframes=0:frame-threads={}:"
             "ref={}:limit-refs={}:me={}:subme={}:rd={}:rdoq-level={}:"
             "rect={}:amp={}:aq-mode=1:aq-strength=0.4:aq-motion=0:cutree=0:"
             "cbqpoffs={}:crqpoffs={}:psy-rd={}:psy-rdoq={}:qcomp=0.5:qpstep=8:"

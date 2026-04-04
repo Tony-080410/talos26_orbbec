@@ -65,20 +65,24 @@ struct StreamSenderStats {
 };
 
 struct StreamReceiverStats {
-    uint64_t chunks_received    = 0;
-    uint64_t bytes_received     = 0;
-    uint64_t frames_reassembled = 0;
-    uint64_t frames_decoded     = 0;
-    uint64_t frames_dropped     = 0;
-    uint64_t assembly_resets    = 0;
-    uint64_t decode_errors      = 0;
-    uint64_t latency_samples    = 0;
-    uint64_t last_latency_ns    = 0;
-    uint64_t min_latency_ns     = 0;
-    uint64_t max_latency_ns     = 0;
-    double avg_latency_ms       = 0.0;
-    size_t queued_frames        = 0;
-    bool assembling_frame       = false;
+    uint64_t chunks_received     = 0;
+    uint64_t bytes_received      = 0;
+    uint64_t duplicate_chunks    = 0;
+    uint64_t stale_chunks        = 0;
+    uint64_t out_of_order_chunks = 0;
+    uint64_t frames_reassembled  = 0;
+    uint64_t frames_decoded      = 0;
+    uint64_t frames_dropped      = 0;
+    uint64_t assembly_resets     = 0;
+    uint64_t decode_errors       = 0;
+    uint64_t latency_samples     = 0;
+    uint64_t last_latency_ns     = 0;
+    uint64_t min_latency_ns      = 0;
+    uint64_t max_latency_ns      = 0;
+    double p75_latency_ms        = 0.0;
+    double p75_decode_ms         = 0.0;
+    size_t queued_frames         = 0;
+    bool assembling_frame        = false;
 };
 
 class StreamSender {

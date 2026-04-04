@@ -184,3 +184,101 @@ TEST(StreamTransport, LoopbackProducesDecodedFrameAndLatency) {
     EXPECT_EQ(receiver_stats.latency_samples, 1U);
     EXPECT_GT(receiver_stats.max_latency_ns, 0U);
 }
+
+TEST(StreamTransport, ReceiverIgnoresDuplicateChunksFromQos1Redelivery) {
+    uint64_t now_ns = 1'000'000'000ULL;
+    quanta::StreamTransportConfig config{
+        .mtu_bytes      = 96,
+        .transport_hz   = 50,
+        .max_stream_fps = 30,
+        .now_ns         = [&now_ns] { return now_ns; },
+    };
+
+    quanta::StreamSender sender(quanta::EncodeParams{}, config);
+    quanta::StreamReceiver receiver(config);
+    ASSERT_TRUE(sender.init(160, 120).has_value());
+
+    const int linesize = 160 * 3;
+    std::vector<uint8_t> frame(static_cast<size_t>(linesize * 120));
+    fill_test_pattern(frame.data(), 160, 120, linesize, 5);
+
+    ASSERT_TRUE(sender.submit_frame(frame.data(), linesize, 9, now_ns).has_value());
+
+    std::vector<std::vector<uint8_t>> chunks;
+    for (int tick = 0; tick < 128; ++tick) {
+        auto chunk = sender.poll_chunk();
+        ASSERT_TRUE(chunk.has_value()) << chunk.error();
+        if (!chunk->has_value() && sender.stats().queued_chunks == 0)
+            break;
+        if (!chunk->has_value())
+            continue;
+        chunks.push_back((*chunk)->data);
+        now_ns += 20'000'000ULL;
+    }
+
+    ASSERT_GT(chunks.size(), 1U);
+    for (const auto& chunk : chunks) {
+        ASSERT_TRUE(receiver.push_chunk(chunk, now_ns).has_value());
+        now_ns += 20'000'000ULL;
+    }
+    for (const auto& chunk : chunks) {
+        ASSERT_TRUE(receiver.push_chunk(chunk, now_ns).has_value());
+        now_ns += 20'000'000ULL;
+    }
+
+    auto decoded = receiver.poll_frame();
+    ASSERT_TRUE(decoded.has_value());
+    EXPECT_FALSE(receiver.poll_frame().has_value());
+
+    const auto receiver_stats = receiver.stats();
+    EXPECT_EQ(receiver_stats.frames_decoded, 1U);
+    EXPECT_GT(receiver_stats.duplicate_chunks, 0U);
+}
+
+TEST(StreamTransport, ReceiverDropsOutOfOrderFragments) {
+    uint64_t now_ns = 1'000'000'000ULL;
+    quanta::StreamTransportConfig config{
+        .mtu_bytes      = 96,
+        .transport_hz   = 50,
+        .max_stream_fps = 30,
+        .now_ns         = [&now_ns] { return now_ns; },
+    };
+
+    quanta::StreamSender sender(quanta::EncodeParams{}, config);
+    quanta::StreamReceiver receiver(config);
+    ASSERT_TRUE(sender.init(160, 120).has_value());
+
+    const int linesize = 160 * 3;
+    std::vector<uint8_t> frame(static_cast<size_t>(linesize * 120));
+    fill_test_pattern(frame.data(), 160, 120, linesize, 6);
+
+    ASSERT_TRUE(sender.submit_frame(frame.data(), linesize, 11, now_ns).has_value());
+
+    std::vector<std::vector<uint8_t>> chunks;
+    for (int tick = 0; tick < 128; ++tick) {
+        auto chunk = sender.poll_chunk();
+        ASSERT_TRUE(chunk.has_value()) << chunk.error();
+        if (!chunk->has_value() && sender.stats().queued_chunks == 0)
+            break;
+        if (!chunk->has_value())
+            continue;
+        chunks.push_back((*chunk)->data);
+        now_ns += 20'000'000ULL;
+    }
+
+    ASSERT_GT(chunks.size(), 1U);
+    ASSERT_TRUE(receiver.push_chunk(chunks[1], now_ns).has_value());
+    now_ns += 20'000'000ULL;
+    for (const auto& chunk : chunks) {
+        ASSERT_TRUE(receiver.push_chunk(chunk, now_ns).has_value());
+        now_ns += 20'000'000ULL;
+    }
+
+    auto decoded = receiver.poll_frame();
+    ASSERT_TRUE(decoded.has_value());
+
+    const auto receiver_stats = receiver.stats();
+    EXPECT_EQ(receiver_stats.frames_decoded, 1U);
+    EXPECT_GT(receiver_stats.out_of_order_chunks, 0U);
+    EXPECT_GE(receiver_stats.frames_dropped, 1U);
+}

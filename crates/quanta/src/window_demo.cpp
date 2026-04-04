@@ -6,11 +6,16 @@
 #include <opencv2/videoio.hpp>
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
+#include <cmath>
+#include <condition_variable>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <deque>
 #include <format>
+#include <mutex>
 #include <string>
 #include <thread>
 #include <vector>
@@ -19,14 +24,54 @@ namespace {
 
 using SteadyClock = std::chrono::steady_clock;
 
-constexpr int kCanvasPad = 20;
-constexpr int kHeaderH   = 88;
-constexpr int kTextStep  = 24;
+constexpr int kCanvasPad   = 20;
+constexpr int kHeaderH     = 88;
+constexpr int kTextStep    = 24;
+constexpr int kTransportHz = 50;
+
+struct DemoState {
+    std::mutex mutex;
+    cv::Mat latest_source;
+    cv::Mat latest_decoded;
+    quanta::StreamSenderStats sender_stats{};
+    quanta::StreamReceiverStats receiver_stats{};
+    int generated_frames   = 0;
+    int decoded_frames     = 0;
+    bool sender_finished   = false;
+    bool receiver_finished = false;
+    std::string error;
+};
+
+struct DemoSnapshot {
+    cv::Mat latest_source;
+    cv::Mat latest_decoded;
+    quanta::StreamSenderStats sender_stats{};
+    quanta::StreamReceiverStats receiver_stats{};
+    int generated_frames   = 0;
+    int decoded_frames     = 0;
+    bool sender_finished   = false;
+    bool receiver_finished = false;
+    std::string error;
+};
+
+struct TransportPipe {
+    std::mutex mutex;
+    std::condition_variable cv;
+    std::deque<std::vector<uint8_t>> chunks;
+    bool sender_finished = false;
+};
 
 uint64_t now_ns() {
     const auto now = SteadyClock::now();
     return static_cast<uint64_t>(
         std::chrono::duration_cast<std::chrono::nanoseconds>(now.time_since_epoch()).count());
+}
+
+double sanitize_fps(double fps) { return std::isfinite(fps) && fps > 0.0 ? fps : 30.0; }
+
+std::chrono::nanoseconds period_from_rate(double hz) {
+    const double safe_hz = std::max(hz, 1.0);
+    return std::chrono::nanoseconds(static_cast<int64_t>(std::llround(1'000'000'000.0 / safe_hz)));
 }
 
 bool read_next_bgr_frame(cv::VideoCapture& capture, cv::Mat& frame_out) {
@@ -67,13 +112,74 @@ void draw_lines(
     }
 }
 
+cv::Mat make_placeholder_panel(cv::Size size, const char* message) {
+    cv::Mat panel(size, CV_8UC3, cv::Scalar(18, 18, 18));
+    cv::putText(
+        panel, message, {40, panel.rows / 2}, cv::FONT_HERSHEY_SIMPLEX, 0.9,
+        cv::Scalar(220, 220, 220), 2, cv::LINE_AA);
+    return panel;
+}
+
+DemoSnapshot snapshot_state(DemoState& state) {
+    std::lock_guard<std::mutex> lock(state.mutex);
+
+    DemoSnapshot snapshot;
+    snapshot.latest_source     = state.latest_source;
+    snapshot.latest_decoded    = state.latest_decoded;
+    snapshot.sender_stats      = state.sender_stats;
+    snapshot.receiver_stats    = state.receiver_stats;
+    snapshot.generated_frames  = state.generated_frames;
+    snapshot.decoded_frames    = state.decoded_frames;
+    snapshot.sender_finished   = state.sender_finished;
+    snapshot.receiver_finished = state.receiver_finished;
+    snapshot.error             = state.error;
+    return snapshot;
+}
+
+void store_error(
+    DemoState& state, TransportPipe& pipe, std::atomic<bool>& stop_requested, std::string message) {
+    {
+        std::lock_guard<std::mutex> lock(state.mutex);
+        if (state.error.empty())
+            state.error = std::move(message);
+    }
+    stop_requested.store(true);
+    pipe.cv.notify_all();
+}
+
+void mark_sender_finished(
+    DemoState& state, TransportPipe& pipe, const quanta::StreamSenderStats& sender_stats,
+    int generated_frames) {
+    {
+        std::lock_guard<std::mutex> lock(state.mutex);
+        state.sender_stats     = sender_stats;
+        state.generated_frames = generated_frames;
+        state.sender_finished  = true;
+    }
+    {
+        std::lock_guard<std::mutex> lock(pipe.mutex);
+        pipe.sender_finished = true;
+    }
+    pipe.cv.notify_all();
+}
+
+void mark_receiver_finished(
+    DemoState& state, const quanta::StreamReceiverStats& receiver_stats, int decoded_frames) {
+    std::lock_guard<std::mutex> lock(state.mutex);
+    state.receiver_stats    = receiver_stats;
+    state.decoded_frames    = decoded_frames;
+    state.receiver_finished = true;
+}
+
 cv::Mat build_canvas(
     const cv::Mat& source_bgr, const cv::Mat& decoded_bgr,
     const quanta::StreamTransportConfig& config, const quanta::StreamSenderStats& sender_stats,
     const quanta::StreamReceiverStats& receiver_stats, uint64_t started_ns, int generated_frames,
-    int decoded_frames, double source_fps, cv::Size encoded_size) {
+    int decoded_frames, double source_fps, double stream_fps, cv::Size encoded_size) {
     cv::Mat source_panel;
-    if (source_bgr.size() != encoded_size) {
+    if (source_bgr.empty()) {
+        source_panel = make_placeholder_panel(encoded_size, "Waiting For Source");
+    } else if (source_bgr.size() != encoded_size) {
         cv::resize(source_bgr, source_panel, encoded_size, 0.0, 0.0, cv::INTER_AREA);
     } else {
         source_panel = source_bgr.clone();
@@ -87,10 +193,7 @@ cv::Mat build_canvas(
             decoded_panel = decoded_bgr.clone();
         }
     } else {
-        decoded_panel = cv::Mat(encoded_size, CV_8UC3, cv::Scalar(18, 18, 18));
-        cv::putText(
-            decoded_panel, "Waiting For Decoder", {60, decoded_panel.rows / 2},
-            cv::FONT_HERSHEY_SIMPLEX, 1.0, cv::Scalar(220, 220, 220), 2, cv::LINE_AA);
+        decoded_panel = make_placeholder_panel(encoded_size, "Waiting For Decoder");
     }
 
     cv::putText(
@@ -130,12 +233,13 @@ cv::Mat build_canvas(
             std::format(
                 "gen={} dec={} drp={}", generated_frames, decoded_frames,
                 sender_stats.frames_dropped),
-            std::format("queue={} link={:.1f} kbps", sender_stats.queued_chunks, link_kbps),
+            std::format("queue={} link={:.1f}kbps", sender_stats.queued_chunks, link_kbps),
             std::format(
-                "lst={:.1f} ms avg={:.1f} ms", receiver_stats.last_latency_ns / 1'000'000.0,
-                receiver_stats.avg_latency_ms),
+                "lst={:.1f}ms p75={:.1f}ms", receiver_stats.last_latency_ns / 1'000'000.0,
+                receiver_stats.p75_latency_ms),
             std::format(
-                "max={:.1f} ms rst={} dec_err={}", receiver_stats.max_latency_ns / 1'000'000.0,
+                "max={:.1f}ms d75={:.1f}ms rst={} err={}",
+                receiver_stats.max_latency_ns / 1'000'000.0, receiver_stats.p75_decode_ms,
                 receiver_stats.assembly_resets, receiver_stats.decode_errors),
         },
         {kCanvasPad, 32}, 0.5);
@@ -149,7 +253,7 @@ cv::Mat build_canvas(
             std::format(
                 "emit={} asm={} dec={:.1f}", sender_stats.chunks_emitted,
                 receiver_stats.frames_reassembled, displayed_fps),
-            std::format("src={:.2f} ctrl: q / esc", source_fps),
+            std::format("src={:.2f} push={:.2f} ctrl: q / esc", source_fps, stream_fps),
         },
         {canvas.cols / 2 + 24, 32}, 0.5);
 
@@ -169,128 +273,265 @@ int main(int argc, char* argv[]) {
     if (argc >= 3)
         frame_limit = std::atoi(argv[2]);
 
-    cv::VideoCapture capture(video_path);
-    if (!capture.isOpened()) {
+    cv::VideoCapture probe_capture(video_path);
+    if (!probe_capture.isOpened()) {
         std::fprintf(stderr, "[demo] cannot open video: %s\n", video_path.c_str());
         return 1;
     }
 
-    cv::Mat pending_frame;
-    if (!read_next_bgr_frame(capture, pending_frame)) {
+    cv::Mat first_frame;
+    if (!read_next_bgr_frame(probe_capture, first_frame)) {
         std::fprintf(stderr, "[demo] video has no decodable frames: %s\n", video_path.c_str());
         return 1;
     }
 
-    const double capture_fps_raw = capture.get(cv::CAP_PROP_FPS);
-    const double source_fps =
-        std::isfinite(capture_fps_raw) && capture_fps_raw > 0.0 ? capture_fps_raw : 30.0;
+    const double source_fps = sanitize_fps(probe_capture.get(cv::CAP_PROP_FPS));
+    const double stream_fps = std::min(source_fps, static_cast<double>(kTransportHz));
+    probe_capture.release();
 
     quanta::StreamTransportConfig transport_config{
         .mtu_bytes      = 300,
-        .transport_hz   = 50,
-        .max_stream_fps = 30,
+        .transport_hz   = kTransportHz,
+        .max_stream_fps = std::max(1, static_cast<int>(std::llround(stream_fps))),
         .now_ns         = [] { return now_ns(); },
     };
+
     quanta::EncodeParams encode_params;
     quanta::StreamSender sender(encode_params, transport_config);
-    quanta::StreamReceiver receiver(transport_config);
-
-    auto init = sender.init(pending_frame.cols, pending_frame.rows);
+    auto init = sender.init(first_frame.cols, first_frame.rows);
     if (!init) {
         std::fprintf(stderr, "[demo] sender init failed: %s\n", init.error().c_str());
         return 1;
     }
+
+    quanta::StreamReceiver receiver(transport_config);
     const auto [out_w, out_h] = sender.dimensions();
     const cv::Size encoded_size(out_w, out_h);
+    const auto transport_period =
+        period_from_rate(static_cast<double>(transport_config.transport_hz));
+    const auto capture_period = period_from_rate(stream_fps);
+    const uint64_t started_ns = now_ns();
 
-    cv::Mat latest_source = pending_frame.clone();
-    cv::Mat latest_decoded;
+    DemoState state;
+    state.latest_source = first_frame.clone();
 
-    const auto capture_period =
-        std::chrono::nanoseconds(static_cast<int64_t>(std::llround(1'000'000'000.0 / source_fps)));
-    const auto transport_period = std::chrono::milliseconds(20);
-    auto next_capture_tp        = SteadyClock::now();
-    auto next_transport_tp      = next_capture_tp;
-    const uint64_t started_ns   = now_ns();
+    TransportPipe pipe;
+    std::atomic<bool> stop_requested{false};
 
-    int generated_frames = 0;
-    int decoded_frames   = 0;
-    bool input_drained   = false;
+    std::thread sender_thread([&, sender = std::move(sender)]() mutable {
+        cv::VideoCapture capture(video_path);
+        if (!capture.isOpened()) {
+            store_error(
+                state, pipe, stop_requested,
+                std::format("[demo] cannot reopen video in sender thread: {}", video_path));
+            mark_sender_finished(state, pipe, sender.stats(), 0);
+            return;
+        }
+
+        cv::Mat pending_frame;
+        if (!read_next_bgr_frame(capture, pending_frame)) {
+            store_error(
+                state, pipe, stop_requested,
+                std::format("[demo] sender thread could not read frames from {}", video_path));
+            mark_sender_finished(state, pipe, sender.stats(), 0);
+            return;
+        }
+
+        auto next_capture_tp   = SteadyClock::now();
+        auto next_transport_tp = next_capture_tp;
+        bool input_drained     = false;
+        int generated_frames   = 0;
+
+        while (!stop_requested.load()) {
+            bool did_work      = false;
+            const auto current = SteadyClock::now();
+
+            if (!input_drained && (frame_limit == 0 || generated_frames < frame_limit)
+                && current >= next_capture_tp) {
+                cv::Mat submitted_frame   = pending_frame.clone();
+                const uint64_t capture_ts = now_ns();
+
+                auto submit = sender.submit_frame(
+                    submitted_frame.data, static_cast<int>(submitted_frame.step[0]),
+                    generated_frames, capture_ts);
+                if (!submit) {
+                    store_error(
+                        state, pipe, stop_requested,
+                        std::format(
+                            "[demo] submit frame {} failed: {}", generated_frames, submit.error()));
+                    mark_sender_finished(state, pipe, sender.stats(), generated_frames);
+                    return;
+                }
+
+                generated_frames++;
+                {
+                    std::lock_guard<std::mutex> lock(state.mutex);
+                    state.latest_source    = std::move(submitted_frame);
+                    state.generated_frames = generated_frames;
+                    state.sender_stats     = sender.stats();
+                }
+
+                next_capture_tp += capture_period;
+                if (frame_limit > 0 && generated_frames >= frame_limit) {
+                    input_drained = true;
+                } else if (!read_next_bgr_frame(capture, pending_frame)) {
+                    input_drained = true;
+                }
+                did_work = true;
+            }
+
+            while (!stop_requested.load() && SteadyClock::now() >= next_transport_tp) {
+                auto chunk = sender.poll_chunk();
+                if (!chunk) {
+                    store_error(
+                        state, pipe, stop_requested,
+                        std::format("[demo] poll_chunk failed: {}", chunk.error()));
+                    mark_sender_finished(state, pipe, sender.stats(), generated_frames);
+                    return;
+                }
+
+                if (chunk->has_value()) {
+                    {
+                        std::lock_guard<std::mutex> lock(pipe.mutex);
+                        pipe.chunks.push_back(std::move((*chunk)->data));
+                    }
+                    pipe.cv.notify_one();
+                }
+
+                {
+                    std::lock_guard<std::mutex> lock(state.mutex);
+                    state.sender_stats     = sender.stats();
+                    state.generated_frames = generated_frames;
+                }
+
+                next_transport_tp += transport_period;
+                did_work = true;
+            }
+
+            const auto sender_stats = sender.stats();
+            {
+                std::lock_guard<std::mutex> lock(state.mutex);
+                state.sender_stats     = sender_stats;
+                state.generated_frames = generated_frames;
+            }
+
+            if (input_drained && sender_stats.queued_chunks == 0 && !sender_stats.has_pending_frame)
+                break;
+
+            auto next_event = next_transport_tp;
+            if (!input_drained && (frame_limit == 0 || generated_frames < frame_limit))
+                next_event = std::min(next_event, next_capture_tp);
+            if (!did_work && next_event > SteadyClock::now())
+                std::this_thread::sleep_until(next_event);
+        }
+
+        mark_sender_finished(state, pipe, sender.stats(), generated_frames);
+    });
+
+    std::thread receiver_thread([&, receiver = std::move(receiver)]() mutable {
+        int decoded_frames = 0;
+
+        auto publish_decoded_frames = [&]() {
+            bool emitted = false;
+            while (auto decoded = receiver.poll_frame()) {
+                cv::Mat decoded_view(
+                    decoded->height, decoded->width, CV_8UC3, decoded->data.data(),
+                    decoded->linesize);
+                decoded_frames++;
+                {
+                    std::lock_guard<std::mutex> lock(state.mutex);
+                    state.latest_decoded = decoded_view.clone();
+                    state.decoded_frames = decoded_frames;
+                    state.receiver_stats = receiver.stats();
+                }
+                emitted = true;
+            }
+
+            if (!emitted) {
+                std::lock_guard<std::mutex> lock(state.mutex);
+                state.receiver_stats = receiver.stats();
+                state.decoded_frames = decoded_frames;
+            }
+        };
+
+        while (true) {
+            std::vector<uint8_t> chunk_bytes;
+            {
+                std::unique_lock<std::mutex> lock(pipe.mutex);
+                pipe.cv.wait(lock, [&] {
+                    return stop_requested.load() || !pipe.chunks.empty() || pipe.sender_finished;
+                });
+
+                if ((stop_requested.load() && pipe.chunks.empty())
+                    || (pipe.chunks.empty() && pipe.sender_finished)) {
+                    break;
+                }
+
+                chunk_bytes = std::move(pipe.chunks.front());
+                pipe.chunks.pop_front();
+            }
+
+            auto pushed = receiver.push_chunk(chunk_bytes, now_ns());
+            if (!pushed) {
+                store_error(
+                    state, pipe, stop_requested,
+                    std::format("[demo] push_chunk failed: {}", pushed.error()));
+                mark_receiver_finished(state, receiver.stats(), decoded_frames);
+                return;
+            }
+
+            publish_decoded_frames();
+        }
+
+        publish_decoded_frames();
+        mark_receiver_finished(state, receiver.stats(), decoded_frames);
+    });
 
     cv::namedWindow("quanta-stream-demo", cv::WINDOW_AUTOSIZE);
 
+    int exit_code = 0;
     while (true) {
-        const auto current = SteadyClock::now();
-
-        if (!input_drained && (frame_limit == 0 || generated_frames < frame_limit)
-            && current >= next_capture_tp) {
-            latest_source = pending_frame.clone();
-
-            auto submit = sender.submit_frame(
-                latest_source.data, static_cast<int>(latest_source.step[0]), generated_frames,
-                now_ns());
-            if (!submit) {
-                std::fprintf(
-                    stderr, "[demo] submit frame %d failed: %s\n", generated_frames,
-                    submit.error().c_str());
-                return 1;
-            }
-            generated_frames++;
-            next_capture_tp += capture_period;
-
-            if (frame_limit > 0 && generated_frames >= frame_limit) {
-                input_drained = true;
-            } else if (!read_next_bgr_frame(capture, pending_frame)) {
-                input_drained = true;
-            }
-        }
-
-        while (SteadyClock::now() >= next_transport_tp) {
-            auto chunk = sender.poll_chunk();
-            if (!chunk) {
-                std::fprintf(stderr, "[demo] poll_chunk failed: %s\n", chunk.error().c_str());
-                return 1;
-            }
-            if (chunk->has_value()) {
-                auto pushed = receiver.push_chunk((*chunk)->bytes(), now_ns());
-                if (!pushed) {
-                    std::fprintf(stderr, "[demo] push_chunk failed: %s\n", pushed.error().c_str());
-                    return 1;
-                }
-            }
-            next_transport_tp += transport_period;
-        }
-
-        while (auto decoded = receiver.poll_frame()) {
-            latest_decoded = cv::Mat(
-                                 decoded->height, decoded->width, CV_8UC3, decoded->data.data(),
-                                 decoded->linesize)
-                                 .clone();
-            decoded_frames++;
-        }
-
-        cv::Mat canvas = build_canvas(
-            latest_source, latest_decoded, transport_config, sender.stats(), receiver.stats(),
-            started_ns, generated_frames, decoded_frames, source_fps, encoded_size);
+        const auto snapshot = snapshot_state(state);
+        cv::Mat canvas      = build_canvas(
+            snapshot.latest_source, snapshot.latest_decoded, transport_config,
+            snapshot.sender_stats, snapshot.receiver_stats, started_ns, snapshot.generated_frames,
+            snapshot.decoded_frames, source_fps, stream_fps, encoded_size);
         cv::imshow("quanta-stream-demo", canvas);
 
         const int key = cv::waitKey(1);
-        if (key == 27 || key == 'q' || key == 'Q')
-            break;
-
-        if (input_drained && sender.stats().queued_chunks == 0 && !sender.stats().has_pending_frame
-            && receiver.stats().queued_frames == 0) {
+        if (key == 27 || key == 'q' || key == 'Q') {
+            stop_requested.store(true);
+            pipe.cv.notify_all();
             break;
         }
 
-        auto next_event = next_transport_tp;
-        if (!input_drained)
-            next_event = std::min(next_event, next_capture_tp);
-        const auto sleep_until = next_event - std::chrono::milliseconds(1);
-        if (sleep_until > SteadyClock::now())
-            std::this_thread::sleep_until(sleep_until);
+        if (!snapshot.error.empty()) {
+            std::fprintf(stderr, "%s\n", snapshot.error.c_str());
+            stop_requested.store(true);
+            pipe.cv.notify_all();
+            exit_code = 1;
+            break;
+        }
+
+        if (snapshot.sender_finished && snapshot.receiver_finished)
+            break;
+
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+
+    stop_requested.store(true);
+    pipe.cv.notify_all();
+    if (sender_thread.joinable())
+        sender_thread.join();
+    if (receiver_thread.joinable())
+        receiver_thread.join();
+
+    const auto final_snapshot = snapshot_state(state);
+    if (exit_code == 0 && !final_snapshot.error.empty()) {
+        std::fprintf(stderr, "%s\n", final_snapshot.error.c_str());
+        exit_code = 1;
     }
 
     cv::destroyAllWindows();
-    return 0;
+    return exit_code;
 }
