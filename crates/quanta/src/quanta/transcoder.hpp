@@ -26,12 +26,12 @@ struct FilterParams {
     double saturation = 1.0;
     // hqdn3d — extreme spatial denoise: annihilate ALL texture, leave only structure.
     // Zero temporal: robot camera is mostly static between frames, temporal denoise adds latency.
-    double denoise_luma   = 1.0;
+    double denoise_luma   = 0.0;
     double denoise_chroma = 0.0;
     double denoise_tl     = 0.0;
     double denoise_tc     = 0.0;
     // unsharp — recover edges lost by denoising; chroma edges for color boundary, luma stays soft
-    double sharpen1_luma   = -1.0;
+    double sharpen1_luma   = 1.0;
     double sharpen1_chroma = 1.8;
     double sharpen2_luma   = 0.0;
     double sharpen2_chroma = 0.0;
@@ -43,10 +43,10 @@ struct FilterParams {
 // Encode parameters for ultra-low bitrate transmission
 // ---------------------------------------------------------------------------
 struct EncodeParams {
-    int target_bitrate = 30'500; // bps
-    int max_width      = 300;    // auto-downscale if wider
-    int max_height     = 300;    // auto-downscale if taller
-    int gop_size       = 60;     // keyframe interval (short GOP = more I-frames = less drift)
+    int target_bitrate = 50'500; // bps
+    int max_width      = 480;    // auto-downscale if wider
+    int max_height     = 360;    // auto-downscale if taller
+    int gop_size       = 120;    // keyframe interval (short GOP = more I-frames = less drift)
     int framerate      = 30;     // target output framerate
     const char* preset = "fast"; // keep the original rate allocation baseline
     const char* tune   = "stillimage";
