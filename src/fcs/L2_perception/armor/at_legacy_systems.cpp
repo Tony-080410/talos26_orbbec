@@ -67,37 +67,29 @@ void register_at_legacy_detection_systems(talos::Scheduler& scheduler) {
                detection_out,
            talos::spmc_mut<AtLegacyArmorMeasurementBatch, AtLegacyMeasurementChannelTopic>
                measurement_out,
-           talos::res_mut<std::shared_ptr<AtLegacyDetectorBackend>> backend_ptr,
+           talos::res_mut<std::shared_ptr<AtLegacyDetectorBackend>> backend,
            talos::res<std::shared_ptr<AtLegacyPnPSolver>> solver_ptr,
            talos::res<fast_tf::CoordinateSystem> tf_system,
            talos::res<AtLegacyReadbackRoiConfig> readback_roi_config,
            talos::res<AtLegacyReadbackRoiCache> readback_roi_cache,
            core::detecting_color detecting_color_) mutable {
-            if (!image_in.has_new()) {
-                return;
-            }
             auto frame = image_in.read();
             if (!frame) {
                 return;
             }
 
-            auto& backend = *backend_ptr;
-            if (!backend) {
-                return;
-            }
-
             ArmorColor detect_color = *detecting_color_;
             // Re-apply detect color before each detection and enforce color before PnP.
-            backend->set_detect_color(detect_color);
+            backend->get()->set_detect_color(detect_color);
 
             cv::Rect detector_roi(0, 0, frame->image.cols, frame->image.rows);
             cv::Mat detector_input = frame->image;
-            if (readback_roi_config->enabled && backend->supports_readback_roi()) {
+            if (readback_roi_config->enabled && backend->get()->supports_readback_roi()) {
                 const auto snapshot = readback_roi_cache->load();
                 if (snapshot_is_fresh(snapshot, *readback_roi_config, frame->timestamp_ns)) {
                     const auto maybe_roi = resolve_readback_roi(
                         frame->image.size(), snapshot.raw_roi, *readback_roi_config,
-                        backend->input_resolution());
+                        backend->get()->input_resolution());
                     if (maybe_roi) {
                         detector_roi   = *maybe_roi;
                         detector_input = frame->image(detector_roi);
@@ -106,7 +98,7 @@ void register_at_legacy_detection_systems(talos::Scheduler& scheduler) {
             }
             const bool has_detector_roi = is_sub_frame_roi(detector_roi, frame->image.size());
 
-            auto result = backend->detect(detector_input);
+            auto result = backend->get()->detect(detector_input);
             if (!result) {
                 detection_out.write(
                     AtLegacyArmorDetectionBatch{

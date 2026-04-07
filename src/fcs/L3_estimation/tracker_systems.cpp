@@ -23,10 +23,6 @@ void register_tracker_systems(talos::Scheduler& scheduler, TrackerConfig&& confi
                 manager = std::make_unique<TrackerManager>(*config);
             }
 
-            if (!meas_in.has_new()) {
-                return;
-            }
-
             auto batch = meas_in.read();
             if (!batch) {
                 return;

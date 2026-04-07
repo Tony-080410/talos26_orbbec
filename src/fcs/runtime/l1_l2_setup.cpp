@@ -167,10 +167,11 @@ struct UsbImu {
             control_out) noexcept {
         device->handle_events();
         if (imu_data->header.sof != talos_gimbal::HeaderFrame::SoF()
-            || imu_data->eof != talos_gimbal::HeaderFrame::EoF()) {
+            || imu_data->eof != talos_gimbal::HeaderFrame::EoF()) [[unlikely]] {
             return;
         }
-        if (last_mcu_timestamp_ms.has_value() && *last_mcu_timestamp_ms == imu_data->time_stamp) {
+        if (last_mcu_timestamp_ms.has_value() && *last_mcu_timestamp_ms == imu_data->time_stamp)
+            [[unlikely]] {
             return;
         }
         last_mcu_timestamp_ms       = imu_data->time_stamp;
@@ -325,7 +326,7 @@ std::expected<L1L2SetupResult, std::string> setup_l1(
         [camera = std::move(camera),
          last_seq](talos::spmc_mut<AtLegacyImageFrame, AtLegacyImageChannelTopic> cam_out) {
             const auto frame = camera->try_recv();
-            if (!frame) {
+            if (!frame) [[unlikely]] {
                 return;
             }
 
@@ -346,7 +347,7 @@ std::expected<L1L2SetupResult, std::string> setup_l1(
         [output = std::move(output)](
             talos::spmc<fcs::L5::WeaponCommand, fcs::WeaponCommandChannelTopic> cmd_in) {
             auto cmd = cmd_in.read();
-            if (!cmd) {
+            if (!cmd) [[unlikely]] {
                 return;
             }
             output->send(*cmd);
