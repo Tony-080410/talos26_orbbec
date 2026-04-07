@@ -418,7 +418,7 @@ void register_aimer_systems(talos::Scheduler& scheduler, L4Config&& config) {
     world.insert_resource(Aimer(config.aimer));
     world.insert_resource(std::move(config));
 
-    scheduler.add_system<talos::pool_compute>(
+    scheduler.add_system<talos::fixed_rate<250>>(
         "l4_aimer",
         [phase_states =
              std::unordered_map<core::TargetKey, TargetPhaseState, core::TargetKeyHash>{},
@@ -439,17 +439,12 @@ void register_aimer_systems(talos::Scheduler& scheduler, L4Config&& config) {
             const uint64_t current_ns = fcs::clock::now_ns();
 
             auto transforms = lookup_gimbal_muzzle_transforms(*tf_buffer, current_ns);
-            if (!transforms) {
+            if (!transforms) [[unlikely]] {
                 SPDLOG_WARN("Transform lookup failed: {}", transforms.error());
                 return;
             }
             const auto& [gimbal, muzzle, timestamp_ns] = *transforms;
-            (void)timestamp_ns;
 
-            if (!solver->get()) {
-                SPDLOG_ERROR("Aimer: trajectory solver not available");
-                return;
-            }
             const auto& solver_ref           = **solver;
             const double bullet_speed        = bullet_speed_->bullet_speed;
             const auto current_gimbal        = gimbal.euler_rot();
