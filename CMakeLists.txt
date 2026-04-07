@@ -71,18 +71,6 @@ target_compile_definitions(toml_impl PUBLIC
         TOML_EXCEPTIONS=0
 )
 
-# TinyMPC solver
-add_library(tinympc STATIC
-        3dparty/tinympc/admm.cpp
-        3dparty/tinympc/tiny_api.cpp
-        3dparty/tinympc/rho_benchmark.cpp
-)
-
-crate_silence_warnings(tinympc)
-
-target_include_directories(tinympc SYSTEM PUBLIC 3dparty/tinympc)
-target_link_libraries(tinympc PUBLIC Eigen3::Eigen)
-
 # Magic enum
 add_library(magic_enum INTERFACE)
 target_include_directories(magic_enum INTERFACE 3dparty/magic_enum)
@@ -244,7 +232,6 @@ target_link_libraries(fcs PUBLIC
         scheduler
         Eigen3::Eigen
         Ceres::ceres
-        tinympc
         lieplusplus
         talos_gimbal
         hikcamera
@@ -331,4 +318,27 @@ target_link_libraries(talos-playground PRIVATE
         talos_log
         spdlog::spdlog
         ${OpenCV_LIBS}
+)
+
+# ============================================================================
+# MPC Benchmark: TinyMPC (double/dynamic) vs SmallMpcSolver (float/fixed-size)
+# ============================================================================
+add_library(tinympc_bench STATIC
+        3dparty/tinympc/admm.cpp
+        3dparty/tinympc/tiny_api.cpp
+        3dparty/tinympc/rho_benchmark.cpp
+)
+target_include_directories(tinympc_bench SYSTEM PUBLIC 3dparty/tinympc)
+target_link_libraries(tinympc_bench PUBLIC Eigen3::Eigen)
+crate_silence_warnings(tinympc_bench)
+
+add_executable(bench_mpc benchmark/bench_mpc.cpp)
+target_include_directories(bench_mpc PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/fcs/L5_weapon/enhanced
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/fcs
+        ${CMAKE_CURRENT_SOURCE_DIR}/3dparty
+)
+target_link_libraries(bench_mpc PRIVATE
+        Eigen3::Eigen
+        tinympc_bench
 )

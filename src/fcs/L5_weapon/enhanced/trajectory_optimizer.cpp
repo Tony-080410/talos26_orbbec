@@ -3,7 +3,6 @@
 #include "L4_planning/common/transform_utils.hpp"
 #include "L4_planning/planning/fire_decision.hpp"
 #include "core/math/normalize.hpp"
-#include "tiny_api.hpp"
 
 #include <Eigen/Dense>
 
@@ -12,54 +11,24 @@
 #include <utility>
 
 // =============================================================================
-// TinyMPC: Vendored C library (3dparty/tinympc) with broken memory management.
-// See destroy_tiny_solver() and create_tiny_solver() for full invariant documentation.
+// Optimized MPC trajectory optimizer for ARM Cortex-A55.
+//
+// Uses SmallMpcSolver (float, fixed-size Eigen) instead of vendored TinyMPC
+// (double, dynamic Eigen). This eliminates:
+//   1. Software-emulated double-precision FP (~20x overhead on A55)
+//   2. Dynamic matrix allocation overhead per ADMM iteration
+//   3. The 5-allocation RAII wrapper needed to paper over TinyMPC's memory leaks
+//
+// The ADMM algorithm is identical — same Riccati backward/forward pass,
+// same slack/dual update, same termination check. Just without the overhead.
 // =============================================================================
+
 namespace fcs::L5 {
 namespace {
-// ==============================================================================
-// TinyMPC invariant provenance (vendored library - do not modify)
-// ==============================================================================
-//
-// ALLOCATION INVARIANTS (tiny_api.cpp:25-29):
-//   - Uses 5 separate `new` calls WITHOUT exception handling
-//   - Allocation order: solution → cache → settings → work → solver
-//   - If ANY allocation throws std::bad_alloc, PREVIOUS allocations LEAK
-//   - NO exception safety guarantees
-//
-// ERROR PATH INVARIANTS (tiny_api.cpp:64-66, 137-139):
-//   - Dimension check failure: Returns non-zero status WITHOUT freeing allocations
-//   - Cache init failure: Returns non-zero status WITHOUT freeing allocations
-//   - ALL error paths leak all 5 allocated objects
-//
-// SUCCESS PATH INVARIANTS (ONLY if no exceptions thrown):
-//   - solver != nullptr
-//   - solver->solution != nullptr (TinySolution with Eigen matrices)
-//   - solver->cache != nullptr (TinyCache with Eigen matrices)
-//   - solver->settings != nullptr (TinySettings struct)
-//   - solver->work != nullptr (TinyWorkspace with many Eigen matrices)
-//
-// EXCEPTION SAFETY: NONE
-//   - No try-catch blocks anywhere in tinympc
-//   - Eigen matrix destruction can throw std::bad_alloc
-//   - Basic exception guarantee violated
-//
-// THREAD SAFETY: UNDEFINED
-//   - No synchronization primitives
-//   - No documentation about concurrent access
-//   - ASSUME NOT THREAD-SAFE
-//
-// WRAPPER CONTRACT:
-//   1. Must check for nullptr on ALL 5 internal pointers before deletion
-//   2. Must wrap delete in try-catch to preserve noexcept (Eigen can throw)
-//   3. Must clean up allocations if tiny_setup() returns error status
-//   4. Must verify all 5 internal pointers are non-null on success
-//   5. Must document as "not thread-safe"
+
 using fcs::core::math::normalize_angle;
 
 using ReferenceTrajectory = core::trajectory::ReferenceTrajectory;
-
-constexpr double kUnlimitedBound = 1e17;
 
 struct FireGateStatus {
     int delay_steps{0};
@@ -72,41 +41,6 @@ struct FireGateStatus {
     bool final_fire_gate_ok{false};
 };
 
-// ==============================================================================
-// RAII CLEANUP FUNCTION: Handles all tinympc invariant violations
-// ==============================================================================
-void destroy_tiny_solver(TinySolver* solver) noexcept {
-    if (solver == nullptr) {
-        return;
-    }
-
-    // tinympc invariant analysis requires individual nullptr checks:
-    // 1. Partial allocation: new may have thrown partway through
-    // 2. Error path leak: tiny_setup() returned error but allocated all 5
-    // 3. Eigen destruction safety: std::bad_alloc can be thrown during ~Matrix()
-    //
-    // Strategy: Check each pointer, wrap delete in try-catch for noexcept safety
-    auto safe_delete = [](auto* ptr) noexcept {
-        if (ptr != nullptr) {
-            try {
-                delete ptr;
-            } catch (...) {
-                // Eigen threw during matrix destruction
-                // In production: log this failure with spdlog
-                // We swallow to preserve noexcept as required by C++ Core Guidelines
-            }
-        }
-    };
-
-    // Delete in REVERSE construction order (work → settings → cache → solution → solver)
-    // This follows RAII best practices even though tinympc doesn't~
-    safe_delete(solver->work);     // Allocated 4th, contains many Eigen matrices
-    safe_delete(solver->settings); // Allocated 3rd, plain struct
-    safe_delete(solver->cache);    // Allocated 2nd, contains Eigen matrices
-    safe_delete(solver->solution); // Allocated 1st, contains Eigen matrices
-    safe_delete(solver);           // Allocated 5th, plain struct
-}
-
 [[nodiscard]] Eigen::Vector3d
     spherical_to_cartesian(double distance, double yaw, double pitch) noexcept {
     return Eigen::Vector3d{
@@ -116,15 +50,11 @@ void destroy_tiny_solver(TinySolver* solver) noexcept {
     };
 }
 
-[[nodiscard]] bool solved_ok(const TinySolver* solver, int status) noexcept {
-    return solver && status == 0 && solver->solution && solver->solution->solved == 1;
-}
-
 [[nodiscard]] FireGateStatus compute_fire_gate(
     const L4::FireDecisionConfig& fire_decision, const L4::AimerConfig& aimer_config,
     const L4::GimbalPlan& plan, double current_yaw, double current_pitch, double mpc_dt,
-    int center_index, const ReferenceTrajectory& trajectory, const TinySolver* yaw_solver,
-    const TinySolver* pitch_solver) noexcept {
+    int center_index, const ReferenceTrajectory& trajectory, const SmallMpcSolver& yaw_solver,
+    const SmallMpcSolver& pitch_solver) noexcept {
     FireGateStatus status;
     status.delay_gate_threshold = fire_decision.delay_gate_error_rad;
 
@@ -142,8 +72,9 @@ void destroy_tiny_solver(TinySolver* solver) noexcept {
     };
     const auto optimized_angles = [&](int index) noexcept {
         return DelayGateAngles{
-            .yaw   = normalize_angle(yaw_solver->solution->x(0, index) + trajectory.yaw_origin),
-            .pitch = pitch_solver->solution->x(0, index),
+            .yaw = normalize_angle(
+                static_cast<double>(yaw_solver.state(0, index)) + trajectory.yaw_origin),
+            .pitch = static_cast<double>(pitch_solver.state(0, index)),
         };
     };
 
@@ -156,11 +87,11 @@ void destroy_tiny_solver(TinySolver* solver) noexcept {
     status.delay_gate_forward_ok  = status.delay_gate_forward_error < status.delay_gate_threshold;
     status.delay_gate_backward_ok = status.delay_gate_backward_error < status.delay_gate_threshold;
 
-    const double optimized_yaw =
-        normalize_angle(yaw_solver->solution->x(0, sample_index) + trajectory.yaw_origin);
+    const double optimized_yaw = normalize_angle(
+        static_cast<double>(yaw_solver.state(0, sample_index)) + trajectory.yaw_origin);
     // is_on_target compares against TF pitch convention; optimizer pitch follows command
     // convention.
-    const double optimized_pitch = -pitch_solver->solution->x(0, sample_index);
+    const double optimized_pitch = -static_cast<double>(pitch_solver.state(0, sample_index));
     const double distance        = std::max(trajectory.distances[sample_index], 1e-6);
     const double diff_yaw        = trajectory.diff_yaws[sample_index];
 
@@ -174,8 +105,8 @@ void destroy_tiny_solver(TinySolver* solver) noexcept {
 }
 
 [[nodiscard]] WeaponVisualizationDebugData build_debug_data(
-    int horizon_back, const ReferenceTrajectory& trajectory, const TinySolver* yaw_solver,
-    const TinySolver* pitch_solver, const FireGateStatus& fire_gate) {
+    int horizon_back, const ReferenceTrajectory& trajectory, const SmallMpcSolver& yaw_solver,
+    const SmallMpcSolver& pitch_solver, const FireGateStatus& fire_gate) {
     WeaponVisualizationDebugData debug;
     const int horizon               = static_cast<int>(trajectory.distances.size());
     debug.center_index              = horizon_back;
@@ -209,8 +140,8 @@ void destroy_tiny_solver(TinySolver* solver) noexcept {
             debug.reference_plan.back().pitch);
         const Eigen::Vector3d world_bias = trajectory.positions[k] - reconstructed_reference;
         const double optimized_yaw =
-            normalize_angle(yaw_solver->solution->x(0, k) + trajectory.yaw_origin);
-        const double optimized_pitch = pitch_solver->solution->x(0, k);
+            normalize_angle(static_cast<double>(yaw_solver.state(0, k)) + trajectory.yaw_origin);
+        const double optimized_pitch = static_cast<double>(pitch_solver.state(0, k));
         const Eigen::Vector3d reconstructed_optimized =
             spherical_to_cartesian(trajectory.distances[k], optimized_yaw, optimized_pitch);
         debug.optimized_plan.push_back(
@@ -230,99 +161,6 @@ void destroy_tiny_solver(TinySolver* solver) noexcept {
 }
 
 } // namespace
-
-TinySolverHandle::~TinySolverHandle() noexcept { reset(); }
-
-TinySolverHandle::TinySolverHandle(TinySolverHandle&& other) noexcept
-    : solver_(std::exchange(other.solver_, nullptr)) {}
-
-TinySolverHandle& TinySolverHandle::operator=(TinySolverHandle&& other) noexcept {
-    if (this != &other) {
-        reset(std::exchange(other.solver_, nullptr));
-    }
-    return *this;
-}
-
-void TinySolverHandle::reset(TinySolver* solver) noexcept {
-    destroy_tiny_solver(solver_);
-    solver_ = solver;
-}
-
-// ==============================================================================
-// FACTORY FUNCTION: Exception-safe creation with invariant verification
-// ==============================================================================
-[[nodiscard]] std::expected<TinySolverHandle, std::string> create_tiny_solver(
-    const Eigen::Matrix2d& A, const Eigen::Matrix<double, 2, 1>& B, const Eigen::Vector2d& f,
-    const Eigen::Matrix2d& Q, const Eigen::Matrix<double, 1, 1>& R, double rho, int nx, int nu,
-    int horizon) noexcept {
-
-    TinySolver* raw_solver = nullptr;
-
-    // ============================================================
-    // TINYMPC BEHAVIOR ANALYSIS:
-    // ============================================================
-    //
-    // tiny_setup() allocation sequence (tiny_api.cpp:25-29):
-    //   1. new TinySolution()
-    //   2. new TinyCache()         ← Can throw std::bad_alloc
-    //   3. new TinySettings()      ← Can throw std::bad_alloc
-    //   4. new TinyWorkspace()     ← Can throw std::bad_alloc
-    //   5. new TinySolver()        ← Can throw std::bad_alloc
-    //
-    // Error paths (tiny_api.cpp:64-66, 137-139):
-    //   - Dimension mismatch → returns non-zero, LEAKS all 5 objects
-    //   - Cache init failure → returns non-zero, LEAKS all 5 objects
-    //
-    // Contract:
-    //   - Return value 0 = success, all 5 pointers valid
-    //   - Return value non-zero = failure, but raw_solver might STILL be non-null (leaked!)
-    //
-    // ============================================================
-
-    const int status = tiny_setup(&raw_solver, A, B, f, Q, R, rho, nx, nu, horizon, 0);
-
-    // ============================================================
-    // ERROR PATH HANDLING: Clean up tinympc's leaks
-    // ============================================================
-    if (status != 0) {
-        // tiny_setup failed, but it may have allocated the 5 objects anyway
-        // tinympc BUG: Returns error without freeing allocations
-        // destroy_tiny_solver handles nullptr checks + safe deletion
-        destroy_tiny_solver(raw_solver);
-
-        return std::unexpected("tiny_setup failed with status: " + std::to_string(status));
-    }
-
-    // ============================================================
-    // SUCCESS PATH VERIFICATION: Defensive invariant checking
-    // ============================================================
-    if (raw_solver == nullptr) {
-        // tinympc returned status=0 but didn't set the output parameter
-        // This is a tinympc bug - it should NEVER happen
-        return std::unexpected("tiny_setup returned success but solver is null (tinympc bug)");
-    }
-
-    // tinympc invariant: On success, ALL internal pointers MUST be non-null
-    // But we're defensive because tinympc has proven untrustworthy~
-    const bool fully_initialized = (raw_solver->solution != nullptr)
-                                && (raw_solver->settings != nullptr)
-                                && (raw_solver->cache != nullptr) && (raw_solver->work != nullptr);
-
-    if (!fully_initialized) {
-        // Partial initialization detected - tinympc is even more broken than we thought
-        destroy_tiny_solver(raw_solver);
-
-        return std::unexpected(
-            "tiny_setup returned partially initialized solver (tinympc invariant violation)");
-    }
-
-    // ============================================================
-    // CONSTRUCTION SUCCESS: Transfer ownership to RAII handle
-    // ============================================================
-    TinySolverHandle handle;
-    handle.reset(raw_solver); // Transfer ownership, handle will cleanup on destruction
-    return handle;
-}
 
 TinyMpcTrajectoryOptimizer::TinyMpcTrajectoryOptimizer(
     const WeaponControllerConfig& config,
@@ -363,7 +201,7 @@ std::expected<WeaponCommand, std::string> TinyMpcTrajectoryOptimizer::optimize(
         return std::unexpected("mpc_weapon disabled");
     }
     if (!ready_) {
-        return std::unexpected("tinympc solvers are not ready");
+        return std::unexpected("mpc solvers are not ready");
     }
     if (plan.source != L4::GimbalPlanSource::Armor) {
         return std::unexpected("only armor planner seeds are supported");
@@ -394,27 +232,28 @@ std::expected<WeaponCommand, std::string> TinyMpcTrajectoryOptimizer::optimize(
     const double current_yaw   = normalize_angle(current_gimbal.yaw);
     const double current_pitch = current_gimbal.pitch;
 
-    TinySolver* const yaw_solver   = yaw_solver_.get();
-    TinySolver* const pitch_solver = pitch_solver_.get();
-
-    Eigen::Vector2d x0;
-    x0 << reference.state(0, 0), reference.state(1, 0);
-    if (tiny_set_x0(yaw_solver, x0) != 0) {
-        return std::unexpected("failed to set yaw MPC initial condition");
+    // --- seed yaw solver ---
+    yaw_solver_.set_x0(reference.state(0, 0), reference.state(1, 0));
+    const int N = reference.state.cols();
+    for (int i = 0; i < N; ++i) {
+        yaw_solver_.set_ref_col(
+            i, static_cast<float>(reference.state(0, i)),
+            static_cast<float>(reference.state(1, i)));
     }
-    yaw_solver->work->Xref = reference.state.block(0, 0, 2, reference.state.cols());
-    const int yaw_status   = tiny_solve(yaw_solver);
-    if (!solved_ok(yaw_solver, yaw_status)) {
+    const bool yaw_ok = yaw_solver_.solve();
+    if (!yaw_ok) {
         return std::unexpected("yaw MPC did not converge");
     }
 
-    x0 << reference.state(2, 0), reference.state(3, 0);
-    if (tiny_set_x0(pitch_solver, x0) != 0) {
-        return std::unexpected("failed to set pitch MPC initial condition");
+    // --- seed pitch solver ---
+    pitch_solver_.set_x0(reference.state(2, 0), reference.state(3, 0));
+    for (int i = 0; i < N; ++i) {
+        pitch_solver_.set_ref_col(
+            i, static_cast<float>(reference.state(2, i)),
+            static_cast<float>(reference.state(3, i)));
     }
-    pitch_solver->work->Xref = reference.state.block(2, 0, 2, reference.state.cols());
-    const int pitch_status   = tiny_solve(pitch_solver);
-    if (!solved_ok(pitch_solver, pitch_status)) {
+    const bool pitch_ok = pitch_solver_.solve();
+    if (!pitch_ok) {
         return std::unexpected("pitch MPC did not converge");
     }
 
@@ -429,22 +268,24 @@ std::expected<WeaponCommand, std::string> TinyMpcTrajectoryOptimizer::optimize(
     cmd.plan_fire         = plan.fire_advice;
     cmd.ref_yaw   = normalize_angle(reference.state(0, center_index) + reference.yaw_origin);
     cmd.ref_pitch = reference.state(2, center_index);
-    cmd.yaw   = normalize_angle(yaw_solver->solution->x(0, center_index) + reference.yaw_origin);
+    cmd.yaw       = normalize_angle(
+        static_cast<double>(yaw_solver_.state(0, center_index)) + reference.yaw_origin);
     cmd.pitch = std::clamp(
-        pitch_solver->solution->x(0, center_index), config_.pitch_min, config_.pitch_max);
-    cmd.yaw_vel                    = yaw_solver->solution->x(1, center_index);
-    cmd.pitch_vel                  = pitch_solver->solution->x(1, center_index);
-    cmd.yaw_accel                  = yaw_solver->solution->u(0, control_index);
-    cmd.pitch_accel                = pitch_solver->solution->u(0, control_index);
+        static_cast<double>(pitch_solver_.state(0, center_index)), config_.pitch_min,
+        config_.pitch_max);
+    cmd.yaw_vel                    = static_cast<double>(yaw_solver_.state(1, center_index));
+    cmd.pitch_vel                  = static_cast<double>(pitch_solver_.state(1, center_index));
+    cmd.yaw_accel                  = static_cast<double>(yaw_solver_.input(control_index));
+    cmd.pitch_accel                = static_cast<double>(pitch_solver_.input(control_index));
     cmd.distance                   = reference.distances[center_index];
     cmd.tof                        = reference.time_of_flights[center_index];
     const FireGateStatus fire_gate = compute_fire_gate(
         fire_decision, aimer_config, plan, current_yaw, current_pitch, trajectory_cfg_.dt,
-        center_index, reference, yaw_solver, pitch_solver);
+        center_index, reference, yaw_solver_, pitch_solver_);
     cmd.fire = plan.fire_advice && fire_gate.final_fire_gate_ok;
     if (config_.enable_debug) {
         cmd.viz_debug = build_debug_data(
-            trajectory_cfg_.horizon_back, reference, yaw_solver, pitch_solver, fire_gate);
+            trajectory_cfg_.horizon_back, reference, yaw_solver_, pitch_solver_, fire_gate);
     }
 
     const auto finite = [](double value) noexcept { return std::isfinite(value); };
@@ -458,61 +299,44 @@ std::expected<WeaponCommand, std::string> TinyMpcTrajectoryOptimizer::optimize(
 }
 
 void TinyMpcTrajectoryOptimizer::initialize_solvers() noexcept {
-    yaw_solver_.reset();
-    pitch_solver_.reset();
-
     const int horizon = trajectory_cfg_.horizon_ahead + trajectory_cfg_.horizon_back + 1;
-    const double dt   = trajectory_cfg_.dt;
+    const float dt    = static_cast<float>(trajectory_cfg_.dt);
+    const float rho   = static_cast<float>(config_.mpc.rho);
 
-    const Eigen::Matrix2d A             = (Eigen::Matrix2d{} << 1.0, dt, 0.0, 1.0).finished();
-    const Eigen::Matrix<double, 2, 1> B = (Eigen::Matrix<double, 2, 1>{} << 0.0, dt).finished();
-    const Eigen::Vector2d f             = Eigen::Vector2d::Zero();
+    auto make_axis = [&](const MpcAxisConfig& axis,
+                         bool pitch) -> std::expected<SmallMpcSolver, std::string> {
+        SmallMpcSolver::AxisConfig cfg;
+        cfg.q_pos              = static_cast<float>(axis.q_pos);
+        cfg.q_vel              = static_cast<float>(axis.q_vel);
+        cfg.r                  = static_cast<float>(axis.r);
+        cfg.max_acc            = static_cast<float>(axis.max_acc);
+        cfg.enable_state_bound = pitch;
 
-    auto setup_axis = [&](const MpcAxisConfig& axis,
-                          bool pitch_axis) -> std::expected<TinySolverHandle, std::string> {
-        const Eigen::Matrix2d Q             = Eigen::Vector2d{axis.q_pos, axis.q_vel}.asDiagonal();
-        const Eigen::Matrix<double, 1, 1> R = Eigen::Matrix<double, 1, 1>::Constant(axis.r);
-
-        // Use factory function for exception-safe creation
-        auto solver_result = create_tiny_solver(A, B, f, Q, R, config_.mpc.rho, 2, 1, horizon);
-        if (!solver_result) {
-            return std::unexpected("Failed to create solver: " + solver_result.error());
-        }
-        auto solver = std::move(*solver_result);
-
-        Eigen::MatrixXd x_min = Eigen::MatrixXd::Constant(2, horizon, -kUnlimitedBound);
-        Eigen::MatrixXd x_max = Eigen::MatrixXd::Constant(2, horizon, kUnlimitedBound);
-        if (pitch_axis) {
-            x_min.row(0).setConstant(config_.pitch_min);
-            x_max.row(0).setConstant(config_.pitch_max);
+        if (pitch) {
+            cfg.state_min = static_cast<float>(config_.pitch_min);
+            cfg.state_max = static_cast<float>(config_.pitch_max);
         }
 
-        const Eigen::MatrixXd u_min = Eigen::MatrixXd::Constant(1, horizon - 1, -axis.max_acc);
-        const Eigen::MatrixXd u_max = Eigen::MatrixXd::Constant(1, horizon - 1, axis.max_acc);
-
-        if (tiny_set_bound_constraints(solver.get(), x_min, x_max, u_min, u_max) != 0) {
-            return std::unexpected("Failed to set bound constraints");
+        auto solver = SmallMpcSolver::create(dt, horizon, rho, cfg);
+        if (!solver) {
+            return std::unexpected("Failed to create solver: " + solver.error());
         }
 
-        solver.get()->settings->max_iter          = config_.mpc.max_iterations;
-        solver.get()->settings->abs_pri_tol       = config_.mpc.abs_tol;
-        solver.get()->settings->abs_dua_tol       = config_.mpc.abs_tol;
-        solver.get()->settings->check_termination = 1;
-
+        solver->set_settings(static_cast<float>(config_.mpc.abs_tol), config_.mpc.max_iterations);
         return solver;
     };
 
-    auto yaw_result = setup_axis(config_.mpc.yaw, false);
+    auto yaw_result = make_axis(config_.mpc.yaw, false);
     if (!yaw_result) {
         ready_ = false;
         return;
     }
     yaw_solver_ = std::move(*yaw_result);
 
-    auto pitch_result = setup_axis(config_.mpc.pitch, true);
+    auto pitch_result = make_axis(config_.mpc.pitch, true);
     if (!pitch_result) {
-        yaw_solver_.reset();
-        ready_ = false;
+        yaw_solver_ = SmallMpcSolver{};
+        ready_      = false;
         return;
     }
     pitch_solver_ = std::move(*pitch_result);
