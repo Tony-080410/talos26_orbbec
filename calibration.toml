@@ -112,9 +112,11 @@ extrinsic_path = "camera_extrinsic.toml"
 # =============================================================================
 [calibration.foxglove]
 enabled = true
+transport = "WebSocket"
 host = "0.0.0.0"
 # 使用与主程序不同的端口
 port = 8765
+# mcap_path = "record/calibration_foxglove.mcap"
 
 # =============================================================================
 # 输入源配置

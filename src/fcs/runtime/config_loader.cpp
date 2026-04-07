@@ -15,6 +15,13 @@ auto format_parse_error(const toml::parse_error& e) -> std::string {
         "{} at {}:{}:{}", e.description(), src.path->data(), src.begin.line, src.begin.column);
 }
 
+auto validate_foxglove_config(const FoxgloveConfig& config) -> std::optional<std::string> {
+    if (config.transport == FoxgloveTransport::Mcap && config.mcap_path.empty()) {
+        return "entry config: foxglove.mcap_path is required when foxglove.transport=\"Mcap\"";
+    }
+    return std::nullopt;
+}
+
 } // namespace
 
 [[nodiscard]] std::expected<RuntimeConfig, std::string> load_config(std::string_view path) {
@@ -32,6 +39,9 @@ auto format_parse_error(const toml::parse_error& e) -> std::string {
     if (launch.capturer.enabled && launch.capturer.output_dir.empty()) {
         return std::unexpected(
             "entry config: capturer.output_dir is required when capturer.enabled=true");
+    }
+    if (auto error = validate_foxglove_config(launch.foxglove)) {
+        return std::unexpected(std::move(*error));
     }
 
     std::string vision_override_path = fmt::format("config/vision/{}.toml", launch.vision);

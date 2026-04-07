@@ -7,6 +7,7 @@
 #include <string>
 
 #include "euler.hpp"
+#include "foxglove_config.hpp"
 #include "magic_enum.hpp"
 
 #include "L2_perception/armor/at_legacy_config.hpp"
@@ -18,12 +19,6 @@
 #include "camera_config.hpp"
 
 namespace fcs {
-
-struct FoxgloveConfig {
-    bool enabled{true};
-    std::string host{"0.0.0.0"};
-    uint16_t port{8765};
-};
 
 struct CapturerConfig {
     bool enabled{false};

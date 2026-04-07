@@ -4,14 +4,17 @@
 #include <memory>
 #include <string>
 
+#include "foxglove_server.hpp"
 #include "scheduler/thin.hpp"
 
 namespace fcs {
 
-class FoxgloveServer;
-
 /// Create and return an initialized Foxglove server instance.
 /// Returns `nullptr` if initialization fails.
+[[nodiscard]] std::shared_ptr<FoxgloveServer>
+    try_create_foxglove_server(FoxgloveServerConfig config) noexcept;
+
+/// Backward-compatible WebSocket-only overload.
 [[nodiscard]] std::shared_ptr<FoxgloveServer>
     try_create_foxglove_server(uint16_t port, std::string host) noexcept;
 

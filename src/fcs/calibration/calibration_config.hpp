@@ -2,6 +2,7 @@
 
 #include "calibration_types.hpp"
 #include "camera_config.hpp"
+#include "foxglove_config.hpp"
 #include "toml_helper.hpp"
 
 #include <cstdint>
@@ -74,8 +75,10 @@ struct OutputConfig {
 /// @brief Foxglove server configuration
 struct FoxgloveCalibConfig {
     bool enabled{true};
+    FoxgloveTransport transport{FoxgloveTransport::WebSocket};
     std::string host{"0.0.0.0"};
     uint16_t port{8766}; // Different from main program (8765)
+    std::string mcap_path{};
 };
 
 /// @brief Input source configuration (hardware vs simulator)
@@ -113,6 +116,12 @@ struct CalibrationConfig {
             auto config = toml_helper::from_table<CalibrationConfig>(*calib_tbl);
             if (!config) {
                 return std::unexpected(config.error());
+            }
+            if (config->foxglove.transport == FoxgloveTransport::Mcap
+                && config->foxglove.mcap_path.empty()) {
+                return std::unexpected(
+                    "calibration.foxglove.mcap_path is required when "
+                    "calibration.foxglove.transport=\"Mcap\"");
             }
             return std::move(*config);
         }

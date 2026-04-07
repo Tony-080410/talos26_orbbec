@@ -110,7 +110,7 @@ void register_l1_sensor_systems(App& app) {
 
             // Compress to JPEG
             std::vector<uint8_t> compressed;
-            std::vector<int> params{cv::IMWRITE_JPEG_QUALITY, 85};
+            std::vector<int> params{cv::IMWRITE_JPEG_QUALITY, 45};
             if (!cv::imencode(".jpg", img_bgr, compressed, params)) {
                 return;
             }

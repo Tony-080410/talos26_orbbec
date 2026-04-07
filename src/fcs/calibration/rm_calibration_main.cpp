@@ -205,16 +205,26 @@ int main(int argc, char* argv[]) {
     // Initialize Foxglove server
     std::shared_ptr<fcs::FoxgloveServer> foxglove_server;
     if (config->foxglove.enabled) {
-        auto server_result =
-            fcs::create_foxglove_server(config->foxglove.port, config->foxglove.host);
+        auto server_result = fcs::create_foxglove_server(
+            fcs::FoxgloveServerConfig{
+                .transport = config->foxglove.transport,
+                .host      = config->foxglove.host,
+                .port      = config->foxglove.port,
+                .mcap_path = config->foxglove.mcap_path,
+            });
         if (!server_result) {
-            SPDLOG_WARN("Foxglove server failed to initialize: {}", server_result.error());
+            SPDLOG_WARN("Foxglove transport failed to initialize: {}", server_result.error());
         } else {
             foxglove_server = std::move(*server_result);
             fcs::attach_foxglove_sink(*foxglove_server);
             world.insert_resource(foxglove_server);
-            SPDLOG_INFO(
-                "Foxglove server started on {}:{}", config->foxglove.host, config->foxglove.port);
+            if (config->foxglove.transport == fcs::FoxgloveTransport::WebSocket) {
+                SPDLOG_INFO(
+                    "Foxglove WebSocket started on {}:{}", config->foxglove.host,
+                    config->foxglove.port);
+            } else {
+                SPDLOG_INFO("Foxglove MCAP started at {}", config->foxglove.mcap_path);
+            }
         }
     }
 

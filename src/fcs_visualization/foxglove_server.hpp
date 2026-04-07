@@ -1,5 +1,6 @@
 #pragma once
 
+#include "foxglove_config.hpp"
 #include "foxglove_types.hpp"
 
 #include "foxglove_export.hpp"
@@ -7,24 +8,25 @@
 
 #include <array>
 #include <atomic>
+#include <cassert>
 #include <expected>
+#include <filesystem>
 #include <memory>
+#include <optional>
 #include <string>
 #include <thread>
 #include <variant>
 
+#include <fmt/format.h>
 #include <spdlog/spdlog.h>
 #include <tbb/concurrent_queue.h>
 
 #include <foxglove/error.hpp>
 #include <foxglove/foxglove.hpp>
+#include <foxglove/mcap.hpp>
 #include <foxglove/server.hpp>
 
 namespace fcs {
-
-// ============================================================================
-// Channel Member Macros - 生成 channel 成员变量
-// ============================================================================
 
 #define FOXGLOVE_SCENE_CHANNEL(MemberName) \
     std::optional<foxglove::schemas::SceneUpdateChannel> MemberName;
@@ -36,10 +38,6 @@ namespace fcs {
 #define FOXGLOVE_CALIB_CHANNEL(MemberName) \
     std::optional<foxglove::schemas::CameraCalibrationChannel> MemberName;
 #define FOXGLOVE_LOG_CHANNEL(MemberName) std::optional<foxglove::schemas::LogChannel> MemberName;
-
-// ============================================================================
-// Channel Registry - 所有 channel 的统一管理
-// ============================================================================
 
 struct FoxgloveChannels {
     FOXGLOVE_SCENE_CHANNEL(scene_ch)
@@ -68,7 +66,6 @@ struct FoxgloveChannels {
 
     FOXGLOVE_JSON_CHANNEL(pnp_solver_ch)
     FOXGLOVE_JSON_CHANNEL(nn_confidence_ch)
-
     FOXGLOVE_JSON_CHANNEL(energy_meter_ch)
 
     FOXGLOVE_IMAGE_CHANNEL(ekf_heatmap_ch)
@@ -85,16 +82,15 @@ struct FoxgloveChannels {
 #undef FOXGLOVE_CALIB_CHANNEL
 #undef FOXGLOVE_LOG_CHANNEL
 
-// ============================================================================
-// Forward declarations
-// ============================================================================
-
 class FoxgloveServer;
 class FoxgloveServerFactory;
 
-// ============================================================================
-// Channel Traits - 编译期映射 message type -> channel pointer
-// ============================================================================
+struct FoxgloveServerConfig {
+    FoxgloveTransport transport{FoxgloveTransport::WebSocket};
+    std::string host{"0.0.0.0"};
+    uint16_t port{8765};
+    std::string mcap_path{};
+};
 
 namespace detail {
 
@@ -120,7 +116,6 @@ FOXGLOVE_JSON_TRAIT(PerfStatsMessage, perf_stats_ch)
 FOXGLOVE_JSON_TRAIT(MpcTrajectoryMessage, mpc_traj_ch)
 FOXGLOVE_JSON_TRAIT(PnPSolverMessage, pnp_solver_ch)
 FOXGLOVE_JSON_TRAIT(NNConfidenceMessage, nn_confidence_ch)
-
 FOXGLOVE_JSON_TRAIT(EnergyMeterMessage, energy_meter_ch)
 #undef FOXGLOVE_JSON_TRAIT
 
@@ -179,24 +174,81 @@ struct ChannelTraits<TfMessage> {
     }
 };
 
-} // namespace detail
+template <typename ChannelType>
+[[nodiscard]] inline std::expected<ChannelType, std::string>
+    try_create_channel(std::string_view topic, const foxglove::Context& context) noexcept {
+    auto result = ChannelType::create(std::string(topic), context);
+    if (result.has_value())
+        return std::move(result.value());
+    return std::unexpected(fmt::format("{}: {}", topic, foxglove::strerror(result.error())));
+}
 
-// ============================================================================
-// Factory
-// ============================================================================
+[[nodiscard]] inline std::expected<foxglove::RawChannel, std::string> try_create_raw_channel(
+    std::string_view topic, std::string_view encoding, const foxglove::Context& context) noexcept {
+    auto result =
+        foxglove::RawChannel::create(std::string(topic), std::string(encoding), {}, context);
+    if (result.has_value())
+        return std::move(result.value());
+    return std::unexpected(fmt::format("{}: {}", topic, foxglove::strerror(result.error())));
+}
+
+[[nodiscard]] inline std::expected<foxglove::WebSocketServer, std::string>
+    try_create_websocket_sink(
+        const FoxgloveServerConfig& config, const foxglove::Context& context) noexcept {
+    foxglove::WebSocketServerOptions ws;
+    ws.context    = context;
+    ws.host       = config.host;
+    ws.port       = config.port;
+    ws.session_id = "talos";
+
+    assert(static_cast<int>(ws.capabilities) == 0);
+    auto server = foxglove::WebSocketServer::create(std::move(ws));
+    if (server.has_value())
+        return std::move(server.value());
+    return std::unexpected(fmt::format("WebSocketServer: {}", foxglove::strerror(server.error())));
+}
+
+[[nodiscard]] inline std::expected<foxglove::McapWriter, std::string> try_create_mcap_sink(
+    const FoxgloveServerConfig& config, const foxglove::Context& context) noexcept {
+    if (config.mcap_path.empty()) {
+        return std::unexpected("McapWriter: mcap_path must not be empty");
+    }
+
+    const auto path = std::filesystem::path(config.mcap_path);
+    if (const auto parent = path.parent_path(); !parent.empty()) {
+        std::error_code ec;
+        std::filesystem::create_directories(parent, ec);
+        if (ec) {
+            return std::unexpected(
+                fmt::format(
+                    "create MCAP parent directory '{}': {}", parent.string(), ec.message()));
+        }
+    }
+
+    foxglove::McapWriterOptions options;
+    options.context  = context;
+    options.path     = config.mcap_path;
+    options.truncate = true;
+
+    auto writer = foxglove::McapWriter::create(options);
+    if (writer.has_value())
+        return std::move(writer.value());
+    return std::unexpected(fmt::format("McapWriter: {}", foxglove::strerror(writer.error())));
+}
+
+} // namespace detail
 
 class FoxgloveServerFactory {
 public:
     [[nodiscard]] static std::expected<std::unique_ptr<FoxgloveServer>, std::string>
-        create(uint16_t port, std::string host) noexcept;
+        create(FoxgloveServerConfig config) noexcept;
 };
 
-[[nodiscard]] std::expected<std::unique_ptr<FoxgloveServer>, std::string>
-    create_foxglove_server(uint16_t port = 8765, std::string host = "0.0.0.0") noexcept;
+[[nodiscard]] inline std::expected<std::unique_ptr<FoxgloveServer>, std::string>
+    create_foxglove_server(FoxgloveServerConfig config) noexcept;
 
-// ============================================================================
-// Foxglove WebSocket Server
-// ============================================================================
+[[nodiscard]] inline std::expected<std::unique_ptr<FoxgloveServer>, std::string>
+    create_foxglove_server(uint16_t port = 8765, std::string host = "0.0.0.0") noexcept;
 
 class FoxgloveServer {
 public:
@@ -206,10 +258,25 @@ public:
             return;
 
         sink_alive_->store(false, std::memory_order_release);
-        should_stop_ = true;
+        should_stop_.store(true, std::memory_order_release);
+
         if (sender_thread_.joinable())
             sender_thread_.join();
-        server_->stop();
+
+        if (mcap_writer_) {
+            const auto result = mcap_writer_->close();
+            if (result != foxglove::FoxgloveError::Ok) {
+                SPDLOG_WARN("Foxglove MCAP close failed: {}", foxglove::strerror(result));
+            }
+        }
+
+        // Intentionally leak websocket server for fast foxglove startup
+        // if (websocket_server_) {
+        //     const auto result = websocket_server_->stop();
+        //     if (result != foxglove::FoxgloveError::Ok) {
+        //         SPDLOG_WARN("Foxglove WebSocket stop failed: {}", foxglove::strerror(result));
+        //     }
+        // }
     }
 
     FoxgloveServer(const FoxgloveServer&)            = delete;
@@ -264,9 +331,13 @@ private:
     friend class FoxgloveServerFactory;
 
     explicit FoxgloveServer(
-        FoxgloveChannels channels, std::shared_ptr<foxglove::WebSocketServer> server) noexcept
-        : server_(std::move(server))
-        , channels_(std::move(channels)) {
+        foxglove::Context context, FoxgloveChannels channels,
+        std::optional<foxglove::WebSocketServer> websocket_server,
+        std::optional<foxglove::McapWriter> mcap_writer) noexcept
+        : context_(std::move(context))
+        , channels_(std::move(channels))
+        , websocket_server_(std::move(websocket_server))
+        , mcap_writer_(std::move(mcap_writer)) {
         foxglove::setLogLevel(foxglove::LogLevel::Info);
         if (channels_.tf_ch) {
             tf_exporter_.emplace(std::move(*channels_.tf_ch));
@@ -276,17 +347,17 @@ private:
         sender_thread_      = std::thread(&FoxgloveServer::message_sender_thread, this);
     }
 
-    // Dispatch helpers
     template <typename Msg>
     void dispatch_one(const Msg& m) noexcept {
         using Traits = detail::ChannelTraits<Msg>;
-        auto* ch     = Traits::get(channels_);
-        if (ch)
-            dispatch_to_channel(m, *ch);
+        dispatch_to_channel(m, *Traits::get(channels_));
     }
 
     template <typename Msg, typename Ch>
     void dispatch_to_channel(const Msg& m, std::optional<Ch>& ch) noexcept {
+        if (!ch)
+            return;
+
         if constexpr (requires { m.data; }) {
             ch->log(reinterpret_cast<const std::byte*>(m.data.data()), m.data.size());
         } else if constexpr (requires { m.scene; }) {
@@ -305,17 +376,21 @@ private:
     }
 
     void dispatch_message(const FoxgloveMessage& msg) noexcept {
-        std::visit([this](auto&& m) { dispatch_one(m); }, msg);
+        std::visit([this](const auto& m) { dispatch_one(m); }, msg);
     }
 
     void message_sender_thread() {
-        while (!should_stop_) {
+        while (true) {
             FoxgloveMessage msg;
-            if (!message_queue_.try_pop(msg)) {
-                std::this_thread::yield();
+            if (message_queue_.try_pop(msg)) {
+                dispatch_message(msg);
                 continue;
             }
-            dispatch_message(msg);
+
+            if (should_stop_.load(std::memory_order_acquire))
+                break;
+
+            std::this_thread::yield();
         }
     }
 
@@ -323,90 +398,82 @@ private:
     std::atomic<bool> should_stop_{false};
     std::atomic<bool> shutdown_done_{false};
     std::shared_ptr<std::atomic<bool>> sink_alive_{std::make_shared<std::atomic<bool>>(true)};
-    std::shared_ptr<foxglove::WebSocketServer> server_;
+    foxglove::Context context_{};
     FoxgloveChannels channels_;
+    std::optional<foxglove::WebSocketServer> websocket_server_;
+    std::optional<foxglove::McapWriter> mcap_writer_;
     std::optional<fast_tf::FoxgloveExporter> tf_exporter_;
     alignas(64) tbb::concurrent_queue<FoxgloveMessage> message_queue_;
     std::thread sender_thread_;
 };
 
-// ============================================================================
-// Factory Implementation
-// ============================================================================
-
-#define TRY_CREATE_SCENE_CHANNEL(ChName, Topic)                                             \
-    do {                                                                                    \
-        auto ch = detail::try_create_channel<foxglove::schemas::SceneUpdateChannel>(Topic); \
-        if (!ch)                                                                            \
-            return std::unexpected(fmt::format("{} channel create failed", Topic));         \
-        channels.ChName = std::move(*ch);                                                   \
+#define TRY_CREATE_SCENE_CHANNEL(ChName, Topic)                                                \
+    do {                                                                                       \
+        auto ch =                                                                              \
+            detail::try_create_channel<foxglove::schemas::SceneUpdateChannel>(Topic, context); \
+        if (!ch)                                                                               \
+            return std::unexpected(ch.error());                                                \
+        channels.ChName = std::move(*ch);                                                      \
     } while (0)
 
-#define TRY_CREATE_IMAGE_CHANNEL(ChName, Topic)                                                 \
-    do {                                                                                        \
-        auto ch = detail::try_create_channel<foxglove::schemas::CompressedImageChannel>(Topic); \
-        if (!ch)                                                                                \
-            return std::unexpected(fmt::format("{} channel create failed", Topic));             \
-        channels.ChName = std::move(*ch);                                                       \
+#define TRY_CREATE_IMAGE_CHANNEL(ChName, Topic)                                                    \
+    do {                                                                                           \
+        auto ch =                                                                                  \
+            detail::try_create_channel<foxglove::schemas::CompressedImageChannel>(Topic, context); \
+        if (!ch)                                                                                   \
+            return std::unexpected(ch.error());                                                    \
+        channels.ChName = std::move(*ch);                                                          \
     } while (0)
 
-#define TRY_CREATE_JSON_CHANNEL(ChName, Topic)                                      \
-    do {                                                                            \
-        auto ch = detail::try_create_raw_channel(Topic, "json");                    \
-        if (!ch)                                                                    \
-            return std::unexpected(fmt::format("{} channel create failed", Topic)); \
-        channels.ChName = std::move(*ch);                                           \
+#define TRY_CREATE_JSON_CHANNEL(ChName, Topic)                            \
+    do {                                                                  \
+        auto ch = detail::try_create_raw_channel(Topic, "json", context); \
+        if (!ch)                                                          \
+            return std::unexpected(ch.error());                           \
+        channels.ChName = std::move(*ch);                                 \
     } while (0)
 
-#define TRY_CREATE_SPECIAL_CHANNEL(ChName, Topic, ChType)                           \
-    do {                                                                            \
-        auto ch = detail::try_create_channel<ChType>(Topic);                        \
-        if (!ch)                                                                    \
-            return std::unexpected(fmt::format("{} channel create failed", Topic)); \
-        channels.ChName = std::move(*ch);                                           \
+#define TRY_CREATE_SPECIAL_CHANNEL(ChName, Topic, ChType)             \
+    do {                                                              \
+        auto ch = detail::try_create_channel<ChType>(Topic, context); \
+        if (!ch)                                                      \
+            return std::unexpected(ch.error());                       \
+        channels.ChName = std::move(*ch);                             \
     } while (0)
 
-#define TRY_CREATE_LOG_CHANNEL(ChName, Topic)                                       \
-    do {                                                                            \
-        auto ch = detail::try_create_channel<foxglove::schemas::LogChannel>(Topic); \
-        if (!ch)                                                                    \
-            return std::unexpected(fmt::format("{} channel create failed", Topic)); \
-        channels.ChName = std::move(*ch);                                           \
+#define TRY_CREATE_LOG_CHANNEL(ChName, Topic)                                                \
+    do {                                                                                     \
+        auto ch = detail::try_create_channel<foxglove::schemas::LogChannel>(Topic, context); \
+        if (!ch)                                                                             \
+            return std::unexpected(ch.error());                                              \
+        channels.ChName = std::move(*ch);                                                    \
     } while (0)
 
-namespace detail {
+[[nodiscard]] inline std::expected<std::unique_ptr<FoxgloveServer>, std::string>
+    FoxgloveServerFactory::create(FoxgloveServerConfig config) noexcept {
+    foxglove::Context context = foxglove::Context::create();
 
-template <typename ChannelType>
-[[nodiscard]] std::expected<std::optional<ChannelType>, std::string>
-    try_create_channel(std::string_view topic) noexcept {
-    auto result = ChannelType::create(std::string(topic));
-    if (result.has_value())
-        return std::make_optional(std::move(result.value()));
-    return std::unexpected(fmt::format("{}: {}", topic, foxglove::strerror(result.error())));
-}
+    std::optional<foxglove::WebSocketServer> websocket_server;
+    std::optional<foxglove::McapWriter> mcap_writer;
 
-[[nodiscard]] std::expected<std::optional<foxglove::RawChannel>, std::string>
-    try_create_raw_channel(std::string_view topic, std::string_view encoding) noexcept {
-    auto result = foxglove::RawChannel::create(std::string(topic), std::string(encoding));
-    if (result.has_value())
-        return std::make_optional(std::move(result.value()));
-    return std::unexpected(fmt::format("{}: {}", topic, foxglove::strerror(result.error())));
-}
-
-} // namespace detail
-
-std::expected<std::unique_ptr<FoxgloveServer>, std::string>
-    FoxgloveServerFactory::create(uint16_t port, std::string host) noexcept {
-    foxglove::WebSocketServerOptions ws;
-    ws.host       = std::move(host);
-    ws.port       = port;
-    ws.session_id = "talos";
-
-    assert(static_cast<int>(ws.capabilities) == 0);
-    auto server_r = foxglove::WebSocketServer::create(std::move(ws));
-    if (!server_r.has_value())
-        return std::unexpected(
-            fmt::format("WebSocketServer: {}", foxglove::strerror(server_r.error())));
+    switch (config.transport) {
+    case FoxgloveTransport::WebSocket: {
+        auto server = detail::try_create_websocket_sink(config, context);
+        if (!server)
+            return std::unexpected(server.error());
+        websocket_server = std::move(*server);
+        SPDLOG_INFO("Foxglove WebSocket listening on {}:{}", config.host, config.port);
+        break;
+    }
+    case FoxgloveTransport::Mcap: {
+        auto writer = detail::try_create_mcap_sink(config, context);
+        if (!writer)
+            return std::unexpected(writer.error());
+        mcap_writer = std::move(*writer);
+        SPDLOG_INFO("Foxglove MCAP writing to {}", config.mcap_path);
+        break;
+    }
+    }
 
     FoxgloveChannels channels;
 
@@ -437,7 +504,6 @@ std::expected<std::unique_ptr<FoxgloveServer>, std::string>
 
     TRY_CREATE_JSON_CHANNEL(pnp_solver_ch, "/debug/pnp_solver");
     TRY_CREATE_JSON_CHANNEL(nn_confidence_ch, "/debug/nn_confidence");
-
     TRY_CREATE_JSON_CHANNEL(energy_meter_ch, "/energy_meter/state");
 
     TRY_CREATE_SPECIAL_CHANNEL(tf_ch, "/tf", foxglove::schemas::FrameTransformsChannel);
@@ -445,37 +511,9 @@ std::expected<std::unique_ptr<FoxgloveServer>, std::string>
         camera_calib_ch, "/camera_info", foxglove::schemas::CameraCalibrationChannel);
     TRY_CREATE_LOG_CHANNEL(log_ch, "/log");
 
-    // ====================================================================
-    // FOXGLOVE SERVER FACTORY: PRIVATE CONSTRUCTOR PATTERN
-    // ====================================================================
-    //
-    // PROVENANCE: Factory function with private constructor
-    //
-    // WHY new INSTEAD OF std::make_unique?
-    //
-    //   FoxgloveServer constructor is PRIVATE (factory-only access).
-    //   std::make_unique<FoxgloveServer>(...) cannot access private constructor.
-    //
-    //   We use `new FoxgloveServer(...)` here because the factory function
-    //   has friend access and can call the private constructor.
-    //
-    // OWNERSHIP TRANSFER:
-    //   1. Factory allocates with new (has friend access)
-    //   2. unique_ptr immediately takes ownership
-    //   3. unique_ptr destructor calls delete automatically
-    //   4. NO LEAKS, EXCEPTION-SAFE
-    //
-    // EXCEPTION SAFETY:
-    //   - If new throws: no memory allocated, nothing to clean up ✅
-    //   - If constructor throws: runtime frees memory before unique_ptr built ✅
-    //
-    // This is EXEMPLARY use of new + unique_ptr for private constructor pattern~ ♪
-    // ====================================================================
-    auto server = std::make_shared<foxglove::WebSocketServer>(std::move(server_r.value()));
-    SPDLOG_INFO("Foxglove server listening on port {}", port);
-
-    return std::unique_ptr<FoxgloveServer>(
-        new FoxgloveServer(std::move(channels), std::move(server)));
+    return std::unique_ptr<FoxgloveServer>(new FoxgloveServer(
+        std::move(context), std::move(channels), std::move(websocket_server),
+        std::move(mcap_writer)));
 }
 
 #undef TRY_CREATE_SCENE_CHANNEL
@@ -485,8 +523,18 @@ std::expected<std::unique_ptr<FoxgloveServer>, std::string>
 #undef TRY_CREATE_LOG_CHANNEL
 
 [[nodiscard]] inline std::expected<std::unique_ptr<FoxgloveServer>, std::string>
+    create_foxglove_server(FoxgloveServerConfig config) noexcept {
+    return FoxgloveServerFactory::create(std::move(config));
+}
+
+[[nodiscard]] inline std::expected<std::unique_ptr<FoxgloveServer>, std::string>
     create_foxglove_server(uint16_t port, std::string host) noexcept {
-    return FoxgloveServerFactory::create(port, std::move(host));
+    return create_foxglove_server(
+        FoxgloveServerConfig{
+            .transport = FoxgloveTransport::WebSocket,
+            .host      = std::move(host),
+            .port      = port,
+        });
 }
 
 } // namespace fcs

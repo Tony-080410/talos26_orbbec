@@ -5,9 +5,7 @@
 #include <fstream>
 #include <string>
 
-#define TALOS_DISABLE_PROGRAM_MAIN
-#include "../../main.cpp"
-#undef TALOS_DISABLE_PROGRAM_MAIN
+#include "runtime/config_loader.hpp"
 
 namespace {
 
@@ -48,8 +46,8 @@ std::filesystem::path make_temp_dir(std::string_view name) {
 TEST(ReadConfig, RepositoryLaunchConfigLoadsAndMergesOverrideSemantics) {
     const ScopedCurrentPath cwd(source_root());
 
-    auto result = read_config();
-    ASSERT_TRUE(result.has_value()) << to_string(result.error());
+    auto result = fcs::load_config("at_vision.toml");
+    ASSERT_TRUE(result.has_value()) << result.error();
 
     auto config = std::move(*result);
     EXPECT_EQ(config.robot_type, fcs::RobotType::Infantry);
@@ -59,8 +57,10 @@ TEST(ReadConfig, RepositoryLaunchConfigLoadsAndMergesOverrideSemantics) {
     EXPECT_DOUBLE_EQ(config.hardware->mcu->bullet_speed_default, 22.0);
 
     EXPECT_TRUE(config.foxglove.enabled);
+    EXPECT_EQ(config.foxglove.transport, fcs::FoxgloveTransport::WebSocket);
     EXPECT_EQ(config.foxglove.host, "0.0.0.0");
     EXPECT_EQ(config.foxglove.port, 8765);
+    EXPECT_TRUE(config.foxglove.mcap_path.empty());
 
     EXPECT_TRUE(config.capturer.enabled);
     EXPECT_EQ(config.capturer.output_dir, "record");
@@ -77,10 +77,9 @@ TEST(ReadConfig, MissingRequiredLaunchFieldReturnsEntryConfigError) {
         const ScopedCurrentPath cwd(temp_dir);
         std::ofstream(temp_dir / "at_vision.toml") << "daedalus = false\nvision = 'std'\n";
 
-        auto result = read_config();
+        auto result = fcs::load_config("at_vision.toml");
         ASSERT_FALSE(result.has_value());
-        ASSERT_TRUE(std::holds_alternative<std::string>(result.error()));
-        EXPECT_EQ(std::get<std::string>(result.error()), "entry config: Missing key 'robot'");
+        EXPECT_EQ(result.error(), "entry config: Missing key 'robot'");
     }
     std::filesystem::remove_all(temp_dir);
 }
@@ -94,8 +93,8 @@ TEST(ReadConfig, NonDaedalusLaunchReturnsHardwareAndMergedBaseVision) {
 
     {
         const ScopedCurrentPath cwd(temp_dir);
-        auto result = read_config();
-        ASSERT_TRUE(result.has_value()) << to_string(result.error());
+        auto result = fcs::load_config("at_vision.toml");
+        ASSERT_TRUE(result.has_value()) << result.error();
 
         auto config = std::move(*result);
         EXPECT_EQ(config.robot_type, fcs::RobotType::Hero);
@@ -103,6 +102,7 @@ TEST(ReadConfig, NonDaedalusLaunchReturnsHardwareAndMergedBaseVision) {
         ASSERT_TRUE(config.hardware.has_value());
         EXPECT_EQ(config.hardware->type.get(), fcs::RobotType::Hero);
         EXPECT_TRUE(config.foxglove.enabled);
+        EXPECT_EQ(config.foxglove.transport, fcs::FoxgloveTransport::WebSocket);
         EXPECT_EQ(
             config.vision.trajectory.model->type,
             fcs::core::trajectory::model::ModelType::LinearDrag);
@@ -122,12 +122,60 @@ TEST(ReadConfig, CapturerRequiresOutputDirWhenEnabled) {
 
     {
         const ScopedCurrentPath cwd(temp_dir);
-        auto result = read_config();
+        auto result = fcs::load_config("at_vision.toml");
         ASSERT_FALSE(result.has_value());
-        ASSERT_TRUE(std::holds_alternative<std::string>(result.error()));
         EXPECT_EQ(
-            std::get<std::string>(result.error()),
+            result.error(),
             "entry config: capturer.output_dir is required when capturer.enabled=true");
+    }
+
+    std::filesystem::remove_all(temp_dir);
+}
+
+TEST(ReadConfig, McapTransportRequiresPath) {
+    const auto temp_dir = make_temp_dir("mcap-missing-path");
+    copy_file_from_repo("config/vision_base.toml", temp_dir / "config/vision_base.toml");
+    copy_file_from_repo("config/robot/hero.toml", temp_dir / "config/robot/hero.toml");
+    write_file(temp_dir / "config/vision/std.toml", "");
+    write_file(
+        temp_dir / "at_vision.toml",
+        "daedalus = false\nrobot = 'hero'\nvision = 'std'\n[foxglove]\ntransport = 'Mcap'\n");
+
+    {
+        const ScopedCurrentPath cwd(temp_dir);
+        auto result = fcs::load_config("at_vision.toml");
+        ASSERT_FALSE(result.has_value());
+        EXPECT_EQ(
+            result.error(),
+            "entry config: foxglove.mcap_path is required when foxglove.transport=\"Mcap\"");
+    }
+
+    std::filesystem::remove_all(temp_dir);
+}
+
+TEST(ReadConfig, McapTransportParsesWhenPathProvided) {
+    const auto temp_dir = make_temp_dir("mcap-success");
+    copy_file_from_repo("config/vision_base.toml", temp_dir / "config/vision_base.toml");
+    copy_file_from_repo("config/robot/hero.toml", temp_dir / "config/robot/hero.toml");
+    write_file(temp_dir / "config/vision/std.toml", "");
+    write_file(
+        temp_dir / "at_vision.toml", "daedalus = false\n"
+                                     "robot = 'hero'\n"
+                                     "vision = 'std'\n"
+                                     "[foxglove]\n"
+                                     "transport = 'Mcap'\n"
+                                     "mcap_path = 'logs/out.mcap'\n");
+
+    {
+        const ScopedCurrentPath cwd(temp_dir);
+        auto result = fcs::load_config("at_vision.toml");
+        ASSERT_TRUE(result.has_value()) << result.error();
+
+        auto config = std::move(*result);
+        EXPECT_EQ(config.foxglove.transport, fcs::FoxgloveTransport::Mcap);
+        EXPECT_EQ(config.foxglove.mcap_path, "logs/out.mcap");
+        EXPECT_EQ(config.foxglove.port, 8765);
+        EXPECT_EQ(config.foxglove.host, "0.0.0.0");
     }
 
     std::filesystem::remove_all(temp_dir);
@@ -141,10 +189,9 @@ TEST(ReadConfig, InvalidMergedVisionConfigIsReported) {
 
     {
         const ScopedCurrentPath cwd(temp_dir);
-        auto result = read_config();
+        auto result = fcs::load_config("at_vision.toml");
         ASSERT_FALSE(result.has_value());
-        ASSERT_TRUE(std::holds_alternative<std::string>(result.error()));
-        const auto& error = std::get<std::string>(result.error());
+        const auto& error = result.error();
         EXPECT_NE(error.find("vision config:"), std::string::npos);
         EXPECT_NE(error.find("backend_type"), std::string::npos);
     }
@@ -161,10 +208,9 @@ TEST(ReadConfig, InvalidHardwareConfigIsReported) {
 
     {
         const ScopedCurrentPath cwd(temp_dir);
-        auto result = read_config();
+        auto result = fcs::load_config("at_vision.toml");
         ASSERT_FALSE(result.has_value());
-        ASSERT_TRUE(std::holds_alternative<std::string>(result.error()));
-        EXPECT_EQ(std::get<std::string>(result.error()), "hardware config: Missing key 'type'");
+        EXPECT_EQ(result.error(), "hardware config: Missing key 'type'");
     }
 
     std::filesystem::remove_all(temp_dir);

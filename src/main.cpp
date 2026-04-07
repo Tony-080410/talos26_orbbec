@@ -5,10 +5,24 @@
 #include "scheduler/scheduler.hpp"
 #include "spdlog_hook.hpp"
 
+#include <atomic>
 #include <chrono>
+#include <csignal>
+#include <thread>
+
+namespace {
+
+std::atomic<bool> g_shutdown_requested{false};
+
+void signal_handler(int) { g_shutdown_requested.store(true, std::memory_order_release); }
+
+} // namespace
 
 #ifndef TALOS_DISABLE_PROGRAM_MAIN
 int main() {
+    std::signal(SIGINT, signal_handler);
+    std::signal(SIGTERM, signal_handler);
+
     init_logger();
     SPDLOG_INFO("talos is initializing...");
     const auto start = std::chrono::system_clock::now();
@@ -28,15 +42,29 @@ int main() {
 
     // Foxglove visualization setup (separate library dependency)
     if (foxglove_cfg.enabled) {
-        auto server = fcs::try_create_foxglove_server(foxglove_cfg.port, foxglove_cfg.host);
-        if (server) {
+        auto server_result = fcs::create_foxglove_server(
+            fcs::FoxgloveServerConfig{
+                .transport = foxglove_cfg.transport,
+                .host      = foxglove_cfg.host,
+                .port      = foxglove_cfg.port,
+                .mcap_path = foxglove_cfg.mcap_path,
+            });
+        if (server_result) {
+            std::shared_ptr<fcs::FoxgloveServer> server = std::move(*server_result);
             fcs::attach_foxglove_sink(*server);
-            world.insert_resource(std::move(server));
+            world.insert_resource(server);
             fcs::register_foxglove_systems(scheduler, &scheduler);
-            SPDLOG_INFO(
-                "Foxglove server enabled on ws://{}:{}", foxglove_cfg.host, foxglove_cfg.port);
+            if (foxglove_cfg.transport == fcs::FoxgloveTransport::WebSocket) {
+                SPDLOG_INFO(
+                    "Foxglove WebSocket enabled on ws://{}:{}", foxglove_cfg.host,
+                    foxglove_cfg.port);
+            } else {
+                SPDLOG_INFO("Foxglove MCAP enabled at {}", foxglove_cfg.mcap_path);
+            }
         } else {
-            SPDLOG_WARN("Foxglove server failed to initialize, visualization disabled");
+            SPDLOG_WARN(
+                "Foxglove transport failed to initialize: {}. Visualization disabled",
+                server_result.error());
         }
     } else {
         SPDLOG_INFO("Foxglove visualization disabled by config");
@@ -52,7 +80,28 @@ int main() {
                                  std::chrono::system_clock::now() - start)
                                  .count());
 
-    if (const auto result = scheduler.run(); !result) {
+    std::atomic<bool> scheduler_finished{false};
+    std::thread shutdown_watcher([&scheduler, &scheduler_finished]() {
+        bool shutdown_logged = false;
+        while (!scheduler_finished.load(std::memory_order_acquire)) {
+            if (g_shutdown_requested.load(std::memory_order_acquire)) {
+                if (!shutdown_logged) {
+                    SPDLOG_INFO("shutdown signal received, stopping scheduler...");
+                    shutdown_logged = true;
+                }
+                scheduler.stop();
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        }
+    });
+
+    const auto result = scheduler.run();
+    scheduler_finished.store(true, std::memory_order_release);
+    if (shutdown_watcher.joinable()) {
+        shutdown_watcher.join();
+    }
+
+    if (!result) {
         SPDLOG_CRITICAL("run scheduler: {}", result.error());
     }
 }
