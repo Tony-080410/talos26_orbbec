@@ -231,7 +231,7 @@ void register_calibration_systems(
                 return;
             }
 
-            ImageMessage msg;
+            CalibrationImageMessage msg;
             msg.img.timestamp = timestamp_from_ns(ts);
             msg.img.frame_id  = "calibration_view";
             msg.img.format    = "jpeg";

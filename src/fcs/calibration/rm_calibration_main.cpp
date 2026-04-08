@@ -211,6 +211,7 @@ int main(int argc, char* argv[]) {
                 .host      = config->foxglove.host,
                 .port      = config->foxglove.port,
                 .mcap_path = config->foxglove.mcap_path,
+                .quanta    = config->foxglove.quanta,
             });
         if (!server_result) {
             SPDLOG_WARN("Foxglove transport failed to initialize: {}", server_result.error());

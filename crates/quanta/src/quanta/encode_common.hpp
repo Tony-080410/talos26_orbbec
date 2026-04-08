@@ -214,10 +214,12 @@ inline std::expected<CodecCtxPtr, std::string> create_encoder_context(
                std::lround(static_cast<double>(bitrate_kbps) * desired_vbv_window_seconds)));
     enc_ctx->rc_buffer_size = realtime_stream ? vbv_bufsize * 1000 : 0;
 
-    if (params.preset && params.preset[0] != '\0')
-        av_opt_set(enc_ctx->priv_data, "preset", params.preset, 0);
-    if (realtime_stream)
-        av_opt_set(enc_ctx->priv_data, "tune", "zerolatency", 0);
+    if (!params.preset.empty())
+        av_opt_set(enc_ctx->priv_data, "preset", params.preset.c_str(), 0);
+    if (realtime_stream) {
+        const char* tune = params.tune.empty() ? "zerolatency" : params.tune.c_str();
+        av_opt_set(enc_ctx->priv_data, "tune", tune, 0);
+    }
 
     const auto min_keyint   = std::max(1, params.gop_size / 2);
     const int frame_threads = realtime_stream ? 1 : 0;
@@ -237,18 +239,19 @@ inline std::expected<CodecCtxPtr, std::string> create_encoder_context(
         // Realtime stream path: hold wire rate close to target instead of letting CRF overshoot.
         // Use periodic intra refresh so the reference picture is refreshed progressively instead
         // of spending the whole GOP budget on a single hard IDR.
-        x265_opts = std::format(
+        const int lookahead = params.lookahead;
+        x265_opts           = std::format(
             "bitrate={}:vbv-maxrate={}:vbv-bufsize={}:vbv-init=0.9:strict-cbr=1:"
-            "keyint={}:min-keyint={}:scenecut=0:open-gop=0:intra-refresh=1:"
-            "rc-lookahead=0:bframes=0:frame-threads={}:"
+            "keyint={}:min-keyint={}:scenecut=0:open-gop=0:intra-refresh={}:"
+            "rc-lookahead={}:bframes=0:frame-threads={}:"
             "ref={}:limit-refs={}:me={}:subme={}:rd={}:rdoq-level={}:"
-            "rect={}:amp={}:aq-mode=1:aq-strength=0.4:aq-motion=0:cutree=0:"
+            "rect={}:amp={}:aq-mode=1:aq-strength={}:aq-motion=0:cutree=0:"
             "cbqpoffs={}:crqpoffs={}:psy-rd={}:psy-rdoq={}:qcomp=0.5:qpstep=8:"
             "deblock=0,0:no-sao=1:info=0:vui-timing-info=0:vui-hrd-info=0:repeat-headers={}",
-            bitrate_kbps, bitrate_kbps, vbv_bufsize, params.gop_size, min_keyint, frame_threads,
-            ref_count, limit_refs, me_mode, subme_level, rd_level, rdoq_level, rect_enabled,
-            amp_enabled, cb_qp_offset, cr_qp_offset, params.psy_rd, params.psy_trellis,
-            repeat_headers ? 1 : 0);
+            bitrate_kbps, bitrate_kbps, vbv_bufsize, params.gop_size, min_keyint,
+            params.intra_refresh ? 1 : 0, lookahead, frame_threads, ref_count, limit_refs, me_mode,
+            subme_level, rd_level, rdoq_level, rect_enabled, amp_enabled, params.aq_strength,
+            cb_qp_offset, cr_qp_offset, params.psy_rd, params.psy_trellis, repeat_headers ? 1 : 0);
     } else {
         const int lookahead = params.lookahead;
 

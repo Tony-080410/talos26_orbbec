@@ -32,6 +32,8 @@ namespace fcs {
     std::optional<foxglove::schemas::SceneUpdateChannel> MemberName;
 #define FOXGLOVE_IMAGE_CHANNEL(MemberName) \
     std::optional<foxglove::schemas::CompressedImageChannel> MemberName;
+#define FOXGLOVE_VIDEO_CHANNEL(MemberName) \
+    std::optional<foxglove::schemas::CompressedVideoChannel> MemberName;
 #define FOXGLOVE_JSON_CHANNEL(MemberName) std::optional<foxglove::RawChannel> MemberName;
 #define FOXGLOVE_TF_CHANNEL(MemberName) \
     std::optional<foxglove::schemas::FrameTransformsChannel> MemberName;
@@ -48,6 +50,8 @@ struct FoxgloveChannels {
     FOXGLOVE_SCENE_CHANNEL(rune_scene_ch)
 
     FOXGLOVE_IMAGE_CHANNEL(img_ch)
+    FOXGLOVE_VIDEO_CHANNEL(video_ch)
+    FOXGLOVE_IMAGE_CHANNEL(calibration_img_ch)
     FOXGLOVE_IMAGE_CHANNEL(binary_img_ch)
     FOXGLOVE_IMAGE_CHANNEL(pattern_img_ch)
     FOXGLOVE_IMAGE_CHANNEL(rune_arrow_img_ch)
@@ -77,6 +81,7 @@ struct FoxgloveChannels {
 
 #undef FOXGLOVE_SCENE_CHANNEL
 #undef FOXGLOVE_IMAGE_CHANNEL
+#undef FOXGLOVE_VIDEO_CHANNEL
 #undef FOXGLOVE_JSON_CHANNEL
 #undef FOXGLOVE_TF_CHANNEL
 #undef FOXGLOVE_CALIB_CHANNEL
@@ -90,6 +95,7 @@ struct FoxgloveServerConfig {
     std::string host{"0.0.0.0"};
     uint16_t port{8765};
     std::string mcap_path{};
+    quanta::EncodeParams quanta{};
 };
 
 namespace detail {
@@ -146,6 +152,7 @@ FOXGLOVE_SCENE_TRAIT(MpcPredictionSceneMessage, mpc_prediction_scene_ch)
     };
 
 FOXGLOVE_IMAGE_TRAIT(ImageMessage, img_ch)
+FOXGLOVE_IMAGE_TRAIT(CalibrationImageMessage, calibration_img_ch)
 FOXGLOVE_IMAGE_TRAIT(BinaryImageMessage, binary_img_ch)
 FOXGLOVE_IMAGE_TRAIT(PatternImageMessage, pattern_img_ch)
 FOXGLOVE_IMAGE_TRAIT(RuneArrowImageMessage, rune_arrow_img_ch)
@@ -153,6 +160,18 @@ FOXGLOVE_IMAGE_TRAIT(RuneTargetImageMessage, rune_target_img_ch)
 FOXGLOVE_IMAGE_TRAIT(RuneCenterImageMessage, rune_center_img_ch)
 FOXGLOVE_IMAGE_TRAIT(EkfHeatmapMessage, ekf_heatmap_ch)
 #undef FOXGLOVE_IMAGE_TRAIT
+
+#define FOXGLOVE_VIDEO_TRAIT(MsgType, ChMember)                            \
+    template <>                                                            \
+    struct ChannelTraits<MsgType> {                                        \
+        static auto get(FoxgloveChannels& ch) noexcept                     \
+            -> std::optional<foxglove::schemas::CompressedVideoChannel>* { \
+            return std::addressof(ch.ChMember);                            \
+        }                                                                  \
+    };
+
+FOXGLOVE_VIDEO_TRAIT(VideoMessage, video_ch)
+#undef FOXGLOVE_VIDEO_TRAIT
 
 #define FOXGLOVE_LOG_TRAIT(MsgType, ChMember)                  \
     template <>                                                \
@@ -226,9 +245,12 @@ template <typename ChannelType>
     }
 
     foxglove::McapWriterOptions options;
-    options.context  = context;
-    options.path     = config.mcap_path;
-    options.truncate = true;
+    options.context             = context;
+    options.path                = config.mcap_path;
+    options.truncate            = true;
+    options.sink_channel_filter = [](const foxglove::ChannelDescriptor& channel) {
+        return channel.topic() != "/debug/ekf_heatmap";
+    };
 
     auto writer = foxglove::McapWriter::create(options);
     if (writer.has_value())
@@ -360,6 +382,8 @@ private:
 
         if constexpr (requires { m.data; }) {
             ch->log(reinterpret_cast<const std::byte*>(m.data.data()), m.data.size());
+        } else if constexpr (requires { m.video; }) {
+            ch->log(m.video);
         } else if constexpr (requires { m.scene; }) {
             ch->log(m.scene);
         } else if constexpr (requires { m.img; }) {
@@ -387,8 +411,9 @@ private:
                 continue;
             }
 
-            if (should_stop_.load(std::memory_order_acquire))
+            if (should_stop_.load(std::memory_order_acquire)) {
                 break;
+            }
 
             std::this_thread::yield();
         }
@@ -420,6 +445,15 @@ private:
     do {                                                                                           \
         auto ch =                                                                                  \
             detail::try_create_channel<foxglove::schemas::CompressedImageChannel>(Topic, context); \
+        if (!ch)                                                                                   \
+            return std::unexpected(ch.error());                                                    \
+        channels.ChName = std::move(*ch);                                                          \
+    } while (0)
+
+#define TRY_CREATE_VIDEO_CHANNEL(ChName, Topic)                                                    \
+    do {                                                                                           \
+        auto ch =                                                                                  \
+            detail::try_create_channel<foxglove::schemas::CompressedVideoChannel>(Topic, context); \
         if (!ch)                                                                                   \
             return std::unexpected(ch.error());                                                    \
         channels.ChName = std::move(*ch);                                                          \
@@ -484,7 +518,12 @@ private:
     TRY_CREATE_SCENE_CHANNEL(mpc_prediction_scene_ch, "/debug/mpc_prediction_scene");
     TRY_CREATE_SCENE_CHANNEL(rune_scene_ch, "/rune/scene");
 
-    TRY_CREATE_IMAGE_CHANNEL(img_ch, "/image");
+    if (config.transport == FoxgloveTransport::Mcap) {
+        TRY_CREATE_VIDEO_CHANNEL(video_ch, "/image");
+    } else {
+        TRY_CREATE_IMAGE_CHANNEL(img_ch, "/image");
+    }
+    TRY_CREATE_IMAGE_CHANNEL(calibration_img_ch, "/calibration/image");
     TRY_CREATE_IMAGE_CHANNEL(binary_img_ch, "/debug/binary_img");
     TRY_CREATE_IMAGE_CHANNEL(pattern_img_ch, "/debug/number_img");
     TRY_CREATE_IMAGE_CHANNEL(rune_arrow_img_ch, "/rune/arrow_img");
@@ -518,6 +557,7 @@ private:
 
 #undef TRY_CREATE_SCENE_CHANNEL
 #undef TRY_CREATE_IMAGE_CHANNEL
+#undef TRY_CREATE_VIDEO_CHANNEL
 #undef TRY_CREATE_JSON_CHANNEL
 #undef TRY_CREATE_SPECIAL_CHANNEL
 #undef TRY_CREATE_LOG_CHANNEL

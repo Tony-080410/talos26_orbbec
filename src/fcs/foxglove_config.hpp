@@ -1,5 +1,7 @@
 #pragma once
 
+#include "quanta/transcoder.hpp"
+
 #include <cstdint>
 #include <string>
 
@@ -16,6 +18,7 @@ struct FoxgloveConfig {
     std::string host{"0.0.0.0"};
     uint16_t port{8765};
     std::string mcap_path{};
+    quanta::EncodeParams quanta{};
 };
 
 } // namespace fcs

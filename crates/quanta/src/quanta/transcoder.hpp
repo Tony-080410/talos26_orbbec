@@ -48,8 +48,9 @@ struct EncodeParams {
     int max_height     = 360;    // auto-downscale if taller
     int gop_size       = 120;    // keyframe interval (short GOP = more I-frames = less drift)
     int framerate      = 30;     // target output framerate
-    const char* preset = "fast"; // keep the original rate allocation baseline
-    const char* tune   = "stillimage";
+    std::string preset = "fast"; // keep the original rate allocation baseline
+    std::string tune   = "stillimage";
+    bool intra_refresh = true; // rolling refresh; disable for decoders that require true keyframes
 
     // CRF + VBV rate control (original working approach)
     int crf              = 52;  // quality target; VBV caps actual bitrate

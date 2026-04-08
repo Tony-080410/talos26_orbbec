@@ -74,6 +74,7 @@ void init_coordinate_system(fast_tf::CoordinateSystem& system, const RobotExtrin
 
     // Insert config as shared resource (for foxglove and other systems)
     world.insert_resource(config.robot_type);
+    world.insert_resource(config.foxglove);
 
     // Save config values for logging before move
     const double bullet_speed = config.hardware->mcu->bullet_speed_default;

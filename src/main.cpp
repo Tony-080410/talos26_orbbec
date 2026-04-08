@@ -35,7 +35,7 @@ int main() {
 
     // Extract foxglove config before boot() consumes the rest
     // (foxglove setup requires fcs_visualization, which is not linked by the fcs library)
-    auto foxglove_cfg = std::move(config->foxglove);
+    auto foxglove_cfg = config->foxglove;
 
     talos::World world;
     talos::Scheduler scheduler(world);
@@ -48,6 +48,7 @@ int main() {
                 .host      = foxglove_cfg.host,
                 .port      = foxglove_cfg.port,
                 .mcap_path = foxglove_cfg.mcap_path,
+                .quanta    = foxglove_cfg.quanta,
             });
         if (server_result) {
             std::shared_ptr<fcs::FoxgloveServer> server = std::move(*server_result);

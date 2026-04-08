@@ -2,7 +2,9 @@
 
 #include "base.hpp"
 #include "core/runtime.hpp"
+#include "foxglove_config.hpp"
 #include "foxglove_types.hpp"
+#include "quanta/transcoder.hpp"
 #include "scene_builder.hpp"
 #include "system_helpers.hpp"
 
@@ -11,12 +13,136 @@
 #include "core/channel_topics.hpp"
 #include "core/types.hpp"
 #include "frame.hpp"
+#include "quanta/stream_encoder.hpp"
 
+#include <algorithm>
+#include <cstddef>
+#include <deque>
+#include <memory>
 #include <opencv2/core/types.hpp>
 #include <opencv2/imgcodecs.hpp>
 #include <opencv2/imgproc.hpp>
 
 namespace fcs::foxglove::systems {
+
+namespace detail {
+
+struct QuantaFrameStamp {
+    int64_t pts{0};
+    uint64_t timestamp_ns{0};
+};
+
+struct QuantaPublisherState {
+    std::unique_ptr<quanta::StreamEncoder> encoder{};
+    std::deque<QuantaFrameStamp> pending_frames{};
+    std::string last_error{};
+    int src_width{0};
+    int src_height{0};
+    int framerate{0};
+    int64_t next_pts{0};
+};
+
+inline void log_quanta_error_once(QuantaPublisherState& state, std::string message) noexcept {
+    if (state.last_error == message)
+        return;
+    state.last_error = std::move(message);
+    SPDLOG_WARN("Foxglove quanta encoder: {}", state.last_error);
+}
+
+[[nodiscard]] inline bool ensure_quanta_encoder(
+    QuantaPublisherState& state, const quanta::EncodeParams& cfg, int src_width,
+    int src_height) noexcept {
+    if (state.encoder && state.src_width == src_width && state.src_height == src_height
+        && state.framerate == cfg.framerate) {
+        return true;
+    }
+
+    state.encoder = std::make_unique<quanta::StreamEncoder>(cfg);
+    state.pending_frames.clear();
+    state.next_pts   = 0;
+    state.src_width  = src_width;
+    state.src_height = src_height;
+    state.framerate  = cfg.framerate;
+
+    auto init_result = state.encoder->init(src_width, src_height, cfg.framerate);
+    if (!init_result) {
+        log_quanta_error_once(state, std::move(init_result.error()));
+        state.encoder.reset();
+        return false;
+    }
+
+    state.last_error.clear();
+    SPDLOG_INFO(
+        "Foxglove quanta encoder initialized: {}x{} -> <= {}x{}, {} bps @ {} fps", src_width,
+        src_height, cfg.max_width, cfg.max_height, cfg.target_bitrate, cfg.framerate);
+    return true;
+}
+
+[[nodiscard]] inline uint64_t take_timestamp_for_pts(
+    QuantaPublisherState& state, int64_t pts, uint64_t fallback_timestamp_ns) noexcept {
+    for (auto it = state.pending_frames.begin(); it != state.pending_frames.end(); ++it) {
+        if (it->pts != pts)
+            continue;
+
+        const uint64_t timestamp_ns = it->timestamp_ns;
+        state.pending_frames.erase(it);
+        return timestamp_ns;
+    }
+    return fallback_timestamp_ns;
+}
+
+inline void publish_quanta_video(
+    FoxgloveServer& server, QuantaPublisherState& state, const quanta::EncodeParams& cfg,
+    const cv::Mat& image_bgr, uint64_t timestamp_ns) noexcept {
+    if (!ensure_quanta_encoder(state, cfg, image_bgr.cols, image_bgr.rows))
+        return;
+
+    const int64_t pts = state.next_pts++;
+    auto push_result =
+        state.encoder->push_frame(image_bgr.data, static_cast<int>(image_bgr.step[0]), pts);
+    if (!push_result) {
+        log_quanta_error_once(state, std::move(push_result.error()));
+        return;
+    }
+
+    state.pending_frames.push_back(QuantaFrameStamp{.pts = pts, .timestamp_ns = timestamp_ns});
+
+    while (auto packet = state.encoder->poll_packet()) {
+        const uint64_t packet_timestamp_ns =
+            take_timestamp_for_pts(state, packet->pts, timestamp_ns);
+
+        VideoMessage msg;
+        msg.video.timestamp = timestamp_from_ns(packet_timestamp_ns);
+        msg.video.frame_id  = "camera_optical_frame";
+        msg.video.format    = "h265";
+        msg.video.data      = std::vector<std::byte>(
+            reinterpret_cast<const std::byte*>(packet->data.get()),
+            reinterpret_cast<const std::byte*>(packet->data.get() + packet->size));
+
+        server.enqueue_message(std::move(msg));
+    }
+}
+
+inline void publish_jpeg_image(
+    FoxgloveServer& server, const cv::Mat& image_bgr, uint64_t timestamp_ns) noexcept {
+    std::vector<uint8_t> compressed;
+    std::vector<int> params{cv::IMWRITE_JPEG_QUALITY, 45};
+    if (!cv::imencode(".jpg", image_bgr, compressed, params)) {
+        return;
+    }
+
+    ImageMessage msg;
+    msg.img.timestamp = timestamp_from_ns(timestamp_ns);
+    msg.img.frame_id  = "camera_optical_frame";
+    msg.img.format    = "jpeg";
+    msg.img.data      = std::vector<std::byte>(
+        reinterpret_cast<const std::byte*>(compressed.data()),
+        reinterpret_cast<const std::byte*>(compressed.data() + compressed.size()));
+
+    server.enqueue_message(std::move(msg));
+}
+
+} // namespace detail
 
 /// @brief Register L1 sensor layer systems (image publishing)
 ///
@@ -34,10 +160,11 @@ void register_l1_sensor_systems(App& app) {
 
     app.template add_system<talos::pool_compute>(
         "foxglove_l1_image_pub",
-        [](talos::spmc<AtLegacyArmorDetectionBatch, AtLegacyDetectionChannelTopic> det_in,
-           talos::res<std::shared_ptr<FoxgloveServer>> server, talos::res<CameraConfig> cam,
-           core::detecting_color detecting_color_,
-           talos::res<fast_tf::CoordinateSystem> tf_buffer) {
+        [video_state = detail::QuantaPublisherState{}](
+            talos::spmc<AtLegacyArmorDetectionBatch, AtLegacyDetectionChannelTopic> det_in,
+            talos::res<std::shared_ptr<FoxgloveServer>> server, talos::res<CameraConfig> cam,
+            talos::res<FoxgloveConfig> foxglove_cfg, core::detecting_color detecting_color_,
+            talos::res<fast_tf::CoordinateSystem> tf_buffer) mutable {
             if (!detail::foxglove_ready(*server, det_in)) {
                 return;
             }
@@ -108,23 +235,12 @@ void register_l1_sensor_systems(App& app) {
                     img_bgr, conf_str, conf_pos, cv::FONT_HERSHEY_SIMPLEX, 0.5, box_color, 1);
             }
 
-            // Compress to JPEG
-            std::vector<uint8_t> compressed;
-            std::vector<int> params{cv::IMWRITE_JPEG_QUALITY, 45};
-            if (!cv::imencode(".jpg", img_bgr, compressed, params)) {
-                return;
+            if (foxglove_cfg->transport == FoxgloveTransport::Mcap) {
+                detail::publish_quanta_video(
+                    *(*server), video_state, foxglove_cfg->quanta, img_bgr, batch->timestamp_ns);
+            } else {
+                detail::publish_jpeg_image(*(*server), img_bgr, batch->timestamp_ns);
             }
-
-            // Construct image message
-            ImageMessage msg;
-            msg.img.timestamp = timestamp_from_ns(batch->timestamp_ns);
-            msg.img.frame_id  = "camera_optical_frame";
-            msg.img.format    = "jpeg";
-            msg.img.data      = std::vector<std::byte>(
-                reinterpret_cast<const std::byte*>(compressed.data()),
-                reinterpret_cast<const std::byte*>(compressed.data() + compressed.size()));
-
-            (*server)->enqueue_message(std::move(msg));
 
             // Publish camera calibration
             std::array<double, 9> camera_matrix_arr;

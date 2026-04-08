@@ -187,6 +187,7 @@ add_library(fcs SHARED ${FCS_SOURCES})
 
 target_include_directories(fcs PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/src/fcs
+        ${CMAKE_CURRENT_SOURCE_DIR}/crates/quanta/src
         $<$<TARGET_EXISTS:TensorRT::TensorRT>:${TensorRT_INCLUDE_DIRS}>
 )
 
@@ -260,6 +261,7 @@ target_link_libraries(fcs_visualization PUBLIC
         fcs
         scheduler
         foxglove_cpp
+        quanta
         ${OpenCV_LIBS}
         Eigen3::Eigen
         spdlog::spdlog

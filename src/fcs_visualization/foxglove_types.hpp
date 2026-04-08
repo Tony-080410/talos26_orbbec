@@ -30,12 +30,24 @@ namespace fcs {
         foxglove::schemas::CompressedImage img; \
     };
 
+/// Macro to generate a video message type (has foxglove::schemas::CompressedVideo video member)
+#define FOXGLOVE_VIDEO_MESSAGE(MessageName)       \
+    struct MessageName {                          \
+        foxglove::schemas::CompressedVideo video; \
+    };
+
 // ============================================================================
 // Foxglove Message Types
 // ============================================================================
 
 /// 压缩图像消息
 FOXGLOVE_IMAGE_MESSAGE(ImageMessage)
+
+/// 压缩视频消息
+FOXGLOVE_VIDEO_MESSAGE(VideoMessage)
+
+/// 标定图像消息
+FOXGLOVE_IMAGE_MESSAGE(CalibrationImageMessage)
 
 /// 场景更新消息 (PnP 解算结果)
 FOXGLOVE_SCENE_MESSAGE(SceneMessage)
@@ -120,11 +132,11 @@ struct LogMessage {
 
 /// Foxglove 消息联合类型
 using FoxgloveMessage = std::variant<
-    ImageMessage, SceneMessage, TrackSceneMessage, TfMessage, BinaryImageMessage,
-    PatternImageMessage, DebugLightsMessage, DebugArmorsMessage, RuneArrowImageMessage,
-    RuneTargetImageMessage, RuneCenterImageMessage, RuneDebugMessage, RuneSceneMessage,
-    MeasurementMessage, TargetMessage, TargetSelectionTraceMessage, GimbalCmdMessage,
-    GimbalSceneMessage, PerfStatsMessage, MpcTrajectoryMessage,
+    ImageMessage, VideoMessage, CalibrationImageMessage, SceneMessage, TrackSceneMessage, TfMessage,
+    BinaryImageMessage, PatternImageMessage, DebugLightsMessage, DebugArmorsMessage,
+    RuneArrowImageMessage, RuneTargetImageMessage, RuneCenterImageMessage, RuneDebugMessage,
+    RuneSceneMessage, MeasurementMessage, TargetMessage, TargetSelectionTraceMessage,
+    GimbalCmdMessage, GimbalSceneMessage, PerfStatsMessage, MpcTrajectoryMessage,
     // L2 Debug
     PnPSolverMessage, NNConfidenceMessage,
     // L3 Debug

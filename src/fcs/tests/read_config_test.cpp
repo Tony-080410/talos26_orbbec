@@ -61,6 +61,10 @@ TEST(ReadConfig, RepositoryLaunchConfigLoadsAndMergesOverrideSemantics) {
     EXPECT_EQ(config.foxglove.host, "0.0.0.0");
     EXPECT_EQ(config.foxglove.port, 8765);
     EXPECT_TRUE(config.foxglove.mcap_path.empty());
+    EXPECT_EQ(config.foxglove.quanta.target_bitrate, 100500);
+    EXPECT_EQ(config.foxglove.quanta.preset, "fast");
+    EXPECT_EQ(config.foxglove.quanta.tune, "zerolatency");
+    EXPECT_FALSE(config.foxglove.quanta.intra_refresh);
 
     EXPECT_TRUE(config.capturer.enabled);
     EXPECT_EQ(config.capturer.output_dir, "record");
@@ -176,6 +180,40 @@ TEST(ReadConfig, McapTransportParsesWhenPathProvided) {
         EXPECT_EQ(config.foxglove.mcap_path, "logs/out.mcap");
         EXPECT_EQ(config.foxglove.port, 8765);
         EXPECT_EQ(config.foxglove.host, "0.0.0.0");
+    }
+
+    std::filesystem::remove_all(temp_dir);
+}
+
+TEST(ReadConfig, QuantaOverridesParseWhenProvided) {
+    const auto temp_dir = make_temp_dir("quanta-success");
+    copy_file_from_repo("config/vision_base.toml", temp_dir / "config/vision_base.toml");
+    copy_file_from_repo("config/robot/hero.toml", temp_dir / "config/robot/hero.toml");
+    write_file(temp_dir / "config/vision/std.toml", "");
+    write_file(
+        temp_dir / "at_vision.toml", "daedalus = false\n"
+                                     "robot = 'hero'\n"
+                                     "vision = 'std'\n"
+                                     "[foxglove]\n"
+                                     "transport = 'WebSocket'\n"
+                                     "[foxglove.quanta]\n"
+                                     "target_bitrate = 64000\n"
+                                     "preset = 'medium'\n"
+                                     "tune = 'fastdecode'\n"
+                                     "intra_refresh = true\n"
+                                     "lookahead = 8\n");
+
+    {
+        const ScopedCurrentPath cwd(temp_dir);
+        auto result = fcs::load_config("at_vision.toml");
+        ASSERT_TRUE(result.has_value()) << result.error();
+
+        auto config = std::move(*result);
+        EXPECT_EQ(config.foxglove.quanta.target_bitrate, 64000);
+        EXPECT_EQ(config.foxglove.quanta.preset, "medium");
+        EXPECT_EQ(config.foxglove.quanta.tune, "fastdecode");
+        EXPECT_TRUE(config.foxglove.quanta.intra_refresh);
+        EXPECT_EQ(config.foxglove.quanta.lookahead, 8);
     }
 
     std::filesystem::remove_all(temp_dir);

@@ -163,7 +163,7 @@ int main(int argc, char* argv[]) {
     std::fprintf(
         stderr, "[debug] Encoding %d frames: %dx%d @ %dfps -> %dx%d, %d bps target, preset=%s\n",
         num_frames, src_width, src_height, framerate, out_w, out_h, params.target_bitrate,
-        params.preset);
+        params.preset.c_str());
 
     // ---- Allocate frame buffer ----
     const int linesize = src_width * 3;
