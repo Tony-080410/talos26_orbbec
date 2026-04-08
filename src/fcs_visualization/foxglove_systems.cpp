@@ -13,7 +13,7 @@
 
 namespace fcs {
 
-std::shared_ptr<FoxgloveServer> try_create_foxglove_server(FoxgloveServerConfig config) noexcept {
+std::shared_ptr<FoxgloveServer> try_create_foxglove_server(FoxgloveConfig config) {
     auto server = create_foxglove_server(std::move(config));
     if (!server.has_value()) {
         return {};
@@ -21,10 +21,9 @@ std::shared_ptr<FoxgloveServer> try_create_foxglove_server(FoxgloveServerConfig 
     return std::move(*server);
 }
 
-std::shared_ptr<FoxgloveServer>
-    try_create_foxglove_server(uint16_t port, std::string host) noexcept {
+std::shared_ptr<FoxgloveServer> try_create_foxglove_server(uint16_t port, std::string host) {
     return try_create_foxglove_server(
-        FoxgloveServerConfig{
+        FoxgloveConfig{
             .transport = FoxgloveTransport::WebSocket,
             .host      = std::move(host),
             .port      = port,

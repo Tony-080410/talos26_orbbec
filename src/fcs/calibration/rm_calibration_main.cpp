@@ -205,14 +205,7 @@ int main(int argc, char* argv[]) {
     // Initialize Foxglove server
     std::shared_ptr<fcs::FoxgloveServer> foxglove_server;
     if (config->foxglove.enabled) {
-        auto server_result = fcs::create_foxglove_server(
-            fcs::FoxgloveServerConfig{
-                .transport = config->foxglove.transport,
-                .host      = config->foxglove.host,
-                .port      = config->foxglove.port,
-                .mcap_path = config->foxglove.mcap_path,
-                .quanta    = config->foxglove.quanta,
-            });
+        auto server_result = fcs::create_foxglove_server(config->foxglove);
         if (!server_result) {
             SPDLOG_WARN("Foxglove transport failed to initialize: {}", server_result.error());
         } else {

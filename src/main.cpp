@@ -42,14 +42,7 @@ int main() {
 
     // Foxglove visualization setup (separate library dependency)
     if (foxglove_cfg.enabled) {
-        auto server_result = fcs::create_foxglove_server(
-            fcs::FoxgloveServerConfig{
-                .transport = foxglove_cfg.transport,
-                .host      = foxglove_cfg.host,
-                .port      = foxglove_cfg.port,
-                .mcap_path = foxglove_cfg.mcap_path,
-                .quanta    = foxglove_cfg.quanta,
-            });
+        auto server_result = fcs::create_foxglove_server(foxglove_cfg);
         if (server_result) {
             std::shared_ptr<fcs::FoxgloveServer> server = std::move(*server_result);
             fcs::attach_foxglove_sink(*server);

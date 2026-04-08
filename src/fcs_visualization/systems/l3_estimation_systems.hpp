@@ -465,10 +465,10 @@ void register_l3_estimation_systems(App& app) {
                 return;
 
             EkfHeatmapMessage msg;
-            msg.img.timestamp = timestamp_from_ns((*outputs)[0].timestamp_ns);
-            msg.img.frame_id  = "ekf_heatmap";
-            msg.img.format    = "png";
-            msg.img.data      = std::vector<std::byte>(
+            msg.payload.timestamp = timestamp_from_ns((*outputs)[0].timestamp_ns);
+            msg.payload.frame_id  = "ekf_heatmap";
+            msg.payload.format    = "png";
+            msg.payload.data      = std::vector<std::byte>(
                 reinterpret_cast<const std::byte*>(compressed.data()),
                 reinterpret_cast<const std::byte*>(compressed.data() + compressed.size()));
             (*server)->enqueue_message(std::move(msg));

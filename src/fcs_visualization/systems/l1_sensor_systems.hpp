@@ -112,10 +112,10 @@ inline void publish_quanta_video(
             take_timestamp_for_pts(state, packet->pts, timestamp_ns);
 
         VideoMessage msg;
-        msg.video.timestamp = timestamp_from_ns(packet_timestamp_ns);
-        msg.video.frame_id  = "camera_optical_frame";
-        msg.video.format    = "h265";
-        msg.video.data      = std::vector<std::byte>(
+        msg.payload.timestamp = timestamp_from_ns(packet_timestamp_ns);
+        msg.payload.frame_id  = "camera_optical_frame";
+        msg.payload.format    = "h265";
+        msg.payload.data      = std::vector<std::byte>(
             reinterpret_cast<const std::byte*>(packet->data.get()),
             reinterpret_cast<const std::byte*>(packet->data.get() + packet->size));
 
@@ -132,10 +132,10 @@ inline void publish_jpeg_image(
     }
 
     ImageMessage msg;
-    msg.img.timestamp = timestamp_from_ns(timestamp_ns);
-    msg.img.frame_id  = "camera_optical_frame";
-    msg.img.format    = "jpeg";
-    msg.img.data      = std::vector<std::byte>(
+    msg.payload.timestamp = timestamp_from_ns(timestamp_ns);
+    msg.payload.frame_id  = "camera_optical_frame";
+    msg.payload.format    = "jpeg";
+    msg.payload.data      = std::vector<std::byte>(
         reinterpret_cast<const std::byte*>(compressed.data()),
         reinterpret_cast<const std::byte*>(compressed.data() + compressed.size()));
 

@@ -160,7 +160,7 @@ void register_debug_systems(App& app, talos::Scheduler* scheduler_ptr = nullptr)
 
                 // Send to foxglove
                 PerfStatsMessage msg;
-                msg.data = json_to_bytes(json_str);
+                msg.payload = json_to_bytes(json_str);
                 server_ptr->enqueue_message(std::move(msg));
             });
     }

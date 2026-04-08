@@ -56,7 +56,7 @@ protected:
             log.line = static_cast<uint32_t>(msg.source.line);
 
         LogMessage wrapper;
-        wrapper.log_msg = std::move(log);
+        wrapper.payload = std::move(log);
         server_.enqueue_message(FoxgloveMessage{std::move(wrapper)});
     }
 

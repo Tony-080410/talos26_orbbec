@@ -45,11 +45,11 @@ void register_rune_systems(App& app) {
                 if (bytes.empty()) {
                     return;
                 }
-                auto msg          = builder();
-                msg.img.timestamp = timestamp_from_ns(dbg->timestamp_ns);
-                msg.img.frame_id  = "camera_optical_frame";
-                msg.img.format    = "jpeg";
-                msg.img.data      = std::vector<std::byte>(
+                auto msg              = builder();
+                msg.payload.timestamp = timestamp_from_ns(dbg->timestamp_ns);
+                msg.payload.frame_id  = "camera_optical_frame";
+                msg.payload.format    = "jpeg";
+                msg.payload.data      = std::vector<std::byte>(
                     reinterpret_cast<const std::byte*>(bytes.data()),
                     reinterpret_cast<const std::byte*>(bytes.data() + bytes.size()));
                 (*server)->enqueue_message(std::move(msg));
@@ -109,7 +109,7 @@ void register_rune_systems(App& app) {
                 cfg->arrow_threshold, cfg->target_threshold, cfg->rcenter_threshold);
 
             RuneDebugMessage msg;
-            msg.data = json_to_bytes(fmt::to_string(buf));
+            msg.payload = json_to_bytes(fmt::to_string(buf));
             (*server)->enqueue_message(std::move(msg));
         });
 

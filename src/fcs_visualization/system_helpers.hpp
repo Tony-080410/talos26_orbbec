@@ -26,7 +26,7 @@ template <typename MessageType>
 inline void publish_json_message(
     const std::shared_ptr<FoxgloveServer>& server, const nlohmann::json& json_obj) noexcept {
     MessageType msg;
-    msg.data = json_to_bytes(json_obj.dump());
+    msg.payload = json_to_bytes(json_obj.dump());
     server->enqueue_message(std::move(msg));
 }
 

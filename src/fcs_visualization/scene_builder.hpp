@@ -890,7 +890,7 @@ inline void publish_scene_if_nonempty(
     std::vector<foxglove::schemas::SceneEntity> entities) noexcept {
     if (!entities.empty()) {
         SceneMessageType msg;
-        msg.scene.entities = std::move(entities);
+        msg.payload.entities = std::move(entities);
         server->enqueue_message(std::move(msg));
     }
 }
@@ -901,7 +901,7 @@ inline void publish_scene(
     std::vector<foxglove::schemas::SceneEntity> entities, uint64_t timestamp_ns) noexcept {
     if (!entities.empty()) {
         SceneMessage msg;
-        msg.scene.entities = std::move(entities);
+        msg.payload.entities = std::move(entities);
         server->enqueue_message(std::move(msg));
     }
 }

@@ -1,21 +1,16 @@
 #pragma once
 
-#include "foxglove_config.hpp"
 #include "foxglove_types.hpp"
 
 #include "foxglove_export.hpp"
 #include "frame.hpp"
 
-#include <array>
 #include <atomic>
-#include <cassert>
 #include <expected>
 #include <filesystem>
 #include <memory>
-#include <optional>
 #include <string>
 #include <thread>
-#include <variant>
 
 #include <fmt/format.h>
 #include <spdlog/spdlog.h>
@@ -28,207 +23,98 @@
 
 namespace fcs {
 
-#define FOXGLOVE_SCENE_CHANNEL(MemberName) \
-    std::optional<foxglove::schemas::SceneUpdateChannel> MemberName;
-#define FOXGLOVE_IMAGE_CHANNEL(MemberName) \
-    std::optional<foxglove::schemas::CompressedImageChannel> MemberName;
-#define FOXGLOVE_VIDEO_CHANNEL(MemberName) \
-    std::optional<foxglove::schemas::CompressedVideoChannel> MemberName;
-#define FOXGLOVE_JSON_CHANNEL(MemberName) std::optional<foxglove::RawChannel> MemberName;
-#define FOXGLOVE_TF_CHANNEL(MemberName) \
-    std::optional<foxglove::schemas::FrameTransformsChannel> MemberName;
-#define FOXGLOVE_CALIB_CHANNEL(MemberName) \
-    std::optional<foxglove::schemas::CameraCalibrationChannel> MemberName;
-#define FOXGLOVE_LOG_CHANNEL(MemberName) std::optional<foxglove::schemas::LogChannel> MemberName;
-
-struct FoxgloveChannels {
-    FOXGLOVE_SCENE_CHANNEL(scene_ch)
-    FOXGLOVE_SCENE_CHANNEL(track_scene_ch)
-    FOXGLOVE_SCENE_CHANNEL(gimbal_scene_ch)
-    FOXGLOVE_SCENE_CHANNEL(association_scene_ch)
-    FOXGLOVE_SCENE_CHANNEL(mpc_prediction_scene_ch)
-    FOXGLOVE_SCENE_CHANNEL(rune_scene_ch)
-
-    FOXGLOVE_IMAGE_CHANNEL(img_ch)
-    FOXGLOVE_VIDEO_CHANNEL(video_ch)
-    FOXGLOVE_IMAGE_CHANNEL(calibration_img_ch)
-    FOXGLOVE_IMAGE_CHANNEL(binary_img_ch)
-    FOXGLOVE_IMAGE_CHANNEL(pattern_img_ch)
-    FOXGLOVE_IMAGE_CHANNEL(rune_arrow_img_ch)
-    FOXGLOVE_IMAGE_CHANNEL(rune_target_img_ch)
-    FOXGLOVE_IMAGE_CHANNEL(rune_center_img_ch)
-
-    FOXGLOVE_JSON_CHANNEL(debug_lights_ch)
-    FOXGLOVE_JSON_CHANNEL(debug_armors_ch)
-    FOXGLOVE_JSON_CHANNEL(measurement_ch)
-    FOXGLOVE_JSON_CHANNEL(target_ch)
-    FOXGLOVE_JSON_CHANNEL(target_selection_trace_ch)
-    FOXGLOVE_JSON_CHANNEL(cmd_gimbal_ch)
-    FOXGLOVE_JSON_CHANNEL(perf_stats_ch)
-    FOXGLOVE_JSON_CHANNEL(mpc_traj_ch)
-    FOXGLOVE_JSON_CHANNEL(rune_debug_ch)
-
-    FOXGLOVE_JSON_CHANNEL(pnp_solver_ch)
-    FOXGLOVE_JSON_CHANNEL(nn_confidence_ch)
-    FOXGLOVE_JSON_CHANNEL(energy_meter_ch)
-
-    FOXGLOVE_IMAGE_CHANNEL(ekf_heatmap_ch)
-
-    FOXGLOVE_TF_CHANNEL(tf_ch)
-    FOXGLOVE_CALIB_CHANNEL(camera_calib_ch)
-    FOXGLOVE_LOG_CHANNEL(log_ch)
-};
-
-#undef FOXGLOVE_SCENE_CHANNEL
-#undef FOXGLOVE_IMAGE_CHANNEL
-#undef FOXGLOVE_VIDEO_CHANNEL
-#undef FOXGLOVE_JSON_CHANNEL
-#undef FOXGLOVE_TF_CHANNEL
-#undef FOXGLOVE_CALIB_CHANNEL
-#undef FOXGLOVE_LOG_CHANNEL
-
 class FoxgloveServer;
 class FoxgloveServerFactory;
 
-struct FoxgloveServerConfig {
-    FoxgloveTransport transport{FoxgloveTransport::WebSocket};
-    std::string host{"0.0.0.0"};
-    uint16_t port{8765};
-    std::string mcap_path{};
-    quanta::EncodeParams quanta{};
-};
-
 namespace detail {
 
-template <typename Msg>
-struct ChannelTraits;
+// ============================================================================
+// Channel Creation Helpers — driven by descriptors
+// ============================================================================
 
-#define FOXGLOVE_JSON_TRAIT(MsgType, ChMember)                                                   \
-    template <>                                                                                  \
-    struct ChannelTraits<MsgType> {                                                              \
-        static auto get(FoxgloveChannels& ch) noexcept -> std::optional<foxglove::RawChannel>* { \
-            return std::addressof(ch.ChMember);                                                  \
-        }                                                                                        \
-    };
-
-FOXGLOVE_JSON_TRAIT(DebugLightsMessage, debug_lights_ch)
-FOXGLOVE_JSON_TRAIT(DebugArmorsMessage, debug_armors_ch)
-FOXGLOVE_JSON_TRAIT(RuneDebugMessage, rune_debug_ch)
-FOXGLOVE_JSON_TRAIT(MeasurementMessage, measurement_ch)
-FOXGLOVE_JSON_TRAIT(TargetMessage, target_ch)
-FOXGLOVE_JSON_TRAIT(TargetSelectionTraceMessage, target_selection_trace_ch)
-FOXGLOVE_JSON_TRAIT(GimbalCmdMessage, cmd_gimbal_ch)
-FOXGLOVE_JSON_TRAIT(PerfStatsMessage, perf_stats_ch)
-FOXGLOVE_JSON_TRAIT(MpcTrajectoryMessage, mpc_traj_ch)
-FOXGLOVE_JSON_TRAIT(PnPSolverMessage, pnp_solver_ch)
-FOXGLOVE_JSON_TRAIT(NNConfidenceMessage, nn_confidence_ch)
-FOXGLOVE_JSON_TRAIT(EnergyMeterMessage, energy_meter_ch)
-#undef FOXGLOVE_JSON_TRAIT
-
-#define FOXGLOVE_SCENE_TRAIT(MsgType, ChMember)                        \
-    template <>                                                        \
-    struct ChannelTraits<MsgType> {                                    \
-        static auto get(FoxgloveChannels& ch) noexcept                 \
-            -> std::optional<foxglove::schemas::SceneUpdateChannel>* { \
-            return std::addressof(ch.ChMember);                        \
-        }                                                              \
-    };
-
-FOXGLOVE_SCENE_TRAIT(SceneMessage, scene_ch)
-FOXGLOVE_SCENE_TRAIT(TrackSceneMessage, track_scene_ch)
-FOXGLOVE_SCENE_TRAIT(GimbalSceneMessage, gimbal_scene_ch)
-FOXGLOVE_SCENE_TRAIT(RuneSceneMessage, rune_scene_ch)
-FOXGLOVE_SCENE_TRAIT(AssociationSceneMessage, association_scene_ch)
-FOXGLOVE_SCENE_TRAIT(MpcPredictionSceneMessage, mpc_prediction_scene_ch)
-#undef FOXGLOVE_SCENE_TRAIT
-
-#define FOXGLOVE_IMAGE_TRAIT(MsgType, ChMember)                            \
-    template <>                                                            \
-    struct ChannelTraits<MsgType> {                                        \
-        static auto get(FoxgloveChannels& ch) noexcept                     \
-            -> std::optional<foxglove::schemas::CompressedImageChannel>* { \
-            return std::addressof(ch.ChMember);                            \
-        }                                                                  \
-    };
-
-FOXGLOVE_IMAGE_TRAIT(ImageMessage, img_ch)
-FOXGLOVE_IMAGE_TRAIT(CalibrationImageMessage, calibration_img_ch)
-FOXGLOVE_IMAGE_TRAIT(BinaryImageMessage, binary_img_ch)
-FOXGLOVE_IMAGE_TRAIT(PatternImageMessage, pattern_img_ch)
-FOXGLOVE_IMAGE_TRAIT(RuneArrowImageMessage, rune_arrow_img_ch)
-FOXGLOVE_IMAGE_TRAIT(RuneTargetImageMessage, rune_target_img_ch)
-FOXGLOVE_IMAGE_TRAIT(RuneCenterImageMessage, rune_center_img_ch)
-FOXGLOVE_IMAGE_TRAIT(EkfHeatmapMessage, ekf_heatmap_ch)
-#undef FOXGLOVE_IMAGE_TRAIT
-
-#define FOXGLOVE_VIDEO_TRAIT(MsgType, ChMember)                            \
-    template <>                                                            \
-    struct ChannelTraits<MsgType> {                                        \
-        static auto get(FoxgloveChannels& ch) noexcept                     \
-            -> std::optional<foxglove::schemas::CompressedVideoChannel>* { \
-            return std::addressof(ch.ChMember);                            \
-        }                                                                  \
-    };
-
-FOXGLOVE_VIDEO_TRAIT(VideoMessage, video_ch)
-#undef FOXGLOVE_VIDEO_TRAIT
-
-#define FOXGLOVE_LOG_TRAIT(MsgType, ChMember)                  \
-    template <>                                                \
-    struct ChannelTraits<MsgType> {                            \
-        static auto get(FoxgloveChannels& ch) noexcept         \
-            -> std::optional<foxglove::schemas::LogChannel>* { \
-            return std::addressof(ch.ChMember);                \
-        }                                                      \
-    };
-
-FOXGLOVE_LOG_TRAIT(LogMessage, log_ch)
-#undef FOXGLOVE_LOG_TRAIT
-
-template <>
-struct ChannelTraits<TfMessage> {
-    static auto get(FoxgloveChannels& ch) noexcept
-        -> std::optional<foxglove::schemas::FrameTransformsChannel>* {
-        return std::addressof(ch.tf_ch);
+template <typename Def>
+[[nodiscard]] inline std::expected<void, std::string> init_typed_channel(
+    std::optional<typename Def::channel_type>& member, const foxglove::Context& context) {
+    auto result = Def::channel_type::create(std::string(Def::topic), context);
+    if (result.has_value()) {
+        member = std::move(*result);
+        return {};
     }
-};
-
-template <typename ChannelType>
-[[nodiscard]] inline std::expected<ChannelType, std::string>
-    try_create_channel(std::string_view topic, const foxglove::Context& context) noexcept {
-    auto result = ChannelType::create(std::string(topic), context);
-    if (result.has_value())
-        return std::move(result.value());
-    return std::unexpected(fmt::format("{}: {}", topic, foxglove::strerror(result.error())));
+    return std::unexpected(fmt::format("{}: {}", Def::topic, foxglove::strerror(result.error())));
 }
 
-[[nodiscard]] inline std::expected<foxglove::RawChannel, std::string> try_create_raw_channel(
-    std::string_view topic, std::string_view encoding, const foxglove::Context& context) noexcept {
-    auto result =
-        foxglove::RawChannel::create(std::string(topic), std::string(encoding), {}, context);
-    if (result.has_value())
-        return std::move(result.value());
-    return std::unexpected(fmt::format("{}: {}", topic, foxglove::strerror(result.error())));
+template <typename Def>
+[[nodiscard]] inline std::expected<void, std::string> init_raw_channel(
+    std::optional<foxglove::RawChannel>& member, const foxglove::Context& context) {
+    auto result = foxglove::RawChannel::create(
+        std::string(Def::topic), std::string(Def::encoding), {}, context);
+    if (result.has_value()) {
+        member = std::move(*result);
+        return {};
+    }
+    return std::unexpected(fmt::format("{}: {}", Def::topic, foxglove::strerror(result.error())));
 }
+
+template <typename Def>
+[[nodiscard]] inline std::expected<void, std::string>
+    init_channel_for(FoxgloveChannels& channels, const foxglove::Context& context) {
+    if constexpr (requires { Def::transport; }) {
+        // Skip channels that don't match the current transport.
+        // Caller must set transport on the descriptor or check separately.
+    }
+    if constexpr (Def::is_raw) {
+        return init_raw_channel<Def>(channels.*(Def::member), context);
+    } else {
+        return init_typed_channel<Def>(channels.*(Def::member), context);
+    }
+}
+
+// Transport-aware initialization: skip if descriptor has a transport constraint
+template <typename Def>
+[[nodiscard]] inline std::expected<void, std::string> init_channel_for(
+    FoxgloveChannels& channels, const foxglove::Context& context,
+    FoxgloveTransport active_transport) {
+    if constexpr (requires { Def::transport; }) {
+        if (Def::transport != active_transport)
+            return {};
+    }
+    return init_channel_for<Def>(channels, context);
+}
+
+// Fold-expression: initialize all channels in a descriptor tuple
+template <typename... Defs>
+[[nodiscard]] inline std::expected<void, std::string> init_all_channels(
+    FoxgloveChannels& channels, const foxglove::Context& context, FoxgloveTransport transport,
+    std::tuple<Defs...>) {
+    std::expected<void, std::string> result;
+    bool ok =
+        ((result = init_channel_for<Defs>(channels, context, transport), result.has_value())
+         && ...);
+    if (!ok)
+        return result;
+    return {};
+}
+
+// ============================================================================
+// Sink Creation
+// ============================================================================
 
 [[nodiscard]] inline std::expected<foxglove::WebSocketServer, std::string>
-    try_create_websocket_sink(
-        const FoxgloveServerConfig& config, const foxglove::Context& context) noexcept {
+    create_websocket_sink(const FoxgloveConfig& config, const foxglove::Context& context) {
     foxglove::WebSocketServerOptions ws;
     ws.context    = context;
     ws.host       = config.host;
     ws.port       = config.port;
     ws.session_id = "talos";
 
-    assert(static_cast<int>(ws.capabilities) == 0);
     auto server = foxglove::WebSocketServer::create(std::move(ws));
     if (server.has_value())
         return std::move(server.value());
     return std::unexpected(fmt::format("WebSocketServer: {}", foxglove::strerror(server.error())));
 }
 
-[[nodiscard]] inline std::expected<foxglove::McapWriter, std::string> try_create_mcap_sink(
-    const FoxgloveServerConfig& config, const foxglove::Context& context) noexcept {
+[[nodiscard]] inline std::expected<foxglove::McapWriter, std::string>
+    create_mcap_sink(const FoxgloveConfig& config, const foxglove::Context& context) {
     if (config.mcap_path.empty()) {
         return std::unexpected("McapWriter: mcap_path must not be empty");
     }
@@ -260,21 +146,53 @@ template <typename ChannelType>
 
 } // namespace detail
 
+// ============================================================================
+// Factory & Free Functions
+// ============================================================================
+
 class FoxgloveServerFactory {
 public:
     [[nodiscard]] static std::expected<std::unique_ptr<FoxgloveServer>, std::string>
-        create(FoxgloveServerConfig config) noexcept;
+        create(FoxgloveConfig config);
 };
 
 [[nodiscard]] inline std::expected<std::unique_ptr<FoxgloveServer>, std::string>
-    create_foxglove_server(FoxgloveServerConfig config) noexcept;
+    create_foxglove_server(FoxgloveConfig config);
 
 [[nodiscard]] inline std::expected<std::unique_ptr<FoxgloveServer>, std::string>
-    create_foxglove_server(uint16_t port = 8765, std::string host = "0.0.0.0") noexcept;
+    create_foxglove_server(uint16_t port, std::string host);
+
+// ============================================================================
+// FoxgloveServer
+// ============================================================================
 
 class FoxgloveServer {
+private:
+    struct ConstructorToken {
+        explicit ConstructorToken() = default;
+    };
+    friend class FoxgloveServerFactory;
+
 public:
-    ~FoxgloveServer() noexcept {
+    // Public constructor requiring a private token — only FoxgloveServerFactory can invoke
+    explicit FoxgloveServer(
+        ConstructorToken, foxglove::Context context, FoxgloveChannels channels,
+        std::optional<foxglove::WebSocketServer> websocket_server,
+        std::optional<foxglove::McapWriter> mcap_writer)
+        : context_(std::move(context))
+        , channels_(std::move(channels))
+        , websocket_server_(std::move(websocket_server))
+        , mcap_writer_(std::move(mcap_writer)) {
+        foxglove::setLogLevel(foxglove::LogLevel::Info);
+        if (channels_.tf_ch) {
+            tf_exporter_.emplace(std::move(*channels_.tf_ch));
+            channels_.tf_ch.reset();
+        }
+        server_initialized_ = true;
+        sender_thread_      = std::thread(&FoxgloveServer::message_sender_thread, this);
+    }
+
+    ~FoxgloveServer() {
         bool expected = false;
         if (!shutdown_done_.compare_exchange_strong(expected, true, std::memory_order_acq_rel))
             return;
@@ -285,20 +203,22 @@ public:
         if (sender_thread_.joinable())
             sender_thread_.join();
 
-        if (mcap_writer_) {
-            const auto result = mcap_writer_->close();
-            if (result != foxglove::FoxgloveError::Ok) {
-                SPDLOG_WARN("Foxglove MCAP close failed: {}", foxglove::strerror(result));
-            }
+        // Drain remaining messages before teardown
+        FoxgloveMessage msg;
+        while (message_queue_.try_pop(msg)) {
+            dispatch_message(msg);
         }
 
-        // Intentionally leak websocket server for fast foxglove startup
-        // if (websocket_server_) {
-        //     const auto result = websocket_server_->stop();
-        //     if (result != foxglove::FoxgloveError::Ok) {
-        //         SPDLOG_WARN("Foxglove WebSocket stop failed: {}", foxglove::strerror(result));
-        //     }
-        // }
+        if (websocket_server_) {
+            if (auto r = websocket_server_->stop(); r != foxglove::FoxgloveError::Ok) {
+                SPDLOG_WARN("Foxglove WebSocket stop failed: {}", foxglove::strerror(r));
+            }
+        }
+        if (mcap_writer_) {
+            if (auto r = mcap_writer_->close(); r != foxglove::FoxgloveError::Ok) {
+                SPDLOG_WARN("Foxglove MCAP close failed: {}", foxglove::strerror(r));
+            }
+        }
     }
 
     FoxgloveServer(const FoxgloveServer&)            = delete;
@@ -314,7 +234,7 @@ public:
 
     void publish_camera_calibration(
         uint32_t width, uint32_t height, const std::array<double, 9>& camera_matrix,
-        const std::vector<double>& distortion, uint64_t timestamp_ns = 0) noexcept {
+        const std::vector<double>& distortion, uint64_t timestamp_ns = 0) {
         if (!channels_.camera_calib_ch)
             return;
 
@@ -350,53 +270,14 @@ public:
     }
 
 private:
-    friend class FoxgloveServerFactory;
-
-    explicit FoxgloveServer(
-        foxglove::Context context, FoxgloveChannels channels,
-        std::optional<foxglove::WebSocketServer> websocket_server,
-        std::optional<foxglove::McapWriter> mcap_writer) noexcept
-        : context_(std::move(context))
-        , channels_(std::move(channels))
-        , websocket_server_(std::move(websocket_server))
-        , mcap_writer_(std::move(mcap_writer)) {
-        foxglove::setLogLevel(foxglove::LogLevel::Info);
-        if (channels_.tf_ch) {
-            tf_exporter_.emplace(std::move(*channels_.tf_ch));
-            channels_.tf_ch.reset();
-        }
-        server_initialized_ = true;
-        sender_thread_      = std::thread(&FoxgloveServer::message_sender_thread, this);
-    }
-
-    template <typename Msg>
-    void dispatch_one(const Msg& m) noexcept {
-        using Traits = detail::ChannelTraits<Msg>;
-        dispatch_to_channel(m, *Traits::get(channels_));
-    }
-
-    template <typename Msg, typename Ch>
-    void dispatch_to_channel(const Msg& m, std::optional<Ch>& ch) noexcept {
-        if (!ch)
+    // Descriptor-driven dispatch — no ChannelTraits needed
+    template <typename Def>
+    void dispatch_one(const FoxgloveMsg<Def>& m) noexcept {
+        auto& opt_ch = channels_.*(Def::member);
+        if (!opt_ch)
             return;
-
-        if constexpr (requires { m.data; }) {
-            ch->log(reinterpret_cast<const std::byte*>(m.data.data()), m.data.size());
-        } else if constexpr (requires { m.video; }) {
-            ch->log(m.video);
-        } else if constexpr (requires { m.scene; }) {
-            ch->log(m.scene);
-        } else if constexpr (requires { m.img; }) {
-            ch->log(m.img);
-        } else if constexpr (requires { m.log_msg; }) {
-            ch->log(m.log_msg);
-        }
-    }
-
-    static void dispatch_to_channel(
-        const TfMessage& m, std::optional<foxglove::schemas::FrameTransformsChannel>& ch) noexcept {
-        if (ch)
-            ch->log(m.tf);
+        using Payload = typename Def::payload_type;
+        detail::PayloadLogger<Payload>::log(*opt_ch, m.payload);
     }
 
     void dispatch_message(const FoxgloveMessage& msg) noexcept {
@@ -432,59 +313,12 @@ private:
     std::thread sender_thread_;
 };
 
-#define TRY_CREATE_SCENE_CHANNEL(ChName, Topic)                                                \
-    do {                                                                                       \
-        auto ch =                                                                              \
-            detail::try_create_channel<foxglove::schemas::SceneUpdateChannel>(Topic, context); \
-        if (!ch)                                                                               \
-            return std::unexpected(ch.error());                                                \
-        channels.ChName = std::move(*ch);                                                      \
-    } while (0)
-
-#define TRY_CREATE_IMAGE_CHANNEL(ChName, Topic)                                                    \
-    do {                                                                                           \
-        auto ch =                                                                                  \
-            detail::try_create_channel<foxglove::schemas::CompressedImageChannel>(Topic, context); \
-        if (!ch)                                                                                   \
-            return std::unexpected(ch.error());                                                    \
-        channels.ChName = std::move(*ch);                                                          \
-    } while (0)
-
-#define TRY_CREATE_VIDEO_CHANNEL(ChName, Topic)                                                    \
-    do {                                                                                           \
-        auto ch =                                                                                  \
-            detail::try_create_channel<foxglove::schemas::CompressedVideoChannel>(Topic, context); \
-        if (!ch)                                                                                   \
-            return std::unexpected(ch.error());                                                    \
-        channels.ChName = std::move(*ch);                                                          \
-    } while (0)
-
-#define TRY_CREATE_JSON_CHANNEL(ChName, Topic)                            \
-    do {                                                                  \
-        auto ch = detail::try_create_raw_channel(Topic, "json", context); \
-        if (!ch)                                                          \
-            return std::unexpected(ch.error());                           \
-        channels.ChName = std::move(*ch);                                 \
-    } while (0)
-
-#define TRY_CREATE_SPECIAL_CHANNEL(ChName, Topic, ChType)             \
-    do {                                                              \
-        auto ch = detail::try_create_channel<ChType>(Topic, context); \
-        if (!ch)                                                      \
-            return std::unexpected(ch.error());                       \
-        channels.ChName = std::move(*ch);                             \
-    } while (0)
-
-#define TRY_CREATE_LOG_CHANNEL(ChName, Topic)                                                \
-    do {                                                                                     \
-        auto ch = detail::try_create_channel<foxglove::schemas::LogChannel>(Topic, context); \
-        if (!ch)                                                                             \
-            return std::unexpected(ch.error());                                              \
-        channels.ChName = std::move(*ch);                                                    \
-    } while (0)
+// ============================================================================
+// Factory Implementation — descriptor-driven
+// ============================================================================
 
 [[nodiscard]] inline std::expected<std::unique_ptr<FoxgloveServer>, std::string>
-    FoxgloveServerFactory::create(FoxgloveServerConfig config) noexcept {
+    FoxgloveServerFactory::create(FoxgloveConfig config) {
     foxglove::Context context = foxglove::Context::create();
 
     std::optional<foxglove::WebSocketServer> websocket_server;
@@ -492,7 +326,7 @@ private:
 
     switch (config.transport) {
     case FoxgloveTransport::WebSocket: {
-        auto server = detail::try_create_websocket_sink(config, context);
+        auto server = detail::create_websocket_sink(config, context);
         if (!server)
             return std::unexpected(server.error());
         websocket_server = std::move(*server);
@@ -500,7 +334,7 @@ private:
         break;
     }
     case FoxgloveTransport::Mcap: {
-        auto writer = detail::try_create_mcap_sink(config, context);
+        auto writer = detail::create_mcap_sink(config, context);
         if (!writer)
             return std::unexpected(writer.error());
         mcap_writer = std::move(*writer);
@@ -509,68 +343,27 @@ private:
     }
     }
 
+    // Initialize all channels from the descriptor registry
     FoxgloveChannels channels;
-
-    TRY_CREATE_SCENE_CHANNEL(scene_ch, "/scene");
-    TRY_CREATE_SCENE_CHANNEL(track_scene_ch, "/track/scene");
-    TRY_CREATE_SCENE_CHANNEL(gimbal_scene_ch, "/solver/scene");
-    TRY_CREATE_SCENE_CHANNEL(association_scene_ch, "/debug/association_scene");
-    TRY_CREATE_SCENE_CHANNEL(mpc_prediction_scene_ch, "/debug/mpc_prediction_scene");
-    TRY_CREATE_SCENE_CHANNEL(rune_scene_ch, "/rune/scene");
-
-    if (config.transport == FoxgloveTransport::Mcap) {
-        TRY_CREATE_VIDEO_CHANNEL(video_ch, "/image");
-    } else {
-        TRY_CREATE_IMAGE_CHANNEL(img_ch, "/image");
+    if (auto r = detail::init_all_channels(channels, context, config.transport, ChannelRegistry{});
+        !r) {
+        return std::unexpected(std::move(r.error()));
     }
-    TRY_CREATE_IMAGE_CHANNEL(calibration_img_ch, "/calibration/image");
-    TRY_CREATE_IMAGE_CHANNEL(binary_img_ch, "/debug/binary_img");
-    TRY_CREATE_IMAGE_CHANNEL(pattern_img_ch, "/debug/number_img");
-    TRY_CREATE_IMAGE_CHANNEL(rune_arrow_img_ch, "/rune/arrow_img");
-    TRY_CREATE_IMAGE_CHANNEL(rune_target_img_ch, "/rune/target_img");
-    TRY_CREATE_IMAGE_CHANNEL(rune_center_img_ch, "/rune/center_img");
-    TRY_CREATE_IMAGE_CHANNEL(ekf_heatmap_ch, "/debug/ekf_heatmap");
 
-    TRY_CREATE_JSON_CHANNEL(debug_lights_ch, "/debug/lights");
-    TRY_CREATE_JSON_CHANNEL(debug_armors_ch, "/debug/armors");
-    TRY_CREATE_JSON_CHANNEL(measurement_ch, "/solver/measurement");
-    TRY_CREATE_JSON_CHANNEL(target_ch, "/solver/target");
-    TRY_CREATE_JSON_CHANNEL(target_selection_trace_ch, "/solver/target_selection");
-    TRY_CREATE_JSON_CHANNEL(cmd_gimbal_ch, "/solver/cmd_gimbal");
-    TRY_CREATE_JSON_CHANNEL(perf_stats_ch, "/perf_stats");
-    TRY_CREATE_JSON_CHANNEL(mpc_traj_ch, "/mpc/trajectory");
-    TRY_CREATE_JSON_CHANNEL(rune_debug_ch, "/rune/debug");
-
-    TRY_CREATE_JSON_CHANNEL(pnp_solver_ch, "/debug/pnp_solver");
-    TRY_CREATE_JSON_CHANNEL(nn_confidence_ch, "/debug/nn_confidence");
-    TRY_CREATE_JSON_CHANNEL(energy_meter_ch, "/energy_meter/state");
-
-    TRY_CREATE_SPECIAL_CHANNEL(tf_ch, "/tf", foxglove::schemas::FrameTransformsChannel);
-    TRY_CREATE_SPECIAL_CHANNEL(
-        camera_calib_ch, "/camera_info", foxglove::schemas::CameraCalibrationChannel);
-    TRY_CREATE_LOG_CHANNEL(log_ch, "/log");
-
-    return std::unique_ptr<FoxgloveServer>(new FoxgloveServer(
-        std::move(context), std::move(channels), std::move(websocket_server),
-        std::move(mcap_writer)));
+    return std::make_unique<FoxgloveServer>(
+        FoxgloveServer::ConstructorToken{}, std::move(context), std::move(channels),
+        std::move(websocket_server), std::move(mcap_writer));
 }
 
-#undef TRY_CREATE_SCENE_CHANNEL
-#undef TRY_CREATE_IMAGE_CHANNEL
-#undef TRY_CREATE_VIDEO_CHANNEL
-#undef TRY_CREATE_JSON_CHANNEL
-#undef TRY_CREATE_SPECIAL_CHANNEL
-#undef TRY_CREATE_LOG_CHANNEL
-
 [[nodiscard]] inline std::expected<std::unique_ptr<FoxgloveServer>, std::string>
-    create_foxglove_server(FoxgloveServerConfig config) noexcept {
+    create_foxglove_server(FoxgloveConfig config) {
     return FoxgloveServerFactory::create(std::move(config));
 }
 
 [[nodiscard]] inline std::expected<std::unique_ptr<FoxgloveServer>, std::string>
-    create_foxglove_server(uint16_t port, std::string host) noexcept {
+    create_foxglove_server(uint16_t port, std::string host) {
     return create_foxglove_server(
-        FoxgloveServerConfig{
+        FoxgloveConfig{
             .transport = FoxgloveTransport::WebSocket,
             .host      = std::move(host),
             .port      = port,
