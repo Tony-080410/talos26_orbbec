@@ -5,6 +5,7 @@
 #include "core/math/normalize.hpp"
 
 #include <Eigen/Dense>
+#include <spdlog/spdlog.h>
 
 #include <algorithm>
 #include <cmath>
@@ -13,7 +14,7 @@
 // =============================================================================
 // Optimized MPC trajectory optimizer for ARM Cortex-A55.
 //
-// Uses SmallMpcSolver (float, fixed-size Eigen) instead of vendored TinyMPC
+// Uses DualSmallMpcSolver (float, fixed-size Eigen) instead of vendored TinyMPC
 // (double, dynamic Eigen). This eliminates:
 //   1. Software-emulated double-precision FP (~20x overhead on A55)
 //   2. Dynamic matrix allocation overhead per ADMM iteration
@@ -29,6 +30,23 @@ namespace {
 using fcs::core::math::normalize_angle;
 
 using ReferenceTrajectory = core::trajectory::ReferenceTrajectory;
+
+template <typename Solver>
+struct AxisSolverView {
+    const Solver* solver{nullptr};
+    int axis{0};
+    int horizon{0};
+
+    [[nodiscard]] float state(int dim, int k) const noexcept {
+        const int clamped_k = std::clamp(k, 0, horizon - 1);
+        return solver->state(axis, dim, clamped_k);
+    }
+
+    [[nodiscard]] float input(int k) const noexcept {
+        const int clamped_k = std::clamp(k, 0, horizon - 2);
+        return solver->input(axis, clamped_k);
+    }
+};
 
 struct FireGateStatus {
     int delay_steps{0};
@@ -50,11 +68,12 @@ struct FireGateStatus {
     };
 }
 
+template <typename YawSolver, typename PitchSolver>
 [[nodiscard]] FireGateStatus compute_fire_gate(
     const L4::FireDecisionConfig& fire_decision, const L4::AimerConfig& aimer_config,
     const L4::GimbalPlan& plan, double current_yaw, double current_pitch, double mpc_dt,
-    int center_index, const ReferenceTrajectory& trajectory, const SmallMpcSolver& yaw_solver,
-    const SmallMpcSolver& pitch_solver) noexcept {
+    int center_index, const ReferenceTrajectory& trajectory, const YawSolver& yaw_solver,
+    const PitchSolver& pitch_solver) noexcept {
     FireGateStatus status;
     status.delay_gate_threshold = fire_decision.delay_gate_error_rad;
 
@@ -104,9 +123,10 @@ struct FireGateStatus {
     return status;
 }
 
+template <typename YawSolver, typename PitchSolver>
 [[nodiscard]] WeaponVisualizationDebugData build_debug_data(
-    int horizon_back, const ReferenceTrajectory& trajectory, const SmallMpcSolver& yaw_solver,
-    const SmallMpcSolver& pitch_solver, const FireGateStatus& fire_gate) {
+    int horizon_back, const ReferenceTrajectory& trajectory, const YawSolver& yaw_solver,
+    const PitchSolver& pitch_solver, const FireGateStatus& fire_gate) {
     WeaponVisualizationDebugData debug;
     const int horizon               = static_cast<int>(trajectory.distances.size());
     debug.center_index              = horizon_back;
@@ -233,32 +253,41 @@ std::expected<WeaponCommand, std::string> TinyMpcTrajectoryOptimizer::optimize(
     const double current_pitch = current_gimbal.pitch;
 
     // --- seed yaw solver ---
-    yaw_solver_.set_x0(reference.state(0, 0), reference.state(1, 0));
-    const int N = reference.state.cols();
-    for (int i = 0; i < N; ++i) {
-        yaw_solver_.set_ref_col(
-            i, static_cast<float>(reference.state(0, i)),
-            static_cast<float>(reference.state(1, i)));
-    }
-    const bool yaw_ok = yaw_solver_.solve();
-    if (!yaw_ok) {
-        return std::unexpected("yaw MPC did not converge");
+    const int solver_horizon    = batched_solver_.horizon();
+    const int reference_horizon = reference.horizon();
+    const int effective_horizon = std::min(reference_horizon, solver_horizon);
+    if (effective_horizon < 2) {
+        return std::unexpected("reference trajectory horizon is too short for MPC");
     }
 
-    // --- seed pitch solver ---
-    pitch_solver_.set_x0(reference.state(2, 0), reference.state(3, 0));
+    batched_solver_.set_x0(
+        reference.state(0, 0), reference.state(1, 0), reference.state(2, 0), reference.state(3, 0));
+    const int N = std::min(static_cast<int>(reference.state.cols()), solver_horizon);
     for (int i = 0; i < N; ++i) {
-        pitch_solver_.set_ref_col(
-            i, static_cast<float>(reference.state(2, i)),
-            static_cast<float>(reference.state(3, i)));
+        batched_solver_.set_ref_col(
+            i, static_cast<float>(reference.state(0, i)), static_cast<float>(reference.state(1, i)),
+            static_cast<float>(reference.state(2, i)), static_cast<float>(reference.state(3, i)));
     }
-    const bool pitch_ok = pitch_solver_.solve();
-    if (!pitch_ok) {
-        return std::unexpected("pitch MPC did not converge");
+    if (N < solver_horizon) {
+        const int last_ref = N - 1;
+        for (int i = N; i < solver_horizon; ++i) {
+            batched_solver_.set_ref_col(
+                i, static_cast<float>(reference.state(0, last_ref)),
+                static_cast<float>(reference.state(1, last_ref)),
+                static_cast<float>(reference.state(2, last_ref)),
+                static_cast<float>(reference.state(3, last_ref)));
+        }
+    }
+    if (!batched_solver_.solve()) {
+        return std::unexpected("batched yaw/pitch MPC did not converge");
     }
 
-    const int center_index  = trajectory_cfg_.horizon_back;
-    const int control_index = std::min(center_index, reference.horizon() - 2);
+    const AxisSolverView yaw_solver{&batched_solver_, DualSmallMpcSolver::kYawAxis, solver_horizon};
+    const AxisSolverView pitch_solver{
+        &batched_solver_, DualSmallMpcSolver::kPitchAxis, solver_horizon};
+
+    const int center_index  = std::clamp(trajectory_cfg_.horizon_back, 0, effective_horizon - 1);
+    const int control_index = std::clamp(center_index, 0, effective_horizon - 2);
 
     WeaponCommand cmd;
     cmd.timestamp_ns      = command_timestamp_ns;
@@ -269,23 +298,23 @@ std::expected<WeaponCommand, std::string> TinyMpcTrajectoryOptimizer::optimize(
     cmd.ref_yaw   = normalize_angle(reference.state(0, center_index) + reference.yaw_origin);
     cmd.ref_pitch = reference.state(2, center_index);
     cmd.yaw       = normalize_angle(
-        static_cast<double>(yaw_solver_.state(0, center_index)) + reference.yaw_origin);
+        static_cast<double>(yaw_solver.state(0, center_index)) + reference.yaw_origin);
     cmd.pitch = std::clamp(
-        static_cast<double>(pitch_solver_.state(0, center_index)), config_.pitch_min,
+        static_cast<double>(pitch_solver.state(0, center_index)), config_.pitch_min,
         config_.pitch_max);
-    cmd.yaw_vel                    = static_cast<double>(yaw_solver_.state(1, center_index));
-    cmd.pitch_vel                  = static_cast<double>(pitch_solver_.state(1, center_index));
-    cmd.yaw_accel                  = static_cast<double>(yaw_solver_.input(control_index));
-    cmd.pitch_accel                = static_cast<double>(pitch_solver_.input(control_index));
+    cmd.yaw_vel                    = static_cast<double>(yaw_solver.state(1, center_index));
+    cmd.pitch_vel                  = static_cast<double>(pitch_solver.state(1, center_index));
+    cmd.yaw_accel                  = static_cast<double>(yaw_solver.input(control_index));
+    cmd.pitch_accel                = static_cast<double>(pitch_solver.input(control_index));
     cmd.distance                   = reference.distances[center_index];
     cmd.tof                        = reference.time_of_flights[center_index];
     const FireGateStatus fire_gate = compute_fire_gate(
         fire_decision, aimer_config, plan, current_yaw, current_pitch, trajectory_cfg_.dt,
-        center_index, reference, yaw_solver_, pitch_solver_);
+        center_index, reference, yaw_solver, pitch_solver);
     cmd.fire = plan.fire_advice && fire_gate.final_fire_gate_ok;
     if (config_.enable_debug) {
-        cmd.viz_debug = build_debug_data(
-            trajectory_cfg_.horizon_back, reference, yaw_solver_, pitch_solver_, fire_gate);
+        cmd.viz_debug =
+            build_debug_data(center_index, reference, yaw_solver, pitch_solver, fire_gate);
     }
 
     const auto finite = [](double value) noexcept { return std::isfinite(value); };
@@ -299,49 +328,41 @@ std::expected<WeaponCommand, std::string> TinyMpcTrajectoryOptimizer::optimize(
 }
 
 void TinyMpcTrajectoryOptimizer::initialize_solvers() noexcept {
-    const int horizon = trajectory_cfg_.horizon_ahead + trajectory_cfg_.horizon_back + 1;
-    const float dt    = static_cast<float>(trajectory_cfg_.dt);
-    const float rho   = static_cast<float>(config_.mpc.rho);
+    const int requested_horizon = trajectory_cfg_.horizon_ahead + trajectory_cfg_.horizon_back + 1;
+    const int horizon           = std::min(requested_horizon, DualSmallMpcSolver::kMaxHorizon);
+    const float dt              = static_cast<float>(trajectory_cfg_.dt);
+    const float rho             = static_cast<float>(config_.mpc.rho);
 
-    auto make_axis = [&](const MpcAxisConfig& axis,
-                         bool pitch) -> std::expected<SmallMpcSolver, std::string> {
-        SmallMpcSolver::AxisConfig cfg;
-        cfg.q_pos              = static_cast<float>(axis.q_pos);
-        cfg.q_vel              = static_cast<float>(axis.q_vel);
-        cfg.r                  = static_cast<float>(axis.r);
-        cfg.max_acc            = static_cast<float>(axis.max_acc);
-        cfg.enable_state_bound = pitch;
+    if (requested_horizon > horizon) {
+        SPDLOG_WARN(
+            "L5 MPC horizon {} exceeds fixed-capacity limit {}; clipping to {}. "
+            "Increase the solver limit or reduce L4 horizon if this is unintended.",
+            requested_horizon, DualSmallMpcSolver::kMaxHorizon, horizon);
+    }
 
-        if (pitch) {
-            cfg.state_min = static_cast<float>(config_.pitch_min);
-            cfg.state_max = static_cast<float>(config_.pitch_max);
-        }
+    DualSmallMpcSolver::AxisConfig yaw_cfg;
+    yaw_cfg.q_pos   = static_cast<float>(config_.mpc.yaw.q_pos);
+    yaw_cfg.q_vel   = static_cast<float>(config_.mpc.yaw.q_vel);
+    yaw_cfg.r       = static_cast<float>(config_.mpc.yaw.r);
+    yaw_cfg.max_acc = static_cast<float>(config_.mpc.yaw.max_acc);
 
-        auto solver = SmallMpcSolver::create(dt, horizon, rho, cfg);
-        if (!solver) {
-            return std::unexpected("Failed to create solver: " + solver.error());
-        }
+    DualSmallMpcSolver::AxisConfig pitch_cfg;
+    pitch_cfg.q_pos              = static_cast<float>(config_.mpc.pitch.q_pos);
+    pitch_cfg.q_vel              = static_cast<float>(config_.mpc.pitch.q_vel);
+    pitch_cfg.r                  = static_cast<float>(config_.mpc.pitch.r);
+    pitch_cfg.max_acc            = static_cast<float>(config_.mpc.pitch.max_acc);
+    pitch_cfg.enable_state_bound = true;
+    pitch_cfg.state_min          = static_cast<float>(config_.pitch_min);
+    pitch_cfg.state_max          = static_cast<float>(config_.pitch_max);
 
-        solver->set_settings(static_cast<float>(config_.mpc.abs_tol), config_.mpc.max_iterations);
-        return solver;
-    };
-
-    auto yaw_result = make_axis(config_.mpc.yaw, false);
-    if (!yaw_result) {
+    auto solver = DualSmallMpcSolver::create(dt, horizon, rho, yaw_cfg, pitch_cfg);
+    if (!solver) {
         ready_ = false;
         return;
     }
-    yaw_solver_ = std::move(*yaw_result);
-
-    auto pitch_result = make_axis(config_.mpc.pitch, true);
-    if (!pitch_result) {
-        yaw_solver_ = SmallMpcSolver{};
-        ready_      = false;
-        return;
-    }
-    pitch_solver_ = std::move(*pitch_result);
-
-    ready_ = true;
+    solver->set_settings(static_cast<float>(config_.mpc.abs_tol), config_.mpc.max_iterations);
+    batched_solver_ = std::move(*solver);
+    ready_          = true;
 }
 
 } // namespace fcs::L5

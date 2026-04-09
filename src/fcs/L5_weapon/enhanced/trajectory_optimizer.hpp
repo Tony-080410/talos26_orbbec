@@ -6,8 +6,8 @@
 #include "L5_weapon/config.hpp"
 #include "L5_weapon/fire_control.hpp"
 #include "core/trajectory/reference_trajectory.hpp"
+#include "dual_small_mpc_solver.hpp"
 #include "frame.hpp"
-#include "small_mpc_solver.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -60,7 +60,7 @@ template <typename ReferenceFn, typename OptimizedFn>
 /// TinyMPC-based trajectory optimizer for the L5 weapon layer.
 ///
 /// Consumes a pre-built reference trajectory from L4, solves independent
-/// yaw/pitch MPC problems via SmallMpcSolver, and emits the center-horizon
+/// yaw/pitch MPC problems via DualSmallMpcSolver, and emits the center-horizon
 /// command with an L5 fire gate.
 class TinyMpcTrajectoryOptimizer {
 public:
@@ -87,8 +87,7 @@ public:
 private:
     WeaponControllerConfig config_;
     L4::ReferenceTrajectoryConfig trajectory_cfg_;
-    SmallMpcSolver yaw_solver_;
-    SmallMpcSolver pitch_solver_;
+    DualSmallMpcSolver batched_solver_;
     bool ready_{false};
 
     void initialize_solvers() noexcept;

@@ -323,7 +323,7 @@ target_link_libraries(talos-playground PRIVATE
 )
 
 # ============================================================================
-# MPC Benchmark: TinyMPC (double/dynamic) vs SmallMpcSolver (float/fixed-size)
+# MPC Benchmark: 2x TinyMPC (double/dynamic) vs DualSmallMpcSolver (float/fixed)
 # ============================================================================
 add_library(tinympc_bench STATIC
         3dparty/tinympc/admm.cpp
