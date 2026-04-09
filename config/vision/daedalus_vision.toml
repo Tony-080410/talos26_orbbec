@@ -4,6 +4,7 @@
 # L4 trajectory compensation overrides
 trajectory.type = "Ideal"
 traditional.advanced_binary = true
+traditional.binary_threshold = 95
 
 trajectory.diameter = 0.017
 trajectory.mass = 0.00312
