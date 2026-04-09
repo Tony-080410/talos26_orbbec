@@ -81,7 +81,7 @@ tracking_threshold = 5          # Aligned with at_vision rm_bringup config
 [tracker.robot.model]
 sigma_a_xy = 10.0               # Aligned with at_vision
 sigma_a_z = 2.0                 # Aligned with at_vision (was 1.0)
-sigma_a_yaw = 20.0              # Aligned with at_vision
+sigma_a_yaw = 15.0              # Aligned with at_vision
 sigma_r0 = 1.0
 sigma_r1 = 1.0
 sigma_h = 0.8                   # Aligned with at_vision (was 0.5)
@@ -105,7 +105,7 @@ tracking_threshold = 4
 [tracker.outpost.model]
 sigma_q_xy = 10.0
 sigma_q_z = 2.0
-sigma_a_yaw = 8.0
+sigma_a_yaw = 4.0
 meas_dist_k = 0.43
 yaw_log_k = 0.005
 
