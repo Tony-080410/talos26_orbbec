@@ -51,7 +51,7 @@ struct BufferOps<TransformMatrix<T, From, To>> {
     static Transform identity() { return Transform{}; }
 
     static Transform interpolate(const Transform& a, const Transform& b, fp_t ratio) {
-        return Transform::lerp_se3(a, b, static_cast<T>(ratio));
+        return Transform::lerp(a, b, static_cast<T>(ratio));
     }
 
     static bool is_valid(const Transform& value) { return validate_transform(value).has_value(); }
