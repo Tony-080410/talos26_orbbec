@@ -98,8 +98,8 @@ constexpr foxglove::schemas::Color MPC_REFERENCE = {1.00, 0.70, 0.00, 0.70};
 // Sizes — 3-tier hierarchy (2x ratio between tiers)
 constexpr double SPATIAL_LINK_THICKNESS    = 0.008;
 constexpr double TRAJECTORY_LINE_THICKNESS = 0.008;
-constexpr double SELECTION_SIZE            = 0.12;
-constexpr double PREDICTION_SIZE           = 0.10;
+constexpr double SELECTION_SIZE            = 0.06;
+constexpr double PREDICTION_SIZE           = 0.04;
 constexpr double TRAJECTORY_DOT            = 0.017;
 constexpr double RING_HEIGHT               = 0.005;
 constexpr double RING_SCALE                = 1.6;

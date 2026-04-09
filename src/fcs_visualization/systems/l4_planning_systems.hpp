@@ -62,13 +62,6 @@ struct FutureArmorSnapshot {
     return std::to_string(*plan.planner_seed->tracker_last_armor_id);
 }
 
-[[nodiscard]] inline std::string short_plan_label(const ::fcs::L4::GimbalPlan& plan) {
-    return fmt::format(
-        "{} {}\nSelected {}\nRough {}\n{}", magic_enum::enum_name(plan.source),
-        magic_enum::enum_name(plan.aim_phase), plan.selected_armor_id, plan.rough_selected_armor_id,
-        plan.fire_advice ? "Fire" : "Hold");
-}
-
 [[nodiscard]] inline std::string
     selection_trace_entity_id(const ::fcs::L4::TargetSelectionTraceEntry& entry) {
     return fmt::format(
@@ -200,14 +193,6 @@ inline void append_selection_trace_metadata(
 [[nodiscard]] inline Eigen::Quaterniond armor_orientation(double yaw) {
     return Eigen::AngleAxisd(yaw, Eigen::Vector3d::UnitZ())
          * Eigen::AngleAxisd(tac::Geometry::ARMOR_TILT_ANGLE, Eigen::Vector3d::UnitY());
-}
-
-[[nodiscard]] inline std::string
-    fire_gate_board(const ::fcs::L5::WeaponVisualizationDebugData& dbg) {
-    return fmt::format(
-        "{}\nForward Delay {}\nBackward Delay {}\nPhase {}",
-        dbg.final_fire_gate_ok ? "Fire" : "Hold", dbg.delay_gate_forward_ok ? "Pass" : "Fail",
-        dbg.delay_gate_backward_ok ? "Pass" : "Fail", dbg.phase_gate_ok ? "Pass" : "Fail");
 }
 
 [[nodiscard]] inline std::string
@@ -729,105 +714,106 @@ void register_l4_planning_systems(App& app) {
 
             std::vector<::foxglove::schemas::SceneEntity> entities;
 
-            if (const auto snapshot = l4_detail::future_armor_snapshot(*plan)) {
-                // ── Target center ──────────────────────────────────────────
-                entities.push_back(
-                    viz::EntityBuilder::create<fast_tf::odom>("l4", "target_center")
-                        .timestamp(plan->timestamp_ns)
-                        .position(snapshot->center)
-                        .size(tac::L3::ROBOT_CENTER_SIZE * 0.75)
-                        .color(tac::L4::MPC_PRESENT)
-                        .alpha(0.6)
-                        .sphere()
-                        .text_with_offset(
-                            "Target Center", 0.0, 0.0, tac::L3::LABEL_OFFSET_Z,
-                            tac::Text::SIZE_SMALL)
-                        .build());
+            // if (const auto snapshot = l4_detail::future_armor_snapshot(*plan)) {
+            //     // ── Target center ──────────────────────────────────────────
+            //     entities.push_back(
+            //         viz::EntityBuilder::create<fast_tf::odom>("l4", "target_center")
+            //             .timestamp(plan->timestamp_ns)
+            //             .position(snapshot->center)
+            //             .size(tac::L3::ROBOT_CENTER_SIZE * 0.75)
+            //             .color(tac::L4::MPC_PRESENT)
+            //             .alpha(0.6)
+            //             .sphere()
+            //             .text_with_offset(
+            //                 "Target Center", 0.0, 0.0, tac::L3::LABEL_OFFSET_Z,
+            //                 tac::Text::SIZE_SMALL)
+            //             .build());
 
-                // ── Velocity arrows ────────────────────────────────────────
-                entities.push_back(
-                    viz::patterns::velocity_arrows<fast_tf::odom>(
-                        snapshot->center, snapshot->linear_velocity, snapshot->angular_velocity,
-                        plan->timestamp_ns));
+            //     // ── Velocity arrows ────────────────────────────────────────
+            //     entities.push_back(
+            //         viz::patterns::velocity_arrows<fast_tf::odom>(
+            //             snapshot->center, snapshot->linear_velocity, snapshot->angular_velocity,
+            //             plan->timestamp_ns));
 
-                // ── Future armor plates (clearly visible) ──────────────────
-                std::vector<::foxglove::schemas::Point3> armor_link_points;
-                const auto center_pt = viz::make_point3(snapshot->center);
-                for (int i = 0; i < static_cast<int>(snapshot->armors.size()); ++i) {
-                    const auto& armor_pose          = snapshot->armors[static_cast<size_t>(i)];
-                    const Eigen::Vector3d armor_pos = armor_pose.head<3>();
-                    entities.push_back(
-                        viz::EntityBuilder::create<fast_tf::odom>(
-                            "l4", fmt::format("future_armor_{}", i))
-                            .timestamp(plan->timestamp_ns)
-                            .position(armor_pos)
-                            .orientation(l4_detail::armor_orientation(armor_pose[3]))
-                            .color(tac::L4::FUTURE_ARMOR)
-                            .cube(
-                                tac::Geometry::ARMOR_THICKNESS, tac::Geometry::ARMOR_HEIGHT_SMALL,
-                                tac::Geometry::ARMOR_WIDTH)
-                            .text_with_offset(
-                                std::to_string(i), 0.0, 0.0, tac::L3::LABEL_OFFSET_Z,
-                                tac::Text::SIZE_SMALL)
-                            .metadata("armor_id", std::to_string(i))
-                            .build());
-                    // Collect points for connecting lines
-                    armor_link_points.push_back(center_pt);
-                    armor_link_points.push_back(viz::make_point3(armor_pos));
-                }
+            //     // ── Future armor plates (clearly visible) ──────────────────
+            //     std::vector<::foxglove::schemas::Point3> armor_link_points;
+            //     const auto center_pt = viz::make_point3(snapshot->center);
+            //     for (int i = 0; i < static_cast<int>(snapshot->armors.size()); ++i) {
+            //         const auto& armor_pose          = snapshot->armors[static_cast<size_t>(i)];
+            //         const Eigen::Vector3d armor_pos = armor_pose.head<3>();
+            //         entities.push_back(
+            //             viz::EntityBuilder::create<fast_tf::odom>(
+            //                 "l4", fmt::format("future_armor_{}", i))
+            //                 .timestamp(plan->timestamp_ns)
+            //                 .position(armor_pos)
+            //                 .orientation(l4_detail::armor_orientation(armor_pose[3]))
+            //                 .color(tac::L4::FUTURE_ARMOR)
+            //                 .cube(
+            //                     tac::Geometry::ARMOR_THICKNESS,
+            //                     tac::Geometry::ARMOR_HEIGHT_SMALL, tac::Geometry::ARMOR_WIDTH)
+            //                 .text_with_offset(
+            //                     std::to_string(i), 0.0, 0.0, tac::L3::LABEL_OFFSET_Z,
+            //                     tac::Text::SIZE_SMALL)
+            //                 .metadata("armor_id", std::to_string(i))
+            //                 .build());
+            //         // Collect points for connecting lines
+            //         armor_link_points.push_back(center_pt);
+            //         armor_link_points.push_back(viz::make_point3(armor_pos));
+            //     }
 
-                // ── Target center → armors connecting lines ────────────────
-                if (armor_link_points.size() >= 4) {
-                    entities.push_back(
-                        viz::EntityBuilder::create<fast_tf::odom>("l4", "armor_links")
-                            .timestamp(plan->timestamp_ns)
-                            .line_list(
-                                std::move(armor_link_points), tac::L4::SPATIAL_LINK,
-                                tac::L4::SPATIAL_LINK_THICKNESS)
-                            .build());
-                }
+            //     // ── Target center → armors connecting lines ────────────────
+            //     if (armor_link_points.size() >= 4) {
+            //         entities.push_back(
+            //             viz::EntityBuilder::create<fast_tf::odom>("l4", "armor_links")
+            //                 .timestamp(plan->timestamp_ns)
+            //                 .line_list(
+            //                     std::move(armor_link_points), tac::L4::SPATIAL_LINK,
+            //                     tac::L4::SPATIAL_LINK_THICKNESS)
+            //                 .build());
+            //     }
 
-                // ── Selection overlay (primary visual) ─────────────────────
-                const auto add_overlay =
-                    [&](int armor_id, const std::string& entity_id, const std::string& label,
-                        const ::foxglove::schemas::Color& color, double size_scale) {
-                        if (armor_id < 0 || armor_id >= static_cast<int>(snapshot->armors.size())) {
-                            return;
-                        }
-                        const Eigen::Vector3d armor_pos =
-                            snapshot->armors[static_cast<size_t>(armor_id)].head<3>();
-                        entities.push_back(
-                            viz::EntityBuilder::create<fast_tf::odom>("l4", entity_id)
-                                .timestamp(plan->timestamp_ns)
-                                .position(armor_pos)
-                                .size(tac::L4::SELECTION_SIZE * size_scale)
-                                .color(color)
-                                .sphere()
-                                .text_with_offset(
-                                    label, 0.0, 0.0, tac::L3::LABEL_OFFSET_Z * 1.6,
-                                    tac::Text::SIZE_SMALL)
-                                .metadata("armor_id", std::to_string(armor_id))
-                                .build());
-                    };
+            //     // ── Selection overlay (primary visual) ─────────────────────
+            //     const auto add_overlay =
+            //         [&](int armor_id, const std::string& entity_id, const std::string& label,
+            //             const ::foxglove::schemas::Color& color, double size_scale) {
+            //             if (armor_id < 0 || armor_id >=
+            //             static_cast<int>(snapshot->armors.size())) {
+            //                 return;
+            //             }
+            //             const Eigen::Vector3d armor_pos =
+            //                 snapshot->armors[static_cast<size_t>(armor_id)].head<3>();
+            //             entities.push_back(
+            //                 viz::EntityBuilder::create<fast_tf::odom>("l4", entity_id)
+            //                     .timestamp(plan->timestamp_ns)
+            //                     .position(armor_pos)
+            //                     .size(tac::L4::SELECTION_SIZE * size_scale)
+            //                     .color(color)
+            //                     .sphere()
+            //                     .text_with_offset(
+            //                         label, 0.0, 0.0, tac::L3::LABEL_OFFSET_Z * 1.6,
+            //                         tac::Text::SIZE_SMALL)
+            //                     .metadata("armor_id", std::to_string(armor_id))
+            //                     .build());
+            //         };
 
-                if (plan->selected_armor_id == plan->rough_selected_armor_id) {
-                    add_overlay(
-                        plan->selected_armor_id, "selected_rough_armor",
-                        fmt::format("Selected {}", plan->selected_armor_id),
-                        plan->fire_advice ? tac::L4::GIMBAL_AIM_FIRE : tac::L4::GIMBAL_AIM_HOLD,
-                        1.25);
-                } else {
-                    add_overlay(
-                        plan->rough_selected_armor_id, "rough_armor",
-                        fmt::format("Rough {}", plan->rough_selected_armor_id),
-                        tac::L4::MPC_REFERENCE, 1.0);
-                    add_overlay(
-                        plan->selected_armor_id, "selected_armor",
-                        fmt::format("Selected {}", plan->selected_armor_id),
-                        plan->fire_advice ? tac::L4::GIMBAL_AIM_FIRE : tac::L4::GIMBAL_AIM_HOLD,
-                        1.25);
-                }
-            }
+            //     if (plan->selected_armor_id == plan->rough_selected_armor_id) {
+            //         add_overlay(
+            //             plan->selected_armor_id, "selected_rough_armor",
+            //             fmt::format("Selected {}", plan->selected_armor_id),
+            //             plan->fire_advice ? tac::L4::GIMBAL_AIM_FIRE : tac::L4::GIMBAL_AIM_HOLD,
+            //             1.25);
+            //     } else {
+            //         add_overlay(
+            //             plan->rough_selected_armor_id, "rough_armor",
+            //             fmt::format("Rough {}", plan->rough_selected_armor_id),
+            //             tac::L4::MPC_REFERENCE, 1.0);
+            //         add_overlay(
+            //             plan->selected_armor_id, "selected_armor",
+            //             fmt::format("Selected {}", plan->selected_armor_id),
+            //             plan->fire_advice ? tac::L4::GIMBAL_AIM_FIRE : tac::L4::GIMBAL_AIM_HOLD,
+            //             1.25);
+            //     }
+            // }
 
             // Predicted position marker (at bullet impact time for verification)
             if (plan->predicted_position) {
@@ -843,13 +829,11 @@ void register_l4_planning_systems(App& app) {
 
                 l4_detail::append_plan_metadata(builder, *plan, selected_target);
 
-                builder.color(tac::Text::PRIMARY)
-                    .text_with_offset(
-                        plan->fire_advice ? "● FIRE" : "○ HOLD", 0.0, 0.0,
-                        tac::L3::LABEL_OFFSET_Z + tac::L4::PREDICTION_SIZE, tac::Text::SIZE_SMALL)
-                    .text_with_offset(
-                        l4_detail::short_plan_label(*plan), tac::L4::SELECTION_SIZE * 1.8, 0.0,
-                        tac::L3::LABEL_OFFSET_Z + tac::L4::PREDICTION_SIZE, tac::Text::SIZE_SMALL);
+                // builder.color(tac::Text::PRIMARY)
+                //     .text_with_offset(
+                //         plan->fire_advice ? "● FIRE" : "○ HOLD", 0.0, 0.0,
+                //         tac::L3::LABEL_OFFSET_Z + tac::L4::PREDICTION_SIZE,
+                //         tac::Text::SIZE_SMALL);
 
                 entities.push_back(builder.build());
             }
@@ -1011,36 +995,20 @@ void register_l4_planning_systems(App& app) {
             add_key_marker(
                 "mpc_ref_center", cmd->viz_debug->reference_plan[static_cast<size_t>(center_index)],
                 l4_detail::key_point_label(
-                    "Reference Center",
-                    cmd->viz_debug->reference_plan[static_cast<size_t>(center_index)]),
-                tac::L4::MPC_REFERENCE, tac::L4::SELECTION_SIZE * 1.1);
+                    "Ref", cmd->viz_debug->reference_plan[static_cast<size_t>(center_index)]),
+                tac::L4::MPC_REFERENCE, tac::L4::SELECTION_SIZE);
 
             add_key_marker(
                 "mpc_opt_center", cmd->viz_debug->optimized_plan[static_cast<size_t>(center_index)],
                 l4_detail::key_point_label(
-                    "Optimized Center",
-                    cmd->viz_debug->optimized_plan[static_cast<size_t>(center_index)]),
-                tac::L4::MPC_PRESENT, tac::L4::SELECTION_SIZE * 1.15);
-
-            entities.push_back(
-                viz::EntityBuilder::create<fast_tf::odom>("l4", "mpc_gate_board")
-                    .timestamp(cmd->timestamp_ns)
-                    .position(cmd->viz_debug->optimized_plan[static_cast<size_t>(center_index)]
-                                  .world_position)
-                    .color(tac::Text::PRIMARY)
-                    .text_with_offset(
-                        l4_detail::fire_gate_board(*cmd->viz_debug), tac::L4::SELECTION_SIZE * 1.8,
-                        0.0, tac::L3::LABEL_OFFSET_Z, tac::Text::SIZE_SMALL)
-                    .build());
+                    "Opt", cmd->viz_debug->optimized_plan[static_cast<size_t>(center_index)]),
+                tac::L4::MPC_PRESENT, tac::L4::SELECTION_SIZE);
 
             if (forward_index != center_index) {
                 add_key_marker(
                     "mpc_plus_delay",
                     cmd->viz_debug->optimized_plan[static_cast<size_t>(forward_index)],
-                    fmt::format(
-                        "Forward Delay {}\n{:.4f}",
-                        cmd->viz_debug->delay_gate_forward_ok ? "Pass" : "Fail",
-                        cmd->viz_debug->delay_gate_forward_error),
+                    fmt::format("Forward {:.4f}", cmd->viz_debug->delay_gate_forward_error),
                     cmd->viz_debug->delay_gate_forward_ok ? tac::L5::FIRE_READY
                                                           : tac::L5::FIRE_ABORTED,
                     tac::L4::SELECTION_SIZE);
@@ -1050,10 +1018,7 @@ void register_l4_planning_systems(App& app) {
                 add_key_marker(
                     "mpc_minus_delay",
                     cmd->viz_debug->optimized_plan[static_cast<size_t>(backward_index)],
-                    fmt::format(
-                        "Backward Delay {}\n{:.4f}",
-                        cmd->viz_debug->delay_gate_backward_ok ? "Pass" : "Fail",
-                        cmd->viz_debug->delay_gate_backward_error),
+                    fmt::format("Backward {:.4f}", cmd->viz_debug->delay_gate_backward_error),
                     cmd->viz_debug->delay_gate_backward_ok ? tac::L5::FIRE_READY
                                                            : tac::L5::FIRE_ABORTED,
                     tac::L4::SELECTION_SIZE);
