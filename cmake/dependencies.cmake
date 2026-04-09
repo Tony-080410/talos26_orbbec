@@ -7,6 +7,7 @@ find_package(OpenCV REQUIRED)
 
 # Include FetchContent helper
 include(${CMAKE_CURRENT_LIST_DIR}/fetch-content-helper.cmake)
+include(${CMAKE_CURRENT_LIST_DIR}/ffmpeg.cmake)
 
 fetch_dependency(NAME Eigen3
                  REPO gitlab.com/libeigen/eigen
@@ -24,11 +25,11 @@ set(SPDLOG_BUILD_SHARED ON CACHE BOOL "" FORCE)
 
 fetch_dependency(NAME spdlog
                  REPO gabime/spdlog
-                 VERSION v1.17.0)
+                 VERSION fb1227486b860c673c5cfdc49359707e30c6b5f8)
 
 fetch_dependency(NAME nlohmann_json
                  REPO nlohmann/json
-                 VERSION v3.12.0)
+                 VERSION 3946872265598aed5a7aea68cad4d9d1f168bd4b)
 
 fetch_dependency(NAME field_reflection
                  REPO yosh-matsuda/field-reflection
@@ -36,7 +37,7 @@ fetch_dependency(NAME field_reflection
 
 fetch_dependency(NAME tomlplusplus
                  REPO marzer/tomlplusplus
-                 VERSION v3.4.0)
+                 VERSION 1c8b7466e4946fcc3bf20484c0e1d001202cca5a)
 
 find_package(OpenVINO QUIET COMPONENTS Runtime)
 if (OpenVINO_FOUND)
@@ -66,6 +67,15 @@ endif ()
 find_package(benchmark QUIET)
 
 find_package(PkgConfig REQUIRED)
+talos_configure_ffmpeg()
+
+if (TALOS_FFMPEG_ROOT AND EXISTS "${TALOS_FFMPEG_ROOT}/lib")
+    list(APPEND CMAKE_BUILD_RPATH "${TALOS_FFMPEG_ROOT}/lib")
+    list(APPEND CMAKE_INSTALL_RPATH "${TALOS_FFMPEG_ROOT}/lib")
+    list(REMOVE_DUPLICATES CMAKE_BUILD_RPATH)
+    list(REMOVE_DUPLICATES CMAKE_INSTALL_RPATH)
+endif ()
+
 pkg_check_modules(LIBUSB REQUIRED libusb-1.0)
 
 # HIK Camera SDK configuration
