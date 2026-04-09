@@ -4,6 +4,7 @@
 #include "L3_estimation/tracker/config.hpp"
 #include "L3_estimation/tracker/types.hpp"
 #include "core/channel_topics.hpp"
+#include "core/types.hpp"
 #include "scheduler/scheduler.hpp"
 
 #include <memory>
@@ -12,7 +13,7 @@
 namespace fcs::L3 {
 void register_tracker_systems(talos::Scheduler& scheduler, TrackerConfig&& config) {
     scheduler.world().insert_resource(std::move(config));
-    scheduler.add_system<talos::pool_compute>(
+    scheduler.add_system<talos::fixed_rate<250>>(
         "armor_tracker",
         [manager = std::unique_ptr<TrackerManager>{}](
             talos::spmc<AtLegacyArmorMeasurementBatch, AtLegacyMeasurementChannelTopic> meas_in,
@@ -25,6 +26,7 @@ void register_tracker_systems(talos::Scheduler& scheduler, TrackerConfig&& confi
 
             auto batch = meas_in.read();
             if (!batch) {
+                batch = AtLegacyArmorMeasurementBatch{};
                 return;
             }
 
