@@ -416,12 +416,12 @@ public:
         return last_trace;
     }
 
-    std::optional<fcs::L2::AtLegacyReadbackRoiSnapshot>
-        wait_for_readback_roi(std::chrono::milliseconds timeout = 750ms) {
+    std::optional<fcs::L2::AtLegacyTrackerReadbackSnapshot>
+        wait_for_readback_tracker(std::chrono::milliseconds timeout = 750ms) {
         const auto deadline = std::chrono::steady_clock::now() + timeout;
         while (std::chrono::steady_clock::now() < deadline) {
             const auto snapshot =
-                scheduler_.world().get_res<fcs::L2::AtLegacyReadbackRoiCache>()->load();
+                scheduler_.world().get_res<fcs::L2::AtLegacyTrackerReadbackCache>()->load();
             if (snapshot.valid) {
                 return snapshot;
             }
@@ -1405,10 +1405,11 @@ TEST(AimerSystemsTargetSelection, ReadbackRoiFreshnessUsesLastObservationTimesta
     EXPECT_GT(selected_target->tracker.timestamp_ns, kLastObservationTimestampNs);
     EXPECT_EQ(selected_target->tracker.last_observation_timestamp_ns, kLastObservationTimestampNs);
 
-    const auto roi_snapshot = harness.wait_for_readback_roi();
-    ASSERT_TRUE(roi_snapshot.has_value());
-    EXPECT_TRUE(roi_snapshot->valid);
-    EXPECT_EQ(roi_snapshot->timestamp_ns, kLastObservationTimestampNs);
+    const auto tracker_snapshot = harness.wait_for_readback_tracker();
+    ASSERT_TRUE(tracker_snapshot.has_value());
+    EXPECT_TRUE(tracker_snapshot->valid);
+    EXPECT_EQ(tracker_snapshot->timestamp_ns, kLastObservationTimestampNs);
+    EXPECT_EQ(tracker_snapshot->tracker.target_name, fcs::ArmorName::One);
 
     harness.stop();
 }

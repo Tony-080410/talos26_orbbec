@@ -14,6 +14,7 @@
 #include <mutex>
 #include <optional>
 #include <utility>
+#include <vector>
 
 #include <opencv2/core.hpp>
 
@@ -27,22 +28,25 @@ struct AtLegacyReadbackRoiConfig {
     std::array<double, 3> box_size_m{0.8, 0.8, 0.6};
 };
 
-struct AtLegacyReadbackRoiSnapshot {
+struct AtLegacyTrackerReadbackSnapshot {
     bool valid{false};
     uint64_t timestamp_ns{0};
-    cv::Rect2f raw_roi{};
+    uint64_t projection_timestamp_ns{0};
+    int selected_armor_id{0};
+    int rough_selected_armor_id{0};
+    L3::TrackerOutput tracker{};
 };
 
-class AtLegacyReadbackRoiCache {
+class AtLegacyTrackerReadbackCache {
 public:
-    AtLegacyReadbackRoiCache() = default;
+    AtLegacyTrackerReadbackCache() = default;
 
-    AtLegacyReadbackRoiCache(const AtLegacyReadbackRoiCache& other) {
+    AtLegacyTrackerReadbackCache(const AtLegacyTrackerReadbackCache& other) {
         std::scoped_lock lock(other.mutex_);
         snapshot_ = other.snapshot_;
     }
 
-    AtLegacyReadbackRoiCache& operator=(const AtLegacyReadbackRoiCache& other) {
+    AtLegacyTrackerReadbackCache& operator=(const AtLegacyTrackerReadbackCache& other) {
         if (this == &other) {
             return *this;
         }
@@ -52,12 +56,12 @@ public:
         return *this;
     }
 
-    AtLegacyReadbackRoiCache(AtLegacyReadbackRoiCache&& other) noexcept {
+    AtLegacyTrackerReadbackCache(AtLegacyTrackerReadbackCache&& other) noexcept {
         std::scoped_lock lock(other.mutex_);
         snapshot_ = other.snapshot_;
     }
 
-    AtLegacyReadbackRoiCache& operator=(AtLegacyReadbackRoiCache&& other) noexcept {
+    AtLegacyTrackerReadbackCache& operator=(AtLegacyTrackerReadbackCache&& other) noexcept {
         if (this == &other) {
             return *this;
         }
@@ -67,27 +71,24 @@ public:
         return *this;
     }
 
-    [[nodiscard]] AtLegacyReadbackRoiSnapshot load() const {
+    [[nodiscard]] AtLegacyTrackerReadbackSnapshot load() const {
         std::scoped_lock lock(mutex_);
         return snapshot_;
     }
 
-    void store(const AtLegacyReadbackRoiSnapshot& snapshot) {
+    void store(const AtLegacyTrackerReadbackSnapshot& snapshot) {
         std::scoped_lock lock(mutex_);
         snapshot_ = snapshot;
     }
 
     void invalidate(uint64_t timestamp_ns = 0) {
         std::scoped_lock lock(mutex_);
-        snapshot_ = AtLegacyReadbackRoiSnapshot{
-            .valid        = false,
-            .timestamp_ns = timestamp_ns,
-        };
+        snapshot_ = AtLegacyTrackerReadbackSnapshot{.valid = false, .timestamp_ns = timestamp_ns};
     }
 
 private:
     mutable std::mutex mutex_;
-    AtLegacyReadbackRoiSnapshot snapshot_{};
+    AtLegacyTrackerReadbackSnapshot snapshot_{};
 };
 
 struct AtLegacyBackendInputResolution {
@@ -100,6 +101,18 @@ struct AtLegacyBackendInputResolution {
         return valid() ? static_cast<double>(width) / static_cast<double>(height) : 1.0;
     }
 };
+
+[[nodiscard]] inline bool tracker_snapshot_is_fresh(
+    const AtLegacyTrackerReadbackSnapshot& snapshot, const AtLegacyReadbackRoiConfig& config,
+    uint64_t image_timestamp_ns) noexcept {
+    if (!snapshot.valid || snapshot.timestamp_ns == 0
+        || image_timestamp_ns < snapshot.timestamp_ns) {
+        return false;
+    }
+
+    const auto max_age_ns = static_cast<uint64_t>(std::max(0.0, config.stale_timeout_s) * 1e9);
+    return image_timestamp_ns - snapshot.timestamp_ns <= max_age_ns;
+}
 
 [[nodiscard]] inline bool is_valid_raw_roi(const cv::Rect2f& roi) noexcept {
     return std::isfinite(roi.x) && std::isfinite(roi.y) && std::isfinite(roi.width)
@@ -188,6 +201,21 @@ struct AtLegacyBackendInputResolution {
     return std::nullopt;
 }
 
+[[nodiscard]] inline std::vector<Eigen::Vector4d>
+    tracker_armor_poses(const L3::TrackerOutput& tracker) noexcept {
+    if (const auto* robot = tracker.robot_state()) {
+        const auto poses = robot->armor_poses();
+        return {poses.begin(), poses.end()};
+    }
+
+    if (const auto* outpost = tracker.outpost_state()) {
+        const auto poses = outpost->armor_poses();
+        return {poses.begin(), poses.end()};
+    }
+
+    return {};
+}
+
 [[nodiscard]] inline std::optional<cv::Rect2f> project_box_to_image(
     const Eigen::Vector3d& center_odom, double yaw,
     const fast_tf::TransformMatrixd<fast_tf::odom, fast_tf::camera_optical>& T_odom_camera,
@@ -259,21 +287,13 @@ struct AtLegacyBackendInputResolution {
 }
 
 [[nodiscard]] inline std::optional<cv::Rect2f> project_tracker_box_to_image(
-    const L3::TrackerOutput& tracker, uint64_t timestamp_ns,
-    const fast_tf::CoordinateSystem& tf_system, const CameraConfig& camera_config,
-    const std::array<double, 3>& box_size_m) {
+    const L3::TrackerOutput& tracker,
+    const fast_tf::TransformMatrixd<fast_tf::odom, fast_tf::camera_optical>& T_odom_camera,
+    const CameraConfig& camera_config, const std::array<double, 3>& box_size_m) {
     const auto center_and_yaw = tracker_box_center_and_yaw(tracker);
     if (!center_and_yaw) {
         return std::nullopt;
     }
-
-    const auto tf_camera_odom =
-        fast_tf::lookup_clamped<fast_tf::odom, fast_tf::camera_optical>(tf_system, timestamp_ns);
-    if (!tf_camera_odom) {
-        return std::nullopt;
-    }
-
-    const auto T_odom_camera = tf_camera_odom->inverse();
     return project_box_to_image(
         center_and_yaw->first, center_and_yaw->second, T_odom_camera, camera_config, box_size_m);
 }

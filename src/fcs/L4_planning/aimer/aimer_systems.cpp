@@ -408,11 +408,8 @@ void register_aimer_systems(talos::Scheduler& scheduler, L4Config&& config) {
     if (!world.has_resource<L2::AtLegacyReadbackRoiConfig>()) {
         world.insert_resource(L2::AtLegacyReadbackRoiConfig{});
     }
-    if (!world.has_resource<L2::AtLegacyReadbackRoiCache>()) {
-        world.insert_resource(L2::AtLegacyReadbackRoiCache{});
-    }
-    if (!world.has_resource<CameraConfig>()) {
-        world.insert_resource(CameraConfig{});
+    if (!world.has_resource<L2::AtLegacyTrackerReadbackCache>()) {
+        world.insert_resource(L2::AtLegacyTrackerReadbackCache{});
     }
 
     world.insert_resource(Aimer(config.aimer));
@@ -732,9 +729,8 @@ void register_aimer_systems(talos::Scheduler& scheduler, L4Config&& config) {
         "l4_optimal_target_readback_roi",
         [](talos::spmc<SelectedTargetSnapshot, SelectedTargetSnapshotChannelTopic>
                selected_target_in,
-           talos::res<fast_tf::CoordinateSystem> tf_buffer, talos::res<CameraConfig> camera_config,
            talos::res<L2::AtLegacyReadbackRoiConfig> readback_roi_config,
-           talos::res_mut<L2::AtLegacyReadbackRoiCache> readback_roi_cache) {
+           talos::res_mut<L2::AtLegacyTrackerReadbackCache> readback_cache) {
             auto has_readback_tracker = [](const SelectedTargetSnapshot& snapshot) noexcept {
                 return snapshot.source == GimbalPlanSource::Armor
                     && tracker_supports_readback_roi(snapshot.tracker);
@@ -749,24 +745,19 @@ void register_aimer_systems(talos::Scheduler& scheduler, L4Config&& config) {
             }
 
             if (!readback_roi_config->enabled || !has_readback_tracker(*selected_target)) {
-                readback_roi_cache->invalidate(selected_target->timestamp_ns);
+                readback_cache->invalidate(selected_target->timestamp_ns);
                 return;
             }
 
             const auto roi_timestamps = resolve_readback_roi_timestamps(*selected_target);
-            const auto roi            = L2::project_tracker_box_to_image(
-                selected_target->tracker, roi_timestamps.projection_timestamp_ns, *tf_buffer,
-                *camera_config, readback_roi_config->box_size_m);
-            if (!roi) {
-                readback_roi_cache->invalidate(roi_timestamps.freshness_timestamp_ns);
-                return;
-            }
-
-            readback_roi_cache->store(
-                L2::AtLegacyReadbackRoiSnapshot{
-                    .valid        = true,
-                    .timestamp_ns = roi_timestamps.freshness_timestamp_ns,
-                    .raw_roi      = *roi,
+            readback_cache->store(
+                L2::AtLegacyTrackerReadbackSnapshot{
+                    .valid                   = true,
+                    .timestamp_ns            = roi_timestamps.freshness_timestamp_ns,
+                    .projection_timestamp_ns = roi_timestamps.projection_timestamp_ns,
+                    .selected_armor_id       = selected_target->selected_armor_id,
+                    .rough_selected_armor_id = selected_target->rough_selected_armor_id,
+                    .tracker                 = selected_target->tracker,
                 });
         });
 }

@@ -82,7 +82,7 @@ void init_coordinate_system(fast_tf::CoordinateSystem& system, const RobotExtrin
     world.insert_resource(core::trajectory::bullet_speed_data{.bullet_speed = bullet_speed});
     world.insert_resource(config.vision.at_legacy->default_detect_color);
     world.insert_resource(config.vision.at_legacy->readback_roi);
-    world.insert_resource(L2::AtLegacyReadbackRoiCache{});
+    world.insert_resource(L2::AtLegacyTrackerReadbackCache{});
 
     // Setup L1 sensor systems
     auto setup_result = runtime::setup_l1(
@@ -102,6 +102,7 @@ void init_coordinate_system(fast_tf::CoordinateSystem& system, const RobotExtrin
         "detector backend: {} (color={})", backend_handle_result->name,
         config.vision.at_legacy->default_detect_color);
 
+    world.insert_resource(setup_result.value().camera_config);
     world.insert_resource(std::move(backend_handle_result->backend));
     world.insert_resource(L2::create_pnp_solver(setup_result.value().camera_config));
 
