@@ -81,6 +81,21 @@ static auto count_channel_io(const SystemMeta& meta) noexcept -> ChannelIoCounts
     return counts;
 }
 
+static constexpr auto is_writer_channel_kind(const channel_kind kind) noexcept -> bool {
+    return kind == channel_kind::spsc_writer || kind == channel_kind::spmc_writer;
+}
+
+template <typename Channels>
+static auto has_writer_channels(const Channels& channels) noexcept -> bool {
+    return std::any_of(channels.begin(), channels.end(), [](const auto& channel) {
+        return is_writer_channel_kind(channel.kind);
+    });
+}
+
+static auto counts_written_calls(const SystemMeta& meta) noexcept -> bool {
+    return has_writer_channels(meta.spsc_channels) || has_writer_channels(meta.spmc_channels);
+}
+
 struct ChannelLabelNames {
     std::string topic_name;
     std::string type_name;
@@ -1422,12 +1437,17 @@ void Scheduler::print_stats() const {
         fixed_rate_systems_, fixed_rate_stats_,
         [&](const auto& entry, const auto& sys_stats, double) {
             const auto notify_cnt = sys_stats.notify_count.load(std::memory_order_relaxed);
+            const auto exec_count = sys_stats.execution_count.load(std::memory_order_relaxed);
             const auto latency    = sys_stats.latency_hist.compute();
             const auto actual_hz  = latency.count / elapsed_sec;
+            const bool write_mode = counts_written_calls(entry.system->meta());
 
             printf(
-                "  %-30s@%.1fHz(%uHz) runs:%zu", entry.system->meta().name.c_str(), actual_hz,
-                entry.policy.frequency_hz, latency.count);
+                "  %-30s@%.1fHz(%uHz) %s:%zu", entry.system->meta().name.c_str(), actual_hz,
+                entry.policy.frequency_hz, write_mode ? "writes" : "runs", latency.count);
+            if (write_mode) {
+                printf(" exec:%" PRIu64, exec_count);
+            }
             if (notify_cnt > 0) {
                 printf(" notif:%" PRIu64, notify_cnt);
             }
@@ -1512,8 +1532,12 @@ auto Scheduler::get_stats_json() const -> std::string {
         fixed_rate_systems_, fixed_rate_stats_, fixed_rate_arr,
         [](json& sys, const auto& entry, const auto& stats) {
             const auto notify_cnt = stats.notify_count.load(std::memory_order_relaxed);
+            const auto exec_count = stats.execution_count.load(std::memory_order_relaxed);
+            const bool write_mode = counts_written_calls(entry.system->meta());
             sys["target_hz"]      = entry.policy.frequency_hz;
             sys["notifies"]       = notify_cnt;
+            sys["executions"]     = exec_count;
+            sys["count_mode"]     = write_mode ? "written_calls" : "run_calls";
         });
 
     // Compute systems
@@ -1558,8 +1582,18 @@ void Scheduler::run_fixed_rate_thread(FixedRateContext ctx) {
         }
     }
 
-    const auto frequency = ctx.policy.frequency_hz;
-    auto& stats          = ctx.scheduler->fixed_rate_stats_[ctx.system_index];
+    const auto frequency        = ctx.policy.frequency_hz;
+    auto& stats                 = ctx.scheduler->fixed_rate_stats_[ctx.system_index];
+    const bool write_mode       = counts_written_calls(ctx.system->meta());
+    const auto record_execution = [&](const bool written, const std::uint64_t elapsed) {
+        stats.execution_count.fetch_add(1, std::memory_order_relaxed);
+        if (!write_mode || written) {
+            stats.latency_hist.record(elapsed);
+        }
+        if (written && ctx.policy.notifies) [[likely]] {
+            ctx.scheduler->notify(ctx.system_index);
+        }
+    };
 
     if (frequency == 0) {
         // Unlimited frequency mode: run as fast as possible
@@ -1568,10 +1602,7 @@ void Scheduler::run_fixed_rate_thread(FixedRateContext ctx) {
             const bool written = ctx.system->run(*ctx.world);
             const auto elapsed = probe.elapsed_ns();
 
-            stats.latency_hist.record(elapsed);
-            if (written && ctx.policy.notifies) [[likely]] {
-                ctx.scheduler->notify(ctx.system_index);
-            }
+            record_execution(written, elapsed);
         }
         return;
     }
@@ -1591,10 +1622,7 @@ void Scheduler::run_fixed_rate_thread(FixedRateContext ctx) {
         const bool written = ctx.system->run(*ctx.world);
         const auto elapsed = probe.elapsed_ns();
 
-        stats.latency_hist.record(elapsed);
-        if (written && ctx.policy.notifies) [[likely]] {
-            ctx.scheduler->notify(ctx.system_index);
-        }
+        record_execution(written, elapsed);
 
         // Busy wait until next tick
         std::this_thread::sleep_until(next_tick);

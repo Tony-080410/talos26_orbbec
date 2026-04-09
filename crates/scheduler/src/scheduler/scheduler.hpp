@@ -457,6 +457,7 @@ private:
      */
     struct alignas(std::hardware_destructive_interference_size) FixedRateStats {
         std::atomic<std::uint64_t> notify_count{0};
+        std::atomic<std::uint64_t> execution_count{0};
         primitive::LatencyHistogram latency_hist;
 
         FixedRateStats() = default;
@@ -464,6 +465,7 @@ private:
         // Move constructor: atomics are not movable, so we load and store
         FixedRateStats(FixedRateStats&& other) noexcept
             : notify_count(other.notify_count.load(std::memory_order_relaxed))
+            , execution_count(other.execution_count.load(std::memory_order_relaxed))
             , latency_hist(std::move(other.latency_hist)) {}
 
         // Non-copyable, non-movable-assignable

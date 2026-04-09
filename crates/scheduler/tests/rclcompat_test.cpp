@@ -9,6 +9,7 @@
 
 #include <functional>
 #include <gtest/gtest.h>
+#include <nlohmann/json.hpp>
 
 #include <atomic>
 #include <chrono>
@@ -1991,6 +1992,62 @@ TEST(RclCompatFlow, ExternalPublishDrainsCallbackChainInSingleComputeRound) {
     EXPECT_EQ(stage2_count.load(), 1);
     EXPECT_EQ(final_value.load(), 42);
     EXPECT_EQ(scheduler.stats().compute_cycle_count, 1U);
+}
+
+TEST(SchedulerStatsTest, FixedRateFrequencyCountsWritesForWriterSystems) {
+    World world;
+    Scheduler scheduler(world);
+
+    std::atomic<int> writer_execs{0};
+    std::atomic<int> no_output_execs{0};
+
+    scheduler.add_system<fixed_rate_silent<180>>(
+        "bursty_writer", [&writer_execs](talos::spmc_mut<TestMessage, TestTag1> out) {
+            const int exec = writer_execs.fetch_add(1, std::memory_order_relaxed) + 1;
+            if ((exec % 3) == 0) {
+                out.write(TestMessage{.value = exec, .text = "written"});
+            }
+        });
+
+    scheduler.add_system<fixed_rate_silent<180>>("no_output_runner", [&no_output_execs]() {
+        no_output_execs.fetch_add(1, std::memory_order_relaxed);
+    });
+
+    ASSERT_TRUE(scheduler.build().has_value());
+
+    std::jthread scheduler_thread([&scheduler]() { (void)scheduler.run(); });
+    std::this_thread::sleep_for(std::chrono::milliseconds(140));
+    scheduler.stop();
+    scheduler_thread.join();
+
+    const auto stats          = nlohmann::json::parse(scheduler.get_stats_json());
+    const auto& bursty_writer = stats.at("fixed_rate_systems").at("bursty_writer");
+    const auto& no_output     = stats.at("fixed_rate_systems").at("no_output_runner");
+
+    const auto writer_exec_count    = writer_execs.load(std::memory_order_relaxed);
+    const auto no_output_exec_count = no_output_execs.load(std::memory_order_relaxed);
+
+    ASSERT_GT(writer_exec_count, 0);
+    ASSERT_GT(no_output_exec_count, 0);
+
+    EXPECT_EQ(bursty_writer.at("count_mode").get<std::string>(), "written_calls");
+    EXPECT_EQ(
+        bursty_writer.at("executions").get<std::uint64_t>(),
+        static_cast<std::uint64_t>(writer_exec_count));
+    EXPECT_EQ(
+        bursty_writer.at("runs").get<std::uint64_t>(),
+        static_cast<std::uint64_t>(writer_exec_count / 3));
+    EXPECT_LT(
+        bursty_writer.at("runs").get<std::uint64_t>(),
+        static_cast<std::uint64_t>(writer_exec_count));
+
+    EXPECT_EQ(no_output.at("count_mode").get<std::string>(), "run_calls");
+    EXPECT_EQ(
+        no_output.at("executions").get<std::uint64_t>(),
+        static_cast<std::uint64_t>(no_output_exec_count));
+    EXPECT_EQ(
+        no_output.at("runs").get<std::uint64_t>(),
+        static_cast<std::uint64_t>(no_output_exec_count));
 }
 
 // -------------------------------------------------------------------------
