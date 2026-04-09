@@ -5,7 +5,7 @@ vision = "daedalus_vision"
 
 [foxglove]
 enabled = true
-transport = "Mcap"
+transport = "WebSocket"
 host = "0.0.0.0"
 port = 8765
 mcap_path = "record/foxglove.mcap"
