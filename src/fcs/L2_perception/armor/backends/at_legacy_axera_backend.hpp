@@ -97,8 +97,8 @@ private:
     DecodeGrid cached_grid_;
 
     /// Decode and postprocess single-output concat-predecode tensor.
-    [[nodiscard]] std::vector<AtLegacyArmorDetection> postprocess_concat_predecode(
-        const PreprocContext& ctx) const;
+    [[nodiscard]] std::vector<AtLegacyArmorDetection>
+        postprocess_concat_predecode(const PreprocContext& ctx) const;
 
     /// Tile-based NMS on pts corner points.
     [[nodiscard]] std::vector<AtLegacyArmorDetection>

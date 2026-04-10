@@ -17,17 +17,17 @@ namespace fcs::L3 {
 
 /// Robot state space (11-dim): 4-armor target tracking
 enum RoboState : uint8_t {
-    XC,    // Center X position
-    VX,    // X velocity
-    YC,    // Center Y position
-    VY,    // Y velocity
-    Z0,    // Armor 0,2 Z position
-    VZ,    // Z velocity
-    YAW,   // Armor 0 yaw angle
-    V_YAW, // Angular velocity
-    LOG_R0,   // log(Armor 0,2 radius) — log-parameterized to guarantee r > 0
-    LOG_R1,   // log(Armor 1,3 radius) — log-parameterized to guarantee r > 0
-    H,     // Z1 - Z0 (height difference)
+    XC,     // Center X position
+    VX,     // X velocity
+    YC,     // Center Y position
+    VY,     // Y velocity
+    Z0,     // Armor 0,2 Z position
+    VZ,     // Z velocity
+    YAW,    // Armor 0 yaw angle
+    V_YAW,  // Angular velocity
+    LOG_R0, // log(Armor 0,2 radius) — log-parameterized to guarantee r > 0
+    LOG_R1, // log(Armor 1,3 radius) — log-parameterized to guarantee r > 0
+    H,      // Z1 - Z0 (height difference)
     STATE_MAX,
 };
 

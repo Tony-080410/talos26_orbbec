@@ -38,7 +38,7 @@ void copy_file_from_repo(const std::filesystem::path& from, const std::filesyste
 std::filesystem::path make_temp_dir(std::string_view name) {
     const auto unique = std::chrono::steady_clock::now().time_since_epoch().count();
     const auto path   = std::filesystem::temp_directory_path()
-                      / ("talos-read-config-" + std::string(name) + "-" + std::to_string(unique));
+                    / ("talos-read-config-" + std::string(name) + "-" + std::to_string(unique));
     std::filesystem::create_directories(path);
     return path;
 }

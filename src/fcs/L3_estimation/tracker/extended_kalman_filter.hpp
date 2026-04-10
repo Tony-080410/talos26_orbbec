@@ -139,7 +139,7 @@ public:
         x_post = x_post + K_ * (z - z_pri);
         // Joseph form: guarantees P_post stays symmetric positive-definite
         const MatrixXX IKH = MatrixXX::Identity() - K_ * H;
-        P_post              = IKH * P_pri * IKH.transpose() + K_ * R * K_.transpose();
+        P_post             = IKH * P_pri * IKH.transpose() + K_ * R * K_.transpose();
         return x_post;
     }
 
@@ -164,7 +164,7 @@ public:
         x_post = x_post + K_ * (z - z_pri);
         // Joseph form: guarantees P_post stays symmetric positive-definite
         const MatrixXX IKH = MatrixXX::Identity() - K_ * H;
-        P_post              = IKH * P_pri * IKH.transpose() + K_ * R * K_.transpose();
+        P_post             = IKH * P_pri * IKH.transpose() + K_ * R * K_.transpose();
         return x_post;
     }
 

@@ -119,9 +119,9 @@ struct AtLegacyAxeraConfig {
     int input_height = 576;
 
     // Model output dimensions
-    int num_colors = 4;
-    int num_kpts   = 4;
-    int num_pairs  = 12;
+    int num_colors           = 4;
+    int num_kpts             = 4;
+    int num_pairs            = 12;
     std::vector<int> strides = {8, 16, 32};
 
     // Detection parameters

@@ -65,17 +65,17 @@ struct RobotEkfMotionModel {
 
     template <typename T>
     static void predict_state(const T* x, const T& dt, T* xp) noexcept {
-        xp[XC]    = x[XC] + x[VX] * dt;
-        xp[VX]    = x[VX];
-        xp[YC]    = x[YC] + x[VY] * dt;
-        xp[VY]    = x[VY];
-        xp[Z0]    = x[Z0] + x[VZ] * dt;
-        xp[VZ]    = x[VZ];
-        xp[YAW]   = x[YAW] + x[V_YAW] * dt;
-        xp[V_YAW] = x[V_YAW];
+        xp[XC]     = x[XC] + x[VX] * dt;
+        xp[VX]     = x[VX];
+        xp[YC]     = x[YC] + x[VY] * dt;
+        xp[VY]     = x[VY];
+        xp[Z0]     = x[Z0] + x[VZ] * dt;
+        xp[VZ]     = x[VZ];
+        xp[YAW]    = x[YAW] + x[V_YAW] * dt;
+        xp[V_YAW]  = x[V_YAW];
         xp[LOG_R0] = x[LOG_R0];
         xp[LOG_R1] = x[LOG_R1];
-        xp[H]     = x[H];
+        xp[H]      = x[H];
     }
 
     template <typename T>
@@ -146,7 +146,7 @@ struct RobotEkfMotionModel {
 
         Q(LOG_R0, LOG_R0) = params.sigma_r0 * params.sigma_r0 * dt2;
         Q(LOG_R1, LOG_R1) = params.sigma_r1 * params.sigma_r1 * dt2;
-        Q(H, H)     = params.sigma_h * params.sigma_h * dt2;
+        Q(H, H)           = params.sigma_h * params.sigma_h * dt2;
         return Q;
     }
 
@@ -179,11 +179,11 @@ struct RobotEkfMotionModel {
 };
 
 struct OutpostEkfMotionModel {
-    using Scalar                    = double;
-    static constexpr int NX         = O_STATE_MAX;
-    static constexpr int NZ         = MEASURE_MAX;
-    static constexpr int ARMORS_NUM = 3;
-    static constexpr int kVyawIndex = O_VYAW;
+    using Scalar                       = double;
+    static constexpr int NX            = O_STATE_MAX;
+    static constexpr int NZ            = MEASURE_MAX;
+    static constexpr int ARMORS_NUM    = 3;
+    static constexpr int kVyawIndex    = O_VYAW;
     static constexpr bool kHasLogRadii = false;
 
     using VecX  = Eigen::Matrix<Scalar, NX, 1>;

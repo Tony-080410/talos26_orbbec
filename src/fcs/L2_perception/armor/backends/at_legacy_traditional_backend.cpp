@@ -98,7 +98,8 @@ AtLegacyTraditionalBackend::DetectionResult
                         return true;
                     }
 
-                    // Filter by type-class matching (when type filtering enabled)
+                    // Filter by type-class matching (when type filtering
+                    // enabled)
                     if (cfg.classifier_enable_type_filtering) {
                         if (detection.type == ArmorType::Large) {
                             // Large armor cannot be: outpost, 2, sentry

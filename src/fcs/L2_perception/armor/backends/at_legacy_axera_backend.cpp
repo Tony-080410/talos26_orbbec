@@ -431,9 +431,8 @@ std::expected<void, DetectorError> AtLegacyAxeraBackend::init() {
     }
 
     SPDLOG_INFO("[AxeraBackend] Model: {}", cfg.model_path);
-    const int predecode_output_dim =
-        4 + cfg.num_colors + cfg.num_pairs + cfg.num_kpts * 2;
-    int expected_anchors = 0;
+    const int predecode_output_dim = 4 + cfg.num_colors + cfg.num_pairs + cfg.num_kpts * 2;
+    int expected_anchors           = 0;
     for (const int s : cfg.strides) {
         expected_anchors += (cfg.input_width / s) * (cfg.input_height / s);
     }
@@ -493,7 +492,9 @@ void AtLegacyAxeraBackend::preprocess_image(const cv::Mat& image) {
     auto* npu_input = static_cast<uint8_t*>(io_data_.pInputs[0].pVirAddr);
 
     cv::Mat npu_input_mat(config_.input_height, config_.input_width, CV_8UC3, npu_input);
-    cv::resize(image, npu_input_mat, cv::Size(config_.input_width, config_.input_height), 0, 0, cv::INTER_LINEAR);
+    cv::resize(
+        image, npu_input_mat, cv::Size(config_.input_width, config_.input_height), 0, 0,
+        cv::INTER_LINEAR);
 
     const size_t flush_size = static_cast<size_t>(config_.input_width) * config_.input_height * 3;
     AX_SYS_MflushCache(io_data_.pInputs[0].phyAddr, npu_input, flush_size);
@@ -697,8 +698,8 @@ AtLegacyAxeraBackend::DecodeGrid AtLegacyAxeraBackend::build_decode_grid() const
     return grid;
 }
 
-std::vector<AtLegacyArmorDetection> AtLegacyAxeraBackend::postprocess_concat_predecode(
-    const PreprocContext& ctx) const {
+std::vector<AtLegacyArmorDetection>
+    AtLegacyAxeraBackend::postprocess_concat_predecode(const PreprocContext& ctx) const {
     const auto total_start = std::chrono::high_resolution_clock::now();
 
     const int predecode_box_dim  = 4;
@@ -737,7 +738,7 @@ std::vector<AtLegacyArmorDetection> AtLegacyAxeraBackend::postprocess_concat_pre
         return {};
     }
 
-    const float* output       = static_cast<const float*>(output_buf->pVirAddr);
+    const float* output = static_cast<const float*>(output_buf->pVirAddr);
     // Skip raw_boxes (first predecode_box_dim * num_anchors floats)
     const float* color_logits = output + predecode_box_dim * num_anchors;
     const float* obj_logits   = color_logits + config_.num_colors * num_anchors;
@@ -756,8 +757,9 @@ std::vector<AtLegacyArmorDetection> AtLegacyAxeraBackend::postprocess_concat_pre
         logged_threshold = true;
     }
 
-    const size_t pre_nms_top_k = static_cast<size_t>(std::min(config_.top_k, std::max(num_anchors, 1)));
-    auto min_heap_comp         = [](const RankedAnchor& lhs, const RankedAnchor& rhs) {
+    const size_t pre_nms_top_k =
+        static_cast<size_t>(std::min(config_.top_k, std::max(num_anchors, 1)));
+    auto min_heap_comp = [](const RankedAnchor& lhs, const RankedAnchor& rhs) {
         return lhs.best_obj_logit > rhs.best_obj_logit;
     };
 
@@ -801,8 +803,8 @@ std::vector<AtLegacyArmorDetection> AtLegacyAxeraBackend::postprocess_concat_pre
         return lhs.best_obj_logit > rhs.best_obj_logit;
     });
 
-    const float max_x = static_cast<float>(std::max(ctx.orig_w - 1, 0));
-    const float max_y = static_cast<float>(std::max(ctx.orig_h - 1, 0));
+    const float max_x   = static_cast<float>(std::max(ctx.orig_w - 1, 0));
+    const float max_y   = static_cast<float>(std::max(ctx.orig_h - 1, 0));
     const float scale_x = ctx.scale_x;
     const float scale_y = ctx.scale_y;
 
@@ -976,7 +978,7 @@ AtLegacyAxeraBackend::DetectionResult AtLegacyAxeraBackend::detect_impl(const cv
         return std::unexpected(DetectorError::InvalidImage);
     }
 
-    const auto ctx  = preprocess(image);
+    const auto ctx = preprocess(image);
     if (!ctx.is_four_three && !warned_non_four_three_input_) {
         SPDLOG_WARN(
             "[AxeraBackend] Input {}x{} is not 4:3; direct resize to {}x{} will be used without "
