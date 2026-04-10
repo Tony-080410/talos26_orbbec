@@ -53,7 +53,17 @@ public:
         auto h = [this](const JetX* x, JetX* z) {
             Model::template measure_state<JetX>(x, armor_id_, z);
         };
-        auto q = [this]() -> MatXX { return model_.Q(dt_); };
+        auto q = [this]() -> MatXX {
+            auto Q = model_.Q(dt_);
+            if constexpr (Model::kHasLogRadii) {
+                // Scale Q for log-parameterization so linear-space uncertainty matches the config
+                const double r0 = std::exp(x_[LOG_R0]);
+                const double r1 = std::exp(x_[LOG_R1]);
+                Q(LOG_R0, LOG_R0) /= (r0 * r0);
+                Q(LOG_R1, LOG_R1) /= (r1 * r1);
+            }
+            return Q;
+        };
         auto r = [this](const VecZ& z) -> MatZZ { return model_.R(z); };
 
         ekf_ = EKF(f, h, q, r, P0);
@@ -76,6 +86,10 @@ public:
         }
         armor_id_ = Model::clamp_armor_id(armor_id);
         x_        = ekf_.update(z);
+        // Decorrelate independent log-radius states to prevent correlation hallucination
+        if constexpr (Model::kHasLogRadii) {
+            ekf_.decorrelate(LOG_R0, LOG_R1);
+        }
     }
 
     [[nodiscard]] bool active() const noexcept { return active_; }
@@ -237,7 +251,8 @@ public:
 
             RobotEkfMotionModel::VecX xp0;
             auto v0 = 0.0;
-            xp0 << x0, v0, y0, v0, z0, v0, armor_yaw, v0, r0_prior, r1_prior, h_prior;
+            xp0 << x0, v0, y0, v0, z0, v0, armor_yaw, v0, std::log(r0_prior), std::log(r1_prior),
+                h_prior;
             RobotEkfMotionModel::MatXX P0 = RobotEkfMotionModel::MatXX::Identity();
 
             P0(XC, XC) = 1e9;
@@ -249,9 +264,9 @@ public:
 
             P0(V_YAW, V_YAW) = 1e9;
 
-            P0(R_0, R_0) = 1e-5;
-            P0(R_1, R_1) = 1e-5;
-            P0(H, H)     = 1e-5;
+            P0(LOG_R0, LOG_R0) = 1e-5 / (r0_prior * r0_prior);
+            P0(LOG_R1, LOG_R1) = 1e-5 / (r1_prior * r1_prior);
+            P0(H, H)           = 1e-5;
 
             robot_target_.emplace();
             robot_target_->initialize(config_.robot.model, xp0, P0);
@@ -282,8 +297,8 @@ public:
             state.velocity       = {x[VX], x[VY], x[VZ]};
             state.yaw            = x[YAW];
             state.v_yaw          = x[V_YAW];
-            state.radius0        = x[R_0];
-            state.radius1        = x[R_1];
+            state.radius0        = std::exp(x[LOG_R0]);
+            state.radius1        = std::exp(x[LOG_R1]);
             state.z1             = x[Z0] + x[H];
             state.armors_num     = RobotEkfMotionModel::ARMORS_NUM;
             state.P              = robot_target_->P();

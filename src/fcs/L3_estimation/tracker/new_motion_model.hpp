@@ -35,6 +35,7 @@ struct RobotEkfMotionModel {
     static constexpr int kHighArmorIdA = 1;
     static constexpr int kHighArmorIdB = 3;
     static constexpr int kVyawIndex    = V_YAW;
+    static constexpr bool kHasLogRadii = true;
 
     using VecX  = Eigen::Matrix<Scalar, NX, 1>;
     using VecZ  = Eigen::Matrix<Scalar, NZ, 1>;
@@ -45,8 +46,8 @@ struct RobotEkfMotionModel {
         Scalar sigma_a_xy  = 10.0; // XY acceleration noise (match reference)
         Scalar sigma_a_z   = 1.0;  // Z acceleration noise
         Scalar sigma_a_yaw = 1.0;  // Yaw acceleration noise
-        Scalar sigma_r0    = 1.0;  // Radius R0 drift noise
-        Scalar sigma_r1    = 1.0;  // Radius R1 drift noise (note: reference uses sigma_r0 for R_1)
+        Scalar sigma_r0    = 1.0;  // log(R0) drift noise in log-space
+        Scalar sigma_r1    = 1.0;  // log(R1) drift noise in log-space
         Scalar sigma_h     = 0.5;  // Height H drift noise
         // Measurement noise parameters (variance domain).
         Scalar meas_yaw_var_floor       = 4e-3;
@@ -72,8 +73,8 @@ struct RobotEkfMotionModel {
         xp[VZ]    = x[VZ];
         xp[YAW]   = x[YAW] + x[V_YAW] * dt;
         xp[V_YAW] = x[V_YAW];
-        xp[R_0]   = x[R_0];
-        xp[R_1]   = x[R_1];
+        xp[LOG_R0] = x[LOG_R0];
+        xp[LOG_R1] = x[LOG_R1];
         xp[H]     = x[H];
     }
 
@@ -81,6 +82,7 @@ struct RobotEkfMotionModel {
     static void measure_state(const T* x, int armor_id, T* z) noexcept {
         using std::atan2;
         using std::cos;
+        using std::exp;
         using std::hypot;
         using std::sin;
         using std::sqrt;
@@ -90,7 +92,7 @@ struct RobotEkfMotionModel {
         const T angle_step = T(2.0 * std::numbers::pi / static_cast<double>(ARMORS_NUM));
         const T yaw        = x[YAW] + T(id) * angle_step;
 
-        const T radius  = is_high ? x[R_1] : x[R_0];
+        const T radius  = is_high ? exp(x[LOG_R1]) : exp(x[LOG_R0]);
         const T armor_z = is_high ? (x[Z0] + x[H]) : x[Z0];
         const T armor_x = x[XC] - radius * cos(yaw);
         const T armor_y = x[YC] - radius * sin(yaw);
@@ -142,8 +144,8 @@ struct RobotEkfMotionModel {
         fill_cv(Z0, sigma_z2);
         fill_cv(YAW, sigma_yaw2);
 
-        Q(R_0, R_0) = params.sigma_r0 * params.sigma_r0 * dt2;
-        Q(R_1, R_1) = params.sigma_r1 * params.sigma_r1 * dt2;
+        Q(LOG_R0, LOG_R0) = params.sigma_r0 * params.sigma_r0 * dt2;
+        Q(LOG_R1, LOG_R1) = params.sigma_r1 * params.sigma_r1 * dt2;
         Q(H, H)     = params.sigma_h * params.sigma_h * dt2;
         return Q;
     }
@@ -182,6 +184,7 @@ struct OutpostEkfMotionModel {
     static constexpr int NZ         = MEASURE_MAX;
     static constexpr int ARMORS_NUM = 3;
     static constexpr int kVyawIndex = O_VYAW;
+    static constexpr bool kHasLogRadii = false;
 
     using VecX  = Eigen::Matrix<Scalar, NX, 1>;
     using VecZ  = Eigen::Matrix<Scalar, NZ, 1>;

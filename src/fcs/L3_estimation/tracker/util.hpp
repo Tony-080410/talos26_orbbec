@@ -25,8 +25,8 @@ enum RoboState : uint8_t {
     VZ,    // Z velocity
     YAW,   // Armor 0 yaw angle
     V_YAW, // Angular velocity
-    R_0,   // Armor 0,2 radius
-    R_1,   // Armor 1,3 radius
+    LOG_R0,   // log(Armor 0,2 radius) — log-parameterized to guarantee r > 0
+    LOG_R1,   // log(Armor 1,3 radius) — log-parameterized to guarantee r > 0
     H,     // Z1 - Z0 (height difference)
     STATE_MAX,
 };
@@ -318,10 +318,10 @@ enum Measure : uint8_t {
     double armor_z;
 
     if (armors_num == 4 && (id == 1 || id == 3)) {
-        radius  = x[R_1];
+        radius  = std::exp(x[LOG_R1]);
         armor_z = x[Z0] + x[H];
     } else {
-        radius  = x[R_0];
+        radius  = std::exp(x[LOG_R0]);
         armor_z = x[Z0];
     }
 

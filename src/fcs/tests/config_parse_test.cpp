@@ -142,7 +142,17 @@ TEST(ConfigParse, VisionBaseTomlMatchesExpectedSemanticsAndValues) {
     EXPECT_EQ(config.at_legacy->trt.top_k, 128);
 
     EXPECT_EQ(config.at_legacy->axera.model_path, "models/compiled.axmodel");
+    EXPECT_EQ(config.at_legacy->axera.input_width, 768);
+    EXPECT_EQ(config.at_legacy->axera.input_height, 576);
+    EXPECT_EQ(config.at_legacy->axera.num_colors, 4);
+    EXPECT_EQ(config.at_legacy->axera.num_kpts, 4);
+    EXPECT_EQ(config.at_legacy->axera.num_pairs, 12);
+    EXPECT_EQ(config.at_legacy->axera.strides.size(), 3u);
+    EXPECT_EQ(config.at_legacy->axera.strides[0], 8);
+    EXPECT_EQ(config.at_legacy->axera.strides[1], 16);
+    EXPECT_EQ(config.at_legacy->axera.strides[2], 32);
     EXPECT_DOUBLE_EQ(config.at_legacy->axera.confidence_threshold, 0.15);
+    EXPECT_DOUBLE_EQ(config.at_legacy->axera.nms_threshold, 0.70);
     EXPECT_EQ(config.at_legacy->axera.top_k, 128);
     EXPECT_TRUE(config.at_legacy->readback_roi.enabled);
     EXPECT_DOUBLE_EQ(config.at_legacy->readback_roi.stale_timeout_s, 0.20);

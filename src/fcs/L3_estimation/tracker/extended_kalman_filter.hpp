@@ -137,7 +137,9 @@ public:
         R      = update_R(z);
         K_     = P_pri * H.transpose() * (H * P_pri * H.transpose() + R).inverse();
         x_post = x_post + K_ * (z - z_pri);
-        P_post = (MatrixXX::Identity() - K_ * H) * P_pri;
+        // Joseph form: guarantees P_post stays symmetric positive-definite
+        const MatrixXX IKH = MatrixXX::Identity() - K_ * H;
+        P_post              = IKH * P_pri * IKH.transpose() + K_ * R * K_.transpose();
         return x_post;
     }
 
@@ -160,8 +162,16 @@ public:
         R      = R_ext;
         K_     = P_pri * H.transpose() * (H * P_pri * H.transpose() + R).inverse();
         x_post = x_post + K_ * (z - z_pri);
-        P_post = (MatrixXX::Identity() - K_ * H) * P_pri;
+        // Joseph form: guarantees P_post stays symmetric positive-definite
+        const MatrixXX IKH = MatrixXX::Identity() - K_ * H;
+        P_post              = IKH * P_pri * IKH.transpose() + K_ * R * K_.transpose();
         return x_post;
+    }
+
+    // Zero out cross-covariance between state indices i and j
+    void decorrelate(int i, int j) noexcept {
+        P_post(i, j) = 0.0;
+        P_post(j, i) = 0.0;
     }
 
 private:

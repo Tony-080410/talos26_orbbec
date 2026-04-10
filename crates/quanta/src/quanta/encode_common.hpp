@@ -83,11 +83,9 @@ inline std::expected<FilterChain, std::string> build_filter_chain(
     AVFilterContext* sink_ctx = nullptr;
 
     std::string args = std::format(
-        "video_size={}x{}:pix_fmt={}:sar={}/{}:time_base={}/{}:frame_rate={}/"
-        "{}:colorspace={}:range={}",
+        "video_size={}x{}:pix_fmt={}:sar={}/{}:time_base={}/{}:frame_rate={}/{}",
         src_w, src_h, static_cast<int>(pix_fmt), sar.num, sar.den, time_base.num, time_base.den,
-        input_frame_rate.num, input_frame_rate.den, static_cast<int>(color.colorspace),
-        static_cast<int>(color.range));
+        input_frame_rate.num, input_frame_rate.den);
 
     int ret =
         avfilter_graph_create_filter(&src_ctx, buf_src, "in", args.c_str(), nullptr, graph.get());
