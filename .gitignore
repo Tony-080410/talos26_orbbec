@@ -49,3 +49,5 @@ build_test_trt
 ax650n_bsp_sdk*
 record
 llvm.sh*
+3dparty/*.sha256
+3dparty/*.tar.xz

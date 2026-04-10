@@ -14,6 +14,7 @@
 #   ./build.sh
 #   ./build.sh --debug
 #   ./build.sh --asan
+#   ./build.sh --cross
 #   ./build.sh --calib -- --camera 0
 #   ./build.sh --no-run
 #   ./build.sh --verbose
@@ -413,6 +414,18 @@ parse_args() {
             -c|--calib)
                 BUILD_TARGET="rm_calibration"
                 ENABLE_CALIBRATION="ON"
+                shift
+                ;;
+            -cx|--cross)
+                CMAKE_EXTRA_ARGS+=(
+                    "-DCMAKE_TOOLCHAIN_FILE=cmake/toolchains/aarch64-linux-gnu-clang.cmake"
+                        "-DTALOS_TARGET_TRIPLE=aarch64-unknown-linux-gnu"
+                        "-DTALOS_LLVM_ROOT=$(brew --prefix llvm)"
+                        "-DTALOS_GNU_TOOLCHAIN_ROOT=$(brew --prefix aarch64-unknown-linux-gnu)/toolchain"
+                        "-DTALOS_SYSROOT=/Users/blackjack/sysroots/ax650n"
+                        "-DBUILD_TESTING=OFF"
+                        "-DCMAKE_CROSSCOMPILING=ON"
+                )
                 shift
                 ;;
             -p|--playground|--play)

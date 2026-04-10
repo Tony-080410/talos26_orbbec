@@ -3,6 +3,108 @@ if(POLICY CMP0135)
     cmake_policy(SET CMP0135 OLD)
 endif()
 
+function(_talos_relocate_sysroot_usr_path out_var in_value)
+    set(_fixed "${in_value}")
+
+    if (NOT CMAKE_CROSSCOMPILING OR NOT TALOS_SYSROOT)
+        set(${out_var} "${_fixed}" PARENT_SCOPE)
+        return()
+    endif ()
+
+    if (_fixed MATCHES "^\\$<" OR NOT IS_ABSOLUTE "${_fixed}" OR EXISTS "${_fixed}")
+        set(${out_var} "${_fixed}" PARENT_SCOPE)
+        return()
+    endif ()
+
+    string(FIND "${_fixed}" "${TALOS_SYSROOT}/" _sysroot_prefix_pos)
+    if (NOT _sysroot_prefix_pos EQUAL 0)
+        set(${out_var} "${_fixed}" PARENT_SCOPE)
+        return()
+    endif ()
+
+    string(LENGTH "${TALOS_SYSROOT}/" _sysroot_prefix_len)
+    string(SUBSTRING "${_fixed}" ${_sysroot_prefix_len} -1 _relative_to_sysroot)
+
+    if (_relative_to_sysroot MATCHES "^(include|lib|lib64|share|bin)(/.*)?$")
+        set(_candidate "${TALOS_SYSROOT}/usr/${_relative_to_sysroot}")
+        if (EXISTS "${_candidate}")
+            set(_fixed "${_candidate}")
+        endif ()
+    endif ()
+
+    set(${out_var} "${_fixed}" PARENT_SCOPE)
+endfunction()
+
+function(_talos_fix_imported_target_sysroot target)
+    if (NOT TARGET "${target}")
+        return()
+    endif ()
+
+    get_target_property(_is_imported "${target}" IMPORTED)
+    if (NOT _is_imported)
+        return()
+    endif ()
+
+    foreach(_prop IN ITEMS
+            INTERFACE_INCLUDE_DIRECTORIES
+            INTERFACE_SYSTEM_INCLUDE_DIRECTORIES
+            INTERFACE_LINK_DIRECTORIES
+            INTERFACE_LINK_LIBRARIES)
+        get_target_property(_values "${target}" ${_prop})
+        if (NOT _values OR _values STREQUAL "${_prop}-NOTFOUND")
+            continue()
+        endif ()
+
+        set(_rewritten_values "")
+        set(_changed FALSE)
+        foreach(_value IN LISTS _values)
+            _talos_relocate_sysroot_usr_path(_rewritten_value "${_value}")
+            list(APPEND _rewritten_values "${_rewritten_value}")
+            if (NOT "${_rewritten_value}" STREQUAL "${_value}")
+                set(_changed TRUE)
+            endif ()
+        endforeach ()
+
+        if (_changed)
+            set_property(TARGET "${target}" PROPERTY ${_prop} "${_rewritten_values}")
+        endif ()
+    endforeach ()
+
+    set(_import_location_props IMPORTED_LOCATION IMPORTED_IMPLIB)
+    get_target_property(_import_configs "${target}" IMPORTED_CONFIGURATIONS)
+    if (_import_configs AND NOT _import_configs STREQUAL "_import_configs-NOTFOUND")
+        foreach(_config IN LISTS _import_configs)
+            string(TOUPPER "${_config}" _config_upper)
+            list(APPEND _import_location_props
+                "IMPORTED_LOCATION_${_config_upper}"
+                "IMPORTED_IMPLIB_${_config_upper}")
+        endforeach ()
+    endif ()
+
+    foreach(_prop IN LISTS _import_location_props)
+        get_target_property(_value "${target}" ${_prop})
+        if (NOT _value OR _value STREQUAL "${_prop}-NOTFOUND")
+            continue()
+        endif ()
+
+        _talos_relocate_sysroot_usr_path(_rewritten_value "${_value}")
+        if (NOT "${_rewritten_value}" STREQUAL "${_value}")
+            set_property(TARGET "${target}" PROPERTY ${_prop} "${_rewritten_value}")
+        endif ()
+    endforeach ()
+endfunction()
+
+function(talos_fixup_cross_sysroot_imported_targets)
+    if (NOT CMAKE_CROSSCOMPILING OR NOT TALOS_SYSROOT)
+        return()
+    endif ()
+
+    get_cmake_property(_all_targets TARGETS)
+    foreach(_target IN LISTS _all_targets)
+        _talos_fix_imported_target_sysroot("${_target}")
+    endforeach ()
+endfunction()
+
 find_package(OpenCV REQUIRED)
 
 # Include FetchContent helper
@@ -46,7 +148,9 @@ else ()
     message(STATUS "OpenVINO not found - OpenVINO backends will be disabled")
 endif ()
 find_package(TBB REQUIRED)
-find_package(GTest REQUIRED)
+if (BUILD_TESTING)
+    find_package(GTest REQUIRED)
+endif ()
 find_package(Ceres REQUIRED)
 
 # TensorRT configuration with better error handling
@@ -77,6 +181,8 @@ if (TALOS_FFMPEG_ROOT AND EXISTS "${TALOS_FFMPEG_ROOT}/lib")
 endif ()
 
 pkg_check_modules(LIBUSB REQUIRED libusb-1.0)
+
+talos_fixup_cross_sysroot_imported_targets()
 
 # HIK Camera SDK configuration
 set(HIK_SDK_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/3dparty/hik_sdk")

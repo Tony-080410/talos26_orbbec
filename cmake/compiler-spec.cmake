@@ -21,11 +21,19 @@ endif ()
 add_compile_options(-fPIC)
 
 # Common optimization options (work for both GCC and Clang)
-add_compile_options(
-    -march=native
-    -mtune=native
-    -funroll-loops
-)
+#
+# Host-native tuning is only valid for native builds. During cross-compilation it
+# can either be rejected outright or silently tune code for the build host
+# instead of the target SoC.
+if (CMAKE_CROSSCOMPILING)
+    add_compile_options(-funroll-loops)
+else ()
+    add_compile_options(
+        -march=native
+        -mtune=native
+        -funroll-loops
+    )
+endif ()
 
 # Clang-specific optimization options
 if (CMAKE_CXX_COMPILER_ID MATCHES "Clang")
