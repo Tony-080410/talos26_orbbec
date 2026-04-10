@@ -64,7 +64,7 @@ if (HIK_USE_SDK)
 
     # Set rpath to find the SDK libraries at runtime
     set_target_properties(hikcamera PROPERTIES
-        INSTALL_RPATH "${HIK_SDK_LIB_DIR}"
+        INSTALL_RPATH "${CMAKE_INSTALL_RPATH};${HIK_SDK_LIB_DIR}"
         BUILD_WITH_INSTALL_RPATH TRUE
     )
 

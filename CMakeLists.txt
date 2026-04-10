@@ -5,6 +5,10 @@ include(cmake/crate-utils.cmake)
 
 project(talos VERSION 0.1 LANGUAGES C CXX)
 
+if(CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT)
+    set(CMAKE_INSTALL_PREFIX "${PROJECT_SOURCE_DIR}" CACHE PATH "Install path prefix." FORCE)
+endif()
+
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
@@ -12,6 +16,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
+set(TALOS_INSTALL_BIN_DIR "${PROJECT_SOURCE_DIR}/bin")
 
 get_filename_component(PROJECT_SOURCE_DIR_ABS "${CMAKE_SOURCE_DIR}" REALPATH)
 
@@ -36,20 +41,36 @@ endif()
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 
 # RPATH configuration for micromamba environment
+if(APPLE)
+    set(TALOS_INSTALL_RPATH "@loader_path")
+else()
+    set(TALOS_INSTALL_RPATH "$ORIGIN")
+endif()
+
 set(CMAKE_INSTALL_RPATH_USE_LINK_PATH TRUE)
 set(CMAKE_BUILD_RPATH_USE_ORIGIN TRUE)
+set(CMAKE_INSTALL_RPATH "${TALOS_INSTALL_RPATH}")
 
 if(CMAKE_CXX_COMPILER MATCHES "micromamba")
     get_filename_component(MICROMAMBA_LIB_DIR ${CMAKE_CXX_COMPILER} DIRECTORY)
     get_filename_component(MICROMAMBA_LIB_DIR ${MICROMAMBA_LIB_DIR} DIRECTORY)
     set(MICROMAMBA_LIB_DIR "${MICROMAMBA_LIB_DIR}/lib")
-    set(CMAKE_INSTALL_RPATH "${CMAKE_BINARY_DIR};${MICROMAMBA_LIB_DIR}")
     set(CMAKE_BUILD_RPATH "${CMAKE_BINARY_DIR};${MICROMAMBA_LIB_DIR}")
+    list(APPEND CMAKE_INSTALL_RPATH "${MICROMAMBA_LIB_DIR}")
 endif()
 
 include(cmake/dependencies.cmake)
 include(cmake/test.cmake)
 include(cmake/calibration.cmake)
+
+foreach(_runtime_target IN ITEMS fmt spdlog)
+    if(TARGET "${_runtime_target}")
+        set_target_properties(${_runtime_target} PROPERTIES
+            BUILD_WITH_INSTALL_RPATH TRUE
+            INSTALL_RPATH "${TALOS_INSTALL_RPATH}"
+        )
+    endif()
+endforeach()
 
 # ============================================================================
 # Third-party libraries (header-only / vendored)
@@ -344,3 +365,156 @@ target_link_libraries(bench_mpc PRIVATE
         Eigen3::Eigen
         tinympc_bench
 )
+
+# ============================================================================
+# Install
+# ============================================================================
+
+function(talos_install_shared_library path)
+    if(EXISTS "${path}" OR IS_SYMLINK "${path}")
+        install(CODE
+            "file(INSTALL DESTINATION \"${TALOS_INSTALL_BIN_DIR}\" TYPE SHARED_LIBRARY FOLLOW_SYMLINK_CHAIN FILES \"${path}\")"
+        )
+    endif()
+endfunction()
+
+function(talos_collect_imported_shared_libraries out_var)
+    set(_collected "")
+
+    foreach(_target IN LISTS ARGN)
+        if(NOT TARGET "${_target}")
+            continue()
+        endif()
+
+        set(_props
+            IMPORTED_LOCATION
+            IMPORTED_IMPLIB
+            INTERFACE_LINK_LIBRARIES
+        )
+
+        get_target_property(_import_configs "${_target}" IMPORTED_CONFIGURATIONS)
+        if(_import_configs AND NOT _import_configs STREQUAL "_import_configs-NOTFOUND")
+            foreach(_config IN LISTS _import_configs)
+                string(TOUPPER "${_config}" _config_upper)
+                list(APPEND _props
+                    "IMPORTED_LOCATION_${_config_upper}"
+                    "IMPORTED_IMPLIB_${_config_upper}"
+                )
+            endforeach()
+        endif()
+
+        foreach(_prop IN LISTS _props)
+            get_target_property(_values "${_target}" ${_prop})
+            if(NOT _values OR _values STREQUAL "${_prop}-NOTFOUND")
+                continue()
+            endif()
+
+            foreach(_value IN LISTS _values)
+                if((EXISTS "${_value}" OR IS_SYMLINK "${_value}")
+                   AND IS_ABSOLUTE "${_value}"
+                   AND _value MATCHES "\\.(so(\\..*)?|dylib)$")
+                    list(APPEND _collected "${_value}")
+                endif()
+            endforeach()
+        endforeach()
+    endforeach()
+
+    list(REMOVE_DUPLICATES _collected)
+    set(${out_var} "${_collected}" PARENT_SCOPE)
+endfunction()
+
+set(TALOS_INSTALL_TARGETS
+        foxglove_cpp
+        quanta
+        scheduler
+        hikcamera
+        fcs
+        fcs_visualization
+        ${PROJECT_NAME}
+        talos-playground
+        bench_mpc
+        quanta-transcode
+        quanta-stream-test
+        quanta-stream-loopback
+        quanta-stream-demo
+)
+
+set(TALOS_OPTIONAL_INSTALL_TARGETS
+        rm_calibration
+)
+
+foreach(_target IN LISTS TALOS_OPTIONAL_INSTALL_TARGETS)
+    if(NOT TARGET "${_target}")
+        list(REMOVE_ITEM TALOS_INSTALL_TARGETS "${_target}")
+    endif()
+endforeach()
+
+if(TARGET rm_calibration)
+    list(APPEND TALOS_INSTALL_TARGETS rm_calibration)
+endif()
+
+install(TARGETS ${TALOS_INSTALL_TARGETS}
+        RUNTIME DESTINATION "${TALOS_INSTALL_BIN_DIR}"
+        LIBRARY DESTINATION "${TALOS_INSTALL_BIN_DIR}"
+)
+
+set(TALOS_HIK_RUNTIME_LIB_DIR "")
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    if(CMAKE_SYSTEM_PROCESSOR STREQUAL "x86_64")
+        set(TALOS_HIK_RUNTIME_LIB_DIR "${HIK_SDK_ROOT}/lib/amd64")
+    elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "arm64|aarch64")
+        set(TALOS_HIK_RUNTIME_LIB_DIR "${HIK_SDK_ROOT}/lib/arm64")
+    endif()
+endif()
+
+if(TALOS_HIK_RUNTIME_LIB_DIR AND EXISTS "${TALOS_HIK_RUNTIME_LIB_DIR}")
+    file(GLOB TALOS_HIK_RUNTIME_LIBS
+        "${TALOS_HIK_RUNTIME_LIB_DIR}/*.so"
+        "${TALOS_HIK_RUNTIME_LIB_DIR}/*.so.*"
+        "${TALOS_HIK_RUNTIME_LIB_DIR}/*.dylib"
+    )
+    list(FILTER TALOS_HIK_RUNTIME_LIBS EXCLUDE REGEX "/lib/[^/]*/lib(av|sw)")
+    foreach(_lib IN LISTS TALOS_HIK_RUNTIME_LIBS)
+        talos_install_shared_library("${_lib}")
+    endforeach()
+endif()
+
+if(TALOS_FFMPEG_ROOT AND EXISTS "${TALOS_FFMPEG_ROOT}/lib")
+    file(GLOB TALOS_FFMPEG_RUNTIME_LIBS
+        "${TALOS_FFMPEG_ROOT}/lib/libav*.so"
+        "${TALOS_FFMPEG_ROOT}/lib/libav*.so.*"
+        "${TALOS_FFMPEG_ROOT}/lib/libav*.dylib"
+        "${TALOS_FFMPEG_ROOT}/lib/libav*.dylib*"
+        "${TALOS_FFMPEG_ROOT}/lib/libsw*.so"
+        "${TALOS_FFMPEG_ROOT}/lib/libsw*.so.*"
+        "${TALOS_FFMPEG_ROOT}/lib/libsw*.dylib"
+        "${TALOS_FFMPEG_ROOT}/lib/libsw*.dylib*"
+    )
+else()
+    talos_collect_imported_shared_libraries(TALOS_FFMPEG_RUNTIME_LIBS
+        PkgConfig::AVCODEC
+        PkgConfig::AVFORMAT
+        PkgConfig::AVFILTER
+        PkgConfig::SWSCALE
+        PkgConfig::AVUTIL
+    )
+endif()
+
+foreach(_lib IN LISTS TALOS_FFMPEG_RUNTIME_LIBS)
+    talos_install_shared_library("${_lib}")
+endforeach()
+
+file(GLOB TALOS_FETCHED_RUNTIME_LIBS
+    "${CMAKE_BINARY_DIR}/_deps/fmt-build/libfmt.so"
+    "${CMAKE_BINARY_DIR}/_deps/fmt-build/libfmt.so.*"
+    "${CMAKE_BINARY_DIR}/_deps/fmt-build/libfmt.dylib"
+    "${CMAKE_BINARY_DIR}/_deps/fmt-build/libfmt.dylib*"
+    "${CMAKE_BINARY_DIR}/_deps/spdlog-build/libspdlog.so"
+    "${CMAKE_BINARY_DIR}/_deps/spdlog-build/libspdlog.so.*"
+    "${CMAKE_BINARY_DIR}/_deps/spdlog-build/libspdlog.dylib"
+    "${CMAKE_BINARY_DIR}/_deps/spdlog-build/libspdlog.dylib*"
+)
+
+foreach(_lib IN LISTS TALOS_FETCHED_RUNTIME_LIBS)
+    talos_install_shared_library("${_lib}")
+endforeach()

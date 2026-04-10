@@ -51,3 +51,4 @@ record
 llvm.sh*
 3dparty/*.sha256
 3dparty/*.tar.xz
+bin
