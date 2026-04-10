@@ -5,6 +5,7 @@
 #include "core/armor_types.hpp"
 
 #include <array>
+#include <limits>
 #include <memory>
 #include <string>
 #include <vector>
@@ -90,11 +91,25 @@ private:
         int pair_id      = -1;
     };
 
+    struct RankedAnchor {
+        float best_obj_logit = -std::numeric_limits<float>::infinity();
+        int pair_id          = -1;
+        int anchor_idx       = -1;
+    };
+
+    static constexpr int TILE_GRID_SIZE = 2;
+
     /// Build decode grid for anchor-based decoding (called once at init).
     [[nodiscard]] DecodeGrid build_decode_grid() const;
 
     /// Cached decode grid (built once at initialization).
     DecodeGrid cached_grid_;
+
+    // Reusable postprocess/NMS buffers (mutable: internal detail, logical const-ness unaffected)
+    mutable std::vector<RankedAnchor> postproc_ranked_buf_;
+    mutable std::vector<DecodedCandidate> postproc_candidates_buf_;
+    mutable std::vector<uint8_t> nms_removed_buf_;
+    mutable std::array<std::vector<int>, TILE_GRID_SIZE * TILE_GRID_SIZE> nms_tile_bins_buf_;
 
     /// Decode and postprocess single-output concat-predecode tensor.
     [[nodiscard]] std::vector<AtLegacyArmorDetection>

@@ -60,17 +60,10 @@ constexpr float GRID_OFFSET               = 0.5f;
 constexpr float FOUR_THIRDS               = 4.0f / 3.0f;
 constexpr float FOUR_THIRDS_TOLERANCE     = 0.01f;
 constexpr std::array<int, 4> KPT_ORDER    = {1, 2, 3, 0};
-constexpr int TILE_GRID_SIZE              = 2;
 
 enum class AX_ENGINE_ALLOC_BUFFER_STRATEGY_T {
     DEFAULT = 0,
     CACHED  = 1,
-};
-
-struct RankedAnchor {
-    float best_obj_logit = -std::numeric_limits<float>::infinity();
-    int pair_id          = -1;
-    int anchor_idx       = -1;
 };
 
 static constexpr std::array<ArmorName, 12> PAIR_TO_ARMOR{
@@ -277,6 +270,10 @@ AtLegacyAxeraBackend::~AtLegacyAxeraBackend() {
 
 AtLegacyAxeraBackend::AtLegacyAxeraBackend(AtLegacyAxeraBackend&& other) noexcept
     : cached_grid_(std::move(other.cached_grid_))
+    , postproc_ranked_buf_(std::move(other.postproc_ranked_buf_))
+    , postproc_candidates_buf_(std::move(other.postproc_candidates_buf_))
+    , nms_removed_buf_(std::move(other.nms_removed_buf_))
+    , nms_tile_bins_buf_(std::move(other.nms_tile_bins_buf_))
     , config_(std::move(other.config_))
     , detect_color_(other.detect_color_)
     , initialized_(other.initialized_)
@@ -321,6 +318,10 @@ AtLegacyAxeraBackend& AtLegacyAxeraBackend::operator=(AtLegacyAxeraBackend&& oth
     }
 
     cached_grid_                 = std::move(other.cached_grid_);
+    postproc_ranked_buf_         = std::move(other.postproc_ranked_buf_);
+    postproc_candidates_buf_     = std::move(other.postproc_candidates_buf_);
+    nms_removed_buf_             = std::move(other.nms_removed_buf_);
+    nms_tile_bins_buf_           = std::move(other.nms_tile_bins_buf_);
     config_                      = std::move(other.config_);
     detect_color_                = other.detect_color_;
     initialized_                 = other.initialized_;
@@ -763,8 +764,11 @@ std::vector<AtLegacyArmorDetection>
         return lhs.best_obj_logit > rhs.best_obj_logit;
     };
 
-    std::vector<RankedAnchor> ranked;
-    ranked.reserve(pre_nms_top_k);
+    postproc_ranked_buf_.clear();
+    if (postproc_ranked_buf_.capacity() < pre_nms_top_k) {
+        postproc_ranked_buf_.reserve(pre_nms_top_k);
+    }
+    auto& ranked = postproc_ranked_buf_;
 
     int anchor_scan_count = 0;
 
@@ -808,8 +812,11 @@ std::vector<AtLegacyArmorDetection>
     const float scale_x = ctx.scale_x;
     const float scale_y = ctx.scale_y;
 
-    std::vector<DecodedCandidate> candidates;
-    candidates.reserve(ranked.size());
+    postproc_candidates_buf_.clear();
+    if (postproc_candidates_buf_.capacity() < ranked.size()) {
+        postproc_candidates_buf_.reserve(ranked.size());
+    }
+    auto& candidates = postproc_candidates_buf_;
 
     for (const RankedAnchor& ranked_anchor : ranked) {
         const float confidence = fast_sigmoid(ranked_anchor.best_obj_logit);
@@ -893,18 +900,14 @@ std::vector<AtLegacyArmorDetection> AtLegacyAxeraBackend::nms(
         return {};
     }
 
-    std::sort(
-        detections.begin(), detections.end(),
-        [](const DecodedCandidate& lhs, const DecodedCandidate& rhs) {
-            return lhs.confidence > rhs.confidence;
-        });
-
-    // Assign each detection to a 2x2 tile based on corner center
+    // Assign each detection to a tile based on corner center
     const float tile_w = static_cast<float>(orig_w) / TILE_GRID_SIZE;
     const float tile_h = static_cast<float>(orig_h) / TILE_GRID_SIZE;
 
-    // tile_bins[tile_idx] = list of detection indices in that tile
-    std::array<std::vector<int>, TILE_GRID_SIZE * TILE_GRID_SIZE> tile_bins;
+    for (auto& bin : nms_tile_bins_buf_) {
+        bin.clear();
+    }
+    auto& tile_bins = nms_tile_bins_buf_;
 
     for (int i = 0; i < static_cast<int>(detections.size()); ++i) {
         const auto& det = detections[i];
@@ -917,7 +920,8 @@ std::vector<AtLegacyArmorDetection> AtLegacyAxeraBackend::nms(
 
     const float nms_thresh = static_cast<float>(config_.nms_threshold);
 
-    std::vector<uint8_t> removed(detections.size(), 0);
+    nms_removed_buf_.assign(detections.size(), 0);
+    auto& removed = nms_removed_buf_;
     std::vector<AtLegacyArmorDetection> result;
     result.reserve(std::min(detections.size(), static_cast<size_t>(config_.top_k)));
 

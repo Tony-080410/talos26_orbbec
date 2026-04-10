@@ -111,17 +111,7 @@ void AtLegacyDetectorBackend::set_detect_color(ArmorColor color) noexcept {
 }
 
 bool AtLegacyDetectorBackend::supports_readback_roi() const noexcept {
-    return std::visit(
-        [](const auto& backend) -> bool {
-            using BackendPtr = std::decay_t<decltype(backend)>;
-            using Backend    = typename BackendPtr::element_type;
-            if (!backend) {
-                return false;
-            }
-
-            return true;
-        },
-        backend_);
+    return std::visit([](const auto& backend) -> bool { return backend != nullptr; }, backend_);
 }
 
 AtLegacyBackendInputResolution AtLegacyDetectorBackend::input_resolution() const noexcept {
@@ -134,6 +124,12 @@ AtLegacyBackendInputResolution AtLegacyDetectorBackend::input_resolution() const
             }
             if constexpr (std::is_same_v<Backend, AtLegacyTraditionalBackend>) {
                 return {.width = 480, .height = 270};
+#if TALOS_HAS_AXERA
+            } else if constexpr (std::is_same_v<Backend, AtLegacyAxeraBackend>) {
+                return {
+                    .width  = backend->get_config().input_width,
+                    .height = backend->get_config().input_height};
+#endif
             } else {
                 return {.width = Backend::INPUT_W, .height = Backend::INPUT_H};
             }
