@@ -29,20 +29,6 @@ namespace fcs::L2 {
 /// Implements RAII for AX engine resources
 class AtLegacyAxeraBackend : public AtLegacyDetectorBackendBase<AtLegacyAxeraBackend> {
 public:
-    static constexpr int INPUT_W            = 896;
-    static constexpr int INPUT_H            = 672;
-    static constexpr int NUM_COLORS         = 4;
-    static constexpr int NUM_KPTS           = 4;
-    static constexpr int NUM_PAIRS          = 12;
-    static constexpr int PREDECODE_BOX_DIM  = 4;
-    static constexpr int PREDECODE_OBJ_DIM  = NUM_PAIRS;
-    static constexpr int PREDECODE_KPTS_DIM = NUM_KPTS * 2;
-    static constexpr int PREDECODE_OUTPUT_DIM =
-        PREDECODE_BOX_DIM + NUM_COLORS + PREDECODE_OBJ_DIM + PREDECODE_KPTS_DIM;
-    static constexpr int NUM_ANCHORS = (INPUT_W / 8) * (INPUT_H / 8)
-                                     + (INPUT_W / 16) * (INPUT_H / 16)
-                                     + (INPUT_W / 32) * (INPUT_H / 32);
-
     using DetectionResult = std::expected<std::vector<AtLegacyArmorDetection>, DetectorError>;
     using Config          = AtLegacyAxeraConfig;
 
@@ -98,7 +84,6 @@ private:
 
     struct DecodedCandidate {
         std::array<cv::Point2f, 4> corners{};
-        cv::Rect2f bbox{};
         ArmorName name   = ArmorName::Invalid;
         ArmorColor color = ArmorColor::Neutral;
         float confidence = 0.0f;
@@ -113,13 +98,11 @@ private:
 
     /// Decode and postprocess single-output concat-predecode tensor.
     [[nodiscard]] std::vector<AtLegacyArmorDetection> postprocess_concat_predecode(
-        const PreprocContext& ctx, const AtLegacyAxeraConfig& cfg) const;
+        const PreprocContext& ctx) const;
 
-    /// Class-aware IoU NMS on decoded bbox candidates.
+    /// Tile-based NMS on pts corner points.
     [[nodiscard]] std::vector<AtLegacyArmorDetection>
-        nms(std::vector<DecodedCandidate>& detections, const AtLegacyAxeraConfig& cfg) const;
-
-    [[nodiscard]] static float iou(const cv::Rect2f& lhs, const cv::Rect2f& rhs) noexcept;
+        nms(std::vector<DecodedCandidate>& detections, int orig_w, int orig_h) const;
 
 private:
     Config config_;

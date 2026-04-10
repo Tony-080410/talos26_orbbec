@@ -48,3 +48,4 @@ build_test
 build_test_trt
 ax650n_bsp_sdk*
 record
+llvm.sh*

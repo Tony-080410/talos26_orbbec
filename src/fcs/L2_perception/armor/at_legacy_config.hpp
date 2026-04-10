@@ -3,8 +3,8 @@
 #include "L2_perception/armor/at_legacy_readback_roi.hpp"
 #include "core/armor_types.hpp"
 
-#include <array>
 #include <string>
+#include <vector>
 
 namespace fcs::L2 {
 
@@ -114,8 +114,19 @@ struct AtLegacyTrtConfig {
 struct AtLegacyAxeraConfig {
     std::string model_path{};
 
+    // Model input dimensions
+    int input_width  = 768;
+    int input_height = 576;
+
+    // Model output dimensions
+    int num_colors = 4;
+    int num_kpts   = 4;
+    int num_pairs  = 12;
+    std::vector<int> strides = {8, 16, 32};
+
     // Detection parameters
     double confidence_threshold = 0.25;
+    double nms_threshold        = 0.70;
     int top_k                   = 128;
 };
 
