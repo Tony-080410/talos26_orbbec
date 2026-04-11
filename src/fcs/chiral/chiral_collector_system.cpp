@@ -27,7 +27,6 @@ talos::chrial::TrackerStatus to_chiral_tracker_status(L3::TrackerStatus status) 
     case L3::TrackerStatus::Detecting: return talos::chrial::TrackerStatus::Detecting;
     case L3::TrackerStatus::Tracking: return talos::chrial::TrackerStatus::Tracking;
     case L3::TrackerStatus::TempLost: return talos::chrial::TrackerStatus::TempLost;
-    default: return talos::chrial::TrackerStatus::Idle;
     }
 }
 
@@ -42,8 +41,8 @@ talos::chrial::ArmorName to_chrial_armor_name(ArmorName name) noexcept {
     case ArmorName::Five: return talos::chrial::ArmorName::Five;
     case ArmorName::Outpost: return talos::chrial::ArmorName::Outpost;
     case ArmorName::Base: return talos::chrial::ArmorName::Base;
-    case ArmorName::BaseLarge: return talos::chrial::ArmorName::BaseLarge;
-    default: return talos::chrial::ArmorName::Invalid;
+    case ArmorName::BaseLarge: return talos::chrial::ArmorName::Invalid;
+    case ArmorName::Invalid: return talos::chrial::ArmorName::Invalid;
     }
 }
 
@@ -54,7 +53,6 @@ talos::chrial::ArmorName to_chrial_armor_name(ArmorName name) noexcept {
     case ArmorColor::Red: return talos::chrial::ArmorColor::Red;
     case ArmorColor::Neutral: return talos::chrial::ArmorColor::Neutral;
     case ArmorColor::Purple: return talos::chrial::ArmorColor::Purple;
-    default: return talos::chrial::ArmorColor::Neutral;
     }
 }
 

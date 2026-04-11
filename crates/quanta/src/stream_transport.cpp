@@ -188,37 +188,26 @@ void serialize_header(std::span<uint8_t> bytes, const WireHeader& header) {
 
 class StreamSender::Impl {
 public:
-    Impl(EncodeParams encode_params, StreamTransportConfig transport_config)
-        : encode_params_(encode_params)
-        , transport_config_(normalize_config(std::move(transport_config)))
-        , encoder_(encode_params_) {}
-
-    std::expected<void, std::string> init(int src_width, int src_height) {
-        if (initialized_)
-            return std::unexpected("StreamSender already initialized");
-        if (src_width <= 0 || src_height <= 0)
-            return std::unexpected("source dimensions must be positive");
-        if (auto valid = validate_transport_config(transport_config_); !valid)
-            return valid;
-
-        src_width_             = src_width;
-        src_height_            = src_height;
-        min_frame_interval_ns_ = std::max<uint64_t>(
-            1, static_cast<uint64_t>(
-                   std::llround(1'000'000'000.0 / transport_config_.max_stream_fps)));
-
-        auto init_result = encoder_.init(src_width, src_height, transport_config_.max_stream_fps);
-        if (!init_result)
-            return init_result;
-
-        initialized_ = true;
-        return {};
+    static std::expected<std::unique_ptr<Impl>, std::string> create(
+        EncodeParams encode_params, StreamTransportConfig transport_config, int src_width,
+        int src_height) {
+        auto impl =
+            std::unique_ptr<Impl>(new Impl(std::move(encode_params), std::move(transport_config)));
+        auto result = impl->setup(src_width, src_height);
+        if (!result)
+            return std::unexpected(std::move(result.error()));
+        return impl;
     }
+
+    ~Impl() = default;
+
+    Impl(const Impl&)            = delete;
+    Impl& operator=(const Impl&) = delete;
+    Impl(Impl&&)                 = default;
+    Impl& operator=(Impl&&)      = default;
 
     std::expected<void, std::string> submit_frame(
         const uint8_t* data, int linesize, int64_t pts, uint64_t capture_timestamp_ns) {
-        if (!initialized_)
-            return std::unexpected("StreamSender not initialized");
         if (!data)
             return std::unexpected("frame data pointer is null");
         if (linesize < src_width_ * 3)
@@ -249,9 +238,6 @@ public:
     }
 
     std::expected<std::optional<TransportChunk>, std::string> poll_chunk() {
-        if (!initialized_)
-            return std::unexpected("StreamSender not initialized");
-
         const uint64_t now_ns = transport_config_.now_ns();
         reset_encode_schedule_if_idle(now_ns);
         if (auto ready = maybe_encode_pending(now_ns); !ready)
@@ -274,11 +260,7 @@ public:
         return copy;
     }
 
-    [[nodiscard]] std::pair<int, int> dimensions() const {
-        if (!initialized_)
-            return {0, 0};
-        return encoder_.dimensions();
-    }
+    [[nodiscard]] std::pair<int, int> dimensions() const { return encoder_->dimensions(); }
 
 private:
     struct PendingFrame {
@@ -307,11 +289,11 @@ private:
             PendingFrame frame = std::move(pending_frames_.front());
             pending_frames_.pop_front();
 
-            auto push_result = encoder_.push_frame(frame.data.data(), frame.linesize, frame.pts);
+            auto push_result = encoder_->push_frame(frame.data.data(), frame.linesize, frame.pts);
             if (!push_result)
                 return push_result;
 
-            while (auto packet = encoder_.poll_packet()) {
+            while (auto packet = encoder_->poll_packet()) {
                 if (auto fragment_result = fragment_packet(*packet, frame.capture_timestamp_ns);
                     !fragment_result) {
                     return std::unexpected(fragment_result.error());
@@ -395,16 +377,40 @@ private:
 
     EncodeParams encode_params_;
     StreamTransportConfig transport_config_;
-    StreamEncoder encoder_;
+    std::optional<StreamEncoder> encoder_;
     StreamSenderStats stats_{};
     std::deque<PendingFrame> pending_frames_;
     std::deque<TransportChunk> chunk_queue_;
-    bool initialized_                 = false;
     int src_width_                    = 0;
     int src_height_                   = 0;
     uint64_t min_frame_interval_ns_   = 0;
     uint64_t next_encode_deadline_ns_ = 0;
     uint32_t next_frame_seq_          = 0;
+
+    explicit Impl(EncodeParams encode_params, StreamTransportConfig transport_config)
+        : encode_params_(std::move(encode_params))
+        , transport_config_(normalize_config(std::move(transport_config))) {}
+
+    std::expected<void, std::string> setup(int src_width, int src_height) {
+        if (src_width <= 0 || src_height <= 0)
+            return std::unexpected("source dimensions must be positive");
+        if (auto valid = validate_transport_config(transport_config_); !valid)
+            return valid;
+
+        src_width_             = src_width;
+        src_height_            = src_height;
+        min_frame_interval_ns_ = std::max<uint64_t>(
+            1, static_cast<uint64_t>(
+                   std::llround(1'000'000'000.0 / transport_config_.max_stream_fps)));
+
+        auto enc = StreamEncoder::create(
+            encode_params_, src_width, src_height, transport_config_.max_stream_fps);
+        if (!enc)
+            return std::unexpected(std::move(enc.error()));
+        encoder_.emplace(std::move(*enc));
+
+        return {};
+    }
 };
 
 class StreamReceiver::Impl {
@@ -699,16 +705,22 @@ private:
     uint32_t last_completed_frame_seq_ = 0;
 };
 
-StreamSender::StreamSender(EncodeParams encode_params, StreamTransportConfig transport_config)
-    : impl_(std::make_unique<Impl>(encode_params, std::move(transport_config))) {}
+StreamSender::StreamSender(std::unique_ptr<Impl> impl)
+    : impl_(std::move(impl)) {}
 
 StreamSender::~StreamSender() = default;
 
 StreamSender::StreamSender(StreamSender&&) noexcept            = default;
 StreamSender& StreamSender::operator=(StreamSender&&) noexcept = default;
 
-std::expected<void, std::string> StreamSender::init(int src_width, int src_height) {
-    return impl_->init(src_width, src_height);
+std::expected<StreamSender, std::string> StreamSender::create(
+    EncodeParams encode_params, StreamTransportConfig transport_config, int src_width,
+    int src_height) {
+    auto impl =
+        Impl::create(std::move(encode_params), std::move(transport_config), src_width, src_height);
+    if (!impl)
+        return std::unexpected(std::move(impl.error()));
+    return StreamSender(std::move(*impl));
 }
 
 std::expected<void, std::string> StreamSender::submit_frame(

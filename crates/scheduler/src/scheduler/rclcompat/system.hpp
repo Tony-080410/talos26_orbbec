@@ -379,6 +379,9 @@ public:
 
     void bind(World& world) noexcept override { slot_->bind(world); }
 
+    /// RTTI-free dispatch: return this as ExternalComputeSource
+    ExternalComputeSource* as_external_compute() noexcept override { return this; }
+
     void bind_external_ready_slot(
         std::atomic<std::uint64_t>* ready_systems,
         const std::size_t system_index) noexcept override {

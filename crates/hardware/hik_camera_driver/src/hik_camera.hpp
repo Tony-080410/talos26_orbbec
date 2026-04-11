@@ -90,9 +90,6 @@ private:
     [[nodiscard]] std::expected<void, CameraError> init(
         const CameraProfile& profile, const char* user_defined_name, const SyncMode& sync_mode);
 
-    friend std::expected<std::unique_ptr<ImageCapturer>, CameraError>
-        ImageCapturer::create(const CameraProfile&, const char*, const SyncMode&);
-
     class Impl;
     std::unique_ptr<Impl> impl_;
 };

@@ -805,6 +805,7 @@ public:
                 fmt::format("create capturer config dir {}: {}", run_dir.string(), ec.message()));
         }
 
+        // std::make_shared cannot access private constructor; direct allocation is required.
         auto capturer = std::shared_ptr<RuntimeCapturer>(new RuntimeCapturer(config, run_dir));
         if (!capturer->jsonl_.is_open()) {
             return std::unexpected(

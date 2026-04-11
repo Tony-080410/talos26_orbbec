@@ -43,8 +43,15 @@ public:
     static constexpr size_t kInputFramePoolSize = 3;
     static constexpr int kBufferSrcFlags        = AV_BUFFERSRC_FLAG_KEEP_REF;
 
-    explicit Impl(EncodeParams params)
-        : params_(params) {}
+    static std::expected<std::unique_ptr<Impl>, std::string>
+        create(EncodeParams params, int src_width, int src_height, int framerate) {
+        auto impl   = std::unique_ptr<Impl>(new Impl(std::move(params)));
+        auto result = impl->setup(src_width, src_height, framerate);
+        if (!result)
+            return std::unexpected(std::move(result.error()));
+        return impl;
+    }
+
     ~Impl() = default;
 
     Impl(const Impl&)            = delete;
@@ -52,69 +59,7 @@ public:
     Impl(Impl&&)                 = default;
     Impl& operator=(Impl&&)      = default;
 
-    std::expected<void, std::string> init(int src_width, int src_height, int framerate) {
-        if (initialized_)
-            return std::unexpected("StreamEncoder already initialized");
-
-        src_width_  = src_width;
-        src_height_ = src_height;
-        framerate_  = framerate;
-
-        // Compute output dimensions (fit within max bounds, snap to even)
-        int out_w{}, out_h{};
-        fit_dimensions(src_width, src_height, params_.max_width, params_.max_height, out_w, out_h);
-        out_width_  = out_w;
-        out_height_ = out_h;
-
-        const AVRational time_base  = {1, framerate};
-        const AVRational frame_rate = {framerate, 1};
-
-        // Build filter chain: BGR24 input -> format=yuv420p -> filters -> scale -> output
-        auto filter_result = build_filter_chain(
-            src_width, src_height, {1, 1}, time_base, frame_rate, {0, 1}, AV_PIX_FMT_BGR24, out_w,
-            out_h, params_.filter);
-        if (!filter_result)
-            return std::unexpected("Cannot build filter chain: " + filter_result.error());
-        chain_ = std::move(filter_result.value());
-
-        // Create encoder
-        auto enc_result =
-            create_encoder_context(out_w, out_h, time_base, frame_rate, params_, {1, 1}, {}, true);
-        if (!enc_result)
-            return std::unexpected(enc_result.error());
-        enc_ctx_ = std::move(enc_result.value());
-
-        filt_frame_ = alloc_frame();
-        enc_pkt_    = alloc_packet();
-        if (!filt_frame_ || !enc_pkt_)
-            return std::unexpected("Cannot allocate reusable frame/packet");
-
-        for (auto& frame : bgr_frames_) {
-            frame = alloc_frame();
-            if (!frame)
-                return std::unexpected("Cannot allocate reusable BGR frame");
-            frame->format = AV_PIX_FMT_BGR24;
-            frame->width  = src_width_;
-            frame->height = src_height_;
-            int ret       = av_frame_get_buffer(frame.get(), 0);
-            if (ret < 0)
-                return std::unexpected("Cannot allocate BGR frame buffer: " + averr(ret));
-        }
-
-        input_row_bytes_ = src_width_ * 3;
-
-        initialized_ = true;
-
-        std::fprintf(
-            stderr, "[quanta::stream] %dx%d @ %dfps -> %dx%d, target %d bps\n", src_width,
-            src_height, framerate, out_w, out_h, params_.target_bitrate);
-        return {};
-    }
-
     std::expected<void, std::string> push_frame(const uint8_t* data, int linesize, int64_t pts) {
-        if (!initialized_)
-            return std::unexpected("StreamEncoder not initialized");
-
         AVFrame* bgr_frame = bgr_frames_[next_bgr_frame_].get();
         next_bgr_frame_    = (next_bgr_frame_ + 1) % bgr_frames_.size();
 
@@ -161,9 +106,6 @@ public:
     }
 
     std::expected<void, std::string> flush() {
-        if (!initialized_)
-            return std::unexpected("StreamEncoder not initialized");
-
         // Drain encoder: send NULL frame
         int ret = avcodec_send_frame(enc_ctx_.get(), nullptr);
         if (ret < 0)
@@ -219,9 +161,65 @@ private:
         packet_queue_.push_back(std::move(encoded));
     }
 
+    explicit Impl(EncodeParams params)
+        : params_(std::move(params)) {}
+
+    std::expected<void, std::string> setup(int src_width, int src_height, int framerate) {
+        src_width_  = src_width;
+        src_height_ = src_height;
+        framerate_  = framerate;
+
+        // Compute output dimensions (fit within max bounds, snap to even)
+        int out_w{}, out_h{};
+        fit_dimensions(src_width, src_height, params_.max_width, params_.max_height, out_w, out_h);
+        out_width_  = out_w;
+        out_height_ = out_h;
+
+        const AVRational time_base  = {1, framerate};
+        const AVRational frame_rate = {framerate, 1};
+
+        // Build filter chain: BGR24 input -> format=yuv420p -> filters -> scale -> output
+        auto filter_result = build_filter_chain(
+            src_width, src_height, {1, 1}, time_base, frame_rate, {0, 1}, AV_PIX_FMT_BGR24, out_w,
+            out_h, params_.filter);
+        if (!filter_result)
+            return std::unexpected("Cannot build filter chain: " + filter_result.error());
+        chain_ = std::move(filter_result.value());
+
+        // Create encoder
+        auto enc_result =
+            create_encoder_context(out_w, out_h, time_base, frame_rate, params_, {1, 1}, {}, true);
+        if (!enc_result)
+            return std::unexpected(enc_result.error());
+        enc_ctx_ = std::move(enc_result.value());
+
+        filt_frame_ = alloc_frame();
+        enc_pkt_    = alloc_packet();
+        if (!filt_frame_ || !enc_pkt_)
+            return std::unexpected("Cannot allocate reusable frame/packet");
+
+        for (auto& frame : bgr_frames_) {
+            frame = alloc_frame();
+            if (!frame)
+                return std::unexpected("Cannot allocate reusable BGR frame");
+            frame->format = AV_PIX_FMT_BGR24;
+            frame->width  = src_width_;
+            frame->height = src_height_;
+            int ret       = av_frame_get_buffer(frame.get(), 0);
+            if (ret < 0)
+                return std::unexpected("Cannot allocate BGR frame buffer: " + averr(ret));
+        }
+
+        input_row_bytes_ = src_width_ * 3;
+
+        std::fprintf(
+            stderr, "[quanta::stream] %dx%d @ %dfps -> %dx%d, target %d bps\n", src_width,
+            src_height, framerate, out_w, out_h, params_.target_bitrate);
+        return {};
+    }
+
     EncodeParams params_;
     TranscodeStats stats_{};
-    bool initialized_ = false;
 
     int src_width_  = 0;
     int src_height_ = 0;
@@ -243,16 +241,20 @@ private:
 // StreamEncoder — pimpl wrapper
 // ===========================================================================
 
-StreamEncoder::StreamEncoder(EncodeParams params)
-    : impl_(std::make_unique<Impl>(params)) {}
+StreamEncoder::StreamEncoder(std::unique_ptr<Impl> impl)
+    : impl_(std::move(impl)) {}
 
 StreamEncoder::~StreamEncoder() = default;
 
 StreamEncoder::StreamEncoder(StreamEncoder&&) noexcept            = default;
 StreamEncoder& StreamEncoder::operator=(StreamEncoder&&) noexcept = default;
 
-std::expected<void, std::string> StreamEncoder::init(int src_width, int src_height, int framerate) {
-    return impl_->init(src_width, src_height, framerate);
+std::expected<StreamEncoder, std::string>
+    StreamEncoder::create(EncodeParams params, int src_width, int src_height, int framerate) {
+    auto impl = Impl::create(std::move(params), src_width, src_height, framerate);
+    if (!impl)
+        return std::unexpected(std::move(impl.error()));
+    return StreamEncoder(std::move(*impl));
 }
 
 std::expected<void, std::string>

@@ -182,15 +182,9 @@ namespace detail {
 class ShmRegion {
 public:
     ~ShmRegion() noexcept {
-        // 析构函数绝不能抛异常！RAII 是信仰！
-        try {
-            if (owner_ && !path_.empty()) {
-                std::error_code ec;
-                std::filesystem::remove(path_, ec); // noexcept 版本
-                (void)ec;                           // 忽略错误，析构时无法处理
-            }
-        } catch (...) {
-            // 捕获所有异常，确保不会逃逸
+        if (owner_ && !path_.empty()) {
+            std::error_code ec;
+            std::filesystem::remove(path_, ec);
         }
 
         if (data_ != nullptr && data_ != MAP_FAILED) {

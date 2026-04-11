@@ -16,6 +16,9 @@ namespace talos::scheduler::system {
 // System Base Interface
 // ============================================================================
 
+// Forward declaration — needed by SystemBase::as_external_compute()
+class ExternalComputeSource;
+
 class SystemBase {
 public:
     virtual ~SystemBase() noexcept = default;
@@ -25,6 +28,11 @@ public:
     // bind channels or mutate scheduler topology.
     virtual bool run(World& world) noexcept         = 0;
     virtual const SystemMeta& meta() const noexcept = 0;
+
+    /// Returns this system as an ExternalComputeSource, or nullptr.
+    /// Override in systems that implement ExternalComputeSource.
+    /// Replaces dynamic_cast for RTTI-free dispatch.
+    virtual ExternalComputeSource* as_external_compute() noexcept { return nullptr; }
 };
 
 /**

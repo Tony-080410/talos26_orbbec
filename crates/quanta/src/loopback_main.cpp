@@ -87,14 +87,15 @@ int main(int argc, char* argv[]) {
         .now_ns         = clock_fn,
     };
     quanta::EncodeParams encode_params;
-    quanta::StreamSender sender(encode_params, transport_config);
-    quanta::StreamReceiver receiver(transport_config);
-
-    auto init = sender.init(kSrcWidth, kSrcHeight);
-    if (!init) {
-        std::fprintf(stderr, "[loopback] sender init failed: %s\n", init.error().c_str());
+    auto sender_result =
+        quanta::StreamSender::create(encode_params, transport_config, kSrcWidth, kSrcHeight);
+    if (!sender_result) {
+        std::fprintf(
+            stderr, "[loopback] sender create failed: %s\n", sender_result.error().c_str());
         return 1;
     }
+    quanta::StreamSender sender = std::move(*sender_result);
+    quanta::StreamReceiver receiver(transport_config);
 
     const auto [out_w, out_h]          = sender.dimensions();
     const uint64_t capture_period_ns   = kOneSecondNs / kInputFps;

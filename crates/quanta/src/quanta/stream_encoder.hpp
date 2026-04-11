@@ -36,17 +36,17 @@ struct EncodedPacket {
 // ---------------------------------------------------------------------------
 class StreamEncoder {
 public:
-    explicit StreamEncoder(EncodeParams params = {});
+    /// Factory: construct a fully initialized encoder.
+    /// Returns the encoder on success, or an error string on failure.
+    [[nodiscard]] static std::expected<StreamEncoder, std::string>
+        create(EncodeParams params, int src_width, int src_height, int framerate);
+
     ~StreamEncoder();
 
     StreamEncoder(StreamEncoder&&) noexcept;
     StreamEncoder& operator=(StreamEncoder&&) noexcept;
     StreamEncoder(const StreamEncoder&)            = delete;
     StreamEncoder& operator=(const StreamEncoder&) = delete;
-
-    /// Initialize encoder + filter chain for given input dimensions and framerate.
-    /// Must be called exactly once before push_frame.
-    std::expected<void, std::string> init(int src_width, int src_height, int framerate);
 
     /// Push a raw BGR24 frame into the encoder.
     /// `data` points to BGR24 interleaved pixel data, `linesize` is the byte stride per row
@@ -65,11 +65,12 @@ public:
     /// Get encoding parameters
     [[nodiscard]] const EncodeParams& params() const;
 
-    /// Get output dimensions (valid after init)
+    /// Get output dimensions
     [[nodiscard]] std::pair<int, int> dimensions() const;
 
 private:
     class Impl;
+    explicit StreamEncoder(std::unique_ptr<Impl> impl);
     std::unique_ptr<Impl> impl_;
 };
 

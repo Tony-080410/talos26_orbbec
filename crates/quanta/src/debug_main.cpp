@@ -151,13 +151,12 @@ int main(int argc, char* argv[]) {
     // ---- Setup encoder ----
     quanta::EncodeParams params;
     // Use the shared library defaults so the debug path matches Transcoder behavior.
-    quanta::StreamEncoder encoder(params);
-
-    auto init_result = encoder.init(src_width, src_height, framerate);
-    if (!init_result) {
-        std::fprintf(stderr, "[debug] Init failed: %s\n", init_result.error().c_str());
+    auto encoder_result = quanta::StreamEncoder::create(params, src_width, src_height, framerate);
+    if (!encoder_result) {
+        std::fprintf(stderr, "[debug] Encoder create failed: %s\n", encoder_result.error().c_str());
         return 1;
     }
+    quanta::StreamEncoder encoder = std::move(*encoder_result);
 
     auto [out_w, out_h] = encoder.dimensions();
     std::fprintf(

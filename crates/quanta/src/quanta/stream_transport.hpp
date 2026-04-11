@@ -87,16 +87,18 @@ struct StreamReceiverStats {
 
 class StreamSender {
 public:
-    explicit StreamSender(
-        EncodeParams encode_params = {}, StreamTransportConfig transport_config = {});
+    /// Factory: construct a fully initialized sender.
+    /// Returns the sender on success, or an error string on failure.
+    [[nodiscard]] static std::expected<StreamSender, std::string> create(
+        EncodeParams encode_params, StreamTransportConfig transport_config, int src_width,
+        int src_height);
+
     ~StreamSender();
 
     StreamSender(StreamSender&&) noexcept;
     StreamSender& operator=(StreamSender&&) noexcept;
     StreamSender(const StreamSender&)            = delete;
     StreamSender& operator=(const StreamSender&) = delete;
-
-    std::expected<void, std::string> init(int src_width, int src_height);
 
     std::expected<void, std::string> submit_frame(
         const uint8_t* data, int linesize, int64_t pts, uint64_t capture_timestamp_ns = 0);
@@ -108,6 +110,7 @@ public:
 
 private:
     class Impl;
+    explicit StreamSender(std::unique_ptr<Impl> impl);
     std::unique_ptr<Impl> impl_;
 };
 

@@ -297,12 +297,13 @@ int main(int argc, char* argv[]) {
     };
 
     quanta::EncodeParams encode_params;
-    quanta::StreamSender sender(encode_params, transport_config);
-    auto init = sender.init(first_frame.cols, first_frame.rows);
-    if (!init) {
-        std::fprintf(stderr, "[demo] sender init failed: %s\n", init.error().c_str());
+    auto sender_result = quanta::StreamSender::create(
+        encode_params, transport_config, first_frame.cols, first_frame.rows);
+    if (!sender_result) {
+        std::fprintf(stderr, "[demo] sender create failed: %s\n", sender_result.error().c_str());
         return 1;
     }
+    quanta::StreamSender sender = std::move(*sender_result);
 
     quanta::StreamReceiver receiver(transport_config);
     const auto [out_w, out_h] = sender.dimensions();

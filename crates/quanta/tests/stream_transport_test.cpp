@@ -30,8 +30,9 @@ TEST(StreamTransport, SenderRespectsMtuAndSplitsLargeFrames) {
         .now_ns         = [&now_ns] { return now_ns; },
     };
 
-    quanta::StreamSender sender(quanta::EncodeParams{}, config);
-    ASSERT_TRUE(sender.init(320, 240).has_value());
+    auto sender_result = quanta::StreamSender::create(quanta::EncodeParams{}, config, 320, 240);
+    ASSERT_TRUE(sender_result.has_value());
+    auto& sender = *sender_result;
 
     const int linesize = 320 * 3;
     std::vector<uint8_t> frame(static_cast<size_t>(linesize * 240));
@@ -74,8 +75,9 @@ TEST(StreamTransport, SenderBuffersShortBurstWhileBacklogged) {
         .max_queued_chunks  = 8,
     };
 
-    quanta::StreamSender sender(quanta::EncodeParams{}, config);
-    ASSERT_TRUE(sender.init(320, 240).has_value());
+    auto sender_result = quanta::StreamSender::create(quanta::EncodeParams{}, config, 320, 240);
+    ASSERT_TRUE(sender_result.has_value());
+    auto& sender = *sender_result;
 
     const int linesize = 320 * 3;
     std::vector<uint8_t> frame(static_cast<size_t>(linesize * 240));
@@ -111,8 +113,9 @@ TEST(StreamTransport, SenderDropsOldPendingFramesWhenBufferIsFull) {
         .max_queued_chunks  = 8,
     };
 
-    quanta::StreamSender sender(quanta::EncodeParams{}, config);
-    ASSERT_TRUE(sender.init(320, 240).has_value());
+    auto sender_result = quanta::StreamSender::create(quanta::EncodeParams{}, config, 320, 240);
+    ASSERT_TRUE(sender_result.has_value());
+    auto& sender = *sender_result;
 
     const int linesize = 320 * 3;
     std::vector<uint8_t> frame(static_cast<size_t>(linesize * 240));
@@ -149,9 +152,10 @@ TEST(StreamTransport, LoopbackProducesDecodedFrameAndLatency) {
         .now_ns         = [&now_ns] { return now_ns; },
     };
 
-    quanta::StreamSender sender(quanta::EncodeParams{}, config);
+    auto sender_result = quanta::StreamSender::create(quanta::EncodeParams{}, config, 160, 120);
+    ASSERT_TRUE(sender_result.has_value());
+    auto& sender = *sender_result;
     quanta::StreamReceiver receiver(config);
-    ASSERT_TRUE(sender.init(160, 120).has_value());
 
     const int linesize = 160 * 3;
     std::vector<uint8_t> frame(static_cast<size_t>(linesize * 120));
@@ -194,9 +198,10 @@ TEST(StreamTransport, ReceiverIgnoresDuplicateChunksFromQos1Redelivery) {
         .now_ns         = [&now_ns] { return now_ns; },
     };
 
-    quanta::StreamSender sender(quanta::EncodeParams{}, config);
+    auto sender_result = quanta::StreamSender::create(quanta::EncodeParams{}, config, 160, 120);
+    ASSERT_TRUE(sender_result.has_value());
+    auto& sender = *sender_result;
     quanta::StreamReceiver receiver(config);
-    ASSERT_TRUE(sender.init(160, 120).has_value());
 
     const int linesize = 160 * 3;
     std::vector<uint8_t> frame(static_cast<size_t>(linesize * 120));
@@ -244,9 +249,10 @@ TEST(StreamTransport, ReceiverDropsOutOfOrderFragments) {
         .now_ns         = [&now_ns] { return now_ns; },
     };
 
-    quanta::StreamSender sender(quanta::EncodeParams{}, config);
+    auto sender_result = quanta::StreamSender::create(quanta::EncodeParams{}, config, 160, 120);
+    ASSERT_TRUE(sender_result.has_value());
+    auto& sender = *sender_result;
     quanta::StreamReceiver receiver(config);
-    ASSERT_TRUE(sender.init(160, 120).has_value());
 
     const int linesize = 160 * 3;
     std::vector<uint8_t> frame(static_cast<size_t>(linesize * 120));

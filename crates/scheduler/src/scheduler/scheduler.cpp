@@ -469,7 +469,7 @@ std::uint64_t Scheduler::sum_notify_counts() const noexcept {
 
 void Scheduler::bind_external_compute_sources() noexcept {
     for (std::size_t i = 0; i < compute_systems_.size(); ++i) {
-        if (auto* external = dynamic_cast<ExternalComputeSource*>(compute_systems_[i].system.get());
+        if (auto* external = compute_systems_[i].system->as_external_compute();
             external != nullptr) {
             external->bind_external_ready_slot(&ready_systems_, i);
         }
@@ -562,7 +562,7 @@ void Scheduler::print_mermaid_wake_chains() const {
     printf("flowchart LR\n\n");
 
     const auto is_external_compute_source = [&](const std::size_t idx) {
-        return dynamic_cast<ExternalComputeSource*>(compute_systems_[idx].system.get()) != nullptr;
+        return compute_systems_[idx].system->as_external_compute() != nullptr;
     };
     const auto channel_labels = build_channel_label_map(fixed_rate_systems_, compute_systems_);
 
@@ -799,7 +799,7 @@ void Scheduler::print_mermaid_data_flow() const {
     printf("flowchart LR\n\n");
 
     const auto is_external_compute_source = [&](const std::size_t idx) {
-        return dynamic_cast<ExternalComputeSource*>(compute_systems_[idx].system.get()) != nullptr;
+        return compute_systems_[idx].system->as_external_compute() != nullptr;
     };
     const auto channel_labels = build_channel_label_map(fixed_rate_systems_, compute_systems_);
 
@@ -1201,7 +1201,7 @@ void Scheduler::print_mermaid_execution_levels() const {
     printf("flowchart LR\n\n");           // Changed from TB to LR for horizontal layout
 
     const auto is_external_compute_source = [&](const std::size_t idx) {
-        return dynamic_cast<ExternalComputeSource*>(compute_systems_[idx].system.get()) != nullptr;
+        return compute_systems_[idx].system->as_external_compute() != nullptr;
     };
 
     bool has_notifying_fixed_rate = false;
@@ -2018,7 +2018,7 @@ auto Scheduler::build_topology_snapshot() const -> std::expected<TopologySnapsho
     // - a compute system that can be woken externally (for example, RclPubSystem)
     std::uint64_t external_source_mask = 0;
     for (std::size_t i = 0; i < n; ++i) {
-        if (dynamic_cast<ExternalComputeSource*>(compute_systems_[i].system.get()) != nullptr) {
+        if (compute_systems_[i].system->as_external_compute() != nullptr) {
             external_source_mask |= (1ULL << i);
         }
     }

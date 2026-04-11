@@ -17,6 +17,7 @@
 #include <opencv2/core/types.hpp>
 #include <opencv2/imgcodecs.hpp>
 #include <opencv2/imgproc.hpp>
+#include <optional>
 
 namespace fcs::visualization::foxglove::systems {
 
@@ -28,7 +29,7 @@ struct QuantaFrameStamp {
 };
 
 struct QuantaPublisherState {
-    std::unique_ptr<quanta::StreamEncoder> encoder{};
+    std::optional<quanta::StreamEncoder> encoder{};
     std::deque<QuantaFrameStamp> pending_frames{};
     std::string last_error{};
     int src_width{0};
@@ -52,19 +53,18 @@ inline void log_quanta_error_once(QuantaPublisherState& state, std::string messa
         return true;
     }
 
-    state.encoder = std::make_unique<quanta::StreamEncoder>(cfg);
+    auto enc = quanta::StreamEncoder::create(cfg, src_width, src_height, cfg.framerate);
+    if (!enc) {
+        log_quanta_error_once(state, std::move(enc.error()));
+        state.encoder.reset();
+        return false;
+    }
+    state.encoder.emplace(std::move(*enc));
     state.pending_frames.clear();
     state.next_pts   = 0;
     state.src_width  = src_width;
     state.src_height = src_height;
     state.framerate  = cfg.framerate;
-
-    auto init_result = state.encoder->init(src_width, src_height, cfg.framerate);
-    if (!init_result) {
-        log_quanta_error_once(state, std::move(init_result.error()));
-        state.encoder.reset();
-        return false;
-    }
 
     state.last_error.clear();
     SPDLOG_INFO(
