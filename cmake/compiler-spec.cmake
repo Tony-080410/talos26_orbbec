@@ -1,4 +1,4 @@
-option(ENABLE_SCCACHE "Enable compiler caching via sccache" ON)
+option(ENABLE_SCCACHE "Enable compiler caching via sccache" OFF)
 
 if (ENABLE_SCCACHE)
     find_program(SCCACHE_PROGRAM sccache)
@@ -38,6 +38,8 @@ endif ()
 # Clang-specific optimization options
 if (CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     add_compile_options(
+    -ftime-trace
+
         -fvectorize
         -fslp-vectorize
     )

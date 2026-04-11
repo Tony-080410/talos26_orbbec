@@ -271,7 +271,9 @@ target_precompile_headers(fcs PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/fcs/pch.hp
 
 # FCS visualization
 add_library(fcs_visualization SHARED
+        src/fcs_visualization/foxglove_server.cpp
         src/fcs_visualization/foxglove_systems.cpp
+        src/fcs_visualization/scene_builder.cpp
         src/fcs_visualization/systems/debug_systems.cpp
         src/fcs_visualization/systems/l1_sensor_systems.cpp
         src/fcs_visualization/systems/l2_perception_systems.cpp
