@@ -24,15 +24,13 @@ struct AtLegacyNNBackend::Impl {
     std::shared_ptr<ov::Model> model;
     ov::CompiledModel compiled;
     ov::InferRequest request;
-
-    bool loaded = false;
 };
 
 // ============================================================================
 // Constructor / Destructor
 // ============================================================================
 
-AtLegacyNNBackend::AtLegacyNNBackend(Config config)
+AtLegacyNNBackend::AtLegacyNNBackend(Config config) noexcept
     : config_{std::move(config)}
     , impl_(std::make_unique<Impl>()) {}
 
@@ -41,49 +39,41 @@ AtLegacyNNBackend::~AtLegacyNNBackend() = default;
 AtLegacyNNBackend::AtLegacyNNBackend(AtLegacyNNBackend&& other) noexcept
     : config_{std::move(other.config_)}
     , detect_color_(other.detect_color_)
-    , initialized_(other.initialized_)
-    , impl_(std::move(other.impl_)) {
-    other.initialized_ = false;
-}
+    , impl_(std::move(other.impl_)) {}
 
 AtLegacyNNBackend& AtLegacyNNBackend::operator=(AtLegacyNNBackend&& other) noexcept {
     if (this != &other) {
-        config_            = std::move(other.config_);
-        detect_color_      = other.detect_color_;
-        initialized_       = other.initialized_;
-        impl_              = std::move(other.impl_);
-        other.initialized_ = false;
+        config_       = std::move(other.config_);
+        detect_color_ = other.detect_color_;
+        impl_         = std::move(other.impl_);
     }
     return *this;
 }
 
 // ============================================================================
-// Initialization
+// Factory — Construction IS Initialization
 // ============================================================================
 
-std::expected<void, DetectorError> AtLegacyNNBackend::init() {
-    if (initialized_) {
-        return {};
-    }
-
-    const auto& cfg = get_config();
+std::expected<AtLegacyNNBackend, std::string> AtLegacyNNBackend::create(Config config) noexcept {
+    AtLegacyNNBackend backend(std::move(config));
+    const auto& cfg = backend.get_config();
 
     try {
         // Enable profiling if requested
         if (cfg.enable_profiling) {
-            impl_->core.set_property(cfg.device, ov::enable_profiling(true));
+            backend.impl_->core.set_property(cfg.device, ov::enable_profiling(true));
         }
 
         // Load model
-        impl_->model = impl_->core.read_model(cfg.model_path);
-        impl_->model->reshape({1, 3, INPUT_H, INPUT_W});
+        backend.impl_->model = backend.impl_->core.read_model(cfg.model_path);
+        backend.impl_->model->reshape({1, 3, INPUT_H, INPUT_W});
 
         // Configure preprocessing
-        ov::preprocess::PrePostProcessor ppp(impl_->model);
+        ov::preprocess::PrePostProcessor ppp(backend.impl_->model);
         ppp.input().tensor().set_element_type(ov::element::f32).set_layout("NCHW");
         ppp.input().model().set_layout("NCHW");
         ppp.output().tensor().set_element_type(ov::element::f32);
-        impl_->model = ppp.build();
+        backend.impl_->model = ppp.build();
 
         // Compile options
         ov::AnyMap compile_opts;
@@ -108,13 +98,12 @@ std::expected<void, DetectorError> AtLegacyNNBackend::init() {
         }
 
         // Compile model
-        impl_->compiled = impl_->core.compile_model(impl_->model, cfg.device, compile_opts);
-        impl_->request  = impl_->compiled.create_infer_request();
-        impl_->loaded   = true;
-        initialized_    = true;
+        backend.impl_->compiled =
+            backend.impl_->core.compile_model(backend.impl_->model, cfg.device, compile_opts);
+        backend.impl_->request = backend.impl_->compiled.create_infer_request();
 
         SPDLOG_INFO("[AtLegacyNNBackend] Model loaded: {}", cfg.model_path);
-        const auto devices = execution_devices();
+        const auto devices = backend.execution_devices();
         if (!devices.empty()) {
             // Reserve upfront to avoid reallocations (estimate: ~12 chars per device)
             std::string dev_str;
@@ -130,10 +119,12 @@ std::expected<void, DetectorError> AtLegacyNNBackend::init() {
             SPDLOG_INFO("[AtLegacyNNBackend] Execution devices: {}", dev_str);
         }
 
-        return {};
+        return backend;
     } catch (const std::exception& e) {
-        SPDLOG_ERROR("[AtLegacyNNBackend] Init failed: {}", e.what());
-        return std::unexpected(DetectorError::InitFailed);
+        SPDLOG_ERROR(
+            "[AtLegacyNNBackend] Init failed for model '{}': {}", cfg.model_path, e.what());
+        return std::unexpected(
+            "NN backend (OpenVINO) init failed for model '" + cfg.model_path + "': " + e.what());
     }
 }
 
@@ -141,8 +132,8 @@ std::expected<void, DetectorError> AtLegacyNNBackend::init() {
 // Preprocessing
 // ============================================================================
 
-AtLegacyNNBackend::PreprocContext
-    AtLegacyNNBackend::preprocess(const cv::Mat& image, const AtLegacyNNConfig& /*cfg*/) const {
+AtLegacyNNBackend::PreprocContext AtLegacyNNBackend::preprocess(
+    const cv::Mat& image, const AtLegacyNNConfig& /*cfg*/) const noexcept {
     PreprocContext ctx;
     ctx.orig_w = image.cols;
     ctx.orig_h = image.rows;
@@ -196,8 +187,8 @@ AtLegacyNNBackend::PreprocContext
 // Inference
 // ============================================================================
 
-bool AtLegacyNNBackend::infer(const PreprocContext& ctx) {
-    if (!impl_->loaded || ctx.preprocessed.empty()) {
+bool AtLegacyNNBackend::infer(const PreprocContext& ctx) noexcept {
+    if (ctx.preprocessed.empty()) {
         return false;
     }
 
@@ -231,8 +222,8 @@ bool AtLegacyNNBackend::infer(const PreprocContext& ctx) {
 // Postprocessing
 // ============================================================================
 
-std::vector<AtLegacyArmorDetection>
-    AtLegacyNNBackend::postprocess(const PreprocContext& ctx, const AtLegacyNNConfig& cfg) const {
+std::vector<AtLegacyArmorDetection> AtLegacyNNBackend::postprocess(
+    const PreprocContext& ctx, const AtLegacyNNConfig& cfg) const noexcept {
     std::vector<AtLegacyArmorDetection> detections;
 
     ov::Tensor out = impl_->request.get_output_tensor(0);
@@ -411,7 +402,7 @@ std::vector<AtLegacyArmorDetection>
 // ============================================================================
 
 void AtLegacyNNBackend::transform_coordinates(
-    std::vector<AtLegacyArmorDetection>& detections, const PreprocContext& ctx) const {
+    std::vector<AtLegacyArmorDetection>& detections, const PreprocContext& ctx) const noexcept {
     // Already done in postprocess via map_point
     (void)detections;
     (void)ctx;
@@ -422,7 +413,7 @@ void AtLegacyNNBackend::transform_coordinates(
 // ============================================================================
 
 std::vector<AtLegacyArmorDetection> AtLegacyNNBackend::nms(
-    std::vector<AtLegacyArmorDetection>& detections, const AtLegacyNNConfig& cfg) const {
+    std::vector<AtLegacyArmorDetection>& detections, const AtLegacyNNConfig& cfg) const noexcept {
     if (detections.empty()) {
         return {};
     }
@@ -468,13 +459,9 @@ std::vector<AtLegacyArmorDetection> AtLegacyNNBackend::nms(
 // Detection Entry Point
 // ============================================================================
 
-AtLegacyNNBackend::DetectionResult AtLegacyNNBackend::detect_impl(const cv::Mat& image) {
-    if (!initialized_) {
-        return std::unexpected(DetectorError::NotInitialized);
-    }
-
+AtLegacyNNBackend::DetectionResult AtLegacyNNBackend::detect_impl(const cv::Mat& image) noexcept {
     if (image.empty()) {
-        return std::unexpected(DetectorError::InvalidImage);
+        return std::unexpected("Empty image passed to NN backend");
     }
 
     const auto& cfg = get_config();
@@ -482,12 +469,12 @@ AtLegacyNNBackend::DetectionResult AtLegacyNNBackend::detect_impl(const cv::Mat&
     // Preprocess
     auto ctx = preprocess(image, cfg);
     if (ctx.preprocessed.empty()) {
-        return std::unexpected(DetectorError::PreprocessFailed);
+        return std::unexpected("NN backend preprocessing failed");
     }
 
     // Infer
     if (!infer(ctx)) {
-        return std::unexpected(DetectorError::InferenceFailed);
+        return std::unexpected("NN backend inference failed");
     }
 
     // Postprocess
@@ -531,17 +518,11 @@ AtLegacyNNBackend::DetectionResult AtLegacyNNBackend::detect_impl(const cv::Mat&
 // Utility
 // ============================================================================
 
-std::vector<std::string> AtLegacyNNBackend::execution_devices() const {
-    if (!impl_->loaded) {
-        return {};
-    }
+std::vector<std::string> AtLegacyNNBackend::execution_devices() const noexcept {
     try {
         return impl_->compiled.get_property(ov::execution_devices);
     } catch (const std::exception& e) {
         SPDLOG_WARN("[NNBackend] Failed to get execution devices: {}", e.what());
-        return {};
-    } catch (...) {
-        SPDLOG_WARN("[NNBackend] Failed to get execution devices: unknown error");
         return {};
     }
 }

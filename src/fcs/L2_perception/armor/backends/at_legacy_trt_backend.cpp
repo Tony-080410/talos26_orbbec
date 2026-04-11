@@ -177,9 +177,9 @@ struct AtLegacyTrtBackend::Impl {
     // Keypoint mapping: YOLO outputs TL, BL, BR, TR; we want TL, TR, BR, BL
     static constexpr std::array<int, 4> keypoint_map = {0, 3, 2, 1};
 
-    Impl() = default;
+    Impl() noexcept = default;
 
-    ~Impl() { release(); }
+    ~Impl() noexcept { release(); }
 
     void release() noexcept {
         // Synchronize and destroy streams
@@ -214,41 +214,48 @@ struct AtLegacyTrtBackend::Impl {
 namespace {
 
 /// Load engine from file
-[[nodiscard]] std::expected<std::unique_ptr<nvinfer1::ICudaEngine>, DetectorError>
-    load_engine(nvinfer1::IRuntime* runtime, const fs::path& engine_path) {
-    std::ifstream file(engine_path, std::ios::binary | std::ios::ate);
-    if (!file.is_open()) {
-        SPDLOG_ERROR("Failed to open engine file: {}", engine_path.string());
-        return std::unexpected(DetectorError::ModelLoadError);
+[[nodiscard]] std::expected<std::unique_ptr<nvinfer1::ICudaEngine>, std::string>
+    load_engine(nvinfer1::IRuntime* runtime, const fs::path& engine_path) noexcept {
+    try {
+        std::ifstream file(engine_path, std::ios::binary | std::ios::ate);
+        if (!file.is_open()) {
+            SPDLOG_ERROR("Failed to open engine file: {}", engine_path.string());
+            return std::unexpected("TensorRT: failed to open engine file " + engine_path.string());
+        }
+
+        std::streamsize file_size = file.tellg();
+        file.seekg(0, std::ios::beg);
+
+        std::vector<char> engine_data(file_size);
+        if (!file.read(engine_data.data(), file_size)) {
+            SPDLOG_ERROR("Failed to read engine file: {}", engine_path.string());
+            return std::unexpected("TensorRT: failed to read engine file " + engine_path.string());
+        }
+
+        auto* engine = runtime->deserializeCudaEngine(engine_data.data(), file_size);
+        if (!engine) {
+            SPDLOG_ERROR("Failed to deserialize CUDA engine");
+            return std::unexpected("TensorRT: failed to deserialize CUDA engine");
+        }
+
+        return std::unique_ptr<nvinfer1::ICudaEngine>(engine);
+    } catch (const std::exception& e) {
+        SPDLOG_ERROR("[TrtBackend] Unexpected exception in load_engine: {}", e.what());
+        return std::unexpected(
+            "[TrtBackend::load_engine] Unhandled exception: " + std::string(e.what()));
     }
-
-    std::streamsize file_size = file.tellg();
-    file.seekg(0, std::ios::beg);
-
-    std::vector<char> engine_data(file_size);
-    if (!file.read(engine_data.data(), file_size)) {
-        SPDLOG_ERROR("Failed to read engine file: {}", engine_path.string());
-        return std::unexpected(DetectorError::ModelLoadError);
-    }
-
-    auto* engine = runtime->deserializeCudaEngine(engine_data.data(), file_size);
-    if (!engine) {
-        SPDLOG_ERROR("Failed to deserialize CUDA engine");
-        return std::unexpected(DetectorError::ModelLoadError);
-    }
-
-    return std::unique_ptr<nvinfer1::ICudaEngine>(engine);
 }
 
 /// Build engine from ONNX model
-[[nodiscard]] std::expected<std::unique_ptr<nvinfer1::ICudaEngine>, DetectorError>
+[[nodiscard]] std::expected<std::unique_ptr<nvinfer1::ICudaEngine>, std::string>
     build_engine_from_onnx(
         nvinfer1::IRuntime* runtime, const fs::path& onnx_path, const fs::path& cache_dir,
-        const std::string& compute_capability, bool enable_fp16, bool enable_dla, int dla_core) {
+        const std::string& compute_capability, bool enable_fp16, bool enable_dla,
+        int dla_core) noexcept {
     auto builder = std::unique_ptr<nvinfer1::IBuilder>(nvinfer1::createInferBuilder(g_trt_logger));
     if (!builder) {
         SPDLOG_ERROR("Failed to create TensorRT builder");
-        return std::unexpected(DetectorError::ModelLoadError);
+        return std::unexpected("TensorRT: failed to create builder");
     }
 
     const auto explicit_batch =
@@ -257,13 +264,13 @@ namespace {
         std::unique_ptr<nvinfer1::INetworkDefinition>(builder->createNetworkV2(explicit_batch));
     if (!network) {
         SPDLOG_ERROR("Failed to create network definition");
-        return std::unexpected(DetectorError::ModelLoadError);
+        return std::unexpected("TensorRT: failed to create network definition");
     }
 
     auto config = std::unique_ptr<nvinfer1::IBuilderConfig>(builder->createBuilderConfig());
     if (!config) {
         SPDLOG_ERROR("Failed to create builder config");
-        return std::unexpected(DetectorError::ModelLoadError);
+        return std::unexpected("TensorRT: failed to create builder config");
     }
 
     // Set FP16 mode
@@ -288,13 +295,13 @@ namespace {
         std::unique_ptr<nvonnxparser::IParser>(nvonnxparser::createParser(*network, g_trt_logger));
     if (!parser) {
         SPDLOG_ERROR("Failed to create ONNX parser");
-        return std::unexpected(DetectorError::ModelLoadError);
+        return std::unexpected("TensorRT: failed to create ONNX parser");
     }
 
     if (!parser->parseFromFile(
             onnx_path.c_str(), static_cast<int>(nvinfer1::ILogger::Severity::kINFO))) {
         SPDLOG_ERROR("Failed to parse ONNX model: {}", onnx_path.string());
-        return std::unexpected(DetectorError::ModelLoadError);
+        return std::unexpected("TensorRT: failed to parse ONNX model " + onnx_path.string());
     }
 
     // Build serialized network
@@ -302,7 +309,7 @@ namespace {
         std::unique_ptr<nvinfer1::IHostMemory>(builder->buildSerializedNetwork(*network, *config));
     if (!plan) {
         SPDLOG_ERROR("Failed to build serialized network");
-        return std::unexpected(DetectorError::ModelLoadError);
+        return std::unexpected("TensorRT: failed to build serialized network");
     }
 
     // Cache engine
@@ -327,7 +334,7 @@ namespace {
     auto* engine = runtime->deserializeCudaEngine(plan->data(), plan->size());
     if (!engine) {
         SPDLOG_ERROR("Failed to deserialize CUDA engine from ONNX");
-        return std::unexpected(DetectorError::ModelLoadError);
+        return std::unexpected("TensorRT: failed to deserialize CUDA engine from ONNX build");
     }
 
     return std::unique_ptr<nvinfer1::ICudaEngine>(engine);
@@ -378,39 +385,56 @@ namespace {
 // Constructor/Destructor
 // ============================================================================
 
-AtLegacyTrtBackend::AtLegacyTrtBackend(Config config)
-    : config_(std::move(config))
-    , initialized_(false) {
-
+AtLegacyTrtBackend::AtLegacyTrtBackend(Config config) noexcept
+    : config_(std::move(config)) {
     impl_ = std::make_unique<Impl>();
+}
+
+AtLegacyTrtBackend::~AtLegacyTrtBackend() noexcept = default;
+
+AtLegacyTrtBackend::AtLegacyTrtBackend(AtLegacyTrtBackend&&) noexcept = default;
+
+AtLegacyTrtBackend& AtLegacyTrtBackend::operator=(AtLegacyTrtBackend&&) noexcept = default;
+
+// ============================================================================
+// Factory — Construction IS Initialization
+// ============================================================================
+
+std::expected<AtLegacyTrtBackend, std::string> AtLegacyTrtBackend::create(Config config) noexcept {
+    AtLegacyTrtBackend backend(std::move(config));
 
     // Set CUDA device
-    cudaError_t cuda_err = cudaSetDevice(config_.device_id);
+    cudaError_t cuda_err = cudaSetDevice(backend.config_.device_id);
     if (cuda_err != cudaSuccess) {
         SPDLOG_ERROR(
-            "Failed to set CUDA device {}: {}", config_.device_id, cudaGetErrorString(cuda_err));
-        return;
+            "Failed to set CUDA device {}: {}", backend.config_.device_id,
+            cudaGetErrorString(cuda_err));
+        return std::unexpected(
+            "TensorRT: failed to set CUDA device " + std::to_string(backend.config_.device_id)
+            + ": " + cudaGetErrorString(cuda_err));
     }
 
     // Create TensorRT runtime
-    impl_->runtime_ =
+    backend.impl_->runtime_ =
         std::unique_ptr<nvinfer1::IRuntime>(nvinfer1::createInferRuntime(g_trt_logger));
-    if (!impl_->runtime_) {
+    if (!backend.impl_->runtime_) {
         SPDLOG_ERROR("Failed to create TensorRT runtime");
-        return;
+        return std::unexpected(
+            "TensorRT: failed to set CUDA device " + std::to_string(backend.config_.device_id)
+            + ": " + cudaGetErrorString(cuda_err));
     }
 
     // Load or build engine
-    fs::path engine_path(config_.engine_path);
-    fs::path model_path(config_.model_path);
-    fs::path cache_dir(config_.engine_cache_dir);
+    fs::path engine_path(backend.config_.engine_path);
+    fs::path model_path(backend.config_.model_path);
+    fs::path cache_dir(backend.config_.engine_cache_dir);
 
     std::unique_ptr<nvinfer1::ICudaEngine> engine;
 
     // Try to load existing engine file
     if (!engine_path.empty() && fs::exists(engine_path)) {
         SPDLOG_INFO("Loading TensorRT engine from: {}", engine_path.string());
-        auto result = load_engine(impl_->runtime_.get(), engine_path);
+        auto result = load_engine(backend.impl_->runtime_.get(), engine_path);
         if (!result) {
             SPDLOG_ERROR("Failed to load engine, will try building from ONNX if available");
         } else {
@@ -422,92 +446,96 @@ AtLegacyTrtBackend::AtLegacyTrtBackend(Config config)
     if (!engine && !model_path.empty() && fs::exists(model_path)) {
         SPDLOG_INFO("Building TensorRT engine from ONNX: {}", model_path.string());
         auto result = build_engine_from_onnx(
-            impl_->runtime_.get(), model_path, cache_dir, config_.compute_capability,
-            config_.enable_fp16, config_.enable_dla, config_.dla_core);
+            backend.impl_->runtime_.get(), model_path, cache_dir,
+            backend.config_.compute_capability, backend.config_.enable_fp16,
+            backend.config_.enable_dla, backend.config_.dla_core);
         if (!result) {
             SPDLOG_ERROR("Failed to build engine from ONNX");
-            return;
+            return std::unexpected("TensorRT: failed to build engine from ONNX");
         }
         engine = std::move(result.value());
     }
 
     if (!engine) {
         SPDLOG_ERROR("No valid engine or model found");
-        return;
+        return std::unexpected("TensorRT: no valid engine or model file found");
     }
 
-    impl_->engine_ = std::move(engine);
+    backend.impl_->engine_ = std::move(engine);
 
     // Get I/O tensors
-    const int num_tensors = impl_->engine_->getNbIOTensors();
+    const int num_tensors = backend.impl_->engine_->getNbIOTensors();
     for (int i = 0; i < num_tensors; ++i) {
-        const char* name = impl_->engine_->getIOTensorName(i);
-        auto mode        = impl_->engine_->getTensorIOMode(name);
+        const char* name = backend.impl_->engine_->getIOTensorName(i);
+        auto mode        = backend.impl_->engine_->getTensorIOMode(name);
         if (mode == nvinfer1::TensorIOMode::kINPUT) {
-            impl_->input_name_ = name;
-            auto dims          = impl_->engine_->getTensorShape(name);
-            impl_->input_size_ = INPUT_W * INPUT_H * 3 * sizeof(float);
+            backend.impl_->input_name_ = name;
+            auto dims                  = backend.impl_->engine_->getTensorShape(name);
+            backend.impl_->input_size_ = INPUT_W * INPUT_H * 3 * sizeof(float);
             SPDLOG_INFO("Input: {} dims=[{}]", name, dims.d[0]);
         } else {
-            impl_->output_name_ = name;
-            auto dims           = impl_->engine_->getTensorShape(name);
+            backend.impl_->output_name_ = name;
+            auto dims                   = backend.impl_->engine_->getTensorShape(name);
             // Output shape: [1, max_det, 14]
-            impl_->max_detections_ = dims.d[1];
-            impl_->output_size_    = impl_->max_detections_ * OUTPUT_DIM * sizeof(float);
+            backend.impl_->max_detections_ = dims.d[1];
+            backend.impl_->output_size_ =
+                backend.impl_->max_detections_ * OUTPUT_DIM * sizeof(float);
             SPDLOG_INFO("Output: {} dims=[1, {}, {}]", name, dims.d[1], dims.d[2]);
         }
     }
 
     // Allocate device memory
-    cuda_err = cudaMalloc(&impl_->device_input_, impl_->input_size_);
+    cuda_err = cudaMalloc(&backend.impl_->device_input_, backend.impl_->input_size_);
     if (cuda_err != cudaSuccess) {
         SPDLOG_ERROR("Failed to allocate device input buffer: {}", cudaGetErrorString(cuda_err));
-        return;
+        return std::unexpected(
+            "TensorRT: failed to set CUDA device " + std::to_string(backend.config_.device_id)
+            + ": " + cudaGetErrorString(cuda_err));
     }
 
-    cuda_err = cudaMalloc(&impl_->device_output_, impl_->output_size_);
+    cuda_err = cudaMalloc(&backend.impl_->device_output_, backend.impl_->output_size_);
     if (cuda_err != cudaSuccess) {
         SPDLOG_ERROR("Failed to allocate device output buffer: {}", cudaGetErrorString(cuda_err));
-        return;
+        return std::unexpected(
+            "TensorRT: failed to set CUDA device " + std::to_string(backend.config_.device_id)
+            + ": " + cudaGetErrorString(cuda_err));
     }
 
     // Resize host buffers
-    impl_->host_output_.resize(impl_->max_detections_ * OUTPUT_DIM);
-    impl_->host_input_.resize(INPUT_W * INPUT_H * 3);
+    backend.impl_->host_output_.resize(backend.impl_->max_detections_ * OUTPUT_DIM);
+    backend.impl_->host_input_.resize(INPUT_W * INPUT_H * 3);
 
     // Create execution contexts and streams
-    int num_streams = config_.num_streams;
-    impl_->contexts_.reserve(num_streams);
-    impl_->streams_.reserve(num_streams);
+    int num_streams = backend.config_.num_streams;
+    backend.impl_->contexts_.reserve(num_streams);
+    backend.impl_->streams_.reserve(num_streams);
 
     for (int i = 0; i < num_streams; ++i) {
-        auto* ctx = impl_->engine_->createExecutionContext();
+        auto* ctx = backend.impl_->engine_->createExecutionContext();
         if (!ctx) {
             SPDLOG_ERROR("Failed to create execution context {}", i);
-            return;
+            return std::unexpected(
+                "TensorRT: failed to set CUDA device " + std::to_string(backend.config_.device_id)
+                + ": " + cudaGetErrorString(cuda_err));
         }
-        impl_->contexts_.emplace_back(ctx);
+        backend.impl_->contexts_.emplace_back(ctx);
 
         cudaStream_t stream;
         cuda_err = cudaStreamCreate(&stream);
         if (cuda_err != cudaSuccess) {
             SPDLOG_ERROR("Failed to create CUDA stream {}: {}", i, cudaGetErrorString(cuda_err));
-            return;
+            return std::unexpected(
+                "TensorRT: failed to set CUDA device " + std::to_string(backend.config_.device_id)
+                + ": " + cudaGetErrorString(cuda_err));
         }
-        impl_->streams_.push_back(stream);
+        backend.impl_->streams_.push_back(stream);
     }
 
     SPDLOG_INFO("TensorRT backend initialized with {} streams", num_streams);
-    initialized_ = true;
+    return backend;
 }
 
-AtLegacyTrtBackend::~AtLegacyTrtBackend() = default;
-
-AtLegacyTrtBackend::AtLegacyTrtBackend(AtLegacyTrtBackend&&) noexcept = default;
-
-AtLegacyTrtBackend& AtLegacyTrtBackend::operator=(AtLegacyTrtBackend&&) noexcept = default;
-
-void AtLegacyTrtBackend::set_detect_color(fcs::ArmorColor color) {
+void AtLegacyTrtBackend::set_detect_color(fcs::ArmorColor color) noexcept {
     detect_color_ = static_cast<int>(color);
 }
 
@@ -515,13 +543,13 @@ void AtLegacyTrtBackend::set_detect_color(fcs::ArmorColor color) {
 // Detection
 // ============================================================================
 
-AtLegacyTrtBackend::DetectionResult AtLegacyTrtBackend::detect_impl(const cv::Mat& image) {
-    if (!initialized_ || !impl_) {
-        return std::unexpected(DetectorError::NotInitialized);
+AtLegacyTrtBackend::DetectionResult AtLegacyTrtBackend::detect_impl(const cv::Mat& image) noexcept {
+    if (!impl_) {
+        return std::unexpected("TensorRT backend not initialized");
     }
 
     if (image.empty()) {
-        return std::unexpected(DetectorError::InvalidImage);
+        return std::unexpected("TensorRT backend received empty image");
     }
 
     // Get context index (round-robin)
@@ -550,7 +578,7 @@ AtLegacyTrtBackend::DetectionResult AtLegacyTrtBackend::detect_impl(const cv::Ma
     } else if (image.channels() == 1) {
         cv::cvtColor(image, rgb_image, cv::COLOR_GRAY2BGR);
     } else {
-        return std::unexpected(DetectorError::InvalidImage);
+        return std::unexpected("TensorRT backend received image with unsupported channel count");
     }
 
 #if TALOS_HAS_CUDA_RUNTIME
@@ -624,7 +652,7 @@ AtLegacyTrtBackend::DetectionResult AtLegacyTrtBackend::detect_impl(const cv::Ma
     bool success = ctx->enqueueV3(stream);
     if (!success) {
         SPDLOG_ERROR("TensorRT inference failed");
-        return std::unexpected(DetectorError::InferenceFailed);
+        return std::unexpected("TensorRT inference failed (enqueueV3)");
     }
 
     // Copy output to host
@@ -745,9 +773,5 @@ AtLegacyTrtBackend::DetectionResult AtLegacyTrtBackend::detect_impl(const cv::Ma
 
     return detections;
 }
-
-bool AtLegacyTrtBackend::is_initialized_impl() const noexcept { return initialized_; }
-
-std::string_view AtLegacyTrtBackend::name_impl() const noexcept { return "TensorRT"; }
 
 } // namespace fcs::L2

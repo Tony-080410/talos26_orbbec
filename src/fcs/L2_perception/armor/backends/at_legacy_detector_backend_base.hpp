@@ -1,9 +1,11 @@
 #pragma once
 
+#include "core/armor_types.hpp"
+
+#include <concepts>
 #include <expected>
-#include <memory>
 #include <string>
-#include <string_view>
+#include <utility>
 #include <vector>
 
 // Forward declare OpenCV types to avoid heavy header pollution
@@ -12,61 +14,62 @@ class Mat;
 }
 
 namespace fcs {
-struct AtLegacyArmorDetection;
-}
-
-namespace fcs::L2 {
 
 // ============================================================================
-// Detector Backend Error Types
+// Detector Backend Concept — Compile-Time Interface Enforcement
 // ============================================================================
+//
+// Every backend MUST satisfy this contract. Violations are hard compile errors.
+//
+// Invariants enforced by concept:
+//   - detect_impl()  noexcept — handles all errors internally via std::expected
+//   - create()       noexcept — factory handles all errors via std::expected
+//   - set_detect_color() / detect_color() / get_config() — noexcept
+//
+// Design rule: exceptions are system boundary concerns only.
+// Internal code MUST NOT throw. All errors propagate via std::expected
+// with full context (backend name, operation, error detail).
 
-enum class DetectorError {
-    NotInitialized,
-    InvalidImage,
-    InferenceError,
-    InferenceFailed,
-    ModelLoadError,
-    InitFailed,
-    PreprocessFailed,
+template <typename T>
+concept DetectorBackend = requires(T& t, const T& ct, const cv::Mat& image, ArmorColor color) {
+    // Type aliases
+    typename T::DetectionResult;
+    typename T::Config;
+
+    // Core detection — noexcept, errors via std::expected with full context
+    { t.detect_impl(image) } noexcept -> std::same_as<typename T::DetectionResult>;
+
+    // Color control — noexcept guaranteed
+    { t.set_detect_color(color) } noexcept;
+    { t.detect_color() } noexcept -> std::same_as<ArmorColor>;
+    { ct.detect_color() } noexcept -> std::same_as<ArmorColor>;
+
+    // Config access — noexcept guaranteed
+    { t.get_config() } noexcept -> std::same_as<const typename T::Config&>;
+    { ct.get_config() } noexcept -> std::same_as<const typename T::Config&>;
+
+    // Factory — static, noexcept, all errors via std::expected
+    {
+        T::create(std::declval<typename T::Config>())
+    } noexcept -> std::same_as<std::expected<T, std::string>>;
 };
 
-[[nodiscard]] constexpr std::string_view detector_error_str(DetectorError e) noexcept {
-    switch (e) {
-    case DetectorError::NotInitialized: return "Not initialized";
-    case DetectorError::InvalidImage: return "Invalid image";
-    case DetectorError::InferenceError: return "Inference error";
-    case DetectorError::InferenceFailed: return "Inference failed";
-    case DetectorError::ModelLoadError: return "Model load error";
-    case DetectorError::InitFailed: return "Initialization failed";
-    case DetectorError::PreprocessFailed: return "Preprocess failed";
-    }
-    return "Unknown error";
-}
-
 // ============================================================================
-// Detector Backend Interface (CRTP Base)
+// CRTP Base — Zero-Cost Abstraction
 // ============================================================================
 
-/// CRTP base for detector backends (zero-cost abstraction when type is known)
+/// CRTP base for detector backends.
+/// Pure noexcept forwarding — detect_impl() is responsible for all error handling.
+/// No try/catch here. detect_impl() is noexcept (enforced by concept),
+/// so this entire call chain is exception-free.
 template <typename Derived>
 class AtLegacyDetectorBackendBase {
 public:
-    using DetectionResult = std::expected<std::vector<AtLegacyArmorDetection>, DetectorError>;
+    using DetectionResult = std::expected<std::vector<AtLegacyArmorDetection>, std::string>;
 
-    /// Detect armors in image
-    [[nodiscard]] DetectionResult detect(const cv::Mat& image) {
+    /// Detect armors in image — pure noexcept forwarding.
+    [[nodiscard]] DetectionResult detect(const cv::Mat& image) noexcept {
         return static_cast<Derived*>(this)->detect_impl(image);
-    }
-
-    /// Check if backend is initialized
-    [[nodiscard]] bool is_initialized() const noexcept {
-        return static_cast<const Derived*>(this)->is_initialized_impl();
-    }
-
-    /// Get backend name
-    [[nodiscard]] std::string_view name() const noexcept {
-        return static_cast<const Derived*>(this)->name_impl();
     }
 
 protected:
@@ -74,4 +77,4 @@ protected:
     ~AtLegacyDetectorBackendBase() = default;
 };
 
-} // namespace fcs::L2
+} // namespace fcs

@@ -8,35 +8,26 @@
 namespace fcs::L2 {
 
 // ============================================================================
-// Constructor and Initialization
+// Factory — Construction IS Initialization
 // ============================================================================
 
-AtLegacyTraditionalClassifier::AtLegacyTraditionalClassifier(
-    std::string_view model_path, bool use_softmax) noexcept
-    : model_path_(model_path)
-    , use_softmax_(use_softmax) {}
-
-std::expected<void, DetectorError> AtLegacyTraditionalClassifier::init() noexcept {
+std::expected<AtLegacyTraditionalClassifier, std::string>
+    AtLegacyTraditionalClassifier::create(std::string_view model_path, bool use_softmax) noexcept {
     try {
-        // Load ONNX model via OpenCV DNN
-        net_ = cv::dnn::readNetFromONNX(model_path_);
+        auto net = cv::dnn::readNetFromONNX(std::string(model_path));
 
-        if (net_.empty()) {
-            return std::unexpected(DetectorError::ModelLoadError);
+        if (net.empty()) {
+            return std::unexpected(
+                "Failed to load ONNX classifier model: " + std::string(model_path));
         }
 
-        // Set backend (CPU for now, can be extended to GPU)
-        net_.setPreferableBackend(cv::dnn::DNN_BACKEND_DEFAULT);
-        net_.setPreferableTarget(cv::dnn::DNN_TARGET_CPU);
+        net.setPreferableBackend(cv::dnn::DNN_BACKEND_DEFAULT);
+        net.setPreferableTarget(cv::dnn::DNN_TARGET_CPU);
 
-        initialized_ = true;
-        return {};
+        return AtLegacyTraditionalClassifier(std::string(model_path), use_softmax, std::move(net));
     } catch (const std::exception& e) {
         SPDLOG_ERROR("[TraditionalClassifier] Model load failed: {}", e.what());
-        return std::unexpected(DetectorError::ModelLoadError);
-    } catch (...) {
-        SPDLOG_ERROR("[TraditionalClassifier] Model load failed: unknown error");
-        return std::unexpected(DetectorError::ModelLoadError);
+        return std::unexpected("ONNX classifier model load failed: " + std::string(e.what()));
     }
 }
 
@@ -46,14 +37,6 @@ std::expected<void, DetectorError> AtLegacyTraditionalClassifier::init() noexcep
 
 AtLegacyTraditionalClassifier::ClassifyResult AtLegacyTraditionalClassifier::classify(
     const cv::Mat& number_img, float& confidence_out) const noexcept {
-    if (!initialized_) {
-        return std::unexpected(DetectorError::NotInitialized);
-    }
-
-    if (number_img.empty()) {
-        return std::unexpected(DetectorError::InvalidImage);
-    }
-
     try {
         // Normalize image to 0-1 range (matching atvision_ws behavior)
         cv::Mat normalized_img = number_img / 255.0;
@@ -72,10 +55,7 @@ AtLegacyTraditionalClassifier::ClassifyResult AtLegacyTraditionalClassifier::cla
         return post_process_output(output, confidence_out);
     } catch (const std::exception& e) {
         SPDLOG_ERROR("[TraditionalClassifier] Inference failed: {}", e.what());
-        return std::unexpected(DetectorError::InferenceError);
-    } catch (...) {
-        SPDLOG_ERROR("[TraditionalClassifier] Inference failed: unknown error");
-        return std::unexpected(DetectorError::InferenceError);
+        return std::unexpected("Classifier inference failed: " + std::string(e.what()));
     }
 }
 

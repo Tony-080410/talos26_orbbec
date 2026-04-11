@@ -13,36 +13,44 @@
 namespace fcs::L2 {
 
 // ============================================================================
-// Constructor
+// Factory — Construction IS Initialization
 // ============================================================================
 
-AtLegacyTraditionalBackend::AtLegacyTraditionalBackend(Config config)
-    : config_{std::move(config)} {
-    // Initialize classifier if enabled in config
-    const auto& cfg = config_;
-    if (!cfg.classifier_model_path.empty()) {
-        classifier_ = std::make_unique<AtLegacyTraditionalClassifier>(
-            cfg.classifier_model_path, cfg.classifier_use_softmax);
-        // Initialize classifier - log error if initialization fails
-        if (const auto init_result = classifier_->init(); !init_result) {
-            // Log error but continue - detection will work without classification
-            SPDLOG_CRITICAL("Failed to initialize ONNX classifier: {}", cfg.classifier_model_path);
-            std::abort();
-        }
-    } else {
-        SPDLOG_CRITICAL("Classifier is enabled but model path is empty.");
-        std::abort();
+std::expected<AtLegacyTraditionalBackend, std::string>
+    AtLegacyTraditionalBackend::create(Config config) noexcept {
+    const auto& cfg = config;
+
+    // Validate: classifier model path must be provided
+    if (cfg.classifier_model_path.empty()) {
+        return std::unexpected("[TraditionalBackend::create] Classifier model path is empty");
     }
+
+    // Create classifier via factory
+    auto classifier_result = AtLegacyTraditionalClassifier::create(
+        cfg.classifier_model_path, cfg.classifier_use_softmax);
+    if (!classifier_result) {
+        return std::unexpected(
+            "[TraditionalBackend::create] Failed to create ONNX classifier for '"
+            + cfg.classifier_model_path + "': " + classifier_result.error());
+    }
+
+    AtLegacyTraditionalBackend backend(std::move(config));
+    backend.classifier_ =
+        std::make_unique<AtLegacyTraditionalClassifier>(std::move(*classifier_result));
+    return backend;
 }
+
+AtLegacyTraditionalBackend::AtLegacyTraditionalBackend(Config config) noexcept
+    : config_{std::move(config)} {}
 
 // ============================================================================
 // Detection Entry Point
 // ============================================================================
 
 AtLegacyTraditionalBackend::DetectionResult
-    AtLegacyTraditionalBackend::detect_impl(const cv::Mat& input) {
+    AtLegacyTraditionalBackend::detect_impl(const cv::Mat& input) noexcept {
     if (input.empty()) {
-        return std::unexpected(DetectorError::InvalidImage);
+        return std::unexpected("Empty image passed to traditional backend");
     }
 
     const auto& cfg = get_config();
@@ -61,25 +69,23 @@ AtLegacyTraditionalBackend::DetectionResult
     auto detections = match_lights(lights, cfg, gray_img);
 
     // 5. Classify armors if classifier is available
-    if (classifier_ && classifier_->is_initialized()) {
-        for (size_t d = 0; d < detections.size(); ++d) {
-            auto& detection = detections[d];
+    for (size_t d = 0; d < detections.size(); ++d) {
+        auto& detection = detections[d];
 
-            // Extract number image: perspective transform + OTSU binarization
-            cv::Mat number_img = extract_number(input, detection.corners, detection.type);
+        // Extract number image: perspective transform + OTSU binarization
+        cv::Mat number_img = extract_number(input, detection.corners, detection.type);
 
-            if (!number_img.empty()) {
-                float confidence = 0.0f;
-                auto result      = classifier_->classify(number_img, confidence);
+        if (!number_img.empty()) {
+            float confidence = 0.0f;
+            auto result      = classifier_->classify(number_img, confidence);
 
-                if (result) {
-                    detection.name       = *result;
-                    detection.confidence = confidence;
-                } else {
-                    // Classification failed, mark as invalid
-                    detection.name       = ArmorName::Invalid;
-                    detection.confidence = 0.0f;
-                }
+            if (result) {
+                detection.name       = *result;
+                detection.confidence = confidence;
+            } else {
+                // Classification failed, mark as invalid
+                detection.name       = ArmorName::Invalid;
+                detection.confidence = 0.0f;
             }
         }
 
@@ -125,13 +131,11 @@ AtLegacyTraditionalBackend::DetectionResult
 
     return detections;
 }
-
-// ============================================================================
 // Preprocessing
 // ============================================================================
 
 cv::Mat AtLegacyTraditionalBackend::preprocess_image(
-    const cv::Mat& bgr_img, const AtLegacyTraditionalConfig& cfg) const {
+    const cv::Mat& bgr_img, const AtLegacyTraditionalConfig& cfg) const noexcept {
     if (!cfg.advanced_binary) {
         cv::Mat gray;
         cv::cvtColor(bgr_img, gray, cv::COLOR_BGR2GRAY);
@@ -172,7 +176,8 @@ cv::Mat AtLegacyTraditionalBackend::preprocess_image(
 // ============================================================================
 
 std::vector<AtLegacyLight> AtLegacyTraditionalBackend::find_lights(
-    const cv::Mat& bgr_img, const cv::Mat& binary_img, const AtLegacyTraditionalConfig& cfg) const {
+    const cv::Mat& bgr_img, const cv::Mat& binary_img,
+    const AtLegacyTraditionalConfig& cfg) const noexcept {
     std::vector<std::vector<cv::Point>> contours;
     cv::findContours(binary_img, contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_NONE);
 
@@ -230,7 +235,7 @@ bool AtLegacyTraditionalBackend::is_light(
 
 std::vector<AtLegacyArmorDetection> AtLegacyTraditionalBackend::match_lights(
     std::vector<AtLegacyLight>& lights, const AtLegacyTraditionalConfig& cfg,
-    [[maybe_unused]] const cv::Mat gray_img) const {
+    [[maybe_unused]] const cv::Mat gray_img) const noexcept {
     // Pre-allocate to avoid repeated reallocation in nested loop
     // Worst case: n*(n-1)/2 pairs where n = lights.size()
     std::vector<AtLegacyArmorDetection> detections;
@@ -278,7 +283,7 @@ std::vector<AtLegacyArmorDetection> AtLegacyTraditionalBackend::match_lights(
 }
 
 bool AtLegacyTraditionalBackend::contains_light(
-    size_t i, size_t j, const std::vector<AtLegacyLight>& lights) {
+    size_t i, size_t j, const std::vector<AtLegacyLight>& lights) noexcept {
     const auto& light_1 = lights[i];
     const auto& light_2 = lights[j];
 

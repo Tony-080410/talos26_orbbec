@@ -21,7 +21,7 @@ struct AtLegacyLight : public cv::RotatedRect {
     AtLegacyLight() = default;
 
     /// Construct from contour
-    explicit AtLegacyLight(const std::vector<cv::Point>& contour)
+    explicit AtLegacyLight(const std::vector<cv::Point>& contour) noexcept
         : cv::RotatedRect(cv::minAreaRect(contour))
         , color(ArmorColor::Neutral) {
         if (contour.empty())
@@ -59,7 +59,7 @@ struct AtLegacyLight : public cv::RotatedRect {
     }
 
     /// Construct from top and bottom points
-    explicit AtLegacyLight(const cv::Point2f& top_pt, const cv::Point2f& bottom_pt)
+    explicit AtLegacyLight(const cv::Point2f& top_pt, const cv::Point2f& bottom_pt) noexcept
         : cv::RotatedRect()
         , color(ArmorColor::Neutral) {
         // Ensure top.y < bottom.y
@@ -113,8 +113,8 @@ struct AtLegacyLight : public cv::RotatedRect {
 // ============================================================================
 
 /// Construct AtLegacyArmorDetection from two lights
-[[nodiscard]] inline AtLegacyArmorDetection
-    make_detection_from_lights(const AtLegacyLight& left_light, const AtLegacyLight& right_light) {
+[[nodiscard]] inline AtLegacyArmorDetection make_detection_from_lights(
+    const AtLegacyLight& left_light, const AtLegacyLight& right_light) noexcept {
     AtLegacyArmorDetection det;
 
     // Order: TL, TR, BR, BL (left-top, right-top, right-bottom, left-bottom)

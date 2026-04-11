@@ -48,28 +48,14 @@ AtLegacyDetectorBackend::AtLegacyDetectorBackend(std::unique_ptr<AtLegacyAxeraBa
     : backend_(std::move(backend)) {}
 #endif
 
-AtLegacyDetectorBackend::DetectionResult AtLegacyDetectorBackend::detect(const cv::Mat& image) {
+AtLegacyDetectorBackend::DetectionResult
+    AtLegacyDetectorBackend::detect(const cv::Mat& image) noexcept {
     return std::visit(
         [&image](auto& backend) -> DetectionResult {
             if (!backend) {
-                return std::unexpected(DetectorError::NotInitialized);
+                return std::unexpected("No detector backend is active");
             }
             return backend->detect(image);
-        },
-        backend_);
-}
-
-bool AtLegacyDetectorBackend::is_initialized() const noexcept {
-    return std::visit(
-        [](const auto& backend) -> bool { return backend && backend->is_initialized(); }, backend_);
-}
-
-std::string_view AtLegacyDetectorBackend::name() const noexcept {
-    return std::visit(
-        [](const auto& backend) -> std::string_view {
-            if (!backend)
-                return "None";
-            return backend->name();
         },
         backend_);
 }
@@ -110,10 +96,6 @@ void AtLegacyDetectorBackend::set_detect_color(ArmorColor color) noexcept {
         backend_);
 }
 
-bool AtLegacyDetectorBackend::supports_readback_roi() const noexcept {
-    return std::visit([](const auto& backend) -> bool { return backend != nullptr; }, backend_);
-}
-
 AtLegacyBackendInputResolution AtLegacyDetectorBackend::input_resolution() const noexcept {
     return std::visit(
         [](const auto& backend) -> AtLegacyBackendInputResolution {
@@ -141,54 +123,58 @@ AtLegacyBackendInputResolution AtLegacyDetectorBackend::input_resolution() const
 // Factory Function
 // ============================================================================
 
-[[nodiscard]] std::expected<AtLegacyDetectorBackend, DetectorError>
-    create_detector_backend(const AtLegacyConfig& config) {
+[[nodiscard]] std::expected<AtLegacyDetectorBackend, std::string>
+    create_detector_backend(const AtLegacyConfig& config) noexcept {
     switch (config.backend_type) {
     case AtLegacyBackendTypeConfig::Traditional: {
-        auto backend = std::make_unique<AtLegacyTraditionalBackend>(config.traditional);
-        backend->set_detect_color(config.default_detect_color);
-        return AtLegacyDetectorBackend(std::move(backend));
+        auto result = AtLegacyTraditionalBackend::create(config.traditional);
+        if (!result) {
+            return std::unexpected(result.error());
+        }
+        result->set_detect_color(config.default_detect_color);
+        return AtLegacyDetectorBackend(
+            std::make_unique<AtLegacyTraditionalBackend>(std::move(*result)));
     }
 #if TALOS_HAS_OPENVINO
     case AtLegacyBackendTypeConfig::NeuralNetwork: {
-        auto backend = std::make_unique<AtLegacyNNBackend>(config.nn);
-        if (auto result = backend->init(); !result) {
+        auto result = AtLegacyNNBackend::create(config.nn);
+        if (!result) {
             return std::unexpected(result.error());
         }
-        backend->set_detect_color(config.default_detect_color);
-        return AtLegacyDetectorBackend(std::move(backend));
+        result->set_detect_color(config.default_detect_color);
+        return AtLegacyDetectorBackend(std::make_unique<AtLegacyNNBackend>(std::move(*result)));
     }
     case AtLegacyBackendTypeConfig::NeuralNetworkTup: {
-        auto backend = std::make_unique<AtLegacyNNTupBackend>(config.nn_tup);
-        if (auto result = backend->init(); !result) {
+        auto result = AtLegacyNNTupBackend::create(config.nn_tup);
+        if (!result) {
             return std::unexpected(result.error());
         }
-        backend->set_detect_color(config.default_detect_color);
-        return AtLegacyDetectorBackend(std::move(backend));
+        result->set_detect_color(config.default_detect_color);
+        return AtLegacyDetectorBackend(std::make_unique<AtLegacyNNTupBackend>(std::move(*result)));
     }
 #endif
 #if TALOS_HAS_TENSORRT
     case AtLegacyBackendTypeConfig::TensorRT: {
-        auto backend = std::make_unique<AtLegacyTrtBackend>(config.trt);
-        if (!backend->is_initialized()) {
-            return std::unexpected(DetectorError::InitFailed);
+        auto result = AtLegacyTrtBackend::create(config.trt);
+        if (!result) {
+            return std::unexpected(result.error());
         }
-        backend->set_detect_color(config.default_detect_color);
-        return AtLegacyDetectorBackend(std::move(backend));
+        result->set_detect_color(config.default_detect_color);
+        return AtLegacyDetectorBackend(std::make_unique<AtLegacyTrtBackend>(std::move(*result)));
     }
 #endif
 #if TALOS_HAS_AXERA
     case AtLegacyBackendTypeConfig::Axera: {
-        auto backend = std::make_unique<AtLegacyAxeraBackend>(config.axera);
-        if (auto result = backend->init(); !result) {
+        auto result = AtLegacyAxeraBackend::create(config.axera);
+        if (!result) {
             return std::unexpected(result.error());
         }
-        backend->set_detect_color(config.default_detect_color);
-        return AtLegacyDetectorBackend(std::move(backend));
+        result->set_detect_color(config.default_detect_color);
+        return AtLegacyDetectorBackend(std::make_unique<AtLegacyAxeraBackend>(std::move(*result)));
     }
 #endif
-    default: return std::unexpected(DetectorError::NotInitialized);
     }
+    std::unreachable();
 }
 
 } // namespace fcs::L2

@@ -25,9 +25,8 @@ public:
     static constexpr int NUM_KPTS    = 4;
     static constexpr int OUTPUT_DIM  = 14;
 
-    using DetectionResult =
-        std::expected<std::vector<fcs::AtLegacyArmorDetection>, fcs::L2::DetectorError>;
-    using Config = AtLegacyTrtConfig;
+    using DetectionResult = std::expected<std::vector<fcs::AtLegacyArmorDetection>, std::string>;
+    using Config          = AtLegacyTrtConfig;
 
     struct PreprocContext {
         float scale_x;
@@ -38,14 +37,11 @@ public:
         int orig_height;
     };
 
-    enum class DetectionError : uint8_t {
-        DeviceInitError,
-        EngineLoadError,
-        InferenceError,
-        ConfigError,
-    };
+    /// Factory: construct a fully-initialized backend (load TensorRT engine).
+    /// Construction IS initialization — no separate init() needed.
+    [[nodiscard]] static std::expected<AtLegacyTrtBackend, std::string>
+        create(Config config) noexcept;
 
-    explicit AtLegacyTrtBackend(Config config);
     ~AtLegacyTrtBackend();
 
     AtLegacyTrtBackend(AtLegacyTrtBackend&&) noexcept;
@@ -53,19 +49,19 @@ public:
     AtLegacyTrtBackend(const AtLegacyTrtBackend&)            = delete;
     AtLegacyTrtBackend& operator=(const AtLegacyTrtBackend&) = delete;
 
-    void set_detect_color(fcs::ArmorColor color);
+    void set_detect_color(fcs::ArmorColor color) noexcept;
 
-    DetectionResult detect_impl(const cv::Mat& image);
-    bool is_initialized_impl() const noexcept;
-    std::string_view name_impl() const noexcept;
+    DetectionResult detect_impl(const cv::Mat& image) noexcept;
 
 private:
+    /// Private constructor — use create() factory
+    explicit AtLegacyTrtBackend(Config config) noexcept;
+
     struct Impl;
     std::unique_ptr<Impl> impl_;
 
     Config config_;
     int detect_color_ = 0;
-    bool initialized_ = false;
 };
 
 } // namespace fcs::L2

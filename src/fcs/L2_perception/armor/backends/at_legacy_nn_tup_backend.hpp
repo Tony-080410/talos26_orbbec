@@ -38,7 +38,7 @@ struct GridAndStride {
 /// Neural network detection backend using OpenVINO (TUP model)
 class AtLegacyNNTupBackend : public AtLegacyDetectorBackendBase<AtLegacyNNTupBackend> {
 public:
-    using DetectionResult = std::expected<std::vector<AtLegacyArmorDetection>, DetectorError>;
+    using DetectionResult = std::expected<std::vector<AtLegacyArmorDetection>, std::string>;
     using Config          = AtLegacyNNTupConfig;
 
     static constexpr int INPUT_W     = 416;
@@ -46,7 +46,11 @@ public:
     static constexpr int NUM_COLORS  = 4;
     static constexpr int NUM_CLASSES = 8;
 
-    explicit AtLegacyNNTupBackend(Config config);
+    /// Factory: construct a fully-initialized backend (load model via OpenVINO).
+    /// Construction IS initialization — no separate init() needed.
+    [[nodiscard]] static std::expected<AtLegacyNNTupBackend, std::string>
+        create(Config config) noexcept;
+
     ~AtLegacyNNTupBackend();
 
     // Move-only (OpenVINO resources)
@@ -55,26 +59,23 @@ public:
     AtLegacyNNTupBackend(const AtLegacyNNTupBackend&)            = delete;
     AtLegacyNNTupBackend& operator=(const AtLegacyNNTupBackend&) = delete;
 
-    /// Initialize the backend (load model)
-    [[nodiscard]] std::expected<void, DetectorError> init();
-
     /// Detect armors in image (synchronous)
-    [[nodiscard]] DetectionResult detect_impl(const cv::Mat& image);
-
-    [[nodiscard]] bool is_initialized_impl() const noexcept { return initialized_; }
-    [[nodiscard]] std::string_view name_impl() const noexcept { return "nn_tup"; }
+    [[nodiscard]] DetectionResult detect_impl(const cv::Mat& image) noexcept;
 
     /// Set detection color (0=BLUE, 1=RED)
     void set_detect_color(ArmorColor color) noexcept { detect_color_ = color; }
     [[nodiscard]] ArmorColor detect_color() const noexcept { return detect_color_; }
 
     /// Get execution devices
-    [[nodiscard]] std::vector<std::string> execution_devices() const;
+    [[nodiscard]] std::vector<std::string> execution_devices() const noexcept;
 
     /// Get current config
     [[nodiscard]] const Config& get_config() const noexcept { return config_; }
 
 private:
+    /// Private constructor — use create() factory
+    explicit AtLegacyNNTupBackend(Config config) noexcept;
+
     /// Preprocess context
     struct PreprocContext {
         cv::Mat preprocessed;
@@ -88,27 +89,27 @@ private:
     /// Generate grids and strides for multi-scale detection
     static void generate_grids_and_strides(
         int width, int height, const std::array<int, 3>& strides,
-        std::vector<GridAndStride>& grids);
+        std::vector<GridAndStride>& grids) noexcept;
 
     /// Preprocess image (letterbox without normalization)
     [[nodiscard]] static PreprocContext
-        preprocess(const cv::Mat& image, const AtLegacyNNTupConfig& cfg);
+        preprocess(const cv::Mat& image, const AtLegacyNNTupConfig& cfg) noexcept;
 
     /// Run inference
-    [[nodiscard]] bool infer(const PreprocContext& ctx);
+    [[nodiscard]] bool infer(const PreprocContext& ctx) noexcept;
 
     /// Postprocess inference output
     [[nodiscard]] std::vector<AtLegacyArmorDetection>
-        postprocess(const PreprocContext& ctx, const AtLegacyNNTupConfig& cfg) const;
+        postprocess(const PreprocContext& ctx, const AtLegacyNNTupConfig& cfg) const noexcept;
 
     /// Non-maximum suppression
     [[nodiscard]] static std::vector<AtLegacyArmorDetection>
-        nms(std::vector<AtLegacyArmorDetection>& detections, const AtLegacyNNTupConfig& cfg);
+        nms(std::vector<AtLegacyArmorDetection>& detections,
+            const AtLegacyNNTupConfig& cfg) noexcept;
 
 private:
     Config config_;
     ArmorColor detect_color_ = ArmorColor::Blue;
-    bool initialized_        = false;
 
     // OpenVINO resources (PIMPL to avoid header pollution)
     struct Impl;

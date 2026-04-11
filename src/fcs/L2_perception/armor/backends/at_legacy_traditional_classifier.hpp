@@ -19,28 +19,30 @@ namespace fcs::L2 {
 /// Supports LeNet and MLP models with typical ONNX format
 class AtLegacyTraditionalClassifier {
 public:
-    using ClassifyResult = std::expected<ArmorName, DetectorError>;
+    using ClassifyResult = std::expected<ArmorName, std::string>;
 
-    /// Constructor: takes path to ONNX model file and softmax flag
-    explicit AtLegacyTraditionalClassifier(
-        std::string_view model_path, bool use_softmax = true) noexcept;
+    /// Factory: load ONNX model and return fully-initialized classifier.
+    /// Construction IS initialization — no separate init() needed.
+    [[nodiscard]] static std::expected<AtLegacyTraditionalClassifier, std::string>
+        create(std::string_view model_path, bool use_softmax = true) noexcept;
 
-    /// Load and initialize the ONNX model
-    [[nodiscard]] std::expected<void, DetectorError> init() noexcept;
+    // Move-only (cv::dnn::Net is movable)
+    AtLegacyTraditionalClassifier(AtLegacyTraditionalClassifier&&) noexcept            = default;
+    AtLegacyTraditionalClassifier& operator=(AtLegacyTraditionalClassifier&&) noexcept = default;
+    AtLegacyTraditionalClassifier(const AtLegacyTraditionalClassifier&)                = delete;
+    AtLegacyTraditionalClassifier& operator=(const AtLegacyTraditionalClassifier&)     = delete;
 
     /// Classify a single armor image (preprocessed: 20x28 grayscale OTSU-binary, normalized [0,1])
     /// Returns the predicted ArmorName and updates confidence_out with confidence score
     [[nodiscard]] ClassifyResult
         classify(const cv::Mat& number_img, float& confidence_out) const noexcept;
 
-    /// Check if classifier is initialized
-    [[nodiscard]] bool is_initialized() const noexcept { return initialized_; }
-
 private:
-    std::string model_path_;
-    mutable cv::dnn::Net net_; // mutable because OpenCV DNN operations are non-const
-    bool initialized_ = false;
-    bool use_softmax_ = true;  // Whether to apply softmax to network output (for legacy networks)
+    AtLegacyTraditionalClassifier(
+        std::string model_path, bool use_softmax, cv::dnn::Net net) noexcept
+        : model_path_(std::move(model_path))
+        , net_(std::move(net))
+        , use_softmax_(use_softmax) {}
 
     // Helper methods
     [[nodiscard]] ArmorName
@@ -48,6 +50,10 @@ private:
 
     /// Map network output index to ArmorName
     [[nodiscard]] static ArmorName index_to_armor_name(int idx) noexcept;
+
+    std::string model_path_;
+    mutable cv::dnn::Net net_; // mutable because OpenCV DNN operations are non-const
+    bool use_softmax_ = true;  // Whether to apply softmax to network output (for legacy networks)
 };
 
 } // namespace fcs::L2

@@ -28,12 +28,17 @@ namespace fcs::L2 {
 
 /// Neural network detection backend using AX650 NPU
 /// Implements RAII for AX engine resources
+/// Construction IS initialization — no separate init() needed.
 class AtLegacyAxeraBackend : public AtLegacyDetectorBackendBase<AtLegacyAxeraBackend> {
 public:
-    using DetectionResult = std::expected<std::vector<AtLegacyArmorDetection>, DetectorError>;
+    using DetectionResult = std::expected<std::vector<AtLegacyArmorDetection>, std::string>;
     using Config          = AtLegacyAxeraConfig;
 
-    explicit AtLegacyAxeraBackend(Config config);
+    /// Factory: construct a fully-initialized backend (load model onto NPU).
+    /// Construction IS initialization — no separate init() needed.
+    [[nodiscard]] static std::expected<AtLegacyAxeraBackend, std::string>
+        create(Config config) noexcept;
+
     ~AtLegacyAxeraBackend();
 
     // Move-only (AX engine resources are non-copyable)
@@ -42,14 +47,8 @@ public:
     AtLegacyAxeraBackend(const AtLegacyAxeraBackend&)            = delete;
     AtLegacyAxeraBackend& operator=(const AtLegacyAxeraBackend&) = delete;
 
-    /// Initialize the backend (load model)
-    [[nodiscard]] std::expected<void, DetectorError> init();
-
     /// Detect armors in image (synchronous)
-    [[nodiscard]] DetectionResult detect_impl(const cv::Mat& image);
-
-    [[nodiscard]] bool is_initialized_impl() const noexcept { return initialized_; }
-    [[nodiscard]] std::string_view name_impl() const noexcept { return "axera"; }
+    [[nodiscard]] DetectionResult detect_impl(const cv::Mat& image) noexcept;
 
     void set_detect_color(ArmorColor color) noexcept { detect_color_ = color; }
     [[nodiscard]] ArmorColor detect_color() const noexcept { return detect_color_; }
@@ -58,6 +57,9 @@ public:
     [[nodiscard]] const Config& get_config() const noexcept { return config_; }
 
 private:
+    /// Private constructor — use create() factory
+    explicit AtLegacyAxeraBackend(Config config);
+
     /// Direct-resize preprocessing context.
     struct PreprocContext {
         float scale_x      = 1.0f;
@@ -122,7 +124,6 @@ private:
 private:
     Config config_;
     ArmorColor detect_color_          = ArmorColor::Blue;
-    bool initialized_                 = false;
     bool warned_non_four_three_input_ = false;
 
     // AX650 NPU resources
@@ -141,9 +142,9 @@ private:
     AX_IVPS_ASPECT_RATIO_T ivps_aspect_ratio_{}; // Cached aspect ratio config
 
     // IVPS helper methods
-    [[nodiscard]] std::expected<void, DetectorError> init_ivps();
+    [[nodiscard]] std::expected<void, std::string> init_ivps();
     void deinit_ivps();
-    [[nodiscard]] std::expected<void, DetectorError>
+    [[nodiscard]] std::expected<void, std::string>
         allocate_ivps_buffers(int max_src_width, int max_src_height);
     void free_ivps_buffers();
     void preprocess_image_ivps(const cv::Mat& image);

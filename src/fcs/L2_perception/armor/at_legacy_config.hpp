@@ -9,9 +9,11 @@
 namespace fcs::L2 {
 
 enum class AtLegacyBackendTypeConfig : int {
-    Traditional      = 0,
+    Traditional = 0,
+#if TALOS_HAS_OPENVINO
     NeuralNetwork    = 1, // AT model (YOLO11-pose)
     NeuralNetworkTup = 2, // TUP model (YOLOX multi-scale)
+#endif
 #if TALOS_HAS_TENSORRT
     TensorRT = 3,         // TensorRT backend (GPU-accelerated)
 #endif

@@ -27,14 +27,12 @@ namespace fcs::L2 {
 // ============================================================================
 
 enum class PnPError {
-    NotInitialized,
     InvalidDetection,
     SolveFailed,
 };
 
 [[nodiscard]] constexpr std::string_view pnp_error_str(PnPError e) noexcept {
     switch (e) {
-    case PnPError::NotInitialized: return "Not initialized";
     case PnPError::InvalidDetection: return "Invalid detection";
     case PnPError::SolveFailed: return "Solve failed";
     }
@@ -183,11 +181,8 @@ public:
         int armor_id{-1};
     };
 
-    AtLegacyPnPSolver() = default;
-
-    /// Initialize camera parameters
-    /// @param config camera config
-    bool init(const CameraConfig& config) {
+    /// Construct with camera parameters — fully initialized, no separate init() needed.
+    explicit AtLegacyPnPSolver(const CameraConfig& config) {
         cv::eigen2cv(config.camera_matrix, camera_matrix_);
         cv::eigen2cv(config.distort_coefficient, dist_coeffs_);
 
@@ -198,8 +193,6 @@ public:
         );
 
         build_model_points();
-        initialized_ = true;
-        return true;
     }
 
     /// Solve armor pose with prior-seeded constrained reprojection refinement.
@@ -450,10 +443,6 @@ private:
 
     [[nodiscard]] std::expected<PnPInput, PnPError>
         make_pnp_input(const AtLegacyArmorDetection& detection) const {
-        if (!initialized_) {
-            return std::unexpected(PnPError::NotInitialized);
-        }
-
         auto img_points = detection.image_points();
         if (img_points.size() != 4) {
             return std::unexpected(PnPError::InvalidDetection);
@@ -504,7 +493,6 @@ private:
     }
 
 private:
-    bool initialized_ = false;
     cv::Mat camera_matrix_;
     cv::Mat dist_coeffs_;
     cv::Point2f image_center_;

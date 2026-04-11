@@ -144,10 +144,10 @@ void free_io(AX_ENGINE_IO_T* io) {
 // ALLOCATION STRATEGY: new[] for C API interop
 // See provenance documentation in free_io() above (lines 98-124)
 // ====================================================================
-std::expected<void, DetectorError> prepare_io(
+std::expected<void, std::string> prepare_io(
     AX_ENGINE_IO_INFO_T* info, AX_ENGINE_IO_T* io_data,
     [[maybe_unused]] std::pair<AX_ENGINE_ALLOC_BUFFER_STRATEGY_T, AX_ENGINE_ALLOC_BUFFER_STRATEGY_T>
-        strategy) {
+        strategy) noexcept {
     *io_data         = {};
     io_data->pInputs = new AX_ENGINE_IO_BUFFER_T[info->nInputSize];
     memset(io_data->pInputs, 0, sizeof(AX_ENGINE_IO_BUFFER_T) * info->nInputSize);
@@ -166,7 +166,8 @@ std::expected<void, DetectorError> prepare_io(
             delete[] io_data->pInputs;
             io_data->pInputs = nullptr;
             SPDLOG_ERROR("[AxeraBackend] Allocate input{} failed", i);
-            return std::unexpected(DetectorError::InitFailed);
+            return std::unexpected(
+                "Axera NPU input buffer allocation failed for index " + std::to_string(i));
         }
     }
 
@@ -190,7 +191,8 @@ std::expected<void, DetectorError> prepare_io(
             io_data->pInputs  = nullptr;
             io_data->pOutputs = nullptr;
             SPDLOG_ERROR("[AxeraBackend] Allocate output{} failed", i);
-            return std::unexpected(DetectorError::InitFailed);
+            return std::unexpected(
+                "Axera NPU output buffer allocation failed for index " + std::to_string(i));
         }
     }
 
@@ -263,9 +265,7 @@ AtLegacyAxeraBackend::~AtLegacyAxeraBackend() {
         AX_ENGINE_Deinit();
     }
     deinit_ivps();
-    if (initialized_) {
-        AX_SYS_Deinit();
-    }
+    AX_SYS_Deinit();
 }
 
 AtLegacyAxeraBackend::AtLegacyAxeraBackend(AtLegacyAxeraBackend&& other) noexcept
@@ -276,7 +276,6 @@ AtLegacyAxeraBackend::AtLegacyAxeraBackend(AtLegacyAxeraBackend&& other) noexcep
     , nms_tile_bins_buf_(std::move(other.nms_tile_bins_buf_))
     , config_(std::move(other.config_))
     , detect_color_(other.detect_color_)
-    , initialized_(other.initialized_)
     , warned_non_four_three_input_(other.warned_non_four_three_input_)
     , handle_(other.handle_)
     , io_data_(other.io_data_)
@@ -290,7 +289,6 @@ AtLegacyAxeraBackend::AtLegacyAxeraBackend(AtLegacyAxeraBackend&& other) noexcep
     , ivps_max_src_height_(other.ivps_max_src_height_)
     , ivps_aspect_ratio_(other.ivps_aspect_ratio_) {
     other.detect_color_                = ArmorColor::Blue;
-    other.initialized_                 = false;
     other.warned_non_four_three_input_ = false;
     other.handle_                      = nullptr;
     other.io_data_                     = {};
@@ -313,9 +311,7 @@ AtLegacyAxeraBackend& AtLegacyAxeraBackend::operator=(AtLegacyAxeraBackend&& oth
         AX_ENGINE_Deinit();
     }
     deinit_ivps();
-    if (initialized_) {
-        AX_SYS_Deinit();
-    }
+    AX_SYS_Deinit();
 
     cached_grid_                 = std::move(other.cached_grid_);
     postproc_ranked_buf_         = std::move(other.postproc_ranked_buf_);
@@ -324,7 +320,6 @@ AtLegacyAxeraBackend& AtLegacyAxeraBackend::operator=(AtLegacyAxeraBackend&& oth
     nms_tile_bins_buf_           = std::move(other.nms_tile_bins_buf_);
     config_                      = std::move(other.config_);
     detect_color_                = other.detect_color_;
-    initialized_                 = other.initialized_;
     warned_non_four_three_input_ = other.warned_non_four_three_input_;
     handle_                      = other.handle_;
     io_data_                     = other.io_data_;
@@ -339,7 +334,6 @@ AtLegacyAxeraBackend& AtLegacyAxeraBackend::operator=(AtLegacyAxeraBackend&& oth
     ivps_aspect_ratio_           = other.ivps_aspect_ratio_;
 
     other.detect_color_                = ArmorColor::Blue;
-    other.initialized_                 = false;
     other.warned_non_four_three_input_ = false;
     other.handle_                      = nullptr;
     other.io_data_                     = {};
@@ -352,83 +346,84 @@ AtLegacyAxeraBackend& AtLegacyAxeraBackend::operator=(AtLegacyAxeraBackend&& oth
     return *this;
 }
 
-std::expected<void, DetectorError> AtLegacyAxeraBackend::init() {
-    if (initialized_) {
-        return {};
-    }
+// ============================================================================
+// Factory — Construction IS Initialization
+// ============================================================================
 
-    const auto& cfg = get_config();
+std::expected<AtLegacyAxeraBackend, std::string>
+    AtLegacyAxeraBackend::create(Config config) noexcept {
+    const auto& cfg = config;
     if (!std::filesystem::exists(cfg.model_path)) {
         SPDLOG_ERROR("[AxeraBackend] Model file not found: {}", cfg.model_path);
-        return std::unexpected(DetectorError::ModelLoadError);
+        return std::unexpected("Axera model file not found: " + cfg.model_path);
     }
 
-    bool sys_initialized     = false;
-    bool engine_initialized  = false;
-    auto cleanup_failed_init = [&]() {
-        if (io_data_.pInputs != nullptr || io_data_.pOutputs != nullptr) {
-            free_io(&io_data_);
-        }
-        if (handle_ != nullptr) {
-            AX_ENGINE_DestroyHandle(handle_);
-            handle_ = nullptr;
-        }
-        if (engine_initialized) {
-            AX_ENGINE_Deinit();
-            engine_initialized = false;
-        }
-        deinit_ivps();
-        if (sys_initialized) {
-            AX_SYS_Deinit();
-            sys_initialized = false;
-        }
-    };
+    AtLegacyAxeraBackend backend(std::move(config));
 
     auto ret = AX_SYS_Init();
     if (ret != 0) {
         SPDLOG_ERROR("[AxeraBackend] AX_SYS_Init failed: {}", ret);
-        return std::unexpected(DetectorError::InitFailed);
+        return std::unexpected("Axera AX_SYS_Init failed with code " + std::to_string(ret));
     }
-    sys_initialized = true;
 
-    (void)init_ivps();
+    (void)backend.init_ivps();
+
+    bool engine_initialized = false;
+
+    auto cleanup_failed = [&]() {
+        if (backend.io_data_.pInputs != nullptr || backend.io_data_.pOutputs != nullptr) {
+            free_io(&backend.io_data_);
+        }
+        if (backend.handle_ != nullptr) {
+            AX_ENGINE_DestroyHandle(backend.handle_);
+            backend.handle_ = nullptr;
+        }
+        if (engine_initialized) {
+            AX_ENGINE_Deinit();
+        }
+        backend.deinit_ivps();
+        AX_SYS_Deinit();
+    };
 
     AX_ENGINE_NPU_ATTR_T npu_attr{};
     npu_attr.eHardMode = AX_ENGINE_VIRTUAL_NPU_DISABLE;
     ret                = AX_ENGINE_Init(&npu_attr);
     if (ret != 0) {
         SPDLOG_ERROR("[AxeraBackend] AX_ENGINE_Init failed: {}", ret);
-        cleanup_failed_init();
-        return std::unexpected(DetectorError::InitFailed);
+        cleanup_failed();
+        return std::unexpected("Axera AX_ENGINE_Init failed with code " + std::to_string(ret));
     }
     engine_initialized = true;
 
-    if (!read_file(cfg.model_path, model_buffer_)) {
+    if (!read_file(cfg.model_path, backend.model_buffer_)) {
         SPDLOG_ERROR("[AxeraBackend] Failed to read model file: {}", cfg.model_path);
-        cleanup_failed_init();
-        return std::unexpected(DetectorError::ModelLoadError);
+        cleanup_failed();
+        return std::unexpected("Axera failed to read model file: " + cfg.model_path);
     }
 
-    ret = AX_ENGINE_CreateHandle(&handle_, model_buffer_.data(), model_buffer_.size());
+    ret = AX_ENGINE_CreateHandle(
+        &backend.handle_, backend.model_buffer_.data(), backend.model_buffer_.size());
     if (ret != 0) {
         SPDLOG_ERROR("[AxeraBackend] AX_ENGINE_CreateHandle failed: {}", ret);
-        cleanup_failed_init();
-        return std::unexpected(DetectorError::ModelLoadError);
+        cleanup_failed();
+        return std::unexpected(
+            "Axera AX_ENGINE_CreateHandle failed with code " + std::to_string(ret));
     }
 
-    ret = AX_ENGINE_CreateContext(handle_);
+    ret = AX_ENGINE_CreateContext(backend.handle_);
     if (ret != 0) {
         SPDLOG_ERROR("[AxeraBackend] AX_ENGINE_CreateContext failed: {}", ret);
-        cleanup_failed_init();
-        return std::unexpected(DetectorError::InitFailed);
+        cleanup_failed();
+        return std::unexpected(
+            "Axera AX_ENGINE_CreateContext failed with code " + std::to_string(ret));
     }
 
     AX_ENGINE_IO_INFO_T* io_info = nullptr;
-    ret                          = AX_ENGINE_GetIOInfo(handle_, &io_info);
+    ret                          = AX_ENGINE_GetIOInfo(backend.handle_, &io_info);
     if (ret != 0) {
         SPDLOG_ERROR("[AxeraBackend] AX_ENGINE_GetIOInfo failed: {}", ret);
-        cleanup_failed_init();
-        return std::unexpected(DetectorError::InitFailed);
+        cleanup_failed();
+        return std::unexpected("Axera AX_ENGINE_GetIOInfo failed with code " + std::to_string(ret));
     }
 
     SPDLOG_INFO("[AxeraBackend] Model: {}", cfg.model_path);
@@ -438,7 +433,8 @@ std::expected<void, DetectorError> AtLegacyAxeraBackend::init() {
         expected_anchors += (cfg.input_width / s) * (cfg.input_height / s);
     }
     SPDLOG_INFO(
-        "[AxeraBackend] Expecting concat-predecode model: input={}x{}, output_dim={}, anchors={}",
+        "[AxeraBackend] Expecting concat-predecode model: input={}x{}, output_dim={}, "
+        "anchors={}",
         cfg.input_width, cfg.input_height, predecode_output_dim, expected_anchors);
     for (int i = 0; i < static_cast<int>(io_info->nInputSize); ++i) {
         const auto& in = io_info->pInputs[i];
@@ -449,34 +445,36 @@ std::expected<void, DetectorError> AtLegacyAxeraBackend::init() {
         SPDLOG_INFO("[AxeraBackend]   Output[{}]: name={}, size={} bytes", i, out.pName, out.nSize);
     }
     SPDLOG_INFO(
-        "[AxeraBackend] Using CPU decode for concat predecode output (anchor offsets removed from "
+        "[AxeraBackend] Using CPU decode for concat predecode output (anchor offsets removed "
+        "from "
         "model)");
 
     auto io_result = prepare_io(
-        io_info, &io_data_,
+        io_info, &backend.io_data_,
         std::make_pair(
             AX_ENGINE_ALLOC_BUFFER_STRATEGY_T::CACHED, AX_ENGINE_ALLOC_BUFFER_STRATEGY_T::CACHED));
     if (!io_result) {
-        cleanup_failed_init();
+        cleanup_failed();
         return std::unexpected(io_result.error());
     }
 
-    cached_grid_ = build_decode_grid();
-    SPDLOG_INFO("[AxeraBackend] Cached decode grid with {} anchors", cached_grid_.grid_x.size());
+    backend.cached_grid_ = backend.build_decode_grid();
+    SPDLOG_INFO(
+        "[AxeraBackend] Cached decode grid with {} anchors", backend.cached_grid_.grid_x.size());
 
-    if (io_data_.nInputSize > 0 && io_data_.pInputs[0].pVirAddr != nullptr) {
-        auto* warmup_input = static_cast<uint8_t*>(io_data_.pInputs[0].pVirAddr);
-        std::memset(warmup_input, 114, static_cast<size_t>(io_data_.pInputs[0].nSize));
-        AX_SYS_MflushCache(io_data_.pInputs[0].phyAddr, warmup_input, io_data_.pInputs[0].nSize);
+    if (backend.io_data_.nInputSize > 0 && backend.io_data_.pInputs[0].pVirAddr != nullptr) {
+        auto* warmup_input = static_cast<uint8_t*>(backend.io_data_.pInputs[0].pVirAddr);
+        std::memset(warmup_input, 114, static_cast<size_t>(backend.io_data_.pInputs[0].nSize));
+        AX_SYS_MflushCache(
+            backend.io_data_.pInputs[0].phyAddr, warmup_input, backend.io_data_.pInputs[0].nSize);
     }
-    ret = AX_ENGINE_RunSync(handle_, &io_data_);
+    ret = AX_ENGINE_RunSync(backend.handle_, &backend.io_data_);
     if (ret != 0) {
         SPDLOG_WARN("[AxeraBackend] Warmup AX_ENGINE_RunSync failed: {}", ret);
     }
 
-    initialized_ = true;
     SPDLOG_INFO("[AxeraBackend] Initialization complete");
-    return {};
+    return backend;
 }
 
 AtLegacyAxeraBackend::PreprocContext AtLegacyAxeraBackend::preprocess(const cv::Mat& image) const {
@@ -501,7 +499,7 @@ void AtLegacyAxeraBackend::preprocess_image(const cv::Mat& image) {
     AX_SYS_MflushCache(io_data_.pInputs[0].phyAddr, npu_input, flush_size);
 }
 
-std::expected<void, DetectorError> AtLegacyAxeraBackend::init_ivps() {
+std::expected<void, std::string> AtLegacyAxeraBackend::init_ivps() noexcept {
     const auto ret = AX_IVPS_Init();
     if (ret != AX_SUCCESS) {
         SPDLOG_WARN(
@@ -531,8 +529,8 @@ void AtLegacyAxeraBackend::deinit_ivps() {
     ivps_initialized_ = false;
 }
 
-std::expected<void, DetectorError>
-    AtLegacyAxeraBackend::allocate_ivps_buffers(int max_src_width, int max_src_height) {
+std::expected<void, std::string>
+    AtLegacyAxeraBackend::allocate_ivps_buffers(int max_src_width, int max_src_height) noexcept {
     free_ivps_buffers();
 
     ivps_max_src_width_  = max_src_width;
@@ -556,7 +554,7 @@ std::expected<void, DetectorError>
         ivps_src_vir_addr_    = nullptr;
         ivps_src_buffer_size_ = 0;
         ivps_src_stride_      = 0;
-        return std::unexpected(DetectorError::InitFailed);
+        return std::unexpected("Axera IVPS source buffer allocation failed");
     }
 
     SPDLOG_INFO(
@@ -661,7 +659,7 @@ void AtLegacyAxeraBackend::preprocess_image_ivps(const cv::Mat& image) {
 }
 
 bool AtLegacyAxeraBackend::infer() {
-    if (!initialized_ || handle_ == nullptr) {
+    if (handle_ == nullptr) {
         return false;
     }
 
@@ -972,20 +970,15 @@ std::vector<AtLegacyArmorDetection> AtLegacyAxeraBackend::nms(
     return result;
 }
 
-AtLegacyAxeraBackend::DetectionResult AtLegacyAxeraBackend::detect_impl(const cv::Mat& image) {
+AtLegacyAxeraBackend::DetectionResult
+    AtLegacyAxeraBackend::detect_impl(const cv::Mat& image) noexcept {
     const auto total_start = std::chrono::high_resolution_clock::now();
-
-    if (!initialized_) {
-        return std::unexpected(DetectorError::NotInitialized);
-    }
-    if (image.empty()) {
-        return std::unexpected(DetectorError::InvalidImage);
-    }
 
     const auto ctx = preprocess(image);
     if (!ctx.is_four_three && !warned_non_four_three_input_) {
         SPDLOG_WARN(
-            "[AxeraBackend] Input {}x{} is not 4:3; direct resize to {}x{} will be used without "
+            "[AxeraBackend] Input {}x{} is not 4:3; direct resize to {}x{} will be used "
+            "without "
             "letterbox",
             image.cols, image.rows, config_.input_width, config_.input_height);
         warned_non_four_three_input_ = true;
@@ -1005,7 +998,7 @@ AtLegacyAxeraBackend::DetectionResult AtLegacyAxeraBackend::detect_impl(const cv
     // Inference timing
     const auto infer_start = std::chrono::high_resolution_clock::now();
     if (!infer()) {
-        return std::unexpected(DetectorError::InferenceFailed);
+        return std::unexpected("Axera NPU inference failed (AX_ENGINE_RunSync)");
     }
     const auto infer_end = std::chrono::high_resolution_clock::now();
     const auto infer_us =

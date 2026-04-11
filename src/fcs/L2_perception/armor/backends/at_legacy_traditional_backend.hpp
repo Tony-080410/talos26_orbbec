@@ -18,17 +18,24 @@ namespace fcs::L2 {
 
 class AtLegacyTraditionalBackend : public AtLegacyDetectorBackendBase<AtLegacyTraditionalBackend> {
 public:
-    using DetectionResult = std::expected<std::vector<AtLegacyArmorDetection>, DetectorError>;
+    using DetectionResult = std::expected<std::vector<AtLegacyArmorDetection>, std::string>;
     using Config          = AtLegacyTraditionalConfig;
 
-    explicit AtLegacyTraditionalBackend(Config config);
+    /// Factory: construct a fully-initialized backend.
+    /// Construction IS initialization — no separate init() needed.
+    [[nodiscard]] static std::expected<AtLegacyTraditionalBackend, std::string>
+        create(Config config) noexcept;
+
+    ~AtLegacyTraditionalBackend() = default;
+
+    // Move-only
+    AtLegacyTraditionalBackend(AtLegacyTraditionalBackend&&) noexcept            = default;
+    AtLegacyTraditionalBackend& operator=(AtLegacyTraditionalBackend&&) noexcept = default;
+    AtLegacyTraditionalBackend(const AtLegacyTraditionalBackend&)                = delete;
+    AtLegacyTraditionalBackend& operator=(const AtLegacyTraditionalBackend&)     = delete;
 
     /// Detect armors in image
-    [[nodiscard]] DetectionResult detect_impl(const cv::Mat& input);
-
-    [[nodiscard]] bool is_initialized_impl() const noexcept { return true; }
-
-    [[nodiscard]] std::string_view name_impl() const noexcept { return "traditional"; }
+    [[nodiscard]] DetectionResult detect_impl(const cv::Mat& input) noexcept;
 
     void set_detect_color(ArmorColor color) noexcept { detect_color_ = color; }
     [[nodiscard]] ArmorColor detect_color() const noexcept { return detect_color_; }
@@ -37,18 +44,20 @@ public:
     [[nodiscard]] const Config& get_config() const noexcept { return config_; }
 
 private:
+    /// Private constructor — use create() factory
+    explicit AtLegacyTraditionalBackend(Config config) noexcept;
     Config config_;
     ArmorColor detect_color_ = ArmorColor::Neutral;
     std::unique_ptr<AtLegacyTraditionalClassifier> classifier_;
 
     /// Preprocess image to binary
-    [[nodiscard]] cv::Mat
-        preprocess_image(const cv::Mat& bgr_img, const AtLegacyTraditionalConfig& cfg) const;
+    [[nodiscard]] cv::Mat preprocess_image(
+        const cv::Mat& bgr_img, const AtLegacyTraditionalConfig& cfg) const noexcept;
 
     /// Find light bars in image
     [[nodiscard]] std::vector<AtLegacyLight> find_lights(
         const cv::Mat& bgr_img, const cv::Mat& binary_img,
-        const AtLegacyTraditionalConfig& cfg) const;
+        const AtLegacyTraditionalConfig& cfg) const noexcept;
 
     /// Check if contour is a valid light bar
     [[nodiscard]] bool
@@ -57,11 +66,11 @@ private:
     /// Match light pairs to form armors
     [[nodiscard]] std::vector<AtLegacyArmorDetection> match_lights(
         std::vector<AtLegacyLight>& lights, const AtLegacyTraditionalConfig& cfg,
-        cv::Mat gray_img) const;
+        cv::Mat gray_img) const noexcept;
 
     /// Check if there's a light between two lights
     [[nodiscard]] static bool
-        contains_light(size_t i, size_t j, const std::vector<AtLegacyLight>& lights);
+        contains_light(size_t i, size_t j, const std::vector<AtLegacyLight>& lights) noexcept;
 
     /// Check if two lights form a valid armor
     [[nodiscard]] ArmorType is_armor(

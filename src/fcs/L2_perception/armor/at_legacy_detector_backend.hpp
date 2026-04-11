@@ -82,7 +82,7 @@ using AtLegacyDetectorBackendVariant = std::variant<std::unique_ptr<AtLegacyTrad
 /// incomplete type issues with std::visit
 class AtLegacyDetectorBackend {
 public:
-    using DetectionResult = std::expected<std::vector<AtLegacyArmorDetection>, DetectorError>;
+    using DetectionResult = std::expected<std::vector<AtLegacyArmorDetection>, std::string>;
 
     AtLegacyDetectorBackend();
     ~AtLegacyDetectorBackend();
@@ -108,20 +108,11 @@ public:
     explicit AtLegacyDetectorBackend(std::unique_ptr<AtLegacyAxeraBackend> backend);
 #endif
 
-    /// Detect armors in image (dispatches to active backend)
-    [[nodiscard]] DetectionResult detect(const cv::Mat& image);
-
-    /// Check if any backend is active and initialized
-    [[nodiscard]] bool is_initialized() const noexcept;
-
-    /// Get active backend name
-    [[nodiscard]] std::string_view name() const noexcept;
+    /// Detect armors in image (dispatches to active backend) — noexcept boundary
+    [[nodiscard]] DetectionResult detect(const cv::Mat& image) noexcept;
 
     /// Set detection color for all backends
     void set_detect_color(ArmorColor color) noexcept;
-
-    /// Whether the active backend supports readback ROI crop.
-    [[nodiscard]] bool supports_readback_roi() const noexcept;
 
     /// Input resolution used to derive ROI aspect ratio and minimum crop size.
     [[nodiscard]] AtLegacyBackendInputResolution input_resolution() const noexcept;
@@ -145,7 +136,7 @@ public:
         return std::holds_alternative<std::unique_ptr<Backend>>(backend_);
     }
 
-    /// Get reference to specific backend (throws if wrong type)
+    /// Get reference to specific backend
     template <typename Backend>
     [[nodiscard]] Backend& get() {
         return *std::get<std::unique_ptr<Backend>>(backend_);
@@ -161,12 +152,12 @@ private:
 };
 
 // ============================================================================
-// Backend Factory (forward declarations)
+// Backend Factory
 // ============================================================================
 
 /// Create detector backend from unified config
 /// Implementation in at_legacy_detector_backend.cpp
-[[nodiscard]] std::expected<AtLegacyDetectorBackend, DetectorError>
-    create_detector_backend(const AtLegacyConfig& config);
+[[nodiscard]] std::expected<AtLegacyDetectorBackend, std::string>
+    create_detector_backend(const AtLegacyConfig& config) noexcept;
 
 } // namespace fcs::L2

@@ -32,10 +32,14 @@ public:
     static constexpr int NUM_SIZES   = 2;
     static constexpr int NUM_CLASSES = 8; // G, 1, 2, 3, 4, 5, O, B
     static constexpr int NUM_KPTS    = 4; // 4 corner keypoints (x, y)
-    using DetectionResult = std::expected<std::vector<AtLegacyArmorDetection>, DetectorError>;
+    using DetectionResult = std::expected<std::vector<AtLegacyArmorDetection>, std::string>;
     using Config          = AtLegacyNNConfig;
 
-    explicit AtLegacyNNBackend(Config config);
+    /// Factory: construct a fully-initialized backend (load model via OpenVINO).
+    /// Construction IS initialization — no separate init() needed.
+    [[nodiscard]] static std::expected<AtLegacyNNBackend, std::string>
+        create(Config config) noexcept;
+
     ~AtLegacyNNBackend();
 
     // Move-only (OpenVINO resources)
@@ -44,25 +48,22 @@ public:
     AtLegacyNNBackend(const AtLegacyNNBackend&)            = delete;
     AtLegacyNNBackend& operator=(const AtLegacyNNBackend&) = delete;
 
-    /// Initialize the backend (load model)
-    [[nodiscard]] std::expected<void, DetectorError> init();
-
     /// Detect armors in image (synchronous)
-    [[nodiscard]] DetectionResult detect_impl(const cv::Mat& image);
-
-    [[nodiscard]] bool is_initialized_impl() const noexcept { return initialized_; }
-    [[nodiscard]] std::string_view name_impl() const noexcept { return "nn"; }
+    [[nodiscard]] DetectionResult detect_impl(const cv::Mat& image) noexcept;
 
     void set_detect_color(ArmorColor color) noexcept { detect_color_ = color; }
     [[nodiscard]] ArmorColor detect_color() const noexcept { return detect_color_; }
 
     /// Get execution devices
-    [[nodiscard]] std::vector<std::string> execution_devices() const;
+    [[nodiscard]] std::vector<std::string> execution_devices() const noexcept;
 
     /// Get current config
     [[nodiscard]] const Config& get_config() const noexcept { return config_; }
 
 private:
+    /// Private constructor — use create() factory
+    explicit AtLegacyNNBackend(Config config) noexcept;
+
     /// Preprocess image for inference (letterbox + normalize)
     struct PreprocContext {
         cv::Mat preprocessed; // Preprocessed input tensor
@@ -75,27 +76,27 @@ private:
     };
 
     [[nodiscard]] PreprocContext
-        preprocess(const cv::Mat& image, const AtLegacyNNConfig& cfg) const;
+        preprocess(const cv::Mat& image, const AtLegacyNNConfig& cfg) const noexcept;
 
     /// Run inference
-    [[nodiscard]] bool infer(const PreprocContext& ctx);
+    [[nodiscard]] bool infer(const PreprocContext& ctx) noexcept;
 
     /// Postprocess inference output
     [[nodiscard]] std::vector<AtLegacyArmorDetection>
-        postprocess(const PreprocContext& ctx, const AtLegacyNNConfig& cfg) const;
+        postprocess(const PreprocContext& ctx, const AtLegacyNNConfig& cfg) const noexcept;
 
     /// Transform coordinates from model output to original image
     void transform_coordinates(
-        std::vector<AtLegacyArmorDetection>& detections, const PreprocContext& ctx) const;
+        std::vector<AtLegacyArmorDetection>& detections, const PreprocContext& ctx) const noexcept;
 
     /// Non-maximum suppression
     [[nodiscard]] std::vector<AtLegacyArmorDetection>
-        nms(std::vector<AtLegacyArmorDetection>& detections, const AtLegacyNNConfig& cfg) const;
+        nms(std::vector<AtLegacyArmorDetection>& detections,
+            const AtLegacyNNConfig& cfg) const noexcept;
 
 private:
     Config config_;
     ArmorColor detect_color_ = ArmorColor::Blue;
-    bool initialized_        = false;
 
     // OpenVINO resources (PIMPL to avoid header pollution)
     struct Impl;

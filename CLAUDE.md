@@ -226,8 +226,11 @@ crates/fast_tf/src/
 ### 错误处理
 
 - 使用 `std::expected` 表达错误，禁止吞掉异常
-- 错误消息必须包含完整上下文，避免歧义
+- 错误消息必须包含完整上下文（`[模块::方法] 操作失败: 细节`），禁止 `"unknown error"` 之类的模糊描述
 - 使用 `magic_enum` 统一转换枚举为小写
+- **异常是系统边界**，不允许在系统内部传播。所有内部错误通过 `std::expected` 传播
+- 返回 `std::expected` 的方法必须 `noexcept`，内部用 `try/catch(const std::exception&)` 捕获并带完整上下文转为 `std::unexpected`
+- **禁止 `catch(...)`** — 只允许 `catch(const std::exception&)`，必须携带 `e.what()` 上下文
 
 ### 控制流
 
@@ -240,6 +243,14 @@ crates/fast_tf/src/
 - 使用强类型包装业务概念
 - 优先使用模板，而非 `std::function`
 - 禁止使用 `std::any`（除 World 内部实现外）
+
+### 构造与接口设计
+
+1. **禁止两阶段构造** — 对象构造完成后必须处于可用状态，不允许 `init()` / `is_initialized()` 模式
+2. **构造即初始化** — 如果初始化可能失败，使用 `static create() noexcept` 工厂方法返回 `std::expected<T, Error>`，构造函数 `private`
+3. **接口用 C++20 concepts 强制约束** — CRTP 基类、策略模式等类型参数必须用 concept 约束，编译期检查 `noexcept`、返回类型、工厂签名
+4. **`std::abort()` 仅用于不可恢复的逻辑错误** — "文件未找到"、"模型加载失败" 等可恢复错误必须通过 `std::expected` 返回
+5. **不允许向后兼容废代码** — 删除废弃接口而非保留，`name()` / `supports_xxx()` 等运行时能力查询属于设计缺陷
 
 ### 其他规范
 

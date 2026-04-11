@@ -39,14 +39,14 @@ struct AtLegacyTrackerReadbackSnapshot {
 
 class AtLegacyTrackerReadbackCache {
 public:
-    AtLegacyTrackerReadbackCache() = default;
+    AtLegacyTrackerReadbackCache() noexcept = default;
 
-    AtLegacyTrackerReadbackCache(const AtLegacyTrackerReadbackCache& other) {
+    AtLegacyTrackerReadbackCache(const AtLegacyTrackerReadbackCache& other) noexcept {
         std::scoped_lock lock(other.mutex_);
         snapshot_ = other.snapshot_;
     }
 
-    AtLegacyTrackerReadbackCache& operator=(const AtLegacyTrackerReadbackCache& other) {
+    AtLegacyTrackerReadbackCache& operator=(const AtLegacyTrackerReadbackCache& other) noexcept {
         if (this == &other) {
             return *this;
         }
@@ -71,17 +71,17 @@ public:
         return *this;
     }
 
-    [[nodiscard]] AtLegacyTrackerReadbackSnapshot load() const {
+    [[nodiscard]] AtLegacyTrackerReadbackSnapshot load() const noexcept {
         std::scoped_lock lock(mutex_);
         return snapshot_;
     }
 
-    void store(const AtLegacyTrackerReadbackSnapshot& snapshot) {
+    void store(const AtLegacyTrackerReadbackSnapshot& snapshot) noexcept {
         std::scoped_lock lock(mutex_);
         snapshot_ = snapshot;
     }
 
-    void invalidate(uint64_t timestamp_ns = 0) {
+    void invalidate(uint64_t timestamp_ns = 0) noexcept {
         std::scoped_lock lock(mutex_);
         snapshot_ = AtLegacyTrackerReadbackSnapshot{.valid = false, .timestamp_ns = timestamp_ns};
     }
@@ -139,7 +139,7 @@ struct AtLegacyBackendInputResolution {
 
 [[nodiscard]] inline std::optional<cv::Rect> resolve_readback_roi(
     const cv::Size& frame_size, const cv::Rect2f& raw_roi, const AtLegacyReadbackRoiConfig& config,
-    const AtLegacyBackendInputResolution& input_resolution) {
+    const AtLegacyBackendInputResolution& input_resolution) noexcept {
     if (frame_size.width <= 0 || frame_size.height <= 0 || !input_resolution.valid()
         || !is_valid_raw_roi(raw_roi)) {
         return std::nullopt;
@@ -219,7 +219,7 @@ struct AtLegacyBackendInputResolution {
 [[nodiscard]] inline std::optional<cv::Rect2f> project_box_to_image(
     const Eigen::Vector3d& center_odom, double yaw,
     const fast_tf::TransformMatrixd<fast_tf::odom, fast_tf::camera_optical>& T_odom_camera,
-    const CameraConfig& camera_config, const std::array<double, 3>& box_size_m) {
+    const CameraConfig& camera_config, const std::array<double, 3>& box_size_m) noexcept {
     const double fx = camera_config.camera_matrix(0, 0);
     const double fy = camera_config.camera_matrix(1, 1);
     const double cx = camera_config.camera_matrix(0, 2);
@@ -289,7 +289,7 @@ struct AtLegacyBackendInputResolution {
 [[nodiscard]] inline std::optional<cv::Rect2f> project_tracker_box_to_image(
     const L3::TrackerOutput& tracker,
     const fast_tf::TransformMatrixd<fast_tf::odom, fast_tf::camera_optical>& T_odom_camera,
-    const CameraConfig& camera_config, const std::array<double, 3>& box_size_m) {
+    const CameraConfig& camera_config, const std::array<double, 3>& box_size_m) noexcept {
     const auto center_and_yaw = tracker_box_center_and_yaw(tracker);
     if (!center_and_yaw) {
         return std::nullopt;

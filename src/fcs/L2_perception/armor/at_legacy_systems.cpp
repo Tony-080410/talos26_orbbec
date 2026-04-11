@@ -15,12 +15,15 @@
 #include <optional>
 #include <spdlog/spdlog.h>
 
+#include <magic_enum/magic_enum.hpp>
+
 namespace fcs::L2 {
 
 namespace {
 
 [[nodiscard]] std::optional<cv::Point2f> normalize_image_point(
-    const cv::Point2f& image_point, const cv::Mat& camera_matrix, const cv::Mat& dist_coeffs) {
+    const cv::Point2f& image_point, const cv::Mat& camera_matrix,
+    const cv::Mat& dist_coeffs) noexcept {
     std::vector<cv::Point2f> norm_points;
     cv::undistortPoints(
         std::vector<cv::Point2f>{image_point}, norm_points, camera_matrix, dist_coeffs);
@@ -45,7 +48,7 @@ namespace {
 [[nodiscard]] std::vector<AtLegacyPnPSolver::PosePrior> make_pose_priors(
     const AtLegacyArmorDetection& detection, const AtLegacyTrackerReadbackSnapshot& snapshot,
     const fast_tf::TransformMatrixd<fast_tf::odom, fast_tf::camera_optical>& T_odom_camera,
-    const cv::Mat& camera_matrix, const cv::Mat& dist_coeffs) {
+    const cv::Mat& camera_matrix, const cv::Mat& dist_coeffs) noexcept {
     if (!tracker_snapshot_matches_detection(snapshot, detection)) {
         return {};
     }
@@ -126,7 +129,8 @@ namespace {
     return priors;
 }
 
-void offset_detections(std::vector<AtLegacyArmorDetection>& detections, const cv::Point& offset) {
+void offset_detections(
+    std::vector<AtLegacyArmorDetection>& detections, const cv::Point& offset) noexcept {
     if (offset.x == 0 && offset.y == 0) {
         return;
     }
@@ -147,7 +151,7 @@ void offset_detections(std::vector<AtLegacyArmorDetection>& detections, const cv
 
 } // namespace
 
-void register_at_legacy_detection_systems(talos::Scheduler& scheduler) {
+void register_at_legacy_detection_systems(talos::Scheduler& scheduler) noexcept {
     auto& world = scheduler.world();
     if (!world.has_resource<AtLegacyReadbackRoiConfig>()) {
         world.insert_resource(AtLegacyReadbackRoiConfig{});
@@ -190,7 +194,7 @@ void register_at_legacy_detection_systems(talos::Scheduler& scheduler) {
             std::optional<fast_tf::TransformMatrixd<fast_tf::odom, fast_tf::camera_optical>>
                 T_odom_camera;
 
-            if (readback_roi_config->enabled && backend->get()->supports_readback_roi()) {
+            if (readback_roi_config->enabled) {
                 const auto snapshot = readback_cache->load();
                 if (tracker_snapshot_is_fresh(
                         snapshot, *readback_roi_config, frame->timestamp_ns)) {
@@ -304,21 +308,19 @@ void register_at_legacy_detection_systems(talos::Scheduler& scheduler) {
 }
 
 std::expected<DetectorBackendHandle, std::string>
-    create_detector_backend_handle(const AtLegacyConfig& config) {
+    create_detector_backend_handle(const AtLegacyConfig& config) noexcept {
     auto backend_result = create_detector_backend(config);
     if (!backend_result) {
-        return std::unexpected(std::string(detector_error_str(backend_result.error())));
+        return std::unexpected(std::move(backend_result.error()));
     }
 
     auto backend_ptr  = std::make_shared<AtLegacyDetectorBackend>(std::move(*backend_result));
-    auto backend_name = std::string(backend_ptr->name());
+    auto backend_name = std::string(magic_enum::enum_name(config.backend_type));
     return DetectorBackendHandle{std::move(backend_ptr), std::move(backend_name)};
 }
 
-std::shared_ptr<AtLegacyPnPSolver> create_pnp_solver(const CameraConfig& config) {
-    auto solver = std::make_shared<AtLegacyPnPSolver>();
-    solver->init(config);
-    return solver;
+std::shared_ptr<AtLegacyPnPSolver> create_pnp_solver(const CameraConfig& config) noexcept {
+    return std::make_shared<AtLegacyPnPSolver>(config);
 }
 
 } // namespace fcs::L2
