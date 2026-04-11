@@ -38,8 +38,6 @@ endif ()
 # Clang-specific optimization options
 if (CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     add_compile_options(
-    -ftime-trace
-
         -fvectorize
         -fslp-vectorize
     )
