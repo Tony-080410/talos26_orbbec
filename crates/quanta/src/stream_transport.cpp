@@ -715,7 +715,7 @@ StreamSender& StreamSender::operator=(StreamSender&&) noexcept = default;
 
 std::expected<StreamSender, std::string> StreamSender::create(
     EncodeParams encode_params, StreamTransportConfig transport_config, int src_width,
-    int src_height) {
+    int src_height) noexcept {
     auto impl =
         Impl::create(std::move(encode_params), std::move(transport_config), src_width, src_height);
     if (!impl)
@@ -724,11 +724,11 @@ std::expected<StreamSender, std::string> StreamSender::create(
 }
 
 std::expected<void, std::string> StreamSender::submit_frame(
-    const uint8_t* data, int linesize, int64_t pts, uint64_t capture_timestamp_ns) {
+    const uint8_t* data, int linesize, int64_t pts, uint64_t capture_timestamp_ns) noexcept {
     return impl_->submit_frame(data, linesize, pts, capture_timestamp_ns);
 }
 
-std::expected<std::optional<TransportChunk>, std::string> StreamSender::poll_chunk() {
+std::expected<std::optional<TransportChunk>, std::string> StreamSender::poll_chunk() noexcept {
     return impl_->poll_chunk();
 }
 
@@ -744,8 +744,8 @@ StreamReceiver::~StreamReceiver() = default;
 StreamReceiver::StreamReceiver(StreamReceiver&&) noexcept            = default;
 StreamReceiver& StreamReceiver::operator=(StreamReceiver&&) noexcept = default;
 
-std::expected<void, std::string>
-    StreamReceiver::push_chunk(std::span<const uint8_t> bytes, uint64_t receive_timestamp_ns) {
+std::expected<void, std::string> StreamReceiver::push_chunk(
+    std::span<const uint8_t> bytes, uint64_t receive_timestamp_ns) noexcept {
     return impl_->push_chunk(bytes, receive_timestamp_ns);
 }
 

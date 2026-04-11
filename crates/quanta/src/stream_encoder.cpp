@@ -7,7 +7,7 @@
 #include <cstdio>
 #include <cstring>
 #include <deque>
-#include <format>
+
 #include <memory>
 #include <optional>
 #include <utility>
@@ -249,8 +249,8 @@ StreamEncoder::~StreamEncoder() = default;
 StreamEncoder::StreamEncoder(StreamEncoder&&) noexcept            = default;
 StreamEncoder& StreamEncoder::operator=(StreamEncoder&&) noexcept = default;
 
-std::expected<StreamEncoder, std::string>
-    StreamEncoder::create(EncodeParams params, int src_width, int src_height, int framerate) {
+std::expected<StreamEncoder, std::string> StreamEncoder::create(
+    EncodeParams params, int src_width, int src_height, int framerate) noexcept {
     auto impl = Impl::create(std::move(params), src_width, src_height, framerate);
     if (!impl)
         return std::unexpected(std::move(impl.error()));
@@ -258,13 +258,13 @@ std::expected<StreamEncoder, std::string>
 }
 
 std::expected<void, std::string>
-    StreamEncoder::push_frame(const uint8_t* data, int linesize, int64_t pts) {
+    StreamEncoder::push_frame(const uint8_t* data, int linesize, int64_t pts) noexcept {
     return impl_->push_frame(data, linesize, pts);
 }
 
 std::optional<EncodedPacket> StreamEncoder::poll_packet() { return impl_->poll_packet(); }
 
-std::expected<void, std::string> StreamEncoder::flush() { return impl_->flush(); }
+std::expected<void, std::string> StreamEncoder::flush() noexcept { return impl_->flush(); }
 
 [[nodiscard]] const EncodeParams& StreamEncoder::params() const { return impl_->params(); }
 

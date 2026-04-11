@@ -91,7 +91,7 @@ public:
     /// Returns the sender on success, or an error string on failure.
     [[nodiscard]] static std::expected<StreamSender, std::string> create(
         EncodeParams encode_params, StreamTransportConfig transport_config, int src_width,
-        int src_height);
+        int src_height) noexcept;
 
     ~StreamSender();
 
@@ -101,9 +101,9 @@ public:
     StreamSender& operator=(const StreamSender&) = delete;
 
     std::expected<void, std::string> submit_frame(
-        const uint8_t* data, int linesize, int64_t pts, uint64_t capture_timestamp_ns = 0);
+        const uint8_t* data, int linesize, int64_t pts, uint64_t capture_timestamp_ns = 0) noexcept;
 
-    std::expected<std::optional<TransportChunk>, std::string> poll_chunk();
+    std::expected<std::optional<TransportChunk>, std::string> poll_chunk() noexcept;
 
     [[nodiscard]] StreamSenderStats stats() const;
     [[nodiscard]] std::pair<int, int> dimensions() const;
@@ -125,7 +125,7 @@ public:
     StreamReceiver& operator=(const StreamReceiver&) = delete;
 
     std::expected<void, std::string>
-        push_chunk(std::span<const uint8_t> bytes, uint64_t receive_timestamp_ns = 0);
+        push_chunk(std::span<const uint8_t> bytes, uint64_t receive_timestamp_ns = 0) noexcept;
 
     std::optional<DecodedFrame> poll_frame();
 

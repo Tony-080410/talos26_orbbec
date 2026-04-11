@@ -39,7 +39,7 @@ public:
     /// Factory: construct a fully initialized encoder.
     /// Returns the encoder on success, or an error string on failure.
     [[nodiscard]] static std::expected<StreamEncoder, std::string>
-        create(EncodeParams params, int src_width, int src_height, int framerate);
+        create(EncodeParams params, int src_width, int src_height, int framerate) noexcept;
 
     ~StreamEncoder();
 
@@ -48,19 +48,12 @@ public:
     StreamEncoder(const StreamEncoder&)            = delete;
     StreamEncoder& operator=(const StreamEncoder&) = delete;
 
-    /// Push a raw BGR24 frame into the encoder.
-    /// `data` points to BGR24 interleaved pixel data, `linesize` is the byte stride per row
-    /// (typically width * 3, may be larger if padded).
-    /// Data must remain valid until the next call to push_frame.
-    /// May produce 0 or more packets — call poll_packet() to retrieve them.
-    std::expected<void, std::string> push_frame(const uint8_t* data, int linesize, int64_t pts);
+    std::expected<void, std::string>
+        push_frame(const uint8_t* data, int linesize, int64_t pts) noexcept;
 
-    /// Retrieve next encoded packet.
-    /// Returns nullopt if no packet is available yet.
     std::optional<EncodedPacket> poll_packet();
 
-    /// Flush the encoder: drain all remaining frames and push packets to queue.
-    std::expected<void, std::string> flush();
+    std::expected<void, std::string> flush() noexcept;
 
     /// Get encoding parameters
     [[nodiscard]] const EncodeParams& params() const;
