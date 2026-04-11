@@ -312,36 +312,6 @@ configure_linux() {
 }
 
 # -----------------------------------------------------------------------------
-# Third-party runtime paths
-# -----------------------------------------------------------------------------
-setup_runtime_env() {
-    case "$OS" in
-        linux)
-            local hik_arch_dir=""
-            case "$ARCH" in
-                arm64)  hik_arch_dir="arm64" ;;
-                x86_64) hik_arch_dir="x86_64" ;;
-                *)      hik_arch_dir="" ;;
-            esac
-
-            if [[ -n "$hik_arch_dir" ]]; then
-                local hik_lib
-                hik_lib="$(pwd)/3dparty/hik_sdk/lib/${hik_arch_dir}"
-                if [[ -d "$hik_lib" ]]; then
-                    export LD_LIBRARY_PATH="${hik_lib}:${LD_LIBRARY_PATH:-}"
-                    info "LD_LIBRARY_PATH += $hik_lib"
-                else
-                    warn "HIK SDK runtime path not found for arch ${ARCH}: $hik_lib"
-                fi
-            fi
-            ;;
-        macos)
-            # If you ever need runtime dylib injection, add DYLD_LIBRARY_PATH here carefully.
-            ;;
-    esac
-}
-
-# -----------------------------------------------------------------------------
 # CMake / build / run
 # -----------------------------------------------------------------------------
 configure_cmake() {
@@ -379,8 +349,6 @@ build_target() {
 
 run_target() {
     [[ "$RUN_AFTER_BUILD" == "ON" ]] || return 0
-
-    setup_runtime_env
 
     local exe="./build/bin/${BUILD_TARGET}"
     [[ -x "$exe" ]] || die "Built executable not found: $exe"
