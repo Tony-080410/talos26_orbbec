@@ -12,6 +12,7 @@ crate(
         PkgConfig::AVFORMAT
         PkgConfig::AVFILTER
         PkgConfig::SWSCALE
+        PkgConfig::SWRESAMPLE
         PkgConfig::AVUTIL
 )
 
