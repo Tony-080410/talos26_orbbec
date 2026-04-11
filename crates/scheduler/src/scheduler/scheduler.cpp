@@ -127,8 +127,8 @@ static void collect_channel_label_names(
                 const ChannelKey key{channel.type, channel.topic};
                 channel_names.try_emplace(
                     key, ChannelLabelNames{
-                                 .topic_name = talos::scheduler::detail::demangle(channel.topic.name()),
-                                 .type_name  = talos::scheduler::detail::demangle(channel.type.name()),
+                             .topic_name = talos::scheduler::detail::demangle(channel.topic.name()),
+                             .type_name  = talos::scheduler::detail::demangle(channel.type.name()),
                          });
             }
         };

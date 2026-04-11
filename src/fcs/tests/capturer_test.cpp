@@ -46,7 +46,7 @@ enum class ProducerMode {
 auto make_temp_dir(std::string_view name) -> fs::path {
     const auto unique = std::chrono::steady_clock::now().time_since_epoch().count();
     const auto path   = fs::temp_directory_path()
-                    / ("talos-capturer-test-" + std::string(name) + "-" + std::to_string(unique));
+                      / ("talos-capturer-test-" + std::string(name) + "-" + std::to_string(unique));
     fs::create_directories(path);
     return path;
 }

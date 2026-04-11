@@ -1,9 +1,6 @@
-#pragma once
-
 #include "base.hpp"
 #include "foxglove_types.hpp"
 #include "scene_builder.hpp"
-#include "system_helpers.hpp"
 
 #include "core/channel_topics.hpp"
 #include "core/types.hpp"
@@ -12,7 +9,7 @@
 #include <magic_enum.hpp>
 #include <nlohmann/json.hpp>
 
-namespace fcs::foxglove::systems {
+namespace fcs::visualization::foxglove::systems {
 
 /// @brief Register L2 perception layer systems (detection, measurement)
 ///
@@ -20,18 +17,17 @@ namespace fcs::foxglove::systems {
 /// - foxglove_l2_detection_pub: Publishes armor detection JSON data
 /// - foxglove_l2_measurement_scene: Publishes measurement scene visualization
 /// - foxglove_l2_measurement_pub: Publishes measurement JSON data
-template <typename App>
-void register_l2_perception_systems(App& app) {
+void register_l2_perception_systems(talos::scheduler::Scheduler& app) {
 
     // =========================================================================
     // DETECTION PUBLISHER
     // =========================================================================
 
-    app.template add_system<talos::pool_compute>(
+    app.add_system<talos::pool_compute>(
         "foxglove_l2_detection_pub",
         [](talos::spmc<AtLegacyArmorDetectionBatch, AtLegacyDetectionChannelTopic> det_in,
            talos::res<std::shared_ptr<FoxgloveServer>> server) {
-            if (!detail::foxglove_ready(*server, det_in)) {
+            if (!foxglove_ready(*server, det_in)) {
                 return;
             }
 
@@ -71,11 +67,11 @@ void register_l2_perception_systems(App& app) {
     // MEASUREMENT VISUALIZATION (L2)
     // =========================================================================
 
-    app.template add_system<talos::pool_compute>(
+    app.add_system<talos::pool_compute>(
         "foxglove_l2_measurement_scene",
         [](talos::spmc<AtLegacyArmorMeasurementBatch, AtLegacyMeasurementChannelTopic> meas_in,
            talos::res<std::shared_ptr<FoxgloveServer>> server) {
-            if (!detail::foxglove_ready(*server, meas_in))
+            if (!foxglove_ready(*server, meas_in))
                 return;
 
             auto batch = meas_in.read();
@@ -113,14 +109,14 @@ void register_l2_perception_systems(App& app) {
             }
 
             // Publish to semantic channel
-            viz::publish_scene_if_nonempty<SceneMessage>(*server, std::move(entities));
+            publish_scene_if_nonempty<SceneMessage>(*server, std::move(entities));
         });
 
     // =========================================================================
     // MEASUREMENT JSON PUBLISHER
     // =========================================================================
 
-    app.template add_system<talos::pool_compute>(
+    app.add_system<talos::pool_compute>(
         "foxglove_l2_measurement_pub",
         [](talos::spmc<AtLegacyArmorMeasurementBatch, AtLegacyMeasurementChannelTopic> meas_in,
            talos::res<std::shared_ptr<FoxgloveServer>> server) {
@@ -161,4 +157,4 @@ void register_l2_perception_systems(App& app) {
         });
 }
 
-} // namespace fcs::foxglove::systems
+} // namespace fcs::visualization::foxglove::systems

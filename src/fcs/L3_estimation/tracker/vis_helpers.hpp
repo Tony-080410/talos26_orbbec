@@ -11,7 +11,7 @@
 namespace fcs::L3::vis {
 
 // Shorthand
-namespace viz = visualization::builder;
+namespace viz = fcs::visualization;
 namespace tac = visualization::tactical;
 
 // ============================================================================

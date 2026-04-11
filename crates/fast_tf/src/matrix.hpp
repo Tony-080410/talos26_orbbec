@@ -2,7 +2,8 @@
 
 #include "euler.hpp"
 
-#include <Eigen/Dense>
+#include <Eigen/Core>
+#include <Eigen/Geometry>
 #include <algorithm>
 #include <cassert>
 #include <concepts>

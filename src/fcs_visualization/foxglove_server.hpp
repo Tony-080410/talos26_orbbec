@@ -20,8 +20,9 @@
 #include <foxglove/foxglove.hpp>
 #include <foxglove/mcap.hpp>
 #include <foxglove/server.hpp>
+#include <utility.hpp>
 
-namespace fcs {
+namespace fcs::visualization {
 
 class FoxgloveServer;
 class FoxgloveServerFactory;
@@ -34,30 +35,30 @@ namespace detail {
 
 template <typename Def>
 [[nodiscard]] inline std::expected<void, std::string> init_typed_channel(
-    std::optional<typename Def::channel_type>& member, const foxglove::Context& context) {
+    std::optional<typename Def::channel_type>& member, const ::foxglove::Context& context) {
     auto result = Def::channel_type::create(std::string(Def::topic), context);
     if (result.has_value()) {
         member = std::move(*result);
         return {};
     }
-    return std::unexpected(fmt::format("{}: {}", Def::topic, foxglove::strerror(result.error())));
+    return std::unexpected(fmt::format("{}: {}", Def::topic, ::foxglove::strerror(result.error())));
 }
 
 template <typename Def>
 [[nodiscard]] inline std::expected<void, std::string> init_raw_channel(
-    std::optional<foxglove::RawChannel>& member, const foxglove::Context& context) {
-    auto result = foxglove::RawChannel::create(
+    std::optional<::foxglove::RawChannel>& member, const ::foxglove::Context& context) {
+    auto result = ::foxglove::RawChannel::create(
         std::string(Def::topic), std::string(Def::encoding), {}, context);
     if (result.has_value()) {
         member = std::move(*result);
         return {};
     }
-    return std::unexpected(fmt::format("{}: {}", Def::topic, foxglove::strerror(result.error())));
+    return std::unexpected(fmt::format("{}: {}", Def::topic, ::foxglove::strerror(result.error())));
 }
 
 template <typename Def>
 [[nodiscard]] inline std::expected<void, std::string>
-    init_channel_for(FoxgloveChannels& channels, const foxglove::Context& context) {
+    init_channel_for(FoxgloveChannels& channels, const ::foxglove::Context& context) {
     if constexpr (requires { Def::transport; }) {
         // Skip channels that don't match the current transport.
         // Caller must set transport on the descriptor or check separately.
@@ -72,7 +73,7 @@ template <typename Def>
 // Transport-aware initialization: skip if descriptor has a transport constraint
 template <typename Def>
 [[nodiscard]] inline std::expected<void, std::string> init_channel_for(
-    FoxgloveChannels& channels, const foxglove::Context& context,
+    FoxgloveChannels& channels, const ::foxglove::Context& context,
     FoxgloveTransport active_transport) {
     if constexpr (requires { Def::transport; }) {
         if (Def::transport != active_transport)
@@ -84,7 +85,7 @@ template <typename Def>
 // Fold-expression: initialize all channels in a descriptor tuple
 template <typename... Defs>
 [[nodiscard]] inline std::expected<void, std::string> init_all_channels(
-    FoxgloveChannels& channels, const foxglove::Context& context, FoxgloveTransport transport,
+    FoxgloveChannels& channels, const ::foxglove::Context& context, FoxgloveTransport transport,
     std::tuple<Defs...>) {
     std::expected<void, std::string> result;
     bool ok =
@@ -99,22 +100,23 @@ template <typename... Defs>
 // Sink Creation
 // ============================================================================
 
-[[nodiscard]] inline std::expected<foxglove::WebSocketServer, std::string>
-    create_websocket_sink(const FoxgloveConfig& config, const foxglove::Context& context) {
-    foxglove::WebSocketServerOptions ws;
+[[nodiscard]] inline std::expected<::foxglove::WebSocketServer, std::string>
+    create_websocket_sink(const FoxgloveConfig& config, const ::foxglove::Context& context) {
+    ::foxglove::WebSocketServerOptions ws;
     ws.context    = context;
     ws.host       = config.host;
     ws.port       = config.port;
     ws.session_id = "talos";
 
-    auto server = foxglove::WebSocketServer::create(std::move(ws));
+    auto server = ::foxglove::WebSocketServer::create(std::move(ws));
     if (server.has_value())
         return std::move(server.value());
-    return std::unexpected(fmt::format("WebSocketServer: {}", foxglove::strerror(server.error())));
+    return std::unexpected(
+        fmt::format("WebSocketServer: {}", ::foxglove::strerror(server.error())));
 }
 
-[[nodiscard]] inline std::expected<foxglove::McapWriter, std::string>
-    create_mcap_sink(const FoxgloveConfig& config, const foxglove::Context& context) {
+[[nodiscard]] inline std::expected<::foxglove::McapWriter, std::string>
+    create_mcap_sink(const FoxgloveConfig& config, const ::foxglove::Context& context) {
     if (config.mcap_path.empty()) {
         return std::unexpected("McapWriter: mcap_path must not be empty");
     }
@@ -130,18 +132,18 @@ template <typename... Defs>
         }
     }
 
-    foxglove::McapWriterOptions options;
+    ::foxglove::McapWriterOptions options;
     options.context             = context;
     options.path                = config.mcap_path;
     options.truncate            = true;
-    options.sink_channel_filter = [](const foxglove::ChannelDescriptor& channel) {
+    options.sink_channel_filter = [](const ::foxglove::ChannelDescriptor& channel) {
         return channel.topic() != "/debug/ekf_heatmap";
     };
 
-    auto writer = foxglove::McapWriter::create(options);
+    auto writer = ::foxglove::McapWriter::create(options);
     if (writer.has_value())
         return std::move(writer.value());
-    return std::unexpected(fmt::format("McapWriter: {}", foxglove::strerror(writer.error())));
+    return std::unexpected(fmt::format("McapWriter: {}", ::foxglove::strerror(writer.error())));
 }
 
 } // namespace detail
@@ -176,14 +178,14 @@ private:
 public:
     // Public constructor requiring a private token — only FoxgloveServerFactory can invoke
     explicit FoxgloveServer(
-        ConstructorToken, foxglove::Context context, FoxgloveChannels channels,
-        std::optional<foxglove::WebSocketServer> websocket_server,
-        std::optional<foxglove::McapWriter> mcap_writer)
+        ConstructorToken, ::foxglove::Context context, FoxgloveChannels channels,
+        std::optional<::foxglove::WebSocketServer> websocket_server,
+        std::optional<::foxglove::McapWriter> mcap_writer)
         : context_(std::move(context))
         , channels_(std::move(channels))
         , websocket_server_(std::move(websocket_server))
         , mcap_writer_(std::move(mcap_writer)) {
-        foxglove::setLogLevel(foxglove::LogLevel::Info);
+        ::foxglove::setLogLevel(::foxglove::LogLevel::Info);
         if (channels_.tf_ch) {
             tf_exporter_.emplace(std::move(*channels_.tf_ch));
             channels_.tf_ch.reset();
@@ -210,13 +212,13 @@ public:
         }
 
         if (websocket_server_) {
-            if (auto r = websocket_server_->stop(); r != foxglove::FoxgloveError::Ok) {
-                SPDLOG_WARN("Foxglove WebSocket stop failed: {}", foxglove::strerror(r));
+            if (auto r = websocket_server_->stop(); r != ::foxglove::FoxgloveError::Ok) {
+                SPDLOG_WARN("Foxglove WebSocket stop failed: {}", ::foxglove::strerror(r));
             }
         }
         if (mcap_writer_) {
-            if (auto r = mcap_writer_->close(); r != foxglove::FoxgloveError::Ok) {
-                SPDLOG_WARN("Foxglove MCAP close failed: {}", foxglove::strerror(r));
+            if (auto r = mcap_writer_->close(); r != ::foxglove::FoxgloveError::Ok) {
+                SPDLOG_WARN("Foxglove MCAP close failed: {}", ::foxglove::strerror(r));
             }
         }
     }
@@ -238,7 +240,7 @@ public:
         if (!channels_.camera_calib_ch)
             return;
 
-        foxglove::schemas::CameraCalibration calib;
+        ::foxglove::schemas::CameraCalibration calib;
         calib.timestamp        = timestamp_from_ns(timestamp_ns);
         calib.frame_id         = "camera_optical_frame";
         calib.width            = width;
@@ -304,10 +306,10 @@ private:
     std::atomic<bool> should_stop_{false};
     std::atomic<bool> shutdown_done_{false};
     std::shared_ptr<std::atomic<bool>> sink_alive_{std::make_shared<std::atomic<bool>>(true)};
-    foxglove::Context context_{};
+    ::foxglove::Context context_{};
     FoxgloveChannels channels_;
-    std::optional<foxglove::WebSocketServer> websocket_server_;
-    std::optional<foxglove::McapWriter> mcap_writer_;
+    std::optional<::foxglove::WebSocketServer> websocket_server_;
+    std::optional<::foxglove::McapWriter> mcap_writer_;
     std::optional<fast_tf::FoxgloveExporter> tf_exporter_;
     alignas(64) tbb::concurrent_queue<FoxgloveMessage> message_queue_;
     std::thread sender_thread_;
@@ -319,10 +321,10 @@ private:
 
 [[nodiscard]] inline std::expected<std::unique_ptr<FoxgloveServer>, std::string>
     FoxgloveServerFactory::create(FoxgloveConfig config) {
-    foxglove::Context context = foxglove::Context::create();
+    ::foxglove::Context context = ::foxglove::Context::create();
 
-    std::optional<foxglove::WebSocketServer> websocket_server;
-    std::optional<foxglove::McapWriter> mcap_writer;
+    std::optional<::foxglove::WebSocketServer> websocket_server;
+    std::optional<::foxglove::McapWriter> mcap_writer;
 
     switch (config.transport) {
     case FoxgloveTransport::WebSocket: {
@@ -370,4 +372,4 @@ private:
         });
 }
 
-} // namespace fcs
+} // namespace fcs::visualization

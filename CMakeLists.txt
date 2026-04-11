@@ -1,9 +1,10 @@
 cmake_minimum_required(VERSION 3.14)
 
-include(cmake/compiler-spec.cmake)
 include(cmake/crate-utils.cmake)
 
 project(talos VERSION 0.1 LANGUAGES C CXX)
+
+include(cmake/compiler-spec.cmake)
 
 if(CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT)
     set(CMAKE_INSTALL_PREFIX "${PROJECT_SOURCE_DIR}" CACHE PATH "Install path prefix." FORCE)
@@ -156,6 +157,7 @@ add_subdirectory(crates/hardware_daedalus)
 set(FCS_SOURCES
         src/fcs/chiral/chiral_collector_system.cpp
         src/fcs/core/trajectory/solver/trajectory_solver.cpp
+        src/fcs/core/types.cpp
         src/fcs/L1_sensor/camera_interface.cpp
         src/fcs/L1_sensor/output_interface.cpp
         src/fcs/runtime/boot.cpp
@@ -268,7 +270,15 @@ target_link_libraries(fcs PUBLIC
 target_precompile_headers(fcs PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/fcs/pch.hpp)
 
 # FCS visualization
-add_library(fcs_visualization SHARED src/fcs_visualization/foxglove_systems.cpp)
+add_library(fcs_visualization SHARED
+        src/fcs_visualization/foxglove_systems.cpp
+        src/fcs_visualization/systems/debug_systems.cpp
+        src/fcs_visualization/systems/l1_sensor_systems.cpp
+        src/fcs_visualization/systems/l2_perception_systems.cpp
+        src/fcs_visualization/systems/l3_estimation_systems.cpp
+        src/fcs_visualization/systems/l4_planning_systems.cpp
+        src/fcs_visualization/systems/rune_systems.cpp
+)
 
 target_include_directories(fcs_visualization PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/src/fcs

@@ -4,7 +4,6 @@
 
 #include <cstdint>
 #include <optional>
-#include <span>
 #include <string_view>
 #include <tuple>
 #include <variant>
@@ -13,19 +12,19 @@
 #include <foxglove/channel.hpp>
 #include <foxglove/schemas.hpp>
 
-namespace fcs {
+namespace fcs::visualization {
 
 // ============================================================================
 // Channel Type Aliases
 // ============================================================================
 
-using SceneCh = std::optional<foxglove::schemas::SceneUpdateChannel>;
-using ImageCh = std::optional<foxglove::schemas::CompressedImageChannel>;
-using VideoCh = std::optional<foxglove::schemas::CompressedVideoChannel>;
-using JsonCh  = std::optional<foxglove::RawChannel>;
-using TfCh    = std::optional<foxglove::schemas::FrameTransformsChannel>;
-using CalibCh = std::optional<foxglove::schemas::CameraCalibrationChannel>;
-using LogCh   = std::optional<foxglove::schemas::LogChannel>;
+using SceneCh = std::optional<::foxglove::schemas::SceneUpdateChannel>;
+using ImageCh = std::optional<::foxglove::schemas::CompressedImageChannel>;
+using VideoCh = std::optional<::foxglove::schemas::CompressedVideoChannel>;
+using JsonCh  = std::optional<::foxglove::RawChannel>;
+using TfCh    = std::optional<::foxglove::schemas::FrameTransformsChannel>;
+using CalibCh = std::optional<::foxglove::schemas::CameraCalibrationChannel>;
+using LogCh   = std::optional<::foxglove::schemas::LogChannel>;
 
 // ============================================================================
 // FoxgloveChannels — runtime channel storage
@@ -92,48 +91,48 @@ struct FoxgloveChannels {
 
 struct scene_def {
     static constexpr std::string_view topic = "/scene";
-    using channel_type                      = foxglove::schemas::SceneUpdateChannel;
-    using payload_type                      = foxglove::schemas::SceneUpdate;
+    using channel_type                      = ::foxglove::schemas::SceneUpdateChannel;
+    using payload_type                      = ::foxglove::schemas::SceneUpdate;
     static constexpr auto member            = &FoxgloveChannels::scene_ch;
     static constexpr bool is_raw            = false;
 };
 
 struct track_scene_def {
     static constexpr std::string_view topic = "/track/scene";
-    using channel_type                      = foxglove::schemas::SceneUpdateChannel;
-    using payload_type                      = foxglove::schemas::SceneUpdate;
+    using channel_type                      = ::foxglove::schemas::SceneUpdateChannel;
+    using payload_type                      = ::foxglove::schemas::SceneUpdate;
     static constexpr auto member            = &FoxgloveChannels::track_scene_ch;
     static constexpr bool is_raw            = false;
 };
 
 struct gimbal_scene_def {
     static constexpr std::string_view topic = "/solver/scene";
-    using channel_type                      = foxglove::schemas::SceneUpdateChannel;
-    using payload_type                      = foxglove::schemas::SceneUpdate;
+    using channel_type                      = ::foxglove::schemas::SceneUpdateChannel;
+    using payload_type                      = ::foxglove::schemas::SceneUpdate;
     static constexpr auto member            = &FoxgloveChannels::gimbal_scene_ch;
     static constexpr bool is_raw            = false;
 };
 
 struct association_scene_def {
     static constexpr std::string_view topic = "/debug/association_scene";
-    using channel_type                      = foxglove::schemas::SceneUpdateChannel;
-    using payload_type                      = foxglove::schemas::SceneUpdate;
+    using channel_type                      = ::foxglove::schemas::SceneUpdateChannel;
+    using payload_type                      = ::foxglove::schemas::SceneUpdate;
     static constexpr auto member            = &FoxgloveChannels::association_scene_ch;
     static constexpr bool is_raw            = false;
 };
 
 struct mpc_prediction_scene_def {
     static constexpr std::string_view topic = "/debug/mpc_prediction_scene";
-    using channel_type                      = foxglove::schemas::SceneUpdateChannel;
-    using payload_type                      = foxglove::schemas::SceneUpdate;
+    using channel_type                      = ::foxglove::schemas::SceneUpdateChannel;
+    using payload_type                      = ::foxglove::schemas::SceneUpdate;
     static constexpr auto member            = &FoxgloveChannels::mpc_prediction_scene_ch;
     static constexpr bool is_raw            = false;
 };
 
 struct rune_scene_def {
     static constexpr std::string_view topic = "/rune/scene";
-    using channel_type                      = foxglove::schemas::SceneUpdateChannel;
-    using payload_type                      = foxglove::schemas::SceneUpdate;
+    using channel_type                      = ::foxglove::schemas::SceneUpdateChannel;
+    using payload_type                      = ::foxglove::schemas::SceneUpdate;
     static constexpr auto member            = &FoxgloveChannels::rune_scene_ch;
     static constexpr bool is_raw            = false;
 };
@@ -142,8 +141,8 @@ struct rune_scene_def {
 
 struct img_def {
     static constexpr std::string_view topic      = "/image";
-    using channel_type                           = foxglove::schemas::CompressedImageChannel;
-    using payload_type                           = foxglove::schemas::CompressedImage;
+    using channel_type                           = ::foxglove::schemas::CompressedImageChannel;
+    using payload_type                           = ::foxglove::schemas::CompressedImage;
     static constexpr auto member                 = &FoxgloveChannels::img_ch;
     static constexpr bool is_raw                 = false;
     static constexpr FoxgloveTransport transport = FoxgloveTransport::WebSocket;
@@ -151,56 +150,56 @@ struct img_def {
 
 struct calibration_img_def {
     static constexpr std::string_view topic = "/calibration/image";
-    using channel_type                      = foxglove::schemas::CompressedImageChannel;
-    using payload_type                      = foxglove::schemas::CompressedImage;
+    using channel_type                      = ::foxglove::schemas::CompressedImageChannel;
+    using payload_type                      = ::foxglove::schemas::CompressedImage;
     static constexpr auto member            = &FoxgloveChannels::calibration_img_ch;
     static constexpr bool is_raw            = false;
 };
 
 struct binary_img_def {
     static constexpr std::string_view topic = "/debug/binary_img";
-    using channel_type                      = foxglove::schemas::CompressedImageChannel;
-    using payload_type                      = foxglove::schemas::CompressedImage;
+    using channel_type                      = ::foxglove::schemas::CompressedImageChannel;
+    using payload_type                      = ::foxglove::schemas::CompressedImage;
     static constexpr auto member            = &FoxgloveChannels::binary_img_ch;
     static constexpr bool is_raw            = false;
 };
 
 struct pattern_img_def {
     static constexpr std::string_view topic = "/debug/number_img";
-    using channel_type                      = foxglove::schemas::CompressedImageChannel;
-    using payload_type                      = foxglove::schemas::CompressedImage;
+    using channel_type                      = ::foxglove::schemas::CompressedImageChannel;
+    using payload_type                      = ::foxglove::schemas::CompressedImage;
     static constexpr auto member            = &FoxgloveChannels::pattern_img_ch;
     static constexpr bool is_raw            = false;
 };
 
 struct rune_arrow_img_def {
     static constexpr std::string_view topic = "/rune/arrow_img";
-    using channel_type                      = foxglove::schemas::CompressedImageChannel;
-    using payload_type                      = foxglove::schemas::CompressedImage;
+    using channel_type                      = ::foxglove::schemas::CompressedImageChannel;
+    using payload_type                      = ::foxglove::schemas::CompressedImage;
     static constexpr auto member            = &FoxgloveChannels::rune_arrow_img_ch;
     static constexpr bool is_raw            = false;
 };
 
 struct rune_target_img_def {
     static constexpr std::string_view topic = "/rune/target_img";
-    using channel_type                      = foxglove::schemas::CompressedImageChannel;
-    using payload_type                      = foxglove::schemas::CompressedImage;
+    using channel_type                      = ::foxglove::schemas::CompressedImageChannel;
+    using payload_type                      = ::foxglove::schemas::CompressedImage;
     static constexpr auto member            = &FoxgloveChannels::rune_target_img_ch;
     static constexpr bool is_raw            = false;
 };
 
 struct rune_center_img_def {
     static constexpr std::string_view topic = "/rune/center_img";
-    using channel_type                      = foxglove::schemas::CompressedImageChannel;
-    using payload_type                      = foxglove::schemas::CompressedImage;
+    using channel_type                      = ::foxglove::schemas::CompressedImageChannel;
+    using payload_type                      = ::foxglove::schemas::CompressedImage;
     static constexpr auto member            = &FoxgloveChannels::rune_center_img_ch;
     static constexpr bool is_raw            = false;
 };
 
 struct ekf_heatmap_def {
     static constexpr std::string_view topic = "/debug/ekf_heatmap";
-    using channel_type                      = foxglove::schemas::CompressedImageChannel;
-    using payload_type                      = foxglove::schemas::CompressedImage;
+    using channel_type                      = ::foxglove::schemas::CompressedImageChannel;
+    using payload_type                      = ::foxglove::schemas::CompressedImage;
     static constexpr auto member            = &FoxgloveChannels::ekf_heatmap_ch;
     static constexpr bool is_raw            = false;
 };
@@ -209,8 +208,8 @@ struct ekf_heatmap_def {
 
 struct video_def {
     static constexpr std::string_view topic      = "/image";
-    using channel_type                           = foxglove::schemas::CompressedVideoChannel;
-    using payload_type                           = foxglove::schemas::CompressedVideo;
+    using channel_type                           = ::foxglove::schemas::CompressedVideoChannel;
+    using payload_type                           = ::foxglove::schemas::CompressedVideo;
     static constexpr auto member                 = &FoxgloveChannels::video_ch;
     static constexpr bool is_raw                 = false;
     static constexpr FoxgloveTransport transport = FoxgloveTransport::Mcap;
@@ -220,7 +219,7 @@ struct video_def {
 
 struct debug_lights_def {
     static constexpr std::string_view topic    = "/debug/lights";
-    using channel_type                         = foxglove::RawChannel;
+    using channel_type                         = ::foxglove::RawChannel;
     using payload_type                         = std::vector<uint8_t>;
     static constexpr auto member               = &FoxgloveChannels::debug_lights_ch;
     static constexpr bool is_raw               = true;
@@ -229,7 +228,7 @@ struct debug_lights_def {
 
 struct debug_armors_def {
     static constexpr std::string_view topic    = "/debug/armors";
-    using channel_type                         = foxglove::RawChannel;
+    using channel_type                         = ::foxglove::RawChannel;
     using payload_type                         = std::vector<uint8_t>;
     static constexpr auto member               = &FoxgloveChannels::debug_armors_ch;
     static constexpr bool is_raw               = true;
@@ -238,7 +237,7 @@ struct debug_armors_def {
 
 struct measurement_def {
     static constexpr std::string_view topic    = "/solver/measurement";
-    using channel_type                         = foxglove::RawChannel;
+    using channel_type                         = ::foxglove::RawChannel;
     using payload_type                         = std::vector<uint8_t>;
     static constexpr auto member               = &FoxgloveChannels::measurement_ch;
     static constexpr bool is_raw               = true;
@@ -247,7 +246,7 @@ struct measurement_def {
 
 struct target_def {
     static constexpr std::string_view topic    = "/solver/target";
-    using channel_type                         = foxglove::RawChannel;
+    using channel_type                         = ::foxglove::RawChannel;
     using payload_type                         = std::vector<uint8_t>;
     static constexpr auto member               = &FoxgloveChannels::target_ch;
     static constexpr bool is_raw               = true;
@@ -256,7 +255,7 @@ struct target_def {
 
 struct target_selection_trace_def {
     static constexpr std::string_view topic    = "/solver/target_selection";
-    using channel_type                         = foxglove::RawChannel;
+    using channel_type                         = ::foxglove::RawChannel;
     using payload_type                         = std::vector<uint8_t>;
     static constexpr auto member               = &FoxgloveChannels::target_selection_trace_ch;
     static constexpr bool is_raw               = true;
@@ -265,7 +264,7 @@ struct target_selection_trace_def {
 
 struct cmd_gimbal_def {
     static constexpr std::string_view topic    = "/solver/cmd_gimbal";
-    using channel_type                         = foxglove::RawChannel;
+    using channel_type                         = ::foxglove::RawChannel;
     using payload_type                         = std::vector<uint8_t>;
     static constexpr auto member               = &FoxgloveChannels::cmd_gimbal_ch;
     static constexpr bool is_raw               = true;
@@ -274,7 +273,7 @@ struct cmd_gimbal_def {
 
 struct perf_stats_def {
     static constexpr std::string_view topic    = "/perf_stats";
-    using channel_type                         = foxglove::RawChannel;
+    using channel_type                         = ::foxglove::RawChannel;
     using payload_type                         = std::vector<uint8_t>;
     static constexpr auto member               = &FoxgloveChannels::perf_stats_ch;
     static constexpr bool is_raw               = true;
@@ -283,7 +282,7 @@ struct perf_stats_def {
 
 struct mpc_traj_def {
     static constexpr std::string_view topic    = "/mpc/trajectory";
-    using channel_type                         = foxglove::RawChannel;
+    using channel_type                         = ::foxglove::RawChannel;
     using payload_type                         = std::vector<uint8_t>;
     static constexpr auto member               = &FoxgloveChannels::mpc_traj_ch;
     static constexpr bool is_raw               = true;
@@ -292,7 +291,7 @@ struct mpc_traj_def {
 
 struct rune_debug_def {
     static constexpr std::string_view topic    = "/rune/debug";
-    using channel_type                         = foxglove::RawChannel;
+    using channel_type                         = ::foxglove::RawChannel;
     using payload_type                         = std::vector<uint8_t>;
     static constexpr auto member               = &FoxgloveChannels::rune_debug_ch;
     static constexpr bool is_raw               = true;
@@ -301,7 +300,7 @@ struct rune_debug_def {
 
 struct pnp_solver_def {
     static constexpr std::string_view topic    = "/debug/pnp_solver";
-    using channel_type                         = foxglove::RawChannel;
+    using channel_type                         = ::foxglove::RawChannel;
     using payload_type                         = std::vector<uint8_t>;
     static constexpr auto member               = &FoxgloveChannels::pnp_solver_ch;
     static constexpr bool is_raw               = true;
@@ -310,7 +309,7 @@ struct pnp_solver_def {
 
 struct nn_confidence_def {
     static constexpr std::string_view topic    = "/debug/nn_confidence";
-    using channel_type                         = foxglove::RawChannel;
+    using channel_type                         = ::foxglove::RawChannel;
     using payload_type                         = std::vector<uint8_t>;
     static constexpr auto member               = &FoxgloveChannels::nn_confidence_ch;
     static constexpr bool is_raw               = true;
@@ -319,7 +318,7 @@ struct nn_confidence_def {
 
 struct energy_meter_def {
     static constexpr std::string_view topic    = "/energy_meter/state";
-    using channel_type                         = foxglove::RawChannel;
+    using channel_type                         = ::foxglove::RawChannel;
     using payload_type                         = std::vector<uint8_t>;
     static constexpr auto member               = &FoxgloveChannels::energy_meter_ch;
     static constexpr bool is_raw               = true;
@@ -330,24 +329,24 @@ struct energy_meter_def {
 
 struct tf_def {
     static constexpr std::string_view topic = "/tf";
-    using channel_type                      = foxglove::schemas::FrameTransformsChannel;
-    using payload_type                      = foxglove::schemas::FrameTransforms;
+    using channel_type                      = ::foxglove::schemas::FrameTransformsChannel;
+    using payload_type                      = ::foxglove::schemas::FrameTransforms;
     static constexpr auto member            = &FoxgloveChannels::tf_ch;
     static constexpr bool is_raw            = false;
 };
 
 struct calib_def {
     static constexpr std::string_view topic = "/camera_info";
-    using channel_type                      = foxglove::schemas::CameraCalibrationChannel;
-    using payload_type                      = foxglove::schemas::CameraCalibration;
+    using channel_type                      = ::foxglove::schemas::CameraCalibrationChannel;
+    using payload_type                      = ::foxglove::schemas::CameraCalibration;
     static constexpr auto member            = &FoxgloveChannels::camera_calib_ch;
     static constexpr bool is_raw            = false;
 };
 
 struct log_def {
     static constexpr std::string_view topic = "/log";
-    using channel_type                      = foxglove::schemas::LogChannel;
-    using payload_type                      = foxglove::schemas::Log;
+    using channel_type                      = ::foxglove::schemas::LogChannel;
+    using payload_type                      = ::foxglove::schemas::Log;
     static constexpr auto member            = &FoxgloveChannels::log_ch;
     static constexpr bool is_raw            = false;
 };
@@ -425,7 +424,7 @@ struct PayloadLogger {
 // Specialization: raw byte payloads → ch.log(byte_ptr, size)
 template <>
 struct PayloadLogger<std::vector<uint8_t>> {
-    static void log(foxglove::RawChannel& ch, const std::vector<uint8_t>& data) noexcept {
+    static void log(::foxglove::RawChannel& ch, const std::vector<uint8_t>& data) noexcept {
         ch.log(reinterpret_cast<const std::byte*>(data.data()), data.size());
     }
 };
@@ -447,17 +446,4 @@ using FoxgloveMessage = decltype(detail::make_message_variant(ChannelRegistry{})
 // Utility Functions
 // ============================================================================
 
-[[nodiscard]] inline foxglove::schemas::Timestamp timestamp_from_ns(uint64_t ns) noexcept {
-    foxglove::schemas::Timestamp t;
-    t.sec  = static_cast<uint32_t>(ns / 1'000'000'000ULL);
-    t.nsec = static_cast<uint32_t>(ns % 1'000'000'000ULL);
-    return t;
-}
-
-[[nodiscard]] inline std::vector<uint8_t> json_to_bytes(const std::string& json_str) {
-    return {
-        reinterpret_cast<const uint8_t*>(json_str.data()),
-        reinterpret_cast<const uint8_t*>(json_str.data() + json_str.size())};
-}
-
-} // namespace fcs
+} // namespace fcs::visualization

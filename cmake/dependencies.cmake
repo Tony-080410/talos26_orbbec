@@ -105,7 +105,7 @@ function(talos_fixup_cross_sysroot_imported_targets)
     endforeach ()
 endfunction()
 
-find_package(OpenCV REQUIRED)
+find_package(OpenCV REQUIRED COMPONENTS core imgproc imgcodecs calib3d dnn)
 
 # Include FetchContent helper
 include(${CMAKE_CURRENT_LIST_DIR}/fetch-content-helper.cmake)
@@ -133,9 +133,9 @@ fetch_dependency(NAME nlohmann_json
                  REPO nlohmann/json
                  VERSION 3946872265598aed5a7aea68cad4d9d1f168bd4b)
 
-fetch_dependency(NAME field_reflection
-                 REPO yosh-matsuda/field-reflection
-                 VERSION v0.2.1)
+fetch_dependency(NAME boost_pfr
+                 REPO boostorg/pfr
+                 VERSION boost-1.90.0)
 
 fetch_dependency(NAME tomlplusplus
                  REPO marzer/tomlplusplus

@@ -21,8 +21,6 @@
 //     .build();
 // ```
 
-#include "foxglove_server.hpp"
-#include "foxglove_types.hpp"
 #include "frame.hpp"
 #include "tactical_palette.hpp"
 
@@ -31,20 +29,22 @@
 
 #include <cmath>
 #include <fmt/core.h>
+#include <foxglove_types.hpp>
 #include <memory>
 #include <optional>
 #include <string>
+#include <utility.hpp>
 #include <vector>
 
-namespace fcs::visualization::builder {
+namespace fcs::visualization {
 
 // ============================================================================
 // UTILITY FUNCTIONS
 // ============================================================================
 
 /// @brief Create Vector3 from components
-inline foxglove::schemas::Vector3 make_vector3(double x, double y, double z) noexcept {
-    foxglove::schemas::Vector3 v;
+inline ::foxglove::schemas::Vector3 make_vector3(double x, double y, double z) noexcept {
+    ::foxglove::schemas::Vector3 v;
     v.x = x;
     v.y = y;
     v.z = z;
@@ -52,13 +52,13 @@ inline foxglove::schemas::Vector3 make_vector3(double x, double y, double z) noe
 }
 
 /// @brief Create Vector3 from Eigen::Vector3d
-inline foxglove::schemas::Vector3 make_vector3(const Eigen::Vector3d& vec) noexcept {
+inline ::foxglove::schemas::Vector3 make_vector3(const Eigen::Vector3d& vec) noexcept {
     return make_vector3(vec.x(), vec.y(), vec.z());
 }
 
 /// @brief Create Point3 from components
-inline foxglove::schemas::Point3 make_point3(double x, double y, double z) noexcept {
-    foxglove::schemas::Point3 p;
+inline ::foxglove::schemas::Point3 make_point3(double x, double y, double z) noexcept {
+    ::foxglove::schemas::Point3 p;
     p.x = x;
     p.y = y;
     p.z = z;
@@ -66,19 +66,19 @@ inline foxglove::schemas::Point3 make_point3(double x, double y, double z) noexc
 }
 
 /// @brief Create Point3 from Eigen::Vector3d
-inline foxglove::schemas::Point3 make_point3(const Eigen::Vector3d& vec) noexcept {
+inline ::foxglove::schemas::Point3 make_point3(const Eigen::Vector3d& vec) noexcept {
     return make_point3(vec.x(), vec.y(), vec.z());
 }
 
 /// @brief Create Point3 from Vector3
-inline foxglove::schemas::Point3 make_point3(const foxglove::schemas::Vector3& v) noexcept {
+inline ::foxglove::schemas::Point3 make_point3(const ::foxglove::schemas::Vector3& v) noexcept {
     return make_point3(v.x, v.y, v.z);
 }
 
 /// @brief Create Quaternion from components
-inline foxglove::schemas::Quaternion
+inline ::foxglove::schemas::Quaternion
     make_quaternion(double x, double y, double z, double w) noexcept {
-    foxglove::schemas::Quaternion q;
+    ::foxglove::schemas::Quaternion q;
     q.x = x;
     q.y = y;
     q.z = z;
@@ -87,18 +87,18 @@ inline foxglove::schemas::Quaternion
 }
 
 /// @brief Create Quaternion from Eigen::Quaterniond
-inline foxglove::schemas::Quaternion make_quaternion(const Eigen::Quaterniond& q) noexcept {
+inline ::foxglove::schemas::Quaternion make_quaternion(const Eigen::Quaterniond& q) noexcept {
     return make_quaternion(q.x(), q.y(), q.z(), q.w());
 }
 
 /// @brief Create identity quaternion
-inline foxglove::schemas::Quaternion identity_quaternion() noexcept {
+inline ::foxglove::schemas::Quaternion identity_quaternion() noexcept {
     return make_quaternion(0.0, 0.0, 0.0, 1.0);
 }
 
 /// @brief Create Color from components
-inline foxglove::schemas::Color make_color(double r, double g, double b, double a) noexcept {
-    foxglove::schemas::Color c;
+inline ::foxglove::schemas::Color make_color(double r, double g, double b, double a) noexcept {
+    ::foxglove::schemas::Color c;
     c.r = r;
     c.g = g;
     c.b = b;
@@ -107,17 +107,17 @@ inline foxglove::schemas::Color make_color(double r, double g, double b, double 
 }
 
 /// @brief Create Pose from position and orientation
-inline foxglove::schemas::Pose make_pose(
-    std::optional<foxglove::schemas::Vector3> position       = std::nullopt,
-    std::optional<foxglove::schemas::Quaternion> orientation = std::nullopt) noexcept {
-    foxglove::schemas::Pose pose;
+inline ::foxglove::schemas::Pose make_pose(
+    std::optional<::foxglove::schemas::Vector3> position       = std::nullopt,
+    std::optional<::foxglove::schemas::Quaternion> orientation = std::nullopt) noexcept {
+    ::foxglove::schemas::Pose pose;
     pose.position    = position;
     pose.orientation = orientation;
     return pose;
 }
 
 /// @brief Create Pose from position with identity orientation
-inline foxglove::schemas::Pose make_pose(const foxglove::schemas::Vector3& position) noexcept {
+inline ::foxglove::schemas::Pose make_pose(const ::foxglove::schemas::Vector3& position) noexcept {
     return make_pose(position, identity_quaternion());
 }
 
@@ -164,7 +164,7 @@ public:
     }
 
     /// @brief Set position from Vector3
-    EntityBuilder& position(const foxglove::schemas::Vector3& pos) {
+    EntityBuilder& position(const ::foxglove::schemas::Vector3& pos) {
         current_pose_.position = pos;
         return *this;
     }
@@ -181,7 +181,7 @@ public:
     }
 
     /// @brief Set orientation from Quaternion
-    EntityBuilder& orientation(const foxglove::schemas::Quaternion& q) {
+    EntityBuilder& orientation(const ::foxglove::schemas::Quaternion& q) {
         current_pose_.orientation = q;
         return *this;
     }
@@ -217,7 +217,7 @@ public:
     }
 
     /// @brief Set color from Color
-    EntityBuilder& color(const foxglove::schemas::Color& c) {
+    EntityBuilder& color(const ::foxglove::schemas::Color& c) {
         current_color_ = c;
         return *this;
     }
@@ -248,9 +248,9 @@ public:
 
     /// @brief Add a sphere primitive with current pose, size, and color
     EntityBuilder& sphere() {
-        foxglove::schemas::SpherePrimitive prim;
+        ::foxglove::schemas::SpherePrimitive prim;
         prim.pose  = current_pose_;
-        prim.size  = current_size_.value_or(foxglove::schemas::Vector3{0.1, 0.1, 0.1});
+        prim.size  = current_size_.value_or(::foxglove::schemas::Vector3{0.1, 0.1, 0.1});
         prim.color = current_color_.value_or(tactical::L3::TRACKING_LOCKED);
         entity_.spheres.push_back(prim);
         return *this;
@@ -258,7 +258,7 @@ public:
 
     /// @brief Add a cube primitive with specified dimensions
     EntityBuilder& cube(double width, double height, double depth) {
-        foxglove::schemas::CubePrimitive prim;
+        ::foxglove::schemas::CubePrimitive prim;
         prim.pose  = current_pose_;
         prim.size  = {width, height, depth};
         prim.color = current_color_.value_or(tactical::L2::MEASUREMENT_GHOST);
@@ -268,7 +268,7 @@ public:
 
     /// @brief Add text label
     EntityBuilder& text(std::string content, double font_size = tactical::Text::SIZE_MEDIUM) {
-        foxglove::schemas::TextPrimitive prim;
+        ::foxglove::schemas::TextPrimitive prim;
         prim.text      = std::move(content);
         prim.pose      = current_pose_;
         prim.font_size = font_size;
@@ -282,7 +282,7 @@ public:
     EntityBuilder& text_with_offset(
         std::string content, double offset_x, double offset_y, double offset_z,
         double font_size = tactical::Text::SIZE_MEDIUM) {
-        foxglove::schemas::TextPrimitive prim;
+        ::foxglove::schemas::TextPrimitive prim;
         prim.text = std::move(content);
 
         auto text_pose = current_pose_;
@@ -308,12 +308,12 @@ public:
     /// @param color Line color
     /// @param thickness Line thickness in world coordinates
     EntityBuilder& line_strip(
-        std::vector<foxglove::schemas::Point3> points, const foxglove::schemas::Color& color,
+        std::vector<::foxglove::schemas::Point3> points, const ::foxglove::schemas::Color& color,
         double thickness = 0.01) {
         if (points.size() < 2)
             return *this;
-        foxglove::schemas::LinePrimitive line;
-        line.type      = foxglove::schemas::LinePrimitive::LineType::LINE_STRIP;
+        ::foxglove::schemas::LinePrimitive line;
+        line.type      = ::foxglove::schemas::LinePrimitive::LineType::LINE_STRIP;
         line.pose      = current_pose_;
         line.thickness = thickness;
         line.points    = std::move(points);
@@ -327,12 +327,12 @@ public:
     /// @param color Line color
     /// @param thickness Line thickness in world coordinates
     EntityBuilder& line_list(
-        std::vector<foxglove::schemas::Point3> points, const foxglove::schemas::Color& color,
+        std::vector<::foxglove::schemas::Point3> points, const ::foxglove::schemas::Color& color,
         double thickness = 0.01) {
         if (points.size() < 4)
             return *this;
-        foxglove::schemas::LinePrimitive line;
-        line.type      = foxglove::schemas::LinePrimitive::LineType::LINE_LIST;
+        ::foxglove::schemas::LinePrimitive line;
+        line.type      = ::foxglove::schemas::LinePrimitive::LineType::LINE_LIST;
         line.pose      = current_pose_;
         line.thickness = thickness;
         line.points    = std::move(points);
@@ -343,12 +343,12 @@ public:
 
     /// @brief Add a closed polygon: 0→1→...→N→0
     EntityBuilder& line_loop(
-        std::vector<foxglove::schemas::Point3> points, const foxglove::schemas::Color& color,
+        std::vector<::foxglove::schemas::Point3> points, const ::foxglove::schemas::Color& color,
         double thickness = 0.01) {
         if (points.size() < 3)
             return *this;
-        foxglove::schemas::LinePrimitive line;
-        line.type      = foxglove::schemas::LinePrimitive::LineType::LINE_LOOP;
+        ::foxglove::schemas::LinePrimitive line;
+        line.type      = ::foxglove::schemas::LinePrimitive::LineType::LINE_LOOP;
         line.pose      = current_pose_;
         line.thickness = thickness;
         line.points    = std::move(points);
@@ -361,9 +361,9 @@ public:
     /// @param diameter Cylinder diameter
     /// @param height Cylinder height (use small value for ring/disc)
     EntityBuilder& cylinder(double diameter, double height) {
-        foxglove::schemas::CylinderPrimitive prim;
+        ::foxglove::schemas::CylinderPrimitive prim;
         prim.pose         = current_pose_;
-        prim.size         = foxglove::schemas::Vector3{diameter, diameter, height};
+        prim.size         = ::foxglove::schemas::Vector3{diameter, diameter, height};
         prim.color        = current_color_.value_or(tactical::L3::TRACKING_LOCKED);
         prim.bottom_scale = 1.0;
         prim.top_scale    = 1.0;
@@ -376,44 +376,44 @@ public:
     // ========================================================================
 
     /// @brief Add a pre-built cube primitive directly
-    EntityBuilder& add_cube(foxglove::schemas::CubePrimitive cube) {
+    EntityBuilder& add_cube(::foxglove::schemas::CubePrimitive cube) {
         entity_.cubes.push_back(std::move(cube));
         return *this;
     }
 
     /// @brief Add a pre-built sphere primitive directly
-    EntityBuilder& add_sphere(foxglove::schemas::SpherePrimitive sphere) {
+    EntityBuilder& add_sphere(::foxglove::schemas::SpherePrimitive sphere) {
         entity_.spheres.push_back(std::move(sphere));
         return *this;
     }
 
     /// @brief Add a pre-built text primitive directly
-    EntityBuilder& add_text(foxglove::schemas::TextPrimitive text) {
+    EntityBuilder& add_text(::foxglove::schemas::TextPrimitive text) {
         entity_.texts.push_back(std::move(text));
         return *this;
     }
 
     /// @brief Add a pre-built arrow primitive directly
-    EntityBuilder& add_arrow(foxglove::schemas::ArrowPrimitive arrow) {
+    EntityBuilder& add_arrow(::foxglove::schemas::ArrowPrimitive arrow) {
         entity_.arrows.push_back(std::move(arrow));
         return *this;
     }
 
     /// @brief Add a pre-built line primitive directly
-    EntityBuilder& add_line(foxglove::schemas::LinePrimitive line) {
+    EntityBuilder& add_line(::foxglove::schemas::LinePrimitive line) {
         entity_.lines.push_back(std::move(line));
         return *this;
     }
 
     /// @brief Add a pre-built cylinder primitive directly
-    EntityBuilder& add_cylinder(foxglove::schemas::CylinderPrimitive cyl) {
+    EntityBuilder& add_cylinder(::foxglove::schemas::CylinderPrimitive cyl) {
         entity_.cylinders.push_back(std::move(cyl));
         return *this;
     }
 
     /// @brief Merge all primitives from another SceneEntity into this builder
     /// Preserves this builder's id, frame_id, timestamp, lifetime, metadata.
-    EntityBuilder& merge_primitives(const foxglove::schemas::SceneEntity& other) {
+    EntityBuilder& merge_primitives(const ::foxglove::schemas::SceneEntity& other) {
         entity_.spheres.insert(entity_.spheres.end(), other.spheres.begin(), other.spheres.end());
         entity_.cubes.insert(entity_.cubes.end(), other.cubes.begin(), other.cubes.end());
         entity_.texts.insert(entity_.texts.end(), other.texts.begin(), other.texts.end());
@@ -433,7 +433,7 @@ public:
 
     /// @brief Add metadata key-value pair
     EntityBuilder& metadata(std::string key, std::string value) {
-        foxglove::schemas::KeyValuePair kv;
+        ::foxglove::schemas::KeyValuePair kv;
         kv.key   = std::move(key);
         kv.value = std::move(value);
         entity_.metadata.push_back(kv);
@@ -442,13 +442,13 @@ public:
 
     /// @brief Set timestamp for the entity
     EntityBuilder& timestamp(uint64_t ns) {
-        entity_.timestamp = ::fcs::timestamp_from_ns(ns);
+        entity_.timestamp = timestamp_from_ns(ns);
         return *this;
     }
 
     /// @brief Set entity lifetime (nanoseconds)
     EntityBuilder& lifetime(uint64_t ns) {
-        entity_.lifetime = foxglove::schemas::Duration{static_cast<int32_t>(ns)};
+        entity_.lifetime = ::foxglove::schemas::Duration{static_cast<int32_t>(ns)};
         return *this;
     }
 
@@ -507,28 +507,28 @@ public:
     // ========================================================================
 
     /// @brief Build and return the SceneEntity
-    [[nodiscard]] foxglove::schemas::SceneEntity build() && {
+    [[nodiscard]] ::foxglove::schemas::SceneEntity build() && {
         // Set defaults if not explicitly set
         if (!entity_.timestamp.has_value()) {
-            entity_.timestamp = ::fcs::timestamp_from_ns(0);
+            entity_.timestamp = timestamp_from_ns(0);
         }
         if (!entity_.lifetime.has_value()) {
             entity_.lifetime =
-                foxglove::schemas::Duration{.nsec = tactical::Temporal::ENTITY_LIFETIME_NS};
+                ::foxglove::schemas::Duration{.nsec = tactical::Temporal::ENTITY_LIFETIME_NS};
         }
 
         return std::move(entity_);
     }
 
     /// @brief Build and return the SceneEntity (copy overload)
-    [[nodiscard]] foxglove::schemas::SceneEntity build() const& {
-        foxglove::schemas::SceneEntity result = entity_;
+    [[nodiscard]] ::foxglove::schemas::SceneEntity build() const& {
+        ::foxglove::schemas::SceneEntity result = entity_;
         if (!result.timestamp.has_value()) {
-            result.timestamp = ::fcs::timestamp_from_ns(0);
+            result.timestamp = timestamp_from_ns(0);
         }
         if (!result.lifetime.has_value()) {
             result.lifetime =
-                foxglove::schemas::Duration{.nsec = tactical::Temporal::ENTITY_LIFETIME_NS};
+                ::foxglove::schemas::Duration{.nsec = tactical::Temporal::ENTITY_LIFETIME_NS};
         }
         return result;
     }
@@ -536,11 +536,11 @@ public:
 private:
     EntityBuilder() = default;
 
-    foxglove::schemas::SceneEntity entity_;
+    ::foxglove::schemas::SceneEntity entity_;
     std::string layer_;
-    foxglove::schemas::Pose current_pose_{};
-    std::optional<foxglove::schemas::Color> current_color_;
-    std::optional<foxglove::schemas::Vector3> current_size_;
+    ::foxglove::schemas::Pose current_pose_{};
+    std::optional<::foxglove::schemas::Color> current_color_;
+    std::optional<::foxglove::schemas::Vector3> current_size_;
 };
 
 // ============================================================================
@@ -558,7 +558,7 @@ namespace patterns {
 /// @param confidence Confidence score (0-1), affects opacity
 /// @param timestamp_ns Entity timestamp for TF interpolation
 template <fast_tf::frame Frame>
-inline foxglove::schemas::SceneEntity measurement_sphere(
+inline ::foxglove::schemas::SceneEntity measurement_sphere(
     const Eigen::Vector3d& pos, double confidence, uint64_t timestamp_ns) noexcept {
     using namespace tactical;
 
@@ -576,7 +576,7 @@ inline foxglove::schemas::SceneEntity measurement_sphere(
 
 /// @brief Create a measurement cube with full pose information
 template <fast_tf::frame Frame>
-inline foxglove::schemas::SceneEntity measurement_cube(
+inline ::foxglove::schemas::SceneEntity measurement_cube(
     const Eigen::Vector3d& pos, const Eigen::Quaterniond& orientation, const std::string& label,
     double confidence = 0.0) noexcept {
     using namespace tactical;
@@ -601,7 +601,7 @@ inline foxglove::schemas::SceneEntity measurement_cube(
 /// @param status Tracker status (determines color)
 /// @param timestamp_ns Entity timestamp for TF interpolation
 template <fast_tf::frame Frame>
-inline foxglove::schemas::SceneEntity tracker_target(
+inline ::foxglove::schemas::SceneEntity tracker_target(
     const Eigen::Vector3d& pos, int status_int, uint64_t timestamp_ns,
     std::string entity_id = "target") noexcept {
     using namespace tactical;
@@ -620,7 +620,7 @@ inline foxglove::schemas::SceneEntity tracker_target(
 /// @param armor_id Armor index (0-3 for robot, 0-2 for outpost)
 /// @param timestamp_ns Entity timestamp for TF interpolation
 template <fast_tf::frame Frame>
-inline foxglove::schemas::SceneEntity predicted_armor(
+inline ::foxglove::schemas::SceneEntity predicted_armor(
     const Eigen::Vector3d& pos, int armor_id, uint64_t timestamp_ns,
     std::string entity_id = {}) noexcept {
     using namespace tactical;
@@ -642,7 +642,7 @@ inline foxglove::schemas::SceneEntity predicted_armor(
 
 /// @brief Create robot center marker
 template <fast_tf::frame Frame>
-inline foxglove::schemas::SceneEntity
+inline ::foxglove::schemas::SceneEntity
     robot_center(const Eigen::Vector3d& pos, int status_int) noexcept {
     using namespace tactical;
 
@@ -656,7 +656,7 @@ inline foxglove::schemas::SceneEntity
 
 /// @brief Create outpost center marker
 template <fast_tf::frame Frame>
-inline foxglove::schemas::SceneEntity
+inline ::foxglove::schemas::SceneEntity
     outpost_center(const Eigen::Vector3d& pos, int status_int) noexcept {
     using namespace tactical;
 
@@ -670,7 +670,7 @@ inline foxglove::schemas::SceneEntity
 
 /// @brief Create armor cube with tilt
 template <fast_tf::frame Frame>
-inline foxglove::schemas::SceneEntity
+inline ::foxglove::schemas::SceneEntity
     armor_cube(const Eigen::Vector3d& pos, double yaw, bool is_big_armor) noexcept {
     using namespace tactical;
 
@@ -698,7 +698,7 @@ inline foxglove::schemas::SceneEntity
 /// @param is_reference True for reference trajectory, false for optimized
 /// @param timestamp_ns Entity timestamp for TF interpolation
 template <fast_tf::frame Frame>
-inline foxglove::schemas::SceneEntity mpc_trajectory_point(
+inline ::foxglove::schemas::SceneEntity mpc_trajectory_point(
     const Eigen::Vector3d& pos, int temporal_distance, bool is_reference,
     uint64_t timestamp_ns) noexcept {
     using namespace tactical;
@@ -723,13 +723,13 @@ inline foxglove::schemas::SceneEntity mpc_trajectory_point(
 /// @param points Trajectory points
 /// @param can_fire Fire decision affects trajectory color
 /// @param timestamp_ns Entity timestamp for TF interpolation
-inline std::vector<foxglove::schemas::SceneEntity> bullet_trajectory(
+inline std::vector<::foxglove::schemas::SceneEntity> bullet_trajectory(
     const std::vector<Eigen::Vector3d>& points, bool can_fire, uint64_t timestamp_ns) noexcept {
     using namespace tactical;
 
     const auto color = can_fire ? L4::TRAJECTORY_FIRE : L4::TRAJECTORY_HOLD;
 
-    std::vector<foxglove::schemas::SceneEntity> entities;
+    std::vector<::foxglove::schemas::SceneEntity> entities;
     entities.reserve(points.size());
 
     for (size_t i = 0; i < points.size(); ++i) {
@@ -745,7 +745,7 @@ inline std::vector<foxglove::schemas::SceneEntity> bullet_trajectory(
 
     // Connect trajectory dots with a visible line strip
     if (points.size() >= 2) {
-        std::vector<foxglove::schemas::Point3> line_points;
+        std::vector<::foxglove::schemas::Point3> line_points;
         line_points.reserve(points.size());
         for (const auto& p : points) {
             line_points.push_back(make_point3(p));
@@ -768,8 +768,8 @@ namespace Vel {
 constexpr double PARALLEL_THRESHOLD = 1e-6;
 
 /// @brief Create linear velocity arrow
-inline std::optional<foxglove::schemas::ArrowPrimitive> linear_arrow(
-    const foxglove::schemas::Vector3& position, const Eigen::Vector3d& velocity) noexcept {
+inline std::optional<::foxglove::schemas::ArrowPrimitive> linear_arrow(
+    const ::foxglove::schemas::Vector3& position, const Eigen::Vector3d& velocity) noexcept {
     using namespace tactical;
 
     const double length = velocity.norm();
@@ -777,7 +777,7 @@ inline std::optional<foxglove::schemas::ArrowPrimitive> linear_arrow(
         return std::nullopt;
     }
 
-    foxglove::schemas::ArrowPrimitive arrow;
+    ::foxglove::schemas::ArrowPrimitive arrow;
     arrow.pose = make_pose(position);
 
     const Eigen::Vector3d vel_dir = velocity.normalized();
@@ -801,8 +801,8 @@ inline std::optional<foxglove::schemas::ArrowPrimitive> linear_arrow(
 }
 
 /// @brief Create angular velocity arrow (along Z axis)
-inline std::optional<foxglove::schemas::ArrowPrimitive>
-    angular_arrow(const foxglove::schemas::Vector3& position, double v_yaw) noexcept {
+inline std::optional<::foxglove::schemas::ArrowPrimitive>
+    angular_arrow(const ::foxglove::schemas::Vector3& position, double v_yaw) noexcept {
     using namespace tactical;
 
     const double length = std::abs(v_yaw) / M_PI;
@@ -810,7 +810,7 @@ inline std::optional<foxglove::schemas::ArrowPrimitive>
         return std::nullopt;
     }
 
-    foxglove::schemas::ArrowPrimitive arrow;
+    ::foxglove::schemas::ArrowPrimitive arrow;
     arrow.pose = make_pose(position);
 
     const double sign       = v_yaw >= 0 ? -1.0 : 1.0;
@@ -831,7 +831,7 @@ inline std::optional<foxglove::schemas::ArrowPrimitive>
 /// @param angular_vel_yaw Angular velocity (yaw axis)
 /// @param timestamp_ns Entity timestamp for TF interpolation
 template <fast_tf::frame Frame>
-inline foxglove::schemas::SceneEntity velocity_arrows(
+inline ::foxglove::schemas::SceneEntity velocity_arrows(
     const Eigen::Vector3d& pos, const Eigen::Vector3d& linear_vel, double angular_vel_yaw,
     uint64_t timestamp_ns, std::string entity_id = "velocity") noexcept {
     using namespace tactical;
@@ -861,7 +861,7 @@ inline foxglove::schemas::SceneEntity velocity_arrows(
 /// @param scale Scale factor for sphere size
 /// @param timestamp_ns Entity timestamp for TF interpolation
 template <fast_tf::frame Frame>
-inline foxglove::schemas::SceneEntity
+inline ::foxglove::schemas::SceneEntity
     uncertainty_sphere(const Eigen::Vector3d& pos, double scale, uint64_t timestamp_ns) noexcept {
     using namespace tactical;
 
@@ -878,44 +878,5 @@ inline foxglove::schemas::SceneEntity
 }
 
 } // namespace patterns
-
-// ============================================================================
-// PUBLISH HELPERS
-// ============================================================================
-
-/// @brief Publish scene entities if non-empty
-template <typename SceneMessageType>
-inline void publish_scene_if_nonempty(
-    const std::shared_ptr<FoxgloveServer>& server,
-    std::vector<foxglove::schemas::SceneEntity> entities) noexcept {
-    if (!entities.empty()) {
-        SceneMessageType msg;
-        msg.payload.entities = std::move(entities);
-        server->enqueue_message(std::move(msg));
-    }
-}
-
-/// @brief Publish scene entities to specified channel
-inline void publish_scene(
-    const std::shared_ptr<FoxgloveServer>& server, std::string_view channel_id,
-    std::vector<foxglove::schemas::SceneEntity> entities, uint64_t timestamp_ns) noexcept {
-    if (!entities.empty()) {
-        SceneMessage msg;
-        msg.payload.entities = std::move(entities);
-        server->enqueue_message(std::move(msg));
-    }
-}
-
-} // namespace fcs::visualization::builder
-
-// ============================================================================
-// CONVENIENCE USING DECLARATIONS
-// ============================================================================
-
-namespace fcs::visualization {
-
-/// @brief Shorthand for commonly used builder components
-namespace viz = builder;
-namespace tac = tactical;
 
 } // namespace fcs::visualization

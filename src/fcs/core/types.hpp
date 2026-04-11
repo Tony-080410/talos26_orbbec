@@ -12,9 +12,7 @@
 
 #include <Eigen/Core>
 #include <Eigen/Geometry>
-#include <opencv2/calib3d.hpp>
 #include <opencv2/core.hpp>
-#include <opencv2/imgproc.hpp>
 
 namespace fcs {
 
@@ -54,17 +52,7 @@ struct AtLegacyArmorDetection {
 
     /// Construct from NN output (armor_name, color as int)
     AtLegacyArmorDetection(
-        std::array<cv::Point2f, 4> pts, ArmorName armor_name, ArmorColor color, float conf)
-        : corners(pts)
-        , name(armor_name)
-        , color(color)
-        , type(at_legacy_cls_to_armor_type(armor_name))
-        , confidence(conf) {
-        // Calculate bounding rect
-        std::vector<cv::Point2f> pts_vec(corners.begin(), corners.end());
-        rect = cv::boundingRect(pts_vec);
-        area = static_cast<int>(cv::contourArea(pts_vec));
-    }
+        std::array<cv::Point2f, 4> pts, ArmorName armor_name, ArmorColor color, float conf);
 
     /// Get center point
     [[nodiscard]] cv::Point2f center() const noexcept {
@@ -93,7 +81,7 @@ struct AtLegacyArmorDetectionBatch {
         : detections(std::move(dets))
         , image(std::move(img))
         , has_detector_roi(has_roi)
-        , detector_roi(std::move(roi))
+        , detector_roi(roi)
         , timestamp_ns(ts)
         , frame_id(fid) {}
 
@@ -115,29 +103,6 @@ struct AtLegacyArmorMeasurementT {
     uint64_t timestamp_ns          = 0;
 
     AtLegacyArmorMeasurementT() = default;
-
-    /// Construct from Detection + PnP result
-    ///
-    /// NOTE: from_pnp returns the pose in camera_optical frame (OpenCV convention):
-    /// - X axis: right
-    /// - Y axis: down
-    /// - Z axis: forward (pointing into the scene)
-    ///
-    /// OpenCV returns object -> camera pose, so this constructor is only valid for
-    /// camera_optical-frame measurements before TF reframe.
-    AtLegacyArmorMeasurementT(
-        const AtLegacyArmorDetection& det, const cv::Mat& rvec, const cv::Mat& tvec, uint64_t ts,
-        float dist_to_center = 0.0f) requires(std::same_as<Frame, fast_tf::camera_optical>)
-        : name(det.name)
-        , color(det.color)
-        , type(det.type)
-        , confidence(det.confidence)
-        , distance_to_image_center(dist_to_center)
-        , timestamp_ns(ts) {
-        const cv::Vec3d rvec_v(rvec.at<double>(0), rvec.at<double>(1), rvec.at<double>(2));
-        const cv::Vec3d tvec_v(tvec.at<double>(0), tvec.at<double>(1), tvec.at<double>(2));
-        transform = Transform::from_pnp(rvec_v, tvec_v);
-    }
 
     /// Get distance to camera
     [[nodiscard]] double distance() const noexcept { return transform.translation().norm(); }

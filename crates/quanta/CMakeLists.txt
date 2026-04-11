@@ -29,4 +29,4 @@ target_link_libraries(quanta-stream-loopback PRIVATE quanta)
 
 # Visual demo: encoder input and decoder output side-by-side in a live window
 add_executable(quanta-stream-demo src/window_demo.cpp)
-target_link_libraries(quanta-stream-demo PRIVATE quanta opencv_core opencv_imgproc opencv_highgui)
+target_link_libraries(quanta-stream-demo PRIVATE quanta opencv_core opencv_imgproc opencv_highgui opencv_videoio)

@@ -240,12 +240,12 @@ inline std::expected<CodecCtxPtr, std::string> create_encoder_context(
         const int lookahead = params.lookahead;
         x265_opts           = std::format(
             "bitrate={}:vbv-maxrate={}:vbv-bufsize={}:vbv-init=0.9:strict-cbr=1:"
-                      "keyint={}:min-keyint={}:scenecut=0:open-gop=0:intra-refresh={}:"
-                      "rc-lookahead={}:bframes=0:frame-threads={}:"
-                      "ref={}:limit-refs={}:me={}:subme={}:rd={}:rdoq-level={}:"
-                      "rect={}:amp={}:aq-mode=1:aq-strength={}:aq-motion=0:cutree=0:"
-                      "cbqpoffs={}:crqpoffs={}:psy-rd={}:psy-rdoq={}:qcomp=0.5:qpstep=8:"
-                      "deblock=0,0:no-sao=1:info=0:vui-timing-info=0:vui-hrd-info=0:repeat-headers={}",
+            "keyint={}:min-keyint={}:scenecut=0:open-gop=0:intra-refresh={}:"
+            "rc-lookahead={}:bframes=0:frame-threads={}:"
+            "ref={}:limit-refs={}:me={}:subme={}:rd={}:rdoq-level={}:"
+            "rect={}:amp={}:aq-mode=1:aq-strength={}:aq-motion=0:cutree=0:"
+            "cbqpoffs={}:crqpoffs={}:psy-rd={}:psy-rdoq={}:qcomp=0.5:qpstep=8:"
+            "deblock=0,0:no-sao=1:info=0:vui-timing-info=0:vui-hrd-info=0:repeat-headers={}",
             bitrate_kbps, bitrate_kbps, vbv_bufsize, params.gop_size, min_keyint,
             params.intra_refresh ? 1 : 0, lookahead, frame_threads, ref_count, limit_refs, me_mode,
             subme_level, rd_level, rdoq_level, rect_enabled, amp_enabled, params.aq_strength,

@@ -2,8 +2,7 @@
 #define RUNE_DETECTOR_TYPES_HPP_
 
 // 3rd party
-#include <opencv2/core/types.hpp>
-#include <opencv2/opencv.hpp>
+#include <opencv2/core.hpp>
 #include <vector>
 
 namespace fyt::rune {

@@ -1002,25 +1002,25 @@ public:
 
             snapshot["streams"] = std::move(streams);
             json resources      = json{
-                     {          "present",         control_state.present()},
-                     {"updated_this_tick", control_state.updated_this_tick},
-                     {            "stale",           control_state.stale()},
+                {          "present",         control_state.present()},
+                {"updated_this_tick", control_state.updated_this_tick},
+                {            "stale",           control_state.stale()},
             };
             json tf = json::object();
             if (control_state.value) {
                 const auto& imu                  = control_state.value->imu;
                 resources["sample_timestamp_ns"] = control_state.value->sample_timestamp_ns;
                 resources["imu_state"]           = json{
-                              {               "present",                       true},
-                              {          "timestamp_ns",           imu.timestamp_ns},
-                              {                   "yaw",                    imu.yaw},
-                              {                 "pitch",                  imu.pitch},
-                              {                  "roll",                   imu.roll},
-                              {               "yaw_vel",                imu.yaw_vel},
-                              {             "pitch_vel",              imu.pitch_vel},
-                              {              "roll_vel",               imu.roll_vel},
-                              {        "attitude_valid",         imu.attitude_valid},
-                              {"angular_velocity_valid", imu.angular_velocity_valid},
+                    {               "present",                       true},
+                    {          "timestamp_ns",           imu.timestamp_ns},
+                    {                   "yaw",                    imu.yaw},
+                    {                 "pitch",                  imu.pitch},
+                    {                  "roll",                   imu.roll},
+                    {               "yaw_vel",                imu.yaw_vel},
+                    {             "pitch_vel",              imu.pitch_vel},
+                    {              "roll_vel",               imu.roll_vel},
+                    {        "attitude_valid",         imu.attitude_valid},
+                    {"angular_velocity_valid", imu.angular_velocity_valid},
                 };
                 resources["detecting_color"] =
                     magic_enum::enum_name(control_state.value->detecting_color);
@@ -1042,7 +1042,7 @@ public:
                 resources["bullet_speed_raw"] = nullptr;
                 resources["bullet_speed"]     = nullptr;
                 tf["odom_to_gimbal_pitch"]    = json{
-                       {"present", false}
+                    {"present", false}
                 };
                 tf["gimbal_to_camera_link"] = json{
                     {"present", false}

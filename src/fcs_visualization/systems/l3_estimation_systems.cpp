@@ -1,10 +1,7 @@
-#pragma once
-
 #include "L3_estimation/tracker/vis_helpers.hpp"
 #include "base.hpp"
 #include "foxglove_types.hpp"
 #include "scene_builder.hpp"
-#include "system_helpers.hpp"
 
 #include "L3_estimation/tracker/util.hpp"
 #include "core/channel_topics.hpp"
@@ -22,7 +19,7 @@
 #include <string>
 #include <vector>
 
-namespace fcs::foxglove::systems {
+namespace fcs::visualization::foxglove::systems {
 
 [[nodiscard]] inline std::string tracker_image_center_text(double value) {
     return std::isfinite(value) ? fmt::format("{:.1f}", value) : "n/a";
@@ -39,8 +36,7 @@ namespace fcs::foxglove::systems {
 /// This includes:
 /// - foxglove_l3_tracker_scene: Publishes tracker scene visualization
 /// - foxglove_l3_association_scene: Publishes association scene (predicted vs measured)
-template <typename App>
-void register_l3_estimation_systems(App& app) {
+void register_l3_estimation_systems(talos::scheduler::Scheduler& app) {
 
     using namespace L3::vis;
 
@@ -48,7 +44,7 @@ void register_l3_estimation_systems(App& app) {
     // TRACKER VISUALIZATION (L3)
     // =========================================================================
 
-    app.template add_system<talos::pool_compute>(
+    app.add_system<talos::pool_compute>(
         "foxglove_l3_tracker_scene",
         [](talos::spmc<std::vector<::fcs::L3::TrackerOutput>, TrackerOutputChannelTopic> tracker_in,
            talos::res<std::shared_ptr<FoxgloveServer>> server) {
@@ -126,14 +122,14 @@ void register_l3_estimation_systems(App& app) {
                 }
             }
 
-            viz::publish_scene_if_nonempty<TrackSceneMessage>(*server, std::move(entities));
+            publish_scene_if_nonempty<TrackSceneMessage>(*server, std::move(entities));
         });
 
     // =========================================================================
     // ASSOCIATION VISUALIZATION (L3) - Predicted vs Measured
     // =========================================================================
 
-    app.template add_system<talos::pool_compute>(
+    app.add_system<talos::pool_compute>(
         "foxglove_l3_association_scene",
         [](talos::spmc<std::vector<::fcs::L3::TrackerOutput>, TrackerOutputChannelTopic> tracker_in,
            talos::spmc<AtLegacyArmorMeasurementBatch, AtLegacyMeasurementChannelTopic> meas_in,
@@ -202,7 +198,7 @@ void register_l3_estimation_systems(App& app) {
                         Eigen::Vector3d(t.x(), t.y(), t.z()), m.confidence, m.timestamp_ns));
             }
 
-            viz::publish_scene_if_nonempty<AssociationSceneMessage>(*server, std::move(entities));
+            publish_scene_if_nonempty<AssociationSceneMessage>(*server, std::move(entities));
         });
 
     // =========================================================================
@@ -211,7 +207,7 @@ void register_l3_estimation_systems(App& app) {
     // Renders P (covariance) and K (Kalman gain) as false-color heatmap images.
     // Each tracking target gets a panel, composited into one JPEG.
 
-    app.template add_system<talos::pool_compute>(
+    app.add_system<talos::pool_compute>(
         "foxglove_l3_ekf_heatmap",
         [](talos::spmc<std::vector<::fcs::L3::TrackerOutput>, TrackerOutputChannelTopic> tracker_in,
            talos::res<std::shared_ptr<FoxgloveServer>> server) {
@@ -475,4 +471,4 @@ void register_l3_estimation_systems(App& app) {
         });
 }
 
-} // namespace fcs::foxglove::systems
+} // namespace fcs::visualization::foxglove::systems

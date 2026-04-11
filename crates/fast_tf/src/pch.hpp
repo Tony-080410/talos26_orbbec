@@ -8,12 +8,10 @@
 #include <expected>
 #include <groups/SEn3.hpp>
 #include <numbers>
-#include <opencv2/calib3d.hpp>
 #include <opencv2/core/cvdef.h>
 #include <opencv2/core/eigen.hpp>
 #include <optional>
 #include <string_view>
-#include <tbb/spin_rw_mutex.h>
 #include <utility>
 
 #include "magic_enum.hpp"

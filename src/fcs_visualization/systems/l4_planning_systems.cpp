@@ -1,16 +1,12 @@
-#pragma once
-
 #include "L4_planning/selected_target_snapshot.hpp"
 #include "L4_planning/target_selection_trace.hpp"
 #include "L5_weapon/fire_control.hpp"
 #include "base.hpp"
 #include "foxglove_types.hpp"
 #include "scene_builder.hpp"
-#include "system_helpers.hpp"
 
 #include "L4_planning/gimbal_planner/types.hpp"
 #include "core/channel_topics.hpp"
-#include "core/types.hpp"
 #include "frame.hpp"
 
 #include <fmt/format.h>
@@ -23,7 +19,7 @@
 #include <cmath>
 #include <vector>
 
-namespace fcs::foxglove::systems {
+namespace fcs::visualization::foxglove::systems {
 
 namespace l4_detail {
 
@@ -487,9 +483,8 @@ inline void append_plan_metadata(
 /// - foxglove_l4_gimbal_scene: Publishes gimbal scene (selection, prediction, trajectory)
 /// - foxglove_l4_mpc_trajectory_pub: Publishes MPC trajectory JSON
 /// - foxglove_l4_mpc_prediction_scene: Publishes full MPC horizon visualization
-template <typename App>
-void register_l4_planning_systems(App& app) {
-    app.template add_system<talos::pool_compute>(
+void register_l4_planning_systems(talos::scheduler::Scheduler& app) {
+    app.add_system<talos::pool_compute>(
         "foxglove_solver_target_pub",
         [](talos::spmc<::fcs::L4::SelectedTargetSnapshot, SelectedTargetSnapshotChannelTopic>
                selected_target_in,
@@ -507,7 +502,7 @@ void register_l4_planning_systems(App& app) {
                 *server, l4_detail::json_solver_target(*selected_target));
         });
 
-    app.template add_system<talos::pool_compute>(
+    app.add_system<talos::pool_compute>(
         "foxglove_target_selection_pub",
         [](talos::spmc<::fcs::L4::TargetSelectionTrace, TargetSelectionTraceChannelTopic> trace_in,
            talos::res<std::shared_ptr<FoxgloveServer>> server) {
@@ -528,7 +523,7 @@ void register_l4_planning_systems(App& app) {
     // GIMBAL COMMAND PUBLISHER
     // =========================================================================
 
-    app.template add_system<talos::pool_compute>(
+    app.add_system<talos::pool_compute>(
         "foxglove_l4_gimbal_cmd_pub",
         [](talos::spmc<::fcs::L5::WeaponCommand, WeaponCommandChannelTopic> cmd_in,
            talos::spmc<::fcs::L4::GimbalPlan, GimbalPlanChannelTopic> plan_in,
@@ -599,7 +594,7 @@ void register_l4_planning_systems(App& app) {
             detail::publish_json_message<GimbalCmdMessage>(*server, cmd_json);
         });
 
-    app.template add_system<talos::pool_compute>(
+    app.add_system<talos::pool_compute>(
         "foxglove_l4_mpc_trajectory_pub",
         [](talos::spmc<::fcs::L5::WeaponCommand, WeaponCommandChannelTopic> cmd_in,
            talos::spmc<::fcs::L4::GimbalPlan, GimbalPlanChannelTopic> plan_in,
@@ -688,7 +683,7 @@ void register_l4_planning_systems(App& app) {
     // GIMBAL SCENE VISUALIZATION (L4) - Selection + Prediction + Trajectory
     // =========================================================================
 
-    app.template add_system<talos::pool_compute>(
+    app.add_system<talos::pool_compute>(
         "foxglove_l4_gimbal_scene",
         [](talos::spmc<::fcs::L4::GimbalPlan, GimbalPlanChannelTopic> plan_in,
            talos::spmc<::fcs::L4::SelectedTargetSnapshot, SelectedTargetSnapshotChannelTopic>
@@ -898,10 +893,10 @@ void register_l4_planning_systems(App& app) {
                     std::make_move_iterator(traj_entities.end()));
             }
 
-            viz::publish_scene_if_nonempty<GimbalSceneMessage>(*server, std::move(entities));
+            publish_scene_if_nonempty<GimbalSceneMessage>(*server, std::move(entities));
         });
 
-    app.template add_system<talos::pool_compute>(
+    app.add_system<talos::pool_compute>(
         "foxglove_l4_mpc_prediction_scene",
         [](talos::spmc<::fcs::L5::WeaponCommand, WeaponCommandChannelTopic> cmd_in,
            talos::res<std::shared_ptr<FoxgloveServer>> server) {
@@ -1024,7 +1019,7 @@ void register_l4_planning_systems(App& app) {
                     tac::L4::SELECTION_SIZE);
             }
 
-            viz::publish_scene_if_nonempty<MpcPredictionSceneMessage>(*server, std::move(entities));
+            publish_scene_if_nonempty<MpcPredictionSceneMessage>(*server, std::move(entities));
         });
 }
-} // namespace fcs::foxglove::systems
+} // namespace fcs::visualization::foxglove::systems

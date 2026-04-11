@@ -1,14 +1,9 @@
-#pragma once
-
 #include "base.hpp"
 #include "core/runtime.hpp"
 #include "foxglove_config.hpp"
 #include "foxglove_types.hpp"
 #include "quanta/transcoder.hpp"
-#include "scene_builder.hpp"
-#include "system_helpers.hpp"
 
-#include "L2_perception/armor/at_legacy_config.hpp"
 #include "camera_config.hpp"
 #include "core/channel_topics.hpp"
 #include "core/types.hpp"
@@ -23,7 +18,7 @@
 #include <opencv2/imgcodecs.hpp>
 #include <opencv2/imgproc.hpp>
 
-namespace fcs::foxglove::systems {
+namespace fcs::visualization::foxglove::systems {
 
 namespace detail {
 
@@ -149,8 +144,7 @@ inline void publish_jpeg_image(
 /// This includes:
 /// - foxglove_image_pub: Publishes camera images with detection boxes overlaid
 /// - Also publishes TF and camera calibration
-template <typename App>
-void register_l1_sensor_systems(App& app) {
+void register_l1_sensor_systems(talos::scheduler::Scheduler& app) {
 
     // =========================================================================
     // IMAGE PUBLISHER (Camera calibration + TF)
@@ -158,14 +152,14 @@ void register_l1_sensor_systems(App& app) {
     // Synchronized rendering: image is bundled with detection result
     // =========================================================================
 
-    app.template add_system<talos::pool_compute>(
+    app.add_system<talos::pool_compute>(
         "foxglove_l1_image_pub",
         [video_state = detail::QuantaPublisherState{}](
             talos::spmc<AtLegacyArmorDetectionBatch, AtLegacyDetectionChannelTopic> det_in,
             talos::res<std::shared_ptr<FoxgloveServer>> server, talos::res<CameraConfig> cam,
             talos::res<FoxgloveConfig> foxglove_cfg, core::detecting_color detecting_color_,
             talos::res<fast_tf::CoordinateSystem> tf_buffer) mutable {
-            if (!detail::foxglove_ready(*server, det_in)) {
+            if (!foxglove_ready(*server, det_in)) {
                 return;
             }
 
@@ -254,4 +248,4 @@ void register_l1_sensor_systems(App& app) {
         });
 }
 
-} // namespace fcs::foxglove::systems
+} // namespace fcs::visualization::foxglove::systems

@@ -7,7 +7,7 @@
 #include "foxglove_server.hpp"
 #include "scheduler/thin.hpp"
 
-namespace fcs {
+namespace fcs::visualization {
 
 /// Create and return an initialized Foxglove server instance.
 /// Returns `nullptr` if initialization fails.
@@ -22,4 +22,4 @@ namespace fcs {
 void register_foxglove_systems(
     talos::Scheduler& scheduler, talos::Scheduler* scheduler_ptr = nullptr);
 
-} // namespace fcs
+} // namespace fcs::visualization

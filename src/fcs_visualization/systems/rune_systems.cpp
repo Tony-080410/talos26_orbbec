@@ -1,19 +1,16 @@
-#pragma once
-
 #include "base.hpp"
 #include "foxglove_types.hpp"
 #include "scene_builder.hpp"
-#include "system_helpers.hpp"
+#include "scheduler/scheduler.hpp"
 
 #include "L2_perception/rune/rune_config.hpp"
 #include "L2_perception/rune/types.hpp"
 #include "core/channel_topics.hpp"
-#include "core/types.hpp"
 #include "frame.hpp"
 
 #include <fmt/format.h>
 
-namespace fcs::foxglove::systems {
+namespace fcs::visualization::foxglove::systems {
 
 /// @brief Register rune-specific visualization systems
 ///
@@ -21,14 +18,13 @@ namespace fcs::foxglove::systems {
 /// - foxglove_rune_debug_images: Publishes rune debug images (arrow, target, center)
 /// - foxglove_rune_debug_json: Publishes rune debug JSON data
 /// - foxglove_rune_scene: Publishes rune scene visualization
-template <typename App>
-void register_rune_systems(App& app) {
+void register_rune_systems(talos::scheduler::Scheduler& app) {
 
     // =========================================================================
     // RUNE DEBUG IMAGES PUBLISHER
     // =========================================================================
 
-    app.template add_system<talos::fixed_rate<30>>(
+    app.add_system<talos::fixed_rate<30>>(
         "foxglove_rune_debug_images",
         [](talos::spmc<::fcs::rune::RuneDebugFrame, RuneDebugFrameChannelTopic> dbg_in,
            talos::res<std::shared_ptr<FoxgloveServer>> server) {
@@ -64,7 +60,7 @@ void register_rune_systems(App& app) {
     // RUNE DEBUG JSON PUBLISHER
     // =========================================================================
 
-    app.template add_system<talos::pool_compute>(
+    app.add_system<talos::pool_compute>(
         "foxglove_rune_debug_json",
         [](talos::spmc<::fcs::rune::RuneDebugFrame, RuneDebugFrameChannelTopic> dbg_in,
            talos::res<std::shared_ptr<FoxgloveServer>> server,
@@ -117,7 +113,7 @@ void register_rune_systems(App& app) {
     // RUNE SCENE PUBLISHER
     // =========================================================================
 
-    app.template add_system<talos::pool_compute>(
+    app.add_system<talos::pool_compute>(
         "foxglove_rune_scene",
         [](talos::spmc<::fcs::rune::RuneObservation, RuneObservationChannelTopic> obs_in,
            talos::res<std::shared_ptr<FoxgloveServer>> server) {
@@ -153,8 +149,8 @@ void register_rune_systems(App& app) {
                         .build());
             }
 
-            viz::publish_scene_if_nonempty<RuneSceneMessage>(*server, std::move(entities));
+            publish_scene_if_nonempty<RuneSceneMessage>(*server, std::move(entities));
         });
 }
 
-} // namespace fcs::foxglove::systems
+} // namespace fcs::visualization::foxglove::systems

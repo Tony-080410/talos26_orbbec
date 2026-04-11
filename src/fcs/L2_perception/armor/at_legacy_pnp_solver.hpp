@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/types.hpp"
+#include "core/types_pnp.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -316,8 +317,7 @@ public:
         }
         // If optimization failed, keep the initial basin pose.
 
-        return AtLegacyCameraArmorMeasurement(
-            detection, rvec, tvec, timestamp_ns, input->dist_to_center);
+        return make_camera_measurement(detection, rvec, tvec, timestamp_ns, input->dist_to_center);
     }
 
     /// Solve PnP with BA for multiple detections

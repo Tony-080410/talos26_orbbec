@@ -10,8 +10,9 @@
 #include <spdlog/common.h>
 #include <spdlog/details/log_msg.h>
 #include <spdlog/sinks/base_sink.h>
+#include <utility.hpp>
 
-namespace fcs {
+namespace fcs::visualization {
 
 // ============================================================================
 // FoxgloveSink - spdlog sink → Foxglove Log panel
@@ -44,7 +45,7 @@ protected:
         const auto ns  = static_cast<uint64_t>(
             std::chrono::duration_cast<std::chrono::nanoseconds>(now.time_since_epoch()).count());
 
-        foxglove::schemas::Log log;
+        ::foxglove::schemas::Log log;
         log.timestamp = timestamp_from_ns(ns);
         log.level     = to_foxglove_level(msg.level);
         log.message   = std::string(msg.payload.data(), msg.payload.size());
@@ -63,10 +64,10 @@ protected:
     void flush_() override {}
 
 private:
-    [[nodiscard]] static foxglove::schemas::Log::LogLevel
+    [[nodiscard]] static ::foxglove::schemas::Log::LogLevel
         to_foxglove_level(spdlog::level::level_enum lvl) noexcept {
         using Spd = spdlog::level::level_enum;
-        using Fg  = foxglove::schemas::Log::LogLevel;
+        using Fg  = ::foxglove::schemas::Log::LogLevel;
         switch (lvl) {
         case Spd::trace: [[fallthrough]];
         case Spd::debug: return Fg::DEBUG;
@@ -91,4 +92,4 @@ inline void attach_foxglove_sink(FoxgloveServer& server) noexcept {
         logger->sinks().push_back(std::move(sink));
 }
 
-} // namespace fcs
+} // namespace fcs::visualization

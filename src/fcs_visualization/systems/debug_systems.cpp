@@ -1,27 +1,15 @@
-#pragma once
-
-#include "L3_estimation/tracker/vis_helpers.hpp"
 #include "base.hpp"
 #include "foxglove_types.hpp"
-#include "scene_builder.hpp"
-#include "system_helpers.hpp"
 
-#include "L2_perception/rune/rune_config.hpp"
-#include "L2_perception/rune/types.hpp"
 #include "L3_estimation/energy_meter/types.hpp"
-#include "L4_planning/gimbal_planner/types.hpp"
-#include "L5_weapon/fire_control.hpp"
 #include "core/channel_topics.hpp"
 #include "core/types.hpp"
-#include "frame.hpp"
 #include "scheduler/scheduler.hpp"
 
 #include <magic_enum.hpp>
 #include <nlohmann/json.hpp>
 
-namespace fcs::foxglove::systems {
-
-using namespace ::fcs::L3::vis;
+namespace fcs::visualization::foxglove::systems {
 
 /// @brief Register debug visualization systems
 ///
@@ -30,14 +18,13 @@ using namespace ::fcs::L3::vis;
 /// - L3: Association phase, permutation, filter innovation/covariance, Viterbi, state machine
 /// - L4: MPC horizon, cost, constraints
 /// - Misc: Energy meter state, performance statistics
-template <typename App>
-void register_debug_systems(App& app, talos::Scheduler* scheduler_ptr = nullptr) {
+void register_debug_systems(talos::scheduler::Scheduler& app, talos::Scheduler* scheduler_ptr) {
 
     // =========================================================================
     // L2 DEBUG: PnP Solver Metrics
     // =========================================================================
 
-    app.template add_system<talos::pool_compute>(
+    app.add_system<talos::pool_compute>(
         "foxglove_debug_l2_pnp_pub",
         [](talos::spmc<AtLegacyArmorMeasurementBatch, AtLegacyMeasurementChannelTopic> meas_in,
            talos::res<std::shared_ptr<FoxgloveServer>> server) {
@@ -74,7 +61,7 @@ void register_debug_systems(App& app, talos::Scheduler* scheduler_ptr = nullptr)
     // L2 DEBUG: NN Confidence Scores
     // =========================================================================
 
-    app.template add_system<talos::pool_compute>(
+    app.add_system<talos::pool_compute>(
         "foxglove_debug_l2_nn_confidence_pub",
         [](talos::spmc<AtLegacyArmorDetectionBatch, AtLegacyDetectionChannelTopic> det_in,
            talos::res<std::shared_ptr<FoxgloveServer>> server) {
@@ -109,7 +96,7 @@ void register_debug_systems(App& app, talos::Scheduler* scheduler_ptr = nullptr)
     // ENERGY METER STATE PUBLISHER (L3)
     // =========================================================================
 
-    app.template add_system<talos::pool_compute>(
+    app.add_system<talos::pool_compute>(
         "foxglove_debug_energy_meter_pub",
         [](talos::spmc<fcs::energy_meter::EnergyMeterState, EnergyMeterStateChannelTopic> state_in,
            talos::res<std::shared_ptr<FoxgloveServer>> server) {
@@ -147,7 +134,7 @@ void register_debug_systems(App& app, talos::Scheduler* scheduler_ptr = nullptr)
     // =========================================================================
 
     if (scheduler_ptr) {
-        app.template add_system<talos::fixed_rate_silent<100>>(
+        app.add_system<talos::fixed_rate_silent<100>>(
             "foxglove_debug_perf_stats_pub",
             [scheduler_ptr](talos::res<std::shared_ptr<FoxgloveServer>> server) {
                 auto& server_ptr = *server; // 引用绑定
@@ -166,4 +153,4 @@ void register_debug_systems(App& app, talos::Scheduler* scheduler_ptr = nullptr)
     }
 }
 
-} // namespace fcs::foxglove::systems
+} // namespace fcs::visualization::foxglove::systems

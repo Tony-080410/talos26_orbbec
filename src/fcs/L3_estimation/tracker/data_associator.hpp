@@ -5,7 +5,8 @@
 
 #include "core/types.hpp"
 
-#include <Eigen/Dense>
+#include <Eigen/Cholesky>
+#include <Eigen/Core>
 #include <array>
 #include <cmath>
 #include <limits>

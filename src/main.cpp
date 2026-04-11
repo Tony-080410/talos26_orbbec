@@ -42,12 +42,12 @@ int main() {
 
     // Foxglove visualization setup (separate library dependency)
     if (foxglove_cfg.enabled) {
-        auto server_result = fcs::create_foxglove_server(foxglove_cfg);
+        auto server_result = fcs::visualization::create_foxglove_server(foxglove_cfg);
         if (server_result) {
-            std::shared_ptr<fcs::FoxgloveServer> server = std::move(*server_result);
-            fcs::attach_foxglove_sink(*server);
+            std::shared_ptr<fcs::visualization::FoxgloveServer> server = std::move(*server_result);
+            fcs::visualization::attach_foxglove_sink(*server);
             world.insert_resource(server);
-            fcs::register_foxglove_systems(scheduler, &scheduler);
+            fcs::visualization::register_foxglove_systems(scheduler, &scheduler);
             if (foxglove_cfg.transport == fcs::FoxgloveTransport::WebSocket) {
                 SPDLOG_INFO(
                     "Foxglove WebSocket enabled on ws://{}:{}", foxglove_cfg.host,

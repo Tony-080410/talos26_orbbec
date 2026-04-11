@@ -376,12 +376,12 @@ void update_phase_fsm(
     entry.distance_weighted      = cfg.weights.distance * scores.distance;
     entry.gimbal_effort_weighted = cfg.weights.gimbal_effort * scores.gimbal_effort;
     entry.armor_name_weighted    = cfg.weights.armor_name * scores.armor_name;
-    entry.weighted_sum           = entry.image_center_weighted + entry.track_state_weighted
+    entry.weighted_sum = entry.image_center_weighted + entry.track_state_weighted
                        + entry.tof_weighted + entry.distance_weighted + entry.gimbal_effort_weighted
                        + entry.armor_name_weighted;
     entry.total_weight = cfg.weights.image_center + cfg.weights.track_state + cfg.weights.tof
                        + cfg.weights.distance + cfg.weights.gimbal_effort + cfg.weights.armor_name;
-    entry.total_score = scores.total;
+    entry.total_score  = scores.total;
     return entry;
 }
 
