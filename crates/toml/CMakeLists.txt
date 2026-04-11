@@ -4,7 +4,7 @@ crate(
     DEPS
         toml_impl
         fmt::fmt
-        field_reflection
+        Boost::pfr
         magic_enum
         Eigen3::Eigen
 )

@@ -19,7 +19,6 @@
 #ifndef MAGIC_ENUM_RANGE_MAX
 # define MAGIC_ENUM_RANGE_MAX 16
 #endif
-#include <field_reflection.hpp>
 #include <magic_enum.hpp>
 
 #define TOML_HEADER_ONLY 0
