@@ -42,6 +42,18 @@ struct ReceiveImuData {
     uint8_t eof;                                        // 0xA5
 };
 
+struct ReceiveSimpleImuData {
+    HeaderFrame header;                                 // id = 0x03
+    uint32_t time_stamp;
+    struct {
+        Color self_color;
+        float yaw;
+        float pitch;
+        float roll;
+    } data;
+    uint8_t eof;                                        // 0xA5
+};
+
 struct SendVisionData {
     HeaderFrame header;
     struct {
@@ -57,6 +69,15 @@ struct SendVisionData {
     uint8_t eof;
 };
 static_assert(sizeof(bool) == sizeof(uint8_t));
+
+struct SendSimpleVisionData {
+    HeaderFrame header;                                 // 0x04
+    struct {
+        float target_yaw;
+    } data;
+    uint8_t eof;
+};
+
 #pragma pack()
 
 inline void print_imu(const ReceiveImuData& imu) {

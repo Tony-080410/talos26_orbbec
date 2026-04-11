@@ -43,28 +43,45 @@ void McuOutput::send(const L5::WeaponCommand& cmd) const noexcept {
         return;
     }
 
-    talos_gimbal::SendVisionData packet{
-        .header =
-            {
-                     .sof = talos_gimbal::HeaderFrame::SoF(),
-                     .len = sizeof(talos_gimbal::SendVisionData::data),
-                     .id  = 0x02, // Vision data ID
-            },
-        .data =
-            {
-                     .fire_advice  = cmd.fire,
-                     .target_yaw   = static_cast<float>(cmd.yaw * detail::RAD_TO_DEG),
-                     .target_pitch = -static_cast<float>(cmd.pitch * detail::RAD_TO_DEG),
-                     .ref_yaw_v    = static_cast<float>(cmd.yaw_vel * detail::RAD_TO_DEG),
-                     .ref_pitch_v  = -static_cast<float>(cmd.pitch_vel * detail::RAD_TO_DEG),
-                     .ref_yaw_a    = static_cast<float>(cmd.yaw_accel * detail::RAD_TO_DEG),
-                     .ref_pitch_a  = -static_cast<float>(cmd.pitch_accel * detail::RAD_TO_DEG),
-                     .distance     = static_cast<float>(cmd.distance),
-                     },
-        .eof = talos_gimbal::HeaderFrame::EoF(),
-    };
-
-    device_->send_sync(reinterpret_cast<uint8_t*>(&packet), sizeof(packet));
+    // Serial只用于全向感知
+    if (device_->backend() == talos_gimbal::McuBackend::Serial) {
+        talos_gimbal::SendSimpleVisionData packet{
+            .header =
+                {
+                         .sof = talos_gimbal::HeaderFrame::SoF(),
+                         .len = sizeof(talos_gimbal::SendSimpleVisionData::data),
+                         .id  = 0x04,
+                         },
+            .data =
+                {
+                         .target_yaw = static_cast<float>(cmd.yaw * detail::RAD_TO_DEG),
+                         },
+            .eof = talos_gimbal::HeaderFrame::EoF(),
+        };
+        device_->send_sync(reinterpret_cast<uint8_t*>(&packet), sizeof(packet));
+    } else {
+        talos_gimbal::SendVisionData packet{
+            .header =
+                {
+                         .sof = talos_gimbal::HeaderFrame::SoF(),
+                         .len = sizeof(talos_gimbal::SendVisionData::data),
+                         .id  = 0x02,
+                         },
+            .data =
+                {
+                         .fire_advice  = cmd.fire,
+                         .target_yaw   = static_cast<float>(cmd.yaw * detail::RAD_TO_DEG),
+                         .target_pitch = -static_cast<float>(cmd.pitch * detail::RAD_TO_DEG),
+                         .ref_yaw_v    = static_cast<float>(cmd.yaw_vel * detail::RAD_TO_DEG),
+                         .ref_pitch_v  = -static_cast<float>(cmd.pitch_vel * detail::RAD_TO_DEG),
+                         .ref_yaw_a    = static_cast<float>(cmd.yaw_accel * detail::RAD_TO_DEG),
+                         .ref_pitch_a  = -static_cast<float>(cmd.pitch_accel * detail::RAD_TO_DEG),
+                         .distance     = static_cast<float>(cmd.distance),
+                         },
+            .eof = talos_gimbal::HeaderFrame::EoF(),
+        };
+        device_->send_sync(reinterpret_cast<uint8_t*>(&packet), sizeof(packet));
+    }
 }
 
 // ============================================================================

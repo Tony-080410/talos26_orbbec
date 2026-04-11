@@ -62,6 +62,22 @@ public:
                 const auto* received = reinterpret_cast<const ReceiveImuData*>(data.data());
                 *latest_imu          = *received;
             }
+        } else if (header_frame->id == 0x03) {
+            if (latest_imu && data.size_bytes() >= sizeof(ReceiveSimpleImuData)) {
+                // 复用一下接口
+                const auto* received   = reinterpret_cast<const ReceiveSimpleImuData*>(data.data());
+                latest_imu->header     = received->header;
+                latest_imu->time_stamp = received->time_stamp;
+                latest_imu->data.self_color   = received->data.self_color;
+                latest_imu->data.bullet_speed = 0.0f;
+                latest_imu->data.yaw          = received->data.yaw;
+                latest_imu->data.pitch        = received->data.pitch;
+                latest_imu->data.roll         = received->data.roll;
+                latest_imu->data.yaw_vel      = 0.0f;
+                latest_imu->data.pitch_vel    = 0.0f;
+                latest_imu->data.roll_vel     = 0.0f;
+                latest_imu->eof               = received->eof;
+            }
         }
     }
 };
