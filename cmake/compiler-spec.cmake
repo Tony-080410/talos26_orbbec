@@ -1,4 +1,4 @@
-option(ENABLE_SCCACHE "Enable compiler caching via sccache" OFF)
+option(ENABLE_SCCACHE "Enable compiler caching via sccache" ON)
 
 if (ENABLE_SCCACHE)
     find_program(SCCACHE_PROGRAM sccache)
