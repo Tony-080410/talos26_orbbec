@@ -2,434 +2,306 @@
 
 #include <algorithm>
 #include <cmath>
-#include <limits>
-#include <numeric>
 
 namespace energy_meter {
 
-AngleFitter::AngleFitter(double /*smooth_alpha*/, int min_data_points)
-    : min_data_points_(min_data_points)
-    , max_observations_(100)
-    , last_prediction_error_(0)
-    , start_time_(0)
-    , last_angle_(0.0)
-    , last_timestamp_(0.0)
-    , has_previous_observation_(false)
-    , last_real_observation_time_(0)
-    , last_real_observation_angle_(0) {
-    current_model_.is_valid    = false;
-    current_model_.is_big_rune = false;     // Will be set by fit methods
+AngleFitter::AngleFitter(Config config)
+    : config_(config) {
+    params_ = config_.initial_params;
 }
 
 AngleFitter::~AngleFitter() = default;
 
+void AngleFitter::addObservation(double time, double abs_angle) {
+    std::unique_lock lock(data_mutex_);
+    fit_data_.emplace_back(time, abs_angle);
+
+    // Trim oldest half when exceeding max size (same as rm_power_rune)
+    if (static_cast<int>(fit_data_.size()) > config_.max_fit_data_size) {
+        auto mid = fit_data_.begin() + static_cast<ptrdiff_t>(fit_data_.size() / 2);
+        fit_data_.erase(fit_data_.begin(), mid);
+    }
+}
+
+bool AngleFitter::fitBigRune() {
+    std::shared_lock lock(data_mutex_);
+
+    if (static_cast<int>(fit_data_.size()) < config_.min_fit_data_size) {
+        return false;
+    }
+
+    // Determine convexity when data is still small
+    if (static_cast<int>(fit_data_.size()) < 2 * config_.min_fit_data_size) {
+        convexity_ = detectConvexity(fit_data_);
+    }
+
+    auto data_copy = fit_data_;
+    lock.unlock();
+
+    auto new_params = ransacFitting(convexity_);
+
+    std::unique_lock mlock(model_mutex_);
+    params_       = new_params;
+    params_valid_ = true;
+    return true;
+}
+
+bool AngleFitter::fitSmallRune() {
+    std::unique_lock mlock(model_mutex_);
+    params_valid_ = true;
+    return true;
+}
+
+auto AngleFitter::getModel() const -> AngleModel {
+    std::shared_lock mlock(model_mutex_);
+    AngleModel m;
+    m.is_big_rune      = true; // caller decides via config
+    m.a                = params_[0];
+    m.omega            = params_[1];
+    m.t0               = params_[2];
+    m.b                = params_[3];
+    m.c                = params_[4];
+    m.rotation_speed   = config_.small_rune_rotation_speed;
+    m.is_valid         = params_valid_;
+    m.data_points_used = [&] {
+        std::shared_lock dlock(data_mutex_);
+        return static_cast<int>(fit_data_.size());
+    }();
+    return m;
+}
+
+auto AngleFitter::getDirection() const -> Direction { return direction_; }
+
+auto AngleFitter::getDataPointCount() const -> int {
+    std::shared_lock lock(data_mutex_);
+    return static_cast<int>(fit_data_.size());
+}
+
+bool AngleFitter::isModelValid() const {
+    std::shared_lock lock(model_mutex_);
+    return params_valid_;
+}
+
 void AngleFitter::reset() {
     {
-        std::unique_lock<std::shared_mutex> lock(observations_mutex_);
-        observations_.clear();
-        frame_interval_history_.clear();
+        std::unique_lock lock(data_mutex_);
+        fit_data_.clear();
     }
-
     {
-        std::unique_lock<std::shared_mutex> lock(model_mutex_);
-        current_model_             = AngleModel();
-        current_model_.is_valid    = false;
-        current_model_.is_big_rune = false; // Will be set by fit methods
+        std::unique_lock lock(model_mutex_);
+        params_       = config_.initial_params;
+        params_valid_ = false;
+        convexity_    = Convexity::UNKNOWN;
     }
-
-    start_time_                  = 0.0;
-    last_prediction_error_       = 0.0;
-    last_angle_                  = 0.0;
-    last_timestamp_              = 0.0;
-    has_previous_observation_    = false;
-    last_real_observation_time_  = 0.0;
-    last_real_observation_angle_ = 0.0;
+    direction_ = Direction::UNKNOWN;
+    direction_data_.clear();
 }
 
-bool AngleFitter::addObservation(const AngleObservation& observation) {
-    std::unique_lock<std::shared_mutex> lock(observations_mutex_);
+double AngleFitter::predictDeltaAngle(double current_time, double future_time) const {
+    std::shared_lock lock(model_mutex_);
+    return getAngleBig(future_time, params_) - getAngleBig(current_time, params_);
+}
 
-    if (observations_.empty()) {
-        start_time_ = observation.timestamp;
+void AngleFitter::updateDirection(double continuous_angle) {
+    if (direction_ != Direction::UNKNOWN && direction_ != Direction::STABLE) {
+        return;
+    }
+
+    direction_data_.push_back(continuous_angle);
+    if (static_cast<int>(direction_data_.size()) < config_.direction_threshold) {
+        return;
+    }
+
+    int stable = 0, anti = 0, clockwise = 0;
+    size_t half = direction_data_.size() / 2;
+    for (size_t i = 0; i < half; ++i) {
+        double diff = direction_data_[i + half] - direction_data_[i];
+        if (diff > config_.direction_angle_threshold) {
+            clockwise++;
+        } else if (diff < -config_.direction_angle_threshold) {
+            anti++;
+        } else {
+            stable++;
+        }
+    }
+
+    int best = std::max({stable, clockwise, anti});
+    if (best == clockwise) {
+        direction_ = Direction::CLOCKWISE;
+    } else if (best == anti) {
+        direction_ = Direction::ANTI_CLOCKWISE;
     } else {
-        if (observation.timestamp < observations_.back().timestamp) {
-            return false;
+        direction_ = Direction::STABLE;
+    }
+}
+
+// ============================================================================
+// RANSAC fitting (rm_power_rune semantics)
+// ============================================================================
+
+std::array<double, 5> AngleFitter::ransacFitting(Convexity convexity) {
+    std::shared_lock lock(data_mutex_);
+
+    // Work on a local copy so the caller's vector is untouched.
+    std::vector<std::pair<double, double>> inliers = fit_data_;
+    std::vector<std::pair<double, double>> outliers;
+    lock.unlock();
+
+    const int iter_times = static_cast<int>(inliers.size()) < config_.few_data_threshold
+                             ? config_.ransac_iterations_few
+                             : config_.ransac_iterations_many;
+
+    std::array<double, 5> params = config_.initial_params;
+
+    for (int iter = 0; iter < iter_times; ++iter) {
+        // Sub-sample for large datasets
+        std::vector<std::pair<double, double>> sample;
+        if (static_cast<int>(inliers.size()) > config_.few_data_threshold) {
+            auto tail = inliers.end() - config_.outlier_keep_tail;
+            std::shuffle(inliers.begin(), tail, random_engine_);
+            auto start = inliers.end() - config_.inlier_sample_size;
+            if (start < inliers.begin()) {
+                start = inliers.begin();
+            }
+            sample.assign(start, inliers.end());
+        } else {
+            sample = inliers;
         }
 
-        const double frame_interval = observation.timestamp - observations_.back().timestamp;
+        params = leastSquareEstimate(sample, params, convexity);
 
-        if (frame_interval > 0.1 && frame_interval < 2.0) {
-            bool has_valid_model = false;
-            {
-                lock.unlock();
-                std::shared_lock<std::shared_mutex> model_lock(model_mutex_);
-                has_valid_model = current_model_.is_valid;
+        // Compute errors on inliers
+        std::vector<double> errors;
+        errors.reserve(inliers.size());
+        for (const auto& pt : inliers) {
+            errors.push_back(std::abs(pt.second - getAngleBig(pt.first, params)));
+        }
+
+        // Inlier/outlier exchange for large data (rm_power_rune semantics)
+        if (static_cast<int>(inliers.size()) > config_.large_data_threshold) {
+            std::sort(errors.begin(), errors.end());
+            size_t idx = std::min(
+                static_cast<size_t>(errors.size() * config_.inlier_percentile), errors.size() - 1);
+            double threshold = errors[idx];
+
+            // Move bad inliers → outliers (iterate backwards to keep indices valid)
+            for (int i = static_cast<int>(inliers.size()) - config_.outlier_keep_tail - 1; i >= 0;
+                 --i) {
+                if (std::abs(inliers[i].second - getAngleBig(inliers[i].first, params))
+                    > threshold) {
+                    outliers.push_back(std::move(inliers[i]));
+                    inliers.erase(inliers.begin() + i);
+                }
             }
-            lock.lock();
 
-            if (has_valid_model && last_real_observation_time_ > 0) {
-                const double avg_interval = getAverageFrameInterval();
-                if (avg_interval > 1e-6) {
-                    lock.unlock();
-                    generateSyntheticObservations(
-                        last_real_observation_time_, observation.timestamp, avg_interval);
-                    lock.lock();
+            // Move good outliers → inliers (iterate backwards)
+            for (int i = static_cast<int>(outliers.size()) - 1; i >= 0; --i) {
+                if (std::abs(outliers[i].second - getAngleBig(outliers[i].first, params))
+                    <= threshold) {
+                    inliers.push_back(std::move(outliers[i]));
+                    outliers.erase(outliers.begin() + i);
                 }
             }
         }
+    }
 
-        if (frame_interval > 0 && frame_interval < 0.1) {
-            frame_interval_history_.push_back(frame_interval);
-            if (frame_interval_history_.size() > MAX_FRAME_INTERVALS) {
-                frame_interval_history_.pop_front();
-            }
+    return params;
+}
+
+// ============================================================================
+// Ceres least-squares estimation (rm_power_rune semantics)
+// ============================================================================
+
+std::array<double, 5> AngleFitter::leastSquareEstimate(
+    const std::vector<std::pair<double, double>>& points,
+    const std::array<double, 5>& initial_params, Convexity convexity) {
+    std::array<double, 5> ret = initial_params;
+
+    ceres::Problem problem;
+
+    // Data residuals with SoftLOne robust loss
+    for (const auto& pt : points) {
+        auto* cf = new CostFunctor2(pt.first, pt.second);
+        auto* lf = new ceres::SoftLOneLoss(0.1);
+        problem.AddResidualBlock(cf, lf, ret.data());
+    }
+
+    // Regularisation weights depend on data size
+    const std::array<double, 3>& omega = static_cast<int>(points.size()) < 100
+                                           ? config_.regularization_few
+                                           : config_.regularization_many;
+
+    // Convexity-based bounds for small data
+    if (static_cast<int>(points.size()) < 100) {
+        if (convexity == Convexity::CONCAVE) {
+            problem.SetParameterUpperBound(ret.data(), 2, config_.convex_concave_t0_upper);
+            problem.SetParameterLowerBound(ret.data(), 2, config_.convex_concave_t0_lower);
+        } else if (convexity == Convexity::CONVEX) {
+            problem.SetParameterUpperBound(ret.data(), 2, config_.convex_convex_t0_upper);
+            problem.SetParameterLowerBound(ret.data(), 2, config_.convex_convex_t0_lower);
         }
     }
 
-    last_real_observation_time_  = observation.timestamp;
-    last_real_observation_angle_ = observation.continuous_angle;
+    // Parameter regularisation (CostFunctor1 + scaled Huber loss)
+    problem.AddResidualBlock(
+        new CostFunctor1(ret[0], 0),
+        new ceres::ScaledLoss(new ceres::HuberLoss(0.1), omega[0], ceres::TAKE_OWNERSHIP),
+        ret.data());
+    problem.AddResidualBlock(
+        new CostFunctor1(ret[1], 1),
+        new ceres::ScaledLoss(new ceres::HuberLoss(0.1), omega[1], ceres::TAKE_OWNERSHIP),
+        ret.data());
+    problem.AddResidualBlock(
+        new CostFunctor1(ret[3], 3),
+        new ceres::ScaledLoss(new ceres::HuberLoss(0.1), omega[2], ceres::TAKE_OWNERSHIP),
+        ret.data());
 
-    observations_.push_back(observation);
-    if (observations_.size() > max_observations_) {
-        observations_.pop_front();
-    }
+    ceres::Solver::Options options;
+    options.linear_solver_type                = ceres::DENSE_QR;
+    options.max_num_iterations                = 50;
+    options.minimizer_progress_to_stdout      = false;
+    options.check_gradients                   = false;
+    options.gradient_check_relative_precision = 1e-4;
 
-    lock.unlock();
-
-    {
-        std::unique_lock<std::shared_mutex> model_lock(model_mutex_);
-        current_model_.last_continuous_angle = observation.continuous_angle;
-        current_model_.last_observation_time = observation.timestamp;
-        current_model_.data_points_used      = static_cast<int>(observations_.size());
-    }
-
-    return false;
+    ceres::Solver::Summary summary;
+    ceres::Solve(options, &problem, &summary);
+    return ret;
 }
 
-bool AngleFitter::fitAngleModelLSQ() {
-    std::shared_lock<std::shared_mutex> lock(observations_mutex_);
+// ============================================================================
+// Convexity detection (rm_power_rune semantics)
+// ============================================================================
 
-    if (observations_.size() < static_cast<size_t>(min_data_points_)) {
-        return false;
+Convexity AngleFitter::detectConvexity(const std::vector<std::pair<double, double>>& data) const {
+    if (data.size() < 2) {
+        return Convexity::UNKNOWN;
     }
 
-    std::vector<double> t_values;
-    std::vector<double> v_values;
-    t_values.reserve(observations_.size());
-    v_values.reserve(observations_.size());
+    auto first = data.begin();
+    auto last  = data.end() - 1;
 
-    for (const auto& obs : observations_) {
-        t_values.push_back(getRelativeTimeNoLock(obs.timestamp));
-        v_values.push_back(obs.velocity);
-    }
+    double slope = (last->second - first->second) / (last->first - first->first);
+    double offset =
+        (first->second * last->first - last->second * first->first) / (last->first - first->first);
 
-    lock.unlock();
-
-    const int n = static_cast<int>(t_values.size());
-    if (n < 3) {
-        return false;
-    }
-
-    double best_error = std::numeric_limits<double>::max();
-    double best_a     = AMPLITUDE_INIT;
-    double best_omega = OMEGA_INIT;
-    double best_phi   = 0.0;
-    double best_b     = OFFSET_BASE - best_a;
-
-    for (double omega = OMEGA_MIN; omega <= OMEGA_MAX + 1e-6; omega += 0.005) {
-        Eigen::MatrixXd H(n, 3);
-        Eigen::VectorXd V(n);
-
-        for (int i = 0; i < n; ++i) {
-            const double t = t_values[i];
-            H(i, 0)        = std::cos(omega * t);
-            H(i, 1)        = std::sin(omega * t);
-            H(i, 2)        = 1.0;
-            V(i)           = v_values[i];
-        }
-
-        const Eigen::Matrix3d HtH = H.transpose() * H;
-        const Eigen::Vector3d HtV = H.transpose() * V;
-        const Eigen::Vector3d X   = HtH.ldlt().solve(HtV);
-
-        const double A = X(0);
-        const double B = X(1);
-        const double b = X(2);
-
-        const double a   = std::sqrt(A * A + B * B);
-        const double phi = std::atan2(A, B);
-
-        const Eigen::VectorXd residual = V - H * X;
-        const double error             = residual.squaredNorm() / n;
-
-        if (error < best_error) {
-            best_error = error;
-            best_a     = a;
-            best_omega = omega;
-            best_phi   = phi;
-            best_b     = b;
-        }
-    }
-
-    const double t_last = t_values.back();
-    double best_t0      = best_phi - best_omega * t_last;
-    best_t0             = std::atan2(std::sin(best_t0), std::cos(best_t0));
-
-    lock.lock();
-    const double theta_last = observations_.back().continuous_angle;
-    lock.unlock();
-
-    const double best_c =
-        theta_last
-        - (-best_a / best_omega * std::cos(best_omega * t_last + best_t0) + best_b * t_last);
-
-    {
-        std::unique_lock<std::shared_mutex> model_lock(model_mutex_);
-        current_model_.sin_amplitude    = best_a;
-        current_model_.sin_omega        = best_omega;
-        current_model_.sin_phase        = best_t0;
-        current_model_.sin_offset       = best_b;
-        current_model_.sin_const_term   = best_c;
-        current_model_.fit_error        = std::sqrt(best_error);
-        current_model_.is_big_rune      = true;
-        current_model_.is_valid         = true;
-        current_model_.data_points_used = n;
-        current_model_.last_fit_time    = t_last + start_time_;
-    }
-
-    return true;
-}
-
-void AngleFitter::applyPosteriorConstraints() {
-    std::unique_lock<std::shared_mutex> lock(model_mutex_);
-
-    if (!current_model_.is_valid || !current_model_.is_big_rune) {
-        return;
-    }
-
-    current_model_.sin_amplitude =
-        std::clamp(current_model_.sin_amplitude, AMPLITUDE_MIN, AMPLITUDE_MAX);
-
-    current_model_.sin_omega = std::clamp(current_model_.sin_omega, OMEGA_MIN, OMEGA_MAX);
-
-    current_model_.sin_offset = OFFSET_BASE - current_model_.sin_amplitude;
-}
-
-bool AngleFitter::fitLinearModelPublic() {
-    AngleModel linear_model;
-    if (fitLinearModel(linear_model)) {
-        linear_model.is_big_rune = false;
-
-        std::unique_lock<std::shared_mutex> lock(model_mutex_);
-        linear_model.last_continuous_angle = current_model_.last_continuous_angle;
-        linear_model.last_observation_time = current_model_.last_observation_time;
-        linear_model.filtered_velocity     = current_model_.filtered_velocity;
-        linear_model.velocity_filter_valid = current_model_.velocity_filter_valid;
-        linear_model.is_valid              = true;
-        linear_model.data_points_used      = current_model_.data_points_used;
-
-        current_model_ = linear_model;
-        return true;
-    }
-    return false;
-}
-
-bool AngleFitter::fitLinearModel(AngleModel& model) {
-    std::shared_lock<std::shared_mutex> lock(observations_mutex_);
-
-    if (observations_.size() < static_cast<size_t>(min_data_points_)) {
-        return false;
-    }
-
-    std::vector<double> all_t_values;
-    std::vector<double> all_angle_values;
-    all_t_values.reserve(observations_.size());
-    all_angle_values.reserve(observations_.size());
-
-    for (size_t i = 0; i < observations_.size(); ++i) {
-        all_t_values.push_back(getRelativeTimeNoLock(observations_[i].timestamp));
-        all_angle_values.push_back(observations_[i].continuous_angle);
-    }
-
-    lock.unlock();
-
-    double slope     = 0.0;
-    double intercept = 0.0;
-    if (!linearRegression(all_t_values, all_angle_values, slope, intercept)) {
-        return false;
-    }
-
-    model.lin_omega   = slope;
-    model.lin_offset  = intercept;
-    model.is_big_rune = false;
-    model.fit_error   = calculateFitError(model);
-
-    return true;
-}
-
-bool AngleFitter::linearRegression(
-    const std::vector<double>& x_values, const std::vector<double>& y_values, double& slope,
-    double& intercept) {
-    if (x_values.size() != y_values.size() || x_values.size() < 2) {
-        return false;
-    }
-
-    const int n = static_cast<int>(x_values.size());
-
-    double sum_x  = 0.0;
-    double sum_y  = 0.0;
-    double sum_xy = 0.0;
-    double sum_x2 = 0.0;
-
-    for (int i = 0; i < n; ++i) {
-        sum_x += x_values[i];
-        sum_y += y_values[i];
-        sum_xy += x_values[i] * y_values[i];
-        sum_x2 += x_values[i] * x_values[i];
-    }
-
-    const double denominator = n * sum_x2 - sum_x * sum_x;
-    if (std::fabs(denominator) < 1e-10) {
-        return false;
-    }
-
-    slope     = (n * sum_xy - sum_x * sum_y) / denominator;
-    intercept = (sum_y - slope * sum_x) / n;
-
-    return true;
-}
-
-auto AngleFitter::getAverageFrameInterval() const -> double {
-    if (frame_interval_history_.empty()) {
-        return 1.0 / 30.0;
-    }
-
-    double sum = 0.0;
-    for (double interval : frame_interval_history_) {
-        sum += interval;
-    }
-
-    return sum / static_cast<double>(frame_interval_history_.size());
-}
-
-void AngleFitter::generateSyntheticObservations(
-    double loss_start_time, double loss_end_time, double avg_frame_interval) {
-    std::unique_lock<std::shared_mutex> obs_lock(observations_mutex_);
-    std::shared_lock<std::shared_mutex> model_lock(model_mutex_);
-
-    if (!current_model_.is_valid || loss_end_time <= loss_start_time) {
-        return;
-    }
-
-    const double loss_duration = loss_end_time - loss_start_time;
-    int num_synthetic_frames   = static_cast<int>(loss_duration / avg_frame_interval);
-    if (num_synthetic_frames > 30) {
-        num_synthetic_frames = 30;
-    }
-
-    if (num_synthetic_frames < 1) {
-        return;
-    }
-
-    const double window_start_time =
-        observations_.empty() ? start_time_ : observations_.front().timestamp;
-
-    for (int i = 1; i <= num_synthetic_frames; ++i) {
-        const double synthetic_time = loss_start_time + i * avg_frame_interval;
-
-        double predicted_angle = 0.0;
-        const double t         = synthetic_time - window_start_time;
-        if (current_model_.is_big_rune) {
-            const double a     = current_model_.sin_amplitude;
-            const double omega = current_model_.sin_omega;
-            const double t0    = current_model_.sin_phase;
-            const double b     = current_model_.sin_offset;
-            const double c     = current_model_.sin_const_term;
-            predicted_angle    = -a / omega * std::cos(omega * t + t0) + b * t + c;
+    int concave = 0;
+    int convex  = 0;
+    for (const auto& pt : data) {
+        if (slope * pt.first + offset > pt.second) {
+            concave++;
         } else {
-            predicted_angle = current_model_.lin_omega * t + current_model_.lin_offset;
-        }
-
-        AngleObservation synthetic_obs;
-        synthetic_obs.timestamp        = synthetic_time;
-        synthetic_obs.continuous_angle = predicted_angle;
-        if (!observations_.empty()) {
-            synthetic_obs.blade_offset   = observations_.back().blade_offset;
-            synthetic_obs.absolute_angle = observations_.back().absolute_angle;
-        }
-
-        observations_.push_back(synthetic_obs);
-        if (observations_.size() > max_observations_) {
-            observations_.pop_front();
+            convex++;
         }
     }
-}
 
-auto AngleFitter::getRelativeTimeNoLock(double timestamp) const -> double {
-    if (!observations_.empty()) {
-        return timestamp - observations_.front().timestamp;
+    const int standard = static_cast<int>(data.size() * config_.convexity_threshold);
+    if (concave > standard) {
+        return Convexity::CONCAVE;
     }
-    return timestamp - start_time_;
-}
-
-auto AngleFitter::calculateFitError(const AngleModel& model) -> double {
-    std::shared_lock<std::shared_mutex> lock(observations_mutex_);
-
-    if (observations_.size() < 2) {
-        return 0.0;
+    if (convex > standard) {
+        return Convexity::CONVEX;
     }
-
-    double sum_squared_error = 0.0;
-    int count                = 0;
-
-    for (size_t i = 1; i < observations_.size(); ++i) {
-        const double dt = observations_[i].timestamp - observations_[i - 1].timestamp;
-        const double actual_delta =
-            observations_[i].continuous_angle - observations_[i - 1].continuous_angle;
-        double predicted_delta = 0.0;
-
-        if (dt < 1e-6) {
-            continue;
-        }
-
-        if (model.is_big_rune) {
-            double v_prev = 0.0;
-            if (i >= 2) {
-                const double dt_prev =
-                    observations_[i - 1].timestamp - observations_[i - 2].timestamp;
-                if (dt_prev > 1e-6) {
-                    v_prev = (observations_[i - 1].continuous_angle
-                              - observations_[i - 2].continuous_angle)
-                           / dt_prev;
-                }
-            } else {
-                v_prev = actual_delta / dt;
-            }
-
-            const double a     = model.sin_amplitude;
-            const double b     = model.sin_offset;
-            const double omega = model.sin_omega;
-
-            const double sin_phi = std::clamp((v_prev - b) / a, -1.0, 1.0);
-            const double phi_now = std::asin(sin_phi);
-
-            const double phi_future = phi_now + omega * dt;
-            predicted_delta =
-                -a / omega * std::cos(phi_future) + a / omega * std::cos(phi_now) + b * dt;
-        } else {
-            predicted_delta = model.lin_omega * dt;
-        }
-
-        const double error = actual_delta - predicted_delta;
-        sum_squared_error += error * error;
-        ++count;
-    }
-
-    if (count == 0) {
-        return 0.0;
-    }
-
-    return std::sqrt(sum_squared_error / count);
+    return Convexity::UNKNOWN;
 }
 
 } // namespace energy_meter

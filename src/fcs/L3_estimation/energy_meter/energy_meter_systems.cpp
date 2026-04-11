@@ -1,7 +1,7 @@
 #include "L3_estimation/energy_meter/energy_meter_systems.hpp"
 
 #include "L2_perception/rune/types.hpp"
-#include "L3_estimation/energy_meter_solver/angle_fitter.hpp"
+#include "L3_estimation/energy_meter/types.hpp"
 #include "L3_estimation/energy_meter_solver/energy_meter_tracker.hpp"
 #include "L3_estimation/energy_meter_solver/types.hpp"
 #include "core/channel_topics.hpp"
@@ -12,9 +12,7 @@
 #include <cmath>
 #include <memory>
 
-namespace fcs::energy_meter {} // namespace fcs::energy_meter
-
-namespace energy_meter {}      // namespace energy_meter
+#include <spdlog/spdlog.h>
 
 namespace fcs::energy_meter {
 
@@ -24,41 +22,16 @@ constexpr auto ns_to_sec(uint64_t ns) -> double { return static_cast<double>(ns)
 
 } // namespace
 
-// 模型类型判断状态
-bool model_type_determined_           = false; // 是否已确定模型类型
-int detection_frame_count_            = 0;     // 检测帧计数
-static constexpr int DETECTION_FRAMES = 20;    // 前20帧用于判断类型
-
-// 防误判机制
-static constexpr double SWITCH_THRESHOLD    = 1.5; // v
-int switch_cooldown_count_                  = 0;   // 切换后的冷却帧计数
-static constexpr int SWITCH_COOLDOWN_FRAMES = 30;  // 切换后等待30帧再检测
-int frame_fps_                              = 0;
-static constexpr int FPS_THRESHOLD          = 100;
-
-// 速度统计（用于判断大小能量机关）
-int velocity_frame_count_                  = 0;
-double velocity_max_                       = -std::numeric_limits<double>::max();
-double velocity_min_                       = std::numeric_limits<double>::max();
-static constexpr int VELOCITY_SKIP_FRAMES_ = 5;
-
-void resetVelocityStats() {
-    velocity_frame_count_ = 0;
-    velocity_max_         = -std::numeric_limits<double>::max();
-    velocity_min_         = std::numeric_limits<double>::max();
-}
-
 void register_energy_meter_systems(talos::Scheduler& scheduler, EnergyMeterL3Config&& config) {
     scheduler.world().insert_resource(std::move(config));
 
     scheduler.world().insert_resource(std::make_shared<::energy_meter::Tracker>());
-    scheduler.world().insert_resource(
-        std::make_shared<::energy_meter::AngleFitter>(
-            config.angle_fitter.smooth_alpha, config.angle_fitter.min_data_points));
+    scheduler.world().insert_resource(std::make_shared<::energy_meter::AngleFitter>(config.fitter));
 
     scheduler.add_system<talos::pool_compute>(
         "l3_energy_meter",
-        [last_timestamp_ns = uint64_t{0}](
+        [last_timestamp_ns = uint64_t{0}, start_time_s = double{0.0}, has_start_time = false,
+         fit_counter = int{0}](
             talos::res<EnergyMeterL3Config> cfg,
             talos::res_mut<std::shared_ptr<::energy_meter::Tracker>> tracker,
             talos::res_mut<std::shared_ptr<::energy_meter::AngleFitter>> fitter,
@@ -79,21 +52,19 @@ void register_energy_meter_systems(talos::Scheduler& scheduler, EnergyMeterL3Con
             }
             last_timestamp_ns = obs->timestamp_ns;
 
-            // 如果间隔超过 2s，重置所有状态
-            if (dt > 2) {
+            // Reset on large gap
+            if (dt > 2.0) {
                 (*tracker)->state = ::energy_meter::Tracker::IDLE;
                 (*tracker)->energy_ukf.reset();
                 last_timestamp_ns = 0;
-                // 重置拟合器和类型判断状态
                 (*fitter)->reset();
-                model_type_determined_ = false;
-                detection_frame_count_ = 0;
-                switch_cooldown_count_ = 0;
-                resetVelocityStats();
-                frame_fps_ = 0;
-                std::cerr << "时间间隔过大, " << dt << "重置类型判断" << std::endl;
+                has_start_time = false;
+                fit_counter    = 0;
+                SPDLOG_WARN("energy_meter: large gap {:.1f}s, resetting", dt);
                 return;
             }
+
+            // ── ISRCKF tracker step ──
 
             if (!(*tracker)->energy_ukf.has_value()) {
                 (*tracker)->first_meet_u(
@@ -110,125 +81,94 @@ void register_energy_meter_systems(talos::Scheduler& scheduler, EnergyMeterL3Con
             const double roll   = x(::energy_meter::ROLL);
             const double v_roll = x(::energy_meter::V_ROLL);
 
-            (*fitter)->setFilteredVelocity(v_roll);
-            ::energy_meter::AngleObservation ao;
-            ao.timestamp        = timestamp_s;
-            ao.absolute_angle   = roll;
-            ao.continuous_angle = roll;
-            ao.velocity         = v_roll;
-            ao.blade_offset     = (*tracker)->getCurrentBladeId();
-            (void)(*fitter)->addObservation(ao);
+            // ── Timing ──
 
-            // 速度统计：从第5帧开始记录最大值和最小值
-            velocity_frame_count_++;
-            if (velocity_frame_count_ > VELOCITY_SKIP_FRAMES_) {
-                double vel = v_roll;
-
-                if (vel > velocity_max_)
-                    velocity_max_ = vel;
-                if (vel < velocity_min_)
-                    velocity_min_ = vel;
+            if (!has_start_time) {
+                has_start_time = true;
+                start_time_s   = timestamp_s;
             }
-            // 拟合逻辑
-            if ((*fitter)->getDataPointCount() >= 15) {
+            const double relative_time = timestamp_s - start_time_s;
 
-                if (!model_type_determined_) {
-                    // 前20帧：判断模型类型
-                    detection_frame_count_++;
+            // ── Direction voting (rm_power_rune semantics) ──
 
-                    (*fitter)->fitAngleModelLSQ();
-                    (*fitter)->applyPosteriorConstraints();
+            (*fitter)->updateDirection(roll);
 
-                    // 通过速度变化范围判断大小符
-                    // 小符: 速度恒定，max-min 很小
-                    // 大符: 速度变化大，max-min 较大
-                    double velocity_range                     = velocity_max_ - velocity_min_;
-                    constexpr double VELOCITY_RANGE_THRESHOLD = 0.5; // 速度变化阈值
-                    bool velocity_suggests_big_rune =
-                        (std::abs(velocity_range) > VELOCITY_RANGE_THRESHOLD);
+            // ── Fitting data ──
 
-                    if (!velocity_suggests_big_rune) {
-                        // 速度变化小，判定为小符
-                        (*fitter)->fitLinearModelPublic();
-                    }
+            (*fitter)->addObservation(relative_time, std::abs(roll));
 
-                    // 20帧后锁定类型
-                    if (detection_frame_count_ >= DETECTION_FRAMES) {
-                        model_type_determined_ = true;
-                        auto final_model       = (*fitter)->getModel();
-                        std::cerr << "模型类型已确定: " << final_model.is_big_rune
-                                  << ", 速度范围: " << velocity_range << "max= " << velocity_max_
-                                  << "min= " << velocity_min_ << std::endl;
-                        resetVelocityStats();
-                        frame_fps_ = 0;
-                    }
+            // ── Fitting ──
 
-                } else {
-                    // 类型已确定，只更新参数不切换类型
-                    auto model = (*fitter)->getModel();
-                    if (model.is_big_rune) {
-                        (*fitter)->fitAngleModelLSQ();
-                        (*fitter)->applyPosteriorConstraints();
+            const auto direction = (*fitter)->getDirection();
+
+            // Only fit when direction is resolved (mirrors rm_power_rune: skip predict if
+            // UNKNOWN)
+            if (direction != ::energy_meter::Direction::UNKNOWN) {
+                // Throttle fitting: every ~10 frames (~333ms at 30fps, matching rm_power_rune's
+                // background thread interval)
+                fit_counter++;
+                if (fit_counter >= 10
+                    && (*fitter)->getDataPointCount() >= cfg->fitter.min_fit_data_size) {
+                    fit_counter = 0;
+                    if (cfg->is_big_rune) {
+                        (*fitter)->fitBigRune();
                     } else {
-                        (*fitter)->fitLinearModelPublic();
-                    }
-
-                    // 防误判机制：冷却期结束后，误差超过10 rad时切换类型
-                    if (switch_cooldown_count_ > 0) {
-                        switch_cooldown_count_--;
-                    } else {
-                        frame_fps_++;
-                        if (frame_fps_ > FPS_THRESHOLD) {
-                            double velocity_range = velocity_max_ - velocity_min_;
-                            auto updated_model    = (*fitter)->getModel();
-                            if (velocity_range > SWITCH_THRESHOLD && !updated_model.is_big_rune) {
-                                std::cerr << "速度差值过大 " << velocity_range
-                                          << " ，切换类型: 小符 -> 大符" << std::endl;
-
-                                (*fitter)->fitAngleModelLSQ();
-                                (*fitter)->applyPosteriorConstraints();
-
-                                // 启动冷却
-                                switch_cooldown_count_ = SWITCH_COOLDOWN_FRAMES;
-
-                            } else if (
-                                velocity_range < SWITCH_THRESHOLD && updated_model.is_big_rune) {
-                                std::cerr << "速度差值过小 " << velocity_range
-                                          << " ，切换类型: 大符 ->小符" << std::endl;
-
-                                (*fitter)->fitLinearModelPublic();
-
-                                // 启动冷却
-                                switch_cooldown_count_ = SWITCH_COOLDOWN_FRAMES;
-                            }
-                            frame_fps_ = 0;
-                            resetVelocityStats();
-                        }
+                        (*fitter)->fitSmallRune();
                     }
                 }
             }
 
-            const auto model = (*fitter)->getModel();
+            // ── Prediction ──
 
             const uint64_t now_ns           = fcs::clock::now_ns();
             const double image_delay_s      = ns_to_sec(now_ns - obs->timestamp_ns);
             const double prediction_delay_s = image_delay_s + cfg->control_delay_s;
             const double predict_dt_s       = std::max(0.0, prediction_delay_s);
 
+            // Compute current angle from observation (same as before)
             const Eigen::Quaterniond q = obs->target_quats_odom[0].normalized();
             const Eigen::Matrix3d rot  = q.toRotationMatrix();
             const Eigen::Vector3d u    = rot.col(2);
             const Eigen::Vector3d v    = rot.col(1);
 
-            const Eigen::Vector3d rel = obs->target_positions_odom[0] - obs->r_center_odom;
-            const double radius       = rel.norm();
+            const Eigen::Vector3d rel  = obs->target_positions_odom[0] - obs->r_center_odom;
+            const double radius        = rel.norm();
+            const double current_angle = std::atan2(rel.dot(v), rel.dot(u));
 
-            const double current_angle  = std::atan2(rel.dot(v), rel.dot(u));
-            const double predicted_roll = current_angle - v_roll * predict_dt_s;
+            // Compute predicted roll using rm_power_rune model semantics
+            double predicted_roll = current_angle;
+
+            if (direction == ::energy_meter::Direction::STABLE) {
+                // No rotation
+            } else if (cfg->is_big_rune && (*fitter)->isModelValid()) {
+                // Big rune: model-based prediction
+                double delta_angle =
+                    (*fitter)->predictDeltaAngle(relative_time, relative_time + predict_dt_s);
+
+                if (direction == ::energy_meter::Direction::ANTI_CLOCKWISE) {
+                    delta_angle = -delta_angle;
+                }
+                predicted_roll = current_angle + delta_angle;
+            } else if (!cfg->is_big_rune) {
+                // Small rune: constant speed rotation
+                double rotation_speed = cfg->fitter.small_rune_rotation_speed;
+                double delta_angle    = rotation_speed * predict_dt_s;
+                if (direction == ::energy_meter::Direction::ANTI_CLOCKWISE) {
+                    delta_angle = -delta_angle;
+                }
+                predicted_roll = current_angle + delta_angle;
+            } else {
+                // Big rune but model not yet valid: fall back to linear prediction
+                predicted_roll = current_angle + v_roll * predict_dt_s;
+            }
 
             const Eigen::Vector3d predicted_pos = obs->r_center_odom
                                                 + radius * std::cos(predicted_roll) * u
-                                                + radius * std::sin(predicted_roll) * v;
+                                                - radius * std::sin(predicted_roll) * v;
+
+            // ── Output ──
+
+            const auto model = (*fitter)->getModel();
 
             EnergyMeterState out;
             out.timestamp_ns = obs->timestamp_ns;
@@ -242,7 +182,7 @@ void register_energy_meter_systems(talos::Scheduler& scheduler, EnergyMeterL3Con
             out.blade_id                = (*tracker)->getCurrentBladeId();
             out.predicted_position_odom = predicted_pos;
             out.predicted_future_ns = obs->timestamp_ns + static_cast<uint64_t>(predict_dt_s * 1e9);
-            out.is_big_rune         = model.is_big_rune;
+            out.is_big_rune         = cfg->is_big_rune;
             out.model_valid         = model.is_valid;
             out.fit_error           = model.fit_error;
 

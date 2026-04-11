@@ -25,6 +25,9 @@ enum Measure : uint8_t {
     MEASURE_MAX,
 };
 
+enum class Direction { UNKNOWN, STABLE, ANTI_CLOCKWISE, CLOCKWISE };
+enum class Convexity { UNKNOWN, CONCAVE, CONVEX };
+
 inline double normalize_rad(double a) {
     a = std::fmod(a + M_PI, 2.0 * M_PI);
     if (a <= 0.0) {
@@ -66,38 +69,34 @@ struct ObservedFrame {
     bool is_valid{true};
 };
 
-struct AngleObservation {
-    double timestamp{};
-    double absolute_angle{};
-    double continuous_angle{};
-    double velocity{};
-    int blade_offset{};
-};
-
+/// Angle model fitted from observations.
+///
+/// Big rune:  θ(t) = -a·cos(ω·(t+t0)) + b·t + c
+///   params = [a, ω, t0, b, c]
+///
+/// Small rune: constant rotation_speed (rad/s)
 struct AngleModel {
     bool is_big_rune{false};
 
-    double sin_amplitude{0.9125};
-    double sin_omega{1.942};
-    double sin_phase{0.0};
-    double sin_offset{1.1775};
-    double sin_const_term{0.0};
+    // ── big rune 5-parameter model ──
+    double a{0.470};     // amplitude
+    double omega{1.942}; // angular frequency
+    double t0{0.0};      // phase offset (internal)
+    double b{1.178};     // linear drift
+    double c{0.0};       // constant term
 
-    double lin_omega{0.0};
-    double lin_offset{0.0};
+    // ── small rune ──
+    double rotation_speed{1.04719}; // rad/s (~60°/s)
 
+    // ── fit quality ──
     double fit_error{0.0};
-    double last_fit_time{0.0};
-    int data_points_used{0};
     bool is_valid{false};
+    int data_points_used{0};
+    double last_fit_time{0.0};
 
-    double current_phase{0.0};
+    // ── tracking state ──
     double last_continuous_angle{0.0};
     double last_observation_time{0.0};
-    double raw_velocity{0.0};
-
-    double filtered_velocity{0.0};
-    bool velocity_filter_valid{false};
 };
 
 struct PredictionResult {

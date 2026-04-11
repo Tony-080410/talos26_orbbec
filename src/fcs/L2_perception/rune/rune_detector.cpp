@@ -4,10 +4,7 @@
 
 #include <algorithm>
 #include <cmath>
-#include <fstream>
-#include <numeric>
 #include <ranges>
-#include <unordered_map>
 #include <vector>
 
 #include <opencv2/core/eigen.hpp>
