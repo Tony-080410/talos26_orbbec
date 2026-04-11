@@ -1,5 +1,6 @@
 #pragma once
 #include <cstdint>
+#include <fmt/base.h>
 #include <iomanip>
 #include <iostream>
 #include <string_view>
@@ -86,7 +87,7 @@ namespace fmt {
 template <>
 struct formatter<talos_gimbal::Color> : formatter<std::string_view> {
     auto format(talos_gimbal::Color c, format_context& ctx) const {
-        return formatter<std::string_view>::format(magic_enum::enum_name(c), ctx);
+        return format(magic_enum::enum_name(c), ctx);
     }
 };
 

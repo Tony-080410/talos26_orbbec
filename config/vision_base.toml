@@ -1,5 +1,5 @@
 backend_type = "Traditional"  # Options: "Traditional", "NeuralNetwork", "NeuralNetworkTup", "TensorRT", "Axera"
-default_detect_color = "Blue"
+default_detect_color = "Red"
 
 # Required if backend_type = "traditional"
 [traditional]
@@ -237,26 +237,33 @@ r = 100.0
 max_acc = 100.0
 
 [rune_detector]
-enabled = false
+enabled = true
 detect_color = "Red"
 arrow_threshold = 170
 target_threshold = 130
 rcenter_threshold = 120
 
 [energy_meter]
-# Rune type: true for big rune (sinusoidal model), false for small rune (linear)
+# Rune type: true for big rune (sinusoidal model), false for small rune (constant speed)
 is_big_rune = true
-# Control delay for predictive shooting (seconds)
+# Prediction delay (seconds): image latency + system delay
 control_delay_s = 0.5
 
-# Angle fitter configuration (velocity-based LSQ model fitting)
-[energy_meter.angle_fitter]
-# Velocity filter exponential smoothing factor (0-1)
-# Larger → smoother but laggier; smaller → more responsive but noisier
-smooth_alpha = 0.8
-# Minimum observations before fitting the angle model
-# Larger → more stable but slower convergence; smaller → faster but more noise
-min_data_points = 15
+# Angle fitter configuration (Ceres+RANSAC model fitting, migrated from rm_power_rune)
+[energy_meter.fitter]
+# Minimum observations before fitting
+min_fit_data_size = 20
+# Maximum stored observations (excess trimmed)
+max_fit_data_size = 1200
+# Initial big-rune parameters [a, omega, t0, b, c]
+# Model: θ(t) = -a·cos(ω·(t+t0)) + b·t + c
+initial_params = [0.470, 1.942, 0.0, 1.178, 0.0]
+# Small rune rotation speed (rad/s, ~60°/s)
+small_rune_rotation_speed = 1.04719
+# Direction voting frames needed
+direction_threshold = 3
+# Direction angle-difference threshold (rad)
+direction_angle_threshold = 0.015
 
 # ISRCKF tracker configuration for energy meter
 [energy_meter.tracker]

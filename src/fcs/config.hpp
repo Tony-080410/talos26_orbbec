@@ -56,9 +56,17 @@ struct RobotExtrinsicConfig {
 
 enum class RobotType { Infantry, Hero, Sentry, Drone };
 
+enum class McuBackend : uint8_t {
+    Usb,
+    Serial,
+};
+
 struct McuConfig {
+    McuBackend mcu_backend{McuBackend::Usb};
     uint16_t mcu_vendor_id{0x0483};
     std::optional<uint16_t> mcu_product_id{std::nullopt};
+    std::string serial_device{"/dev/ttyS4"};
+    int serial_baud_rate{115200};
     bool untrust_roll{true};
     bool dynamic_self_color{true};
     bool dynamic_bullet_speed{true};
@@ -106,6 +114,13 @@ template <>
 struct formatter<fcs::RobotType> : formatter<std::string_view> {
     auto format(fcs::RobotType type, format_context& ctx) const {
         return formatter<std::string_view>::format(magic_enum::enum_name(type), ctx);
+    }
+};
+
+template <>
+struct formatter<fcs::McuBackend> : formatter<std::string_view> {
+    auto format(fcs::McuBackend b, format_context& ctx) const {
+        return formatter<std::string_view>::format(magic_enum::enum_name(b), ctx);
     }
 };
 

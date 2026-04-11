@@ -12,8 +12,8 @@
 #include "euler.hpp"
 #include "frame.hpp"
 #include "scheduler/scheduler.hpp"
+#include "talos_gimbal/mcu_device.hpp"
 #include "talos_gimbal/packet.hpp"
-#include "talos_gimbal/stm32.hpp"
 
 #include <algorithm>
 #include <atomic>
@@ -150,12 +150,12 @@ struct DaedalusImu {
     }
 };
 
-using UsbDevice = talos_gimbal::Stm32Impl<talos_gimbal::Stm32Parser>;
+using McuHandle = talos_gimbal::McuDeviceHandle;
 static talos_gimbal::ReceiveImuData g_imu_data{};
 
-struct UsbImu {
+struct McuImu {
     McuConfig config;
-    std::shared_ptr<UsbDevice> device;
+    std::shared_ptr<McuHandle> device;
     talos_gimbal::ReceiveImuData* imu_data = nullptr;
     std::optional<uint32_t> last_mcu_timestamp_ms{};
 
@@ -217,7 +217,7 @@ struct UsbImu {
 };
 
 struct Imu {
-    std::variant<DaedalusImu, UsbImu> impl;
+    std::variant<DaedalusImu, McuImu> impl;
 
     void system(
         talos::res_mut<fast_tf::CoordinateSystem> tf_buffer,
@@ -273,16 +273,34 @@ std::expected<L1L2SetupResult, std::string> setup_l1(
         talos_gimbal::Stm32Parser::latest_imu = &g_imu_data;
 
         const auto& config = *hardware;
+        auto mcu_config    = config.mcu;
 
-        auto usb_device = std::make_shared<UsbDevice>();
-        auto mcu_config = config.mcu;
-        if (mcu_config->mcu_product_id) {
+        std::shared_ptr<McuHandle> mcu_device;
+        if (mcu_config->mcu_backend == fcs::McuBackend::Serial) {
             SPDLOG_INFO(
-                "connecting to USB {:#x}:{:#x}", mcu_config->mcu_vendor_id,
-                mcu_config->mcu_product_id);
+                "connecting to Serial {} @ {} baud", mcu_config->serial_device,
+                mcu_config->serial_baud_rate);
+            mcu_device =
+                McuHandle::create_serial(mcu_config->serial_device, mcu_config->serial_baud_rate);
+            if (!mcu_device) {
+                return std::unexpected("failed to connect serial device");
+            }
+            SPDLOG_INFO("connected to serial device");
         } else {
-            SPDLOG_INFO(
-                "connecting to USB {:#x} (product_id unspecified)", mcu_config->mcu_vendor_id);
+            if (mcu_config->mcu_product_id) {
+                SPDLOG_INFO(
+                    "connecting to USB {:#x}:{:#x}", mcu_config->mcu_vendor_id,
+                    mcu_config->mcu_product_id);
+            } else {
+                SPDLOG_INFO(
+                    "connecting to USB {:#x} (product_id unspecified)", mcu_config->mcu_vendor_id);
+            }
+            mcu_device =
+                McuHandle::create_usb(mcu_config->mcu_vendor_id, mcu_config->mcu_product_id);
+            if (!mcu_device) {
+                return std::unexpected("failed to connect USB device");
+            }
+            SPDLOG_INFO("connected to USB device");
         }
 
         SPDLOG_INFO("initializing hik input interface...");
@@ -291,17 +309,9 @@ std::expected<L1L2SetupResult, std::string> setup_l1(
             return std::unexpected(fmt::format("init hik input: {}", input_result.error()));
         }
 
-        SPDLOG_INFO("connecting to USB device...");
-        auto connect_result =
-            usb_device->connect(mcu_config->mcu_vendor_id, mcu_config->mcu_product_id);
-        if (!connect_result) {
-            return std::unexpected(fmt::format("connect USB device: {}", connect_result.error()));
-        }
-        SPDLOG_INFO("connected to USB device...");
-
         camera    = std::make_shared<fcs::L1::CameraInterface>(std::move(*input_result));
-        output    = std::make_shared<fcs::L1::OutputInterface>(fcs::L1::UsbOutput(usb_device));
-        imu->impl = UsbImu{mcu_config, usb_device, &g_imu_data};
+        output    = std::make_shared<fcs::L1::OutputInterface>(fcs::L1::McuOutput(mcu_device));
+        imu->impl = McuImu{mcu_config, mcu_device, &g_imu_data};
     }
 
     const auto& cam_info = camera->camera_info();

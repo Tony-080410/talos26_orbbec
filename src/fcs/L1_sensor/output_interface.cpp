@@ -1,7 +1,7 @@
 #include "L1_sensor/output_interface.hpp"
 #include "shm_client.hpp"
+#include "talos_gimbal/mcu_device.hpp"
 #include "talos_gimbal/packet.hpp"
-#include "talos_gimbal/stm32.hpp"
 
 #include <spdlog/spdlog.h>
 
@@ -28,14 +28,13 @@ void IpcOutput::send(const L5::WeaponCommand& cmd) const noexcept {
 }
 
 // ============================================================================
-// UsbOutput 实现
+// McuOutput 实现
 // ============================================================================
 
-UsbOutput::UsbOutput(
-    std::shared_ptr<talos_gimbal::Stm32Impl<talos_gimbal::Stm32Parser>> device) noexcept
+McuOutput::McuOutput(std::shared_ptr<talos_gimbal::McuDeviceHandle> device) noexcept
     : device_(std::move(device)) {}
 
-void UsbOutput::send(const L5::WeaponCommand& cmd) const noexcept {
+void McuOutput::send(const L5::WeaponCommand& cmd) const noexcept {
     if (!device_) {
         return;
     }
@@ -80,16 +79,24 @@ std::expected<OutputInterface, std::string>
 
 std::expected<OutputInterface, std::string> OutputInterface::create_usb(
     const uint16_t vendor_id, const std::optional<uint16_t> product_id) noexcept {
-    // 创建 STM32 设备 (libusb 枚举，不使用 device_path)
-    auto device = std::make_unique<talos_gimbal::Stm32Impl<talos_gimbal::Stm32Parser>>();
-
-    // 连接设备
-    if (const auto result = device->connect(vendor_id, product_id); !result) {
+    auto device = talos_gimbal::McuDeviceHandle::create_usb(vendor_id, product_id);
+    if (!device) {
         return std::unexpected("failed to connect USB device");
     }
 
     SPDLOG_INFO("[OutputInterface] USB mode connected");
-    return OutputInterface(UsbOutput(std::move(device)));
+    return OutputInterface(McuOutput(std::move(device)));
+}
+
+std::expected<OutputInterface, std::string>
+    OutputInterface::create_serial(const std::string& device_path, int baud_rate) noexcept {
+    auto device = talos_gimbal::McuDeviceHandle::create_serial(device_path, baud_rate);
+    if (!device) {
+        return std::unexpected("failed to connect serial device");
+    }
+
+    SPDLOG_INFO("[OutputInterface] Serial mode connected");
+    return OutputInterface(McuOutput(std::move(device)));
 }
 
 } // namespace fcs::L1
