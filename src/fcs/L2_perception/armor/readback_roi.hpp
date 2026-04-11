@@ -20,7 +20,7 @@
 
 namespace fcs::L2 {
 
-struct AtLegacyReadbackRoiConfig {
+struct ArmorReadbackRoiConfig {
     bool enabled{false};
     double stale_timeout_s{0.20};
     double margin_ratio_x{0.10};
@@ -28,7 +28,7 @@ struct AtLegacyReadbackRoiConfig {
     std::array<double, 3> box_size_m{0.8, 0.8, 0.6};
 };
 
-struct AtLegacyTrackerReadbackSnapshot {
+struct TrackerReadbackSnapshot {
     bool valid{false};
     uint64_t timestamp_ns{0};
     uint64_t projection_timestamp_ns{0};
@@ -37,16 +37,16 @@ struct AtLegacyTrackerReadbackSnapshot {
     L3::TrackerOutput tracker{};
 };
 
-class AtLegacyTrackerReadbackCache {
+class TrackerReadbackCache {
 public:
-    AtLegacyTrackerReadbackCache() noexcept = default;
+    TrackerReadbackCache() noexcept = default;
 
-    AtLegacyTrackerReadbackCache(const AtLegacyTrackerReadbackCache& other) noexcept {
+    TrackerReadbackCache(const TrackerReadbackCache& other) noexcept {
         std::scoped_lock lock(other.mutex_);
         snapshot_ = other.snapshot_;
     }
 
-    AtLegacyTrackerReadbackCache& operator=(const AtLegacyTrackerReadbackCache& other) noexcept {
+    TrackerReadbackCache& operator=(const TrackerReadbackCache& other) noexcept {
         if (this == &other) {
             return *this;
         }
@@ -56,12 +56,12 @@ public:
         return *this;
     }
 
-    AtLegacyTrackerReadbackCache(AtLegacyTrackerReadbackCache&& other) noexcept {
+    TrackerReadbackCache(TrackerReadbackCache&& other) noexcept {
         std::scoped_lock lock(other.mutex_);
         snapshot_ = other.snapshot_;
     }
 
-    AtLegacyTrackerReadbackCache& operator=(AtLegacyTrackerReadbackCache&& other) noexcept {
+    TrackerReadbackCache& operator=(TrackerReadbackCache&& other) noexcept {
         if (this == &other) {
             return *this;
         }
@@ -71,27 +71,27 @@ public:
         return *this;
     }
 
-    [[nodiscard]] AtLegacyTrackerReadbackSnapshot load() const noexcept {
+    [[nodiscard]] TrackerReadbackSnapshot load() const noexcept {
         std::scoped_lock lock(mutex_);
         return snapshot_;
     }
 
-    void store(const AtLegacyTrackerReadbackSnapshot& snapshot) noexcept {
+    void store(const TrackerReadbackSnapshot& snapshot) noexcept {
         std::scoped_lock lock(mutex_);
         snapshot_ = snapshot;
     }
 
     void invalidate(uint64_t timestamp_ns = 0) noexcept {
         std::scoped_lock lock(mutex_);
-        snapshot_ = AtLegacyTrackerReadbackSnapshot{.valid = false, .timestamp_ns = timestamp_ns};
+        snapshot_ = TrackerReadbackSnapshot{.valid = false, .timestamp_ns = timestamp_ns};
     }
 
 private:
     mutable std::mutex mutex_;
-    AtLegacyTrackerReadbackSnapshot snapshot_{};
+    TrackerReadbackSnapshot snapshot_{};
 };
 
-struct AtLegacyBackendInputResolution {
+struct BackendInputResolution {
     int width{0};
     int height{0};
 
@@ -103,7 +103,7 @@ struct AtLegacyBackendInputResolution {
 };
 
 [[nodiscard]] inline bool tracker_snapshot_is_fresh(
-    const AtLegacyTrackerReadbackSnapshot& snapshot, const AtLegacyReadbackRoiConfig& config,
+    const TrackerReadbackSnapshot& snapshot, const ArmorReadbackRoiConfig& config,
     uint64_t image_timestamp_ns) noexcept {
     if (!snapshot.valid || snapshot.timestamp_ns == 0
         || image_timestamp_ns < snapshot.timestamp_ns) {
@@ -120,7 +120,7 @@ struct AtLegacyBackendInputResolution {
 }
 
 [[nodiscard]] inline cv::Rect2f
-    expand_raw_roi(const cv::Rect2f& roi, const AtLegacyReadbackRoiConfig& config) noexcept {
+    expand_raw_roi(const cv::Rect2f& roi, const ArmorReadbackRoiConfig& config) noexcept {
     if (!is_valid_raw_roi(roi)) {
         return {};
     }
@@ -138,8 +138,8 @@ struct AtLegacyBackendInputResolution {
 }
 
 [[nodiscard]] inline std::optional<cv::Rect> resolve_readback_roi(
-    const cv::Size& frame_size, const cv::Rect2f& raw_roi, const AtLegacyReadbackRoiConfig& config,
-    const AtLegacyBackendInputResolution& input_resolution) noexcept {
+    const cv::Size& frame_size, const cv::Rect2f& raw_roi, const ArmorReadbackRoiConfig& config,
+    const BackendInputResolution& input_resolution) noexcept {
     if (frame_size.width <= 0 || frame_size.height <= 0 || !input_resolution.valid()
         || !is_valid_raw_roi(raw_roi)) {
         return std::nullopt;

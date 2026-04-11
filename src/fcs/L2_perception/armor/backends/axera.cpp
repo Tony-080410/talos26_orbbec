@@ -1,6 +1,6 @@
-#include "L2_perception/armor/backends/at_legacy_axera_backend.hpp"
+#include "L2_perception/armor/backends/axera.hpp"
 
-#include "L2_perception/armor/at_legacy_config.hpp"
+#include "L2_perception/armor/config.hpp"
 #include "core/types.hpp"
 
 #include <algorithm>
@@ -102,7 +102,7 @@ static constexpr std::array<ArmorName, 12> PAIR_TO_ARMOR{
 //   - Passing std::vector to C API is UB (undefined behavior)
 //
 // OWNERSHIP MODEL:
-//   - AtLegacyAxeraBackend class owns io_data_ (RAII)
+//   - AxeraBackend class owns io_data_ (RAII)
 //   - Destructor calls free_io() which calls delete[]
 //   - Move-only semantics prevent double-delete
 //   - Error paths clean up partial allocations
@@ -254,10 +254,10 @@ int clamp_int(int value, int lo, int hi) noexcept {
 
 } // namespace
 
-AtLegacyAxeraBackend::AtLegacyAxeraBackend(Config config)
+AxeraBackend::AxeraBackend(Config config)
     : config_(std::move(config)) {}
 
-AtLegacyAxeraBackend::~AtLegacyAxeraBackend() {
+AxeraBackend::~AxeraBackend() {
     if (handle_ != nullptr) {
         free_io(&io_data_);
         AX_ENGINE_DestroyHandle(handle_);
@@ -268,7 +268,7 @@ AtLegacyAxeraBackend::~AtLegacyAxeraBackend() {
     AX_SYS_Deinit();
 }
 
-AtLegacyAxeraBackend::AtLegacyAxeraBackend(AtLegacyAxeraBackend&& other) noexcept
+AxeraBackend::AxeraBackend(AxeraBackend&& other) noexcept
     : cached_grid_(std::move(other.cached_grid_))
     , postproc_ranked_buf_(std::move(other.postproc_ranked_buf_))
     , postproc_candidates_buf_(std::move(other.postproc_candidates_buf_))
@@ -300,7 +300,7 @@ AtLegacyAxeraBackend::AtLegacyAxeraBackend(AtLegacyAxeraBackend&& other) noexcep
     other.ivps_src_stride_      = 0;
 }
 
-AtLegacyAxeraBackend& AtLegacyAxeraBackend::operator=(AtLegacyAxeraBackend&& other) noexcept {
+AxeraBackend& AxeraBackend::operator=(AxeraBackend&& other) noexcept {
     if (this == &other) {
         return *this;
     }
@@ -350,15 +350,14 @@ AtLegacyAxeraBackend& AtLegacyAxeraBackend::operator=(AtLegacyAxeraBackend&& oth
 // Factory — Construction IS Initialization
 // ============================================================================
 
-std::expected<AtLegacyAxeraBackend, std::string>
-    AtLegacyAxeraBackend::create(Config config) noexcept {
+std::expected<AxeraBackend, std::string> AxeraBackend::create(Config config) noexcept {
     const auto& cfg = config;
     if (!std::filesystem::exists(cfg.model_path)) {
         SPDLOG_ERROR("[AxeraBackend] Model file not found: {}", cfg.model_path);
         return std::unexpected("Axera model file not found: " + cfg.model_path);
     }
 
-    AtLegacyAxeraBackend backend(std::move(config));
+    AxeraBackend backend(std::move(config));
 
     auto ret = AX_SYS_Init();
     if (ret != 0) {
@@ -477,7 +476,7 @@ std::expected<AtLegacyAxeraBackend, std::string>
     return backend;
 }
 
-AtLegacyAxeraBackend::PreprocContext AtLegacyAxeraBackend::preprocess(const cv::Mat& image) const {
+AxeraBackend::PreprocContext AxeraBackend::preprocess(const cv::Mat& image) const {
     PreprocContext ctx;
     ctx.orig_w        = image.cols;
     ctx.orig_h        = image.rows;
@@ -487,7 +486,7 @@ AtLegacyAxeraBackend::PreprocContext AtLegacyAxeraBackend::preprocess(const cv::
     return ctx;
 }
 
-void AtLegacyAxeraBackend::preprocess_image(const cv::Mat& image) {
+void AxeraBackend::preprocess_image(const cv::Mat& image) {
     auto* npu_input = static_cast<uint8_t*>(io_data_.pInputs[0].pVirAddr);
 
     cv::Mat npu_input_mat(config_.input_height, config_.input_width, CV_8UC3, npu_input);
@@ -499,7 +498,7 @@ void AtLegacyAxeraBackend::preprocess_image(const cv::Mat& image) {
     AX_SYS_MflushCache(io_data_.pInputs[0].phyAddr, npu_input, flush_size);
 }
 
-std::expected<void, std::string> AtLegacyAxeraBackend::init_ivps() noexcept {
+std::expected<void, std::string> AxeraBackend::init_ivps() noexcept {
     const auto ret = AX_IVPS_Init();
     if (ret != AX_SUCCESS) {
         SPDLOG_WARN(
@@ -519,7 +518,7 @@ std::expected<void, std::string> AtLegacyAxeraBackend::init_ivps() noexcept {
     return {};
 }
 
-void AtLegacyAxeraBackend::deinit_ivps() {
+void AxeraBackend::deinit_ivps() {
     if (!ivps_initialized_) {
         return;
     }
@@ -530,7 +529,7 @@ void AtLegacyAxeraBackend::deinit_ivps() {
 }
 
 std::expected<void, std::string>
-    AtLegacyAxeraBackend::allocate_ivps_buffers(int max_src_width, int max_src_height) noexcept {
+    AxeraBackend::allocate_ivps_buffers(int max_src_width, int max_src_height) noexcept {
     free_ivps_buffers();
 
     ivps_max_src_width_  = max_src_width;
@@ -563,7 +562,7 @@ std::expected<void, std::string>
     return {};
 }
 
-void AtLegacyAxeraBackend::free_ivps_buffers() {
+void AxeraBackend::free_ivps_buffers() {
     if (ivps_src_vir_addr_ != nullptr && ivps_src_phy_addr_ != 0) {
         AX_SYS_MemFree(ivps_src_phy_addr_, ivps_src_vir_addr_);
     }
@@ -573,7 +572,7 @@ void AtLegacyAxeraBackend::free_ivps_buffers() {
     ivps_src_stride_      = 0;
 }
 
-void AtLegacyAxeraBackend::preprocess_image_ivps(const cv::Mat& image) {
+void AxeraBackend::preprocess_image_ivps(const cv::Mat& image) {
     if (!ivps_initialized_) {
         static bool warned = false;
         if (!warned) {
@@ -658,7 +657,7 @@ void AtLegacyAxeraBackend::preprocess_image_ivps(const cv::Mat& image) {
     AX_SYS_MflushCache(io_data_.pInputs[0].phyAddr, io_data_.pInputs[0].pVirAddr, flush_size);
 }
 
-bool AtLegacyAxeraBackend::infer() {
+bool AxeraBackend::infer() {
     if (handle_ == nullptr) {
         return false;
     }
@@ -671,7 +670,7 @@ bool AtLegacyAxeraBackend::infer() {
     return true;
 }
 
-AtLegacyAxeraBackend::DecodeGrid AtLegacyAxeraBackend::build_decode_grid() const {
+AxeraBackend::DecodeGrid AxeraBackend::build_decode_grid() const {
     int total_anchors = 0;
     for (const int stride : config_.strides) {
         total_anchors += (config_.input_width / stride) * (config_.input_height / stride);
@@ -697,8 +696,8 @@ AtLegacyAxeraBackend::DecodeGrid AtLegacyAxeraBackend::build_decode_grid() const
     return grid;
 }
 
-std::vector<AtLegacyArmorDetection>
-    AtLegacyAxeraBackend::postprocess_concat_predecode(const PreprocContext& ctx) const {
+std::vector<ArmorDetection>
+    AxeraBackend::postprocess_concat_predecode(const PreprocContext& ctx) const {
     const auto total_start = std::chrono::high_resolution_clock::now();
 
     const int predecode_box_dim  = 4;
@@ -892,8 +891,8 @@ std::vector<AtLegacyArmorDetection>
     return result;
 }
 
-std::vector<AtLegacyArmorDetection> AtLegacyAxeraBackend::nms(
-    std::vector<DecodedCandidate>& detections, int orig_w, int orig_h) const {
+std::vector<ArmorDetection>
+    AxeraBackend::nms(std::vector<DecodedCandidate>& detections, int orig_w, int orig_h) const {
     if (detections.empty()) {
         return {};
     }
@@ -920,7 +919,7 @@ std::vector<AtLegacyArmorDetection> AtLegacyAxeraBackend::nms(
 
     nms_removed_buf_.assign(detections.size(), 0);
     auto& removed = nms_removed_buf_;
-    std::vector<AtLegacyArmorDetection> result;
+    std::vector<ArmorDetection> result;
     result.reserve(std::min(detections.size(), static_cast<size_t>(config_.top_k)));
 
     // Process detections in confidence order
@@ -930,7 +929,7 @@ std::vector<AtLegacyArmorDetection> AtLegacyAxeraBackend::nms(
             continue;
         }
 
-        AtLegacyArmorDetection det(
+        ArmorDetection det(
             detections[i].corners, detections[i].name, detections[i].color,
             detections[i].confidence);
         if (det.area <= 0) {
@@ -970,8 +969,7 @@ std::vector<AtLegacyArmorDetection> AtLegacyAxeraBackend::nms(
     return result;
 }
 
-AtLegacyAxeraBackend::DetectionResult
-    AtLegacyAxeraBackend::detect_impl(const cv::Mat& image) noexcept {
+AxeraBackend::DetectionResult AxeraBackend::detect_impl(const cv::Mat& image) noexcept {
     const auto total_start = std::chrono::high_resolution_clock::now();
 
     const auto ctx = preprocess(image);

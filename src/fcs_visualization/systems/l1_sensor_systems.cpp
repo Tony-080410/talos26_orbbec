@@ -155,7 +155,7 @@ void register_l1_sensor_systems(talos::scheduler::Scheduler& app) {
     app.add_system<talos::pool_compute>(
         "foxglove_l1_image_pub",
         [video_state = detail::QuantaPublisherState{}](
-            talos::spmc<AtLegacyArmorDetectionBatch, AtLegacyDetectionChannelTopic> det_in,
+            talos::spmc<ArmorDetectionBatch, DetectionChannelTopic> det_in,
             talos::res<std::shared_ptr<FoxgloveServer>> server, talos::res<CameraConfig> cam,
             talos::res<FoxgloveConfig> foxglove_cfg, core::detecting_color detecting_color_,
             talos::res<fast_tf::CoordinateSystem> tf_buffer) mutable {

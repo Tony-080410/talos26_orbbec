@@ -63,9 +63,9 @@ concept DetectorBackend = requires(T& t, const T& ct, const cv::Mat& image, Armo
 /// No try/catch here. detect_impl() is noexcept (enforced by concept),
 /// so this entire call chain is exception-free.
 template <typename Derived>
-class AtLegacyDetectorBackendBase {
+class DetectorBackendBase {
 public:
-    using DetectionResult = std::expected<std::vector<AtLegacyArmorDetection>, std::string>;
+    using DetectionResult = std::expected<std::vector<ArmorDetection>, std::string>;
 
     /// Detect armors in image — pure noexcept forwarding.
     [[nodiscard]] DetectionResult detect(const cv::Mat& image) noexcept {
@@ -73,8 +73,8 @@ public:
     }
 
 protected:
-    AtLegacyDetectorBackendBase()  = default;
-    ~AtLegacyDetectorBackendBase() = default;
+    DetectorBackendBase()  = default;
+    ~DetectorBackendBase() = default;
 };
 
 } // namespace fcs

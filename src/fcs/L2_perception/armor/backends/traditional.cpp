@@ -1,6 +1,6 @@
-#include "L2_perception/armor/backends/at_legacy_traditional_backend.hpp"
+#include "L2_perception/armor/backends/traditional.hpp"
 
-#include "L2_perception/armor/at_legacy_config.hpp"
+#include "L2_perception/armor/config.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -16,8 +16,7 @@ namespace fcs::L2 {
 // Factory — Construction IS Initialization
 // ============================================================================
 
-std::expected<AtLegacyTraditionalBackend, std::string>
-    AtLegacyTraditionalBackend::create(Config config) noexcept {
+std::expected<TraditionalBackend, std::string> TraditionalBackend::create(Config config) noexcept {
     const auto& cfg = config;
 
     // Validate: classifier model path must be provided
@@ -26,29 +25,27 @@ std::expected<AtLegacyTraditionalBackend, std::string>
     }
 
     // Create classifier via factory
-    auto classifier_result = AtLegacyTraditionalClassifier::create(
-        cfg.classifier_model_path, cfg.classifier_use_softmax);
+    auto classifier_result =
+        TraditionalClassifier::create(cfg.classifier_model_path, cfg.classifier_use_softmax);
     if (!classifier_result) {
         return std::unexpected(
             "[TraditionalBackend::create] Failed to create ONNX classifier for '"
             + cfg.classifier_model_path + "': " + classifier_result.error());
     }
 
-    AtLegacyTraditionalBackend backend(std::move(config));
-    backend.classifier_ =
-        std::make_unique<AtLegacyTraditionalClassifier>(std::move(*classifier_result));
+    TraditionalBackend backend(std::move(config));
+    backend.classifier_ = std::make_unique<TraditionalClassifier>(std::move(*classifier_result));
     return backend;
 }
 
-AtLegacyTraditionalBackend::AtLegacyTraditionalBackend(Config config) noexcept
+TraditionalBackend::TraditionalBackend(Config config) noexcept
     : config_{std::move(config)} {}
 
 // ============================================================================
 // Detection Entry Point
 // ============================================================================
 
-AtLegacyTraditionalBackend::DetectionResult
-    AtLegacyTraditionalBackend::detect_impl(const cv::Mat& input) noexcept {
+TraditionalBackend::DetectionResult TraditionalBackend::detect_impl(const cv::Mat& input) noexcept {
     if (input.empty()) {
         return std::unexpected("Empty image passed to traditional backend");
     }
@@ -93,7 +90,7 @@ AtLegacyTraditionalBackend::DetectionResult
         detections.erase(
             std::remove_if(
                 detections.begin(), detections.end(),
-                [&cfg](const AtLegacyArmorDetection& detection) {
+                [&cfg](const ArmorDetection& detection) {
                     // Filter by confidence threshold
                     if (detection.confidence < cfg.classifier_confidence_threshold) {
                         return true;
@@ -134,8 +131,8 @@ AtLegacyTraditionalBackend::DetectionResult
 // Preprocessing
 // ============================================================================
 
-cv::Mat AtLegacyTraditionalBackend::preprocess_image(
-    const cv::Mat& bgr_img, const AtLegacyTraditionalConfig& cfg) const noexcept {
+cv::Mat TraditionalBackend::preprocess_image(
+    const cv::Mat& bgr_img, const ArmorTraditionalConfig& cfg) const noexcept {
     if (!cfg.advanced_binary) {
         cv::Mat gray;
         cv::cvtColor(bgr_img, gray, cv::COLOR_BGR2GRAY);
@@ -175,20 +172,20 @@ cv::Mat AtLegacyTraditionalBackend::preprocess_image(
 // Light Detection
 // ============================================================================
 
-std::vector<AtLegacyLight> AtLegacyTraditionalBackend::find_lights(
+std::vector<Light> TraditionalBackend::find_lights(
     const cv::Mat& bgr_img, const cv::Mat& binary_img,
-    const AtLegacyTraditionalConfig& cfg) const noexcept {
+    const ArmorTraditionalConfig& cfg) const noexcept {
     std::vector<std::vector<cv::Point>> contours;
     cv::findContours(binary_img, contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_NONE);
 
-    std::vector<AtLegacyLight> lights;
+    std::vector<Light> lights;
     lights.reserve(contours.size());
 
     for (const auto& contour : contours) {
         if (contour.size() < 6)
             continue;
 
-        AtLegacyLight light(contour);
+        Light light(contour);
 
         if (is_light(light, cfg)) {
             // Determine color from contour pixels
@@ -210,15 +207,15 @@ std::vector<AtLegacyLight> AtLegacyTraditionalBackend::find_lights(
     }
 
     // Sort by x coordinate
-    std::ranges::sort(
-        lights.begin(), lights.end(),
-        [](const AtLegacyLight& l1, const AtLegacyLight& l2) { return l1.center.x < l2.center.x; });
+    std::ranges::sort(lights.begin(), lights.end(), [](const Light& l1, const Light& l2) {
+        return l1.center.x < l2.center.x;
+    });
 
     return lights;
 }
 
-bool AtLegacyTraditionalBackend::is_light(
-    const AtLegacyLight& light, const AtLegacyTraditionalConfig& cfg) const noexcept {
+bool TraditionalBackend::is_light(
+    const Light& light, const ArmorTraditionalConfig& cfg) const noexcept {
     // Check width/height ratio
     const float ratio   = static_cast<float>(light.width) / static_cast<float>(light.length);
     const bool ratio_ok = (cfg.light_min_ratio < ratio) && (ratio < cfg.light_max_ratio);
@@ -233,12 +230,12 @@ bool AtLegacyTraditionalBackend::is_light(
 // Armor Matching
 // ============================================================================
 
-std::vector<AtLegacyArmorDetection> AtLegacyTraditionalBackend::match_lights(
-    std::vector<AtLegacyLight>& lights, const AtLegacyTraditionalConfig& cfg,
+std::vector<ArmorDetection> TraditionalBackend::match_lights(
+    std::vector<Light>& lights, const ArmorTraditionalConfig& cfg,
     [[maybe_unused]] const cv::Mat gray_img) const noexcept {
     // Pre-allocate to avoid repeated reallocation in nested loop
     // Worst case: n*(n-1)/2 pairs where n = lights.size()
-    std::vector<AtLegacyArmorDetection> detections;
+    std::vector<ArmorDetection> detections;
     detections.reserve(lights.size() * (lights.size() - 1) / 2 + 16);
 
     // NOTE: Color filtering removed - detect all colors (RBGP)
@@ -282,8 +279,8 @@ std::vector<AtLegacyArmorDetection> AtLegacyTraditionalBackend::match_lights(
     return detections;
 }
 
-bool AtLegacyTraditionalBackend::contains_light(
-    size_t i, size_t j, const std::vector<AtLegacyLight>& lights) noexcept {
+bool TraditionalBackend::contains_light(
+    size_t i, size_t j, const std::vector<Light>& lights) noexcept {
     const auto& light_1 = lights[i];
     const auto& light_2 = lights[j];
 
@@ -315,9 +312,8 @@ bool AtLegacyTraditionalBackend::contains_light(
     return false;
 }
 
-ArmorType AtLegacyTraditionalBackend::is_armor(
-    const AtLegacyLight& light_1, const AtLegacyLight& light_2,
-    const AtLegacyTraditionalConfig& cfg) const noexcept {
+ArmorType TraditionalBackend::is_armor(
+    const Light& light_1, const Light& light_2, const ArmorTraditionalConfig& cfg) const noexcept {
     // Check light length ratio
     const float light_length_ratio = (light_1.length < light_2.length)
                                        ? static_cast<float>(light_1.length / light_2.length)
@@ -354,7 +350,7 @@ ArmorType AtLegacyTraditionalBackend::is_armor(
 // Number Extraction (Perspective Transform + OTSU Binarization)
 // ============================================================================
 
-cv::Mat AtLegacyTraditionalBackend::extract_number(
+cv::Mat TraditionalBackend::extract_number(
     const cv::Mat& src, const std::array<cv::Point2f, 4>& lights_vertices,
     ArmorType armor_type) const noexcept {
     // Light length in image

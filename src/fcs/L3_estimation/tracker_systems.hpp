@@ -13,7 +13,7 @@ struct TrackerConfig;
 /// Register L3 tracker pipeline systems
 ///
 /// Pipeline:
-///   AtLegacyArmorMeasurementBatch [SPMC] -> TrackerSystem [pool_compute]
+///   ArmorMeasurementBatch [SPMC] -> TrackerSystem [pool_compute]
 ///                                               ↓
 ///                                        TrackerOutput [SPMC]
 ///

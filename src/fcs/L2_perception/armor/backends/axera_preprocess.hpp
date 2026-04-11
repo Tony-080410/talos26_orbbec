@@ -8,7 +8,7 @@
 
 namespace fcs::L2 {
 
-struct AtLegacyAxeraLetterboxGeometry {
+struct AxeraLetterboxGeometry {
     float ratio   = 1.0f;
     int orig_w    = 0;
     int orig_h    = 0;
@@ -20,9 +20,9 @@ struct AtLegacyAxeraLetterboxGeometry {
     int bottom    = 0;
 };
 
-[[nodiscard]] inline AtLegacyAxeraLetterboxGeometry
+[[nodiscard]] inline AxeraLetterboxGeometry
     compute_axera_letterbox_geometry(int orig_w, int orig_h, int input_w, int input_h) {
-    AtLegacyAxeraLetterboxGeometry geometry;
+    AxeraLetterboxGeometry geometry;
     geometry.orig_w = orig_w;
     geometry.orig_h = orig_h;
 
@@ -43,14 +43,14 @@ struct AtLegacyAxeraLetterboxGeometry {
 }
 
 [[nodiscard]] inline int
-    select_axera_resize_interpolation(const AtLegacyAxeraLetterboxGeometry& geometry) noexcept {
+    select_axera_resize_interpolation(const AxeraLetterboxGeometry& geometry) noexcept {
     const bool is_downsampling =
         geometry.resized_w < geometry.orig_w || geometry.resized_h < geometry.orig_h;
     return is_downsampling ? cv::INTER_AREA : cv::INTER_LINEAR;
 }
 
 inline void preprocess_axera_letterbox_to_rgb(
-    const cv::Mat& image, const AtLegacyAxeraLetterboxGeometry& geometry, cv::Mat& dst_rgb,
+    const cv::Mat& image, const AxeraLetterboxGeometry& geometry, cv::Mat& dst_rgb,
     cv::Mat& resize_scratch_bgr, const cv::Scalar& pad_color = cv::Scalar(114, 114, 114)) {
     dst_rgb.setTo(pad_color);
 

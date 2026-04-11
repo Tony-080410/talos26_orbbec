@@ -61,12 +61,11 @@ public:
     /// Batch update: process all trackers (matching original singleton semantics)
     /// - All non-Idle trackers: predict(dt)
     /// - All trackers: update() (handles both found/not found via state_machine)
-    [[nodiscard]] TrackerOutputs update_all(const AtLegacyArmorMeasurementBatch& measurements) {
+    [[nodiscard]] TrackerOutputs update_all(const ArmorMeasurementBatch& measurements) {
         TrackerOutputs updated_outputs;
 
         // Group measurements by (name, color) for routing
-        std::unordered_map<core::TargetKey, AtLegacyArmorMeasurementBatch, core::TargetKeyHash>
-            grouped;
+        std::unordered_map<core::TargetKey, ArmorMeasurementBatch, core::TargetKeyHash> grouped;
         for (const auto& meas : measurements.measurements) {
             const core::TargetKey key{meas.name, meas.color};
             grouped[key].measurements.push_back(meas);
@@ -106,7 +105,7 @@ public:
             } else {
                 // No measurements: still call update to handle lost tracking
                 // Build empty batch for state_machine to process "not found"
-                AtLegacyArmorMeasurementBatch empty_batch;
+                ArmorMeasurementBatch empty_batch;
                 empty_batch.timestamp_ns = measurements.timestamp_ns;
                 empty_batch.frame_id     = measurements.frame_id;
                 (void)tracker->update(empty_batch);

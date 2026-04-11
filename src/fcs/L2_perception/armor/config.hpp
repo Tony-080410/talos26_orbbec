@@ -1,6 +1,6 @@
 #pragma once
 
-#include "L2_perception/armor/at_legacy_readback_roi.hpp"
+#include "L2_perception/armor/readback_roi.hpp"
 #include "core/armor_types.hpp"
 
 #include <string>
@@ -8,17 +8,17 @@
 
 namespace fcs::L2 {
 
-enum class AtLegacyBackendTypeConfig : int {
+enum class ArmorBackendType : int {
     Traditional = 0,
 #if TALOS_HAS_OPENVINO
-    NeuralNetwork    = 1, // AT model (YOLO11-pose)
-    NeuralNetworkTup = 2, // TUP model (YOLOX multi-scale)
+    OpenVINO    = 1, // AT model (YOLO11-pose)
+    OpenVINOTup = 2, // TUP model (YOLOX multi-scale)
 #endif
 #if TALOS_HAS_TENSORRT
-    TensorRT = 3,         // TensorRT backend (GPU-accelerated)
+    TensorRT = 3,    // TensorRT backend (GPU-accelerated)
 #endif
 #if TALOS_HAS_AXERA
-    Axera = 4,            // Axera AX650 NPU backend
+    Axera = 4,       // Axera AX650 NPU backend
 #endif
 };
 
@@ -26,7 +26,7 @@ enum class AtLegacyBackendTypeConfig : int {
 // AT Legacy Traditional Backend Config
 // ============================================================================
 
-struct AtLegacyTraditionalConfig {
+struct ArmorTraditionalConfig {
     bool advanced_binary = false;
     float dark_percentage{0.5};
     int binary_threshold{};
@@ -56,7 +56,7 @@ struct AtLegacyTraditionalConfig {
 // AT Legacy NN Backend Config
 // ============================================================================
 
-struct AtLegacyNNConfig {
+struct ArmorOpenVinoConfig {
     std::string model_path{};
     std::string device{};
     std::string device_priorities{};
@@ -72,7 +72,7 @@ struct AtLegacyNNConfig {
 // AT Legacy NN TUP Backend Config (YOLOX multi-scale)
 // ============================================================================
 
-struct AtLegacyNNTupConfig {
+struct ArmorOpenVinoTupConfig {
     std::string model_path{};
     std::string device{};
     std::string device_priorities{};
@@ -88,7 +88,7 @@ struct AtLegacyNNTupConfig {
 // AT Legacy TRT Backend Config (TensorRT)
 // ============================================================================
 
-struct AtLegacyTrtConfig {
+struct ArmorTensorRtConfig {
     std::string engine_path{};
     std::string model_path{};
     std::string engine_cache_dir{};
@@ -113,7 +113,7 @@ struct AtLegacyTrtConfig {
 // AT Legacy Axera Backend Config (AX650 NPU)
 // ============================================================================
 
-struct AtLegacyAxeraConfig {
+struct ArmorAxeraConfig {
     std::string model_path{};
 
     // Model input dimensions
@@ -136,15 +136,15 @@ struct AtLegacyAxeraConfig {
 // AT Legacy Full Config
 // ============================================================================
 
-struct AtLegacyConfig {
-    AtLegacyBackendTypeConfig backend_type;
+struct ArmorDetectorConfig {
+    ArmorBackendType backend_type;
     ArmorColor default_detect_color; // 0=BLUE, 1=RED
-    AtLegacyTraditionalConfig traditional;
-    AtLegacyNNConfig nn;
-    AtLegacyNNTupConfig nn_tup;
-    AtLegacyTrtConfig trt;
-    AtLegacyAxeraConfig axera;
-    AtLegacyReadbackRoiConfig readback_roi;
+    ArmorTraditionalConfig traditional;
+    ArmorOpenVinoConfig openvino;
+    ArmorOpenVinoTupConfig openvino_tup;
+    ArmorTensorRtConfig tensor_rt;
+    ArmorAxeraConfig axera;
+    ArmorReadbackRoiConfig readback_roi;
 };
 
 } // namespace fcs::L2

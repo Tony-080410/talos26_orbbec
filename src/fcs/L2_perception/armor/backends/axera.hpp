@@ -1,7 +1,7 @@
 #pragma once
 
-#include "../at_legacy_config.hpp"
-#include "at_legacy_detector_backend_base.hpp"
+#include "../config.hpp"
+#include "base.hpp"
 #include "core/armor_types.hpp"
 
 #include <array>
@@ -29,23 +29,22 @@ namespace fcs::L2 {
 /// Neural network detection backend using AX650 NPU
 /// Implements RAII for AX engine resources
 /// Construction IS initialization — no separate init() needed.
-class AtLegacyAxeraBackend : public AtLegacyDetectorBackendBase<AtLegacyAxeraBackend> {
+class AxeraBackend : public DetectorBackendBase<AxeraBackend> {
 public:
-    using DetectionResult = std::expected<std::vector<AtLegacyArmorDetection>, std::string>;
-    using Config          = AtLegacyAxeraConfig;
+    using DetectionResult = std::expected<std::vector<ArmorDetection>, std::string>;
+    using Config          = ArmorAxeraConfig;
 
     /// Factory: construct a fully-initialized backend (load model onto NPU).
     /// Construction IS initialization — no separate init() needed.
-    [[nodiscard]] static std::expected<AtLegacyAxeraBackend, std::string>
-        create(Config config) noexcept;
+    [[nodiscard]] static std::expected<AxeraBackend, std::string> create(Config config) noexcept;
 
-    ~AtLegacyAxeraBackend();
+    ~AxeraBackend();
 
     // Move-only (AX engine resources are non-copyable)
-    AtLegacyAxeraBackend(AtLegacyAxeraBackend&&) noexcept;
-    AtLegacyAxeraBackend& operator=(AtLegacyAxeraBackend&&) noexcept;
-    AtLegacyAxeraBackend(const AtLegacyAxeraBackend&)            = delete;
-    AtLegacyAxeraBackend& operator=(const AtLegacyAxeraBackend&) = delete;
+    AxeraBackend(AxeraBackend&&) noexcept;
+    AxeraBackend& operator=(AxeraBackend&&) noexcept;
+    AxeraBackend(const AxeraBackend&)            = delete;
+    AxeraBackend& operator=(const AxeraBackend&) = delete;
 
     /// Detect armors in image (synchronous)
     [[nodiscard]] DetectionResult detect_impl(const cv::Mat& image) noexcept;
@@ -58,7 +57,7 @@ public:
 
 private:
     /// Private constructor — use create() factory
-    explicit AtLegacyAxeraBackend(Config config);
+    explicit AxeraBackend(Config config);
 
     /// Direct-resize preprocessing context.
     struct PreprocContext {
@@ -114,11 +113,11 @@ private:
     mutable std::array<std::vector<int>, TILE_GRID_SIZE * TILE_GRID_SIZE> nms_tile_bins_buf_;
 
     /// Decode and postprocess single-output concat-predecode tensor.
-    [[nodiscard]] std::vector<AtLegacyArmorDetection>
+    [[nodiscard]] std::vector<ArmorDetection>
         postprocess_concat_predecode(const PreprocContext& ctx) const;
 
     /// Tile-based NMS on pts corner points.
-    [[nodiscard]] std::vector<AtLegacyArmorDetection>
+    [[nodiscard]] std::vector<ArmorDetection>
         nms(std::vector<DecodedCandidate>& detections, int orig_w, int orig_h) const;
 
 private:

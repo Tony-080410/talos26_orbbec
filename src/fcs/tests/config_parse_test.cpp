@@ -89,7 +89,7 @@ TEST(ConfigParse, VisionBaseTomlMatchesExpectedSemanticsAndValues) {
     ASSERT_TRUE(result.has_value()) << result.error();
     const auto& config = *result;
 
-    EXPECT_EQ(config.at_legacy->backend_type, fcs::L2::AtLegacyBackendTypeConfig::NeuralNetworkTup);
+    EXPECT_EQ(config.at_legacy->backend_type, fcs::L2::BackendTypeConfig::NeuralNetworkTup);
     EXPECT_EQ(config.at_legacy->default_detect_color, fcs::ArmorColor::Blue);
 
     EXPECT_FALSE(config.at_legacy->traditional.advanced_binary);

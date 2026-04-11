@@ -1,6 +1,6 @@
 #pragma once
 
-#include "../at_legacy_detector_backend.hpp"
+#include "../backend.hpp"
 #include "core/types.hpp"
 
 #include <expected>
@@ -17,20 +17,20 @@ namespace fcs::L2 {
 
 /// OpenCV DNN-based ONNX classifier for armor number classification
 /// Supports LeNet and MLP models with typical ONNX format
-class AtLegacyTraditionalClassifier {
+class TraditionalClassifier {
 public:
     using ClassifyResult = std::expected<ArmorName, std::string>;
 
     /// Factory: load ONNX model and return fully-initialized classifier.
     /// Construction IS initialization — no separate init() needed.
-    [[nodiscard]] static std::expected<AtLegacyTraditionalClassifier, std::string>
+    [[nodiscard]] static std::expected<TraditionalClassifier, std::string>
         create(std::string_view model_path, bool use_softmax = true) noexcept;
 
     // Move-only (cv::dnn::Net is movable)
-    AtLegacyTraditionalClassifier(AtLegacyTraditionalClassifier&&) noexcept            = default;
-    AtLegacyTraditionalClassifier& operator=(AtLegacyTraditionalClassifier&&) noexcept = default;
-    AtLegacyTraditionalClassifier(const AtLegacyTraditionalClassifier&)                = delete;
-    AtLegacyTraditionalClassifier& operator=(const AtLegacyTraditionalClassifier&)     = delete;
+    TraditionalClassifier(TraditionalClassifier&&) noexcept            = default;
+    TraditionalClassifier& operator=(TraditionalClassifier&&) noexcept = default;
+    TraditionalClassifier(const TraditionalClassifier&)                = delete;
+    TraditionalClassifier& operator=(const TraditionalClassifier&)     = delete;
 
     /// Classify a single armor image (preprocessed: 20x28 grayscale OTSU-binary, normalized [0,1])
     /// Returns the predicted ArmorName and updates confidence_out with confidence score
@@ -38,8 +38,7 @@ public:
         classify(const cv::Mat& number_img, float& confidence_out) const noexcept;
 
 private:
-    AtLegacyTraditionalClassifier(
-        std::string model_path, bool use_softmax, cv::dnn::Net net) noexcept
+    TraditionalClassifier(std::string model_path, bool use_softmax, cv::dnn::Net net) noexcept
         : model_path_(std::move(model_path))
         , net_(std::move(net))
         , use_softmax_(use_softmax) {}

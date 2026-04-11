@@ -1,7 +1,7 @@
 #include "L4_planning/aimer/aimer_systems.hpp"
 #include "L4_planning/aimer/aimer.hpp"
 
-#include "L2_perception/armor/at_legacy_readback_roi.hpp"
+#include "L2_perception/armor/readback_roi.hpp"
 #include "L3_estimation/energy_meter/types.hpp"
 #include "L3_estimation/tracker/types.hpp"
 #include "L4_planning/aimer/types.hpp"
@@ -405,11 +405,11 @@ void update_phase_fsm(
 
 void register_aimer_systems(talos::Scheduler& scheduler, L4Config&& config) {
     auto& world = scheduler.world();
-    if (!world.has_resource<L2::AtLegacyReadbackRoiConfig>()) {
-        world.insert_resource(L2::AtLegacyReadbackRoiConfig{});
+    if (!world.has_resource<L2::ArmorReadbackRoiConfig>()) {
+        world.insert_resource(L2::ArmorReadbackRoiConfig{});
     }
-    if (!world.has_resource<L2::AtLegacyTrackerReadbackCache>()) {
-        world.insert_resource(L2::AtLegacyTrackerReadbackCache{});
+    if (!world.has_resource<L2::TrackerReadbackCache>()) {
+        world.insert_resource(L2::TrackerReadbackCache{});
     }
 
     world.insert_resource(Aimer(config.aimer));
@@ -729,8 +729,8 @@ void register_aimer_systems(talos::Scheduler& scheduler, L4Config&& config) {
         "l4_optimal_target_readback_roi",
         [](talos::spmc<SelectedTargetSnapshot, SelectedTargetSnapshotChannelTopic>
                selected_target_in,
-           talos::res<L2::AtLegacyReadbackRoiConfig> readback_roi_config,
-           talos::res_mut<L2::AtLegacyTrackerReadbackCache> readback_cache) {
+           talos::res<L2::ArmorReadbackRoiConfig> readback_roi_config,
+           talos::res_mut<L2::TrackerReadbackCache> readback_cache) {
             auto has_readback_tracker = [](const SelectedTargetSnapshot& snapshot) noexcept {
                 return snapshot.source == GimbalPlanSource::Armor
                     && tracker_supports_readback_roi(snapshot.tracker);
@@ -751,7 +751,7 @@ void register_aimer_systems(talos::Scheduler& scheduler, L4Config&& config) {
 
             const auto roi_timestamps = resolve_readback_roi_timestamps(*selected_target);
             readback_cache->store(
-                L2::AtLegacyTrackerReadbackSnapshot{
+                L2::TrackerReadbackSnapshot{
                     .valid                   = true,
                     .timestamp_ns            = roi_timestamps.freshness_timestamp_ns,
                     .projection_timestamp_ns = roi_timestamps.projection_timestamp_ns,

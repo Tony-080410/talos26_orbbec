@@ -1,4 +1,4 @@
-backend_type = "Traditional"  # Options: "Traditional", "NeuralNetwork", "NeuralNetworkTup", "TensorRT", "Axera"
+backend_type = "Traditional"  # Options: "Traditional", "OpenVINO", "OpenVINOTup", "TensorRT", "Axera"
 default_detect_color = "Red"
 
 # Required if backend_type = "traditional"
@@ -24,7 +24,7 @@ classifier_enable_type_filtering = true
 classifier_use_softmax = true
 
 # Required if backend_type = "nn"
-[nn]
+[openvino]
 model_path = "models/best.onnx"
 device = "CPU"
 device_priorities = ""
@@ -34,7 +34,7 @@ confidence_threshold = 0.75
 nms_threshold = 0.30
 top_k = 128
 
-[nn_tup]
+[openvino_tup]
 model_path = "models/opt-1208-001.onnx"
 device = "CPU"
 device_priorities = ""
@@ -45,7 +45,7 @@ nms_threshold = 0.30
 top_k = 128
 
 # Required if backend_type = "TensorRT"
-[trt]
+[tensor_rt]
 model_path = "models/best_fp16.onnx"  # Path to ONNX model (will be compiled to TensorRT engine)
 engine_path = "models/best_fp16_sm87_fp16.engine"  # Optional: Path to pre-built TensorRT engine (.engine file)
 engine_cache_dir = "/tmp/tensorrt_cache"  # Directory for caching compiled engines

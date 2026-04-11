@@ -87,11 +87,9 @@ void register_test_producer(talos::Scheduler& scheduler, ProducerMode mode) {
     scheduler.add_system<talos::fixed_rate<20>>(
         "capturer_test_producer",
         [mode, start_ns = fcs::clock::now_ns()](
-            talos::spmc_mut<fcs::AtLegacyImageFrame, fcs::AtLegacyImageChannelTopic> image_out,
-            talos::spmc_mut<fcs::AtLegacyArmorDetectionBatch, fcs::AtLegacyDetectionChannelTopic>
-                detection_out,
-            talos::spmc_mut<
-                fcs::AtLegacyArmorMeasurementBatch, fcs::AtLegacyMeasurementChannelTopic>
+            talos::spmc_mut<fcs::ImageFrame, fcs::ImageChannelTopic> image_out,
+            talos::spmc_mut<fcs::ArmorDetectionBatch, fcs::DetectionChannelTopic> detection_out,
+            talos::spmc_mut<fcs::ArmorMeasurementBatch, fcs::MeasurementChannelTopic>
                 measurement_out,
             talos::spmc_mut<fcs::L3::TrackerOutputs, fcs::TrackerOutputChannelTopic> tracker_out,
             talos::spmc_mut<fcs::rune::RuneObservation, fcs::RuneObservationChannelTopic>
@@ -117,7 +115,7 @@ void register_test_producer(talos::Scheduler& scheduler, ProducerMode mode) {
             const cv::Scalar color = stale_phase ? cv::Scalar(255, 0, 0) : cv::Scalar(0, 0, 255);
             cv::Mat image(4, 4, CV_8UC3, color);
 
-            image_out.write(fcs::AtLegacyImageFrame{image.clone(), now_ns, camera_frame});
+            image_out.write(fcs::ImageFrame{image.clone(), now_ns, camera_frame});
 
             const bool publish_detector = [&]() {
                 switch (mode) {
@@ -132,8 +130,8 @@ void register_test_producer(talos::Scheduler& scheduler, ProducerMode mode) {
             std::optional<fcs::L3::TrackerOutput> selected_tracker;
             if (publish_detector) {
                 detection_out.write(
-                    fcs::AtLegacyArmorDetectionBatch{{}, image.clone(), now_ns, camera_frame});
-                measurement_out.write(fcs::AtLegacyArmorMeasurementBatch{{}, now_ns, camera_frame});
+                    fcs::ArmorDetectionBatch{{}, image.clone(), now_ns, camera_frame});
+                measurement_out.write(fcs::ArmorMeasurementBatch{{}, now_ns, camera_frame});
 
                 fcs::L3::TrackerOutputs trackers;
                 fcs::L3::TrackerOutput tracker;

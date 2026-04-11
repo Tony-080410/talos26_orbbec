@@ -34,9 +34,9 @@ protected:
     TrackerConfig config_;
 
     // Helper: Create a simple measurement for testing
-    [[nodiscard]] AtLegacyArmorMeasurement
+    [[nodiscard]] ArmorMeasurement
         create_measurement(ArmorName name, ArmorColor color, float distance = 5.0f) {
-        AtLegacyArmorMeasurement meas;
+        ArmorMeasurement meas;
         meas.name                     = name;
         meas.color                    = color;
         meas.distance_to_image_center = distance;
@@ -46,9 +46,9 @@ protected:
     }
 
     // Helper: Create a measurement batch for testing
-    [[nodiscard]] AtLegacyArmorMeasurementBatch
-        create_batch(const std::vector<AtLegacyArmorMeasurement>& measurements) {
-        AtLegacyArmorMeasurementBatch batch;
+    [[nodiscard]] ArmorMeasurementBatch
+        create_batch(const std::vector<ArmorMeasurement>& measurements) {
+        ArmorMeasurementBatch batch;
         batch.timestamp_ns = 1000000; // 1ms
         batch.frame_id     = 42;
         batch.measurements = measurements;

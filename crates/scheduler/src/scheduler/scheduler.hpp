@@ -107,8 +107,8 @@ using namespace system;
  * World world;
  * Scheduler scheduler(world);
  *
- * scheduler.add_system<fixed_rate<30>>("camera", [](talos::spmc_mut<fcs::AtLegacyImageFrame,
- * fcs::AtLegacyImageChannelTopic> cam_out) {
+ * scheduler.add_system<fixed_rate<30>>("camera", [](talos::spmc_mut<fcs::ImageFrame,
+ * fcs::ImageChannelTopic> cam_out) {
  *     // Process camera input, write to channel
  *     cam_out.write(...);
  * });

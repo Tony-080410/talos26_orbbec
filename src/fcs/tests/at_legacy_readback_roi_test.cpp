@@ -1,13 +1,13 @@
 #include <gtest/gtest.h>
 
-#include "L2_perception/armor/at_legacy_readback_roi.hpp"
+#include "L2_perception/armor/readback_roi.hpp"
 
 namespace {
 
-TEST(AtLegacyReadbackRoi, ResolveMaintainsAspectAndMinimumSize) {
+TEST(ReadbackRoi, ResolveMaintainsAspectAndMinimumSize) {
     const cv::Size frame_size(1440, 1080);
     const cv::Rect2f raw_roi(100.0f, 120.0f, 80.0f, 40.0f);
-    fcs::L2::AtLegacyReadbackRoiConfig config;
+    fcs::L2::ReadbackRoiConfig config;
     config.margin_ratio_x = 0.10;
     config.margin_ratio_y = 0.10;
 
@@ -24,10 +24,10 @@ TEST(AtLegacyReadbackRoi, ResolveMaintainsAspectAndMinimumSize) {
     EXPECT_LE(resolved->y + resolved->height, frame_size.height);
 }
 
-TEST(AtLegacyReadbackRoi, ResolveShiftsOutOfBoundsRoiBackIntoFrame) {
+TEST(ReadbackRoi, ResolveShiftsOutOfBoundsRoiBackIntoFrame) {
     const cv::Size frame_size(1440, 1080);
     const cv::Rect2f raw_roi(1300.0f, 900.0f, 120.0f, 120.0f);
-    fcs::L2::AtLegacyReadbackRoiConfig config;
+    fcs::L2::ReadbackRoiConfig config;
     config.margin_ratio_x = 0.0;
     config.margin_ratio_y = 0.0;
 
@@ -39,17 +39,17 @@ TEST(AtLegacyReadbackRoi, ResolveShiftsOutOfBoundsRoiBackIntoFrame) {
     EXPECT_EQ(resolved->y + resolved->height, frame_size.height);
 }
 
-TEST(AtLegacyReadbackRoi, ResolveReturnsNulloptWhenMinInputCannotFitFrame) {
+TEST(ReadbackRoi, ResolveReturnsNulloptWhenMinInputCannotFitFrame) {
     const cv::Size frame_size(640, 480);
     const cv::Rect2f raw_roi(10.0f, 10.0f, 50.0f, 50.0f);
     const auto resolved = fcs::L2::resolve_readback_roi(
-        frame_size, raw_roi, fcs::L2::AtLegacyReadbackRoiConfig{}, {.width = 896, .height = 672});
+        frame_size, raw_roi, fcs::L2::ReadbackRoiConfig{}, {.width = 896, .height = 672});
     EXPECT_FALSE(resolved.has_value());
 }
 
-TEST(AtLegacyReadbackRoi, ExpandUsesIndependentMarginsForXAndY) {
+TEST(ReadbackRoi, ExpandUsesIndependentMarginsForXAndY) {
     const cv::Rect2f raw_roi(100.0f, 200.0f, 50.0f, 80.0f);
-    fcs::L2::AtLegacyReadbackRoiConfig config;
+    fcs::L2::ReadbackRoiConfig config;
     config.margin_ratio_x = 0.20;
     config.margin_ratio_y = 0.50;
 
@@ -60,7 +60,7 @@ TEST(AtLegacyReadbackRoi, ExpandUsesIndependentMarginsForXAndY) {
     EXPECT_FLOAT_EQ(expanded.height, 160.0f);
 }
 
-TEST(AtLegacyReadbackRoi, ProjectBoxToImageProducesFiniteRoi) {
+TEST(ReadbackRoi, ProjectBoxToImageProducesFiniteRoi) {
     fcs::CameraConfig camera_config;
     camera_config.camera_matrix << 100.0, 0.0, 50.0, 0.0, 100.0, 60.0, 0.0, 0.0, 1.0;
 

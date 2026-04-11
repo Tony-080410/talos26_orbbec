@@ -147,10 +147,10 @@ node.finalize(); // 完成注册
 ### 5 级流水线数据流
 
 ```
-L1 (Sensor)     → AtLegacyImageFrame [SPMC]
+L1 (Sensor)     → ImageFrame [SPMC]
                      ↓
-L2 (Perception) → AtLegacyArmorDetectionBatch [SPMC]
-                 → AtLegacyArmorMeasurementBatch [SPMC]
+L2 (Perception) → ArmorDetectionBatch [SPMC]
+                 → ArmorMeasurementBatch [SPMC]
                      ↓
 L3 (Estimation) → TrackerOutput [SPMC]
                      ↓

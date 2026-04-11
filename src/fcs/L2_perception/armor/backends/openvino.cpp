@@ -1,7 +1,7 @@
-#include "L2_perception/armor/backends/at_legacy_nn_backend.hpp"
+#include "L2_perception/armor/backends/openvino.hpp"
 
-#include "L2_perception/armor/at_legacy_config.hpp"
-#include "L2_perception/common/at_legacy_geometry.hpp"
+#include "L2_perception/armor/config.hpp"
+#include "L2_perception/common/geometry.hpp"
 #include "core/types.hpp"
 
 #include <algorithm>
@@ -19,7 +19,7 @@ namespace fcs::L2 {
 // PIMPL Implementation
 // ============================================================================
 
-struct AtLegacyNNBackend::Impl {
+struct NNBackend::Impl {
     ov::Core core;
     std::shared_ptr<ov::Model> model;
     ov::CompiledModel compiled;
@@ -30,18 +30,18 @@ struct AtLegacyNNBackend::Impl {
 // Constructor / Destructor
 // ============================================================================
 
-AtLegacyNNBackend::AtLegacyNNBackend(Config config) noexcept
+NNBackend::NNBackend(Config config) noexcept
     : config_{std::move(config)}
     , impl_(std::make_unique<Impl>()) {}
 
-AtLegacyNNBackend::~AtLegacyNNBackend() = default;
+NNBackend::~NNBackend() = default;
 
-AtLegacyNNBackend::AtLegacyNNBackend(AtLegacyNNBackend&& other) noexcept
+NNBackend::NNBackend(NNBackend&& other) noexcept
     : config_{std::move(other.config_)}
     , detect_color_(other.detect_color_)
     , impl_(std::move(other.impl_)) {}
 
-AtLegacyNNBackend& AtLegacyNNBackend::operator=(AtLegacyNNBackend&& other) noexcept {
+NNBackend& NNBackend::operator=(NNBackend&& other) noexcept {
     if (this != &other) {
         config_       = std::move(other.config_);
         detect_color_ = other.detect_color_;
@@ -54,8 +54,8 @@ AtLegacyNNBackend& AtLegacyNNBackend::operator=(AtLegacyNNBackend&& other) noexc
 // Factory — Construction IS Initialization
 // ============================================================================
 
-std::expected<AtLegacyNNBackend, std::string> AtLegacyNNBackend::create(Config config) noexcept {
-    AtLegacyNNBackend backend(std::move(config));
+std::expected<NNBackend, std::string> NNBackend::create(Config config) noexcept {
+    NNBackend backend(std::move(config));
     const auto& cfg = backend.get_config();
 
     try {
@@ -102,7 +102,7 @@ std::expected<AtLegacyNNBackend, std::string> AtLegacyNNBackend::create(Config c
             backend.impl_->core.compile_model(backend.impl_->model, cfg.device, compile_opts);
         backend.impl_->request = backend.impl_->compiled.create_infer_request();
 
-        SPDLOG_INFO("[AtLegacyNNBackend] Model loaded: {}", cfg.model_path);
+        SPDLOG_INFO("[NNBackend] Model loaded: {}", cfg.model_path);
         const auto devices = backend.execution_devices();
         if (!devices.empty()) {
             // Reserve upfront to avoid reallocations (estimate: ~12 chars per device)
@@ -116,13 +116,12 @@ std::expected<AtLegacyNNBackend, std::string> AtLegacyNNBackend::create(Config c
                 dev_str += d;
                 first = false;
             }
-            SPDLOG_INFO("[AtLegacyNNBackend] Execution devices: {}", dev_str);
+            SPDLOG_INFO("[NNBackend] Execution devices: {}", dev_str);
         }
 
         return backend;
     } catch (const std::exception& e) {
-        SPDLOG_ERROR(
-            "[AtLegacyNNBackend] Init failed for model '{}': {}", cfg.model_path, e.what());
+        SPDLOG_ERROR("[NNBackend] Init failed for model '{}': {}", cfg.model_path, e.what());
         return std::unexpected(
             "NN backend (OpenVINO) init failed for model '" + cfg.model_path + "': " + e.what());
     }
@@ -132,8 +131,8 @@ std::expected<AtLegacyNNBackend, std::string> AtLegacyNNBackend::create(Config c
 // Preprocessing
 // ============================================================================
 
-AtLegacyNNBackend::PreprocContext AtLegacyNNBackend::preprocess(
-    const cv::Mat& image, const AtLegacyNNConfig& /*cfg*/) const noexcept {
+NNBackend::PreprocContext
+    NNBackend::preprocess(const cv::Mat& image, const ArmorOpenVinoConfig& /*cfg*/) const noexcept {
     PreprocContext ctx;
     ctx.orig_w = image.cols;
     ctx.orig_h = image.rows;
@@ -143,13 +142,13 @@ AtLegacyNNBackend::PreprocContext AtLegacyNNBackend::preprocess(
     const auto& shp = ip.get_shape(); // [1, 3, H, W]
 
     if (shp.size() != 4) {
-        SPDLOG_ERROR("[AtLegacyNNBackend] Input shape {} not supported", shp.size());
+        SPDLOG_ERROR("[NNBackend] Input shape {} not supported", shp.size());
         return ctx;
     }
     if (shp[0] != 1 || shp[1] != 3) {
         SPDLOG_ERROR(
-            "[AtLegacyNNBackend] Input shape mismatch, get [{},{},{},{}], expect [{},{},{},{}]",
-            shp[0], shp[1], shp[2], shp[3], 1, 3, INPUT_H, INPUT_W);
+            "[NNBackend] Input shape mismatch, get [{},{},{},{}], expect [{},{},{},{}]", shp[0],
+            shp[1], shp[2], shp[3], 1, 3, INPUT_H, INPUT_W);
         return ctx;
     }
 
@@ -187,7 +186,7 @@ AtLegacyNNBackend::PreprocContext AtLegacyNNBackend::preprocess(
 // Inference
 // ============================================================================
 
-bool AtLegacyNNBackend::infer(const PreprocContext& ctx) noexcept {
+bool NNBackend::infer(const PreprocContext& ctx) noexcept {
     if (ctx.preprocessed.empty()) {
         return false;
     }
@@ -213,7 +212,7 @@ bool AtLegacyNNBackend::infer(const PreprocContext& ctx) noexcept {
         impl_->request.infer();
         return true;
     } catch (const std::exception& e) {
-        SPDLOG_ERROR("[AtLegacyNNBackend] Inference failed: {}", e.what());
+        SPDLOG_ERROR("[NNBackend] Inference failed: {}", e.what());
         return false;
     }
 }
@@ -222,9 +221,9 @@ bool AtLegacyNNBackend::infer(const PreprocContext& ctx) noexcept {
 // Postprocessing
 // ============================================================================
 
-std::vector<AtLegacyArmorDetection> AtLegacyNNBackend::postprocess(
-    const PreprocContext& ctx, const AtLegacyNNConfig& cfg) const noexcept {
-    std::vector<AtLegacyArmorDetection> detections;
+std::vector<ArmorDetection> NNBackend::postprocess(
+    const PreprocContext& ctx, const ArmorOpenVinoConfig& cfg) const noexcept {
+    std::vector<ArmorDetection> detections;
 
     ov::Tensor out = impl_->request.get_output_tensor(0);
     const float* p = out.data<const float>();
@@ -236,7 +235,7 @@ std::vector<AtLegacyArmorDetection> AtLegacyNNBackend::postprocess(
     // YOLO26 end-to-end output: [1, max_det, 6 + nk]
     // Format per detection: [x, y, w, h, conf, class_id, kpts...]
     if (shape.size() != 3 || shape[0] != 1) {
-        SPDLOG_WARN("[AtLegacyNNBackend] Unexpected output shape");
+        SPDLOG_WARN("[NNBackend] Unexpected output shape");
         return detections;
     }
 
@@ -249,13 +248,12 @@ std::vector<AtLegacyArmorDetection> AtLegacyNNBackend::postprocess(
     constexpr int bbox_dim = 6;              // x, y, w, h, conf, class_id
 
     SPDLOG_DEBUG(
-        "[AtLegacyNNBackend] Output shape: [{}, {}, {}], max_det={}, output_dim={}", shape[0],
-        shape[1], shape[2], max_det, output_dim);
+        "[NNBackend] Output shape: [{}, {}, {}], max_det={}, output_dim={}", shape[0], shape[1],
+        shape[2], max_det, output_dim);
 
     if (output_dim < bbox_dim + nk) {
         SPDLOG_ERROR(
-            "[AtLegacyNNBackend] Output dim {} < bbox_dim({}) + nkpts({})", output_dim, bbox_dim,
-            nk);
+            "[NNBackend] Output dim {} < bbox_dim({}) + nkpts({})", output_dim, bbox_dim, nk);
         return detections;
     }
 
@@ -352,7 +350,7 @@ std::vector<AtLegacyArmorDetection> AtLegacyNNBackend::postprocess(
                 static_cast<size_t>(max_det) * static_cast<size_t>(output_dim);
             if (ky_offset >= total_elements) {
                 SPDLOG_ERROR(
-                    "[AtLegacyNNBackend] Keypoint access out of bounds: "
+                    "[NNBackend] Keypoint access out of bounds: "
                     "ky_offset={} >= total_elements={}, i={}, k={}, yolo_idx={}, "
                     "row_offset={}, bbox_dim={}, output_dim={}",
                     ky_offset, total_elements, i, k, yolo_idx, row_offset, bbox_dim, output_dim);
@@ -388,7 +386,7 @@ std::vector<AtLegacyArmorDetection> AtLegacyNNBackend::postprocess(
         }
 
         // Create detection
-        AtLegacyArmorDetection det(corners, cls, color, conf);
+        ArmorDetection det(corners, cls, color, conf);
         if (det.area > 0) {
             detections.push_back(det);
         }
@@ -401,8 +399,8 @@ std::vector<AtLegacyArmorDetection> AtLegacyNNBackend::postprocess(
 // Coordinate Transform
 // ============================================================================
 
-void AtLegacyNNBackend::transform_coordinates(
-    std::vector<AtLegacyArmorDetection>& detections, const PreprocContext& ctx) const noexcept {
+void NNBackend::transform_coordinates(
+    std::vector<ArmorDetection>& detections, const PreprocContext& ctx) const noexcept {
     // Already done in postprocess via map_point
     (void)detections;
     (void)ctx;
@@ -412,16 +410,15 @@ void AtLegacyNNBackend::transform_coordinates(
 // NMS
 // ============================================================================
 
-std::vector<AtLegacyArmorDetection> AtLegacyNNBackend::nms(
-    std::vector<AtLegacyArmorDetection>& detections, const AtLegacyNNConfig& cfg) const noexcept {
+std::vector<ArmorDetection> NNBackend::nms(
+    std::vector<ArmorDetection>& detections, const ArmorOpenVinoConfig& cfg) const noexcept {
     if (detections.empty()) {
         return {};
     }
 
     // Sort by confidence (descending)
     std::sort(
-        detections.begin(), detections.end(),
-        [](const AtLegacyArmorDetection& a, const AtLegacyArmorDetection& b) {
+        detections.begin(), detections.end(), [](const ArmorDetection& a, const ArmorDetection& b) {
             return a.confidence > b.confidence;
         });
 
@@ -433,7 +430,7 @@ std::vector<AtLegacyArmorDetection> AtLegacyNNBackend::nms(
     // NMS
     const float nms_thresh = static_cast<float>(cfg.nms_threshold);
     std::vector<bool> suppressed(detections.size(), false);
-    std::vector<AtLegacyArmorDetection> result;
+    std::vector<ArmorDetection> result;
     result.reserve(detections.size());
 
     for (size_t i = 0; i < detections.size(); ++i) {
@@ -459,7 +456,7 @@ std::vector<AtLegacyArmorDetection> AtLegacyNNBackend::nms(
 // Detection Entry Point
 // ============================================================================
 
-AtLegacyNNBackend::DetectionResult AtLegacyNNBackend::detect_impl(const cv::Mat& image) noexcept {
+NNBackend::DetectionResult NNBackend::detect_impl(const cv::Mat& image) noexcept {
     if (image.empty()) {
         return std::unexpected("Empty image passed to NN backend");
     }
@@ -484,32 +481,32 @@ AtLegacyNNBackend::DetectionResult AtLegacyNNBackend::detect_impl(const cv::Mat&
     auto result = nms(detections, cfg);
 
     // Debug: print detection results
-    // SPDLOG_INFO("[AtLegacyNNBackend] ===== Detection Results =====");
-    // SPDLOG_INFO("[AtLegacyNNBackend] Total detections: {}", result.size());
+    // SPDLOG_INFO("[NNBackend] ===== Detection Results =====");
+    // SPDLOG_INFO("[NNBackend] Total detections: {}", result.size());
     // for (size_t i = 0; i < result.size(); ++i) {
     //     const auto& det = result[i];
     //     const auto center = det.center();
 
-    //     SPDLOG_INFO("[AtLegacyNNBackend] [{}] {} {} | conf={:.3f} | area={}",
+    //     SPDLOG_INFO("[NNBackend] [{}] {} {} | conf={:.3f} | area={}",
     //         i,
     //         to_string(det.name),
     //         to_string(det.color),
     //         det.confidence,
     //         det.area);
 
-    //     SPDLOG_INFO("[AtLegacyNNBackend]     Center: ({:.1f}, {:.1f})", center.x, center.y);
+    //     SPDLOG_INFO("[NNBackend]     Center: ({:.1f}, {:.1f})", center.x, center.y);
 
-    //     SPDLOG_INFO("[AtLegacyNNBackend]     Corners: TL=({:.1f},{:.1f}) TR=({:.1f},{:.1f})
+    //     SPDLOG_INFO("[NNBackend]     Corners: TL=({:.1f},{:.1f}) TR=({:.1f},{:.1f})
     //     BR=({:.1f},{:.1f}) BL=({:.1f},{:.1f})",
     //         det.corners[0].x, det.corners[0].y,
     //         det.corners[1].x, det.corners[1].y,
     //         det.corners[2].x, det.corners[2].y,
     //         det.corners[3].x, det.corners[3].y);
 
-    //     SPDLOG_INFO("[AtLegacyNNBackend]     BBox: x={:.1f} y={:.1f} w={:.1f} h={:.1f}",
+    //     SPDLOG_INFO("[NNBackend]     BBox: x={:.1f} y={:.1f} w={:.1f} h={:.1f}",
     //         det.rect.x, det.rect.y, det.rect.width, det.rect.height);
     // }
-    // SPDLOG_INFO("[AtLegacyNNBackend] =================================");
+    // SPDLOG_INFO("[NNBackend] =================================");
 
     return result;
 }
@@ -518,7 +515,7 @@ AtLegacyNNBackend::DetectionResult AtLegacyNNBackend::detect_impl(const cv::Mat&
 // Utility
 // ============================================================================
 
-std::vector<std::string> AtLegacyNNBackend::execution_devices() const noexcept {
+std::vector<std::string> NNBackend::execution_devices() const noexcept {
     try {
         return impl_->compiled.get_property(ov::execution_devices);
     } catch (const std::exception& e) {

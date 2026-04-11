@@ -56,7 +56,7 @@ void register_rune_detection_systems(talos::Scheduler& scheduler, RuneDetectorCo
         [detector = std::make_shared<::fyt::rune::RuneDetector>(
              to_enemy_color(config.detect_color), config.arrow_threshold, config.target_threshold,
              config.rcenter_threshold)](
-            talos::spmc<AtLegacyImageFrame, AtLegacyImageChannelTopic> image_in,
+            talos::spmc<ImageFrame, ImageChannelTopic> image_in,
             talos::spmc_mut<RuneObservation, RuneObservationChannelTopic> obs_out,
             talos::spmc_mut<RuneDebugFrame, RuneDebugFrameChannelTopic> debug_out,
             talos::res<RuneDetectorConfig> cfg, talos::res<CameraConfig> cam_cfg,

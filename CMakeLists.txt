@@ -164,12 +164,12 @@ set(FCS_SOURCES
         src/fcs/runtime/capturer.cpp
         src/fcs/runtime/config_loader.cpp
         src/fcs/runtime/l1_l2_setup.cpp
-        src/fcs/L2_perception/armor/at_legacy_detector_backend.cpp
-        src/fcs/L2_perception/armor/at_legacy_systems.cpp
+        src/fcs/L2_perception/armor/backend.cpp
+        src/fcs/L2_perception/armor/systems.cpp
         src/fcs/L2_perception/rune/rune_detector.cpp
         src/fcs/L2_perception/rune/rune_systems.cpp
-        src/fcs/L2_perception/armor/backends/at_legacy_traditional_backend.cpp
-        src/fcs/L2_perception/armor/backends/at_legacy_traditional_classifier.cpp
+        src/fcs/L2_perception/armor/backends/traditional.cpp
+        src/fcs/L2_perception/armor/backends/traditional_classifier.cpp
         src/fcs/L3_estimation/tracker_systems.cpp
         src/fcs/L3_estimation/extended_kalman_filter.cpp
         src/fcs/L3_estimation/energy_meter_solver/angle_fitter.cpp
@@ -185,22 +185,22 @@ set(FCS_SOURCES
 
 if(OpenVINO_FOUND)
     list(APPEND FCS_SOURCES
-        src/fcs/L2_perception/armor/backends/at_legacy_nn_backend.cpp
-        src/fcs/L2_perception/armor/backends/at_legacy_nn_tup_backend.cpp)
+        src/fcs/L2_perception/armor/backends/openvino.cpp
+        src/fcs/L2_perception/armor/backends/openvino_tup.cpp)
     message(STATUS "OpenVINO backends enabled")
 else()
     message(STATUS "OpenVINO backends disabled (OpenVINO not found)")
 endif()
 
 if(TensorRT_FOUND)
-    list(APPEND FCS_SOURCES src/fcs/L2_perception/armor/backends/at_legacy_trt_backend.cpp)
+    list(APPEND FCS_SOURCES src/fcs/L2_perception/armor/backends/tensor_rt.cpp)
     message(STATUS "TensorRT backend enabled")
 else()
     message(STATUS "TensorRT backend disabled (TensorRT not found)")
 endif()
 
 if(AXERA_FOUND)
-    list(APPEND FCS_SOURCES src/fcs/L2_perception/armor/backends/at_legacy_axera_backend.cpp)
+    list(APPEND FCS_SOURCES src/fcs/L2_perception/armor/backends/axera.cpp)
     message(STATUS "Axera backend enabled")
 else()
     message(STATUS "Axera backend disabled (AXERA not found)")

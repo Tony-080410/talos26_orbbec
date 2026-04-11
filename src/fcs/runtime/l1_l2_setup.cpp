@@ -332,9 +332,8 @@ std::expected<L1L2SetupResult, std::string> setup_l1(
     // Camera: 160Hz, notify (triggers compute)
     auto last_seq = std::make_shared<std::atomic<uint64_t>>(0);
     scheduler.add_system<talos::fixed_rate<250, 1>>(
-        "camera_reader",
-        [camera = std::move(camera),
-         last_seq](talos::spmc_mut<AtLegacyImageFrame, AtLegacyImageChannelTopic> cam_out) {
+        "camera_reader", [camera = std::move(camera),
+                          last_seq](talos::spmc_mut<ImageFrame, ImageChannelTopic> cam_out) {
             const auto frame = camera->try_recv();
             if (!frame) [[unlikely]] {
                 return;
@@ -348,7 +347,7 @@ std::expected<L1L2SetupResult, std::string> setup_l1(
             last_seq->store(seq, std::memory_order_relaxed);
 
             auto img = frame->image;
-            cam_out.write(fcs::AtLegacyImageFrame{std::move(img), frame->timestamp_ns, seq});
+            cam_out.write(fcs::ImageFrame{std::move(img), frame->timestamp_ns, seq});
         });
 
     // L1 Output System: Send WeaponCommand to device

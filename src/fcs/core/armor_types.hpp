@@ -44,7 +44,7 @@ enum class ArmorName : uint8_t {
 
 /// Determine ArmorType from armor name
 /// Hero (One) and BaseLarge are Large armor types
-[[nodiscard]] constexpr ArmorType at_legacy_cls_to_armor_type(ArmorName armor_name) noexcept {
+[[nodiscard]] constexpr ArmorType cls_to_armor_type(ArmorName armor_name) noexcept {
     return (armor_name == ArmorName::One || armor_name == ArmorName::BaseLarge) ? ArmorType::Large
                                                                                 : ArmorType::Small;
 }

@@ -639,7 +639,7 @@ struct ConfigSnapshotSource {
     return result;
 }
 
-[[nodiscard]] auto to_json_detection_batch(const AtLegacyArmorDetectionBatch& batch) -> json {
+[[nodiscard]] auto to_json_detection_batch(const ArmorDetectionBatch& batch) -> json {
     json detections = json::array();
     for (const auto& det : batch.detections) {
         json corners = json::array();
@@ -672,8 +672,7 @@ struct ConfigSnapshotSource {
 }
 
 template <fast_tf::frame Frame>
-[[nodiscard]] auto to_json_measurement_batch(const AtLegacyArmorMeasurementBatchT<Frame>& batch)
-    -> json {
+[[nodiscard]] auto to_json_measurement_batch(const ArmorMeasurementBatchT<Frame>& batch) -> json {
     json measurements = json::array();
     for (const auto& measurement : batch.measurements) {
         measurements.push_back(
@@ -850,9 +849,9 @@ public:
     }
 
     void capture_tick(
-        uint64_t tick_timestamp_ns, const ChannelSnapshot<AtLegacyImageFrame>& image,
-        const ChannelSnapshot<AtLegacyArmorDetectionBatch>& detection,
-        const ChannelSnapshot<AtLegacyArmorMeasurementBatch>& measurement,
+        uint64_t tick_timestamp_ns, const ChannelSnapshot<ImageFrame>& image,
+        const ChannelSnapshot<ArmorDetectionBatch>& detection,
+        const ChannelSnapshot<ArmorMeasurementBatch>& measurement,
         const ChannelSnapshot<L3::TrackerOutputs>& tracker,
         const ChannelSnapshot<rune::RuneObservation>& rune_observation,
         const ChannelSnapshot<rune::RuneDebugFrame>& rune_debug,
@@ -1361,7 +1360,7 @@ private:
     }
 
     [[nodiscard]] auto resolve_detection_image_path(
-        const AtLegacyArmorDetectionBatch& batch, uint64_t tick_index, uint64_t tick_ns,
+        const ArmorDetectionBatch& batch, uint64_t tick_index, uint64_t tick_ns,
         bool allow_sidecars) -> json {
         if (last_camera_image_.matches(batch.frame_id, batch.timestamp_ns)) {
             return last_camera_image_.relative_path;
@@ -1485,10 +1484,9 @@ void register_runtime_capturer_system(
     scheduler.add_system<talos::fixed_rate_silent<4>>(
         "runtime_capturer",
         [capturer = std::move(*capturer_result)](
-            talos::spmc<AtLegacyImageFrame, AtLegacyImageChannelTopic> image_in,
-            talos::spmc<AtLegacyArmorDetectionBatch, AtLegacyDetectionChannelTopic> detection_in,
-            talos::spmc<AtLegacyArmorMeasurementBatch, AtLegacyMeasurementChannelTopic>
-                measurement_in,
+            talos::spmc<ImageFrame, ImageChannelTopic> image_in,
+            talos::spmc<ArmorDetectionBatch, DetectionChannelTopic> detection_in,
+            talos::spmc<ArmorMeasurementBatch, MeasurementChannelTopic> measurement_in,
             talos::spmc<L3::TrackerOutputs, TrackerOutputChannelTopic> tracker_in,
             talos::spmc<rune::RuneObservation, RuneObservationChannelTopic> rune_observation_in,
             talos::spmc<rune::RuneDebugFrame, RuneDebugFrameChannelTopic> rune_debug_in,

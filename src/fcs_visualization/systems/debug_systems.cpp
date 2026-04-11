@@ -26,7 +26,7 @@ void register_debug_systems(talos::scheduler::Scheduler& app, talos::Scheduler* 
 
     app.add_system<talos::pool_compute>(
         "foxglove_debug_l2_pnp_pub",
-        [](talos::spmc<AtLegacyArmorMeasurementBatch, AtLegacyMeasurementChannelTopic> meas_in,
+        [](talos::spmc<ArmorMeasurementBatch, MeasurementChannelTopic> meas_in,
            talos::res<std::shared_ptr<FoxgloveServer>> server) {
             if (!detail::foxglove_ready(*server, meas_in)) {
                 return;
@@ -63,7 +63,7 @@ void register_debug_systems(talos::scheduler::Scheduler& app, talos::Scheduler* 
 
     app.add_system<talos::pool_compute>(
         "foxglove_debug_l2_nn_confidence_pub",
-        [](talos::spmc<AtLegacyArmorDetectionBatch, AtLegacyDetectionChannelTopic> det_in,
+        [](talos::spmc<ArmorDetectionBatch, DetectionChannelTopic> det_in,
            talos::res<std::shared_ptr<FoxgloveServer>> server) {
             if (!detail::foxglove_ready(*server, det_in)) {
                 return;

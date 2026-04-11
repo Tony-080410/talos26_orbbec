@@ -142,7 +142,7 @@ public:
         }
     }
 
-    [[nodiscard]] bool update(const AtLegacyArmorMeasurementBatch& measurements) noexcept {
+    [[nodiscard]] bool update(const ArmorMeasurementBatch& measurements) noexcept {
         measurement_.fill(0.0);
 
         if (target_name_ == ArmorName::Outpost) {
@@ -179,7 +179,7 @@ public:
     }
 
     [[nodiscard]] std::optional<ArmorName>
-        first_meet(const AtLegacyArmorMeasurementBatch& measurements) noexcept {
+        first_meet(const ArmorMeasurementBatch& measurements) noexcept {
         if (measurements.empty()) {
             state_machine(false);
             return std::nullopt;
@@ -362,7 +362,7 @@ private:
 
     template <typename TargetInfo>
     [[nodiscard]] bool update_target_(
-        TargetInfo& target, const AtLegacyArmorMeasurementBatch& measurements, int armors_num,
+        TargetInfo& target, const ArmorMeasurementBatch& measurements, int armors_num,
         std::optional<int>& last_armor_id, bool enable_robot_pair_measure) noexcept {
         using VecZ  = typename TargetInfo::VecZ;
         using MatZZ = typename TargetInfo::MatZZ;
@@ -518,8 +518,7 @@ private:
         return prior;
     }
 
-    static RobotEkfMotionModel::VecZ
-        measurement_to_z_(const AtLegacyArmorMeasurement& meas) noexcept {
+    static RobotEkfMotionModel::VecZ measurement_to_z_(const ArmorMeasurement& meas) noexcept {
         const auto ypd = xyz2ypd(meas.transform.translation());
         RobotEkfMotionModel::VecZ z;
         z[ARMOR_YAW]       = ypd[0];

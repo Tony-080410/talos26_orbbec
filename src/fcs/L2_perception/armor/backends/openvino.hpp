@@ -1,7 +1,7 @@
 #pragma once
 
-#include "../at_legacy_config.hpp"
-#include "../at_legacy_detector_backend.hpp"
+#include "../backend.hpp"
+#include "../config.hpp"
 #include "core/types.hpp"
 
 #include <memory>
@@ -24,7 +24,7 @@ namespace fcs::L2 {
 // ============================================================================
 
 /// Neural network detection backend using OpenVINO
-class AtLegacyNNBackend : public AtLegacyDetectorBackendBase<AtLegacyNNBackend> {
+class NNBackend : public DetectorBackendBase<NNBackend> {
 public:
     static constexpr int INPUT_W     = 640;
     static constexpr int INPUT_H     = 640;
@@ -32,21 +32,20 @@ public:
     static constexpr int NUM_SIZES   = 2;
     static constexpr int NUM_CLASSES = 8; // G, 1, 2, 3, 4, 5, O, B
     static constexpr int NUM_KPTS    = 4; // 4 corner keypoints (x, y)
-    using DetectionResult = std::expected<std::vector<AtLegacyArmorDetection>, std::string>;
-    using Config          = AtLegacyNNConfig;
+    using DetectionResult            = std::expected<std::vector<ArmorDetection>, std::string>;
+    using Config                     = ArmorOpenVinoConfig;
 
     /// Factory: construct a fully-initialized backend (load model via OpenVINO).
     /// Construction IS initialization — no separate init() needed.
-    [[nodiscard]] static std::expected<AtLegacyNNBackend, std::string>
-        create(Config config) noexcept;
+    [[nodiscard]] static std::expected<NNBackend, std::string> create(Config config) noexcept;
 
-    ~AtLegacyNNBackend();
+    ~NNBackend();
 
     // Move-only (OpenVINO resources)
-    AtLegacyNNBackend(AtLegacyNNBackend&&) noexcept;
-    AtLegacyNNBackend& operator=(AtLegacyNNBackend&&) noexcept;
-    AtLegacyNNBackend(const AtLegacyNNBackend&)            = delete;
-    AtLegacyNNBackend& operator=(const AtLegacyNNBackend&) = delete;
+    NNBackend(NNBackend&&) noexcept;
+    NNBackend& operator=(NNBackend&&) noexcept;
+    NNBackend(const NNBackend&)            = delete;
+    NNBackend& operator=(const NNBackend&) = delete;
 
     /// Detect armors in image (synchronous)
     [[nodiscard]] DetectionResult detect_impl(const cv::Mat& image) noexcept;
@@ -62,7 +61,7 @@ public:
 
 private:
     /// Private constructor — use create() factory
-    explicit AtLegacyNNBackend(Config config) noexcept;
+    explicit NNBackend(Config config) noexcept;
 
     /// Preprocess image for inference (letterbox + normalize)
     struct PreprocContext {
@@ -76,23 +75,22 @@ private:
     };
 
     [[nodiscard]] PreprocContext
-        preprocess(const cv::Mat& image, const AtLegacyNNConfig& cfg) const noexcept;
+        preprocess(const cv::Mat& image, const ArmorOpenVinoConfig& cfg) const noexcept;
 
     /// Run inference
     [[nodiscard]] bool infer(const PreprocContext& ctx) noexcept;
 
     /// Postprocess inference output
-    [[nodiscard]] std::vector<AtLegacyArmorDetection>
-        postprocess(const PreprocContext& ctx, const AtLegacyNNConfig& cfg) const noexcept;
+    [[nodiscard]] std::vector<ArmorDetection>
+        postprocess(const PreprocContext& ctx, const ArmorOpenVinoConfig& cfg) const noexcept;
 
     /// Transform coordinates from model output to original image
     void transform_coordinates(
-        std::vector<AtLegacyArmorDetection>& detections, const PreprocContext& ctx) const noexcept;
+        std::vector<ArmorDetection>& detections, const PreprocContext& ctx) const noexcept;
 
     /// Non-maximum suppression
-    [[nodiscard]] std::vector<AtLegacyArmorDetection>
-        nms(std::vector<AtLegacyArmorDetection>& detections,
-            const AtLegacyNNConfig& cfg) const noexcept;
+    [[nodiscard]] std::vector<ArmorDetection>
+        nms(std::vector<ArmorDetection>& detections, const ArmorOpenVinoConfig& cfg) const noexcept;
 
 private:
     Config config_;

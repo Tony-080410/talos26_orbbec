@@ -29,7 +29,7 @@ public:
     using MatZ  = Eigen::Matrix<double, NZ, NZ>;
 
     struct MatchResult {
-        std::vector<AtLegacyArmorMeasurement> armors;
+        std::vector<ArmorMeasurement> armors;
         std::vector<int> armor_ids;
         std::vector<double> costs;
     };
@@ -43,14 +43,14 @@ public:
     /// @param gate_threshold Mahalanobis distance gating threshold
     /// @param armors_num Number of armors on target
     [[nodiscard]] MatchResult match(
-        const AtLegacyArmorMeasurementBatch& observations, const VecX& x_pred, const MatXX& Sx_pred,
+        const ArmorMeasurementBatch& observations, const VecX& x_pred, const MatXX& Sx_pred,
         Model& model, ArmorName target_name, double gate_threshold, int armors_num) const noexcept {
         return match(
             observations, x_pred, Sx_pred, model, target_name, gate_threshold, armors_num, nullptr);
     }
 
     [[nodiscard]] MatchResult match(
-        const AtLegacyArmorMeasurementBatch& observations, const VecX& x_pred, const MatXX& Sx_pred,
+        const ArmorMeasurementBatch& observations, const VecX& x_pred, const MatXX& Sx_pred,
         Model& model, ArmorName target_name, double gate_threshold, int armors_num,
         const std::vector<double>* id_prior) const noexcept {
 

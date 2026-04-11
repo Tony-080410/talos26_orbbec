@@ -1,6 +1,6 @@
-#include "L2_perception/armor/backends/at_legacy_trt_backend.hpp"
-#include "L2_perception/armor/at_legacy_config.hpp"
+#include "L2_perception/armor/backends/tensor_rt.hpp"
 #include "L2_perception/armor/backends/letterbox.cuh"
+#include "L2_perception/armor/config.hpp"
 #include "core/types.hpp"
 
 #include <algorithm>
@@ -150,7 +150,7 @@ static constexpr std::array<ClassMapping, 64> g_class_mappings = {
 // PIMPL Implementation
 // ============================================================================
 
-struct AtLegacyTrtBackend::Impl {
+struct TrtBackend::Impl {
     // TensorRT resources
     std::unique_ptr<nvinfer1::IRuntime> runtime_;
     std::unique_ptr<nvinfer1::ICudaEngine> engine_;
@@ -385,23 +385,23 @@ namespace {
 // Constructor/Destructor
 // ============================================================================
 
-AtLegacyTrtBackend::AtLegacyTrtBackend(Config config) noexcept
+TrtBackend::TrtBackend(Config config) noexcept
     : config_(std::move(config)) {
     impl_ = std::make_unique<Impl>();
 }
 
-AtLegacyTrtBackend::~AtLegacyTrtBackend() noexcept = default;
+TrtBackend::~TrtBackend() noexcept = default;
 
-AtLegacyTrtBackend::AtLegacyTrtBackend(AtLegacyTrtBackend&&) noexcept = default;
+TrtBackend::TrtBackend(TrtBackend&&) noexcept = default;
 
-AtLegacyTrtBackend& AtLegacyTrtBackend::operator=(AtLegacyTrtBackend&&) noexcept = default;
+TrtBackend& TrtBackend::operator=(TrtBackend&&) noexcept = default;
 
 // ============================================================================
 // Factory — Construction IS Initialization
 // ============================================================================
 
-std::expected<AtLegacyTrtBackend, std::string> AtLegacyTrtBackend::create(Config config) noexcept {
-    AtLegacyTrtBackend backend(std::move(config));
+std::expected<TrtBackend, std::string> TrtBackend::create(Config config) noexcept {
+    TrtBackend backend(std::move(config));
 
     // Set CUDA device
     cudaError_t cuda_err = cudaSetDevice(backend.config_.device_id);
@@ -535,7 +535,7 @@ std::expected<AtLegacyTrtBackend, std::string> AtLegacyTrtBackend::create(Config
     return backend;
 }
 
-void AtLegacyTrtBackend::set_detect_color(fcs::ArmorColor color) noexcept {
+void TrtBackend::set_detect_color(fcs::ArmorColor color) noexcept {
     detect_color_ = static_cast<int>(color);
 }
 
@@ -543,7 +543,7 @@ void AtLegacyTrtBackend::set_detect_color(fcs::ArmorColor color) noexcept {
 // Detection
 // ============================================================================
 
-AtLegacyTrtBackend::DetectionResult AtLegacyTrtBackend::detect_impl(const cv::Mat& image) noexcept {
+TrtBackend::DetectionResult TrtBackend::detect_impl(const cv::Mat& image) noexcept {
     if (!impl_) {
         return std::unexpected("TensorRT backend not initialized");
     }
@@ -662,7 +662,7 @@ AtLegacyTrtBackend::DetectionResult AtLegacyTrtBackend::detect_impl(const cv::Ma
     cudaStreamSynchronize(stream);
 
     // Postprocess output
-    std::vector<AtLegacyArmorDetection> detections;
+    std::vector<ArmorDetection> detections;
 
     // AT model output: [1, max_det, 14]
     // [0-3]: bbox (x, y, w, h) center format

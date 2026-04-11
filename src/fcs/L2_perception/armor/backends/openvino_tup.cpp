@@ -1,7 +1,7 @@
-#include "L2_perception/armor/backends/at_legacy_nn_tup_backend.hpp"
+#include "L2_perception/armor/backends/openvino_tup.hpp"
 
-#include "L2_perception/armor/at_legacy_config.hpp"
-#include "L2_perception/common/at_legacy_geometry.hpp"
+#include "L2_perception/armor/config.hpp"
+#include "L2_perception/common/geometry.hpp"
 #include "core/types.hpp"
 
 #include <algorithm>
@@ -18,7 +18,7 @@ namespace fcs::L2 {
 // PIMPL Implementation
 // ============================================================================
 
-struct AtLegacyNNTupBackend::Impl {
+struct NNTupBackend::Impl {
     ov::Core core;
     std::shared_ptr<ov::Model> model;
     ov::CompiledModel compiled;
@@ -29,18 +29,18 @@ struct AtLegacyNNTupBackend::Impl {
 // Constructor / Destructor
 // ============================================================================
 
-AtLegacyNNTupBackend::AtLegacyNNTupBackend(Config config) noexcept
+NNTupBackend::NNTupBackend(Config config) noexcept
     : config_{std::move(config)}
     , impl_(std::make_unique<Impl>()) {}
 
-AtLegacyNNTupBackend::~AtLegacyNNTupBackend() = default;
+NNTupBackend::~NNTupBackend() = default;
 
-AtLegacyNNTupBackend::AtLegacyNNTupBackend(AtLegacyNNTupBackend&& other) noexcept
+NNTupBackend::NNTupBackend(NNTupBackend&& other) noexcept
     : config_{std::move(other.config_)}
     , detect_color_(other.detect_color_)
     , impl_(std::move(other.impl_)) {}
 
-AtLegacyNNTupBackend& AtLegacyNNTupBackend::operator=(AtLegacyNNTupBackend&& other) noexcept {
+NNTupBackend& NNTupBackend::operator=(NNTupBackend&& other) noexcept {
     if (this != &other) {
         config_       = std::move(other.config_);
         detect_color_ = other.detect_color_;
@@ -53,9 +53,8 @@ AtLegacyNNTupBackend& AtLegacyNNTupBackend::operator=(AtLegacyNNTupBackend&& oth
 // Factory — Construction IS Initialization
 // ============================================================================
 
-std::expected<AtLegacyNNTupBackend, std::string>
-    AtLegacyNNTupBackend::create(Config config) noexcept {
-    AtLegacyNNTupBackend backend(std::move(config));
+std::expected<NNTupBackend, std::string> NNTupBackend::create(Config config) noexcept {
+    NNTupBackend backend(std::move(config));
     const auto& cfg = backend.get_config();
 
     try {
@@ -101,7 +100,7 @@ std::expected<AtLegacyNNTupBackend, std::string>
             backend.impl_->core.compile_model(backend.impl_->model, cfg.device, compile_opts);
         backend.impl_->request = backend.impl_->compiled.create_infer_request();
 
-        SPDLOG_INFO("[AtLegacyNNTupBackend] Model loaded: {}", cfg.model_path);
+        SPDLOG_INFO("[NNTupBackend] Model loaded: {}", cfg.model_path);
         const auto devices = backend.execution_devices();
         if (!devices.empty()) {
             std::string dev_str;
@@ -110,7 +109,7 @@ std::expected<AtLegacyNNTupBackend, std::string>
                     dev_str += ", ";
                 dev_str += d;
             }
-            SPDLOG_INFO("[AtLegacyNNTupBackend] Execution devices: {}", dev_str);
+            SPDLOG_INFO("[NNTupBackend] Execution devices: {}", dev_str);
         }
 
         return backend;
@@ -128,7 +127,7 @@ std::expected<AtLegacyNNTupBackend, std::string>
 // Grid Generation
 // ============================================================================
 
-void AtLegacyNNTupBackend::generate_grids_and_strides(
+void NNTupBackend::generate_grids_and_strides(
     int width, int height, const std::array<int, 3>& strides,
     std::vector<GridAndStride>& grids) noexcept {
     grids.clear();
@@ -151,8 +150,8 @@ void AtLegacyNNTupBackend::generate_grids_and_strides(
 // Preprocessing
 // ============================================================================
 
-AtLegacyNNTupBackend::PreprocContext
-    AtLegacyNNTupBackend::preprocess(const cv::Mat& image, const AtLegacyNNTupConfig&) noexcept {
+NNTupBackend::PreprocContext
+    NNTupBackend::preprocess(const cv::Mat& image, const ArmorOpenVinoTupConfig&) noexcept {
     PreprocContext ctx;
 
     // Letterbox resize with symmetric padding
@@ -195,7 +194,7 @@ AtLegacyNNTupBackend::PreprocContext
 // Inference
 // ============================================================================
 
-bool AtLegacyNNTupBackend::infer(const PreprocContext& ctx) noexcept {
+bool NNTupBackend::infer(const PreprocContext& ctx) noexcept {
     if (ctx.preprocessed.empty()) {
         return false;
     }
@@ -224,7 +223,7 @@ bool AtLegacyNNTupBackend::infer(const PreprocContext& ctx) noexcept {
         impl_->request.infer();
         return true;
     } catch (const std::exception& e) {
-        SPDLOG_ERROR("[AtLegacyNNTupBackend] Inference failed: {}", e.what());
+        SPDLOG_ERROR("[NNTupBackend] Inference failed: {}", e.what());
         return false;
     }
 }
@@ -233,9 +232,9 @@ bool AtLegacyNNTupBackend::infer(const PreprocContext& ctx) noexcept {
 // Postprocessing
 // ============================================================================
 
-std::vector<AtLegacyArmorDetection> AtLegacyNNTupBackend::postprocess(
-    const PreprocContext& ctx, const AtLegacyNNTupConfig& cfg) const noexcept {
-    std::vector<AtLegacyArmorDetection> detections;
+std::vector<ArmorDetection> NNTupBackend::postprocess(
+    const PreprocContext& ctx, const ArmorOpenVinoTupConfig& cfg) const noexcept {
+    std::vector<ArmorDetection> detections;
 
     ov::Tensor out = impl_->request.get_output_tensor(0);
     const float* p = out.data<const float>();
@@ -246,7 +245,7 @@ std::vector<AtLegacyArmorDetection> AtLegacyNNTupBackend::postprocess(
 
     // Verify output shape
     if (shape.size() != 3 || shape[0] != 1) {
-        SPDLOG_WARN("[AtLegacyNNTupBackend] Unexpected output shape");
+        SPDLOG_WARN("[NNTupBackend] Unexpected output shape");
         return detections;
     }
 
@@ -263,8 +262,7 @@ std::vector<AtLegacyArmorDetection> AtLegacyNNTupBackend::postprocess(
     const int num_to     = color_to + ctx.num_classes;
 
     if (num_to > out_cols) {
-        SPDLOG_WARN(
-            "[AtLegacyNNTupBackend] Class columns ({}) exceed output width ({})", num_to, out_cols);
+        SPDLOG_WARN("[NNTupBackend] Class columns ({}) exceed output width ({})", num_to, out_cols);
         return detections;
     }
 
@@ -341,7 +339,7 @@ std::vector<AtLegacyArmorDetection> AtLegacyNNTupBackend::postprocess(
         // Color filtering should be done at a higher level if needed
 
         // Create detection
-        AtLegacyArmorDetection det(corners, cls, color, conf);
+        ArmorDetection det(corners, cls, color, conf);
         if (det.area > 0) {
             detections.push_back(det);
         }
@@ -358,16 +356,15 @@ std::vector<AtLegacyArmorDetection> AtLegacyNNTupBackend::postprocess(
 // NMS
 // ============================================================================
 
-std::vector<AtLegacyArmorDetection> AtLegacyNNTupBackend::nms(
-    std::vector<AtLegacyArmorDetection>& detections, const AtLegacyNNTupConfig& cfg) noexcept {
+std::vector<ArmorDetection> NNTupBackend::nms(
+    std::vector<ArmorDetection>& detections, const ArmorOpenVinoTupConfig& cfg) noexcept {
     if (detections.empty()) {
         return {};
     }
 
     // Sort by confidence (descending)
     std::sort(
-        detections.begin(), detections.end(),
-        [](const AtLegacyArmorDetection& a, const AtLegacyArmorDetection& b) {
+        detections.begin(), detections.end(), [](const ArmorDetection& a, const ArmorDetection& b) {
             return a.confidence > b.confidence;
         });
 
@@ -379,7 +376,7 @@ std::vector<AtLegacyArmorDetection> AtLegacyNNTupBackend::nms(
     // NMS
     const float nms_thresh = static_cast<float>(cfg.nms_threshold);
     std::vector<bool> suppressed(detections.size(), false);
-    std::vector<AtLegacyArmorDetection> result;
+    std::vector<ArmorDetection> result;
     result.reserve(detections.size());
 
     for (size_t i = 0; i < detections.size(); ++i) {
@@ -405,8 +402,7 @@ std::vector<AtLegacyArmorDetection> AtLegacyNNTupBackend::nms(
 // Detection Entry Point
 // ============================================================================
 
-AtLegacyNNTupBackend::DetectionResult
-    AtLegacyNNTupBackend::detect_impl(const cv::Mat& image) noexcept {
+NNTupBackend::DetectionResult NNTupBackend::detect_impl(const cv::Mat& image) noexcept {
     const auto& cfg = get_config();
 
     // Preprocess
@@ -433,7 +429,7 @@ AtLegacyNNTupBackend::DetectionResult
 // Utility
 // ============================================================================
 
-std::vector<std::string> AtLegacyNNTupBackend::execution_devices() const noexcept {
+std::vector<std::string> NNTupBackend::execution_devices() const noexcept {
     try {
         return impl_->compiled.get_property(ov::execution_devices);
     } catch (const std::exception& e) {

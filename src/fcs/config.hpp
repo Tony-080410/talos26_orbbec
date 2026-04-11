@@ -10,7 +10,7 @@
 #include "foxglove_config.hpp"
 #include "magic_enum.hpp"
 
-#include "L2_perception/armor/at_legacy_config.hpp"
+#include "L2_perception/armor/config.hpp"
 #include "L2_perception/rune/rune_config.hpp"
 #include "L3_estimation/energy_meter/energy_meter_systems.hpp"
 #include "L3_estimation/tracker/config.hpp"
@@ -84,7 +84,7 @@ struct HardwareConfig {
 
 struct VisionConfig {
     core::trajectory::TrajectoryConfig trajectory{};
-    toml_helper::flatten<L2::AtLegacyConfig> at_legacy{};
+    toml_helper::flatten<L2::ArmorDetectorConfig> at_legacy{};
     rune::RuneDetectorConfig rune_detector{};
 
     toml_helper::flatten<L3::L3Config> l3{};

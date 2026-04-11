@@ -1,4 +1,4 @@
-#include "L2_perception/armor/backends/at_legacy_traditional_classifier.hpp"
+#include "L2_perception/armor/backends/traditional_classifier.hpp"
 
 #include <algorithm>
 
@@ -11,8 +11,8 @@ namespace fcs::L2 {
 // Factory — Construction IS Initialization
 // ============================================================================
 
-std::expected<AtLegacyTraditionalClassifier, std::string>
-    AtLegacyTraditionalClassifier::create(std::string_view model_path, bool use_softmax) noexcept {
+std::expected<TraditionalClassifier, std::string>
+    TraditionalClassifier::create(std::string_view model_path, bool use_softmax) noexcept {
     try {
         auto net = cv::dnn::readNetFromONNX(std::string(model_path));
 
@@ -24,7 +24,7 @@ std::expected<AtLegacyTraditionalClassifier, std::string>
         net.setPreferableBackend(cv::dnn::DNN_BACKEND_DEFAULT);
         net.setPreferableTarget(cv::dnn::DNN_TARGET_CPU);
 
-        return AtLegacyTraditionalClassifier(std::string(model_path), use_softmax, std::move(net));
+        return TraditionalClassifier(std::string(model_path), use_softmax, std::move(net));
     } catch (const std::exception& e) {
         SPDLOG_ERROR("[TraditionalClassifier] Model load failed: {}", e.what());
         return std::unexpected("ONNX classifier model load failed: " + std::string(e.what()));
@@ -35,7 +35,7 @@ std::expected<AtLegacyTraditionalClassifier, std::string>
 // Classification
 // ============================================================================
 
-AtLegacyTraditionalClassifier::ClassifyResult AtLegacyTraditionalClassifier::classify(
+TraditionalClassifier::ClassifyResult TraditionalClassifier::classify(
     const cv::Mat& number_img, float& confidence_out) const noexcept {
     try {
         // Normalize image to 0-1 range (matching atvision_ws behavior)
@@ -63,7 +63,7 @@ AtLegacyTraditionalClassifier::ClassifyResult AtLegacyTraditionalClassifier::cla
 // Output Post-Processing
 // ============================================================================
 
-ArmorName AtLegacyTraditionalClassifier::post_process_output(
+ArmorName TraditionalClassifier::post_process_output(
     const cv::Mat& output, float& confidence_out) const noexcept {
     // Output should be 1D array with class logits or probabilities
     cv::Mat flat_output = output.reshape(1, 1);
@@ -102,7 +102,7 @@ ArmorName AtLegacyTraditionalClassifier::post_process_output(
 // Helper Methods
 // ============================================================================
 
-ArmorName AtLegacyTraditionalClassifier::index_to_armor_name(int idx) noexcept {
+ArmorName TraditionalClassifier::index_to_armor_name(int idx) noexcept {
     switch (idx) {
     case 0: return ArmorName::One;
     case 1: return ArmorName::Two;

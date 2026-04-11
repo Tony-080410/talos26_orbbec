@@ -18,7 +18,7 @@ struct L1L2SetupResult {
 
 // Creates and registers:
 // - IMU reader system
-// - Camera reader system (publishes AtLegacyImageFrame)
+// - Camera reader system (publishes ImageFrame)
 // - Weapon output system (consumes L5::WeaponCommand)
 // - L2 detector backend + PnP solver resources
 // - CameraConfig resource

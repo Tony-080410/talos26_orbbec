@@ -16,29 +16,29 @@
 
 namespace fcs {
 
-struct at_legacy_armor_frame_tag {};
+struct armor_frame_tag {};
 
-using at_legacy_armor_frame = at_legacy_armor_frame_tag;
+using armor_frame = armor_frame_tag;
 
 // ============================================================================
 // AT Legacy Frame Data Types (for Scheduler Channels)
 // ============================================================================
 
 /// Image frame with timestamp
-struct AtLegacyImageFrame {
+struct ImageFrame {
     cv::Mat image;
     uint64_t timestamp_ns = 0;
     uint64_t frame_id     = 0;
 
-    AtLegacyImageFrame() = default;
-    AtLegacyImageFrame(cv::Mat img, uint64_t ts, uint64_t fid)
+    ImageFrame() = default;
+    ImageFrame(cv::Mat img, uint64_t ts, uint64_t fid)
         : image(std::move(img))
         , timestamp_ns(ts)
         , frame_id(fid) {}
 };
 
 /// Single armor detection result (2D, before PnP)
-struct AtLegacyArmorDetection {
+struct ArmorDetection {
     /// 4 corners: TL, TR, BR, BL
     std::array<cv::Point2f, 4> corners{};
     cv::Rect2f rect{};
@@ -48,10 +48,10 @@ struct AtLegacyArmorDetection {
     float confidence = 0.0f;
     int area         = 0;
 
-    AtLegacyArmorDetection() = default;
+    ArmorDetection() = default;
 
     /// Construct from NN output (armor_name, color as int)
-    AtLegacyArmorDetection(
+    ArmorDetection(
         std::array<cv::Point2f, 4> pts, ArmorName armor_name, ArmorColor color, float conf);
 
     /// Get center point
@@ -66,17 +66,17 @@ struct AtLegacyArmorDetection {
 };
 
 /// Batch of detections from a single frame
-struct AtLegacyArmorDetectionBatch {
-    std::vector<AtLegacyArmorDetection> detections;
+struct ArmorDetectionBatch {
+    std::vector<ArmorDetection> detections;
     cv::Mat image; ///< Source image (shared reference for visualization)
     bool has_detector_roi = false;
     cv::Rect detector_roi{};
     uint64_t timestamp_ns = 0;
     uint64_t frame_id     = 0;
 
-    AtLegacyArmorDetectionBatch() = default;
-    AtLegacyArmorDetectionBatch(
-        std::vector<AtLegacyArmorDetection> dets, cv::Mat img, uint64_t ts, uint64_t fid,
+    ArmorDetectionBatch() = default;
+    ArmorDetectionBatch(
+        std::vector<ArmorDetection> dets, cv::Mat img, uint64_t ts, uint64_t fid,
         bool has_roi = false, cv::Rect roi = {})
         : detections(std::move(dets))
         , image(std::move(img))
@@ -91,8 +91,8 @@ struct AtLegacyArmorDetectionBatch {
 
 /// Single armor measurement (3D pose in odom frame after TF transform)
 template <fast_tf::frame Frame>
-struct AtLegacyArmorMeasurementT {
-    using Transform = fast_tf::TransformMatrixd<at_legacy_armor_frame, Frame>;
+struct ArmorMeasurementT {
+    using Transform = fast_tf::TransformMatrixd<armor_frame, Frame>;
 
     Transform transform{};
     ArmorName name                 = ArmorName::Invalid;
@@ -102,7 +102,7 @@ struct AtLegacyArmorMeasurementT {
     float distance_to_image_center = 0.0f; // Pixel distance from armor center to image center
     uint64_t timestamp_ns          = 0;
 
-    AtLegacyArmorMeasurementT() = default;
+    ArmorMeasurementT() = default;
 
     /// Get distance to camera
     [[nodiscard]] double distance() const noexcept { return transform.translation().norm(); }
@@ -114,9 +114,9 @@ struct AtLegacyArmorMeasurementT {
     [[nodiscard]] double pitch() const noexcept { return transform.euler_rot().pitch; }
 
     template <fast_tf::frame ToFrame>
-    [[nodiscard]] AtLegacyArmorMeasurementT<ToFrame>
+    [[nodiscard]] ArmorMeasurementT<ToFrame>
         reframe(const fast_tf::FrameTransform<Frame, ToFrame>& frame_transform) const {
-        AtLegacyArmorMeasurementT<ToFrame> reframed;
+        ArmorMeasurementT<ToFrame> reframed;
         reframed.transform                = transform * frame_transform;
         reframed.name                     = name;
         reframed.color                    = color;
@@ -128,19 +128,18 @@ struct AtLegacyArmorMeasurementT {
     }
 };
 
-using AtLegacyArmorMeasurement       = AtLegacyArmorMeasurementT<fast_tf::odom>;
-using AtLegacyCameraArmorMeasurement = AtLegacyArmorMeasurementT<fast_tf::camera_optical>;
+using ArmorMeasurement       = ArmorMeasurementT<fast_tf::odom>;
+using CameraArmorMeasurement = ArmorMeasurementT<fast_tf::camera_optical>;
 
 /// Batch of measurements from a single frame
 template <fast_tf::frame Frame>
-struct AtLegacyArmorMeasurementBatchT {
-    std::vector<AtLegacyArmorMeasurementT<Frame>> measurements;
+struct ArmorMeasurementBatchT {
+    std::vector<ArmorMeasurementT<Frame>> measurements;
     uint64_t timestamp_ns = 0;
     uint64_t frame_id     = 0;
 
-    AtLegacyArmorMeasurementBatchT() = default;
-    AtLegacyArmorMeasurementBatchT(
-        std::vector<AtLegacyArmorMeasurementT<Frame>> meas, uint64_t ts, uint64_t fid)
+    ArmorMeasurementBatchT() = default;
+    ArmorMeasurementBatchT(std::vector<ArmorMeasurementT<Frame>> meas, uint64_t ts, uint64_t fid)
         : measurements(std::move(meas))
         , timestamp_ns(ts)
         , frame_id(fid) {}
@@ -149,6 +148,6 @@ struct AtLegacyArmorMeasurementBatchT {
     [[nodiscard]] size_t size() const noexcept { return measurements.size(); }
 };
 
-using AtLegacyArmorMeasurementBatch = AtLegacyArmorMeasurementBatchT<fast_tf::odom>;
+using ArmorMeasurementBatch = ArmorMeasurementBatchT<fast_tf::odom>;
 
 } // namespace fcs

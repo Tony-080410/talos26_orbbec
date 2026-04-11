@@ -1,17 +1,12 @@
-#include "L2_perception/armor/at_legacy_systems.hpp"
+#include "L2_perception/armor/systems.hpp"
 
-#include "L2_perception/armor/at_legacy_config.hpp"
-#include "L2_perception/armor/at_legacy_detector_backend.hpp"
-#include "L2_perception/armor/at_legacy_pnp_solver.hpp"
-#include "L2_perception/armor/at_legacy_readback_roi.hpp"
-#include "core/armor_types.hpp"
-#include "core/channel_topics.hpp"
+#include "L2_perception/armor/backend.hpp"
+#include "L2_perception/armor/config.hpp"
+#include "L2_perception/armor/readback_roi.hpp"
+#include "L2_perception/armor/solver.hpp"
 #include "core/runtime.hpp"
-#include "frame.hpp"
 #include "scheduler/scheduler.hpp"
-
 #include <algorithm>
-#include <iterator>
 #include <optional>
 #include <spdlog/spdlog.h>
 
@@ -39,14 +34,13 @@ namespace {
 }
 
 [[nodiscard]] bool tracker_snapshot_matches_detection(
-    const AtLegacyTrackerReadbackSnapshot& snapshot,
-    const AtLegacyArmorDetection& detection) noexcept {
+    const TrackerReadbackSnapshot& snapshot, const ArmorDetection& detection) noexcept {
     return snapshot.valid && snapshot.tracker.target_name == detection.name
         && snapshot.tracker.target_color == detection.color;
 }
 
-[[nodiscard]] std::vector<AtLegacyPnPSolver::PosePrior> make_pose_priors(
-    const AtLegacyArmorDetection& detection, const AtLegacyTrackerReadbackSnapshot& snapshot,
+[[nodiscard]] std::vector<PnPSolver::PosePrior> make_pose_priors(
+    const ArmorDetection& detection, const TrackerReadbackSnapshot& snapshot,
     const fast_tf::TransformMatrixd<fast_tf::odom, fast_tf::camera_optical>& T_odom_camera,
     const cv::Mat& camera_matrix, const cv::Mat& dist_coeffs) noexcept {
     if (!tracker_snapshot_matches_detection(snapshot, detection)) {
@@ -73,7 +67,7 @@ namespace {
     const Eigen::Matrix3d R_odom_camera = T_odom_camera.rotation();
     const Eigen::Vector3d t_odom_camera = T_odom_camera.translation();
 
-    std::vector<AtLegacyPnPSolver::PosePrior> priors;
+    std::vector<PnPSolver::PosePrior> priors;
     priors.reserve(armor_poses.size());
 
     for (size_t i = 0; i < armor_poses.size(); ++i) {
@@ -118,7 +112,7 @@ namespace {
         }
 
         priors.push_back(
-            AtLegacyPnPSolver::PosePrior{
+            PnPSolver::PosePrior{
                 .rvec      = cv::Vec3d(rvec.at<double>(0), rvec.at<double>(1), rvec.at<double>(2)),
                 .tvec      = cv::Vec3d(t_camera_armor.x(), t_camera_armor.y(), t_camera_armor.z()),
                 .hint_cost = hint_cost,
@@ -129,8 +123,7 @@ namespace {
     return priors;
 }
 
-void offset_detections(
-    std::vector<AtLegacyArmorDetection>& detections, const cv::Point& offset) noexcept {
+void offset_detections(std::vector<ArmorDetection>& detections, const cv::Point& offset) noexcept {
     if (offset.x == 0 && offset.y == 0) {
         return;
     }
@@ -151,27 +144,25 @@ void offset_detections(
 
 } // namespace
 
-void register_at_legacy_detection_systems(talos::Scheduler& scheduler) noexcept {
+void register_detection_systems(talos::Scheduler& scheduler) noexcept {
     auto& world = scheduler.world();
-    if (!world.has_resource<AtLegacyReadbackRoiConfig>()) {
-        world.insert_resource(AtLegacyReadbackRoiConfig{});
+    if (!world.has_resource<ArmorReadbackRoiConfig>()) {
+        world.insert_resource(ArmorReadbackRoiConfig{});
     }
-    if (!world.has_resource<AtLegacyTrackerReadbackCache>()) {
-        world.insert_resource(AtLegacyTrackerReadbackCache{});
+    if (!world.has_resource<TrackerReadbackCache>()) {
+        world.insert_resource(TrackerReadbackCache{});
     }
 
     scheduler.add_system<talos::fixed_rate<200>>(
-        "at_legacy_armor_detector_pnp_solver",
-        [](talos::spmc<AtLegacyImageFrame, AtLegacyImageChannelTopic> image_in,
-           talos::spmc_mut<AtLegacyArmorDetectionBatch, AtLegacyDetectionChannelTopic>
-               detection_out,
-           talos::spmc_mut<AtLegacyArmorMeasurementBatch, AtLegacyMeasurementChannelTopic>
-               measurement_out,
-           talos::res_mut<std::shared_ptr<AtLegacyDetectorBackend>> backend,
-           talos::res<std::shared_ptr<AtLegacyPnPSolver>> solver_ptr,
+        "armor_detector_pnp_solver",
+        [](talos::spmc<ImageFrame, ImageChannelTopic> image_in,
+           talos::spmc_mut<ArmorDetectionBatch, DetectionChannelTopic> detection_out,
+           talos::spmc_mut<ArmorMeasurementBatch, MeasurementChannelTopic> measurement_out,
+           talos::res_mut<std::shared_ptr<DetectorBackend>> backend,
+           talos::res<std::shared_ptr<PnPSolver>> solver_ptr,
            talos::res<fast_tf::CoordinateSystem> tf_system, talos::res<CameraConfig> camera_config,
-           talos::res<AtLegacyReadbackRoiConfig> readback_roi_config,
-           talos::res<AtLegacyTrackerReadbackCache> readback_cache,
+           talos::res<ArmorReadbackRoiConfig> readback_roi_config,
+           talos::res<TrackerReadbackCache> readback_cache,
            core::detecting_color detecting_color_) mutable {
             auto frame = image_in.read();
             if (!frame) {
@@ -229,7 +220,7 @@ void register_at_legacy_detection_systems(talos::Scheduler& scheduler) noexcept 
             auto result = backend->get()->detect(detector_input);
             if (!result) {
                 detection_out.write(
-                    AtLegacyArmorDetectionBatch{
+                    ArmorDetectionBatch{
                         {},
                         frame->image,
                         frame->timestamp_ns,
@@ -241,16 +232,14 @@ void register_at_legacy_detection_systems(talos::Scheduler& scheduler) noexcept 
 
             auto detections = std::move(*result);
             offset_detections(detections, detector_roi.tl());
-            std::vector<AtLegacyArmorDetection> detections_for_pnp;
+            std::vector<ArmorDetection> detections_for_pnp;
             detections_for_pnp.reserve(detections.size());
             std::copy_if(
                 detections.begin(), detections.end(), std::back_inserter(detections_for_pnp),
-                [detect_color](const AtLegacyArmorDetection& det) {
-                    return det.color == detect_color;
-                });
+                [detect_color](const ArmorDetection& det) { return det.color == detect_color; });
 
             detection_out.write(
-                AtLegacyArmorDetectionBatch{
+                ArmorDetectionBatch{
                     std::move(detections), frame->image, frame->timestamp_ns, frame->frame_id,
                     has_detector_roi, detector_roi});
 
@@ -277,7 +266,7 @@ void register_at_legacy_detection_systems(talos::Scheduler& scheduler) noexcept 
             // BA expects R_imu_cam in the sense of imu <- camera (here: odom <- camera).
             const Eigen::Matrix3d R_odom_camera = T_camera_odom_ref.rotation();
             const auto tracker_snapshot         = readback_cache->load();
-            std::vector<AtLegacyCameraArmorMeasurement> measurements;
+            std::vector<CameraArmorMeasurement> measurements;
             measurements.reserve(detections_for_pnp.size());
             for (const auto& detection : detections_for_pnp) {
                 const auto priors = tracker_snapshot_is_fresh(
@@ -285,7 +274,7 @@ void register_at_legacy_detection_systems(talos::Scheduler& scheduler) noexcept 
                                       ? make_pose_priors(
                                             detection, tracker_snapshot, *T_odom_camera,
                                             camera_matrix_cv, dist_coeffs_cv)
-                                      : std::vector<AtLegacyPnPSolver::PosePrior>{};
+                                      : std::vector<PnPSolver::PosePrior>{};
                 auto result =
                     (*solver_ptr)
                         ->solve_with_ba(detection, R_odom_camera, frame->timestamp_ns, priors);
@@ -294,7 +283,7 @@ void register_at_legacy_detection_systems(talos::Scheduler& scheduler) noexcept 
                 }
             }
 
-            std::vector<AtLegacyArmorMeasurement> odom_measurements;
+            std::vector<ArmorMeasurement> odom_measurements;
             odom_measurements.reserve(measurements.size());
 
             for (const auto& meas : measurements) {
@@ -302,25 +291,25 @@ void register_at_legacy_detection_systems(talos::Scheduler& scheduler) noexcept 
             }
 
             measurement_out.write(
-                AtLegacyArmorMeasurementBatch{
+                ArmorMeasurementBatch{
                     std::move(odom_measurements), frame->timestamp_ns, frame->frame_id});
         });
 }
 
 std::expected<DetectorBackendHandle, std::string>
-    create_detector_backend_handle(const AtLegacyConfig& config) noexcept {
+    create_detector_backend_handle(const ArmorDetectorConfig& config) noexcept {
     auto backend_result = create_detector_backend(config);
     if (!backend_result) {
         return std::unexpected(std::move(backend_result.error()));
     }
 
-    auto backend_ptr  = std::make_shared<AtLegacyDetectorBackend>(std::move(*backend_result));
+    auto backend_ptr  = std::make_shared<DetectorBackend>(std::move(*backend_result));
     auto backend_name = std::string(magic_enum::enum_name(config.backend_type));
     return DetectorBackendHandle{std::move(backend_ptr), std::move(backend_name)};
 }
 
-std::shared_ptr<AtLegacyPnPSolver> create_pnp_solver(const CameraConfig& config) noexcept {
-    return std::make_shared<AtLegacyPnPSolver>(config);
+std::shared_ptr<PnPSolver> create_pnp_solver(const CameraConfig& config) noexcept {
+    return std::make_shared<PnPSolver>(config);
 }
 
 } // namespace fcs::L2

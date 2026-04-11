@@ -170,9 +170,9 @@ private:
 // ============================================================================
 
 /// PnP solver for armor pose estimation
-class AtLegacyPnPSolver {
+class PnPSolver {
 public:
-    using PoseResult = std::expected<AtLegacyCameraArmorMeasurement, PnPError>;
+    using PoseResult = std::expected<CameraArmorMeasurement, PnPError>;
 
     struct PosePrior {
         cv::Vec3d rvec{};
@@ -182,7 +182,7 @@ public:
     };
 
     /// Construct with camera parameters — fully initialized, no separate init() needed.
-    explicit AtLegacyPnPSolver(const CameraConfig& config) {
+    explicit PnPSolver(const CameraConfig& config) {
         cv::eigen2cv(config.camera_matrix, camera_matrix_);
         cv::eigen2cv(config.distort_coefficient, dist_coeffs_);
 
@@ -203,8 +203,8 @@ public:
     /// @param timestamp_ns Timestamp for the measurement
     /// @return Measurement with refined 3D pose, or error
     [[nodiscard]] PoseResult solve_with_ba(
-        const AtLegacyArmorDetection& detection, const Eigen::Matrix3d& R_imu_cam,
-        uint64_t timestamp_ns, const std::vector<PosePrior>& pose_priors = {}) const {
+        const ArmorDetection& detection, const Eigen::Matrix3d& R_imu_cam, uint64_t timestamp_ns,
+        const std::vector<PosePrior>& pose_priors = {}) const {
         auto input = make_pnp_input(detection);
         if (!input) {
             return std::unexpected(input.error());
@@ -314,10 +314,10 @@ public:
     }
 
     /// Solve PnP with BA for multiple detections
-    [[nodiscard]] std::vector<AtLegacyCameraArmorMeasurement> solve_batch_with_ba(
-        const std::vector<AtLegacyArmorDetection>& detections, const Eigen::Matrix3d& R_imu_cam,
+    [[nodiscard]] std::vector<CameraArmorMeasurement> solve_batch_with_ba(
+        const std::vector<ArmorDetection>& detections, const Eigen::Matrix3d& R_imu_cam,
         uint64_t timestamp_ns) const {
-        std::vector<AtLegacyCameraArmorMeasurement> measurements;
+        std::vector<CameraArmorMeasurement> measurements;
         measurements.reserve(detections.size());
 
         for (const auto& det : detections) {
@@ -442,7 +442,7 @@ private:
     }
 
     [[nodiscard]] std::expected<PnPInput, PnPError>
-        make_pnp_input(const AtLegacyArmorDetection& detection) const {
+        make_pnp_input(const ArmorDetection& detection) const {
         auto img_points = detection.image_points();
         if (img_points.size() != 4) {
             return std::unexpected(PnPError::InvalidDetection);
@@ -466,14 +466,14 @@ private:
     }
 
     void build_model_points() {
-        constexpr double AT_LEGACY_SMALL_ARMOR_WIDTH  = 135.0 / 1000.0;
-        constexpr double AT_LEGACY_SMALL_ARMOR_HEIGHT = 55.0 / 1000.0;
-        constexpr double AT_LEGACY_LARGE_ARMOR_WIDTH  = 230.0 / 1000.0;
-        constexpr double AT_LEGACY_LARGE_ARMOR_HEIGHT = 55.0 / 1000.0;
+        constexpr double SMALL_ARMOR_WIDTH  = 135.0 / 1000.0;
+        constexpr double SMALL_ARMOR_HEIGHT = 55.0 / 1000.0;
+        constexpr double LARGE_ARMOR_WIDTH  = 230.0 / 1000.0;
+        constexpr double LARGE_ARMOR_HEIGHT = 55.0 / 1000.0;
 
         // Small armor: 135mm x 55mm
-        const float sw      = static_cast<float>(AT_LEGACY_SMALL_ARMOR_WIDTH / 2.0);
-        const float sh      = static_cast<float>(AT_LEGACY_SMALL_ARMOR_HEIGHT / 2.0);
+        const float sw      = static_cast<float>(SMALL_ARMOR_WIDTH / 2.0);
+        const float sh      = static_cast<float>(SMALL_ARMOR_HEIGHT / 2.0);
         small_armor_points_ = {
             cv::Point3f(0, sw, sh),   // Top-left
             cv::Point3f(0, -sw, sh),  // Top-right
@@ -482,8 +482,8 @@ private:
         };
 
         // Large armor: 230mm x 55mm
-        const float lw      = static_cast<float>(AT_LEGACY_LARGE_ARMOR_WIDTH / 2.0);
-        const float lh      = static_cast<float>(AT_LEGACY_LARGE_ARMOR_HEIGHT / 2.0);
+        const float lw      = static_cast<float>(LARGE_ARMOR_WIDTH / 2.0);
+        const float lh      = static_cast<float>(LARGE_ARMOR_HEIGHT / 2.0);
         large_armor_points_ = {
             cv::Point3f(0, lw, lh),   // Top-left
             cv::Point3f(0, -lw, lh),  // Top-right

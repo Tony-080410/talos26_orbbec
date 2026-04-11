@@ -1,7 +1,7 @@
 #pragma once
 
-#include "../at_legacy_config.hpp"
-#include "at_legacy_detector_backend_base.hpp"
+#include "../config.hpp"
+#include "base.hpp"
 #include "core/armor_types.hpp"
 
 #include <cstdint>
@@ -15,7 +15,7 @@ class Mat;
 
 namespace fcs::L2 {
 
-class AtLegacyTrtBackend : public AtLegacyDetectorBackendBase<AtLegacyTrtBackend> {
+class TrtBackend : public DetectorBackendBase<TrtBackend> {
 public:
     static constexpr int INPUT_W     = 640;
     static constexpr int INPUT_H     = 640;
@@ -25,8 +25,8 @@ public:
     static constexpr int NUM_KPTS    = 4;
     static constexpr int OUTPUT_DIM  = 14;
 
-    using DetectionResult = std::expected<std::vector<fcs::AtLegacyArmorDetection>, std::string>;
-    using Config          = AtLegacyTrtConfig;
+    using DetectionResult = std::expected<std::vector<fcs::ArmorDetection>, std::string>;
+    using Config          = ArmorTensorRtConfig;
 
     struct PreprocContext {
         float scale_x;
@@ -39,15 +39,14 @@ public:
 
     /// Factory: construct a fully-initialized backend (load TensorRT engine).
     /// Construction IS initialization — no separate init() needed.
-    [[nodiscard]] static std::expected<AtLegacyTrtBackend, std::string>
-        create(Config config) noexcept;
+    [[nodiscard]] static std::expected<TrtBackend, std::string> create(Config config) noexcept;
 
-    ~AtLegacyTrtBackend();
+    ~TrtBackend();
 
-    AtLegacyTrtBackend(AtLegacyTrtBackend&&) noexcept;
-    AtLegacyTrtBackend& operator=(AtLegacyTrtBackend&&) noexcept;
-    AtLegacyTrtBackend(const AtLegacyTrtBackend&)            = delete;
-    AtLegacyTrtBackend& operator=(const AtLegacyTrtBackend&) = delete;
+    TrtBackend(TrtBackend&&) noexcept;
+    TrtBackend& operator=(TrtBackend&&) noexcept;
+    TrtBackend(const TrtBackend&)            = delete;
+    TrtBackend& operator=(const TrtBackend&) = delete;
 
     void set_detect_color(fcs::ArmorColor color) noexcept;
 
@@ -55,7 +54,7 @@ public:
 
 private:
     /// Private constructor — use create() factory
-    explicit AtLegacyTrtBackend(Config config) noexcept;
+    explicit TrtBackend(Config config) noexcept;
 
     struct Impl;
     std::unique_ptr<Impl> impl_;

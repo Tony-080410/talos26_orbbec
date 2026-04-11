@@ -17,11 +17,11 @@ namespace fcs::L2 {
 // ============================================================================
 
 /// Light bar detected in image (灯条)
-struct AtLegacyLight : public cv::RotatedRect {
-    AtLegacyLight() = default;
+struct Light : public cv::RotatedRect {
+    Light() = default;
 
     /// Construct from contour
-    explicit AtLegacyLight(const std::vector<cv::Point>& contour) noexcept
+    explicit Light(const std::vector<cv::Point>& contour) noexcept
         : cv::RotatedRect(cv::minAreaRect(contour))
         , color(ArmorColor::Neutral) {
         if (contour.empty())
@@ -59,7 +59,7 @@ struct AtLegacyLight : public cv::RotatedRect {
     }
 
     /// Construct from top and bottom points
-    explicit AtLegacyLight(const cv::Point2f& top_pt, const cv::Point2f& bottom_pt) noexcept
+    explicit Light(const cv::Point2f& top_pt, const cv::Point2f& bottom_pt) noexcept
         : cv::RotatedRect()
         , color(ArmorColor::Neutral) {
         // Ensure top.y < bottom.y
@@ -112,10 +112,10 @@ struct AtLegacyLight : public cv::RotatedRect {
 // AT Legacy Armor from Lights (for Traditional Backend)
 // ============================================================================
 
-/// Construct AtLegacyArmorDetection from two lights
-[[nodiscard]] inline AtLegacyArmorDetection make_detection_from_lights(
-    const AtLegacyLight& left_light, const AtLegacyLight& right_light) noexcept {
-    AtLegacyArmorDetection det;
+/// Construct ArmorDetection from two lights
+[[nodiscard]] inline ArmorDetection
+    make_detection_from_lights(const Light& left_light, const Light& right_light) noexcept {
+    ArmorDetection det;
 
     // Order: TL, TR, BR, BL (left-top, right-top, right-bottom, left-bottom)
     det.corners[0] = left_light.top;

@@ -13,7 +13,7 @@
 #include <utility>
 #include <vector>
 
-#include "L2_perception/armor/at_legacy_readback_roi.hpp"
+#include "L2_perception/armor/readback_roi.hpp"
 #include "L3_estimation/energy_meter/types.hpp"
 #include "L3_estimation/tracker/new_tracker.hpp"
 #include "L3_estimation/tracker/types.hpp"
@@ -123,10 +123,10 @@ fcs::L3::OutpostTargetState make_outpost_target(double yaw, double v_yaw = 0.0) 
     return target;
 }
 
-fcs::AtLegacyArmorMeasurement make_measurement(
+fcs::ArmorMeasurement make_measurement(
     const Eigen::Vector4d& armor_pose, fcs::ArmorName name, float image_center_distance = 0.0f) {
-    fcs::AtLegacyArmorMeasurement measurement;
-    measurement.transform = fcs::AtLegacyArmorMeasurement::Transform::from_rpy(
+    fcs::ArmorMeasurement measurement;
+    measurement.transform = fcs::ArmorMeasurement::Transform::from_rpy(
         0.0, 0.0, armor_pose[3], armor_pose[0], armor_pose[1], armor_pose[2]);
     measurement.name                     = name;
     measurement.color                    = fcs::ArmorColor::Blue;
@@ -191,8 +191,7 @@ fcs::L3::TrackerOutput make_robot_tracker_output(
 class AimerSystemHarness {
 public:
     explicit AimerSystemHarness(
-        fcs::L4::L4Config config                               = {},
-        fcs::L2::AtLegacyReadbackRoiConfig readback_roi_config = {}) {
+        fcs::L4::L4Config config = {}, fcs::L2::ReadbackRoiConfig readback_roi_config = {}) {
         scheduler_.world().insert_resource(make_test_coordinate_system());
         scheduler_.world().insert_resource(make_test_camera_config());
         scheduler_.world().insert_resource(readback_roi_config);
@@ -416,12 +415,12 @@ public:
         return last_trace;
     }
 
-    std::optional<fcs::L2::AtLegacyTrackerReadbackSnapshot>
+    std::optional<fcs::L2::TrackerReadbackSnapshot>
         wait_for_readback_tracker(std::chrono::milliseconds timeout = 750ms) {
         const auto deadline = std::chrono::steady_clock::now() + timeout;
         while (std::chrono::steady_clock::now() < deadline) {
             const auto snapshot =
-                scheduler_.world().get_res<fcs::L2::AtLegacyTrackerReadbackCache>()->load();
+                scheduler_.world().get_res<fcs::L2::TrackerReadbackCache>()->load();
             if (snapshot.valid) {
                 return snapshot;
             }
@@ -662,7 +661,7 @@ TEST(AimerPhase, TrackerJumpedLatchesWhenAnyVisibleArmorIsNonZero) {
 
     fcs::L3::TrackerNew tracker(config);
 
-    fcs::AtLegacyArmorMeasurementBatch first_batch;
+    fcs::ArmorMeasurementBatch first_batch;
     first_batch.measurements.push_back(
         make_measurement(Eigen::Vector4d{0.8, 0.0, 0.0, 0.0}, fcs::ArmorName::Three, 0.0f));
     ASSERT_TRUE(tracker.first_meet(first_batch).has_value());
@@ -673,7 +672,7 @@ TEST(AimerPhase, TrackerJumpedLatchesWhenAnyVisibleArmorIsNonZero) {
 
     const auto armor_poses = first_output.robot_state()->armor_poses();
 
-    fcs::AtLegacyArmorMeasurementBatch update_batch;
+    fcs::ArmorMeasurementBatch update_batch;
     update_batch.measurements.push_back(make_measurement(armor_poses[0], fcs::ArmorName::Three));
     update_batch.measurements.push_back(make_measurement(armor_poses[1], fcs::ArmorName::Three));
 
@@ -740,7 +739,7 @@ TEST(AimerPhase, TrackerArmorVyawTracksSinusoidalOmegaInput) {
     truth.z1         = truth.position.z() + config.robot_inekf.height;
     truth.armors_num = 4;
 
-    fcs::AtLegacyArmorMeasurementBatch first_batch;
+    fcs::ArmorMeasurementBatch first_batch;
     first_batch.measurements.push_back(
         make_measurement(truth.armor_poses()[0], fcs::ArmorName::Three));
     ASSERT_TRUE(tracker.first_meet(first_batch).has_value());
@@ -761,7 +760,7 @@ TEST(AimerPhase, TrackerArmorVyawTracksSinusoidalOmegaInput) {
         truth.v_yaw = omega(time);
         truth.yaw += truth.v_yaw * kDt;
 
-        fcs::AtLegacyArmorMeasurementBatch batch;
+        fcs::ArmorMeasurementBatch batch;
         const auto poses = truth.armor_poses();
         for (const auto& pose : poses) {
             batch.measurements.push_back(make_measurement(pose, fcs::ArmorName::Three));
@@ -859,7 +858,7 @@ TEST(AimerPhase, TrackerArmorIdealFireHitRateOnSinusoidalOmegaInput) {
     };
 
     const auto truth0 = truth_state_at(0.0);
-    fcs::AtLegacyArmorMeasurementBatch first_batch;
+    fcs::ArmorMeasurementBatch first_batch;
     first_batch.measurements.push_back(
         make_measurement(truth0.armor_poses()[0], fcs::ArmorName::Three));
     ASSERT_TRUE(tracker.first_meet(first_batch).has_value());
@@ -881,7 +880,7 @@ TEST(AimerPhase, TrackerArmorIdealFireHitRateOnSinusoidalOmegaInput) {
         tracker.predict(kDt);
 
         const auto truth_now = truth_state_at(time);
-        fcs::AtLegacyArmorMeasurementBatch batch;
+        fcs::ArmorMeasurementBatch batch;
         for (const auto& pose : truth_now.armor_poses()) {
             batch.measurements.push_back(make_measurement(pose, fcs::ArmorName::Three));
         }
@@ -1040,7 +1039,7 @@ TEST(AimerPhase, TrackerArmorIdealFireHitRateOnTwoSecondAbsSinBurst) {
     };
 
     const auto truth0 = truth_state_at(0.0);
-    fcs::AtLegacyArmorMeasurementBatch first_batch;
+    fcs::ArmorMeasurementBatch first_batch;
     first_batch.measurements.push_back(
         make_measurement(truth0.armor_poses()[0], fcs::ArmorName::Three));
     ASSERT_TRUE(tracker.first_meet(first_batch).has_value());
@@ -1060,7 +1059,7 @@ TEST(AimerPhase, TrackerArmorIdealFireHitRateOnTwoSecondAbsSinBurst) {
         tracker.predict(kDt);
 
         const auto truth_now = truth_state_at(time);
-        fcs::AtLegacyArmorMeasurementBatch batch;
+        fcs::ArmorMeasurementBatch batch;
         for (const auto& pose : truth_now.armor_poses()) {
             batch.measurements.push_back(make_measurement(pose, fcs::ArmorName::Three));
         }
@@ -1362,7 +1361,7 @@ TEST(AimerSystemsTargetSelection, TempLostRetainsLastOpticalMeasurement) {
 
     fcs::L3::TrackerNew tracker(config);
 
-    fcs::AtLegacyArmorMeasurementBatch batch;
+    fcs::ArmorMeasurementBatch batch;
     batch.timestamp_ns = 100;
     batch.measurements.push_back(
         make_measurement(Eigen::Vector4d(1.0, 0.0, 0.0, 0.0), fcs::ArmorName::Three, 42.0f));
@@ -1376,7 +1375,7 @@ TEST(AimerSystemsTargetSelection, TempLostRetainsLastOpticalMeasurement) {
     EXPECT_DOUBLE_EQ(tracking_output.last_image_center_distance_px, 42.0);
     EXPECT_EQ(tracking_output.last_observation_timestamp_ns, 100u);
 
-    fcs::AtLegacyArmorMeasurementBatch empty_batch;
+    fcs::ArmorMeasurementBatch empty_batch;
     empty_batch.timestamp_ns = 200;
     tracker.predict(0.01);
     ASSERT_FALSE(tracker.update(empty_batch));
@@ -1388,7 +1387,7 @@ TEST(AimerSystemsTargetSelection, TempLostRetainsLastOpticalMeasurement) {
 }
 
 TEST(AimerSystemsTargetSelection, ReadbackRoiFreshnessUsesLastObservationTimestampDuringTempLost) {
-    fcs::L2::AtLegacyReadbackRoiConfig readback_roi_config;
+    fcs::L2::ReadbackRoiConfig readback_roi_config;
     readback_roi_config.enabled         = true;
     readback_roi_config.stale_timeout_s = 0.20;
 

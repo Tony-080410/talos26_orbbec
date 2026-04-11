@@ -14,11 +14,10 @@ namespace fcs::L3 {
 void register_tracker_systems(talos::Scheduler& scheduler, TrackerConfig&& config) {
     scheduler.world().insert_resource(std::move(config));
     scheduler.add_system<talos::fixed_rate<250>>(
-        "armor_tracker",
-        [manager = std::unique_ptr<TrackerManager>{}](
-            talos::spmc<AtLegacyArmorMeasurementBatch, AtLegacyMeasurementChannelTopic> meas_in,
-            talos::spmc_mut<TrackerOutputs, TrackerOutputChannelTopic> tracker_out,
-            talos::res<TrackerConfig> config) mutable {
+        "armor_tracker", [manager = std::unique_ptr<TrackerManager>{}](
+                             talos::spmc<ArmorMeasurementBatch, MeasurementChannelTopic> meas_in,
+                             talos::spmc_mut<TrackerOutputs, TrackerOutputChannelTopic> tracker_out,
+                             talos::res<TrackerConfig> config) mutable {
             // Initialize manager on first run
             if (!manager) {
                 manager = std::make_unique<TrackerManager>(*config);
@@ -26,7 +25,7 @@ void register_tracker_systems(talos::Scheduler& scheduler, TrackerConfig&& confi
 
             auto batch = meas_in.read();
             if (!batch) {
-                batch = AtLegacyArmorMeasurementBatch{};
+                batch = ArmorMeasurementBatch{};
                 return;
             }
 

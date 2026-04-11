@@ -7,19 +7,19 @@ namespace fcs {
 // ============================================================================
 
 /// @brief Image frame channel (Camera → Detector)
-/// Data type: AtLegacyImageFrame
+/// Data type: ImageFrame
 /// Mode: SPMC (single producer, multiple consumers)
-struct AtLegacyImageChannelTopic {};
+struct ImageChannelTopic {};
 
 /// @brief Detection result channel (Detector → PnPSolver)
-/// Data type: AtLegacyArmorDetectionBatch
+/// Data type: ArmorDetectionBatch
 /// Mode: SPMC (single producer, multiple consumers)
-struct AtLegacyDetectionChannelTopic {};
+struct DetectionChannelTopic {};
 
 /// @brief Measurement result channel (PnPSolver → Tracker)
-/// Data type: AtLegacyArmorMeasurementBatch
+/// Data type: ArmorMeasurementBatch
 /// Mode: SPMC (single producer, multiple consumers)
-struct AtLegacyMeasurementChannelTopic {};
+struct MeasurementChannelTopic {};
 
 // ============================================================================
 // L3 Estimation Pipeline Channel Topics

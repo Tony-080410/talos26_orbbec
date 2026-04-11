@@ -10,7 +10,7 @@
 #include <opencv2/calib3d.hpp>
 #include <opencv2/core.hpp>
 
-#include "L2_perception/armor/at_legacy_pnp_solver.hpp"
+#include "L2_perception/armor/pnp_solver.hpp"
 #include "camera_config.hpp"
 #include "core/types.hpp"
 
@@ -63,10 +63,10 @@ cv::Mat eigen_rotation_to_rvec(const Eigen::Matrix3d& rotation) {
     return rvec;
 }
 
-fcs::AtLegacyArmorDetection make_detection(
+fcs::ArmorDetection make_detection(
     fcs::ArmorName name, fcs::ArmorColor color, const Eigen::Matrix3d& rotation,
     const Eigen::Vector3d& translation, const fcs::CameraConfig& camera_config) {
-    const auto type = fcs::at_legacy_cls_to_armor_type(name);
+    const auto type = fcs::cls_to_armor_type(name);
     const auto obj  = armor_model_points(type);
     const auto rvec = eigen_rotation_to_rvec(rotation);
     const cv::Mat tvec =
@@ -89,11 +89,11 @@ fcs::AtLegacyArmorDetection make_detection(
 
     std::array<cv::Point2f, 4> corners{};
     std::copy(projected.begin(), projected.end(), corners.begin());
-    return fcs::AtLegacyArmorDetection(corners, name, color, 1.0f);
+    return fcs::ArmorDetection(corners, name, color, 1.0f);
 }
 
-fcs::AtLegacyArmorDetection
-    bias_detection_towards_center(const fcs::AtLegacyArmorDetection& detection, float bias_px) {
+fcs::ArmorDetection
+    bias_detection_towards_center(const fcs::ArmorDetection& detection, float bias_px) {
     auto corners      = detection.corners;
     const auto center = detection.center();
 
@@ -105,13 +105,12 @@ fcs::AtLegacyArmorDetection
         }
     }
 
-    return fcs::AtLegacyArmorDetection(
-        corners, detection.name, detection.color, detection.confidence);
+    return fcs::ArmorDetection(corners, detection.name, detection.color, detection.confidence);
 }
 
 double reprojection_rmse_px(
-    const fcs::AtLegacyCameraArmorMeasurement& measurement,
-    const fcs::AtLegacyArmorDetection& detection, const fcs::CameraConfig& camera_config) {
+    const fcs::CameraArmorMeasurement& measurement, const fcs::ArmorDetection& detection,
+    const fcs::CameraConfig& camera_config) {
     const auto obj_points = armor_model_points(detection.type);
     const auto rotation   = measurement.transform.rotation();
     const auto t          = measurement.transform.translation();
@@ -142,15 +141,15 @@ double reprojection_rmse_px(
 }
 
 double rotation_error_rad(
-    const fcs::AtLegacyCameraArmorMeasurement& measurement, const Eigen::Matrix3d& rotation_gt) {
+    const fcs::CameraArmorMeasurement& measurement, const Eigen::Matrix3d& rotation_gt) {
     const Eigen::Matrix3d delta = measurement.transform.rotation() * rotation_gt.transpose();
     return Eigen::AngleAxisd(delta).angle();
 }
 
-TEST(AtLegacyPnPSolver, RecoversSmallArmorPoseWithoutPriorUnderDistortion) {
+TEST(PnPSolver, RecoversSmallArmorPoseWithoutPriorUnderDistortion) {
     const auto camera_config = make_test_camera_config();
 
-    fcs::L2::AtLegacyPnPSolver solver;
+    fcs::L2::PnPSolver solver;
     ASSERT_TRUE(solver.init(camera_config));
 
     const double yaw_gt               = 0.42;
@@ -168,10 +167,10 @@ TEST(AtLegacyPnPSolver, RecoversSmallArmorPoseWithoutPriorUnderDistortion) {
     EXPECT_LT(reprojection_rmse_px(measurement, detection, camera_config), 0.1);
 }
 
-TEST(AtLegacyPnPSolver, RecoversLargeArmorPoseWithPosePriorUnderDistortion) {
+TEST(PnPSolver, RecoversLargeArmorPoseWithPosePriorUnderDistortion) {
     const auto camera_config = make_test_camera_config();
 
-    fcs::L2::AtLegacyPnPSolver solver;
+    fcs::L2::PnPSolver solver;
     ASSERT_TRUE(solver.init(camera_config));
 
     const double yaw_gt               = -0.31;
@@ -184,7 +183,7 @@ TEST(AtLegacyPnPSolver, RecoversLargeArmorPoseWithPosePriorUnderDistortion) {
     const Eigen::Vector3d translation_prior = translation_gt + Eigen::Vector3d(0.03, -0.02, 0.10);
     const auto prior_rvec                   = eigen_rotation_to_rvec(rotation_prior);
 
-    std::vector<fcs::L2::AtLegacyPnPSolver::PosePrior> priors;
+    std::vector<fcs::L2::PnPSolver::PosePrior> priors;
     priors.push_back({
         .rvec =
             cv::Vec3d(prior_rvec.at<double>(0), prior_rvec.at<double>(1), prior_rvec.at<double>(2)),
@@ -202,10 +201,10 @@ TEST(AtLegacyPnPSolver, RecoversLargeArmorPoseWithPosePriorUnderDistortion) {
     EXPECT_LT(reprojection_rmse_px(measurement, detection, camera_config), 0.1);
 }
 
-TEST(AtLegacyPnPSolver, KeepsConstrainedPoseManifoldWithBiasedCornersAndPrior) {
+TEST(PnPSolver, KeepsConstrainedPoseManifoldWithBiasedCornersAndPrior) {
     const auto camera_config = make_test_camera_config();
 
-    fcs::L2::AtLegacyPnPSolver solver;
+    fcs::L2::PnPSolver solver;
     ASSERT_TRUE(solver.init(camera_config));
 
     const double yaw_gt               = 0.57;
@@ -219,7 +218,7 @@ TEST(AtLegacyPnPSolver, KeepsConstrainedPoseManifoldWithBiasedCornersAndPrior) {
     const Eigen::Vector3d translation_prior = translation_gt + Eigen::Vector3d(-0.02, 0.02, 0.12);
     const auto prior_rvec                   = eigen_rotation_to_rvec(rotation_prior);
 
-    std::vector<fcs::L2::AtLegacyPnPSolver::PosePrior> priors;
+    std::vector<fcs::L2::PnPSolver::PosePrior> priors;
     priors.push_back({
         .rvec =
             cv::Vec3d(prior_rvec.at<double>(0), prior_rvec.at<double>(1), prior_rvec.at<double>(2)),

@@ -1,7 +1,7 @@
 #pragma once
 
 // Keep this header as a thin API surface.
-// The implementation lives in `src/fcs/L2_perception/at_legacy_systems.cpp`.
+// The implementation lives in `src/fcs/L2_perception/systems.cpp`.
 
 #include "scheduler/thin.hpp"
 #include <expected>
@@ -13,9 +13,9 @@ struct CameraConfig;
 };
 namespace fcs::L2 {
 
-struct AtLegacyConfig;
-class AtLegacyDetectorBackend;
-class AtLegacyPnPSolver;
+struct ArmorDetectorConfig;
+class DetectorBackend;
+class PnPSolver;
 
 // ============================================================================
 // AT Legacy Armor Detection Pipeline Systems
@@ -36,25 +36,24 @@ class AtLegacyPnPSolver;
 ///
 /// - `scheduler`: the scheduler to register systems with
 /// - `config`: L2 perception configuration (will be moved into resource)
-void register_at_legacy_detection_systems(talos::Scheduler& scheduler) noexcept;
+void register_detection_systems(talos::Scheduler& scheduler) noexcept;
 
 // ============================================================================
 // Configuration Helpers
 // ============================================================================
 
 struct DetectorBackendHandle {
-    std::shared_ptr<AtLegacyDetectorBackend> backend;
+    std::shared_ptr<DetectorBackend> backend;
     std::string name;
 };
 
 /// Create detector backend resource from unified config.
 /// Returns the backend pointer plus a human-readable backend name.
 [[nodiscard]] std::expected<DetectorBackendHandle, std::string>
-    create_detector_backend_handle(const AtLegacyConfig& config) noexcept;
+    create_detector_backend_handle(const ArmorDetectorConfig& config) noexcept;
 
 /// Create PnP solver from camera info
 /// @param config camera config
-[[nodiscard]] std::shared_ptr<AtLegacyPnPSolver>
-    create_pnp_solver(const CameraConfig& config) noexcept;
+[[nodiscard]] std::shared_ptr<PnPSolver> create_pnp_solver(const CameraConfig& config) noexcept;
 
 } // namespace fcs::L2

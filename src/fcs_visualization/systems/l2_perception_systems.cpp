@@ -25,7 +25,7 @@ void register_l2_perception_systems(talos::scheduler::Scheduler& app) {
 
     app.add_system<talos::pool_compute>(
         "foxglove_l2_detection_pub",
-        [](talos::spmc<AtLegacyArmorDetectionBatch, AtLegacyDetectionChannelTopic> det_in,
+        [](talos::spmc<ArmorDetectionBatch, DetectionChannelTopic> det_in,
            talos::res<std::shared_ptr<FoxgloveServer>> server) {
             if (!foxglove_ready(*server, det_in)) {
                 return;
@@ -69,7 +69,7 @@ void register_l2_perception_systems(talos::scheduler::Scheduler& app) {
 
     app.add_system<talos::pool_compute>(
         "foxglove_l2_measurement_scene",
-        [](talos::spmc<AtLegacyArmorMeasurementBatch, AtLegacyMeasurementChannelTopic> meas_in,
+        [](talos::spmc<ArmorMeasurementBatch, MeasurementChannelTopic> meas_in,
            talos::res<std::shared_ptr<FoxgloveServer>> server) {
             if (!foxglove_ready(*server, meas_in))
                 return;
@@ -118,7 +118,7 @@ void register_l2_perception_systems(talos::scheduler::Scheduler& app) {
 
     app.add_system<talos::pool_compute>(
         "foxglove_l2_measurement_pub",
-        [](talos::spmc<AtLegacyArmorMeasurementBatch, AtLegacyMeasurementChannelTopic> meas_in,
+        [](talos::spmc<ArmorMeasurementBatch, MeasurementChannelTopic> meas_in,
            talos::res<std::shared_ptr<FoxgloveServer>> server) {
             if (!detail::foxglove_ready(*server, meas_in)) {
                 return;

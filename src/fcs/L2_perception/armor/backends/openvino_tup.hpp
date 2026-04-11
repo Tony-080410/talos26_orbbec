@@ -1,7 +1,7 @@
 #pragma once
 
-#include "../at_legacy_config.hpp"
-#include "../at_legacy_detector_backend.hpp"
+#include "../backend.hpp"
+#include "../config.hpp"
 #include "core/types.hpp"
 
 #include <array>
@@ -36,10 +36,10 @@ struct GridAndStride {
 // ============================================================================
 
 /// Neural network detection backend using OpenVINO (TUP model)
-class AtLegacyNNTupBackend : public AtLegacyDetectorBackendBase<AtLegacyNNTupBackend> {
+class NNTupBackend : public DetectorBackendBase<NNTupBackend> {
 public:
-    using DetectionResult = std::expected<std::vector<AtLegacyArmorDetection>, std::string>;
-    using Config          = AtLegacyNNTupConfig;
+    using DetectionResult = std::expected<std::vector<ArmorDetection>, std::string>;
+    using Config          = ArmorOpenVinoTupConfig;
 
     static constexpr int INPUT_W     = 416;
     static constexpr int INPUT_H     = 416;
@@ -48,16 +48,15 @@ public:
 
     /// Factory: construct a fully-initialized backend (load model via OpenVINO).
     /// Construction IS initialization — no separate init() needed.
-    [[nodiscard]] static std::expected<AtLegacyNNTupBackend, std::string>
-        create(Config config) noexcept;
+    [[nodiscard]] static std::expected<NNTupBackend, std::string> create(Config config) noexcept;
 
-    ~AtLegacyNNTupBackend();
+    ~NNTupBackend();
 
     // Move-only (OpenVINO resources)
-    AtLegacyNNTupBackend(AtLegacyNNTupBackend&&) noexcept;
-    AtLegacyNNTupBackend& operator=(AtLegacyNNTupBackend&&) noexcept;
-    AtLegacyNNTupBackend(const AtLegacyNNTupBackend&)            = delete;
-    AtLegacyNNTupBackend& operator=(const AtLegacyNNTupBackend&) = delete;
+    NNTupBackend(NNTupBackend&&) noexcept;
+    NNTupBackend& operator=(NNTupBackend&&) noexcept;
+    NNTupBackend(const NNTupBackend&)            = delete;
+    NNTupBackend& operator=(const NNTupBackend&) = delete;
 
     /// Detect armors in image (synchronous)
     [[nodiscard]] DetectionResult detect_impl(const cv::Mat& image) noexcept;
@@ -74,7 +73,7 @@ public:
 
 private:
     /// Private constructor — use create() factory
-    explicit AtLegacyNNTupBackend(Config config) noexcept;
+    explicit NNTupBackend(Config config) noexcept;
 
     /// Preprocess context
     struct PreprocContext {
@@ -93,19 +92,18 @@ private:
 
     /// Preprocess image (letterbox without normalization)
     [[nodiscard]] static PreprocContext
-        preprocess(const cv::Mat& image, const AtLegacyNNTupConfig& cfg) noexcept;
+        preprocess(const cv::Mat& image, const ArmorOpenVinoTupConfig& cfg) noexcept;
 
     /// Run inference
     [[nodiscard]] bool infer(const PreprocContext& ctx) noexcept;
 
     /// Postprocess inference output
-    [[nodiscard]] std::vector<AtLegacyArmorDetection>
-        postprocess(const PreprocContext& ctx, const AtLegacyNNTupConfig& cfg) const noexcept;
+    [[nodiscard]] std::vector<ArmorDetection>
+        postprocess(const PreprocContext& ctx, const ArmorOpenVinoTupConfig& cfg) const noexcept;
 
     /// Non-maximum suppression
-    [[nodiscard]] static std::vector<AtLegacyArmorDetection>
-        nms(std::vector<AtLegacyArmorDetection>& detections,
-            const AtLegacyNNTupConfig& cfg) noexcept;
+    [[nodiscard]] static std::vector<ArmorDetection>
+        nms(std::vector<ArmorDetection>& detections, const ArmorOpenVinoTupConfig& cfg) noexcept;
 
 private:
     Config config_;

@@ -1,7 +1,7 @@
 #include "runtime/boot.hpp"
 
-#include "L2_perception/armor/at_legacy_readback_roi.hpp"
-#include "L2_perception/armor/at_legacy_systems.hpp"
+#include "L2_perception/armor/readback_roi.hpp"
+#include "L2_perception/armor/systems.hpp"
 #include "L2_perception/rune/rune_systems.hpp"
 #include "L3_estimation/energy_meter/energy_meter_systems.hpp"
 #include "L3_estimation/tracker_systems.hpp"
@@ -82,7 +82,7 @@ void init_coordinate_system(fast_tf::CoordinateSystem& system, const RobotExtrin
     world.insert_resource(core::trajectory::bullet_speed_data{.bullet_speed = bullet_speed});
     world.insert_resource(config.vision.at_legacy->default_detect_color);
     world.insert_resource(config.vision.at_legacy->readback_roi);
-    world.insert_resource(L2::AtLegacyTrackerReadbackCache{});
+    world.insert_resource(L2::TrackerReadbackCache{});
 
     // Setup L1 sensor systems
     auto setup_result = runtime::setup_l1(
@@ -111,7 +111,7 @@ void init_coordinate_system(fast_tf::CoordinateSystem& system, const RobotExtrin
     SPDLOG_INFO("Trajectory resources configured (bullet_speed={:.1f}m/s)", bullet_speed);
 
     // Register AT Legacy detection pipeline systems
-    L2::register_at_legacy_detection_systems(scheduler);
+    L2::register_detection_systems(scheduler);
     rune::register_rune_detection_systems(scheduler, std::move(config.vision.rune_detector));
 
     // Register L3 Tracker pipeline (Measurement -> TrackerOutput)
