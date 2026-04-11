@@ -440,10 +440,10 @@ private:
                             + Lane::Constant(b0_) * u + Lane::Constant(f_pos_);
         const Lane next_vel = Lane::Constant(a10_) * x_pos + Lane::Constant(a11_) * x_vel
                             + Lane::Constant(b1_) * u + Lane::Constant(f_vel_);
-        x_pos_.col(i + 1)   = active.select(next_pos, x_pos_.col(i + 1));
-        x_vel_.col(i + 1)   = active.select(next_vel, x_vel_.col(i + 1));
-        x_pos               = active.select(next_pos, x_pos_.col(i + 1));
-        x_vel               = active.select(next_vel, x_vel_.col(i + 1));
+        x_pos_.col(i + 1) = active.select(next_pos, x_pos_.col(i + 1));
+        x_vel_.col(i + 1) = active.select(next_vel, x_vel_.col(i + 1));
+        x_pos             = active.select(next_pos, x_pos_.col(i + 1));
+        x_vel             = active.select(next_vel, x_vel_.col(i + 1));
     }
 
     void terminal_step(

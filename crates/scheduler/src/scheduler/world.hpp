@@ -33,7 +33,8 @@ struct Resource {
     T value;
 
     Resource() noexcept(std::is_nothrow_default_constructible_v<T>)
-        requires std::default_initializable<T> = default;
+        requires std::default_initializable<T>
+        = default;
 
     template <typename... Args>
     explicit Resource(std::in_place_t, Args&&... args) noexcept(
