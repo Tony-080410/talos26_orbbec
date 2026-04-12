@@ -58,6 +58,7 @@ public:
 private:
     /// Private constructor — use create() factory
     explicit AxeraBackend(Config config) noexcept;
+    [[nodiscard]] std::expected<void, std::string> init() noexcept;
 
     /// Direct-resize preprocessing context.
     struct PreprocContext {
@@ -123,6 +124,7 @@ private:
 private:
     Config config_;
     ArmorColor detect_color_          = ArmorColor::Blue;
+    bool initialized_                 = false;
     bool warned_non_four_three_input_ = false;
 
     // AX650 NPU resources

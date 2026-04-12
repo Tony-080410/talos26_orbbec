@@ -265,7 +265,9 @@ AxeraBackend::~AxeraBackend() {
         AX_ENGINE_Deinit();
     }
     deinit_ivps();
-    AX_SYS_Deinit();
+    if (initialized_) {
+        AX_SYS_Deinit();
+    }
 }
 
 AxeraBackend::AxeraBackend(AxeraBackend&& other) noexcept
@@ -276,6 +278,7 @@ AxeraBackend::AxeraBackend(AxeraBackend&& other) noexcept
     , nms_tile_bins_buf_(std::move(other.nms_tile_bins_buf_))
     , config_(std::move(other.config_))
     , detect_color_(other.detect_color_)
+    , initialized_(other.initialized_)
     , warned_non_four_three_input_(other.warned_non_four_three_input_)
     , handle_(other.handle_)
     , io_data_(other.io_data_)
@@ -289,6 +292,7 @@ AxeraBackend::AxeraBackend(AxeraBackend&& other) noexcept
     , ivps_max_src_height_(other.ivps_max_src_height_)
     , ivps_aspect_ratio_(other.ivps_aspect_ratio_) {
     other.detect_color_                = ArmorColor::Blue;
+    other.initialized_                 = false;
     other.warned_non_four_three_input_ = false;
     other.handle_                      = nullptr;
     other.io_data_                     = {};
@@ -311,7 +315,9 @@ AxeraBackend& AxeraBackend::operator=(AxeraBackend&& other) noexcept {
         AX_ENGINE_Deinit();
     }
     deinit_ivps();
-    AX_SYS_Deinit();
+    if (initialized_) {
+        AX_SYS_Deinit();
+    }
 
     cached_grid_                 = std::move(other.cached_grid_);
     postproc_ranked_buf_         = std::move(other.postproc_ranked_buf_);
@@ -320,6 +326,7 @@ AxeraBackend& AxeraBackend::operator=(AxeraBackend&& other) noexcept {
     nms_tile_bins_buf_           = std::move(other.nms_tile_bins_buf_);
     config_                      = std::move(other.config_);
     detect_color_                = other.detect_color_;
+    initialized_                 = other.initialized_;
     warned_non_four_three_input_ = other.warned_non_four_three_input_;
     handle_                      = other.handle_;
     io_data_                     = other.io_data_;
@@ -334,6 +341,7 @@ AxeraBackend& AxeraBackend::operator=(AxeraBackend&& other) noexcept {
     ivps_aspect_ratio_           = other.ivps_aspect_ratio_;
 
     other.detect_color_                = ArmorColor::Blue;
+    other.initialized_                 = false;
     other.warned_non_four_three_input_ = false;
     other.handle_                      = nullptr;
     other.io_data_                     = {};
@@ -351,77 +359,99 @@ AxeraBackend& AxeraBackend::operator=(AxeraBackend&& other) noexcept {
 // ============================================================================
 
 std::expected<AxeraBackend, std::string> AxeraBackend::create(Config config) noexcept {
-    const auto& cfg = config;
+    AxeraBackend backend(std::move(config));
+    const auto& cfg = backend.get_config();
     if (!std::filesystem::exists(cfg.model_path)) {
         SPDLOG_ERROR("[AxeraBackend] Model file not found: {}", cfg.model_path);
         return std::unexpected("Axera model file not found: " + cfg.model_path);
     }
 
-    AxeraBackend backend(std::move(config));
+    auto init_result = backend.init();
+    if (!init_result) {
+        return std::unexpected(init_result.error());
+    }
+
+    return backend;
+}
+
+std::expected<void, std::string> AxeraBackend::init() noexcept {
+    if (initialized_) {
+        return {};
+    }
+
+    const auto& cfg = get_config();
+    if (!std::filesystem::exists(cfg.model_path)) {
+        SPDLOG_ERROR("[AxeraBackend] Model file not found: {}", cfg.model_path);
+        return std::unexpected("Axera model file not found: " + cfg.model_path);
+    }
+
+    bool sys_initialized     = false;
+    bool engine_initialized  = false;
+    auto cleanup_failed_init = [&]() {
+        if (io_data_.pInputs != nullptr || io_data_.pOutputs != nullptr) {
+            free_io(&io_data_);
+        }
+        if (handle_ != nullptr) {
+            AX_ENGINE_DestroyHandle(handle_);
+            handle_ = nullptr;
+        }
+        if (engine_initialized) {
+            AX_ENGINE_Deinit();
+            engine_initialized = false;
+        }
+        deinit_ivps();
+        if (sys_initialized) {
+            AX_SYS_Deinit();
+            sys_initialized = false;
+        }
+    };
 
     auto ret = AX_SYS_Init();
     if (ret != 0) {
         SPDLOG_ERROR("[AxeraBackend] AX_SYS_Init failed: {}", ret);
         return std::unexpected("Axera AX_SYS_Init failed with code " + std::to_string(ret));
     }
+    sys_initialized = true;
 
-    (void)backend.init_ivps();
-
-    bool engine_initialized = false;
-
-    auto cleanup_failed = [&]() {
-        if (backend.io_data_.pInputs != nullptr || backend.io_data_.pOutputs != nullptr) {
-            free_io(&backend.io_data_);
-        }
-        if (backend.handle_ != nullptr) {
-            AX_ENGINE_DestroyHandle(backend.handle_);
-            backend.handle_ = nullptr;
-        }
-        if (engine_initialized) {
-            AX_ENGINE_Deinit();
-        }
-        backend.deinit_ivps();
-        AX_SYS_Deinit();
-    };
+    (void)init_ivps();
 
     AX_ENGINE_NPU_ATTR_T npu_attr{};
     npu_attr.eHardMode = AX_ENGINE_VIRTUAL_NPU_DISABLE;
     ret                = AX_ENGINE_Init(&npu_attr);
     if (ret != 0) {
         SPDLOG_ERROR("[AxeraBackend] AX_ENGINE_Init failed: {}", ret);
-        cleanup_failed();
+        cleanup_failed_init();
         return std::unexpected("Axera AX_ENGINE_Init failed with code " + std::to_string(ret));
     }
     engine_initialized = true;
 
-    if (!read_file(cfg.model_path, backend.model_buffer_)) {
+    if (!read_file(cfg.model_path, model_buffer_)) {
         SPDLOG_ERROR("[AxeraBackend] Failed to read model file: {}", cfg.model_path);
-        cleanup_failed();
+        cleanup_failed_init();
         return std::unexpected("Axera failed to read model file: " + cfg.model_path);
     }
 
-    ret = AX_ENGINE_CreateHandle(
-        &backend.handle_, backend.model_buffer_.data(), backend.model_buffer_.size());
+    ret = AX_ENGINE_CreateHandle(&handle_, model_buffer_.data(), model_buffer_.size());
     if (ret != 0) {
         SPDLOG_ERROR("[AxeraBackend] AX_ENGINE_CreateHandle failed: {}", ret);
-        cleanup_failed();
+        cleanup_failed_init();
         return std::unexpected(
             "Axera AX_ENGINE_CreateHandle failed with code " + std::to_string(ret));
     }
 
-    ret = AX_ENGINE_CreateContext(backend.handle_);
+    ret = AX_ENGINE_CreateContext(handle_);
     if (ret != 0) {
         SPDLOG_ERROR("[AxeraBackend] AX_ENGINE_CreateContext failed: {}", ret);
-        cleanup_failed();
+        cleanup_failed_init();
         return std::unexpected(
             "Axera AX_ENGINE_CreateContext failed with code " + std::to_string(ret));
     }
 
     AX_ENGINE_IO_INFO_T* io_info = nullptr;
-    ret                          = AX_ENGINE_GetIOInfo(backend.handle_, &io_info);
+    ret                          = AX_ENGINE_GetIOInfo(handle_, &io_info);
     if (ret != 0) {
         SPDLOG_ERROR("[AxeraBackend] AX_ENGINE_GetIOInfo failed: {}", ret);
-        cleanup_failed();
+        cleanup_failed_init();
         return std::unexpected("Axera AX_ENGINE_GetIOInfo failed with code " + std::to_string(ret));
     }
 
@@ -449,31 +479,30 @@ std::expected<AxeraBackend, std::string> AxeraBackend::create(Config config) noe
         "model)");
 
     auto io_result = prepare_io(
-        io_info, &backend.io_data_,
+        io_info, &io_data_,
         std::make_pair(
             AX_ENGINE_ALLOC_BUFFER_STRATEGY_T::CACHED, AX_ENGINE_ALLOC_BUFFER_STRATEGY_T::CACHED));
     if (!io_result) {
-        cleanup_failed();
+        cleanup_failed_init();
         return std::unexpected(io_result.error());
     }
 
-    backend.cached_grid_ = backend.build_decode_grid();
-    SPDLOG_INFO(
-        "[AxeraBackend] Cached decode grid with {} anchors", backend.cached_grid_.grid_x.size());
+    cached_grid_ = build_decode_grid();
+    SPDLOG_INFO("[AxeraBackend] Cached decode grid with {} anchors", cached_grid_.grid_x.size());
 
-    if (backend.io_data_.nInputSize > 0 && backend.io_data_.pInputs[0].pVirAddr != nullptr) {
-        auto* warmup_input = static_cast<uint8_t*>(backend.io_data_.pInputs[0].pVirAddr);
-        std::memset(warmup_input, 114, static_cast<size_t>(backend.io_data_.pInputs[0].nSize));
-        AX_SYS_MflushCache(
-            backend.io_data_.pInputs[0].phyAddr, warmup_input, backend.io_data_.pInputs[0].nSize);
+    if (io_data_.nInputSize > 0 && io_data_.pInputs[0].pVirAddr != nullptr) {
+        auto* warmup_input = static_cast<uint8_t*>(io_data_.pInputs[0].pVirAddr);
+        std::memset(warmup_input, 114, static_cast<size_t>(io_data_.pInputs[0].nSize));
+        AX_SYS_MflushCache(io_data_.pInputs[0].phyAddr, warmup_input, io_data_.pInputs[0].nSize);
     }
-    ret = AX_ENGINE_RunSync(backend.handle_, &backend.io_data_);
+    ret = AX_ENGINE_RunSync(handle_, &io_data_);
     if (ret != 0) {
         SPDLOG_WARN("[AxeraBackend] Warmup AX_ENGINE_RunSync failed: {}", ret);
     }
 
+    initialized_ = true;
     SPDLOG_INFO("[AxeraBackend] Initialization complete");
-    return backend;
+    return {};
 }
 
 AxeraBackend::PreprocContext AxeraBackend::preprocess(const cv::Mat& image) const noexcept {

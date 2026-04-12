@@ -251,6 +251,8 @@ crates/fast_tf/src/
 3. **接口用 C++20 concepts 强制约束** — CRTP 基类、策略模式等类型参数必须用 concept 约束，编译期检查 `noexcept`、返回类型、工厂签名
 4. **`std::abort()` 仅用于不可恢复的逻辑错误** — "文件未找到"、"模型加载失败" 等可恢复错误必须通过 `std::expected` 返回
 5. **不允许向后兼容废代码** — 删除废弃接口而非保留，`name()` / `supports_xxx()` 等运行时能力查询属于设计缺陷
+6. **禁止用 `*_initialized` / ownership flag 冒充 RAII** — 资源生命周期必须由 guard / token / owner 类型表达，析构自动释放，move 后所有权必须自然转移；不要用布尔状态手搓资源管理
+7. **不要用口头解释替代结构修正** — 如果问题是构造、move、析构、所有权语义错误，必须直接把结构改到满足 RAII 和 construction-is-initialization，而不是围绕“调用方配置”做猜测
 
 ### 其他规范
 

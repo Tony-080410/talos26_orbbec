@@ -17,7 +17,8 @@ namespace fcs::L2 {
 // ============================================================================
 
 std::expected<TraditionalBackend, std::string> TraditionalBackend::create(Config config) noexcept {
-    const auto& cfg = config;
+    TraditionalBackend backend(std::move(config));
+    const auto& cfg = backend.get_config();
 
     // Validate: classifier model path must be provided
     if (cfg.classifier_model_path.empty()) {
@@ -33,7 +34,6 @@ std::expected<TraditionalBackend, std::string> TraditionalBackend::create(Config
             + cfg.classifier_model_path + "': " + classifier_result.error());
     }
 
-    TraditionalBackend backend(std::move(config));
     backend.classifier_ = std::make_unique<TraditionalClassifier>(std::move(*classifier_result));
     return backend;
 }
