@@ -14,6 +14,7 @@
 #include <vector>
 
 #include <Eigen/Core>
+#include <Eigen/Geometry>
 #include <opencv2/calib3d.hpp>
 #include <opencv2/core.hpp>
 #include <opencv2/core/eigen.hpp>
@@ -122,10 +123,16 @@ public:
         measurement.selected_candidate_idx = static_cast<int>(selected_idx);
 
         if (selected.depth_valid && selected.whole_center_cam.has_value()) {
+            measurement.orientation_cam   = selected.orientation_cam;
             measurement.whole_center_cam  = selected.whole_center_cam;
             measurement.whole_center_odom = selected.whole_center_odom;
             if (measurement.whole_center_odom.has_value()) {
                 measurement.whole_center_z_odom = measurement.whole_center_odom->z();
+            }
+            if (measurement.orientation_cam.has_value() && T_camera_odom.has_value()) {
+                const Eigen::Quaterniond q_camera_odom(T_camera_odom->rotation());
+                measurement.orientation_odom =
+                    (q_camera_odom * *measurement.orientation_cam).normalized();
             }
             measurement.depth_quality = (selected.pair_indices.size() >= 3)
                                           ? LdmDepthQuality::Stable
@@ -201,7 +208,7 @@ private:
 
     [[nodiscard]] bool
         same_assignment(const LdmMeshCandidate& lhs, const LdmMeshCandidate& rhs) const noexcept {
-        return lhs.reverse_assignment == rhs.reverse_assignment
+        return lhs.cluster_id == rhs.cluster_id && lhs.reverse_assignment == rhs.reverse_assignment
             && lhs.pair_indices == rhs.pair_indices
             && lhs.octagon_face_indices == rhs.octagon_face_indices;
     }
@@ -212,6 +219,9 @@ private:
         const std::optional<fast_tf::TransformMatrixd<fast_tf::camera_optical, fast_tf::odom>>&
             T_camera_odom) const {
         if (!has_face_assignment(base) || !has_face_assignment(extra)) {
+            return std::nullopt;
+        }
+        if (base.cluster_id >= 0 && extra.cluster_id >= 0 && base.cluster_id != extra.cluster_id) {
             return std::nullopt;
         }
         if (base.reverse_assignment != extra.reverse_assignment) {
@@ -257,6 +267,7 @@ private:
         }
 
         LdmMeshCandidate merged;
+        merged.cluster_id         = base.cluster_id;
         merged.reverse_assignment = base.reverse_assignment;
         merged.pair_indices.reserve(pairs.size());
         merged.octagon_face_indices.reserve(pairs.size());
@@ -412,6 +423,56 @@ private:
         return bearing.normalized();
     }
 
+    [[nodiscard]] float
+        projected_vertical_axis_score(const cv::Mat& rvec, const cv::Mat& tvec) const {
+        const float half_axis =
+            static_cast<float>(std::max(config_.geometry.pair_center_separation_m, 1e-3) * 0.5);
+        std::vector<cv::Point2f> projected_axis;
+        cv::projectPoints(
+            std::vector<cv::Point3f>{
+                cv::Point3f(0.0f, -half_axis, 0.0f), cv::Point3f(0.0f, half_axis, 0.0f)},
+            rvec, tvec, camera_matrix_, dist_coeffs_, projected_axis);
+        if (projected_axis.size() != 2u) {
+            return 0.0f;
+        }
+
+        const cv::Point2f delta = projected_axis[1] - projected_axis[0];
+        const float norm        = std::sqrt(delta.x * delta.x + delta.y * delta.y);
+        if (norm <= 1e-3f) {
+            return 0.0f;
+        }
+        return std::clamp(delta.y / norm, 0.0f, 1.0f);
+    }
+
+    [[nodiscard]] float visible_face_score(
+        const LdmMeshCandidate& candidate, const Eigen::Matrix3d& rotation_cam,
+        const Eigen::Vector3d& center_cam) const {
+        if (!has_face_assignment(candidate)) {
+            return 0.5f;
+        }
+
+        const double scale = std::max(1e-6, octagon_face_center_radius_m(config_.geometry));
+        float score_sum    = 0.0f;
+        int score_count    = 0;
+        for (const int face_idx : candidate.octagon_face_indices) {
+            const auto model_pair = pair_model_points_for_face(config_.geometry, face_idx);
+            const Eigen::Vector3d face_center_model(
+                0.5 * static_cast<double>(model_pair[0].x + model_pair[1].x),
+                0.5 * static_cast<double>(model_pair[0].y + model_pair[1].y),
+                0.5 * static_cast<double>(model_pair[0].z + model_pair[1].z));
+            const Eigen::Vector3d face_center_cam = rotation_cam * face_center_model + center_cam;
+            const double front_delta              = center_cam.z() - face_center_cam.z();
+            score_sum +=
+                std::clamp(static_cast<float>(0.5 + 0.5 * (front_delta / scale)), 0.0f, 1.0f);
+            ++score_count;
+        }
+
+        if (score_count <= 0) {
+            return 0.5f;
+        }
+        return score_sum / static_cast<float>(score_count);
+    }
+
     void evaluate_candidate(
         LdmMeshCandidate& candidate, const std::vector<LightPair>& pairs,
         const std::optional<fast_tf::TransformMatrixd<fast_tf::camera_optical, fast_tf::odom>>&
@@ -477,17 +538,33 @@ private:
         cv::cv2eigen(tvec, center_cam);
         candidate.whole_center_cam = center_cam;
 
+        cv::Mat rotation_cv;
+        cv::Rodrigues(rvec, rotation_cv);
+        Eigen::Matrix3d rotation_cam;
+        cv::cv2eigen(rotation_cv, rotation_cam);
+        candidate.orientation_cam = Eigen::Quaterniond(rotation_cam).normalized();
+
         if (T_camera_odom.has_value()) {
             candidate.whole_center_odom =
                 T_camera_odom->rotation() * center_cam + T_camera_odom->translation();
         }
+
+        const auto outline_model_points = volume_outline_points(config_.geometry);
+        cv::projectPoints(
+            std::vector<cv::Point3f>(outline_model_points.begin(), outline_model_points.end()),
+            rvec, tvec, camera_matrix_, dist_coeffs_, candidate.projected_outline_image);
+
+        const float vertical_axis_term   = projected_vertical_axis_score(rvec, tvec);
+        const float face_visibility_term = visible_face_score(candidate, rotation_cam, center_cam);
+        constexpr float kMinProjectedVerticalAxisScore = 0.45f;
 
         const double rmse_limit = (candidate.pair_indices.size() >= 3)
                                     ? config_.rmse_stable_threshold_px
                                     : config_.rmse_constrained_threshold_px;
         candidate.depth_valid   = std::isfinite(center_cam.x()) && std::isfinite(center_cam.y())
                              && std::isfinite(center_cam.z()) && center_cam.z() > 1e-3
-                             && candidate.reprojection_rmse_px <= static_cast<float>(rmse_limit);
+                             && candidate.reprojection_rmse_px <= static_cast<float>(rmse_limit)
+                             && vertical_axis_term >= kMinProjectedVerticalAxisScore;
 
         const float pair_term = pair_count_score(static_cast<int>(candidate.pair_indices.size()));
         const float rmse_term = std::exp(
@@ -495,8 +572,8 @@ private:
             / static_cast<float>(std::max(1.0, config_.rmse_constrained_threshold_px)));
         const float depth_bonus = candidate.depth_valid ? 0.22f : -0.10f;
         candidate.score         = std::clamp(
-            0.40f * candidate.preliminary_score + 0.25f * pair_term + 0.25f * rmse_term
-                + depth_bonus,
+            0.32f * candidate.preliminary_score + 0.20f * pair_term + 0.18f * rmse_term
+                + 0.15f * vertical_axis_term + 0.15f * face_visibility_term + depth_bonus,
             0.0f, 1.2f);
     }
 

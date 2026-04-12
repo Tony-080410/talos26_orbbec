@@ -3,6 +3,7 @@
 #include "scene_builder.hpp"
 
 #include "L2_perception/ldm/ldm_config.hpp"
+#include "L2_perception/ldm/ldm_geometry.hpp"
 #include "L2_perception/ldm/types.hpp"
 #include "core/channel_topics.hpp"
 #include "core/types.hpp"
@@ -15,7 +16,7 @@ namespace fcs::visualization::foxglove::systems {
 
 namespace {
 
-constexpr uint64_t kLdmSceneLifetimeNs = 200'000'000;
+constexpr uint64_t kLdmSceneLifetimeNs = 1000'000'000;
 
 [[nodiscard]] ::foxglove::schemas::Color
     ldm_scene_color(const fcs::L2::ldm::LdmMeasurement& measurement) noexcept {
@@ -34,19 +35,55 @@ constexpr uint64_t kLdmSceneLifetimeNs = 200'000'000;
         measurement.depth_quality);
 }
 
+[[nodiscard]] std::vector<::foxglove::schemas::Point3>
+    ldm_top_outline_points(const fcs::L2::ldm::LdmDetectorConfig& config) {
+    const auto outline = fcs::L2::ldm::volume_outline_points(config.geometry);
+    std::vector<::foxglove::schemas::Point3> points;
+    points.reserve(8);
+    for (size_t i = 0; i < 8; ++i) {
+        points.push_back(viz::make_point3(outline[i].x, outline[i].y, outline[i].z));
+    }
+    return points;
+}
+
+[[nodiscard]] std::vector<::foxglove::schemas::Point3>
+    ldm_bottom_outline_points(const fcs::L2::ldm::LdmDetectorConfig& config) {
+    const auto outline = fcs::L2::ldm::volume_outline_points(config.geometry);
+    std::vector<::foxglove::schemas::Point3> points;
+    points.reserve(8);
+    for (size_t i = 8; i < 16; ++i) {
+        points.push_back(viz::make_point3(outline[i].x, outline[i].y, outline[i].z));
+    }
+    return points;
+}
+
+[[nodiscard]] std::vector<::foxglove::schemas::Point3>
+    ldm_vertical_outline_points(const fcs::L2::ldm::LdmDetectorConfig& config) {
+    const auto outline = fcs::L2::ldm::volume_outline_points(config.geometry);
+    std::vector<::foxglove::schemas::Point3> points;
+    points.reserve(16);
+    for (size_t i = 0; i < 8; ++i) {
+        points.push_back(viz::make_point3(outline[i].x, outline[i].y, outline[i].z));
+        points.push_back(viz::make_point3(outline[i + 8].x, outline[i + 8].y, outline[i + 8].z));
+    }
+    return points;
+}
+
 [[nodiscard]] ::foxglove::schemas::SceneEntity make_ldm_volume_entity_odom(
     const fcs::L2::ldm::LdmMeasurement& measurement,
     const fcs::L2::ldm::LdmDetectorConfig& config) {
-    const auto color      = ldm_scene_color(measurement);
-    const auto& pos       = *measurement.whole_center_odom;
-    const double diameter = config.geometry.octagon_circumradius_m * 2.0;
+    const auto color = ldm_scene_color(measurement);
+    const auto& pos  = *measurement.whole_center_odom;
 
-    return viz::EntityBuilder::create<fast_tf::odom>("l2", "ldm")
-        .timestamp(measurement.timestamp_ns)
-        .lifetime(kLdmSceneLifetimeNs)
-        .position(pos)
-        .color(color)
-        .cylinder(diameter, config.geometry.volume_height_m)
+    auto builder = viz::EntityBuilder::create<fast_tf::odom>("l2", "ldm");
+    builder.timestamp(measurement.timestamp_ns).lifetime(kLdmSceneLifetimeNs).position(pos);
+    if (measurement.orientation_odom.has_value()) {
+        builder.orientation(*measurement.orientation_odom);
+    }
+    builder.color(color)
+        .line_loop(ldm_top_outline_points(config), color, 0.01)
+        .line_loop(ldm_bottom_outline_points(config), color, 0.01)
+        .line_list(ldm_vertical_outline_points(config), color, 0.01)
         .size(0.04)
         .sphere()
         .text_with_offset(
@@ -55,23 +92,25 @@ constexpr uint64_t kLdmSceneLifetimeNs = 200'000'000;
         .metadata("confidence", fmt::format("{:.3f}", measurement.confidence))
         .metadata("depth_quality", std::string(magic_enum::enum_name(measurement.depth_quality)))
         .metadata("pair_count_total", std::to_string(measurement.pair_count_total))
-        .metadata("selected_pair_count", std::to_string(measurement.selected_pair_count))
-        .build();
+        .metadata("selected_pair_count", std::to_string(measurement.selected_pair_count));
+    return builder.build();
 }
 
 [[nodiscard]] ::foxglove::schemas::SceneEntity make_ldm_volume_entity_camera(
     const fcs::L2::ldm::LdmMeasurement& measurement,
     const fcs::L2::ldm::LdmDetectorConfig& config) {
-    const auto color      = ldm_scene_color(measurement);
-    const auto& pos       = *measurement.whole_center_cam;
-    const double diameter = config.geometry.octagon_circumradius_m * 2.0;
+    const auto color = ldm_scene_color(measurement);
+    const auto& pos  = *measurement.whole_center_cam;
 
-    return viz::EntityBuilder::create<fast_tf::camera_optical>("l2", "ldm_cam")
-        .timestamp(measurement.timestamp_ns)
-        .lifetime(kLdmSceneLifetimeNs)
-        .position(pos)
-        .color(color)
-        .cylinder(diameter, config.geometry.volume_height_m)
+    auto builder = viz::EntityBuilder::create<fast_tf::camera_optical>("l2", "ldm_cam");
+    builder.timestamp(measurement.timestamp_ns).lifetime(kLdmSceneLifetimeNs).position(pos);
+    if (measurement.orientation_cam.has_value()) {
+        builder.orientation(*measurement.orientation_cam);
+    }
+    builder.color(color)
+        .line_loop(ldm_top_outline_points(config), color, 0.01)
+        .line_loop(ldm_bottom_outline_points(config), color, 0.01)
+        .line_list(ldm_vertical_outline_points(config), color, 0.01)
         .size(0.04)
         .sphere()
         .text_with_offset(
@@ -80,8 +119,8 @@ constexpr uint64_t kLdmSceneLifetimeNs = 200'000'000;
         .metadata("confidence", fmt::format("{:.3f}", measurement.confidence))
         .metadata("depth_quality", std::string(magic_enum::enum_name(measurement.depth_quality)))
         .metadata("pair_count_total", std::to_string(measurement.pair_count_total))
-        .metadata("selected_pair_count", std::to_string(measurement.selected_pair_count))
-        .build();
+        .metadata("selected_pair_count", std::to_string(measurement.selected_pair_count));
+    return builder.build();
 }
 
 [[nodiscard]] ::foxglove::schemas::SceneEntity

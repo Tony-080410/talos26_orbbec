@@ -22,10 +22,29 @@ namespace fcs::L2::ldm {
     const double radius     = octagon_face_center_radius_m(geometry);
     const double half_y_sep = geometry.pair_center_separation_m * 0.5;
     const float x           = static_cast<float>(radius * std::sin(angle));
-    const float z           = static_cast<float>(radius * std::cos(angle));
+    const float z           = static_cast<float>(-radius * std::cos(angle));
     const float top_y       = static_cast<float>(-half_y_sep);
     const float bottom_y    = static_cast<float>(half_y_sep);
     return {cv::Point3f(x, top_y, z), cv::Point3f(x, bottom_y, z)};
+}
+
+[[nodiscard]] inline std::array<cv::Point3f, 16>
+    volume_outline_points(const LdmGeometryConfig& geometry) {
+    std::array<cv::Point3f, 16> points{};
+    const double radius       = geometry.octagon_circumradius_m;
+    const float top_y         = static_cast<float>(-geometry.volume_height_m * 0.5);
+    const float bottom_y      = static_cast<float>(geometry.volume_height_m * 0.5);
+    const double angle_offset = std::numbers::pi_v<double> / 8.0;
+
+    for (int i = 0; i < 8; ++i) {
+        const double angle =
+            angle_offset + static_cast<double>(i) * (std::numbers::pi_v<double> / 4.0);
+        const float x                       = static_cast<float>(radius * std::sin(angle));
+        const float z                       = static_cast<float>(-radius * std::cos(angle));
+        points[static_cast<size_t>(i)]      = cv::Point3f(x, top_y, z);
+        points[static_cast<size_t>(i) + 8u] = cv::Point3f(x, bottom_y, z);
+    }
+    return points;
 }
 
 [[nodiscard]] inline cv::Rect2f bounding_rect_from_pairs(const std::vector<LightPair>& pairs) {
@@ -42,33 +61,42 @@ namespace fcs::L2::ldm {
     return cv::boundingRect(pts);
 }
 
+[[nodiscard]] inline float pair_layer_separation_px(const LightPair& pair) {
+    return (pair.local_layer_sep_px > 0.0f) ? pair.local_layer_sep_px : pair.center_dy_px;
+}
+
 [[nodiscard]] inline float pair_group_score(
-    const std::vector<LightPair>& sorted_pairs, size_t start, size_t length,
-    const LdmDetectorConfig& config) {
+    const std::vector<LightPair>& pairs, const std::vector<int>& ordered_pair_indices, size_t start,
+    size_t length, const LdmDetectorConfig& config) {
     if (length == 0) {
         return 0.0f;
     }
 
-    const auto group_begin = sorted_pairs.begin() + static_cast<std::ptrdiff_t>(start);
-    const auto group_end   = group_begin + static_cast<std::ptrdiff_t>(length);
-
     float mean_pair_score = 0.0f;
-    float mean_pair_dy    = 0.0f;
-    for (auto it = group_begin; it != group_end; ++it) {
-        mean_pair_score += it->score;
-        mean_pair_dy += it->center_dy_px;
+    float mean_pair_layer = 0.0f;
+    for (size_t i = 0; i < length; ++i) {
+        const auto pair_idx = static_cast<size_t>(ordered_pair_indices[start + i]);
+        const auto& pair    = pairs[pair_idx];
+        mean_pair_score += pair.score;
+        mean_pair_layer += pair_layer_separation_px(pair);
     }
     mean_pair_score /= static_cast<float>(length);
-    mean_pair_dy /= static_cast<float>(length);
+    mean_pair_layer /= static_cast<float>(length);
 
-    float gap_consistency    = 1.0f;
-    float vertical_alignment = 1.0f;
+    float gap_consistency = 1.0f;
+    float layer_alignment = 1.0f;
 
     if (length >= 2) {
         std::vector<float> gaps;
         gaps.reserve(length - 1);
         for (size_t i = start + 1; i < start + length; ++i) {
-            gaps.push_back(sorted_pairs[i].midpoint_px.x - sorted_pairs[i - 1].midpoint_px.x);
+            const auto lhs_idx = static_cast<size_t>(ordered_pair_indices[i - 1]);
+            const auto rhs_idx = static_cast<size_t>(ordered_pair_indices[i]);
+            const float gap    = pairs[rhs_idx].local_order_px - pairs[lhs_idx].local_order_px;
+            if (gap <= 0.0f) {
+                return 0.0f;
+            }
+            gaps.push_back(gap);
         }
 
         const float mean_gap =
@@ -90,52 +118,87 @@ namespace fcs::L2::ldm {
         gap_consistency = std::max(0.0f, 1.0f - gap_cv / static_cast<float>(config.max_gap_cv));
     }
 
-    if (mean_pair_dy > 1e-3f) {
+    if (mean_pair_layer > 1e-3f) {
         float max_delta = 0.0f;
-        for (auto it = group_begin; it != group_end; ++it) {
-            max_delta = std::max(max_delta, std::abs(it->center_dy_px - mean_pair_dy));
+        for (size_t i = 0; i < length; ++i) {
+            const auto pair_idx = static_cast<size_t>(ordered_pair_indices[start + i]);
+            max_delta           = std::max(
+                max_delta, std::abs(pair_layer_separation_px(pairs[pair_idx]) - mean_pair_layer));
         }
-        vertical_alignment =
-            std::max(0.0f, 1.0f - max_delta / std::max(1.0f, mean_pair_dy * 0.35f));
+        layer_alignment =
+            std::max(0.0f, 1.0f - max_delta / std::max(1.0f, mean_pair_layer * 0.35f));
     }
 
+    const float coverage_bonus = 0.05f * static_cast<float>((length > 2) ? (length - 2) : 0u);
     return std::clamp(
-        0.55f * mean_pair_score + 0.30f * gap_consistency + 0.15f * vertical_alignment, 0.0f, 1.0f);
+        0.55f * mean_pair_score + 0.30f * gap_consistency + 0.15f * layer_alignment
+            + coverage_bonus,
+        0.0f, 1.0f);
 }
 
 [[nodiscard]] inline std::vector<LdmMeshCandidate> build_preliminary_mesh_candidates(
-    std::vector<LightPair> sorted_pairs, const LdmDetectorConfig& config) {
-    std::sort(sorted_pairs.begin(), sorted_pairs.end(), [](const LightPair& a, const LightPair& b) {
-        return a.midpoint_px.x < b.midpoint_px.x;
-    });
-
+    const std::vector<LightPair>& pairs, const LdmDetectorConfig& config) {
     std::vector<LdmMeshCandidate> candidates;
-    if (sorted_pairs.empty()) {
+    if (pairs.empty()) {
         return candidates;
     }
 
-    const size_t max_pairs = static_cast<size_t>(std::max(1, config.max_pairs_per_candidate));
-    const size_t limit     = std::min(sorted_pairs.size(), max_pairs);
-    for (size_t length = limit; length >= 1; --length) {
-        for (size_t start = 0; start + length <= sorted_pairs.size(); ++start) {
-            LdmMeshCandidate candidate;
-            candidate.preliminary_score = pair_group_score(sorted_pairs, start, length, config);
-            if (candidate.preliminary_score <= 0.0f) {
-                continue;
-            }
+    std::vector<int> cluster_ids;
+    cluster_ids.reserve(pairs.size());
+    for (const auto& pair : pairs) {
+        if (pair.cluster_id < 0) {
+            continue;
+        }
+        if (std::find(cluster_ids.begin(), cluster_ids.end(), pair.cluster_id)
+            == cluster_ids.end()) {
+            cluster_ids.push_back(pair.cluster_id);
+        }
+    }
 
-            candidate.pair_indices.reserve(length);
-            for (size_t i = 0; i < length; ++i) {
-                const auto& pair = sorted_pairs[start + i];
-                candidate.pair_indices.push_back(static_cast<int>(start + i));
-                candidate.estimated_center_image_px += pair.midpoint_px;
+    const size_t max_pairs = static_cast<size_t>(std::max(1, config.max_pairs_per_candidate));
+    for (const int cluster_id : cluster_ids) {
+        std::vector<int> ordered_pair_indices;
+        ordered_pair_indices.reserve(pairs.size());
+        for (size_t pair_idx = 0; pair_idx < pairs.size(); ++pair_idx) {
+            if (pairs[pair_idx].cluster_id == cluster_id) {
+                ordered_pair_indices.push_back(static_cast<int>(pair_idx));
             }
-            candidate.estimated_center_image_px *= (1.0f / static_cast<float>(length));
-            candidates.push_back(std::move(candidate));
+        }
+        if (ordered_pair_indices.empty()) {
+            continue;
         }
 
-        if (length == 1) {
-            break;
+        std::sort(ordered_pair_indices.begin(), ordered_pair_indices.end(), [&](int lhs, int rhs) {
+            return pairs[static_cast<size_t>(lhs)].local_order_px
+                 < pairs[static_cast<size_t>(rhs)].local_order_px;
+        });
+
+        const size_t limit = std::min(ordered_pair_indices.size(), max_pairs);
+        for (size_t length = limit; length >= 1; --length) {
+            for (size_t start = 0; start + length <= ordered_pair_indices.size(); ++start) {
+                LdmMeshCandidate candidate;
+                candidate.cluster_id =
+                    pairs[static_cast<size_t>(ordered_pair_indices[start])].cluster_id;
+                candidate.preliminary_score =
+                    pair_group_score(pairs, ordered_pair_indices, start, length, config);
+                if (candidate.preliminary_score <= 0.0f) {
+                    continue;
+                }
+
+                candidate.pair_indices.reserve(length);
+                for (size_t i = 0; i < length; ++i) {
+                    const int pair_idx = ordered_pair_indices[start + i];
+                    const auto& pair   = pairs[static_cast<size_t>(pair_idx)];
+                    candidate.pair_indices.push_back(pair_idx);
+                    candidate.estimated_center_image_px += pair.midpoint_px;
+                }
+                candidate.estimated_center_image_px *= (1.0f / static_cast<float>(length));
+                candidates.push_back(std::move(candidate));
+            }
+
+            if (length == 1) {
+                break;
+            }
         }
     }
 

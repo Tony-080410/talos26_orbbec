@@ -23,11 +23,9 @@ struct LdmDetectorConfig {
     double min_blob_fill_ratio{0.35};
     double min_blob_aspect_ratio{0.35};
     double max_blob_aspect_ratio{4.0};
-    double max_pair_center_dx_ratio{1.25};
     double min_pair_center_dy_ratio{1.0};
     double max_pair_center_dy_ratio{12.0};
     double max_pair_size_delta_ratio{0.75};
-    double max_pair_angle_deg{25.0};
     double max_gap_cv{0.65};
     double min_preliminary_candidate_score{0.80};
     double min_preliminary_candidate_score_two_pair{0.87};

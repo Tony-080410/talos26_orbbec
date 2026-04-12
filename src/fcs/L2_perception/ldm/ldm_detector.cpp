@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <limits>
 #include <numeric>
 #include <opencv2/imgproc.hpp>
 #include <spdlog/spdlog.h>
@@ -31,20 +32,20 @@ namespace {
     }
 
     if (candidate.pair_indices.size() <= 2) {
-        double mean_center_dy_px = 0.0;
+        double mean_layer_sep_px = 0.0;
         int valid_pair_count     = 0;
         for (const int pair_idx : candidate.pair_indices) {
             if (pair_idx < 0 || static_cast<size_t>(pair_idx) >= pairs.size()) {
                 continue;
             }
-            mean_center_dy_px += pairs[static_cast<size_t>(pair_idx)].center_dy_px;
+            mean_layer_sep_px += pair_layer_separation_px(pairs[static_cast<size_t>(pair_idx)]);
             ++valid_pair_count;
         }
         if (valid_pair_count == 0) {
             return false;
         }
-        mean_center_dy_px /= static_cast<double>(valid_pair_count);
-        if (mean_center_dy_px < config.min_two_pair_mean_center_dy_px) {
+        mean_layer_sep_px /= static_cast<double>(valid_pair_count);
+        if (mean_layer_sep_px < config.min_two_pair_mean_center_dy_px) {
             return false;
         }
     }
@@ -154,63 +155,604 @@ namespace {
     return blobs;
 }
 
-[[nodiscard]] float
-    pair_score(const LightBlob& top, const LightBlob& bottom, const LdmDetectorConfig& config) {
-    const float avg_w = (top.rect.width + bottom.rect.width) * 0.5f;
-    const float avg_h = (top.rect.height + bottom.rect.height) * 0.5f;
+constexpr float kClusterExpandXRatio    = 1.0f;
+constexpr float kClusterExpandYRatio    = 3.5f;
+constexpr size_t kPcaSeedBlobLimit      = 6;
+constexpr size_t kMaxClusterBlobCount   = 20;
+constexpr float kMaxPairOrderDeltaRatio = 1.5f;
+constexpr float kMinAxisBalance         = 0.4f;
+
+[[nodiscard]] float dot(const cv::Point2f& lhs, const cv::Point2f& rhs) {
+    return lhs.x * rhs.x + lhs.y * rhs.y;
+}
+
+[[nodiscard]] cv::Point2f orient_axis(cv::Point2f axis, bool prefer_y_positive) {
+    if (prefer_y_positive) {
+        if (axis.y < 0.0f) {
+            axis *= -1.0f;
+        }
+        return axis;
+    }
+
+    if (std::abs(axis.x) >= std::abs(axis.y)) {
+        if (axis.x < 0.0f) {
+            axis *= -1.0f;
+        }
+    } else if (axis.y < 0.0f) {
+        axis *= -1.0f;
+    }
+    return axis;
+}
+
+[[nodiscard]] cv::Rect2f expanded_rect(const LightBlob& blob) {
+    const float margin_x = blob.rect.width * kClusterExpandXRatio;
+    const float margin_y = std::max(blob.rect.width, blob.rect.height) * kClusterExpandYRatio;
+    return cv::Rect2f(
+        blob.rect.x - margin_x, blob.rect.y - margin_y, blob.rect.width + 2.0f * margin_x,
+        blob.rect.height + 2.0f * margin_y);
+}
+
+[[nodiscard]] bool rects_overlap(const cv::Rect2f& lhs, const cv::Rect2f& rhs) {
+    const float left   = std::max(lhs.x, rhs.x);
+    const float top    = std::max(lhs.y, rhs.y);
+    const float right  = std::min(lhs.x + lhs.width, rhs.x + rhs.width);
+    const float bottom = std::min(lhs.y + lhs.height, rhs.y + rhs.height);
+    return right >= left && bottom >= top;
+}
+
+[[nodiscard]] std::vector<std::vector<size_t>> cluster_blob_indices(std::vector<LightBlob>& blobs) {
+    std::vector<std::vector<size_t>> clusters;
+    if (blobs.empty()) {
+        return clusters;
+    }
+
+    std::vector<cv::Rect2f> grown_rects;
+    grown_rects.reserve(blobs.size());
+    for (const auto& blob : blobs) {
+        grown_rects.push_back(expanded_rect(blob));
+    }
+
+    std::vector<bool> visited(blobs.size(), false);
+    for (size_t seed_idx = 0; seed_idx < blobs.size(); ++seed_idx) {
+        if (visited[seed_idx]) {
+            continue;
+        }
+
+        std::vector<size_t> cluster;
+        std::vector<size_t> stack{seed_idx};
+        visited[seed_idx] = true;
+        while (!stack.empty()) {
+            const size_t idx = stack.back();
+            stack.pop_back();
+            cluster.push_back(idx);
+
+            for (size_t other_idx = 0; other_idx < blobs.size(); ++other_idx) {
+                if (visited[other_idx]) {
+                    continue;
+                }
+                if (!rects_overlap(grown_rects[idx], grown_rects[other_idx])) {
+                    continue;
+                }
+                visited[other_idx] = true;
+                stack.push_back(other_idx);
+            }
+        }
+
+        clusters.push_back(std::move(cluster));
+    }
+
+    std::sort(clusters.begin(), clusters.end(), [&](const auto& lhs, const auto& rhs) {
+        const auto cluster_center_x = [&](const std::vector<size_t>& cluster) {
+            float sum = 0.0f;
+            for (const size_t idx : cluster) {
+                sum += blobs[idx].center_px.x;
+            }
+            return sum / static_cast<float>(cluster.size());
+        };
+        return cluster_center_x(lhs) < cluster_center_x(rhs);
+    });
+
+    for (size_t cluster_id = 0; cluster_id < clusters.size(); ++cluster_id) {
+        for (const size_t blob_idx : clusters[cluster_id]) {
+            blobs[blob_idx].cluster_id     = static_cast<int>(cluster_id);
+            blobs[blob_idx].local_order_px = 0.0f;
+            blobs[blob_idx].local_layer_px = 0.0f;
+        }
+    }
+    return clusters;
+}
+
+struct AxisSplit {
+    cv::Point2f layer_axis{};
+    cv::Point2f order_axis{};
+    float split_value{0.0f};
+    float score{-1.0f};
+    int matched_pair_count{0};
+    float matched_pair_score{0.0f};
+    int best_candidate_pair_count{0};
+    float best_candidate_preliminary{0.0f};
+    float best_candidate_score{0.0f};
+};
+
+struct MatchResult {
+    int pair_count{0};
+    float score{0.0f};
+};
+
+struct ProjectedPairSelection {
+    size_t first_local_idx{0};
+    size_t second_local_idx{0};
+    float score{0.0f};
+};
+
+struct ProjectedMatching {
+    MatchResult result{};
+    std::vector<ProjectedPairSelection> selected_pairs{};
+};
+
+[[nodiscard]] bool better_match(const MatchResult& lhs, const MatchResult& rhs) {
+    return lhs.pair_count > rhs.pair_count
+        || (lhs.pair_count == rhs.pair_count && lhs.score > rhs.score);
+}
+
+[[nodiscard]] float pair_count_priority(int pair_count) {
+    switch (pair_count) {
+    case 1: return 0.25f;
+    case 2: return 0.55f;
+    case 3: return 0.82f;
+    default: return 0.96f;
+    }
+}
+
+[[nodiscard]] std::optional<float> score_projected_pair(
+    const LightBlob& first, float first_order, float first_layer, const LightBlob& second,
+    float second_order, float second_layer, const LdmDetectorConfig& config) {
+    if ((first_layer <= 0.0f) == (second_layer <= 0.0f)) {
+        return std::nullopt;
+    }
+
+    const float avg_w = (first.rect.width + second.rect.width) * 0.5f;
+    const float avg_h = (first.rect.height + second.rect.height) * 0.5f;
     if (avg_w <= 1e-3f || avg_h <= 1e-3f) {
-        return 0.0f;
+        return std::nullopt;
     }
 
-    const cv::Point2f top_center    = top.center_px;
-    const cv::Point2f bottom_center = bottom.center_px;
-    const float dx                  = std::abs(bottom_center.x - top_center.x);
-    const float dy                  = bottom_center.y - top_center.y;
-    if (dy <= 0.0f) {
-        return 0.0f;
+    const float order_delta = std::abs(first_order - second_order);
+    const float size_scale  = std::max({avg_w, avg_h, 1.0f});
+    const float order_limit = kMaxPairOrderDeltaRatio * size_scale;
+    if (order_delta > order_limit) {
+        return std::nullopt;
     }
 
-    const float dx_limit =
-        static_cast<float>(config.max_pair_center_dx_ratio) * std::max(avg_w, 1.0f);
-    if (dx > dx_limit) {
-        return 0.0f;
-    }
-
-    const float min_dy =
+    const float layer_separation = std::abs(first_layer - second_layer);
+    const float min_layer_sep =
         static_cast<float>(config.min_pair_center_dy_ratio) * std::max(avg_h, 1.0f);
-    const float max_dy =
+    const float max_layer_sep =
         static_cast<float>(config.max_pair_center_dy_ratio) * std::max(avg_h, 1.0f);
-    if (dy < min_dy || dy > max_dy) {
-        return 0.0f;
+    if (layer_separation < min_layer_sep || layer_separation > max_layer_sep) {
+        return std::nullopt;
     }
 
-    const float width_delta = std::abs(top.rect.width - bottom.rect.width) / std::max(avg_w, 1.0f);
+    const float width_delta =
+        std::abs(first.rect.width - second.rect.width) / std::max(avg_w, 1.0f);
     const float height_delta =
-        std::abs(top.rect.height - bottom.rect.height) / std::max(avg_h, 1.0f);
+        std::abs(first.rect.height - second.rect.height) / std::max(avg_h, 1.0f);
     if (width_delta > static_cast<float>(config.max_pair_size_delta_ratio)
         || height_delta > static_cast<float>(config.max_pair_size_delta_ratio)) {
-        return 0.0f;
+        return std::nullopt;
     }
 
-    const float angle_deg = std::abs(
-        std::atan2(bottom_center.x - top_center.x, bottom_center.y - top_center.y) * 180.0f
-        / static_cast<float>(std::numbers::pi_v<double>));
-    if (angle_deg > static_cast<float>(config.max_pair_angle_deg)) {
-        return 0.0f;
-    }
-
-    const float dx_score     = std::max(0.0f, 1.0f - dx / std::max(dx_limit, 1.0f));
+    const float order_score  = std::max(0.0f, 1.0f - order_delta / std::max(order_limit, 1.0f));
     const float width_score  = std::max(0.0f, 1.0f - width_delta);
     const float height_score = std::max(0.0f, 1.0f - height_delta);
-    const float fill_score   = 0.5f * (top.fill_ratio + bottom.fill_ratio);
+    const float fill_score   = 0.5f * (first.fill_ratio + second.fill_ratio);
+    const float layer_balance =
+        std::abs(std::abs(first_layer) - std::abs(second_layer)) / std::max(layer_separation, 1.0f);
+    const float balance_score = std::max(0.0f, 1.0f - layer_balance);
+
     return std::clamp(
-        0.35f * dx_score + 0.20f * width_score + 0.20f * height_score + 0.25f * fill_score, 0.0f,
-        1.0f);
+        0.35f * order_score + 0.15f * balance_score + 0.15f * width_score + 0.15f * height_score
+            + 0.20f * fill_score,
+        0.0f, 1.0f);
+}
+
+[[nodiscard]] ProjectedMatching best_projected_matching(
+    const std::vector<LightBlob>& blobs, const std::vector<size_t>& cluster_indices,
+    const std::vector<float>& order_values, const std::vector<float>& layer_values,
+    const LdmDetectorConfig& config) {
+    if (cluster_indices.empty() || cluster_indices.size() > kMaxClusterBlobCount) {
+        return {};
+    }
+
+    struct Candidate {
+        size_t first_local_idx{0};
+        size_t second_local_idx{0};
+        float score{0.0f};
+    };
+
+    std::vector<Candidate> pair_candidates;
+    pair_candidates.reserve(cluster_indices.size() * 3);
+    std::vector<std::vector<int>> adjacency(cluster_indices.size());
+    for (size_t first_local_idx = 0; first_local_idx < cluster_indices.size(); ++first_local_idx) {
+        for (size_t second_local_idx = first_local_idx + 1;
+             second_local_idx < cluster_indices.size(); ++second_local_idx) {
+            const size_t first_blob_idx  = cluster_indices[first_local_idx];
+            const size_t second_blob_idx = cluster_indices[second_local_idx];
+            auto score                   = score_projected_pair(
+                blobs[first_blob_idx], order_values[first_local_idx], layer_values[first_local_idx],
+                blobs[second_blob_idx], order_values[second_local_idx],
+                layer_values[second_local_idx], config);
+            if (!score.has_value()) {
+                continue;
+            }
+
+            const int candidate_idx = static_cast<int>(pair_candidates.size());
+            pair_candidates.push_back(
+                Candidate{
+                    .first_local_idx  = first_local_idx,
+                    .second_local_idx = second_local_idx,
+                    .score            = *score,
+                });
+            adjacency[first_local_idx].push_back(candidate_idx);
+            adjacency[second_local_idx].push_back(candidate_idx);
+        }
+    }
+    if (pair_candidates.empty()) {
+        return {};
+    }
+
+    const uint64_t full_mask = (uint64_t{1} << cluster_indices.size()) - 1u;
+    std::vector<bool> cached(static_cast<size_t>(full_mask + 1u), false);
+    std::vector<MatchResult> best(static_cast<size_t>(full_mask + 1u));
+    std::vector<int> best_choice(static_cast<size_t>(full_mask + 1u), -2);
+    const auto solve = [&](auto&& self, uint64_t used_mask) -> MatchResult {
+        if (used_mask == full_mask) {
+            return {};
+        }
+        if (cached[static_cast<size_t>(used_mask)]) {
+            return best[static_cast<size_t>(used_mask)];
+        }
+
+        size_t first_unused = 0;
+        while ((used_mask & (uint64_t{1} << first_unused)) != 0u) {
+            ++first_unused;
+        }
+
+        MatchResult best_result = self(self, used_mask | (uint64_t{1} << first_unused));
+        int choice              = -1;
+        for (const int candidate_idx : adjacency[first_unused]) {
+            const auto& candidate    = pair_candidates[static_cast<size_t>(candidate_idx)];
+            const size_t other_idx   = (candidate.first_local_idx == first_unused)
+                                         ? candidate.second_local_idx
+                                         : candidate.first_local_idx;
+            const uint64_t other_bit = (uint64_t{1} << other_idx);
+            if ((used_mask & other_bit) != 0u) {
+                continue;
+            }
+
+            auto candidate_result =
+                self(self, used_mask | (uint64_t{1} << first_unused) | other_bit);
+            candidate_result.pair_count += 1;
+            candidate_result.score += candidate.score;
+            if (better_match(candidate_result, best_result)) {
+                best_result = candidate_result;
+                choice      = candidate_idx;
+            }
+        }
+
+        cached[static_cast<size_t>(used_mask)]      = true;
+        best[static_cast<size_t>(used_mask)]        = best_result;
+        best_choice[static_cast<size_t>(used_mask)] = choice;
+        return best_result;
+    };
+
+    ProjectedMatching matching;
+    matching.result = solve(solve, 0u);
+
+    uint64_t used_mask = 0u;
+    while (used_mask != full_mask) {
+        size_t first_unused = 0;
+        while ((used_mask & (uint64_t{1} << first_unused)) != 0u) {
+            ++first_unused;
+        }
+
+        const int candidate_idx = best_choice[static_cast<size_t>(used_mask)];
+        if (candidate_idx < 0) {
+            used_mask |= (uint64_t{1} << first_unused);
+            continue;
+        }
+
+        const auto& candidate = pair_candidates[static_cast<size_t>(candidate_idx)];
+        matching.selected_pairs.push_back(
+            ProjectedPairSelection{
+                .first_local_idx  = candidate.first_local_idx,
+                .second_local_idx = candidate.second_local_idx,
+                .score            = candidate.score,
+            });
+        const size_t other_idx = (candidate.first_local_idx == first_unused)
+                                   ? candidate.second_local_idx
+                                   : candidate.first_local_idx;
+        used_mask |= (uint64_t{1} << first_unused) | (uint64_t{1} << other_idx);
+    }
+    return matching;
+}
+
+[[nodiscard]] float values_stddev(const std::vector<float>& values) {
+    if (values.size() <= 1) {
+        return 0.0f;
+    }
+
+    const float mean =
+        std::accumulate(values.begin(), values.end(), 0.0f) / static_cast<float>(values.size());
+    float sq_sum = 0.0f;
+    for (const float value : values) {
+        const float delta = value - mean;
+        sq_sum += delta * delta;
+    }
+    return std::sqrt(sq_sum / static_cast<float>(values.size()));
+}
+
+[[nodiscard]] std::optional<AxisSplit> evaluate_axis_split(
+    const std::vector<LightBlob>& blobs, const std::vector<size_t>& cluster_indices,
+    const cv::Point2f& mean, cv::Point2f layer_axis, cv::Point2f order_axis,
+    const LdmDetectorConfig& config) {
+    if (cluster_indices.size() < 2) {
+        return std::nullopt;
+    }
+
+    layer_axis = orient_axis(layer_axis, true);
+    order_axis = orient_axis(order_axis, false);
+
+    std::vector<float> projected_values;
+    projected_values.reserve(cluster_indices.size());
+    for (const size_t blob_idx : cluster_indices) {
+        const cv::Point2f centered = blobs[blob_idx].center_px - mean;
+        projected_values.push_back(dot(centered, layer_axis));
+    }
+
+    std::sort(projected_values.begin(), projected_values.end());
+    AxisSplit best_split{
+        .layer_axis  = layer_axis,
+        .order_axis  = order_axis,
+        .split_value = 0.0f,
+        .score       = -1.0f,
+    };
+
+    for (size_t split = 1; split < projected_values.size(); ++split) {
+        const size_t lower_count = split;
+        const size_t upper_count = projected_values.size() - split;
+        const float balance      = static_cast<float>(std::min(lower_count, upper_count))
+                            / static_cast<float>(std::max(lower_count, upper_count));
+        if (balance < kMinAxisBalance) {
+            continue;
+        }
+
+        const float gap = projected_values[split] - projected_values[split - 1];
+        if (gap <= 1e-3f) {
+            continue;
+        }
+
+        std::vector<float> lower(projected_values.begin(), projected_values.begin() + split);
+        std::vector<float> upper(
+            projected_values.begin() + static_cast<std::ptrdiff_t>(split), projected_values.end());
+        const float score =
+            gap * (0.55f + 0.45f * balance) / (4.0f + values_stddev(lower) + values_stddev(upper));
+        if (score <= best_split.score) {
+            continue;
+        }
+
+        best_split.split_value = 0.5f * (projected_values[split - 1] + projected_values[split]);
+        best_split.score       = score;
+    }
+
+    if (best_split.score <= 0.0f) {
+        return std::nullopt;
+    }
+
+    std::vector<float> order_values;
+    std::vector<float> layer_values;
+    order_values.reserve(cluster_indices.size());
+    layer_values.reserve(cluster_indices.size());
+    for (const size_t blob_idx : cluster_indices) {
+        const cv::Point2f centered = blobs[blob_idx].center_px - mean;
+        order_values.push_back(dot(centered, best_split.order_axis));
+        layer_values.push_back(dot(centered, best_split.layer_axis) - best_split.split_value);
+    }
+    const auto matching =
+        best_projected_matching(blobs, cluster_indices, order_values, layer_values, config);
+    best_split.matched_pair_count = matching.result.pair_count;
+    best_split.matched_pair_score = matching.result.score;
+
+    std::vector<LightPair> projected_pairs;
+    projected_pairs.reserve(matching.selected_pairs.size());
+    for (const auto& selection : matching.selected_pairs) {
+        const size_t first_blob_idx  = cluster_indices[selection.first_local_idx];
+        const size_t second_blob_idx = cluster_indices[selection.second_local_idx];
+        const auto& first            = blobs[first_blob_idx];
+        const auto& second           = blobs[second_blob_idx];
+        const size_t top_blob_idx =
+            (first.center_px.y <= second.center_px.y) ? first_blob_idx : second_blob_idx;
+        const size_t bottom_blob_idx =
+            (top_blob_idx == first_blob_idx) ? second_blob_idx : first_blob_idx;
+        const auto& top    = blobs[top_blob_idx];
+        const auto& bottom = blobs[bottom_blob_idx];
+        projected_pairs.push_back(
+            LightPair{
+                .top_blob_index    = static_cast<int>(top_blob_idx),
+                .bottom_blob_index = static_cast<int>(bottom_blob_idx),
+                .top_center_px     = top.center_px,
+                .bottom_center_px  = bottom.center_px,
+                .midpoint_px       = (top.center_px + bottom.center_px) * 0.5f,
+                .center_dx_px      = std::abs(bottom.center_px.x - top.center_px.x),
+                .center_dy_px      = std::abs(bottom.center_px.y - top.center_px.y),
+                .cluster_id        = 0,
+                .local_order_px    = 0.5f
+                                * (order_values[selection.first_local_idx]
+                                   + order_values[selection.second_local_idx]),
+                .local_layer_sep_px = std::abs(
+                    layer_values[selection.first_local_idx]
+                    - layer_values[selection.second_local_idx]),
+                .score = selection.score,
+            });
+    }
+
+    auto preliminary_candidates = build_preliminary_mesh_candidates(projected_pairs, config);
+    for (const auto& candidate : preliminary_candidates) {
+        if (!candidate_passes_detection_gate(candidate, projected_pairs, config)) {
+            continue;
+        }
+
+        const int pair_count = static_cast<int>(candidate.pair_indices.size());
+        const float detection_score =
+            0.55f * pair_count_priority(pair_count) + 0.45f * candidate.preliminary_score;
+        if (pair_count > best_split.best_candidate_pair_count
+            || (pair_count == best_split.best_candidate_pair_count
+                && detection_score > best_split.best_candidate_score)) {
+            best_split.best_candidate_pair_count  = pair_count;
+            best_split.best_candidate_preliminary = candidate.preliminary_score;
+            best_split.best_candidate_score       = detection_score;
+        }
+    }
+    return best_split;
+}
+
+[[nodiscard]] std::optional<AxisSplit> estimate_cluster_axes(
+    const std::vector<LightBlob>& blobs, const std::vector<size_t>& cluster_indices,
+    const LdmDetectorConfig& config) {
+    if (cluster_indices.size() < 2) {
+        return std::nullopt;
+    }
+
+    std::vector<size_t> seed_indices = cluster_indices;
+    std::sort(seed_indices.begin(), seed_indices.end(), [&](size_t lhs, size_t rhs) {
+        return blobs[lhs].area_px > blobs[rhs].area_px;
+    });
+    if (seed_indices.size() > kPcaSeedBlobLimit) {
+        seed_indices.resize(kPcaSeedBlobLimit);
+    }
+    if (seed_indices.size() < 2) {
+        return std::nullopt;
+    }
+
+    cv::Mat samples(static_cast<int>(seed_indices.size()), 2, CV_32F);
+    for (size_t row = 0; row < seed_indices.size(); ++row) {
+        samples.at<float>(static_cast<int>(row), 0) = blobs[seed_indices[row]].center_px.x;
+        samples.at<float>(static_cast<int>(row), 1) = blobs[seed_indices[row]].center_px.y;
+    }
+
+    cv::PCA pca(samples, cv::Mat(), cv::PCA::DATA_AS_ROW);
+    const cv::Point2f mean(pca.mean.at<float>(0, 0), pca.mean.at<float>(0, 1));
+    const cv::Point2f axis0(pca.eigenvectors.at<float>(0, 0), pca.eigenvectors.at<float>(0, 1));
+    const cv::Point2f axis1(pca.eigenvectors.at<float>(1, 0), pca.eigenvectors.at<float>(1, 1));
+
+    std::vector<std::optional<AxisSplit>> candidates;
+    candidates.push_back(evaluate_axis_split(blobs, cluster_indices, mean, axis0, axis1, config));
+    candidates.push_back(evaluate_axis_split(blobs, cluster_indices, mean, axis1, axis0, config));
+    candidates.push_back(evaluate_axis_split(
+        blobs, cluster_indices, mean, cv::Point2f(0.0f, 1.0f), cv::Point2f(1.0f, 0.0f), config));
+    candidates.push_back(evaluate_axis_split(
+        blobs, cluster_indices, mean, cv::Point2f(1.0f, 0.0f), cv::Point2f(0.0f, 1.0f), config));
+
+    std::optional<AxisSplit> best_candidate;
+    for (const auto& candidate : candidates) {
+        if (!candidate.has_value()) {
+            continue;
+        }
+        if (!best_candidate.has_value()
+            || candidate->best_candidate_score > best_candidate->best_candidate_score
+            || (std::abs(candidate->best_candidate_score - best_candidate->best_candidate_score)
+                    <= 1e-3f
+                && candidate->best_candidate_pair_count > best_candidate->best_candidate_pair_count)
+            || (std::abs(candidate->best_candidate_score - best_candidate->best_candidate_score)
+                    <= 1e-3f
+                && candidate->best_candidate_pair_count == best_candidate->best_candidate_pair_count
+                && candidate->matched_pair_count > best_candidate->matched_pair_count)
+            || (std::abs(candidate->best_candidate_score - best_candidate->best_candidate_score)
+                    <= 1e-3f
+                && candidate->best_candidate_pair_count == best_candidate->best_candidate_pair_count
+                && candidate->matched_pair_count == best_candidate->matched_pair_count
+                && candidate->score > best_candidate->score)) {
+            best_candidate = candidate;
+        }
+    }
+    return best_candidate;
+}
+
+void annotate_blob_clusters(std::vector<LightBlob>& blobs, const LdmDetectorConfig& config) {
+    const auto clusters = cluster_blob_indices(blobs);
+    for (const auto& cluster_indices : clusters) {
+        auto axes = estimate_cluster_axes(blobs, cluster_indices, config);
+        if (!axes.has_value()) {
+            continue;
+        }
+
+        cv::Point2f mean(0.0f, 0.0f);
+        for (const size_t seed_idx : cluster_indices) {
+            mean += blobs[seed_idx].center_px;
+        }
+        mean *= (1.0f / static_cast<float>(cluster_indices.size()));
+
+        // Re-estimate the mean from the seed PCA inputs so local coordinates match the split.
+        std::vector<size_t> seed_indices = cluster_indices;
+        std::sort(seed_indices.begin(), seed_indices.end(), [&](size_t lhs, size_t rhs) {
+            return blobs[lhs].area_px > blobs[rhs].area_px;
+        });
+        if (seed_indices.size() > kPcaSeedBlobLimit) {
+            seed_indices.resize(kPcaSeedBlobLimit);
+        }
+        if (!seed_indices.empty()) {
+            mean = cv::Point2f(0.0f, 0.0f);
+            for (const size_t seed_idx : seed_indices) {
+                mean += blobs[seed_idx].center_px;
+            }
+            mean *= (1.0f / static_cast<float>(seed_indices.size()));
+        }
+
+        for (const size_t blob_idx : cluster_indices) {
+            const cv::Point2f centered     = blobs[blob_idx].center_px - mean;
+            blobs[blob_idx].local_order_px = dot(centered, axes->order_axis);
+            blobs[blob_idx].local_layer_px = dot(centered, axes->layer_axis) - axes->split_value;
+        }
+    }
+}
+
+struct PairMetrics {
+    size_t top_blob_idx{0};
+    size_t bottom_blob_idx{0};
+    float order_delta{0.0f};
+    float layer_separation{0.0f};
+    float score{0.0f};
+};
+
+[[nodiscard]] std::optional<PairMetrics> score_pair(
+    const LightBlob& first, size_t first_idx, const LightBlob& second, size_t second_idx,
+    const LdmDetectorConfig& config) {
+    if (first.cluster_id < 0 || first.cluster_id != second.cluster_id) {
+        return std::nullopt;
+    }
+    auto score = score_projected_pair(
+        first, first.local_order_px, first.local_layer_px, second, second.local_order_px,
+        second.local_layer_px, config);
+    if (!score.has_value()) {
+        return std::nullopt;
+    }
+
+    const float order_delta      = std::abs(first.local_order_px - second.local_order_px);
+    const float layer_separation = std::abs(first.local_layer_px - second.local_layer_px);
+
+    PairMetrics metrics;
+    metrics.top_blob_idx     = (first.center_px.y <= second.center_px.y) ? first_idx : second_idx;
+    metrics.bottom_blob_idx  = (metrics.top_blob_idx == first_idx) ? second_idx : first_idx;
+    metrics.order_delta      = order_delta;
+    metrics.layer_separation = layer_separation;
+    metrics.score            = *score;
+    return metrics;
 }
 
 struct PairCandidate {
-    size_t top_idx{0};
-    size_t bottom_idx{0};
+    size_t first_local_idx{0};
+    size_t second_local_idx{0};
+    PairMetrics metrics{};
     float score{0.0f};
 };
 
@@ -221,156 +763,154 @@ struct PairCandidate {
         return pairs;
     }
 
-    std::vector<PairCandidate> pair_candidates;
-    pair_candidates.reserve(blobs.size() * 2);
-    std::vector<std::vector<int>> adjacency(blobs.size());
-
-    for (size_t first_idx = 0; first_idx < blobs.size(); ++first_idx) {
-        for (size_t second_idx = first_idx + 1; second_idx < blobs.size(); ++second_idx) {
-            size_t top_idx    = first_idx;
-            size_t bottom_idx = second_idx;
-            if (blobs[top_idx].center_px.y > blobs[bottom_idx].center_px.y) {
-                std::swap(top_idx, bottom_idx);
-            }
-
-            const float score = pair_score(blobs[top_idx], blobs[bottom_idx], config);
-            if (score <= 0.0f) {
-                continue;
-            }
-
-            const int candidate_idx = static_cast<int>(pair_candidates.size());
-            pair_candidates.push_back(
-                PairCandidate{
-                    .top_idx    = top_idx,
-                    .bottom_idx = bottom_idx,
-                    .score      = score,
-                });
-            adjacency[top_idx].push_back(candidate_idx);
-            adjacency[bottom_idx].push_back(candidate_idx);
+    std::vector<int> cluster_ids;
+    cluster_ids.reserve(blobs.size());
+    for (const auto& blob : blobs) {
+        if (blob.cluster_id < 0) {
+            continue;
+        }
+        if (std::find(cluster_ids.begin(), cluster_ids.end(), blob.cluster_id)
+            == cluster_ids.end()) {
+            cluster_ids.push_back(blob.cluster_id);
         }
     }
 
-    if (pair_candidates.empty()) {
-        return pairs;
-    }
-
-    std::vector<int> selected_candidate_indices;
-    selected_candidate_indices.reserve(blobs.size() / 2);
-
-    if (blobs.size() <= 20) {
-        const uint32_t full_mask = (1u << blobs.size()) - 1u;
-        std::vector<float> best_score(1u << blobs.size(), -1.0f);
-        std::vector<int> best_choice(1u << blobs.size(), -2);
-
-        const auto solve = [&](auto&& self, uint32_t used_mask) -> float {
-            if (used_mask == full_mask) {
-                return 0.0f;
+    for (const int cluster_id : cluster_ids) {
+        std::vector<size_t> cluster_blob_indices;
+        cluster_blob_indices.reserve(blobs.size());
+        for (size_t blob_idx = 0; blob_idx < blobs.size(); ++blob_idx) {
+            if (blobs[blob_idx].cluster_id == cluster_id) {
+                cluster_blob_indices.push_back(blob_idx);
             }
+        }
+        if (cluster_blob_indices.size() < 2 || cluster_blob_indices.size() > kMaxClusterBlobCount) {
+            continue;
+        }
 
-            float& cached_score = best_score[used_mask];
-            if (cached_score >= 0.0f) {
-                return cached_score;
+        std::vector<PairCandidate> pair_candidates;
+        pair_candidates.reserve(cluster_blob_indices.size() * 3);
+        std::vector<std::vector<int>> adjacency(cluster_blob_indices.size());
+        for (size_t first_local_idx = 0; first_local_idx < cluster_blob_indices.size();
+             ++first_local_idx) {
+            for (size_t second_local_idx = first_local_idx + 1;
+                 second_local_idx < cluster_blob_indices.size(); ++second_local_idx) {
+                const size_t first_blob_idx  = cluster_blob_indices[first_local_idx];
+                const size_t second_blob_idx = cluster_blob_indices[second_local_idx];
+                auto metrics                 = score_pair(
+                    blobs[first_blob_idx], first_blob_idx, blobs[second_blob_idx], second_blob_idx,
+                    config);
+                if (!metrics.has_value()) {
+                    continue;
+                }
+
+                const int candidate_idx = static_cast<int>(pair_candidates.size());
+                pair_candidates.push_back(
+                    PairCandidate{
+                        .first_local_idx  = first_local_idx,
+                        .second_local_idx = second_local_idx,
+                        .metrics          = *metrics,
+                        .score            = metrics->score,
+                    });
+                adjacency[first_local_idx].push_back(candidate_idx);
+                adjacency[second_local_idx].push_back(candidate_idx);
+            }
+        }
+        if (pair_candidates.empty()) {
+            continue;
+        }
+
+        const uint64_t full_mask = (uint64_t{1} << cluster_blob_indices.size()) - 1u;
+        std::vector<bool> cached(static_cast<size_t>(full_mask + 1u), false);
+        std::vector<MatchResult> best(static_cast<size_t>(full_mask + 1u));
+        std::vector<int> best_choice(static_cast<size_t>(full_mask + 1u), -2);
+
+        const auto solve = [&](auto&& self, uint64_t used_mask) -> MatchResult {
+            if (used_mask == full_mask) {
+                return {};
+            }
+            if (cached[static_cast<size_t>(used_mask)]) {
+                return best[static_cast<size_t>(used_mask)];
             }
 
             size_t first_unused = 0;
-            while ((used_mask & (1u << first_unused)) != 0u) {
+            while ((used_mask & (uint64_t{1} << first_unused)) != 0u) {
                 ++first_unused;
             }
 
-            float best = self(self, used_mask | (1u << first_unused));
-            int choice = -1;
+            MatchResult best_result = self(self, used_mask | (uint64_t{1} << first_unused));
+            int choice              = -1;
             for (const int candidate_idx : adjacency[first_unused]) {
-                const auto& candidate = pair_candidates[static_cast<size_t>(candidate_idx)];
-                const size_t other_idx =
-                    (candidate.top_idx == first_unused) ? candidate.bottom_idx : candidate.top_idx;
-                const uint32_t other_bit = (1u << other_idx);
+                const auto& candidate    = pair_candidates[static_cast<size_t>(candidate_idx)];
+                const size_t other_idx   = (candidate.first_local_idx == first_unused)
+                                             ? candidate.second_local_idx
+                                             : candidate.first_local_idx;
+                const uint64_t other_bit = (uint64_t{1} << other_idx);
                 if ((used_mask & other_bit) != 0u) {
                     continue;
                 }
 
-                const float candidate_score =
-                    candidate.score + self(self, used_mask | (1u << first_unused) | other_bit);
-                if (candidate_score > best) {
-                    best   = candidate_score;
-                    choice = candidate_idx;
+                auto candidate_result =
+                    self(self, used_mask | (uint64_t{1} << first_unused) | other_bit);
+                candidate_result.pair_count += 1;
+                candidate_result.score += candidate.score;
+                if (better_match(candidate_result, best_result)) {
+                    best_result = candidate_result;
+                    choice      = candidate_idx;
                 }
             }
 
-            cached_score           = best;
-            best_choice[used_mask] = choice;
-            return best;
+            cached[static_cast<size_t>(used_mask)]      = true;
+            best[static_cast<size_t>(used_mask)]        = best_result;
+            best_choice[static_cast<size_t>(used_mask)] = choice;
+            return best_result;
         };
 
         solve(solve, 0u);
 
-        uint32_t used_mask = 0u;
+        uint64_t used_mask = 0u;
         while (used_mask != full_mask) {
             size_t first_unused = 0;
-            while ((used_mask & (1u << first_unused)) != 0u) {
+            while ((used_mask & (uint64_t{1} << first_unused)) != 0u) {
                 ++first_unused;
             }
 
-            const int candidate_idx = best_choice[used_mask];
+            const int candidate_idx = best_choice[static_cast<size_t>(used_mask)];
             if (candidate_idx < 0) {
-                used_mask |= (1u << first_unused);
+                used_mask |= (uint64_t{1} << first_unused);
                 continue;
             }
 
-            const auto& candidate = pair_candidates[static_cast<size_t>(candidate_idx)];
-            const size_t other_idx =
-                (candidate.top_idx == first_unused) ? candidate.bottom_idx : candidate.top_idx;
-            selected_candidate_indices.push_back(candidate_idx);
-            used_mask |= (1u << first_unused) | (1u << other_idx);
-        }
-    } else {
-        std::vector<int> candidate_order(pair_candidates.size());
-        std::iota(candidate_order.begin(), candidate_order.end(), 0);
-        std::sort(
-            candidate_order.begin(), candidate_order.end(), [&](const int lhs, const int rhs) {
-                const auto& a = pair_candidates[static_cast<size_t>(lhs)];
-                const auto& b = pair_candidates[static_cast<size_t>(rhs)];
-                if (a.score != b.score) {
-                    return a.score > b.score;
-                }
-                const float a_dx =
-                    std::abs(blobs[a.bottom_idx].center_px.x - blobs[a.top_idx].center_px.x);
-                const float b_dx =
-                    std::abs(blobs[b.bottom_idx].center_px.x - blobs[b.top_idx].center_px.x);
-                return a_dx < b_dx;
-            });
+            const auto& candidate      = pair_candidates[static_cast<size_t>(candidate_idx)];
+            const auto& top            = blobs[candidate.metrics.top_blob_idx];
+            const auto& bottom         = blobs[candidate.metrics.bottom_blob_idx];
+            const cv::Point2f midpoint = (top.center_px + bottom.center_px) * 0.5f;
+            pairs.push_back(
+                LightPair{
+                    .top_blob_index     = static_cast<int>(candidate.metrics.top_blob_idx),
+                    .bottom_blob_index  = static_cast<int>(candidate.metrics.bottom_blob_idx),
+                    .top_center_px      = top.center_px,
+                    .bottom_center_px   = bottom.center_px,
+                    .midpoint_px        = midpoint,
+                    .center_dx_px       = std::abs(bottom.center_px.x - top.center_px.x),
+                    .center_dy_px       = std::abs(bottom.center_px.y - top.center_px.y),
+                    .cluster_id         = cluster_id,
+                    .local_order_px     = 0.5f * (top.local_order_px + bottom.local_order_px),
+                    .local_layer_sep_px = candidate.metrics.layer_separation,
+                    .score              = candidate.score,
+                });
 
-        std::vector<bool> used(blobs.size(), false);
-        for (const int candidate_idx : candidate_order) {
-            const auto& candidate = pair_candidates[static_cast<size_t>(candidate_idx)];
-            if (used[candidate.top_idx] || used[candidate.bottom_idx]) {
-                continue;
-            }
-            used[candidate.top_idx]    = true;
-            used[candidate.bottom_idx] = true;
-            selected_candidate_indices.push_back(candidate_idx);
+            const size_t other_idx = (candidate.first_local_idx == first_unused)
+                                       ? candidate.second_local_idx
+                                       : candidate.first_local_idx;
+            used_mask |= (uint64_t{1} << first_unused) | (uint64_t{1} << other_idx);
         }
-    }
-
-    pairs.reserve(selected_candidate_indices.size());
-    for (const int candidate_idx : selected_candidate_indices) {
-        const auto& candidate      = pair_candidates[static_cast<size_t>(candidate_idx)];
-        const auto& top            = blobs[candidate.top_idx];
-        const auto& bottom         = blobs[candidate.bottom_idx];
-        const cv::Point2f midpoint = (top.center_px + bottom.center_px) * 0.5f;
-        pairs.push_back(
-            LightPair{
-                .top_blob_index    = static_cast<int>(candidate.top_idx),
-                .bottom_blob_index = static_cast<int>(candidate.bottom_idx),
-                .top_center_px     = top.center_px,
-                .bottom_center_px  = bottom.center_px,
-                .midpoint_px       = midpoint,
-                .center_dx_px      = std::abs(bottom.center_px.x - top.center_px.x),
-                .center_dy_px      = bottom.center_px.y - top.center_px.y,
-                .score             = candidate.score});
     }
 
     std::sort(pairs.begin(), pairs.end(), [](const LightPair& a, const LightPair& b) {
-        return a.midpoint_px.x < b.midpoint_px.x;
+        if (a.cluster_id != b.cluster_id) {
+            return a.cluster_id < b.cluster_id;
+        }
+        return a.local_order_px < b.local_order_px;
     });
     return pairs;
 }
@@ -378,6 +918,7 @@ struct PairCandidate {
 [[nodiscard]] std::optional<LdmDetection>
     detect_laser_module(const cv::Mat& image, const LdmDetectorConfig& config, ArmorColor color) {
     auto blobs = detect_light_blobs(image, config, color);
+    annotate_blob_clusters(blobs, config);
     auto pairs = build_light_pairs(blobs, config);
     if (pairs.empty()) {
         return std::nullopt;

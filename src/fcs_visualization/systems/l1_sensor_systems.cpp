@@ -12,6 +12,7 @@
 #include "quanta/stream_encoder.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cstddef>
 #include <deque>
 #include <memory>
@@ -19,6 +20,7 @@
 #include <opencv2/imgcodecs.hpp>
 #include <opencv2/imgproc.hpp>
 #include <optional>
+#include <utility>
 
 namespace fcs::visualization::foxglove::systems {
 
@@ -43,6 +45,29 @@ struct QuantaPublisherState {
     int framerate{0};
     int64_t next_pts{0};
 };
+
+[[nodiscard]] inline cv::Rect2f
+    projected_outline_bounds(const std::vector<cv::Point2f>& projected_outline) noexcept {
+    if (projected_outline.empty()) {
+        return {};
+    }
+    return cv::boundingRect(projected_outline);
+}
+
+inline void draw_ldm_projected_outline(
+    cv::Mat& image, const std::vector<cv::Point2f>& projected_outline, const cv::Scalar& color) {
+    if (projected_outline.size() != 16) {
+        return;
+    }
+
+    for (size_t i = 0; i < 8; ++i) {
+        const size_t next = (i + 1) % 8;
+        cv::line(image, projected_outline[i], projected_outline[next], color, 2, cv::LINE_AA);
+        cv::line(
+            image, projected_outline[i + 8], projected_outline[next + 8], color, 2, cv::LINE_AA);
+        cv::line(image, projected_outline[i], projected_outline[i + 8], color, 2, cv::LINE_AA);
+    }
+}
 
 inline void log_quanta_error_once(QuantaPublisherState& state, std::string message) noexcept {
     if (state.last_error == message)
@@ -244,7 +269,7 @@ void register_l1_sensor_systems(talos::scheduler::Scheduler& app) {
                 cv::putText(
                     img_bgr, conf_str, conf_pos, cv::FONT_HERSHEY_SIMPLEX, 0.5, box_color, 1);
             }
-            constexpr uint64_t kMaxLdmOverlaySkewNs = 50'000'000;
+            constexpr uint64_t kMaxLdmOverlaySkewNs = 100'000'000;
             const auto maybe_ldm_det                = ldm_in.read_current();
             const auto maybe_ldm_meas               = ldm_meas_in.read_current();
             if (maybe_ldm_det) {
@@ -266,7 +291,8 @@ void register_l1_sensor_systems(talos::scheduler::Scheduler& app) {
                 const cv::Scalar blob_color(0, 165, 255);
                 const cv::Scalar pair_color(255, 0, 255);
                 const cv::Scalar center_color(0, 255, 255);
-                cv::Rect2f ldm_rect = ldm_det.rect;
+                cv::Rect2f ldm_rect     = ldm_det.rect;
+                bool drew_projected_box = false;
 
                 if (ldm_det.selected_candidate_idx.has_value()
                     && *ldm_det.selected_candidate_idx >= 0
@@ -275,23 +301,34 @@ void register_l1_sensor_systems(talos::scheduler::Scheduler& app) {
                     const auto& selected =
                         ldm_det
                             .mesh_candidates[static_cast<size_t>(*ldm_det.selected_candidate_idx)];
-                    std::vector<cv::Point2f> candidate_points;
-                    candidate_points.reserve(selected.pair_indices.size() * 2);
-                    for (const int pair_idx : selected.pair_indices) {
-                        if (pair_idx < 0 || static_cast<size_t>(pair_idx) >= ldm_det.pairs.size()) {
-                            continue;
+                    if (selected.projected_outline_image.size() == 16) {
+                        detail::draw_ldm_projected_outline(
+                            img_bgr, selected.projected_outline_image, box_color);
+                        ldm_rect =
+                            detail::projected_outline_bounds(selected.projected_outline_image);
+                        drew_projected_box = true;
+                    } else {
+                        std::vector<cv::Point2f> candidate_points;
+                        candidate_points.reserve(selected.pair_indices.size() * 2);
+                        for (const int pair_idx : selected.pair_indices) {
+                            if (pair_idx < 0
+                                || static_cast<size_t>(pair_idx) >= ldm_det.pairs.size()) {
+                                continue;
+                            }
+                            const auto& pair = ldm_det.pairs[static_cast<size_t>(pair_idx)];
+                            candidate_points.push_back(pair.top_center_px);
+                            candidate_points.push_back(pair.bottom_center_px);
                         }
-                        const auto& pair = ldm_det.pairs[static_cast<size_t>(pair_idx)];
-                        candidate_points.push_back(pair.top_center_px);
-                        candidate_points.push_back(pair.bottom_center_px);
-                    }
-                    if (!candidate_points.empty()) {
-                        ldm_rect = cv::boundingRect(candidate_points);
+                        if (!candidate_points.empty()) {
+                            ldm_rect = cv::boundingRect(candidate_points);
+                        }
                     }
                 }
 
                 if (ldm_rect.width > 0.0f && ldm_rect.height > 0.0f) {
-                    cv::rectangle(img_bgr, ldm_rect, box_color, 2, cv::LINE_AA);
+                    if (!drew_projected_box) {
+                        cv::rectangle(img_bgr, ldm_rect, box_color, 2, cv::LINE_AA);
+                    }
                     cv::putText(
                         img_bgr, fmt::format("LDM {}", ldm_det.pairs.size()),
                         cv::Point(

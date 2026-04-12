@@ -121,12 +121,17 @@ std::vector<fcs::L2::ldm::LightPair> make_projected_pairs(
                 .midpoint_px       = (top + bottom) * 0.5f,
                 .center_dx_px      = std::abs(bottom.x - top.x),
                 .center_dy_px      = bottom.y - top.y,
+                .cluster_id        = 0,
                 .score             = 1.0f});
     }
 
     std::sort(pairs.begin(), pairs.end(), [](const auto& a, const auto& b) {
         return a.midpoint_px.x < b.midpoint_px.x;
     });
+    for (auto& pair : pairs) {
+        pair.local_order_px     = pair.midpoint_px.x;
+        pair.local_layer_sep_px = pair.center_dy_px;
+    }
     return pairs;
 }
 
@@ -142,6 +147,31 @@ fcs::L2::ldm::LdmDetection make_detection_from_pairs(
     detection.mesh_candidates =
         fcs::L2::ldm::build_preliminary_mesh_candidates(detection.pairs, config);
     return detection;
+}
+
+double
+    axis_alignment_error_rad(const Eigen::Quaterniond& expected, const Eigen::Quaterniond& actual) {
+    const Eigen::Vector3d expected_axis = expected.normalized() * Eigen::Vector3d::UnitY();
+    const Eigen::Vector3d actual_axis   = actual.normalized() * Eigen::Vector3d::UnitY();
+    const double cos_theta              = std::clamp(expected_axis.dot(actual_axis), -1.0, 1.0);
+    return std::acos(cos_theta);
+}
+
+double mean_projected_vertical_edge_alignment(const std::vector<cv::Point2f>& outline) {
+    if (outline.size() != 16u) {
+        return 0.0;
+    }
+
+    double alignment_sum = 0.0;
+    for (size_t i = 0; i < 8; ++i) {
+        const cv::Point2f delta = outline[i + 8] - outline[i];
+        const double norm = std::sqrt(static_cast<double>(delta.x * delta.x + delta.y * delta.y));
+        if (norm <= 1e-6) {
+            continue;
+        }
+        alignment_sum += static_cast<double>(delta.y) / norm;
+    }
+    return alignment_sum / 8.0;
 }
 
 TEST(LdmDetector, DetectsAllThreePairDatasetImages) {
@@ -273,6 +303,20 @@ TEST(LdmDetector, RejectsAllNoneDatasetImages) {
     }
 }
 
+TEST(LdmGeometry, VisibleFaceLiesInFrontOfCenterAtIdentityPose) {
+    const auto config = make_ldm_config();
+    const auto face0  = fcs::L2::ldm::pair_model_points_for_face(config.geometry, 0);
+    EXPECT_LT(face0[0].z, 0.0f);
+    EXPECT_LT(face0[1].z, 0.0f);
+
+    const auto outline = fcs::L2::ldm::volume_outline_points(config.geometry);
+    float min_z        = std::numeric_limits<float>::infinity();
+    for (const auto& point : outline) {
+        min_z = std::min(min_z, point.z);
+    }
+    EXPECT_LT(min_z, 0.0f);
+}
+
 TEST(LdmSolver, SinglePairFallsBackToBearingOnly) {
     const auto camera_config = make_test_camera_config();
     const auto ldm_config    = make_ldm_config();
@@ -288,6 +332,7 @@ TEST(LdmSolver, SinglePairFallsBackToBearingOnly) {
     ASSERT_TRUE(result.has_value());
     EXPECT_EQ(result->depth_quality, fcs::L2::ldm::LdmDepthQuality::BearingOnly);
     EXPECT_FALSE(result->whole_center_cam.has_value());
+    EXPECT_FALSE(result->orientation_cam.has_value());
 }
 
 TEST(LdmSolver, TwoPairsProduceConstrainedDepth) {
@@ -305,7 +350,14 @@ TEST(LdmSolver, TwoPairsProduceConstrainedDepth) {
     ASSERT_TRUE(result.has_value());
     EXPECT_EQ(result->depth_quality, fcs::L2::ldm::LdmDepthQuality::Constrained);
     ASSERT_TRUE(result->whole_center_cam.has_value());
+    ASSERT_TRUE(result->orientation_cam.has_value());
     EXPECT_LT((result->whole_center_cam.value() - translation).norm(), 5e-2);
+
+    ASSERT_TRUE(result->selected_candidate_idx.has_value());
+    const auto& selected =
+        result->mesh_candidates[static_cast<size_t>(*result->selected_candidate_idx)];
+    EXPECT_EQ(selected.projected_outline_image.size(), 16u);
+    EXPECT_GT(mean_projected_vertical_edge_alignment(selected.projected_outline_image), 0.6);
 }
 
 TEST(LdmSolver, CombinesMultipleMeshInfosIntoStableCenter) {
@@ -342,6 +394,7 @@ TEST(LdmSolver, CombinesMultipleMeshInfosIntoStableCenter) {
     EXPECT_EQ(result->selected_pair_count, 4);
     ASSERT_TRUE(result->whole_center_cam.has_value());
     EXPECT_LT((result->whole_center_cam.value() - translation).norm(), 8e-2);
+    ASSERT_TRUE(result->orientation_cam.has_value());
 
     bool has_combined_four_pair_candidate = false;
     for (const auto& candidate : result->mesh_candidates) {
@@ -370,10 +423,20 @@ TEST(LdmSolver, ThreePairsRecoverStableCenterAndOdomProjection) {
     EXPECT_EQ(result->depth_quality, fcs::L2::ldm::LdmDepthQuality::Stable);
     ASSERT_TRUE(result->whole_center_cam.has_value());
     ASSERT_TRUE(result->whole_center_odom.has_value());
+    ASSERT_TRUE(result->orientation_cam.has_value());
+    ASSERT_TRUE(result->orientation_odom.has_value());
     EXPECT_LT((result->whole_center_cam.value() - translation).norm(), 5e-2);
     EXPECT_LT(
         (result->whole_center_odom.value() - (translation + Eigen::Vector3d(1.0, 2.0, 3.0))).norm(),
         5e-2);
+    EXPECT_LT(
+        axis_alignment_error_rad(Eigen::Quaterniond(rotation), *result->orientation_cam), 0.15);
+
+    ASSERT_TRUE(result->selected_candidate_idx.has_value());
+    const auto& selected =
+        result->mesh_candidates[static_cast<size_t>(*result->selected_candidate_idx)];
+    EXPECT_EQ(selected.projected_outline_image.size(), 16u);
+    EXPECT_GT(mean_projected_vertical_edge_alignment(selected.projected_outline_image), 0.6);
 }
 
 } // namespace
