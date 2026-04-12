@@ -217,8 +217,8 @@ private:
             return true;
         }
 
-        // Frame layout: HeaderFrame(3) + payload(header->len bytes) + EOF(1)
-        const size_t frame_size = sizeof(HeaderFrame) + header->len + 1;
+        // Frame layout: HeaderFrame(3) + time_stamp(4) + payload(header->len bytes) + EOF(1)
+        const size_t frame_size = sizeof(HeaderFrame) + sizeof(uint32_t) + header->len + 1;
 
         if (rx_buf_.size() < frame_size)
             return false;
