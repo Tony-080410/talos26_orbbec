@@ -167,9 +167,9 @@ public:
             return std::unexpected(
                 CameraError{std::string("Read initial frame failed: ") + e.what(), 0});
         }
+
+        return {};
     }
-    return {};
-}
 
 ~Impl() {
     uninit_camera();

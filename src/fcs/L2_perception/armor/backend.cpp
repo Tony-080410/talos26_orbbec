@@ -150,8 +150,8 @@ BackendInputResolution DetectorBackend::input_resolution() const noexcept {
     }
 #endif
 #if TALOS_HAS_TENSORRT
-    case BackendTypeConfig::TensorRT: {
-        auto result = TrtBackend::create(config.trt);
+    case ArmorBackendType::TensorRT: {
+        auto result = TrtBackend::create(config.tensor_rt);
         if (!result) {
             return std::unexpected(result.error());
         }
@@ -160,7 +160,7 @@ BackendInputResolution DetectorBackend::input_resolution() const noexcept {
     }
 #endif
 #if TALOS_HAS_AXERA
-    case BackendTypeConfig::Axera: {
+    case ArmorBackendType::Axera: {
         auto result = AxeraBackend::create(config.axera);
         if (!result) {
             return std::unexpected(result.error());

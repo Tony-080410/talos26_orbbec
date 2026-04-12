@@ -57,7 +57,7 @@ public:
 
 private:
     /// Private constructor — use create() factory
-    explicit AxeraBackend(Config config);
+    explicit AxeraBackend(Config config) noexcept;
 
     /// Direct-resize preprocessing context.
     struct PreprocContext {
@@ -69,13 +69,13 @@ private:
     };
 
     /// Build direct-resize transform for current frame.
-    [[nodiscard]] PreprocContext preprocess(const cv::Mat& image) const;
+    [[nodiscard]] PreprocContext preprocess(const cv::Mat& image) const noexcept;
 
     /// Preprocess image into NPU buffer (resize + BGR2RGB + cache flush).
-    void preprocess_image(const cv::Mat& image);
+    void preprocess_image(const cv::Mat& image) noexcept;
 
     /// Run pure NPU inference (assumes input buffer is ready)
-    [[nodiscard]] bool infer();
+    [[nodiscard]] bool infer() noexcept;
 
     /// Cached anchor grid used to decode the predecode-concat output on CPU.
     struct DecodeGrid {
@@ -101,7 +101,7 @@ private:
     static constexpr int TILE_GRID_SIZE = 2;
 
     /// Build decode grid for anchor-based decoding (called once at init).
-    [[nodiscard]] DecodeGrid build_decode_grid() const;
+    [[nodiscard]] DecodeGrid build_decode_grid() const noexcept;
 
     /// Cached decode grid (built once at initialization).
     DecodeGrid cached_grid_;
@@ -114,11 +114,11 @@ private:
 
     /// Decode and postprocess single-output concat-predecode tensor.
     [[nodiscard]] std::vector<ArmorDetection>
-        postprocess_concat_predecode(const PreprocContext& ctx) const;
+        postprocess_concat_predecode(const PreprocContext& ctx) const noexcept;
 
     /// Tile-based NMS on pts corner points.
     [[nodiscard]] std::vector<ArmorDetection>
-        nms(std::vector<DecodedCandidate>& detections, int orig_w, int orig_h) const;
+        nms(std::vector<DecodedCandidate>& detections, int orig_w, int orig_h) const noexcept;
 
 private:
     Config config_;
@@ -141,12 +141,12 @@ private:
     AX_IVPS_ASPECT_RATIO_T ivps_aspect_ratio_{}; // Cached aspect ratio config
 
     // IVPS helper methods
-    [[nodiscard]] std::expected<void, std::string> init_ivps();
-    void deinit_ivps();
+    [[nodiscard]] std::expected<void, std::string> init_ivps() noexcept;
+    void deinit_ivps() noexcept;
     [[nodiscard]] std::expected<void, std::string>
-        allocate_ivps_buffers(int max_src_width, int max_src_height);
-    void free_ivps_buffers();
-    void preprocess_image_ivps(const cv::Mat& image);
+        allocate_ivps_buffers(int max_src_width, int max_src_height) noexcept;
+    void free_ivps_buffers() noexcept;
+    void preprocess_image_ivps(const cv::Mat& image) noexcept;
 };
 
 } // namespace fcs::L2

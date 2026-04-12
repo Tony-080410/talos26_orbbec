@@ -115,14 +115,14 @@ static constexpr std::array<ArmorName, 12> PAIR_TO_ARMOR{
 //
 // ====================================================================
 // Cleanup helper: Free hardware memory and C arrays
-void free_io_index(AX_ENGINE_IO_BUFFER_T* io_buf, size_t index) {
+void free_io_index(AX_ENGINE_IO_BUFFER_T* io_buf, size_t index) noexcept {
     for (size_t i = 0; i < index; ++i) {
         AX_ENGINE_IO_BUFFER_T* p_buf = io_buf + i;
         AX_SYS_MemFree(p_buf->phyAddr, p_buf->pVirAddr);
     }
 }
 
-void free_io(AX_ENGINE_IO_T* io) {
+void free_io(AX_ENGINE_IO_T* io) noexcept {
     if (io->pInputs != nullptr) {
         for (size_t j = 0; j < io->nInputSize; ++j) {
             AX_ENGINE_IO_BUFFER_T* p_buf = io->pInputs + j;
@@ -254,7 +254,7 @@ int clamp_int(int value, int lo, int hi) noexcept {
 
 } // namespace
 
-AxeraBackend::AxeraBackend(Config config)
+AxeraBackend::AxeraBackend(Config config) noexcept
     : config_(std::move(config)) {}
 
 AxeraBackend::~AxeraBackend() {
@@ -476,7 +476,7 @@ std::expected<AxeraBackend, std::string> AxeraBackend::create(Config config) noe
     return backend;
 }
 
-AxeraBackend::PreprocContext AxeraBackend::preprocess(const cv::Mat& image) const {
+AxeraBackend::PreprocContext AxeraBackend::preprocess(const cv::Mat& image) const noexcept {
     PreprocContext ctx;
     ctx.orig_w        = image.cols;
     ctx.orig_h        = image.rows;
@@ -486,7 +486,7 @@ AxeraBackend::PreprocContext AxeraBackend::preprocess(const cv::Mat& image) cons
     return ctx;
 }
 
-void AxeraBackend::preprocess_image(const cv::Mat& image) {
+void AxeraBackend::preprocess_image(const cv::Mat& image) noexcept {
     auto* npu_input = static_cast<uint8_t*>(io_data_.pInputs[0].pVirAddr);
 
     cv::Mat npu_input_mat(config_.input_height, config_.input_width, CV_8UC3, npu_input);
@@ -518,7 +518,7 @@ std::expected<void, std::string> AxeraBackend::init_ivps() noexcept {
     return {};
 }
 
-void AxeraBackend::deinit_ivps() {
+void AxeraBackend::deinit_ivps() noexcept {
     if (!ivps_initialized_) {
         return;
     }
@@ -562,7 +562,7 @@ std::expected<void, std::string>
     return {};
 }
 
-void AxeraBackend::free_ivps_buffers() {
+void AxeraBackend::free_ivps_buffers() noexcept {
     if (ivps_src_vir_addr_ != nullptr && ivps_src_phy_addr_ != 0) {
         AX_SYS_MemFree(ivps_src_phy_addr_, ivps_src_vir_addr_);
     }
@@ -572,7 +572,7 @@ void AxeraBackend::free_ivps_buffers() {
     ivps_src_stride_      = 0;
 }
 
-void AxeraBackend::preprocess_image_ivps(const cv::Mat& image) {
+void AxeraBackend::preprocess_image_ivps(const cv::Mat& image) noexcept {
     if (!ivps_initialized_) {
         static bool warned = false;
         if (!warned) {
@@ -657,7 +657,7 @@ void AxeraBackend::preprocess_image_ivps(const cv::Mat& image) {
     AX_SYS_MflushCache(io_data_.pInputs[0].phyAddr, io_data_.pInputs[0].pVirAddr, flush_size);
 }
 
-bool AxeraBackend::infer() {
+bool AxeraBackend::infer() noexcept {
     if (handle_ == nullptr) {
         return false;
     }
@@ -670,7 +670,7 @@ bool AxeraBackend::infer() {
     return true;
 }
 
-AxeraBackend::DecodeGrid AxeraBackend::build_decode_grid() const {
+AxeraBackend::DecodeGrid AxeraBackend::build_decode_grid() const noexcept {
     int total_anchors = 0;
     for (const int stride : config_.strides) {
         total_anchors += (config_.input_width / stride) * (config_.input_height / stride);
@@ -697,7 +697,7 @@ AxeraBackend::DecodeGrid AxeraBackend::build_decode_grid() const {
 }
 
 std::vector<ArmorDetection>
-    AxeraBackend::postprocess_concat_predecode(const PreprocContext& ctx) const {
+    AxeraBackend::postprocess_concat_predecode(const PreprocContext& ctx) const noexcept {
     const auto total_start = std::chrono::high_resolution_clock::now();
 
     const int predecode_box_dim  = 4;
@@ -891,8 +891,8 @@ std::vector<ArmorDetection>
     return result;
 }
 
-std::vector<ArmorDetection>
-    AxeraBackend::nms(std::vector<DecodedCandidate>& detections, int orig_w, int orig_h) const {
+std::vector<ArmorDetection> AxeraBackend::nms(
+    std::vector<DecodedCandidate>& detections, int orig_w, int orig_h) const noexcept {
     if (detections.empty()) {
         return {};
     }
