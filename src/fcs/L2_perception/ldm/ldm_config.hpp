@@ -1,0 +1,42 @@
+#pragma once
+
+#include "core/armor_types.hpp"
+
+#include <array>
+
+namespace fcs::L2::ldm {
+
+struct LdmGeometryConfig {
+    double octagon_side_length_m{0.020711};
+    double octagon_circumradius_m{0.02706};
+    double pair_center_separation_m{0.036514};
+    double window_length_m{0.012};
+    double window_width_m{0.009618};
+    double volume_height_m{0.067};
+    std::array<double, 2> detectable_center_z_range_m{-0.01, 0.01};
+};
+
+struct LdmDetectorConfig {
+    bool enabled{true};
+    ArmorColor target_color{ArmorColor::Red};
+    int min_blob_area_px{5};
+    double min_blob_fill_ratio{0.35};
+    double min_blob_aspect_ratio{0.35};
+    double max_blob_aspect_ratio{4.0};
+    double max_pair_center_dx_ratio{1.25};
+    double min_pair_center_dy_ratio{1.0};
+    double max_pair_center_dy_ratio{12.0};
+    double max_pair_size_delta_ratio{0.75};
+    double max_pair_angle_deg{25.0};
+    double max_gap_cv{0.65};
+    double min_preliminary_candidate_score{0.80};
+    double min_preliminary_candidate_score_two_pair{0.87};
+    double min_two_pair_mean_center_dy_px{12.0};
+    int min_pairs_for_detection{2};
+    int max_pairs_per_candidate{4};
+    double rmse_stable_threshold_px{2.5};
+    double rmse_constrained_threshold_px{5.0};
+    LdmGeometryConfig geometry{};
+};
+
+} // namespace fcs::L2::ldm

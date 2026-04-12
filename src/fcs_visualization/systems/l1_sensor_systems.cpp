@@ -1,3 +1,4 @@
+#include "L2_perception/ldm/types.hpp"
 #include "base.hpp"
 #include "core/runtime.hpp"
 #include "foxglove_config.hpp"
@@ -26,6 +27,11 @@ namespace detail {
 struct QuantaFrameStamp {
     int64_t pts{0};
     uint64_t timestamp_ns{0};
+};
+
+struct LdmOverlayState {
+    std::optional<L2::ldm::LdmDetection> latest_detection{};
+    std::optional<L2::ldm::LdmMeasurement> latest_measurement{};
 };
 
 struct QuantaPublisherState {
@@ -137,6 +143,14 @@ inline void publish_jpeg_image(
     server.enqueue_message(std::move(msg));
 }
 
+[[nodiscard]] inline bool frame_sync_ok(
+    uint64_t producer_timestamp_ns, uint64_t consumer_timestamp_ns, uint64_t max_skew_ns) noexcept {
+    const uint64_t skew = (producer_timestamp_ns > consumer_timestamp_ns)
+                            ? (producer_timestamp_ns - consumer_timestamp_ns)
+                            : (consumer_timestamp_ns - producer_timestamp_ns);
+    return skew <= max_skew_ns;
+}
+
 } // namespace detail
 
 /// @brief Register L1 sensor layer systems (image publishing)
@@ -154,8 +168,10 @@ void register_l1_sensor_systems(talos::scheduler::Scheduler& app) {
 
     app.add_system<talos::pool_compute>(
         "foxglove_l1_image_pub",
-        [video_state = detail::QuantaPublisherState{}](
+        [video_state = detail::QuantaPublisherState{}, ldm_state = detail::LdmOverlayState{}](
             talos::spmc<ArmorDetectionBatch, DetectionChannelTopic> det_in,
+            talos::spmc<L2::ldm::LdmDetection, LdmDetectionChannelTopic> ldm_in,
+            talos::spmc<L2::ldm::LdmMeasurement, LdmMeasurementChannelTopic> ldm_meas_in,
             talos::res<std::shared_ptr<FoxgloveServer>> server, talos::res<CameraConfig> cam,
             talos::res<FoxgloveConfig> foxglove_cfg, core::detecting_color detecting_color_,
             talos::res<fast_tf::CoordinateSystem> tf_buffer) mutable {
@@ -227,6 +243,135 @@ void register_l1_sensor_systems(talos::scheduler::Scheduler& app) {
                 std::string conf_str = fmt::format("conf: {:.2f}", det.confidence);
                 cv::putText(
                     img_bgr, conf_str, conf_pos, cv::FONT_HERSHEY_SIMPLEX, 0.5, box_color, 1);
+            }
+            constexpr uint64_t kMaxLdmOverlaySkewNs = 50'000'000;
+            const auto maybe_ldm_det                = ldm_in.read_current();
+            const auto maybe_ldm_meas               = ldm_meas_in.read_current();
+            if (maybe_ldm_det) {
+                ldm_state.latest_detection = *maybe_ldm_det;
+            }
+            if (maybe_ldm_meas) {
+                ldm_state.latest_measurement = *maybe_ldm_meas;
+            }
+
+            const auto use_ldm_det = ldm_state.latest_detection.has_value()
+                                  && ldm_state.latest_detection->valid
+                                  && (ldm_state.latest_detection->frame_id == batch->frame_id
+                                      || detail::frame_sync_ok(
+                                          ldm_state.latest_detection->timestamp_ns,
+                                          batch->timestamp_ns, kMaxLdmOverlaySkewNs));
+
+            if (use_ldm_det) {
+                const auto& ldm_det = *ldm_state.latest_detection;
+                const cv::Scalar blob_color(0, 165, 255);
+                const cv::Scalar pair_color(255, 0, 255);
+                const cv::Scalar center_color(0, 255, 255);
+                cv::Rect2f ldm_rect = ldm_det.rect;
+
+                if (ldm_det.selected_candidate_idx.has_value()
+                    && *ldm_det.selected_candidate_idx >= 0
+                    && static_cast<size_t>(*ldm_det.selected_candidate_idx)
+                           < ldm_det.mesh_candidates.size()) {
+                    const auto& selected =
+                        ldm_det
+                            .mesh_candidates[static_cast<size_t>(*ldm_det.selected_candidate_idx)];
+                    std::vector<cv::Point2f> candidate_points;
+                    candidate_points.reserve(selected.pair_indices.size() * 2);
+                    for (const int pair_idx : selected.pair_indices) {
+                        if (pair_idx < 0 || static_cast<size_t>(pair_idx) >= ldm_det.pairs.size()) {
+                            continue;
+                        }
+                        const auto& pair = ldm_det.pairs[static_cast<size_t>(pair_idx)];
+                        candidate_points.push_back(pair.top_center_px);
+                        candidate_points.push_back(pair.bottom_center_px);
+                    }
+                    if (!candidate_points.empty()) {
+                        ldm_rect = cv::boundingRect(candidate_points);
+                    }
+                }
+
+                if (ldm_rect.width > 0.0f && ldm_rect.height > 0.0f) {
+                    cv::rectangle(img_bgr, ldm_rect, box_color, 2, cv::LINE_AA);
+                    cv::putText(
+                        img_bgr, fmt::format("LDM {}", ldm_det.pairs.size()),
+                        cv::Point(
+                            static_cast<int>(ldm_rect.x),
+                            std::max(20, static_cast<int>(ldm_rect.y) - 8)),
+                        cv::FONT_HERSHEY_SIMPLEX, 0.55, box_color, 2, cv::LINE_AA);
+                }
+
+                for (const auto& blob : ldm_det.blobs) {
+                    cv::rectangle(img_bgr, blob.rect, blob_color, 1, cv::LINE_AA);
+                }
+
+                for (size_t i = 0; i < ldm_det.pairs.size(); ++i) {
+                    const auto& pair = ldm_det.pairs[i];
+                    cv::line(
+                        img_bgr, pair.top_center_px, pair.bottom_center_px, pair_color, 2,
+                        cv::LINE_AA);
+                    cv::circle(img_bgr, pair.top_center_px, 4, colors[0], 2);
+                    cv::circle(img_bgr, pair.bottom_center_px, 4, colors[2], 2);
+                    cv::circle(img_bgr, pair.midpoint_px, 3, center_color, -1);
+                    cv::putText(
+                        img_bgr, fmt::format("p{}", i), pair.midpoint_px + cv::Point2f(4.0f, -4.0f),
+                        cv::FONT_HERSHEY_SIMPLEX, 0.45, center_color, 1, cv::LINE_AA);
+                }
+
+                if (ldm_det.center_image_px.has_value()) {
+                    cv::drawMarker(
+                        img_bgr, *ldm_det.center_image_px, center_color, cv::MARKER_CROSS, 18, 2);
+                }
+
+                if (ldm_det.selected_candidate_idx.has_value()
+                    && *ldm_det.selected_candidate_idx >= 0
+                    && static_cast<size_t>(*ldm_det.selected_candidate_idx)
+                           < ldm_det.mesh_candidates.size()) {
+                    const auto& selected =
+                        ldm_det
+                            .mesh_candidates[static_cast<size_t>(*ldm_det.selected_candidate_idx)];
+                    std::string faces_text;
+                    for (size_t i = 0; i < selected.octagon_face_indices.size(); ++i) {
+                        if (!faces_text.empty()) {
+                            faces_text += ",";
+                        }
+                        faces_text += std::to_string(selected.octagon_face_indices[i]);
+                    }
+                    cv::putText(
+                        img_bgr,
+                        fmt::format(
+                            "ldm faces={} rmse={:.2f}", faces_text, selected.reprojection_rmse_px),
+                        cv::Point(
+                            static_cast<int>(ldm_rect.x),
+                            std::max(20, static_cast<int>(ldm_rect.y) - 28)),
+                        cv::FONT_HERSHEY_SIMPLEX, 0.45, center_color, 1, cv::LINE_AA);
+                }
+            }
+
+            const auto use_ldm_meas = ldm_state.latest_measurement.has_value()
+                                   && ldm_state.latest_measurement->valid
+                                   && (ldm_state.latest_measurement->frame_id == batch->frame_id
+                                       || detail::frame_sync_ok(
+                                           ldm_state.latest_measurement->timestamp_ns,
+                                           batch->timestamp_ns, kMaxLdmOverlaySkewNs));
+            if (use_ldm_meas) {
+                const auto& ldm_meas = *ldm_state.latest_measurement;
+                cv::putText(
+                    img_bgr,
+                    fmt::format(
+                        "LDM pairs={}/{} {} conf={:.2f}", ldm_meas.selected_pair_count,
+                        ldm_meas.pair_count_total, ldm_meas.depth_quality, ldm_meas.confidence),
+                    cv::Point(30, 32), cv::FONT_HERSHEY_SIMPLEX, 0.6, cv::Scalar(0, 255, 255), 2,
+                    cv::LINE_AA);
+
+                if (ldm_meas.whole_center_cam.has_value()) {
+                    const auto& center = *ldm_meas.whole_center_cam;
+                    cv::putText(
+                        img_bgr,
+                        fmt::format(
+                            "cam=[{:.2f},{:.2f},{:.2f}]m", center.x(), center.y(), center.z()),
+                        cv::Point(30, 56), cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(0, 255, 255),
+                        1, cv::LINE_AA);
+                }
             }
 
             if (foxglove_cfg->transport == FoxgloveTransport::Mcap) {

@@ -21,6 +21,9 @@ struct DetectionChannelTopic {};
 /// Mode: SPMC (single producer, multiple consumers)
 struct MeasurementChannelTopic {};
 
+struct LdmDetectionChannelTopic {};
+struct LdmMeasurementChannelTopic {};
+
 // ============================================================================
 // L3 Estimation Pipeline Channel Topics
 // ============================================================================

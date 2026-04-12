@@ -6,6 +6,7 @@
 #include <optional>
 #include <string>
 
+#include "L2_perception/ldm/ldm_config.hpp"
 #include "euler.hpp"
 #include "foxglove_config.hpp"
 #include "magic_enum.hpp"
@@ -86,6 +87,7 @@ struct VisionConfig {
     core::trajectory::TrajectoryConfig trajectory{};
     toml_helper::flatten<L2::ArmorDetectorConfig> at_legacy{};
     rune::RuneDetectorConfig rune_detector{};
+    L2::ldm::LdmDetectorConfig ldm{};
 
     toml_helper::flatten<L3::L3Config> l3{};
     energy_meter::EnergyMeterL3Config energy_meter{};

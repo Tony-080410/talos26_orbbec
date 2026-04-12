@@ -166,6 +166,8 @@ set(FCS_SOURCES
         src/fcs/runtime/l1_l2_setup.cpp
         src/fcs/L2_perception/armor/backend.cpp
         src/fcs/L2_perception/armor/systems.cpp
+        src/fcs/L2_perception/ldm/ldm_detector.cpp
+        src/fcs/L2_perception/ldm/ldm_systems.cpp
         src/fcs/L2_perception/rune/rune_detector.cpp
         src/fcs/L2_perception/rune/rune_systems.cpp
         src/fcs/L2_perception/armor/backends/traditional.cpp

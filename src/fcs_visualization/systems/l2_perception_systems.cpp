@@ -2,6 +2,8 @@
 #include "foxglove_types.hpp"
 #include "scene_builder.hpp"
 
+#include "L2_perception/ldm/ldm_config.hpp"
+#include "L2_perception/ldm/types.hpp"
 #include "core/channel_topics.hpp"
 #include "core/types.hpp"
 #include "frame.hpp"
@@ -10,6 +12,100 @@
 #include <nlohmann/json.hpp>
 
 namespace fcs::visualization::foxglove::systems {
+
+namespace {
+
+constexpr uint64_t kLdmSceneLifetimeNs = 200'000'000;
+
+[[nodiscard]] ::foxglove::schemas::Color
+    ldm_scene_color(const fcs::L2::ldm::LdmMeasurement& measurement) noexcept {
+    switch (measurement.depth_quality) {
+    case fcs::L2::ldm::LdmDepthQuality::Stable: return tac::Semantic::STATUS_ACTIVE;
+    case fcs::L2::ldm::LdmDepthQuality::Constrained: return tac::Semantic::ALERT;
+    case fcs::L2::ldm::LdmDepthQuality::BearingOnly: return tac::L2::MEASUREMENT_CONFIDENCE;
+    case fcs::L2::ldm::LdmDepthQuality::None: return tac::Semantic::INERT;
+    }
+    return tac::Semantic::INERT;
+}
+
+[[nodiscard]] std::string ldm_label(const fcs::L2::ldm::LdmMeasurement& measurement) {
+    return fmt::format(
+        "LDM {}/{} {}", measurement.selected_pair_count, measurement.pair_count_total,
+        measurement.depth_quality);
+}
+
+[[nodiscard]] ::foxglove::schemas::SceneEntity make_ldm_volume_entity_odom(
+    const fcs::L2::ldm::LdmMeasurement& measurement,
+    const fcs::L2::ldm::LdmDetectorConfig& config) {
+    const auto color      = ldm_scene_color(measurement);
+    const auto& pos       = *measurement.whole_center_odom;
+    const double diameter = config.geometry.octagon_circumradius_m * 2.0;
+
+    return viz::EntityBuilder::create<fast_tf::odom>("l2", "ldm")
+        .timestamp(measurement.timestamp_ns)
+        .lifetime(kLdmSceneLifetimeNs)
+        .position(pos)
+        .color(color)
+        .cylinder(diameter, config.geometry.volume_height_m)
+        .size(0.04)
+        .sphere()
+        .text_with_offset(
+            ldm_label(measurement), 0.0, 0.0, config.geometry.volume_height_m * 0.8,
+            tac::L2::LABEL_FONT_SIZE)
+        .metadata("confidence", fmt::format("{:.3f}", measurement.confidence))
+        .metadata("depth_quality", std::string(magic_enum::enum_name(measurement.depth_quality)))
+        .metadata("pair_count_total", std::to_string(measurement.pair_count_total))
+        .metadata("selected_pair_count", std::to_string(measurement.selected_pair_count))
+        .build();
+}
+
+[[nodiscard]] ::foxglove::schemas::SceneEntity make_ldm_volume_entity_camera(
+    const fcs::L2::ldm::LdmMeasurement& measurement,
+    const fcs::L2::ldm::LdmDetectorConfig& config) {
+    const auto color      = ldm_scene_color(measurement);
+    const auto& pos       = *measurement.whole_center_cam;
+    const double diameter = config.geometry.octagon_circumradius_m * 2.0;
+
+    return viz::EntityBuilder::create<fast_tf::camera_optical>("l2", "ldm_cam")
+        .timestamp(measurement.timestamp_ns)
+        .lifetime(kLdmSceneLifetimeNs)
+        .position(pos)
+        .color(color)
+        .cylinder(diameter, config.geometry.volume_height_m)
+        .size(0.04)
+        .sphere()
+        .text_with_offset(
+            ldm_label(measurement), 0.0, 0.0, config.geometry.volume_height_m * 0.8,
+            tac::L2::LABEL_FONT_SIZE)
+        .metadata("confidence", fmt::format("{:.3f}", measurement.confidence))
+        .metadata("depth_quality", std::string(magic_enum::enum_name(measurement.depth_quality)))
+        .metadata("pair_count_total", std::to_string(measurement.pair_count_total))
+        .metadata("selected_pair_count", std::to_string(measurement.selected_pair_count))
+        .build();
+}
+
+[[nodiscard]] ::foxglove::schemas::SceneEntity
+    make_ldm_bearing_entity(const fcs::L2::ldm::LdmMeasurement& measurement) {
+    const auto color          = ldm_scene_color(measurement);
+    const Eigen::Vector3d end = measurement.bearing_cam.normalized() * 2.0;
+
+    return viz::EntityBuilder::create<fast_tf::camera_optical>("l2", "ldm_bearing")
+        .timestamp(measurement.timestamp_ns)
+        .lifetime(kLdmSceneLifetimeNs)
+        .line_strip({viz::make_point3(0.0, 0.0, 0.0), viz::make_point3(end)}, color, 0.01)
+        .position(end)
+        .color(color)
+        .size(0.04)
+        .sphere()
+        .text_with_offset(ldm_label(measurement), 0.0, 0.0, 0.08, tac::L2::LABEL_FONT_SIZE)
+        .metadata("confidence", fmt::format("{:.3f}", measurement.confidence))
+        .metadata("depth_quality", std::string(magic_enum::enum_name(measurement.depth_quality)))
+        .metadata("pair_count_total", std::to_string(measurement.pair_count_total))
+        .metadata("selected_pair_count", std::to_string(measurement.selected_pair_count))
+        .build();
+}
+
+} // namespace
 
 /// @brief Register L2 perception layer systems (detection, measurement)
 ///
@@ -109,6 +205,32 @@ void register_l2_perception_systems(talos::scheduler::Scheduler& app) {
             }
 
             // Publish to semantic channel
+            publish_scene_if_nonempty<SceneMessage>(*server, std::move(entities));
+        });
+
+    app.add_system<talos::pool_compute>(
+        "foxglove_l2_ldm_scene",
+        [](talos::spmc<fcs::L2::ldm::LdmMeasurement, LdmMeasurementChannelTopic> ldm_meas_in,
+           talos::res<std::shared_ptr<FoxgloveServer>> server,
+           talos::res<fcs::L2::ldm::LdmDetectorConfig> ldm_config) {
+            if (!foxglove_ready(*server, ldm_meas_in)) {
+                return;
+            }
+
+            auto measurement = ldm_meas_in.read();
+            if (!measurement || !measurement->valid) {
+                return;
+            }
+
+            std::vector<::foxglove::schemas::SceneEntity> entities;
+            if (measurement->whole_center_odom.has_value()) {
+                entities.push_back(make_ldm_volume_entity_odom(*measurement, *ldm_config));
+            } else if (measurement->whole_center_cam.has_value()) {
+                entities.push_back(make_ldm_volume_entity_camera(*measurement, *ldm_config));
+            } else {
+                entities.push_back(make_ldm_bearing_entity(*measurement));
+            }
+
             publish_scene_if_nonempty<SceneMessage>(*server, std::move(entities));
         });
 

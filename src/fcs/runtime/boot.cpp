@@ -2,6 +2,7 @@
 
 #include "L2_perception/armor/readback_roi.hpp"
 #include "L2_perception/armor/systems.hpp"
+#include "L2_perception/ldm/ldm_systems.hpp"
 #include "L2_perception/rune/rune_systems.hpp"
 #include "L3_estimation/energy_meter/energy_meter_systems.hpp"
 #include "L3_estimation/tracker_systems.hpp"
@@ -112,6 +113,8 @@ void init_coordinate_system(fast_tf::CoordinateSystem& system, const RobotExtrin
 
     // Register AT Legacy detection pipeline systems
     L2::register_detection_systems(scheduler);
+    L2::ldm::register_ldm_systems(
+        scheduler, std::move(config.vision.ldm), setup_result.value().camera_config);
     rune::register_rune_detection_systems(scheduler, std::move(config.vision.rune_detector));
 
     // Register L3 Tracker pipeline (Measurement -> TrackerOutput)
