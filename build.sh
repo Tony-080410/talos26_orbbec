@@ -8,12 +8,13 @@
 #   Linux  | clang 21+       | libstdc++ (via GCC 13+ toolchain) | x86_64/arm64
 #
 # Usage:
-#   ./build.sh [--debug|--release] [--asan] [--calib|--playground] [--] [app args...]
+#   ./build.sh [--debug|--release] [--asan] [--test] [--calib|--playground] [--] [app args...]
 #
 # Examples:
 #   ./build.sh
 #   ./build.sh --debug
 #   ./build.sh --asan
+#   ./build.sh --test --no-run
 #   ./build.sh --cross
 #   ./build.sh --calib -- --camera 0
 #   ./build.sh --no-run
@@ -64,6 +65,7 @@ BUILD_TYPE="Release"
 BUILD_TARGET="talos"
 ENABLE_CALIBRATION="OFF"
 ENABLE_ASAN="OFF"
+ENABLE_TESTING="OFF"
 RUN_AFTER_BUILD="ON"
 VERBOSE="OFF"
 REDACT_BUILD_OUTPUT="ON"
@@ -322,6 +324,7 @@ configure_cmake() {
         "-DCMAKE_BUILD_TYPE=${BUILD_TYPE}"
         "-DENABLE_CALIBRATION=${ENABLE_CALIBRATION}"
         "-DENABLE_ASAN=${ENABLE_ASAN}"
+        "-DTALOS_BUILD_TESTING=${ENABLE_TESTING}"
         "${CMAKE_EXTRA_ARGS[@]}"
     )
 
@@ -334,14 +337,21 @@ build_target() {
 
     CMAKE_BUILD_ARGS=(
         --build build
-        --target "${BUILD_TARGET}"
     )
+
+    if [[ "$ENABLE_TESTING" == "OFF" ]]; then
+        CMAKE_BUILD_ARGS+=(--target "${BUILD_TARGET}")
+    fi
 
     if [[ "$VERBOSE" == "ON" ]]; then
         CMAKE_BUILD_ARGS+=(--verbose)
     fi
 
-    info "Building ${BUILD_TARGET} (${BUILD_TYPE})..."
+    if [[ "$ENABLE_TESTING" == "ON" ]]; then
+        info "Building all targets (${BUILD_TYPE})..."
+    else
+        info "Building ${BUILD_TARGET} (${BUILD_TYPE})..."
+    fi
     cmake "${CMAKE_BUILD_ARGS[@]}"
 
     ok "Build complete!"
@@ -361,6 +371,14 @@ run_target() {
     exec "$exe"
 }
 
+run_tests() {
+    [[ "$ENABLE_TESTING" == "ON" ]] || return 0
+
+    info "Running tests..."
+    ctest --test-dir build --output-on-failure --parallel "${BUILD_JOBS}"
+    ok "All tests passed!"
+}
+
 # -----------------------------------------------------------------------------
 # Args
 # -----------------------------------------------------------------------------
@@ -377,6 +395,11 @@ parse_args() {
                 ;;
             --asan|-fsanitize=address)
                 ENABLE_ASAN="ON"
+                shift
+                ;;
+            --test)
+                ENABLE_TESTING="ON"
+                RUN_AFTER_BUILD="OFF"
                 shift
                 ;;
             -c|--calib)
@@ -466,6 +489,7 @@ main() {
 
     configure_cmake
     build_target
+    run_tests
     run_target
 }
 

@@ -303,7 +303,7 @@ target_link_libraries(fcs_visualization PUBLIC
 target_precompile_headers(fcs_visualization PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/fcs_visualization/pch.hpp)
 
 # FCS tests (auto-discovered from src/fcs/tests/)
-if(BUILD_TESTING)
+if(TALOS_BUILD_TESTING)
     file(GLOB FCS_TESTS "${CMAKE_CURRENT_SOURCE_DIR}/src/fcs/tests/*_test.cpp")
     foreach(test_file ${FCS_TESTS})
         get_filename_component(test_name ${test_file} NAME_WE)
@@ -366,6 +366,7 @@ add_library(tinympc_bench STATIC
 target_include_directories(tinympc_bench SYSTEM PUBLIC 3dparty/tinympc)
 target_link_libraries(tinympc_bench PUBLIC Eigen3::Eigen)
 crate_silence_warnings(tinympc_bench)
+target_compile_options(tinympc_bench PRIVATE -Wno-header-hygiene)
 
 add_executable(bench_mpc benchmark/bench_mpc.cpp)
 target_include_directories(bench_mpc PRIVATE

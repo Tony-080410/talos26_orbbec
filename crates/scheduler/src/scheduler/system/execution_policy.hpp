@@ -147,7 +147,7 @@ struct is_visualization_policy : std::is_same<T, pool_visualization> {};
 
 /// Check if policy notifies (only fixed_rate, not fixed_rate_silent)
 template <typename T>
-struct is_notifying_policy : is_fixed_rate_policy_base<T> {};
+struct is_notifying_policy : std::false_type {};
 
 template <std::uint32_t F, std::int32_t A, std::int32_t P>
 struct is_notifying_policy<fixed_rate<F, A, P>> : std::true_type {};

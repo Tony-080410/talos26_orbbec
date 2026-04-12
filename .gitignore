@@ -18,7 +18,6 @@ cmake-build-debug/
 cmake-build-release/
 .cmake/
 .idea/
-datasets/
 dataset.zip
 sp_vision_25
 _deps/

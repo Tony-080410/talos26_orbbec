@@ -8,9 +8,9 @@
 #include <thread>
 #include <vector>
 
-#include "primitives/spmc_triple_buffer.hpp"
+#include "primitive/spmc_triple_buffer.hpp"
 
-using namespace primitive;
+using namespace talos;
 using namespace std::chrono_literals;
 
 namespace {

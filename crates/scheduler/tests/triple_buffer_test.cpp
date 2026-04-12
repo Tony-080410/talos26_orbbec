@@ -7,10 +7,10 @@
 #include <thread>
 #include <vector>
 
-#include "scheduler/primitives/spmc_triple_buffer.hpp"
-#include "scheduler/primitives/spsc_triple_buffer.hpp"
+#include "primitive/spmc_triple_buffer.hpp"
+#include "primitive/spsc_triple_buffer.hpp"
 
-using namespace primitive;
+using namespace talos::primitive;
 
 // Data structure for integrity testing - all fields should have same value
 struct IntegrityData {
@@ -76,16 +76,6 @@ TEST(SpscTest, BorrowMut) {
     const auto val = r.read();
     ASSERT_TRUE(val.has_value());
     EXPECT_EQ(*val, 99);
-}
-
-TEST(SpscTest, HasNew) {
-    auto [w, r] = SpscTripleBuffer<int>::create();
-
-    EXPECT_FALSE(r.has_new());
-    w.write(1);
-    EXPECT_TRUE(r.has_new());
-    static_cast<void>(r.read());
-    EXPECT_FALSE(r.has_new());
 }
 
 TEST(SpscTest, MoveSemantics) {

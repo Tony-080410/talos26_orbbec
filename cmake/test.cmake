@@ -1,5 +1,11 @@
 # Build testing (default OFF for faster builds)
-option(BUILD_TESTING "Build tests" OFF)
+option(TALOS_BUILD_TESTING "Build tests" OFF)
+
+if(NOT TALOS_BUILD_TESTING)
+    return()
+endif()
+
+find_package(GTest REQUIRED)
 
 # Sanitizers (optional - enable via CMake flags)
 option(ENABLE_ASAN "Enable AddressSanitizer" OFF)

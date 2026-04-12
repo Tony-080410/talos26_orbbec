@@ -5,14 +5,14 @@
 #include <numbers>
 #include <vector>
 
+#include "core/types.hpp"
 #include <Eigen/Core>
 #include <Eigen/Geometry>
 #include <opencv2/calib3d.hpp>
 #include <opencv2/core.hpp>
 
-#include "L2_perception/armor/pnp_solver.hpp"
+#include "L2_perception/armor/solver.hpp"
 #include "camera_config.hpp"
-#include "core/types.hpp"
 
 namespace {
 
@@ -149,8 +149,7 @@ double rotation_error_rad(
 TEST(PnPSolver, RecoversSmallArmorPoseWithoutPriorUnderDistortion) {
     const auto camera_config = make_test_camera_config();
 
-    fcs::L2::PnPSolver solver;
-    ASSERT_TRUE(solver.init(camera_config));
+    fcs::L2::PnPSolver solver(camera_config);
 
     const double yaw_gt               = 0.42;
     const Eigen::Matrix3d rotation_gt = armor_rotation(yaw_gt, fcs::ArmorName::Three);
@@ -170,8 +169,7 @@ TEST(PnPSolver, RecoversSmallArmorPoseWithoutPriorUnderDistortion) {
 TEST(PnPSolver, RecoversLargeArmorPoseWithPosePriorUnderDistortion) {
     const auto camera_config = make_test_camera_config();
 
-    fcs::L2::PnPSolver solver;
-    ASSERT_TRUE(solver.init(camera_config));
+    fcs::L2::PnPSolver solver(camera_config);
 
     const double yaw_gt               = -0.31;
     const Eigen::Matrix3d rotation_gt = armor_rotation(yaw_gt, fcs::ArmorName::One);
@@ -204,8 +202,7 @@ TEST(PnPSolver, RecoversLargeArmorPoseWithPosePriorUnderDistortion) {
 TEST(PnPSolver, KeepsConstrainedPoseManifoldWithBiasedCornersAndPrior) {
     const auto camera_config = make_test_camera_config();
 
-    fcs::L2::PnPSolver solver;
-    ASSERT_TRUE(solver.init(camera_config));
+    fcs::L2::PnPSolver solver(camera_config);
 
     const double yaw_gt               = 0.57;
     const Eigen::Matrix3d rotation_gt = armor_rotation(yaw_gt, fcs::ArmorName::Five);

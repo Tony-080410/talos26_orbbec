@@ -191,7 +191,7 @@ fcs::L3::TrackerOutput make_robot_tracker_output(
 class AimerSystemHarness {
 public:
     explicit AimerSystemHarness(
-        fcs::L4::L4Config config = {}, fcs::L2::ReadbackRoiConfig readback_roi_config = {}) {
+        fcs::L4::L4Config config = {}, fcs::L2::ArmorReadbackRoiConfig readback_roi_config = {}) {
         scheduler_.world().insert_resource(make_test_coordinate_system());
         scheduler_.world().insert_resource(make_test_camera_config());
         scheduler_.world().insert_resource(readback_roi_config);
@@ -1387,7 +1387,7 @@ TEST(AimerSystemsTargetSelection, TempLostRetainsLastOpticalMeasurement) {
 }
 
 TEST(AimerSystemsTargetSelection, ReadbackRoiFreshnessUsesLastObservationTimestampDuringTempLost) {
-    fcs::L2::ReadbackRoiConfig readback_roi_config;
+    fcs::L2::ArmorReadbackRoiConfig readback_roi_config;
     readback_roi_config.enabled         = true;
     readback_roi_config.stale_timeout_s = 0.20;
 

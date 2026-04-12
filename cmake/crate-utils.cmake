@@ -154,7 +154,7 @@ endfunction()
 # =============================================================================
 function(_crate_add_tests crate_name src_dir test_list)
     # 跳过测试构建（默认 OFF）
-    if(NOT BUILD_TESTING)
+    if(NOT TALOS_BUILD_TESTING)
         return()
     endif()
 

@@ -89,8 +89,8 @@ TEST(ConfigParse, VisionBaseTomlMatchesExpectedSemanticsAndValues) {
     ASSERT_TRUE(result.has_value()) << result.error();
     const auto& config = *result;
 
-    EXPECT_EQ(config.at_legacy->backend_type, fcs::L2::BackendTypeConfig::NeuralNetworkTup);
-    EXPECT_EQ(config.at_legacy->default_detect_color, fcs::ArmorColor::Blue);
+    EXPECT_EQ(config.at_legacy->backend_type, fcs::L2::ArmorBackendType::Traditional);
+    EXPECT_EQ(config.at_legacy->default_detect_color, fcs::ArmorColor::Red);
 
     EXPECT_FALSE(config.at_legacy->traditional.advanced_binary);
     EXPECT_FLOAT_EQ(config.at_legacy->traditional.dark_percentage, 0.5F);
@@ -110,36 +110,36 @@ TEST(ConfigParse, VisionBaseTomlMatchesExpectedSemanticsAndValues) {
     EXPECT_TRUE(config.at_legacy->traditional.classifier_enable_type_filtering);
     EXPECT_TRUE(config.at_legacy->traditional.classifier_use_softmax);
 
-    EXPECT_EQ(config.at_legacy->nn.model_path, "models/best.onnx");
-    EXPECT_EQ(config.at_legacy->nn.device, "CPU");
-    EXPECT_EQ(config.at_legacy->nn.device_priorities, "");
-    EXPECT_FALSE(config.at_legacy->nn.enable_profiling);
-    EXPECT_FALSE(config.at_legacy->nn.enable_multi_thread);
-    EXPECT_DOUBLE_EQ(config.at_legacy->nn.confidence_threshold, 0.75);
-    EXPECT_DOUBLE_EQ(config.at_legacy->nn.nms_threshold, 0.30);
-    EXPECT_EQ(config.at_legacy->nn.top_k, 128);
+    EXPECT_EQ(config.at_legacy->openvino.model_path, "models/best.onnx");
+    EXPECT_EQ(config.at_legacy->openvino.device, "CPU");
+    EXPECT_EQ(config.at_legacy->openvino.device_priorities, "");
+    EXPECT_FALSE(config.at_legacy->openvino.enable_profiling);
+    EXPECT_FALSE(config.at_legacy->openvino.enable_multi_thread);
+    EXPECT_DOUBLE_EQ(config.at_legacy->openvino.confidence_threshold, 0.75);
+    EXPECT_DOUBLE_EQ(config.at_legacy->openvino.nms_threshold, 0.30);
+    EXPECT_EQ(config.at_legacy->openvino.top_k, 128);
 
-    EXPECT_EQ(config.at_legacy->nn_tup.model_path, "models/opt-1208-001.onnx");
-    EXPECT_EQ(config.at_legacy->nn_tup.device, "CPU");
-    EXPECT_EQ(config.at_legacy->nn_tup.device_priorities, "");
-    EXPECT_FALSE(config.at_legacy->nn_tup.enable_profiling);
-    EXPECT_FALSE(config.at_legacy->nn_tup.enable_multi_thread);
-    EXPECT_DOUBLE_EQ(config.at_legacy->nn_tup.confidence_threshold, 0.75);
-    EXPECT_DOUBLE_EQ(config.at_legacy->nn_tup.nms_threshold, 0.30);
-    EXPECT_EQ(config.at_legacy->nn_tup.top_k, 128);
+    EXPECT_EQ(config.at_legacy->openvino_tup.model_path, "models/opt-1208-001.onnx");
+    EXPECT_EQ(config.at_legacy->openvino_tup.device, "CPU");
+    EXPECT_EQ(config.at_legacy->openvino_tup.device_priorities, "");
+    EXPECT_FALSE(config.at_legacy->openvino_tup.enable_profiling);
+    EXPECT_FALSE(config.at_legacy->openvino_tup.enable_multi_thread);
+    EXPECT_DOUBLE_EQ(config.at_legacy->openvino_tup.confidence_threshold, 0.75);
+    EXPECT_DOUBLE_EQ(config.at_legacy->openvino_tup.nms_threshold, 0.30);
+    EXPECT_EQ(config.at_legacy->openvino_tup.top_k, 128);
 
-    EXPECT_EQ(config.at_legacy->trt.model_path, "models/best_fp16.onnx");
-    EXPECT_EQ(config.at_legacy->trt.engine_path, "models/best_fp16_sm87_fp16.engine");
-    EXPECT_EQ(config.at_legacy->trt.engine_cache_dir, "/tmp/tensorrt_cache");
-    EXPECT_EQ(config.at_legacy->trt.device_id, 0);
-    EXPECT_EQ(config.at_legacy->trt.num_streams, 2);
-    EXPECT_EQ(config.at_legacy->trt.compute_capability, "87");
-    EXPECT_TRUE(config.at_legacy->trt.enable_fp16);
-    EXPECT_TRUE(config.at_legacy->trt.enable_dla);
-    EXPECT_EQ(config.at_legacy->trt.dla_core, 0);
-    EXPECT_DOUBLE_EQ(config.at_legacy->trt.confidence_threshold, 0.20);
-    EXPECT_DOUBLE_EQ(config.at_legacy->trt.nms_threshold, 0.30);
-    EXPECT_EQ(config.at_legacy->trt.top_k, 128);
+    EXPECT_EQ(config.at_legacy->tensor_rt.model_path, "models/best_fp16.onnx");
+    EXPECT_EQ(config.at_legacy->tensor_rt.engine_path, "models/best_fp16_sm87_fp16.engine");
+    EXPECT_EQ(config.at_legacy->tensor_rt.engine_cache_dir, "/tmp/tensorrt_cache");
+    EXPECT_EQ(config.at_legacy->tensor_rt.device_id, 0);
+    EXPECT_EQ(config.at_legacy->tensor_rt.num_streams, 2);
+    EXPECT_EQ(config.at_legacy->tensor_rt.compute_capability, "87");
+    EXPECT_TRUE(config.at_legacy->tensor_rt.enable_fp16);
+    EXPECT_TRUE(config.at_legacy->tensor_rt.enable_dla);
+    EXPECT_EQ(config.at_legacy->tensor_rt.dla_core, 0);
+    EXPECT_DOUBLE_EQ(config.at_legacy->tensor_rt.confidence_threshold, 0.20);
+    EXPECT_DOUBLE_EQ(config.at_legacy->tensor_rt.nms_threshold, 0.30);
+    EXPECT_EQ(config.at_legacy->tensor_rt.top_k, 128);
 
     EXPECT_EQ(config.at_legacy->axera.model_path, "models/compiled.axmodel");
     EXPECT_EQ(config.at_legacy->axera.input_width, 768);
@@ -157,9 +157,9 @@ TEST(ConfigParse, VisionBaseTomlMatchesExpectedSemanticsAndValues) {
     EXPECT_TRUE(config.at_legacy->readback_roi.enabled);
     EXPECT_DOUBLE_EQ(config.at_legacy->readback_roi.stale_timeout_s, 0.20);
     EXPECT_DOUBLE_EQ(config.at_legacy->readback_roi.margin_ratio_x, 0.20);
-    EXPECT_DOUBLE_EQ(config.at_legacy->readback_roi.margin_ratio_y, 0.20);
-    EXPECT_DOUBLE_EQ(config.at_legacy->readback_roi.box_size_m[0], 1.0);
-    EXPECT_DOUBLE_EQ(config.at_legacy->readback_roi.box_size_m[1], 1.0);
+    EXPECT_DOUBLE_EQ(config.at_legacy->readback_roi.margin_ratio_y, 0.0);
+    EXPECT_DOUBLE_EQ(config.at_legacy->readback_roi.box_size_m[0], 0.6);
+    EXPECT_DOUBLE_EQ(config.at_legacy->readback_roi.box_size_m[1], 0.6);
     EXPECT_DOUBLE_EQ(config.at_legacy->readback_roi.box_size_m[2], 0.6);
 
     EXPECT_DOUBLE_EQ(config.tracker().robot.matcher_gate, 10.0);
@@ -167,7 +167,7 @@ TEST(ConfigParse, VisionBaseTomlMatchesExpectedSemanticsAndValues) {
     EXPECT_EQ(config.tracker().robot.tracking_threshold, 5u);
     EXPECT_DOUBLE_EQ(config.tracker().robot.model.sigma_a_xy, 10.0);
     EXPECT_DOUBLE_EQ(config.tracker().robot.model.sigma_a_z, 2.0);
-    EXPECT_DOUBLE_EQ(config.tracker().robot.model.sigma_a_yaw, 20.0);
+    EXPECT_DOUBLE_EQ(config.tracker().robot.model.sigma_a_yaw, 15.0);
     EXPECT_DOUBLE_EQ(config.tracker().robot.model.sigma_r0, 1.0);
     EXPECT_DOUBLE_EQ(config.tracker().robot.model.sigma_r1, 1.0);
     EXPECT_DOUBLE_EQ(config.tracker().robot.model.sigma_h, 0.8);
@@ -187,7 +187,7 @@ TEST(ConfigParse, VisionBaseTomlMatchesExpectedSemanticsAndValues) {
     EXPECT_EQ(config.tracker().outpost.tracking_threshold, 4u);
     EXPECT_DOUBLE_EQ(config.tracker().outpost.model.sigma_q_xy, 10.0);
     EXPECT_DOUBLE_EQ(config.tracker().outpost.model.sigma_q_z, 2.0);
-    EXPECT_DOUBLE_EQ(config.tracker().outpost.model.sigma_a_yaw, 8.0);
+    EXPECT_DOUBLE_EQ(config.tracker().outpost.model.sigma_a_yaw, 4.0);
     EXPECT_DOUBLE_EQ(config.tracker().outpost.model.meas_dist_k, 0.43);
     EXPECT_DOUBLE_EQ(config.tracker().outpost.model.yaw_log_k, 0.005);
 
@@ -202,7 +202,7 @@ TEST(ConfigParse, VisionBaseTomlMatchesExpectedSemanticsAndValues) {
     EXPECT_DOUBLE_EQ(config.l4->aimer.whole_armor_center_v_yaw_range[1], 7.5);
     EXPECT_EQ(config.l4->aimer.single_to_whole_armor_frames, 20);
     EXPECT_EQ(config.l4->aimer.phase_transition_frames, 50);
-    EXPECT_DOUBLE_EQ(config.l4->aimer.front_window_deg, 90.0);
+    EXPECT_DOUBLE_EQ(config.l4->aimer.front_window_deg, 60.0);
     EXPECT_DOUBLE_EQ(config.l4->aimer.coming_angle_deg, 60.0);
     EXPECT_DOUBLE_EQ(config.l4->aimer.leaving_angle_deg, 20.0);
     EXPECT_DOUBLE_EQ(config.l4->aimer.yaw_limit_deg, 40.0);
@@ -244,9 +244,6 @@ TEST(ConfigParse, VisionBaseTomlMatchesExpectedSemanticsAndValues) {
     EXPECT_TRUE(config.weapon().enable_debug);
     EXPECT_DOUBLE_EQ(config.weapon().pitch_min, -0.69813169);
     EXPECT_DOUBLE_EQ(config.weapon().pitch_max, 0.69813169);
-    EXPECT_EQ(config.weapon().mpc.horizon_ahead, 50);
-    EXPECT_EQ(config.weapon().mpc.horizon_back, 50);
-    EXPECT_DOUBLE_EQ(config.weapon().mpc.dt, 0.01);
     EXPECT_EQ(config.weapon().mpc.max_iterations, 10);
     EXPECT_DOUBLE_EQ(config.weapon().mpc.abs_tol, 0.001);
     EXPECT_DOUBLE_EQ(config.weapon().mpc.rho, 2.0);

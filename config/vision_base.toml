@@ -79,6 +79,33 @@ margin_ratio_x = 0.20
 margin_ratio_y = 0.00
 box_size_m = [0.6, 0.6, 0.6]
 
+[ldm]
+enabled = true
+target_color = "Red"
+min_blob_area_px = 4
+min_blob_fill_ratio = 0.35
+min_blob_aspect_ratio = 0.35
+max_blob_aspect_ratio = 4.0
+max_pair_center_dx_ratio = 1.25
+min_pair_center_dy_ratio = 1.0
+max_pair_center_dy_ratio = 12.0
+max_pair_size_delta_ratio = 0.75
+max_pair_angle_deg = 25.0
+max_gap_cv = 0.65
+min_pairs_for_detection = 2
+max_pairs_per_candidate = 4
+rmse_stable_threshold_px = 2.5
+rmse_constrained_threshold_px = 5.0
+
+[ldm.geometry]
+octagon_side_length_m = 0.020711
+octagon_circumradius_m = 0.02706
+pair_center_separation_m = 0.036514
+window_length_m = 0.012
+window_width_m = 0.009618
+volume_height_m = 0.067
+detectable_center_z_range_m = [-0.01, 0.01]
+
 [tracker]
 [tracker.robot]
 matcher_gate = 10.0             # Aligned with at_vision rm_bringup config
