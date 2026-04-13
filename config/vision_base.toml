@@ -61,7 +61,7 @@ top_k = 128
 
 # Required if backend_type = "Axera" (AX650 NPU)
 [axera]
-model_path = "models/compiled.axmodel"  # Path to AX650 .axmodel file
+model_path = "models/qat_u8u16.axmodel"  # Path to AX650 .axmodel file
 input_width = 768
 input_height = 576
 num_colors = 4
