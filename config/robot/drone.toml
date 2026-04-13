@@ -1,15 +1,15 @@
 type = "Drone"
 
 [camera]
-camera_matrix = [2200.770, 0.000, 663.804, 0.000, 2204.975, 552.267, 0.000, 0.000, 1.000]
-distort_coefficient = [-0.190, 0.113, -0.001, 0.001, 1.805]
+camera_matrix = [2468.288, 0.000, 706.247, 0.000, 2450.042, 521.525, 0.000, 0.000, 1.000]
+distort_coefficient = [-0.125, 0.111, 0.001, -0.001, 1.727]
 width = 1440
 height = 1080
 
 # [calibration_info]
-# rms_error = 0.265
-# num_samples = 5
-# 2026.4.11 23:17
+# rms_error = 0.062
+# num_samples = 6
+# 2026年 04月 13日 星期一 22:21:22 CST
 
 [camera.profile]
 trigger_mode = false
