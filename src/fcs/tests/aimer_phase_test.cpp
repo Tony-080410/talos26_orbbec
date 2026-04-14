@@ -19,6 +19,7 @@
 #include "L3_estimation/tracker/types.hpp"
 #include "L4_planning/aimer/aimer.hpp"
 #include "L4_planning/aimer/aimer_systems.hpp"
+#include "L4_planning/aimer/fsm.hpp"
 #include "L4_planning/gimbal_planner/types.hpp"
 #include "L4_planning/planning/fire_decision.hpp"
 #include "L4_planning/selected_target_snapshot.hpp"
@@ -486,7 +487,7 @@ TEST(AimerPhase, SingleArmorLocksSymmetricCandidates) {
     EXPECT_EQ(right->selected_armor_id, 1);
 }
 
-TEST(AimerPhase, WholeCarArmorUsesRotationDirection) {
+TEST(AimerPhase, WholeCarArmorUsesPredictedMinDeltaSelection) {
     fcs::L4::Aimer aimer(fcs::L4::AimerConfig{});
     MockTrajectorySolver solver;
     const auto gimbal = make_gimbal();
@@ -509,7 +510,7 @@ TEST(AimerPhase, WholeCarArmorUsesRotationDirection) {
     EXPECT_EQ(negative->selected_armor_id, 1);
 }
 
-TEST(AimerPhase, WholeCarArmorFallbackStaysWithinValidCandidates) {
+TEST(AimerPhase, WholeCarArmorIgnoresStalePreferredArmor) {
     fcs::L4::Aimer aimer(fcs::L4::AimerConfig{});
     MockTrajectorySolver solver;
     const auto gimbal = make_gimbal();
@@ -525,9 +526,43 @@ TEST(AimerPhase, WholeCarArmorFallbackStaysWithinValidCandidates) {
         0.0, 30.0, solver);
     ASSERT_TRUE(prediction.has_value()) << prediction.error();
     EXPECT_NE(prediction->selected_armor_id, 2);
-    EXPECT_LE(
-        std::abs(prediction->diff_yaw),
-        fcs::L4::AimerConfig{}.coming_angle_deg * std::numbers::pi / 180.0);
+    EXPECT_EQ(prediction->selected_armor_id, 0);
+}
+
+TEST(AimerPhase, WholeCarPairUsesHighLayerWhenTargetHasHeight) {
+    fcs::L4::Aimer aimer(fcs::L4::AimerConfig{});
+    MockTrajectorySolver solver;
+    const auto gimbal = make_gimbal();
+    const auto muzzle = make_muzzle();
+
+    fcs::L4::ArmorAimContext context;
+    context.target_jumped = true;
+    context.phase         = fcs::L4::ArmorAimPhase::WholeCarPair;
+
+    const auto prediction = aimer.aim(
+        make_robot_target(-std::numbers::pi / 4.0, 8.0), context, gimbal, muzzle, 0, 0, 0.0, 30.0,
+        solver);
+    ASSERT_TRUE(prediction.has_value()) << prediction.error();
+    EXPECT_EQ(prediction->selected_armor_id, 1);
+}
+
+TEST(AimerPhase, WholeCarPairUsesLowLayerWhenTargetIsFlat) {
+    fcs::L4::Aimer aimer(fcs::L4::AimerConfig{});
+    MockTrajectorySolver solver;
+    const auto gimbal = make_gimbal();
+    const auto muzzle = make_muzzle();
+
+    auto target    = make_robot_target(-std::numbers::pi / 4.0, 8.0);
+    target.z1      = target.position.z();
+    target.radius1 = target.radius0;
+
+    fcs::L4::ArmorAimContext context;
+    context.target_jumped = true;
+    context.phase         = fcs::L4::ArmorAimPhase::WholeCarPair;
+
+    const auto prediction = aimer.aim(target, context, gimbal, muzzle, 0, 0, 0.0, 30.0, solver);
+    ASSERT_TRUE(prediction.has_value()) << prediction.error();
+    EXPECT_EQ(prediction->selected_armor_id, 0);
 }
 
 TEST(AimerPhase, WholeCarCenterLowLayerKeepsWholeCarSelection) {
@@ -624,6 +659,10 @@ TEST(AimerPhase, WholeCarCenterProjectsAlongMuzzleRay) {
     EXPECT_NEAR(prediction->predicted_position.x(), 1.0, 1e-6);
     EXPECT_NEAR(prediction->predicted_position.y(), 4.8, 1e-6);
     EXPECT_NEAR(prediction->predicted_position.z(), target.position.z(), 1e-6);
+    EXPECT_NEAR(prediction->distance, 4.8, 1e-6);
+    EXPECT_NEAR(
+        prediction->fire_yaw_diff,
+        std::remainder(target.yaw - std::numbers::pi / 2.0, 2.0 * std::numbers::pi), 1e-6);
 }
 
 TEST(AimerPhase, FlightTimeTracksFinalArmorAcrossHandoff) {
@@ -645,12 +684,36 @@ TEST(AimerPhase, FlightTimeTracksFinalArmorAcrossHandoff) {
         fcs::L4::kFlyingTimeRefineTolerance);
 }
 
-TEST(AimerPhase, WholeCarCenterFireGateRejectsOutsideYawLimit) {
+TEST(AimerPhase, WholeCarCenterFireGateIgnoresLegacyYawLimit) {
     const fcs::L4::FireDecisionConfig fire_cfg{};
     const bool allowed = fcs::L4::is_on_target_phase_aware(
-        fire_cfg, fcs::L4::ArmorAimPhase::WholeCarCenter, 50.0 * std::numbers::pi / 180.0, 40.0,
-        0.25, 0.0, 0.0, 0.0, 0.0, 5.0);
-    EXPECT_FALSE(allowed);
+        fire_cfg, fcs::L4::ArmorAimPhase::WholeCarCenter, fcs::ArmorType::Small,
+        50.0 * std::numbers::pi / 180.0, 0.25, 0.0, 0.0, 0.0, 0.0, 5.0);
+    EXPECT_TRUE(allowed);
+}
+
+TEST(AimerPhase, FireGateUsesShortestAngularDistanceAcrossWrap) {
+    const fcs::L4::FireDecisionConfig fire_cfg{};
+    const bool allowed = fcs::L4::is_on_target_phase_aware(
+        fire_cfg, fcs::L4::ArmorAimPhase::SingleArmor, fcs::ArmorType::Small, 0.0, 0.25,
+        std::numbers::pi - 1e-3, 0.0, -std::numbers::pi + 1e-3, 0.0, 100.0);
+    EXPECT_TRUE(allowed);
+}
+
+TEST(AimerPhase, FireGateUsesLargeArmorWindow) {
+    const fcs::L4::FireDecisionConfig fire_cfg{};
+    const double distance  = 10.0;
+    const double yaw_error = 0.01;
+
+    const bool small_allowed = fcs::L4::is_on_target_phase_aware(
+        fire_cfg, fcs::L4::ArmorAimPhase::SingleArmor, fcs::ArmorType::Small, 0.0, 0.25, 0.0, 0.0,
+        yaw_error, 0.0, distance);
+    const bool large_allowed = fcs::L4::is_on_target_phase_aware(
+        fire_cfg, fcs::L4::ArmorAimPhase::SingleArmor, fcs::ArmorType::Large, 0.0, 0.25, 0.0, 0.0,
+        yaw_error, 0.0, distance);
+
+    EXPECT_FALSE(small_allowed);
+    EXPECT_TRUE(large_allowed);
 }
 
 TEST(AimerPhase, TrackerJumpedLatchesWhenAnyVisibleArmorIsNonZero) {
@@ -1139,33 +1202,27 @@ TEST(AimerPhase, TrackerArmorIdealFireHitRateOnTwoSecondAbsSinBurst) {
     EXPECT_GT(settled_hit_rate, 0.98);
 }
 
-TEST(AimerSystemsPhaseFsm, JumpedFastTargetLiftsDirectlyToWholeCarCenter) {
+TEST(AimerPhaseFsm, JumpedFastTargetWalksAuthorityFourStateFsm) {
     fcs::L4::L4Config config;
-    config.aimer.single_whole_armor_v_yaw_range = {0.05, 0.1};
-    config.aimer.whole_armor_center_v_yaw_range = {0.05, 0.2};
-    config.aimer.single_to_whole_armor_frames   = 0;
-    config.aimer.phase_transition_frames        = 0;
+    config.aimer.single_whole_up   = 0.1;
+    config.aimer.single_whole_down = 0.05;
+    config.aimer.whole_pair_up     = 0.2;
+    config.aimer.whole_pair_down   = 0.15;
+    config.aimer.pair_center_up    = 0.3;
+    config.aimer.pair_center_down  = 0.25;
+    config.aimer.transfer_thresh   = 0;
 
-    AimerSystemHarness harness(config);
-    harness.start();
+    fcs::L4::ArmorAimPhase phase = fcs::L4::ArmorAimPhase::SingleArmor;
+    int overflow_count           = 0;
 
-    auto tracker = make_robot_tracker_output(
-        fcs::ArmorName::Three, fcs::L3::TrackerStatus::Tracking, Eigen::Vector3d(3.0, 0.0, 0.0),
-        10.0);
-    tracker.target_jumped = true;
-    tracker.last_armor_id = 0;
-    if (auto* state = std::get_if<fcs::L3::RobotTargetState>(&tracker.state)) {
-        state->v_yaw = 10.0;
-    }
+    fcs::L4::advance_armor_aim_phase(config.aimer, 10.0, true, phase, overflow_count);
+    EXPECT_EQ(phase, fcs::L4::ArmorAimPhase::WholeCarArmor);
 
-    harness.set_trackers({tracker});
+    fcs::L4::advance_armor_aim_phase(config.aimer, 10.0, true, phase, overflow_count);
+    EXPECT_EQ(phase, fcs::L4::ArmorAimPhase::WholeCarPair);
 
-    const auto plan = harness.wait_for_armor_plan_after(0);
-    ASSERT_TRUE(plan.has_value());
-    EXPECT_EQ(plan->source, fcs::L4::GimbalPlanSource::Armor);
-    EXPECT_EQ(plan->aim_phase, fcs::L4::ArmorAimPhase::WholeCarCenter);
-
-    harness.stop();
+    fcs::L4::advance_armor_aim_phase(config.aimer, 10.0, true, phase, overflow_count);
+    EXPECT_EQ(phase, fcs::L4::ArmorAimPhase::WholeCarCenter);
 }
 
 TEST(AimerSystemsTargetSelection, PrefersSmallerOpticalOffsetOverCloserTarget) {

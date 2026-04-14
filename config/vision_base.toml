@@ -153,32 +153,35 @@ yaw_log_k = 0.005
 # Minimum shooting threshold (radians), used for long distances
 # Shared fire gate threshold for L4/L5
 fire_thresh = 0.01744444
-# L5 dual-delay gate mismatch threshold (radians)
+# Legacy delay-gate debug threshold (radians)
 delay_gate_error_rad = 3.1744444
 # Physical window dimensions (meters)
 shooting_range_h = 0.135
-shooting_range_w = 0.135
+shooting_range_w_small = 0.135
+shooting_range_w_large = 0.24
+min_enable_pitch_deg = 0.25
 
 # Aimer configuration (shared by all target types: Robot/Outpost/Rune)
 [aimer]
 # System delay compensation (seconds)
 # Includes: camera exposure, image processing, communication, gimbal response
-# 第三场：提前量疑似太小，0.019 -> 0.04
-# 对于 3.6 rad/s +0.021 用于 补偿 5度
 delay = 0.04
 
-# Aim phase FSM hysteresis ranges [low, high] in rad/s
-single_whole_armor_v_yaw_range = [1.0, 2.5]
-whole_armor_center_v_yaw_range = [6.5, 11.5]
-phase_transition_frames = 50
-single_to_whole_armor_frames = 20
-# Armor selection windows (degrees)
-# TODO fix fire_decision for high speed gyro
+# Authoritative four-state auto-aim FSM thresholds
+single_whole_up = 1.5
+single_whole_down = 1.0
+whole_pair_up = 8.5
+whole_pair_down = 9.5
+pair_center_up = 16.5
+pair_center_down = 15.0
+transfer_thresh = 20
+# Armor selection windows
 front_window_deg = 60.0
-coming_angle_deg = 360.0
-leaving_angle_deg = 360.0
+# Legacy knobs retained for config stability; authoritative selection ignores them.
+coming_angle_deg = 55.0
+leaving_angle_deg = 20.0
 
-# Phase-aware fire gate shaping
+# Hard-aligned fire gate uses only min_enable_yaw_deg; yaw_limit_deg is kept for config stability.
 yaw_limit_deg = 60.0
 min_enable_yaw_deg = 0.25
 
@@ -249,7 +252,7 @@ pitch_max = 0.69813169 # 40deg
 [mpc_weapon.mpc]
 max_iterations = 10
 abs_tol = 0.001
-rho = 2.0
+rho = 1.0
 
 # MPC yaw axis configuration
 [mpc_weapon.mpc.yaw]

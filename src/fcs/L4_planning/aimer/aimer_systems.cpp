@@ -1,5 +1,6 @@
 #include "L4_planning/aimer/aimer_systems.hpp"
 #include "L4_planning/aimer/aimer.hpp"
+#include "L4_planning/aimer/fsm.hpp"
 
 #include "L2_perception/armor/readback_roi.hpp"
 #include "L3_estimation/energy_meter/types.hpp"
@@ -70,49 +71,6 @@ struct ReadbackRoiTimestamps {
     uint64_t projection_timestamp_ns{0};
     uint64_t freshness_timestamp_ns{0};
 };
-
-void update_phase_fsm(
-    const AimerConfig& cfg, double abs_v_yaw, bool target_jumped, ArmorAimPhase& phase,
-    int& overflow_count) noexcept {
-    if (!target_jumped) {
-        phase          = ArmorAimPhase::SingleArmor;
-        overflow_count = 0;
-        return;
-    }
-
-    switch (phase) {
-    case ArmorAimPhase::SingleArmor:
-        overflow_count = (abs_v_yaw > cfg.single_whole_armor_high_v_yaw()) ? overflow_count + 1 : 0;
-        if (overflow_count > cfg.single_to_whole_armor_frames) {
-            phase          = ArmorAimPhase::WholeCarArmor;
-            overflow_count = 0;
-        }
-        break;
-
-    case ArmorAimPhase::WholeCarArmor:
-        if (abs_v_yaw > cfg.whole_armor_center_high_v_yaw()) {
-            ++overflow_count;
-        } else if (abs_v_yaw < cfg.single_whole_armor_low_v_yaw()) {
-            --overflow_count;
-        } else {
-            overflow_count = 0;
-        }
-        if (std::abs(overflow_count) > cfg.phase_transition_frames) {
-            phase =
-                (overflow_count > 0) ? ArmorAimPhase::WholeCarCenter : ArmorAimPhase::SingleArmor;
-            overflow_count = 0;
-        }
-        break;
-
-    case ArmorAimPhase::WholeCarCenter:
-        overflow_count = (abs_v_yaw < cfg.whole_armor_center_low_v_yaw()) ? overflow_count + 1 : 0;
-        if (overflow_count > cfg.phase_transition_frames) {
-            phase          = ArmorAimPhase::WholeCarArmor;
-            overflow_count = 0;
-        }
-        break;
-    }
-}
 
 [[nodiscard]] double clamp01(double value) noexcept { return std::clamp(value, 0.0, 1.0); }
 
@@ -472,7 +430,7 @@ void register_aimer_systems(talos::Scheduler& scheduler, L4Config&& config) {
                         previous_selected_key.has_value() && key == *previous_selected_key;
 
                     auto& phase_state = phase_states[key];
-                    update_phase_fsm(
+                    advance_armor_aim_phase(
                         cfg->aimer, target_abs_v_yaw(tracker_output), tracker_output.target_jumped,
                         phase_state.phase, phase_state.overflow_count);
 
@@ -604,9 +562,13 @@ void register_aimer_systems(talos::Scheduler& scheduler, L4Config&& config) {
             }
 
             if (aim_result) {
+                if (selected_candidate) {
+                    aim_result->armor_type =
+                        cls_to_armor_type(selected_candidate->tracker.target_name);
+                }
                 aim_result->aimer_fire_advice = is_on_target_phase_aware(
-                    cfg->fire_decision, aim_result->aim_phase, aim_result->diff_yaw,
-                    cfg->aimer.yaw_limit_deg, cfg->aimer.min_enable_yaw_deg, cur_yaw, cur_pitch,
+                    cfg->fire_decision, aim_result->aim_phase, aim_result->armor_type,
+                    aim_result->fire_yaw_diff, cfg->aimer.min_enable_yaw_deg, cur_yaw, cur_pitch,
                     aim_result->aim_yaw, -aim_result->aim_pitch, aim_result->distance);
 
                 if (selected_candidate) {
@@ -645,9 +607,11 @@ void register_aimer_systems(talos::Scheduler& scheduler, L4Config&& config) {
                 plan.yaw                     = aim_result->aim_yaw;
                 plan.pitch                   = aim_result->aim_pitch;
                 plan.diff_yaw                = aim_result->diff_yaw;
+                plan.fire_yaw_diff           = aim_result->fire_yaw_diff;
                 plan.aim_phase               = aim_result->aim_phase;
                 plan.selected_armor_id       = aim_result->selected_armor_id;
                 plan.rough_selected_armor_id = aim_result->rough_selected_armor_id;
+                plan.armor_type              = aim_result->armor_type;
                 plan.aim_yaw                 = aim_result->aim_yaw;
                 plan.aim_pitch               = aim_result->aim_pitch;
                 plan.distance                = aim_result->distance;
@@ -665,6 +629,7 @@ void register_aimer_systems(talos::Scheduler& scheduler, L4Config&& config) {
                     seed.tracker_last_armor_id = selected_candidate->tracker.last_armor_id;
                     seed.aim_phase             = aim_result->aim_phase;
                     seed.selected_armor_id     = aim_result->selected_armor_id;
+                    seed.armor_type            = aim_result->armor_type;
                     if (const auto* robot_state = selected_candidate->tracker.robot_state()) {
                         seed.state = *robot_state;
                     } else if (

@@ -70,42 +70,26 @@ struct AimerConfig {
     /// Includes: camera exposure, image processing, communication, gimbal response
     double delay{0.01};
 
-    /// Phase-FSM hysteresis ranges [low, high] in rad/s.
-    std::array<double, 2> single_whole_armor_v_yaw_range{1.0, 2.5};
-    std::array<double, 2> whole_armor_center_v_yaw_range{6.5, 7.5};
-
-    /// Consecutive frames required to enter WholeCarArmor from SingleArmor.
-    int single_to_whole_armor_frames{50};
-
-    /// Consecutive frames required for other phase transitions.
-    int phase_transition_frames{50};
+    /// Authoritative four-state FSM thresholds from awakening::auto_aim::AutoAimFsmController.
+    double single_whole_up{1.5};
+    double single_whole_down{1.0};
+    double whole_pair_up{6.5};
+    double whole_pair_down{7.5};
+    double pair_center_up{16.5};
+    double pair_center_down{15.0};
+    int transfer_thresh{50};
 
     /// Front-window limit for single-armor locking (degrees).
-    double front_window_deg{90.0};
+    double front_window_deg{60.0};
 
-    /// Robot whole-car directional armor windows (degrees), aligned with WUST semantics.
+    /// Legacy knobs retained only for config stability; authoritative selection does not use them.
     double coming_angle_deg{60.0};
     double leaving_angle_deg{20.0};
 
-    /// Phase-aware fire gate shaping, aligned with WUST semantics.
+    /// Legacy config knob retained only for config stability; hard-aligned fire gate does not use
+    /// it.
     double yaw_limit_deg{40.0};
     double min_enable_yaw_deg{0.25};
-
-    [[nodiscard]] double single_whole_armor_low_v_yaw() const noexcept {
-        return single_whole_armor_v_yaw_range[0];
-    }
-
-    [[nodiscard]] double single_whole_armor_high_v_yaw() const noexcept {
-        return single_whole_armor_v_yaw_range[1];
-    }
-
-    [[nodiscard]] double whole_armor_center_low_v_yaw() const noexcept {
-        return whole_armor_center_v_yaw_range[0];
-    }
-
-    [[nodiscard]] double whole_armor_center_high_v_yaw() const noexcept {
-        return whole_armor_center_v_yaw_range[1];
-    }
 
     /// Weighted multi-target selection configuration.
     TargetSelectionConfig target_selection{};

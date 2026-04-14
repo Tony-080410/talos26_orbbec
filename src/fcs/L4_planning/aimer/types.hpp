@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/armor_types.hpp"
+
 #include <Eigen/Core>
 #include <cstdint>
 #include <optional>
@@ -9,7 +11,8 @@ namespace fcs::L4 {
 enum class ArmorAimPhase : uint8_t {
     SingleArmor    = 0,
     WholeCarArmor  = 1,
-    WholeCarCenter = 2,
+    WholeCarPair   = 2,
+    WholeCarCenter = 3,
 };
 
 struct ArmorAimContext {
@@ -66,11 +69,13 @@ struct TargetPrediction {
     int selected_armor_id{0};
     int rough_selected_armor_id{0};
     double diff_yaw{0.0};
+    double fire_yaw_diff{0.0};
 
     // ========================================================================
     // Simple Fire Advice (is target in shooting window?)
     // ========================================================================
     bool aimer_fire_advice{false}; ///< Aimer's fire advice
+    ArmorType armor_type{ArmorType::Invalid};
 
     // ========================================================================
     // Metadata

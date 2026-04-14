@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/armor_types.hpp"
+
 #include <Eigen/Core>
 
 #include <vector>
@@ -28,6 +30,9 @@ struct ReferenceTrajectory {
     /// Yaw difference (target facing - gimbal center) at each step (rad).
     std::vector<double> diff_yaws;
 
+    /// Armor attitude relative to the actual aim ray at each step (rad).
+    std::vector<double> fire_yaw_diffs;
+
     /// Projectile time-of-flight at each step (seconds).
     std::vector<double> time_of_flights;
 
@@ -39,6 +44,9 @@ struct ReferenceTrajectory {
 
     /// Rough (pre-refinement) selected armor ID at each step.
     std::vector<int> rough_selected_armor_ids;
+
+    /// Target armor type for fire-window shaping.
+    ArmorType armor_type{ArmorType::Invalid};
 
     /// Yaw angle origin for normalization (yaw at center horizon step).
     double yaw_origin{0.0};

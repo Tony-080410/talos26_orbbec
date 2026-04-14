@@ -34,6 +34,11 @@ using fcs::core::math::normalize_angle;
 
 [[nodiscard]] double center_yaw_from_xy(double x, double y) noexcept { return std::atan2(y, x); }
 
+[[nodiscard]] double aim_ray_yaw_from_position(
+    const Eigen::Vector3d& position, const Eigen::Vector3d& muzzle_pos) noexcept {
+    return std::atan2(position.y() - muzzle_pos.y(), position.x() - muzzle_pos.x());
+}
+
 [[nodiscard]] std::optional<int>
     sanitize_preferred(const std::optional<int>& preferred, int armors_num) noexcept {
     if (!preferred.has_value()) {
@@ -126,31 +131,31 @@ template <size_t N>
         return pick_locked_or_min_delta(candidates, delta_angles, preferred);
     }
 
-    int active_armor_id = fallback_best();
-    if (!is_outpost) {
-        const double coming_angle  = config.coming_angle_deg * std::numbers::pi / 180.0;
-        const double leaving_angle = config.leaving_angle_deg * std::numbers::pi / 180.0;
-        std::vector<int> candidates;
-        candidates.reserve(armors_num);
-        for (int i = 0; i < armors_num; ++i) {
-            const double delta = delta_angles[static_cast<size_t>(i)];
-            if (std::abs(delta) > coming_angle) {
-                continue;
+    if (context.phase == ArmorAimPhase::WholeCarPair && !is_outpost) {
+        std::vector<int> pair_ids;
+        pair_ids.reserve(2);
+        const bool use_high_layer = armor_poses[1][2] > armor_poses[0][2];
+        if (use_high_layer) {
+            if (armors_num > 1) {
+                pair_ids.push_back(1);
             }
-            if (std::abs(delta) < leaving_angle) {
-                candidates.push_back(i);
+            if (armors_num > 3) {
+                pair_ids.push_back(3);
+            }
+        } else {
+            pair_ids.push_back(0);
+            if (armors_num > 2) {
+                pair_ids.push_back(2);
             }
         }
-        if (!candidates.empty()) {
-            active_armor_id = pick_best_by_min_delta(candidates, delta_angles);
+        if (!pair_ids.empty()) {
+            return pick_best_by_min_delta(pair_ids, delta_angles);
         }
     }
 
-    if (context.phase == ArmorAimPhase::WholeCarArmor && !is_outpost) {
-        return active_armor_id;
-    }
-
-    return active_armor_id;
+    (void)config;
+    (void)target_v_yaw;
+    return fallback_best();
 }
 
 [[nodiscard]] Eigen::Vector3d project_center_aim(
@@ -210,6 +215,9 @@ Aimer::PredictedAimPoint Aimer::predict_aim_point(
         result.position = project_center_aim(predicted.position, muzzle_pos, radius, armor_pose[2]);
     }
 
+    result.fire_yaw_diff =
+        normalize_angle(armor_pose[3] - aim_ray_yaw_from_position(result.position, muzzle_pos));
+
     return result;
 }
 
@@ -237,6 +245,9 @@ Aimer::PredictedAimPoint Aimer::predict_aim_point(
             Eigen::Vector3d{predicted.position.x(), predicted.position.y(), 0.0}, muzzle_pos,
             L3::OutpostTargetState::radius, armor_pose[2]);
     }
+
+    result.fire_yaw_diff =
+        normalize_angle(armor_pose[3] - aim_ray_yaw_from_position(result.position, muzzle_pos));
 
     return result;
 }
@@ -306,6 +317,7 @@ std::expected<TargetPrediction, std::string> Aimer::aim_generic(
     output.selected_armor_id       = predicted.armor_id;
     output.rough_selected_armor_id = rough_selected_armor_id;
     output.diff_yaw                = predicted.diff_yaw;
+    output.fire_yaw_diff           = predicted.fire_yaw_diff;
 
     auto aim_angles =
         compute_gimbal_aim_angles(output.predicted_position, gimbal, muzzle, solver, bullet_speed);
@@ -315,7 +327,7 @@ std::expected<TargetPrediction, std::string> Aimer::aim_generic(
 
     output.aim_yaw   = aim_angles->first;
     output.aim_pitch = aim_angles->second;
-    output.distance  = output.predicted_position.norm();
+    output.distance  = (output.predicted_position - muzzle.translation()).norm();
 
     return output;
 }
@@ -349,7 +361,7 @@ std::expected<TargetPrediction, std::string> Aimer::aim_generic_no_prediction(
 
     output.aim_yaw   = yaw;
     output.aim_pitch = pitch;
-    output.distance  = output.predicted_position.norm();
+    output.distance  = (output.predicted_position - muzzle.translation()).norm();
 
     return output;
 }
