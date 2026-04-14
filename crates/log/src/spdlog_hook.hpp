@@ -12,9 +12,12 @@
 
 class spdlog_streambuf : public std::streambuf {
 public:
-    spdlog_streambuf(std::shared_ptr<spdlog::logger> logger, const spdlog::level::level_enum lvl)
+    spdlog_streambuf(
+        std::shared_ptr<spdlog::logger> logger, std::string_view name,
+        const spdlog::level::level_enum lvl)
         : logger_(std::move(logger))
         , level_(lvl)
+        , name_(name)
         , buffer_() {
         buffer_.reserve(512); // Pre-allocate for typical log line size
     }
@@ -37,13 +40,14 @@ protected:
 private:
     void flush_buffer() {
         if (!buffer_.empty()) {
-            logger_->log(level_, buffer_);
+            logger_->log(spdlog ::source_loc{name_.data(), 1, nullptr}, level_, buffer_);
             buffer_.clear();
         }
     }
 
     std::shared_ptr<spdlog::logger> logger_;
     spdlog::level::level_enum level_;
+    std::string_view name_;
     std::string buffer_;
 };
 
@@ -60,9 +64,9 @@ inline std::shared_ptr<spdlog::logger> init_logger() noexcept {
 }
 
 inline void hook_cstream() noexcept {
-    const std::shared_ptr<spdlog::logger> logger = init_logger();
-    static spdlog_streambuf cout_buf(logger, spdlog::level::info);
-    static spdlog_streambuf cerr_buf(logger, spdlog::level::err);
+    const std::shared_ptr<spdlog::logger> logger = spdlog::default_logger();
+    static spdlog_streambuf cout_buf(logger, "cout", spdlog::level::info);
+    static spdlog_streambuf cerr_buf(logger, "cerr", spdlog::level::err);
     std::cout.rdbuf(&cout_buf);
     std::cerr.rdbuf(&cerr_buf);
 }

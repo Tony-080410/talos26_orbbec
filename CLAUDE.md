@@ -246,13 +246,13 @@ crates/fast_tf/src/
 
 ### 构造与接口设计
 
-1. **禁止两阶段构造** — 对象构造完成后必须处于可用状态，不允许 `init()` / `is_initialized()` 模式
-2. **构造即初始化** — 如果初始化可能失败，使用 `static create() noexcept` 工厂方法返回 `std::expected<T, Error>`，构造函数 `private`
+1. **构造函数必须 `noexcept`** — 这是铁律，不是建议。构造函数 `noexcept` 意味着对象构造完成后必定处于有效状态，RAII 才有根基
+2. **如果构造可能失败，用 `static create() noexcept` 工厂方法返回 `std::expected<T, Error>`** — 构造函数 `private`/default，所有可能失败的初始化（syscalls、IO、资源分配）放入 `create()`
 3. **接口用 C++20 concepts 强制约束** — CRTP 基类、策略模式等类型参数必须用 concept 约束，编译期检查 `noexcept`、返回类型、工厂签名
-4. **`std::abort()` 仅用于不可恢复的逻辑错误** — "文件未找到"、"模型加载失败" 等可恢复错误必须通过 `std::expected` 返回
+4. **`std::abort()` 仅用于不可恢复的逻辑错误** — “文件未找到”、”资源分配失败”、”模型加载失败” 等可恢复错误必须通过 `std::expected` 返回，绝不 `abort()`
 5. **不允许向后兼容废代码** — 删除废弃接口而非保留，`name()` / `supports_xxx()` 等运行时能力查询属于设计缺陷
 6. **禁止用 `*_initialized` / ownership flag 冒充 RAII** — 资源生命周期必须由 guard / token / owner 类型表达，析构自动释放，move 后所有权必须自然转移；不要用布尔状态手搓资源管理
-7. **不要用口头解释替代结构修正** — 如果问题是构造、move、析构、所有权语义错误，必须直接把结构改到满足 RAII 和 construction-is-initialization，而不是围绕“调用方配置”做猜测
+7. **不要用口头解释替代结构修正** — 如果问题是构造、move、析构、所有权语义错误，必须直接把结构改到满足 RAII 和 construction-is-initialization，而不是围绕”调用方配置”做猜测
 
 ### 其他规范
 

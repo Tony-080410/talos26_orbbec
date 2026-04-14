@@ -1,5 +1,5 @@
 backend_type = "Traditional"  # Options: "Traditional", "OpenVINO", "OpenVINOTup", "TensorRT", "Axera"
-default_detect_color = "Red"
+default_detect_color = "Blue"
 
 # Required if backend_type = "traditional"
 [traditional]
@@ -80,7 +80,7 @@ margin_ratio_y = 0.00
 box_size_m = [0.6, 0.6, 0.6]
 
 [ldm]
-enabled = true
+enabled = false
 target_color = "Red"
 min_blob_area_px = 4
 min_blob_fill_ratio = 0.35
@@ -115,7 +115,7 @@ tracking_threshold = 5          # Aligned with at_vision rm_bringup config
 
 [tracker.robot.model]
 sigma_a_xy = 10.0               # Aligned with at_vision
-sigma_a_z = 2.0                 # Aligned with at_vision (was 1.0)
+sigma_a_z = 0.1                 # Aligned with at_vision (was 1.0)
 sigma_a_yaw = 15.0              # Aligned with at_vision
 sigma_r0 = 1.0
 sigma_r1 = 1.0
@@ -173,9 +173,10 @@ whole_armor_center_v_yaw_range = [6.5, 7.5]
 phase_transition_frames = 50
 single_to_whole_armor_frames = 20
 # Armor selection windows (degrees)
-front_window_deg = 60.0
-coming_angle_deg = 60.0
-leaving_angle_deg = 20.0
+# TODO fix fire_decision for high speed gyro
+front_window_deg = 30.0
+coming_angle_deg = 360.0
+leaving_angle_deg = 360.0
 
 # Phase-aware fire gate shaping
 yaw_limit_deg = 40.0
@@ -265,7 +266,7 @@ r = 100.0
 max_acc = 100.0
 
 [rune_detector]
-enabled = true
+enabled = false
 detect_color = "Red"
 arrow_threshold = 170
 target_threshold = 130

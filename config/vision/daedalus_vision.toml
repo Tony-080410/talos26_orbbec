@@ -3,8 +3,9 @@
 
 # L4 trajectory compensation overrides
 trajectory.type = "Ideal"
-traditional.advanced_binary = true
-traditional.binary_threshold = 95
+traditional.advanced_binary = false
+traditional.binary_threshold = 25
+traditional.light_color_diff_thresh = 20
 
 trajectory.diameter = 0.017
 trajectory.mass = 0.00312

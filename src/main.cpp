@@ -24,6 +24,7 @@ int main() {
     std::signal(SIGTERM, signal_handler);
 
     init_logger();
+    hook_cstream();
     SPDLOG_INFO("talos is initializing...");
     const auto start = std::chrono::system_clock::now();
 

@@ -137,9 +137,7 @@ template <size_t N>
             if (std::abs(delta) > coming_angle) {
                 continue;
             }
-            if (target_v_yaw > 0.0 && delta < leaving_angle) {
-                candidates.push_back(i);
-            } else if (target_v_yaw < 0.0 && delta > -leaving_angle) {
+            if (std::abs(delta) < leaving_angle) {
                 candidates.push_back(i);
             }
         }
