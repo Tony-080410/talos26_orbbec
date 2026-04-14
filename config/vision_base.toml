@@ -116,7 +116,7 @@ tracking_threshold = 5          # Aligned with at_vision rm_bringup config
 [tracker.robot.model]
 sigma_a_xy = 10.0               # Aligned with at_vision
 sigma_a_z = 0.1                 # Aligned with at_vision (was 1.0)
-sigma_a_yaw = 15.0              # Aligned with at_vision
+sigma_a_yaw = 20.0              # Aligned with at_vision
 sigma_r0 = 1.0
 sigma_r1 = 1.0
 sigma_h = 0.8                   # Aligned with at_vision (was 0.5)
@@ -169,17 +169,17 @@ delay = 0.04
 
 # Aim phase FSM hysteresis ranges [low, high] in rad/s
 single_whole_armor_v_yaw_range = [1.0, 2.5]
-whole_armor_center_v_yaw_range = [6.5, 7.5]
+whole_armor_center_v_yaw_range = [6.5, 11.5]
 phase_transition_frames = 50
 single_to_whole_armor_frames = 20
 # Armor selection windows (degrees)
 # TODO fix fire_decision for high speed gyro
-front_window_deg = 30.0
+front_window_deg = 60.0
 coming_angle_deg = 360.0
 leaving_angle_deg = 360.0
 
 # Phase-aware fire gate shaping
-yaw_limit_deg = 40.0
+yaw_limit_deg = 60.0
 min_enable_yaw_deg = 0.25
 
 [aimer.target_selection]
@@ -253,16 +253,16 @@ rho = 2.0
 
 # MPC yaw axis configuration
 [mpc_weapon.mpc.yaw]
-q_pos = 9e5
+q_pos = 9e6
 q_vel = 0.0
-r = 10.0
+r = 1.0
 max_acc = 50.0
 
 # MPC pitch axis configuration
 [mpc_weapon.mpc.pitch]
-q_pos = 9e5
+q_pos = 9e6
 q_vel = 0.0
-r = 100.0
+r = 1.0
 max_acc = 100.0
 
 [rune_detector]
