@@ -19,8 +19,8 @@ enum class ArmorType : uint8_t {
 };
 
 enum class ArmorColor : uint8_t {
-    Blue    = 0,
-    Red     = 1,
+    Red     = 0,
+    Blue    = 1,
     Neutral = 2,
     Purple  = 3,
 };
