@@ -10,6 +10,7 @@
 #include "L4_planning/aimer/types.hpp"
 #include "L4_planning/config.hpp"
 #include "core/trajectory/solver/solver_interfaces.hpp"
+#include "frame.hpp"
 
 namespace fcs::L4 {
 
@@ -19,10 +20,8 @@ namespace fcs::L4 {
 /// Uses composition with shared utility functions from aimer_utils.hpp.
 class Aimer {
 public:
-    using GimbalTransform =
-        fast_tf::TransformMatrixd<fast_tf::gimbal_pitch_fuxk_frame, fast_tf::odom_fuxk_frame>;
-    using MuzzleTransform =
-        fast_tf::TransformMatrixd<fast_tf::muzzle_link_fuxk_frame, fast_tf::odom_fuxk_frame>;
+    using GimbalTransform = fast_tf::FrameTransform<fast_tf::odom, fast_tf::gimbal_pitch>;
+    using MuzzleTransform = fast_tf::FrameTransform<fast_tf::odom, fast_tf::muzzle>;
 
     /// Constructor
     explicit Aimer(const AimerConfig& config) noexcept

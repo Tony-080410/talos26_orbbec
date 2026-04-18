@@ -102,6 +102,7 @@ DECL(muzzle_link, gimbal_pitch);
 
 using odom           = odom_fuxk_frame;
 using gimbal         = gimbal_yaw_fuxk_frame;
+using gimbal_pitch   = gimbal_pitch_fuxk_frame;
 using camera         = camera_link_fuxk_frame;
 using camera_optical = camera_optical_fuxk_frame;
 using muzzle         = muzzle_link_fuxk_frame;
@@ -217,14 +218,15 @@ inline auto fucked(T&& t) {
     return Fuck<Coordinate, T>(std::forward<T>(t));
 }
 
-template <frame From, frame To>
-using FrameTransform = TransformMatrixd<From, To>;
+template <frame A, frame B>
+using FrameTransform = TransformMatrixd<A, B>;
 
 template <frame Coordinate>
 using IdentityTransform = FrameTransform<Coordinate, Coordinate>;
 
+/// Edge transform: from `Layer`'s ancestor into `Layer` (passive: re-expresses Layer in ancestor).
 template <non_root_frame Layer>
-using EdgeTransform = FrameTransform<Layer, typename Layer::ancestor>;
+using EdgeTransform = FrameTransform<typename Layer::ancestor, Layer>;
 
 template <frame Coordinate>
 using FuckDouble = Fuck<Coordinate, double>;
@@ -252,9 +254,9 @@ struct buffer_coord_of;
 template <typename Layer>
 using buffer_coord_t = buffer_coord_of<Layer>::type;
 
-template <typename Scalar, frame From, frame To, sec Range, sample_per_sec Density>
-struct buffer_coord_of<Buffer<TransformMatrix<Scalar, From, To>, Range, Density>> {
-    using type = From;
+template <typename Scalar, typename A, typename B, sec Range, sample_per_sec Density>
+struct buffer_coord_of<Buffer<TransformMatrix<Scalar, A, B>, Range, Density>> {
+    using type = B;
 };
 
 template <non_root_frame Layer, typename System, size_t I = 0>
@@ -308,29 +310,36 @@ constexpr void update_rotate_only(
     buffer_of<Layer>(system).push_rotate_only(ns, rot);
 }
 
-template <frame To, frame Source, frame From>
+/// Lookup transform: build T<Target, Source> (re-express Source in Target's frame).
+///
+/// Internal recursive step. `acc` accumulates the chain from Source upward.
+template <frame Target, frame Source, frame CurrentFrame>
 constexpr auto lookup(
-    const CoordinateSystem& system, FrameTransform<Source, From> tf_source,
-    timestamp_ns_t ns) noexcept -> std::expected<FrameTransform<Source, To>, TransformError> {
-    static_assert(is_descendant_of<From, To>(), "From must be a descendant of To");
-    if constexpr (std::is_same_v<From, To>) {
-        return tf_source;
-    } else if constexpr (root_frame<From>) {
+    const CoordinateSystem& system, TransformMatrixd<CurrentFrame, Source> acc,
+    timestamp_ns_t ns) noexcept -> std::expected<TransformMatrixd<Target, Source>, TransformError> {
+    static_assert(is_descendant_of<Source, Target>(), "Source must be a descendant of Target");
+    if constexpr (std::is_same_v<CurrentFrame, Target>) {
+        return acc;
+    } else if constexpr (root_frame<CurrentFrame>) {
         return std::unexpected(TransformError::FrameNotFound);
     } else {
-        const auto& buffer = buffer_of<From>(system);
+        const auto& buffer = buffer_of<CurrentFrame>(system);
         auto result        = buffer.lookup(ns, interpolate);
         if (!result) {
             return std::unexpected(result.error());
         }
-        return lookup<To>(system, tf_source * result->value, ns);
+        // edge: T<CurrentFrame::ancestor, CurrentFrame>
+        // acc:  T<CurrentFrame, Source>
+        // edge * acc → T<ancestor, Source>
+        return lookup<Target, Source>(system, result->value * acc, ns);
     }
 }
 
-template <frame To, frame From>
+/// Lookup transform: T<Target, Source> (re-express Source in Target's frame).
+template <frame Target, frame Source>
 constexpr auto lookup(const CoordinateSystem& system, timestamp_ns_t ns) noexcept
-    -> std::expected<FrameTransform<From, To>, TransformError> {
-    return lookup<To>(system, I<From>(), ns);
+    -> std::expected<TransformMatrixd<Target, Source>, TransformError> {
+    return lookup<Target, Source>(system, I<Source>(), ns);
 }
 
 /// Lookup transform using clamped interpolation.
@@ -338,29 +347,32 @@ constexpr auto lookup(const CoordinateSystem& system, timestamp_ns_t ns) noexcep
 /// This never returns `FutureExtrapolationRequired`/`PastExtrapolationRequired` as long as the
 /// buffer has data; it clamps the query time to the buffer's time range (equivalent to TF2
 /// `TimePointZero` semantics for "latest available" when `ns` is newer than the newest sample).
-template <frame To, frame Source, frame From>
+template <frame Target, frame Source, frame CurrentFrame>
 constexpr auto lookup_clamped(
-    const CoordinateSystem& system, FrameTransform<Source, From> tf_source,
-    timestamp_ns_t ns) noexcept -> std::expected<FrameTransform<Source, To>, TransformError> {
-    static_assert(is_descendant_of<From, To>(), "From must be a descendant of To");
-    if constexpr (std::is_same_v<From, To>) {
-        return tf_source;
-    } else if constexpr (root_frame<From>) {
+    const CoordinateSystem& system, TransformMatrixd<CurrentFrame, Source> acc,
+    timestamp_ns_t ns) noexcept -> std::expected<TransformMatrixd<Target, Source>, TransformError> {
+    static_assert(is_descendant_of<Source, Target>(), "Source must be a descendant of Target");
+    if constexpr (std::is_same_v<CurrentFrame, Target>) {
+        return acc;
+    } else if constexpr (root_frame<CurrentFrame>) {
         return std::unexpected(TransformError::FrameNotFound);
     } else {
-        const auto& buffer = buffer_of<From>(system);
+        const auto& buffer = buffer_of<CurrentFrame>(system);
         auto result        = buffer.lookup(ns, clamped);
         if (!result) {
             return std::unexpected(result.error());
         }
-        return lookup_clamped<To>(system, tf_source * result->value, ns);
+        // edge: T<CurrentFrame::ancestor, CurrentFrame>
+        // acc:  T<CurrentFrame, Source>
+        // edge * acc → T<ancestor, Source>
+        return lookup_clamped<Target, Source>(system, result->value * acc, ns);
     }
 }
 
-template <frame To, frame From>
+template <frame Target, frame Source>
 constexpr auto lookup_clamped(const CoordinateSystem& system, timestamp_ns_t ns) noexcept
-    -> std::expected<FrameTransform<From, To>, TransformError> {
-    return lookup_clamped<To, From, From>(system, I<From>(), ns);
+    -> std::expected<TransformMatrixd<Target, Source>, TransformError> {
+    return lookup_clamped<Target, Source, Source>(system, I<Source>(), ns);
 }
 
 } // namespace fast_tf

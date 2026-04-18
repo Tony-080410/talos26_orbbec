@@ -218,7 +218,7 @@ struct BackendInputResolution {
 
 [[nodiscard]] inline std::optional<cv::Rect2f> project_box_to_image(
     const Eigen::Vector3d& center_odom, double yaw,
-    const fast_tf::TransformMatrixd<fast_tf::odom, fast_tf::camera_optical>& T_odom_camera,
+    const fast_tf::FrameTransform<fast_tf::camera_optical, fast_tf::odom>& T_odom_camera,
     const CameraConfig& camera_config, const std::array<double, 3>& box_size_m) noexcept {
     const double fx = camera_config.camera_matrix(0, 0);
     const double fy = camera_config.camera_matrix(1, 1);
@@ -288,7 +288,7 @@ struct BackendInputResolution {
 
 [[nodiscard]] inline std::optional<cv::Rect2f> project_tracker_box_to_image(
     const L3::TrackerOutput& tracker,
-    const fast_tf::TransformMatrixd<fast_tf::odom, fast_tf::camera_optical>& T_odom_camera,
+    const fast_tf::FrameTransform<fast_tf::camera_optical, fast_tf::odom>& T_odom_camera,
     const CameraConfig& camera_config, const std::array<double, 3>& box_size_m) noexcept {
     const auto center_and_yaw = tracker_box_center_and_yaw(tracker);
     if (!center_and_yaw) {

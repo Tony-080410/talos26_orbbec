@@ -15,15 +15,16 @@
 
 namespace fast_tf {
 
-/// Strongly typed SE(3) transform.
+/// Strongly typed SE(3) transform (passive / change-of-basis convention).
 ///
-/// The algebra follows:
-/// - T<X, Y> * T<Y, Z> -> T<X, Z>
-/// - inv(T<X, Y>) -> T<Y, X>
-/// - I<X> -> T<X, X>
+/// `TransformMatrix<T, A, B>` represents the passive transform that
+/// re-expresses a point from frame B into frame A.
 ///
-/// Semantically, `TransformMatrix<T, From, To>` maps coordinates expressed in `From` into `To`.
-template <typename T, typename From, typename To>
+/// Algebra:
+/// - T<A, B> * T<B, C> → T<A, C>   (composition)
+/// - inv(T<A, B>)      → T<B, A>    (inverse)
+/// - I<A>              → T<A, A>    (identity)
+template <typename T, typename A, typename B>
 class TransformMatrix {
 public:
     template <typename, typename, typename>
@@ -34,8 +35,8 @@ public:
     using Matrix  = typename SE3::MatrixType;
     using Tangent = typename SE3::VectorType;
     using Scalar  = T;
-    using FromTag = From;
-    using ToTag   = To;
+    using FromTag = A;
+    using ToTag   = B;
 
     TransformMatrix() = default;
 
@@ -98,33 +99,34 @@ public:
         return TransformMatrix(tt);
     }
 
-    static TransformMatrix identity() requires(std::same_as<From, To>) { return TransformMatrix{}; }
+    static TransformMatrix identity() requires(std::same_as<A, B>) { return TransformMatrix{}; }
 
-    static TransformMatrix Identity() requires(std::same_as<From, To>) { return identity(); }
+    static TransformMatrix Identity() requires(std::same_as<A, B>) { return identity(); }
 
     // ========================================================================
     // Type-level Transform Algebra
     // ========================================================================
 
-    template <typename Next>
-    [[nodiscard]] TransformMatrix<T, From, Next>
-        operator*(const TransformMatrix<T, To, Next>& other) const {
-        return TransformMatrix<T, From, Next>(other.pose_ * pose_);
+    /// Composition: T<A,B> * T<B,C> → T<A,C>
+    template <typename C>
+    [[nodiscard]] TransformMatrix<T, A, C> operator*(const TransformMatrix<T, B, C>& other) const {
+        return TransformMatrix<T, A, C>(pose_ * other.pose_);
     }
 
-    [[nodiscard]] TransformMatrix<T, To, From> inverse() const {
-        return TransformMatrix<T, To, From>(pose_.inv());
+    [[nodiscard]] TransformMatrix<T, B, A> inverse() const {
+        return TransformMatrix<T, B, A>(pose_.inv());
     }
 
-    [[nodiscard]] TransformMatrix<T, To, From> inv() const { return inverse(); }
+    [[nodiscard]] TransformMatrix<T, B, A> inv() const { return inverse(); }
 
     // ========================================================================
     // Compatibility Helpers
     // ========================================================================
 
+    /// reparent_to(T<Parent,A>, T<A,B>) → T<Parent,B>
     template <typename Parent>
-    [[nodiscard]] TransformMatrix<T, Parent, To>
-        reparent_to(const TransformMatrix<T, Parent, From>& parent_tf) const {
+    [[nodiscard]] TransformMatrix<T, Parent, B>
+        reparent_to(const TransformMatrix<T, Parent, A>& parent_tf) const {
         return parent_tf * *this;
     }
 
@@ -200,23 +202,24 @@ private:
     SE3 pose_{};
 };
 
+/// Identity transform for frame F: I<F> → TransformMatrix<Scalar, F, F>
 template <typename Frame, typename Scalar = double>
 [[nodiscard]] TransformMatrix<Scalar, Frame, Frame> I() {
     return TransformMatrix<Scalar, Frame, Frame>::identity();
 }
 
-template <typename T, typename From, typename To>
-[[nodiscard]] TransformMatrix<T, To, From> inv(const TransformMatrix<T, From, To>& tf) {
+template <typename T, typename A, typename B>
+[[nodiscard]] TransformMatrix<T, B, A> inv(const TransformMatrix<T, A, B>& tf) {
     return tf.inv();
 }
 
-template <typename T, typename From, typename To>
-using TypedTransformMatrix = TransformMatrix<T, From, To>;
+template <typename T, typename A, typename B>
+using TypedTransformMatrix = TransformMatrix<T, A, B>;
 
-template <typename From, typename To>
-using TransformMatrixd = TransformMatrix<double, From, To>;
+template <typename A, typename B>
+using TransformMatrixd = TransformMatrix<double, A, B>;
 
-template <typename From, typename To>
-using TransformMatrixf = TransformMatrix<float, From, To>;
+template <typename A, typename B>
+using TransformMatrixf = TransformMatrix<float, A, B>;
 
 } // namespace fast_tf

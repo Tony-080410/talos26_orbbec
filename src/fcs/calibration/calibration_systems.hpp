@@ -136,7 +136,7 @@ void register_calibration_systems(
             }
 
             // Get gimbal pose from TF buffer
-            auto tf_result = fast_tf::lookup<fast_tf::odom, fast_tf::gimbal>(
+            auto tf_result = fast_tf::lookup<fast_tf::odom, fast_tf::gimbal_pitch>(
                 *tf_buffer, detection->timestamp_ns);
 
             if (!tf_result) {

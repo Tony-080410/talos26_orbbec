@@ -58,7 +58,7 @@ void register_ldm_systems(
                 detection.color        = *detecting_color_;
             }
 
-            std::optional<fast_tf::TransformMatrixd<fast_tf::camera_optical, fast_tf::odom>>
+            std::optional<fast_tf::TransformMatrixd<fast_tf::odom, fast_tf::camera_optical>>
                 T_camera_odom;
             auto tf_lookup = fast_tf::lookup_clamped<
                 fast_tf::odom_fuxk_frame, fast_tf::camera_optical_fuxk_frame>(

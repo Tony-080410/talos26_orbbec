@@ -136,8 +136,7 @@ void register_chiral_collector_system(talos::Scheduler& scheduler) {
             using namespace fast_tf;
 
             // Lookup gimbal transform (odom -> gimbal)
-            auto gimbal_tf = lookup_clamped<fast_tf::odom, fast_tf::gimbal_pitch_fuxk_frame>(
-                *tf_buffer, current_ns);
+            auto gimbal_tf = lookup_clamped<odom, gimbal_pitch>(*tf_buffer, current_ns);
             if (gimbal_tf) {
                 auto translation                     = gimbal_tf.value().translation();
                 auto rotation                        = gimbal_tf.value().quaternion();
@@ -153,8 +152,7 @@ void register_chiral_collector_system(talos::Scheduler& scheduler) {
             }
 
             // Lookup camera transform (gimbal -> camera)
-            auto camera_tf =
-                lookup_clamped<fast_tf::gimbal, camera_link_fuxk_frame>(*tf_buffer, current_ns);
+            auto camera_tf = lookup_clamped<gimbal, camera>(*tf_buffer, current_ns);
             if (camera_tf) {
 
                 auto translation                     = camera_tf.value().translation();
@@ -171,8 +169,7 @@ void register_chiral_collector_system(talos::Scheduler& scheduler) {
             }
 
             // Lookup muzzle transform (odom -> muzzle)
-            auto muzzle_tf =
-                lookup_clamped<odom_fuxk_frame, muzzle_link_fuxk_frame>(*tf_buffer, current_ns);
+            auto muzzle_tf = lookup_clamped<odom, muzzle>(*tf_buffer, current_ns);
             if (muzzle_tf) {
                 auto translation                     = muzzle_tf.value().translation();
                 auto rotation                        = muzzle_tf.value().quaternion();

@@ -89,10 +89,10 @@ struct ArmorDetectionBatch {
     [[nodiscard]] size_t size() const noexcept { return detections.size(); }
 };
 
-/// Single armor measurement (3D pose in odom frame after TF transform)
+/// Single armor measurement (3D pose in the given frame after TF transform)
 template <fast_tf::frame Frame>
 struct ArmorMeasurementT {
-    using Transform = fast_tf::TransformMatrixd<armor_frame, Frame>;
+    using Transform = fast_tf::TransformMatrixd<Frame, armor_frame>;
 
     Transform transform{};
     ArmorName name                 = ArmorName::Invalid;
@@ -113,11 +113,13 @@ struct ArmorMeasurementT {
     /// Get pitch angle (in radians)
     [[nodiscard]] double pitch() const noexcept { return transform.euler_rot().pitch; }
 
+    /// Reframe measurement from current Frame into ToFrame.
+    /// `frame_transform` is T<ToFrame, Frame> (re-expresses Frame in ToFrame).
     template <fast_tf::frame ToFrame>
     [[nodiscard]] ArmorMeasurementT<ToFrame>
-        reframe(const fast_tf::FrameTransform<Frame, ToFrame>& frame_transform) const {
+        reframe(const fast_tf::FrameTransform<ToFrame, Frame>& frame_transform) const {
         ArmorMeasurementT<ToFrame> reframed;
-        reframed.transform                = transform * frame_transform;
+        reframed.transform                = frame_transform * transform;
         reframed.name                     = name;
         reframed.color                    = color;
         reframed.type                     = type;

@@ -19,7 +19,7 @@ HandEyeCalibrator::HandEyeCalibrator(
     samples_.reserve(capture.max_samples);
 }
 
-fast_tf::TransformMatrixd<calibration_board_frame, fast_tf::camera>
+fast_tf::TransformMatrixd<fast_tf::camera, calibration_board_frame>
     HandEyeCalibrator::opencv_to_ros(const cv::Vec3d& rvec, const cv::Vec3d& tvec) noexcept {
     // Convert rvec/tvec to 4x4 matrix
     cv::Mat R_cv;
@@ -39,17 +39,18 @@ fast_tf::TransformMatrixd<calibration_board_frame, fast_tf::camera>
     // This converts from OpenCV convention to ROS convention
     constexpr double pi = std::numbers::pi;
     auto T_optical_to_link =
-        fast_tf::TransformMatrixd<fast_tf::camera_optical, fast_tf::camera>::from_rpy(
+        fast_tf::TransformMatrixd<fast_tf::camera, fast_tf::camera_optical>::from_rpy(
             -pi / 2.0, 0.0, -pi / 2.0, 0.0, 0.0, 0.0);
 
     // OpenCV solvePnP gives board -> camera_optical. Convert to board -> camera_link.
-    fast_tf::TransformMatrixd<calibration_board_frame, fast_tf::camera_optical> T_opencv_tf(
+    fast_tf::TransformMatrixd<fast_tf::camera_optical, calibration_board_frame> T_opencv_tf(
         T_opencv);
-    return T_opencv_tf * T_optical_to_link;
+    return T_optical_to_link * T_opencv_tf;
 }
 
 bool HandEyeCalibrator::is_diverse_enough(
-    const fast_tf::TransformMatrixd<fast_tf::gimbal, fast_tf::odom>& gimbal_pose) const noexcept {
+    const fast_tf::TransformMatrixd<fast_tf::odom, fast_tf::gimbal_pitch>& gimbal_pose)
+    const noexcept {
     if (samples_.empty()) {
         return true;
     }
@@ -85,8 +86,8 @@ bool HandEyeCalibrator::is_diverse_enough(
 }
 
 std::expected<void, std::string> HandEyeCalibrator::add_sample(
-    const fast_tf::TransformMatrixd<fast_tf::gimbal, fast_tf::odom>& gimbal_pose,
-    const fast_tf::TransformMatrixd<calibration_board_frame, fast_tf::camera>& board_pose,
+    const fast_tf::TransformMatrixd<fast_tf::odom, fast_tf::gimbal_pitch>& gimbal_pose,
+    const fast_tf::TransformMatrixd<fast_tf::camera, calibration_board_frame>& board_pose,
     timestamp_ns_t ts) noexcept {
     if (samples_.size() >= capture_config_.max_samples) {
         return std::unexpected("Maximum sample count reached");

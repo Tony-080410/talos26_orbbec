@@ -62,10 +62,12 @@ void publish_control_snapshot(
             .odom_to_gimbal_pitch =
                 capture_control_transform_snapshot<fast_tf::odom, fast_tf::gimbal_pitch_fuxk_frame>(
                     tf_buffer, sample_timestamp_ns),
-            .gimbal_to_camera_link = capture_control_transform_snapshot<
-                fast_tf::gimbal, fast_tf::camera_link_fuxk_frame>(tf_buffer, sample_timestamp_ns),
-            .odom_to_camera_optical = capture_control_transform_snapshot<
-                fast_tf::odom, fast_tf::camera_optical_fuxk_frame>(tf_buffer, sample_timestamp_ns),
+            .gimbal_to_camera_link =
+                capture_control_transform_snapshot<fast_tf::gimbal, fast_tf::camera>(
+                    tf_buffer, sample_timestamp_ns),
+            .odom_to_camera_optical =
+                capture_control_transform_snapshot<fast_tf::odom, fast_tf::camera_optical>(
+                    tf_buffer, sample_timestamp_ns),
             .odom_to_muzzle =
                 capture_control_transform_snapshot<fast_tf::odom, fast_tf::muzzle_link_fuxk_frame>(
                     tf_buffer, sample_timestamp_ns),

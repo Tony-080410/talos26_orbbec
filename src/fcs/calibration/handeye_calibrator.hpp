@@ -29,15 +29,15 @@ public:
     /// @param ts Timestamp
     /// @return Success or error message
     [[nodiscard]] std::expected<void, std::string> add_sample(
-        const fast_tf::TransformMatrixd<fast_tf::gimbal, fast_tf::odom>& gimbal_pose,
-        const fast_tf::TransformMatrixd<calibration_board_frame, fast_tf::camera>& board_pose,
+        const fast_tf::TransformMatrixd<fast_tf::odom, fast_tf::gimbal_pitch>& gimbal_pose,
+        const fast_tf::TransformMatrixd<fast_tf::camera, calibration_board_frame>& board_pose,
         timestamp_ns_t ts) noexcept;
 
     /// @brief Check if pose is diverse enough from existing samples
     /// @param gimbal_pose New gimbal pose to check
     /// @return true if sample adds diversity
     [[nodiscard]] bool is_diverse_enough(
-        const fast_tf::TransformMatrixd<fast_tf::gimbal, fast_tf::odom>& gimbal_pose)
+        const fast_tf::TransformMatrixd<fast_tf::odom, fast_tf::gimbal_pitch>& gimbal_pose)
         const noexcept;
 
     /// @brief Run hand-eye calibration with collected samples
@@ -56,7 +56,7 @@ public:
     /// OpenCV: X-right, Y-down, Z-forward
     /// ROS: X-forward, Y-left, Z-up
     /// The conversion applies camera_optical → camera_link transform: rpy[-π/2, 0, -π/2]
-    [[nodiscard]] static fast_tf::TransformMatrixd<calibration_board_frame, fast_tf::camera>
+    [[nodiscard]] static fast_tf::TransformMatrixd<fast_tf::camera, calibration_board_frame>
         opencv_to_ros(const cv::Vec3d& rvec, const cv::Vec3d& tvec) noexcept;
 
 private:

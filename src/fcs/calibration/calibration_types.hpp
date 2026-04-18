@@ -154,8 +154,8 @@ struct CalibrationStatus {
 
 /// @brief Pose sample for hand-eye calibration
 struct PoseSample {
-    fast_tf::TransformMatrixd<fast_tf::gimbal, fast_tf::odom> gimbal_pose;
-    fast_tf::TransformMatrixd<calibration_board_frame, fast_tf::camera> board_pose;
+    fast_tf::TransformMatrixd<fast_tf::odom, fast_tf::gimbal_pitch> gimbal_pose;
+    fast_tf::TransformMatrixd<fast_tf::camera, calibration_board_frame> board_pose;
     timestamp_ns_t timestamp_ns;
 };
 

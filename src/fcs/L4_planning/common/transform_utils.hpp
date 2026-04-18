@@ -15,8 +15,8 @@ namespace fcs::L4 {
 /// Result of gimbal/muzzle transform lookup
 ///
 struct TransformLookupResult {
-    fast_tf::TransformMatrixd<fast_tf::gimbal_pitch_fuxk_frame, fast_tf::odom_fuxk_frame> gimbal;
-    fast_tf::TransformMatrixd<fast_tf::muzzle_link_fuxk_frame, fast_tf::odom_fuxk_frame> muzzle;
+    fast_tf::TransformMatrixd<fast_tf::odom, fast_tf::gimbal_pitch> gimbal;
+    fast_tf::TransformMatrixd<fast_tf::odom, fast_tf::muzzle> muzzle;
     uint64_t timestamp_ns;
 };
 
@@ -37,7 +37,7 @@ struct TransformLookupResult {
         const fast_tf::CoordinateSystem& tf_buffer, uint64_t current_ns) noexcept {
     using namespace fast_tf;
 
-    auto muzzle_tf = lookup_clamped<odom_fuxk_frame, muzzle_link_fuxk_frame>(tf_buffer, current_ns);
+    auto muzzle_tf = lookup_clamped<odom, muzzle>(tf_buffer, current_ns);
     if (!muzzle_tf) {
         return std::unexpected(
             fmt::format(
@@ -45,8 +45,7 @@ struct TransformLookupResult {
                 muzzle_tf.error(), current_ns));
     }
 
-    auto gimbal_tf =
-        lookup_clamped<odom_fuxk_frame, fast_tf::gimbal_pitch_fuxk_frame>(tf_buffer, current_ns);
+    auto gimbal_tf = lookup_clamped<odom, gimbal_pitch>(tf_buffer, current_ns);
     if (!gimbal_tf) {
         return std::unexpected(
             fmt::format(
@@ -66,14 +65,12 @@ struct TransformLookupResult {
 /// @param tf_buffer Coordinate system buffer (shared_ptr)
 /// @param current_ns Query timestamp in nanoseconds
 [[nodiscard]] inline std::expected<
-    fast_tf::TransformMatrixd<fast_tf::gimbal_pitch_fuxk_frame, fast_tf::odom_fuxk_frame>,
-    std::string>
+    fast_tf::TransformMatrixd<fast_tf::odom, fast_tf::gimbal_pitch>, std::string>
     lookup_gimbal_transform(
         const fast_tf::CoordinateSystem& tf_buffer, uint64_t current_ns) noexcept {
     using namespace fast_tf;
 
-    auto gimbal_tf =
-        lookup_clamped<odom_fuxk_frame, fast_tf::gimbal_pitch_fuxk_frame>(tf_buffer, current_ns);
+    auto gimbal_tf = lookup_clamped<odom, gimbal_pitch>(tf_buffer, current_ns);
     if (!gimbal_tf) {
         return std::unexpected(
             fmt::format(

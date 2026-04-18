@@ -416,7 +416,7 @@ TEST(LdmSolver, ThreePairsRecoverStableCenterAndOdomProjection) {
         ldm_config);
 
     const auto T_camera_odom =
-        fast_tf::TransformMatrixd<fast_tf::camera_optical, fast_tf::odom>::from_translation(
+        fast_tf::TransformMatrixd<fast_tf::odom, fast_tf::camera_optical>::from_translation(
             1.0, 2.0, 3.0);
     const auto result = solver.solve(detection, T_camera_odom);
     ASSERT_TRUE(result.has_value());

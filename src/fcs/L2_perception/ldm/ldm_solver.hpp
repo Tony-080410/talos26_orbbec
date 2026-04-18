@@ -37,7 +37,7 @@ public:
 
     [[nodiscard]] std::expected<LdmMeasurement, PnPError> solve(
         const LdmDetection& detection,
-        const std::optional<fast_tf::TransformMatrixd<fast_tf::camera_optical, fast_tf::odom>>&
+        const std::optional<fast_tf::TransformMatrixd<fast_tf::odom, fast_tf::camera_optical>>&
             T_camera_odom = std::nullopt) const {
         if (!detection.valid || detection.pairs.empty()) {
             return std::unexpected(PnPError::InvalidDetection);
@@ -216,7 +216,7 @@ private:
     [[nodiscard]] std::optional<LdmMeshCandidate> try_merge_candidates(
         const LdmMeshCandidate& base, const LdmMeshCandidate& extra,
         const std::vector<LightPair>& pairs,
-        const std::optional<fast_tf::TransformMatrixd<fast_tf::camera_optical, fast_tf::odom>>&
+        const std::optional<fast_tf::TransformMatrixd<fast_tf::odom, fast_tf::camera_optical>>&
             T_camera_odom) const {
         if (!has_face_assignment(base) || !has_face_assignment(extra)) {
             return std::nullopt;
@@ -301,7 +301,7 @@ private:
     [[nodiscard]] std::vector<LdmMeshCandidate> build_combined_candidates(
         const std::vector<LdmMeshCandidate>& evaluated_candidates,
         const std::vector<LightPair>& pairs,
-        const std::optional<fast_tf::TransformMatrixd<fast_tf::camera_optical, fast_tf::odom>>&
+        const std::optional<fast_tf::TransformMatrixd<fast_tf::odom, fast_tf::camera_optical>>&
             T_camera_odom) const {
         std::vector<size_t> source_indices;
         source_indices.reserve(evaluated_candidates.size());
@@ -475,7 +475,7 @@ private:
 
     void evaluate_candidate(
         LdmMeshCandidate& candidate, const std::vector<LightPair>& pairs,
-        const std::optional<fast_tf::TransformMatrixd<fast_tf::camera_optical, fast_tf::odom>>&
+        const std::optional<fast_tf::TransformMatrixd<fast_tf::odom, fast_tf::camera_optical>>&
             T_camera_odom) const {
         candidate.estimated_center_image_px =
             estimate_candidate_center_image(pairs, candidate.pair_indices);

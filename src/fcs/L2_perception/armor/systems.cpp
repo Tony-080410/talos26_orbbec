@@ -5,6 +5,7 @@
 #include "L2_perception/armor/readback_roi.hpp"
 #include "L2_perception/armor/solver.hpp"
 #include "core/runtime.hpp"
+#include "frame.hpp"
 #include "scheduler/scheduler.hpp"
 #include <algorithm>
 #include <optional>
@@ -41,7 +42,7 @@ namespace {
 
 [[nodiscard]] std::vector<PnPSolver::PosePrior> make_pose_priors(
     const ArmorDetection& detection, const TrackerReadbackSnapshot& snapshot,
-    const fast_tf::TransformMatrixd<fast_tf::odom, fast_tf::camera_optical>& T_odom_camera,
+    const fast_tf::FrameTransform<fast_tf::camera_optical, fast_tf::odom>& T_odom_camera,
     const cv::Mat& camera_matrix, const cv::Mat& dist_coeffs) noexcept {
     if (!tracker_snapshot_matches_detection(snapshot, detection)) {
         return {};
@@ -138,7 +139,8 @@ void offset_detections(std::vector<ArmorDetection>& detections, const cv::Point&
     }
 }
 
-[[nodiscard]] bool is_sub_frame_roi(const cv::Rect& roi, const cv::Size& frame_size) noexcept {
+[[nodiscard]] inline bool
+    is_sub_frame_roi(const cv::Rect& roi, const cv::Size& frame_size) noexcept {
     return roi.x > 0 || roi.y > 0 || roi.width < frame_size.width || roi.height < frame_size.height;
 }
 
@@ -180,32 +182,25 @@ void register_detection_systems(talos::Scheduler& scheduler) noexcept {
             cv::eigen2cv(camera_config->camera_matrix, camera_matrix_cv);
             cv::eigen2cv(camera_config->distort_coefficient, dist_coeffs_cv);
 
-            std::optional<fast_tf::TransformMatrixd<fast_tf::camera_optical, fast_tf::odom>>
-                T_camera_odom;
-            std::optional<fast_tf::TransformMatrixd<fast_tf::odom, fast_tf::camera_optical>>
-                T_odom_camera;
+            auto tf_lookup = fast_tf::lookup_clamped<fast_tf::odom, fast_tf::camera_optical>(
+                *tf_system, frame->timestamp_ns);
 
+            if (!tf_lookup) {
+                SPDLOG_ERROR(
+                    "TF lookup failed for timestamp {}: {}", frame->timestamp_ns,
+                    tf_lookup.error());
+                return;
+            }
+
+            auto T_odom_camera = tf_lookup.value();
             if (readback_roi_config->enabled) {
                 const auto snapshot = readback_cache->load();
                 if (tracker_snapshot_is_fresh(
                         snapshot, *readback_roi_config, frame->timestamp_ns)) {
-                    if (!T_camera_odom.has_value()) {
-                        auto tf_lookup =
-                            fast_tf::lookup_clamped<fast_tf::odom, fast_tf::camera_optical>(
-                                *tf_system, frame->timestamp_ns);
-                        if (tf_lookup) {
-                            T_camera_odom = *tf_lookup;
-                            T_odom_camera = tf_lookup->inverse();
-                        }
-                    }
-                }
-
-                if (tracker_snapshot_is_fresh(snapshot, *readback_roi_config, frame->timestamp_ns)
-                    && T_odom_camera.has_value()) {
                     const auto maybe_roi = resolve_readback_roi(
                         frame->image.size(),
                         project_tracker_box_to_image(
-                            snapshot.tracker, *T_odom_camera, *camera_config,
+                            snapshot.tracker, T_odom_camera.inverse(), *camera_config,
                             readback_roi_config->box_size_m)
                             .value_or(cv::Rect2f{}),
                         *readback_roi_config, backend->get()->input_resolution());
@@ -243,28 +238,8 @@ void register_detection_systems(talos::Scheduler& scheduler) noexcept {
                     std::move(detections), frame->image, frame->timestamp_ns, frame->frame_id,
                     has_detector_roi, detector_roi});
 
-            if (!T_camera_odom.has_value()) {
-                auto tf_lookup = fast_tf::lookup_clamped<fast_tf::odom, fast_tf::camera_optical>(
-                    *tf_system, frame->timestamp_ns);
-                if (tf_lookup) {
-                    T_camera_odom = *tf_lookup;
-                    T_odom_camera = tf_lookup->inverse();
-                }
-            }
-
-            if (!T_camera_odom.has_value()) {
-                // SPDLOG_ERROR(
-                //     "TF lookup failed for timestamp {}: {}", frame->timestamp_ns,
-                //     tf_camera_odom.error());
-                return;
-            }
-
-            const auto& T_camera_odom_ref = *T_camera_odom;
-            if (!T_odom_camera.has_value()) {
-                T_odom_camera = T_camera_odom_ref.inverse();
-            }
             // BA expects R_imu_cam in the sense of imu <- camera (here: odom <- camera).
-            const Eigen::Matrix3d R_odom_camera = T_camera_odom_ref.rotation();
+            const Eigen::Matrix3d R_odom_camera = T_odom_camera.rotation();
             const auto tracker_snapshot         = readback_cache->load();
             std::vector<CameraArmorMeasurement> measurements;
             measurements.reserve(detections_for_pnp.size());
@@ -272,7 +247,7 @@ void register_detection_systems(talos::Scheduler& scheduler) noexcept {
                 const auto priors = tracker_snapshot_is_fresh(
                                         tracker_snapshot, *readback_roi_config, frame->timestamp_ns)
                                       ? make_pose_priors(
-                                            detection, tracker_snapshot, *T_odom_camera,
+                                            detection, tracker_snapshot, T_odom_camera.inverse(),
                                             camera_matrix_cv, dist_coeffs_cv)
                                       : std::vector<PnPSolver::PosePrior>{};
                 auto result =
@@ -287,7 +262,7 @@ void register_detection_systems(talos::Scheduler& scheduler) noexcept {
             odom_measurements.reserve(measurements.size());
 
             for (const auto& meas : measurements) {
-                odom_measurements.push_back(meas.reframe(T_camera_odom_ref));
+                odom_measurements.push_back(meas.reframe(T_odom_camera));
             }
 
             measurement_out.write(
