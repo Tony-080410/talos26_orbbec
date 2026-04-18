@@ -156,12 +156,10 @@ void register_detection_systems(talos::Scheduler& scheduler) noexcept {
     }
 
     scheduler.add_system<talos::fixed_rate<200>>(
-        "armor_detector_pnp_solver",
+        "armor_detector",
         [](talos::spmc<ImageFrame, ImageChannelTopic> image_in,
            talos::spmc_mut<ArmorDetectionBatch, DetectionChannelTopic> detection_out,
-           talos::spmc_mut<ArmorMeasurementBatch, MeasurementChannelTopic> measurement_out,
            talos::res_mut<std::shared_ptr<DetectorBackend>> backend,
-           talos::res<std::shared_ptr<PnPSolver>> solver_ptr,
            talos::res<fast_tf::CoordinateSystem> tf_system, talos::res<CameraConfig> camera_config,
            talos::res<ArmorReadbackRoiConfig> readback_roi_config,
            talos::res<TrackerReadbackCache> readback_cache,
@@ -237,22 +235,51 @@ void register_detection_systems(talos::Scheduler& scheduler) noexcept {
                 ArmorDetectionBatch{
                     std::move(detections), frame->image, frame->timestamp_ns, frame->frame_id,
                     has_detector_roi, detector_roi});
+        });
+    scheduler.add_system<talos::fixed_rate<200>>(
+        "armor_solver",
+        [](talos::spmc<ArmorDetectionBatch, DetectionChannelTopic> detection_in,
+           talos::spmc_mut<ArmorMeasurementBatch, MeasurementChannelTopic> measurement_out,
+           talos::res<std::shared_ptr<PnPSolver>> solver_ptr,
+           talos::res<fast_tf::CoordinateSystem> tf_system, talos::res<CameraConfig> camera_config,
+           talos::res<ArmorReadbackRoiConfig> readback_roi_config,
+           talos::res<TrackerReadbackCache> readback_cache) mutable {
+            auto detections = detection_in.read();
+            if (!detections) {
+                return;
+            }
+            cv::Mat camera_matrix_cv;
+            cv::Mat dist_coeffs_cv;
+            cv::eigen2cv(camera_config->camera_matrix, camera_matrix_cv);
+            cv::eigen2cv(camera_config->distort_coefficient, dist_coeffs_cv);
 
+            auto tf_lookup = fast_tf::lookup_clamped<fast_tf::odom, fast_tf::camera_optical>(
+                *tf_system, detections->timestamp_ns);
+
+            if (!tf_lookup) {
+                SPDLOG_ERROR(
+                    "TF lookup failed for timestamp {}: {}", detections->timestamp_ns,
+                    tf_lookup.error());
+                return;
+            }
+
+            auto T_odom_camera = tf_lookup.value();
             // BA expects R_imu_cam in the sense of imu <- camera (here: odom <- camera).
             const Eigen::Matrix3d R_odom_camera = T_odom_camera.rotation();
             const auto tracker_snapshot         = readback_cache->load();
             std::vector<CameraArmorMeasurement> measurements;
-            measurements.reserve(detections_for_pnp.size());
-            for (const auto& detection : detections_for_pnp) {
-                const auto priors = tracker_snapshot_is_fresh(
-                                        tracker_snapshot, *readback_roi_config, frame->timestamp_ns)
-                                      ? make_pose_priors(
-                                            detection, tracker_snapshot, T_odom_camera.inverse(),
-                                            camera_matrix_cv, dist_coeffs_cv)
-                                      : std::vector<PnPSolver::PosePrior>{};
+            measurements.reserve(detections->detections.size());
+            for (const auto& detection : detections->detections) {
+                const auto priors =
+                    tracker_snapshot_is_fresh(
+                        tracker_snapshot, *readback_roi_config, detections->timestamp_ns)
+                        ? make_pose_priors(
+                              detection, tracker_snapshot, T_odom_camera.inverse(),
+                              camera_matrix_cv, dist_coeffs_cv)
+                        : std::vector<PnPSolver::PosePrior>{};
                 auto result =
                     (*solver_ptr)
-                        ->solve_with_ba(detection, R_odom_camera, frame->timestamp_ns, priors);
+                        ->solve_with_ba(detection, R_odom_camera, detections->timestamp_ns, priors);
                 if (result) {
                     measurements.push_back(std::move(*result));
                 }
@@ -267,7 +294,7 @@ void register_detection_systems(talos::Scheduler& scheduler) noexcept {
 
             measurement_out.write(
                 ArmorMeasurementBatch{
-                    std::move(odom_measurements), frame->timestamp_ns, frame->frame_id});
+                    std::move(odom_measurements), detections->timestamp_ns, detections->frame_id});
         });
 }
 
