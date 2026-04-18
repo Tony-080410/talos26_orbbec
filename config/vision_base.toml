@@ -172,8 +172,8 @@ single_whole_up = 1.5
 single_whole_down = 1.0
 whole_pair_up = 8.5
 whole_pair_down = 9.5
-pair_center_up = 16.5
-pair_center_down = 15.0
+pair_center_up = 9.0
+pair_center_down = 6.0
 transfer_thresh = 20
 # Armor selection windows
 front_window_deg = 60.0
@@ -243,6 +243,7 @@ rho = 1.225
 [mpc_weapon]
 enabled = true
 enable_debug = true
+reference_age_threshold_s = 0.5
 
 # Pitch limits (radians)
 pitch_min = -0.69813169 # -40deg
@@ -250,8 +251,8 @@ pitch_max = 0.69813169 # 40deg
 
 # MPC core parameters
 [mpc_weapon.mpc]
-max_iterations = 10
-abs_tol = 0.001
+max_iterations = 30
+abs_tol = 0.1
 rho = 1.0
 
 # MPC yaw axis configuration
