@@ -112,6 +112,7 @@ private:
     mutable std::vector<DecodedCandidate> postproc_candidates_buf_;
     mutable std::vector<uint8_t> nms_removed_buf_;
     mutable std::array<std::vector<int>, TILE_GRID_SIZE * TILE_GRID_SIZE> nms_tile_bins_buf_;
+    mutable std::vector<ArmorDetection> nms_result_buf_;
 
     /// Decode and postprocess single-output concat-predecode tensor.
     [[nodiscard]] std::vector<ArmorDetection>
