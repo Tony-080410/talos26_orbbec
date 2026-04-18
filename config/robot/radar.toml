@@ -1,0 +1,33 @@
+type = "Sentry"
+
+# Sat, 18 Apr 2026 22:02:51 +0800
+# rms_error: 0.051
+[camera]
+camera_matrix = [12663.930, 0.000, 700.570, 0.000, 12669.041, 532.382, 0.000, 0.000, 1.000]
+distort_coefficient = [-0.092, 96.667, 0.005, -0.003, 0.304]
+width = 1440
+height = 1080
+
+[camera.profile]
+trigger_mode = false
+invert_image = true
+exposure_time_us = 3000  # 0.15ms in microseconds
+gain = 16.9
+
+[extrinsic.gimbal_yaw.gimbal_pitch]
+translation = [0, 0, 0.0791]
+
+camera_link.translation = [0.0273, 0, 0.0544]
+camera_link.roll = 0.0
+camera_link.pitch = 0.15
+camera_link.yaw = -1.45
+
+muzzle_link.translation = [0.06, 0.0, 0.0]
+
+[mcu]
+untrust_roll = true
+dynamic_self_color = true
+dynamic_bullet_speed = true
+bullet_speed_default = 21.0
+bullet_speed_min = 20
+bullet_speed_max = 25
