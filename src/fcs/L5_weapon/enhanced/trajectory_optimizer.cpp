@@ -288,9 +288,7 @@ std::expected<WeaponCommand, std::string> TinyMpcTrajectoryOptimizer::optimize(
                 static_cast<float>(reference.state(3, last_ref)));
         }
     }
-    if (!batched_solver_.solve()) {
-        return std::unexpected("batched yaw/pitch MPC did not converge");
-    }
+    batched_solver_.solve();
 
     const AxisSolverView yaw_solver{&batched_solver_, DualSmallMpcSolver::kYawAxis, solver_horizon};
     const AxisSolverView pitch_solver{

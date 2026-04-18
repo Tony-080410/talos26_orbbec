@@ -102,8 +102,8 @@ public:
     }
 
     void set_ref_col(int axis, int k, float pos, float vel) noexcept {
-        qref_pos_(axis, k) = -q_pos_(axis) * pos;
-        qref_vel_(axis, k) = -q_vel_(axis) * vel;
+        qref_pos_(axis, k) = -(q_pos_(axis) + rho_) * pos;
+        qref_vel_(axis, k) = -(q_vel_(axis) + rho_) * vel;
         if (k == last_state_index_) {
             update_terminal_cache(axis, pos, vel);
         }
@@ -111,8 +111,10 @@ public:
 
     void set_ref_col(
         int k, float yaw_pos, float yaw_vel, float pitch_pos, float pitch_vel) noexcept {
-        qref_pos_.col(k) << -q_pos_(kYawAxis) * yaw_pos, -q_pos_(kPitchAxis) * pitch_pos;
-        qref_vel_.col(k) << -q_vel_(kYawAxis) * yaw_vel, -q_vel_(kPitchAxis) * pitch_vel;
+        qref_pos_.col(k) << -(q_pos_(kYawAxis) + rho_) * yaw_pos,
+            -(q_pos_(kPitchAxis) + rho_) * pitch_pos;
+        qref_vel_.col(k) << -(q_vel_(kYawAxis) + rho_) * yaw_vel,
+            -(q_vel_(kPitchAxis) + rho_) * pitch_vel;
         if (k == last_state_index_) {
             update_terminal_cache(kYawAxis, yaw_pos, yaw_vel);
             update_terminal_cache(kPitchAxis, pitch_pos, pitch_vel);
@@ -122,12 +124,14 @@ public:
     void set_reference(
         const Eigen::Ref<const Eigen::MatrixXf>& yaw_ref,
         const Eigen::Ref<const Eigen::MatrixXf>& pitch_ref) noexcept {
-        qref_pos_.row(kYawAxis).head(N_) = (-q_pos_(kYawAxis) * yaw_ref.row(0).array()).matrix();
-        qref_vel_.row(kYawAxis).head(N_) = (-q_vel_(kYawAxis) * yaw_ref.row(1).array()).matrix();
+        qref_pos_.row(kYawAxis).head(N_) =
+            (-(q_pos_(kYawAxis) + rho_) * yaw_ref.row(0).array()).matrix();
+        qref_vel_.row(kYawAxis).head(N_) =
+            (-(q_vel_(kYawAxis) + rho_) * yaw_ref.row(1).array()).matrix();
         qref_pos_.row(kPitchAxis).head(N_) =
-            (-q_pos_(kPitchAxis) * pitch_ref.row(0).array()).matrix();
+            (-(q_pos_(kPitchAxis) + rho_) * pitch_ref.row(0).array()).matrix();
         qref_vel_.row(kPitchAxis).head(N_) =
-            (-q_vel_(kPitchAxis) * pitch_ref.row(1).array()).matrix();
+            (-(q_vel_(kPitchAxis) + rho_) * pitch_ref.row(1).array()).matrix();
 
         update_terminal_cache(
             kYawAxis, yaw_ref(0, last_state_index_), yaw_ref(1, last_state_index_));
@@ -407,7 +411,7 @@ private:
 
         const Lane z_prev = z_.col(i);
         const Lane z_new  = clamp_lane(u + y_.col(i), u_min_, u_max_);
-        z_cost_.col(i)    = active.select(z_prev, z_cost_.col(i));
+        z_cost_.col(i)    = active.select(z_new, z_cost_.col(i));
         z_.col(i)         = active.select(z_new, z_.col(i));
         y_.col(i)         = active.select(y_.col(i) + (u - z_new), y_.col(i));
 
@@ -421,8 +425,8 @@ private:
         const Lane v_new_pos  = clamp_lane(x_pos + g_pos_.col(i), state_min_, state_max_);
         const Lane v_new_vel  = x_vel + g_vel_.col(i);
 
-        v_cost_pos_.col(i) = active.select(v_prev_pos, v_cost_pos_.col(i));
-        v_cost_vel_.col(i) = active.select(v_prev_vel, v_cost_vel_.col(i));
+        v_cost_pos_.col(i) = active.select(v_new_pos, v_cost_pos_.col(i));
+        v_cost_vel_.col(i) = active.select(v_new_vel, v_cost_vel_.col(i));
         v_pos_.col(i)      = active.select(v_new_pos, v_pos_.col(i));
         v_vel_.col(i)      = active.select(v_new_vel, v_vel_.col(i));
 
@@ -456,9 +460,9 @@ private:
         const Lane v_new_vel = x_vel + g_vel_.col(last_state_index_);
 
         v_cost_pos_.col(last_state_index_) =
-            active.select(v_prev_pos, v_cost_pos_.col(last_state_index_));
+            active.select(v_new_pos, v_cost_pos_.col(last_state_index_));
         v_cost_vel_.col(last_state_index_) =
-            active.select(v_prev_vel, v_cost_vel_.col(last_state_index_));
+            active.select(v_new_vel, v_cost_vel_.col(last_state_index_));
         v_pos_.col(last_state_index_) = active.select(v_new_pos, v_pos_.col(last_state_index_));
         v_vel_.col(last_state_index_) = active.select(v_new_vel, v_vel_.col(last_state_index_));
 

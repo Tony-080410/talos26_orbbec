@@ -28,8 +28,12 @@ void register_enhanced_weapon_system(talos::Scheduler& scheduler, WeaponControll
             if (!plan) {
                 return;
             }
-
             const uint64_t command_timestamp_ns = fcs::clock::now_ns();
+
+            if (plan->distance < 0) {
+                weapon_out.write(optimizer->passthrough(*plan, command_timestamp_ns));
+                return;
+            }
 
             const auto optimized = optimizer->optimize(
                 *plan, l4_config->fire_decision, l4_config->aimer, *tf_buffer,
@@ -37,6 +41,10 @@ void register_enhanced_weapon_system(talos::Scheduler& scheduler, WeaponControll
 
             WeaponCommand cmd =
                 optimized ? *optimized : optimizer->passthrough(*plan, command_timestamp_ns);
+            if (!optimized) {
+                SPDLOG_ERROR(
+                    "Optimization failed, using passthrough command: {}", optimized.error());
+            }
 
             weapon_out.write(cmd);
         });
