@@ -7,7 +7,6 @@
 #include "core/runtime.hpp"
 #include "frame.hpp"
 #include "scheduler/scheduler.hpp"
-#include <algorithm>
 #include <optional>
 #include <spdlog/spdlog.h>
 
@@ -175,10 +174,6 @@ void register_detection_systems(talos::Scheduler& scheduler) noexcept {
 
             cv::Rect detector_roi(0, 0, frame->image.cols, frame->image.rows);
             cv::Mat detector_input = frame->image;
-            cv::Mat camera_matrix_cv;
-            cv::Mat dist_coeffs_cv;
-            cv::eigen2cv(camera_config->camera_matrix, camera_matrix_cv);
-            cv::eigen2cv(camera_config->distort_coefficient, dist_coeffs_cv);
 
             auto tf_lookup = fast_tf::lookup_clamped<fast_tf::odom, fast_tf::camera_optical>(
                 *tf_system, frame->timestamp_ns);
@@ -233,8 +228,8 @@ void register_detection_systems(talos::Scheduler& scheduler) noexcept {
 
             detection_out.write(
                 ArmorDetectionBatch{
-                    std::move(detections), frame->image, frame->timestamp_ns, frame->frame_id,
-                    has_detector_roi, detector_roi});
+                    std::move(detections_for_pnp), frame->image, frame->timestamp_ns,
+                    frame->frame_id, has_detector_roi, detector_roi});
         });
     scheduler.add_system<talos::fixed_rate<200>>(
         "armor_solver",
@@ -248,10 +243,6 @@ void register_detection_systems(talos::Scheduler& scheduler) noexcept {
             if (!detections) {
                 return;
             }
-            cv::Mat camera_matrix_cv;
-            cv::Mat dist_coeffs_cv;
-            cv::eigen2cv(camera_config->camera_matrix, camera_matrix_cv);
-            cv::eigen2cv(camera_config->distort_coefficient, dist_coeffs_cv);
 
             auto tf_lookup = fast_tf::lookup_clamped<fast_tf::odom, fast_tf::camera_optical>(
                 *tf_system, detections->timestamp_ns);
@@ -263,20 +254,27 @@ void register_detection_systems(talos::Scheduler& scheduler) noexcept {
                 return;
             }
 
-            auto T_odom_camera = tf_lookup.value();
-            // BA expects R_imu_cam in the sense of imu <- camera (here: odom <- camera).
-            const Eigen::Matrix3d R_odom_camera = T_odom_camera.rotation();
-            const auto tracker_snapshot         = readback_cache->load();
+            const auto T_odom_camera     = tf_lookup.value();
+            const auto T_camera_odom     = T_odom_camera.inverse();
+            const auto R_odom_camera     = T_odom_camera.rotation();
+            const auto tracker_snapshot  = readback_cache->load();
+            const bool snapshot_is_fresh = tracker_snapshot_is_fresh(
+                tracker_snapshot, *readback_roi_config, detections->timestamp_ns);
+
+            // Pre-convert camera intrinsics once (avoid per-frame cv::eigen2cv allocations).
+            cv::Mat camera_matrix_cv;
+            cv::Mat dist_coeffs_cv;
+            cv::eigen2cv(camera_config->camera_matrix, camera_matrix_cv);
+            cv::eigen2cv(camera_config->distort_coefficient, dist_coeffs_cv);
+
             std::vector<CameraArmorMeasurement> measurements;
             measurements.reserve(detections->detections.size());
             for (const auto& detection : detections->detections) {
-                const auto priors =
-                    tracker_snapshot_is_fresh(
-                        tracker_snapshot, *readback_roi_config, detections->timestamp_ns)
-                        ? make_pose_priors(
-                              detection, tracker_snapshot, T_odom_camera.inverse(),
-                              camera_matrix_cv, dist_coeffs_cv)
-                        : std::vector<PnPSolver::PosePrior>{};
+                const auto priors = snapshot_is_fresh
+                                      ? make_pose_priors(
+                                            detection, tracker_snapshot, T_camera_odom,
+                                            camera_matrix_cv, dist_coeffs_cv)
+                                      : std::vector<PnPSolver::PosePrior>{};
                 auto result =
                     (*solver_ptr)
                         ->solve_with_ba(detection, R_odom_camera, detections->timestamp_ns, priors);
