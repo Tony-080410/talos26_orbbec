@@ -124,7 +124,7 @@ void init_coordinate_system(fast_tf::CoordinateSystem& system, const RobotExtrin
     L4::register_l4_planning_systems(scheduler, std::move(config.vision.l4.get()));
 
     // Register L5 MPC Weapon system (consumes GimbalPlan from L4)
-    L5::register_enhanced_weapon_system(scheduler, std::move(config.vision.l5->mpc_weapon));
+    L5::register_enhanced_weapon_system(scheduler, std::move(config.vision.l5.get()));
 
     // Register Chiral data collection system (publishes TrackerOutput to shared memory)
     if (config.hardware->chiral) {

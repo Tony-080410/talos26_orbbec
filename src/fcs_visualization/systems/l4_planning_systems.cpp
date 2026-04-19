@@ -2,6 +2,8 @@
 #include "L4_planning/target_selection_trace.hpp"
 #include "L5_weapon/fire_control.hpp"
 #include "base.hpp"
+#include "core/time.hpp"
+#include "core/trajectory/resource.hpp"
 #include "foxglove_types.hpp"
 #include "scene_builder.hpp"
 
@@ -368,22 +370,6 @@ inline void append_selection_trace_metadata(
     return seed_json;
 }
 
-[[nodiscard]] inline nlohmann::json json_ballistic_trajectory(const ::fcs::L4::GimbalPlan& plan) {
-    nlohmann::json trajectory = nlohmann::json::array();
-    if (!plan.viz_debug) {
-        return trajectory;
-    }
-
-    for (const auto& [x, z] : plan.viz_debug->trajectory) {
-        trajectory.push_back({
-            {"x", x},
-            {"z", z},
-        });
-    }
-
-    return trajectory;
-}
-
 [[nodiscard]] inline nlohmann::json json_gimbal_plan(const ::fcs::L4::GimbalPlan& plan) {
     nlohmann::json plan_json = {
         {           "timestamp_ns",         plan.timestamp_ns                                   },
@@ -408,7 +394,6 @@ inline void append_selection_trace_metadata(
          plan.predicted_position ? json_vec3(*plan.predicted_position) : nlohmann::json(nullptr)},
         {           "planner_seed",
          plan.planner_seed ? json_planner_seed(*plan.planner_seed) : nlohmann::json(nullptr)    },
-        {   "ballistic_trajectory",                              json_ballistic_trajectory(plan)},
     };
 
     return plan_json;
@@ -543,18 +528,14 @@ void register_l4_planning_systems(talos::scheduler::Scheduler& app) {
             cmd_json["timestamp"]["sec"]  = cmd->timestamp_ns / 1000000000L;
             cmd_json["timestamp"]["nsec"] = cmd->timestamp_ns % 1000000000L;
             cmd_json["pre_plan"]          = {
-                {        "yaw",   cmd->plan_yaw},
-                {      "pitch", cmd->plan_pitch},
-                {"fire_advice",  cmd->plan_fire},
+                {     "yaw",      cmd->plan_yaw},
+                {   "pitch",    cmd->plan_pitch},
+                {"distance", cmd->plan_distance},
             };
             cmd_json["post_plan"] = {
                 {        "yaw",   cmd->yaw},
                 {      "pitch", cmd->pitch},
                 {"fire_advice",  cmd->fire},
-            };
-            cmd_json["reference_center"] = {
-                {  "yaw",   cmd->ref_yaw},
-                {"pitch", cmd->ref_pitch},
             };
             cmd_json["yaw"]         = cmd->yaw;
             cmd_json["pitch"]       = cmd->pitch;
@@ -853,120 +834,142 @@ void register_l4_planning_systems(talos::scheduler::Scheduler& app) {
                     entities.push_back(builder.build());
                 }
             }
-
-            // Bullet trajectory
-            if (plan->viz_debug && !plan->viz_debug->trajectory.empty()) {
-                std::vector<Eigen::Vector3d> traj_points;
-                for (const auto& [x, z] : plan->viz_debug->trajectory) {
-                    traj_points.emplace_back(x, 0, z);
-                }
-                auto traj_entities = viz::patterns::bullet_trajectory(
-                    traj_points, plan->fire_advice, plan->timestamp_ns);
-                entities.insert(
-                    entities.end(), std::make_move_iterator(traj_entities.begin()),
-                    std::make_move_iterator(traj_entities.end()));
-            }
-
             publish_scene_if_nonempty<GimbalSceneMessage>(*server, std::move(entities));
         });
 
-    app.add_system<talos::pool_compute>(
+    app.add_system<talos::fixed_rate<250>>(
         "foxglove_l4_mpc_prediction_scene",
         [](talos::spmc<::fcs::L5::WeaponCommand, WeaponCommandChannelTopic> cmd_in,
-           talos::res<std::shared_ptr<FoxgloveServer>> server) {
+           talos::res<std::shared_ptr<FoxgloveServer>> server,
+           core::trajectory::trajectory_solver solver, talos::res<fast_tf::CoordinateSystem> coord,
+           core::trajectory::bullet_speed bullet_speed) {
             if (!detail::foxglove_ready(*server, cmd_in)) {
                 return;
             }
 
-            auto cmd = cmd_in.read();
-            if (!cmd || !cmd->viz_debug) {
-                return;
-            }
-
             std::vector<::foxglove::schemas::SceneEntity> entities;
-            entities.reserve(
-                cmd->viz_debug->reference_plan.size() + cmd->viz_debug->optimized_plan.size());
+            auto cmd = cmd_in.read();
+            if (cmd && cmd->viz_debug) {
+                entities.reserve(
+                    cmd->viz_debug->reference_plan.size() + cmd->viz_debug->optimized_plan.size());
 
-            for (int i = 0; i < static_cast<int>(cmd->viz_debug->reference_plan.size()); ++i) {
-                const auto& reference = cmd->viz_debug->reference_plan[i];
-                entities.push_back(
-                    viz::patterns::mpc_trajectory_point<fast_tf::odom>(
-                        reference.world_position, i - cmd->viz_debug->center_index, true,
-                        cmd->timestamp_ns));
-            }
-
-            for (int i = 0; i < static_cast<int>(cmd->viz_debug->optimized_plan.size()); ++i) {
-                const auto& optimized = cmd->viz_debug->optimized_plan[i];
-                entities.push_back(
-                    viz::patterns::mpc_trajectory_point<fast_tf::odom>(
-                        optimized.world_position, i - cmd->viz_debug->center_index, false,
-                        cmd->timestamp_ns));
-            }
-
-            // ── Reference trajectory connecting line ─────────────────────
-            if (cmd->viz_debug->reference_plan.size() >= 2) {
-                std::vector<::foxglove::schemas::Point3> ref_line_points;
-                ref_line_points.reserve(cmd->viz_debug->reference_plan.size());
-                for (const auto& sample : cmd->viz_debug->reference_plan) {
-                    ref_line_points.push_back(viz::make_point3(sample.world_position));
+                for (int i = 0; i < static_cast<int>(cmd->viz_debug->reference_plan.size()); ++i) {
+                    const auto& reference = cmd->viz_debug->reference_plan[i];
+                    entities.push_back(
+                        viz::patterns::mpc_trajectory_point<fast_tf::odom>(
+                            reference.world_position, i - cmd->viz_debug->center_index, true,
+                            cmd->timestamp_ns));
                 }
-                entities.push_back(
-                    viz::EntityBuilder::create<fast_tf::odom>("l4", "mpc_ref_line")
-                        .timestamp(cmd->timestamp_ns)
-                        .line_strip(
-                            std::move(ref_line_points), tac::L4::MPC_REFERENCE,
-                            tac::L4::TRAJECTORY_LINE_THICKNESS)
-                        .build());
-            }
 
-            // ── Optimized trajectory connecting line ─────────────────────
-            if (cmd->viz_debug->optimized_plan.size() >= 2) {
-                std::vector<::foxglove::schemas::Point3> opt_line_points;
-                opt_line_points.reserve(cmd->viz_debug->optimized_plan.size());
-                for (const auto& sample : cmd->viz_debug->optimized_plan) {
-                    opt_line_points.push_back(viz::make_point3(sample.world_position));
+                for (int i = 0; i < static_cast<int>(cmd->viz_debug->optimized_plan.size()); ++i) {
+                    const auto& optimized = cmd->viz_debug->optimized_plan[i];
+                    entities.push_back(
+                        viz::patterns::mpc_trajectory_point<fast_tf::odom>(
+                            optimized.world_position, i - cmd->viz_debug->center_index, false,
+                            cmd->timestamp_ns));
                 }
-                entities.push_back(
-                    viz::EntityBuilder::create<fast_tf::odom>("l4", "mpc_opt_line")
-                        .timestamp(cmd->timestamp_ns)
-                        .line_strip(
-                            std::move(opt_line_points), tac::L4::MPC_PRESENT,
-                            tac::L4::TRAJECTORY_LINE_THICKNESS)
-                        .build());
+
+                // ── Reference trajectory connecting line ─────────────────────
+                if (cmd->viz_debug->reference_plan.size() >= 2) {
+                    std::vector<::foxglove::schemas::Point3> ref_line_points;
+                    ref_line_points.reserve(cmd->viz_debug->reference_plan.size());
+                    for (const auto& sample : cmd->viz_debug->reference_plan) {
+                        ref_line_points.push_back(viz::make_point3(sample.world_position));
+                    }
+                    entities.push_back(
+                        viz::EntityBuilder::create<fast_tf::odom>("l4", "mpc_ref_line")
+                            .timestamp(cmd->timestamp_ns)
+                            .line_strip(
+                                std::move(ref_line_points), tac::L4::MPC_REFERENCE,
+                                tac::L4::TRAJECTORY_LINE_THICKNESS)
+                            .build());
+                }
+
+                // ── Optimized trajectory connecting line ─────────────────────
+                if (cmd->viz_debug->optimized_plan.size() >= 2) {
+                    std::vector<::foxglove::schemas::Point3> opt_line_points;
+                    opt_line_points.reserve(cmd->viz_debug->optimized_plan.size());
+                    for (const auto& sample : cmd->viz_debug->optimized_plan) {
+                        opt_line_points.push_back(viz::make_point3(sample.world_position));
+                    }
+                    entities.push_back(
+                        viz::EntityBuilder::create<fast_tf::odom>("l4", "mpc_opt_line")
+                            .timestamp(cmd->timestamp_ns)
+                            .line_strip(
+                                std::move(opt_line_points), tac::L4::MPC_PRESENT,
+                                tac::L4::TRAJECTORY_LINE_THICKNESS)
+                            .build());
+                }
+
+                const int center_index = std::clamp(
+                    cmd->viz_debug->center_index, 0,
+                    static_cast<int>(cmd->viz_debug->optimized_plan.size()) - 1);
+
+                const auto add_key_marker =
+                    [&](const std::string& entity_id, const ::fcs::L5::TrajectoryPlanSample& sample,
+                        const std::string& label, const ::foxglove::schemas::Color& color,
+                        double size) {
+                        entities.push_back(
+                            viz::EntityBuilder::create<fast_tf::odom>("l4", entity_id)
+                                .timestamp(cmd->timestamp_ns)
+                                .position(sample.world_position)
+                                .size(size)
+                                .color(color)
+                                .sphere()
+                                .text_with_offset(
+                                    label, 0.0, 0.0, tac::L3::LABEL_OFFSET_Z, tac::Text::SIZE_SMALL)
+                                .build());
+                    };
+
+                add_key_marker(
+                    "mpc_ref_center",
+                    cmd->viz_debug->reference_plan[static_cast<size_t>(center_index)],
+                    l4_detail::key_point_label(
+                        "Ref", cmd->viz_debug->reference_plan[static_cast<size_t>(center_index)]),
+                    tac::L4::MPC_REFERENCE, tac::L4::SELECTION_SIZE);
+
+                add_key_marker(
+                    "mpc_opt_center",
+                    cmd->viz_debug->optimized_plan[static_cast<size_t>(center_index)],
+                    l4_detail::key_point_label(
+                        "Opt", cmd->viz_debug->optimized_plan[static_cast<size_t>(center_index)]),
+                    tac::L4::MPC_PRESENT, tac::L4::SELECTION_SIZE);
+                auto trajectory = solver->get()->generate_trajectory(
+                    cmd->pitch, bullet_speed->bullet_speed, cmd->distance);
+                std::vector<Eigen::Vector3d> traj_points;
+                traj_points.reserve(trajectory.size());
+                for (const auto& [x, z] : trajectory) {
+                    traj_points.emplace_back(
+                        x * std::cos(cmd->pitch) + z * std::sin(cmd->pitch), 0,
+                        -x * std::sin(cmd->pitch) + z * std::cos(cmd->pitch));
+                }
+                auto traj_entities =
+                    viz::patterns::bullet_trajectory(traj_points, cmd->fire, cmd->timestamp_ns);
+                entities.insert(
+                    entities.end(), std::make_move_iterator(traj_entities.begin()),
+                    std::make_move_iterator(traj_entities.end()));
+            } else {
+
+                auto f = fast_tf::lookup_clamped<fast_tf::odom, fast_tf::gimbal>(
+                    *coord, clock::now_ns());
+                if (f) {
+                    auto [r, p, y] = f->euler_rot().rpy();
+                    auto trajectory =
+                        solver->get()->generate_trajectory(p, bullet_speed->bullet_speed, 15.0);
+                    std::vector<Eigen::Vector3d> traj_points;
+                    traj_points.reserve(trajectory.size());
+                    for (const auto& [x, z] : trajectory) {
+                        traj_points.emplace_back(
+                            x * std::cos(p) + z * std::sin(p), 0,
+                            -x * std::sin(p) + z * std::cos(p));
+                    }
+                    auto traj_entities =
+                        viz::patterns::bullet_trajectory(traj_points, false, clock::now_ns());
+                    entities.insert(
+                        entities.end(), std::make_move_iterator(traj_entities.begin()),
+                        std::make_move_iterator(traj_entities.end()));
+                }
             }
-
-            const int center_index = std::clamp(
-                cmd->viz_debug->center_index, 0,
-                static_cast<int>(cmd->viz_debug->optimized_plan.size()) - 1);
-
-            const auto add_key_marker = [&](const std::string& entity_id,
-                                            const ::fcs::L5::TrajectoryPlanSample& sample,
-                                            const std::string& label,
-                                            const ::foxglove::schemas::Color& color, double size) {
-                entities.push_back(
-                    viz::EntityBuilder::create<fast_tf::odom>("l4", entity_id)
-                        .timestamp(cmd->timestamp_ns)
-                        .position(sample.world_position)
-                        .size(size)
-                        .color(color)
-                        .sphere()
-                        .text_with_offset(
-                            label, 0.0, 0.0, tac::L3::LABEL_OFFSET_Z, tac::Text::SIZE_SMALL)
-                        .build());
-            };
-
-            add_key_marker(
-                "mpc_ref_center", cmd->viz_debug->reference_plan[static_cast<size_t>(center_index)],
-                l4_detail::key_point_label(
-                    "Ref", cmd->viz_debug->reference_plan[static_cast<size_t>(center_index)]),
-                tac::L4::MPC_REFERENCE, tac::L4::SELECTION_SIZE);
-
-            add_key_marker(
-                "mpc_opt_center", cmd->viz_debug->optimized_plan[static_cast<size_t>(center_index)],
-                l4_detail::key_point_label(
-                    "Opt", cmd->viz_debug->optimized_plan[static_cast<size_t>(center_index)]),
-                tac::L4::MPC_PRESENT, tac::L4::SELECTION_SIZE);
-
             publish_scene_if_nonempty<MpcPredictionSceneMessage>(*server, std::move(entities));
         });
 }

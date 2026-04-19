@@ -34,15 +34,11 @@ struct WeaponCommand {
     // L4 原始 plan（优化前，仅调试）
     double plan_yaw{0.0};
     double plan_pitch{0.0};
-    bool plan_fire{false};
+    double plan_distance{0.0}; // 目标距离 (米)
 
     // 云台角度
     double yaw{0.0};   // 目标 yaw (弧度)
     double pitch{0.0}; // 目标 pitch (弧度)
-
-    // L5 参考中心点（仅调试）
-    double ref_yaw{0.0};   // 目标 yaw (弧度)
-    double ref_pitch{0.0}; // 目标 pitch (弧度)
 
     // 前馈 (用于预测补偿)
     double yaw_vel{0.0};   // yaw 角速度 (rad/s)

@@ -88,12 +88,12 @@ constexpr ::foxglove::schemas::Color CANDIDATE_RUNNER_UP  = {1.00, 0.75, 0.20, 0
 constexpr ::foxglove::schemas::Color CANDIDATE_ELIMINATED = {0.60, 0.60, 0.60, 0.25};
 
 // Trajectory colors
-constexpr ::foxglove::schemas::Color TRAJECTORY_FIRE = {0.50, 1.00, 0.30, 0.80};
-constexpr ::foxglove::schemas::Color TRAJECTORY_HOLD = {0.30, 0.40, 0.50, 0.50};
+constexpr ::foxglove::schemas::Color TRAJECTORY_FIRE = {0.50, 1.00, 0.30, 0.40};
+constexpr ::foxglove::schemas::Color TRAJECTORY_HOLD = {0.30, 0.40, 0.50, 0.25};
 
 // MPC colors
-constexpr ::foxglove::schemas::Color MPC_PRESENT   = {0.00, 1.00, 0.80, 0.85};
-constexpr ::foxglove::schemas::Color MPC_REFERENCE = {1.00, 0.70, 0.00, 0.70};
+constexpr ::foxglove::schemas::Color MPC_PRESENT   = {0.00, 1.00, 0.80, 0.40};
+constexpr ::foxglove::schemas::Color MPC_REFERENCE = {1.00, 0.70, 0.00, 0.35};
 
 // Sizes — 3-tier hierarchy (2x ratio between tiers)
 constexpr double SPATIAL_LINK_THICKNESS    = 0.008;

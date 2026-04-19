@@ -134,8 +134,6 @@ struct ControlSampleRecord {
     uint16_t reserved2{0};
     float weapon_yaw{0.0F};
     float weapon_pitch{0.0F};
-    float weapon_ref_yaw{0.0F};
-    float weapon_ref_pitch{0.0F};
     float weapon_yaw_vel{0.0F};
     float weapon_pitch_vel{0.0F};
     float weapon_yaw_accel{0.0F};
@@ -243,8 +241,6 @@ auto serialize_control_chunk(
         append_le_uint<uint16_t>(bytes, sample.reserved2);
         append_le_float32(bytes, sample.weapon_yaw);
         append_le_float32(bytes, sample.weapon_pitch);
-        append_le_float32(bytes, sample.weapon_ref_yaw);
-        append_le_float32(bytes, sample.weapon_ref_pitch);
         append_le_float32(bytes, sample.weapon_yaw_vel);
         append_le_float32(bytes, sample.weapon_pitch_vel);
         append_le_float32(bytes, sample.weapon_yaw_accel);
@@ -529,19 +525,6 @@ struct ConfigSnapshotSource {
         {           "planner_seed",
          plan.planner_seed ? json(to_json_planner_seed(*plan.planner_seed)) : json(nullptr)    },
     };
-
-    if (plan.viz_debug) {
-        json trajectory = json::array();
-        for (const auto& [x, z] : plan.viz_debug->trajectory) {
-            trajectory.push_back(json::array({x, z}));
-        }
-        result["viz_debug"] = json{
-            {"trajectory", std::move(trajectory)}
-        };
-    } else {
-        result["viz_debug"] = nullptr;
-    }
-
     return result;
 }
 
@@ -581,11 +564,9 @@ struct ConfigSnapshotSource {
         {"plan_timestamp_ns", cmd.plan_timestamp_ns},
         {         "plan_yaw",          cmd.plan_yaw},
         {       "plan_pitch",        cmd.plan_pitch},
-        {        "plan_fire",         cmd.plan_fire},
+        {    "plan_distance",     cmd.plan_distance},
         {              "yaw",               cmd.yaw},
         {            "pitch",             cmd.pitch},
-        {          "ref_yaw",           cmd.ref_yaw},
-        {        "ref_pitch",         cmd.ref_pitch},
         {          "yaw_vel",           cmd.yaw_vel},
         {        "pitch_vel",         cmd.pitch_vel},
         {        "yaw_accel",         cmd.yaw_accel},
@@ -1102,12 +1083,9 @@ public:
             sample.weapon_plan_timestamp_ns = weapon_command.value->plan_timestamp_ns;
             sample.weapon_plan_yaw          = static_cast<float>(weapon_command.value->plan_yaw);
             sample.weapon_plan_pitch        = static_cast<float>(weapon_command.value->plan_pitch);
-            sample.weapon_plan_fire         = weapon_command.value->plan_fire ? 1 : 0;
             sample.weapon_fire              = weapon_command.value->fire ? 1 : 0;
             sample.weapon_yaw               = static_cast<float>(weapon_command.value->yaw);
             sample.weapon_pitch             = static_cast<float>(weapon_command.value->pitch);
-            sample.weapon_ref_yaw           = static_cast<float>(weapon_command.value->ref_yaw);
-            sample.weapon_ref_pitch         = static_cast<float>(weapon_command.value->ref_pitch);
             sample.weapon_yaw_vel           = static_cast<float>(weapon_command.value->yaw_vel);
             sample.weapon_pitch_vel         = static_cast<float>(weapon_command.value->pitch_vel);
             sample.weapon_yaw_accel         = static_cast<float>(weapon_command.value->yaw_accel);

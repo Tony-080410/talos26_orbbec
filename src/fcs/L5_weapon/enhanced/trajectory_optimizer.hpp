@@ -2,18 +2,11 @@
 
 #include "L4_planning/config.hpp"
 #include "L4_planning/gimbal_planner/types.hpp"
-#include "L4_planning/planning/fire_decision.hpp"
 #include "L5_weapon/config.hpp"
 #include "L5_weapon/fire_control.hpp"
-#include "core/trajectory/reference_trajectory.hpp"
 #include "dual_small_mpc_solver.hpp"
-#include "frame.hpp"
-
-#include <algorithm>
-#include <cmath>
 #include <cstdint>
 #include <expected>
-#include <numbers>
 #include <string>
 
 namespace fcs::L5 {
@@ -41,8 +34,7 @@ public:
         passthrough(const L4::GimbalPlan& plan, uint64_t command_timestamp_ns) const noexcept;
 
     [[nodiscard]] std::expected<WeaponCommand, std::string> optimize(
-        const L4::GimbalPlan& plan, const L4::FireDecisionConfig& fire_decision,
-        const L4::AimerConfig& aimer_config, const fast_tf::CoordinateSystem& tf_buffer,
+        const L4::GimbalPlan& plan, const FireDecisionConfig& fire_decision,
         uint64_t command_timestamp_ns) noexcept;
 
 private:

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "L5_weapon/fire_decision.hpp"
 namespace fcs::L5 {
 
 struct MpcAxisConfig {
@@ -41,6 +42,8 @@ struct WeaponControllerConfig {
 // ============================================================================
 
 struct L5Config {
+    // Fire decision configuration shared by L4 aiming and L5 fire gating.
+    FireDecisionConfig fire_decision{};
     WeaponControllerConfig mpc_weapon{};
 };
 

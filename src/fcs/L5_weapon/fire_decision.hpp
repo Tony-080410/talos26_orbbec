@@ -5,7 +5,7 @@
 #include <algorithm>
 #include <cmath>
 
-namespace fcs::L4 {
+namespace fcs::L5 {
 
 /// Fire decision configuration
 struct FireDecisionConfig {
@@ -49,4 +49,4 @@ struct FireDecisionConfig {
         && std::abs(core::math::normalize_angle(target_pitch - cur_pitch)) < shooting_range_pitch;
 }
 
-} // namespace fcs::L4
+} // namespace fcs::L5

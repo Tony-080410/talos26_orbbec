@@ -147,17 +147,6 @@ yaw_log_k = 0.005
 # ============================================================================
 # L4 Planning Configuration (Aimer + Planner Architecture)
 # ============================================================================
-
-# Fire decision configuration shared by L4 aimers and the L5 MPC fire gate.
-[fire_decision]
-# Minimum shooting threshold (radians), used for long distances
-# Shared fire gate threshold for L4/L5
-fire_thresh = 0.01744444
-# Physical window dimensions (meters)
-shooting_range_h = 0.135
-shooting_range_w_small = 0.135
-shooting_range_w_large = 0.24
-
 # Aimer configuration (shared by all target types: Robot/Outpost/Rune)
 [aimer]
 # System delay compensation (seconds)
@@ -231,8 +220,17 @@ rho = 1.225
 # ============================================================================
 # L5 Weapon MPC Controller Configuration
 # ============================================================================
-# L5-only MPC settings live under [mpc_weapon].
+# Fire decision configuration
+[fire_decision]
+# Minimum shooting threshold (radians), used for long distances
+# Shared fire gate threshold for L5
+fire_thresh = 0.01744444
+# Physical window dimensions (meters)
+shooting_range_h = 0.135
+shooting_range_w_small = 0.135
+shooting_range_w_large = 0.24
 
+# L5-only MPC settings live under [mpc_weapon].
 [mpc_weapon]
 enabled = true
 enable_debug = true

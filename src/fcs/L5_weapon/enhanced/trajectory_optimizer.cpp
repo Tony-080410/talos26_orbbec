@@ -1,7 +1,6 @@
 #include "L5_weapon/enhanced/trajectory_optimizer.hpp"
 
-#include "L4_planning/common/transform_utils.hpp"
-#include "L4_planning/planning/fire_decision.hpp"
+#include "L5_weapon/fire_decision.hpp"
 #include "core/math/normalize.hpp"
 
 #include <Eigen/Dense>
@@ -123,11 +122,9 @@ WeaponCommand TinyMpcTrajectoryOptimizer::passthrough(
     cmd.plan_timestamp_ns = plan.timestamp_ns;
     cmd.plan_yaw          = plan.yaw;
     cmd.plan_pitch        = plan.pitch;
-    cmd.plan_fire         = plan.fire_advice;
+    cmd.plan_distance     = plan.distance;
     cmd.yaw               = plan.yaw;
     cmd.pitch             = plan.pitch;
-    cmd.ref_yaw           = plan.aim_yaw;
-    cmd.ref_pitch         = plan.aim_pitch;
     cmd.yaw_vel           = plan.yaw_vel;
     cmd.pitch_vel         = plan.pitch_vel;
     cmd.yaw_accel         = plan.yaw_acc;
@@ -138,8 +135,7 @@ WeaponCommand TinyMpcTrajectoryOptimizer::passthrough(
 }
 
 std::expected<WeaponCommand, std::string> TinyMpcTrajectoryOptimizer::optimize(
-    const L4::GimbalPlan& plan, const L4::FireDecisionConfig& fire_decision,
-    const L4::AimerConfig& aimer_config, const fast_tf::CoordinateSystem& coord,
+    const L4::GimbalPlan& plan, const FireDecisionConfig& fire_decision,
     uint64_t command_timestamp_ns) noexcept {
     if (!config_.enabled) {
         return std::unexpected("mpc_weapon disabled");
@@ -207,10 +203,8 @@ std::expected<WeaponCommand, std::string> TinyMpcTrajectoryOptimizer::optimize(
     cmd.plan_timestamp_ns = plan.timestamp_ns;
     cmd.plan_yaw          = plan.yaw;
     cmd.plan_pitch        = plan.pitch;
-    cmd.plan_fire         = plan.fire_advice;
-    cmd.ref_yaw   = normalize_angle(reference.state(0, center_index) + reference.yaw_origin);
-    cmd.ref_pitch = reference.state(2, center_index);
-    cmd.yaw       = normalize_angle(
+    cmd.plan_distance     = plan.distance;
+    cmd.yaw               = normalize_angle(
         static_cast<double>(yaw_solver.state(0, center_index)) + reference.yaw_origin);
     cmd.pitch = std::clamp(
         static_cast<double>(pitch_solver.state(0, center_index)), config_.pitch_min,
@@ -221,8 +215,6 @@ std::expected<WeaponCommand, std::string> TinyMpcTrajectoryOptimizer::optimize(
     cmd.pitch_accel = static_cast<double>(pitch_solver.input(control_index));
     cmd.distance    = reference.distances[center_index];
     cmd.tof         = reference.time_of_flights[center_index];
-    cmd.fire =
-        L4::is_on_target(fire_decision, plan.yaw, plan.pitch, cmd.yaw, cmd.pitch, cmd.distance);
     if (config_.enable_debug) {
         cmd.viz_debug = build_debug_data(center_index, reference, yaw_solver, pitch_solver);
     }

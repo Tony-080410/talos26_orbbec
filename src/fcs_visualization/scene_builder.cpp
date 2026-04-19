@@ -325,18 +325,6 @@ std::vector<::foxglove::schemas::SceneEntity> bullet_trajectory(
     const auto color = can_fire ? L4::TRAJECTORY_FIRE : L4::TRAJECTORY_HOLD;
 
     std::vector<::foxglove::schemas::SceneEntity> entities;
-    entities.reserve(points.size());
-
-    for (size_t i = 0; i < points.size(); ++i) {
-        entities.push_back(
-            EntityBuilder::create<fast_tf::muzzle>("l4", fmt::format("bullet_{}", i))
-                .position(points[i])
-                .size(L4::TRAJECTORY_DOT)
-                .color(color)
-                .sphere()
-                .timestamp(timestamp_ns)
-                .build());
-    }
 
     // Connect trajectory dots with a visible line strip
     if (points.size() >= 2) {
@@ -348,7 +336,7 @@ std::vector<::foxglove::schemas::SceneEntity> bullet_trajectory(
         entities.push_back(
             EntityBuilder::create<fast_tf::muzzle>("l4", "bullet_traj_line")
                 .timestamp(timestamp_ns)
-                .line_strip(std::move(line_points), color, L4::TRAJECTORY_LINE_THICKNESS)
+                .line_list(std::move(line_points), color, L4::TRAJECTORY_DOT)
                 .build());
     }
 

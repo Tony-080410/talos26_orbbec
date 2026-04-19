@@ -9,7 +9,6 @@
 #include "L4_planning/common/transform_utils.hpp"
 #include "L4_planning/config.hpp"
 #include "L4_planning/gimbal_planner/types.hpp"
-#include "L4_planning/planning/fire_decision.hpp"
 #include "L4_planning/selected_target_snapshot.hpp"
 #include "L4_planning/target_selection_trace.hpp"
 #include "L4_planning/trajectory_builder.hpp"
@@ -33,7 +32,6 @@
 #include <vector>
 
 namespace fcs::L4 {
-static constexpr double kMaxVisualizationDistance = 15.0;
 
 namespace {
 
@@ -647,16 +645,6 @@ void register_aimer_systems(talos::Scheduler& scheduler, L4Config&& config) {
                         }
                     }
                 }
-                VisualizationDebugData viz_debug;
-                viz_debug.trajectory = solver_ref.generate_trajectory(
-                    aim_result->aim_pitch, bullet_speed, kMaxVisualizationDistance);
-                for (auto& p : viz_debug.trajectory) {
-                    const double x = p.first;
-                    const double z = p.second;
-                    p.first        = x * std::cos(plan.pitch) + z * std::sin(plan.pitch);
-                    p.second       = -x * std::sin(plan.pitch) + z * std::cos(plan.pitch);
-                }
-                plan.viz_debug = viz_debug;
                 selected_target_out.write(std::move(selected_target));
                 target_selection_out.write(std::move(target_selection_trace));
                 aimer_out.write(std::move(plan));
