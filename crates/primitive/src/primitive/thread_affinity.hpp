@@ -1,8 +1,10 @@
 #pragma once
 
 #include <cstdint>
+#include <cstring>
 #include <expected>
-#include <string_view>
+#include <fmt/format.h>
+#include <string>
 #include <thread>
 
 #ifdef __APPLE__
@@ -16,46 +18,8 @@
 
 namespace talos::primitive {
 
-/**
- * @brief 线程亲和性操作的错误类型
- */
-enum class AffinityError : std::uint8_t {
-    PlatformNotSupported,       // 当前平台不支持此操作
-    InvalidCoreId,              // 无效的核心ID
-    SetAffinityFailed,          // 设置亲和性失败
-    SetPriorityFailed,          // 设置优先级失败
-    InsufficientPermission,     // 权限不足（如需要root）
-    ExternalThreadNotSupported, // 不支持外部线程设置（macOS限制）
-};
-
-/**
- * @brief 获取错误描述
- */
-[[nodiscard]] constexpr auto error_message(const AffinityError err) noexcept -> std::string_view {
-    switch (err) {
-    case AffinityError::PlatformNotSupported: return "platform does not support this operation";
-    case AffinityError::InvalidCoreId: return "invalid CPU core ID specified";
-    case AffinityError::SetAffinityFailed: return "failed to set thread affinity";
-    case AffinityError::SetPriorityFailed: return "failed to set thread priority";
-    case AffinityError::InsufficientPermission: return "insufficient permission (may require root)";
-    case AffinityError::ExternalThreadNotSupported:
-        return "cannot set affinity for external thread on this platform";
-    }
-    // 穷尽所有枚举值，此处不可达
-    return "unknown error";
-}
-
-/**
- * @brief 获取当前核心ID的结果类型
- *
- * 使用 std::expected 替代裸 int + 魔数(-1)
- */
-using CoreIdResult = std::expected<std::uint32_t, AffinityError>;
-
-/**
- * @brief 无返回值操作的结果类型
- */
-using AffinityResult = std::expected<void, AffinityError>;
+using CoreIdResult   = std::expected<std::uint32_t, std::string>;
+using AffinityResult = std::expected<void, std::string>;
 
 /**
  * @brief 线程亲和性工具 - CPU绑定
@@ -81,7 +45,8 @@ public:
      */
     [[nodiscard]] static auto pin_to_core(const std::uint32_t core_id) noexcept -> AffinityResult {
         if (core_id >= get_num_cores()) {
-            return std::unexpected(AffinityError::InvalidCoreId);
+            return std::unexpected(
+                fmt::format("pin_to_core: core_id {} >= num_cores {}", core_id, get_num_cores()));
         }
 
 #ifdef __linux__
@@ -93,38 +58,43 @@ public:
         const int result = pthread_setaffinity_np(thread, sizeof(cpu_set_t), &cpuset);
 
         if (result != 0) {
-            return std::unexpected(AffinityError::SetAffinityFailed);
+            return std::unexpected(
+                fmt::format(
+                    "pin_to_core: pthread_setaffinity_np(core {}) failed: {}", core_id,
+                    std::strerror(result)));
         }
         return {};
+#elif defined(__APPLE__) && defined(__arm64__)
+        // Apple Silicon: THREAD_AFFINITY_POLICY not supported (kern_return=46)
+        // The OS handles P-core/E-core scheduling; affinity tags are Intel-only.
+        return {};
 #elif defined(__APPLE__)
-        // macOS不支持严格的CPU绑定，使用affinity tag作为提示
-        // 相同tag的线程会倾向于调度到同一核心组
-        thread_affinity_policy_data_t policy = {static_cast<integer_t>(core_id + 1)}; // tag从1开始
+        // Intel Mac: affinity tag is a scheduling hint (not strict binding)
+        thread_affinity_policy_data_t policy = {static_cast<integer_t>(core_id + 1)};
         const thread_port_t mach_thread      = pthread_mach_thread_np(pthread_self());
 
-        const kern_return_t result = thread_policy_set(
+        const kern_return_t kr = thread_policy_set(
             mach_thread, THREAD_AFFINITY_POLICY, reinterpret_cast<thread_policy_t>(&policy),
             THREAD_AFFINITY_POLICY_COUNT);
-        if (result != KERN_SUCCESS) {
-            return std::unexpected(AffinityError::SetAffinityFailed);
+        if (kr != KERN_SUCCESS) {
+            return std::unexpected(
+                fmt::format(
+                    "pin_to_core: thread_policy_set(affinity, tag={}) failed: {} (kern_return={})",
+                    core_id + 1, mach_error_string(kr), kr));
         }
         return {};
 #else
-        static_cast<void>(core_id);
-        return std::unexpected(AffinityError::PlatformNotSupported);
+        return std::unexpected("pin_to_core: unsupported platform");
 #endif
     }
 
-    /**
-     * @brief 将指定std::thread绑定到CPU核心
-     *
-     * @note macOS不支持从外部设置线程亲和性，必须在线程内部调用pin_to_core
-     */
     [[nodiscard]] static auto
         pin_thread_to_core(std::thread& thread, const std::uint32_t core_id) noexcept
         -> AffinityResult {
         if (core_id >= get_num_cores()) {
-            return std::unexpected(AffinityError::InvalidCoreId);
+            return std::unexpected(
+                fmt::format(
+                    "pin_thread_to_core: core_id {} >= num_cores {}", core_id, get_num_cores()));
         }
 
 #ifdef __linux__
@@ -136,19 +106,22 @@ public:
             pthread_setaffinity_np(thread.native_handle(), sizeof(cpu_set_t), &cpuset);
 
         if (result != 0) {
-            return std::unexpected(AffinityError::SetAffinityFailed);
+            return std::unexpected(
+                fmt::format(
+                    "pin_thread_to_core: pthread_setaffinity_np(core {}) failed: {}", core_id,
+                    std::strerror(result)));
         }
         return {};
 
 #elif defined(__APPLE__)
-        // macOS: 需要在线程内部设置
         static_cast<void>(thread);
         static_cast<void>(core_id);
-        return std::unexpected(AffinityError::ExternalThreadNotSupported);
+        return std::unexpected(
+            "pin_thread_to_core: macOS does not support setting affinity from external thread");
 #else
         static_cast<void>(thread);
         static_cast<void>(core_id);
-        return std::unexpected(AffinityError::PlatformNotSupported);
+        return std::unexpected("pin_thread_to_core: unsupported platform");
 #endif
     }
 
@@ -177,11 +150,10 @@ public:
 
         const int result = pthread_setschedparam(pthread_self(), SCHED_FIFO, &param);
         if (result != 0) {
-            // EPERM表示权限不足
-            if (result == EPERM) {
-                return std::unexpected(AffinityError::InsufficientPermission);
-            }
-            return std::unexpected(AffinityError::SetPriorityFailed);
+            return std::unexpected(
+                fmt::format(
+                    "set_realtime_priority: pthread_setschedparam(SCHED_FIFO, prio={}) failed: {}",
+                    config.priority, std::strerror(result)));
         }
         return {};
 
@@ -193,17 +165,21 @@ public:
         policy.preemptible = config.preemptible ? TRUE : FALSE;
 
         const thread_port_t mach_thread = pthread_mach_thread_np(pthread_self());
-        const kern_return_t result      = thread_policy_set(
+        const kern_return_t kr          = thread_policy_set(
             mach_thread, THREAD_TIME_CONSTRAINT_POLICY, reinterpret_cast<thread_policy_t>(&policy),
             THREAD_TIME_CONSTRAINT_POLICY_COUNT);
 
-        if (result != KERN_SUCCESS) {
-            return std::unexpected(AffinityError::SetPriorityFailed);
+        if (kr != KERN_SUCCESS) {
+            return std::unexpected(
+                fmt::format(
+                    "set_realtime_priority: thread_policy_set(time_constraint, comp={}ns, "
+                    "constr={}ns) failed: {} (kern_return={})",
+                    config.computation_ns, config.constraint_ns, mach_error_string(kr), kr));
         }
         return {};
 #else
         static_cast<void>(config);
-        return std::unexpected(AffinityError::PlatformNotSupported);
+        return std::unexpected("set_realtime_priority: unsupported platform");
 #endif
     }
 
@@ -223,14 +199,13 @@ public:
 #ifdef __linux__
         const int cpu = sched_getcpu();
         if (cpu < 0) {
-            return std::unexpected(AffinityError::PlatformNotSupported);
+            return std::unexpected("get_current_core: sched_getcpu() failed");
         }
         return static_cast<std::uint32_t>(cpu);
 #elif defined(__APPLE__)
-        // macOS没有直接的API
-        return std::unexpected(AffinityError::PlatformNotSupported);
+        return std::unexpected("get_current_core: not available on macOS");
 #else
-        return std::unexpected(AffinityError::PlatformNotSupported);
+        return std::unexpected("get_current_core: unsupported platform");
 #endif
     }
 };

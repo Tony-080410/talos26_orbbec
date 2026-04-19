@@ -1,30 +1,20 @@
 #pragma once
 
 #include <algorithm>
-#include <array>
+#include <atomic>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <iostream>
-#include <mutex>
 #include <numeric>
-#include <ranges>
 #include <vector>
 
 namespace talos::primitive {
+
 /**
- * @brief High-performance latency probe
+ * @brief Low-overhead latency probe
  *
- * Uses std::chrono::steady_clock which is faster than high_resolution_clock
- * on most platforms (no time zone adjustment, monotonic).
- *
- * Design:
- * - Records start timestamp on construction
- * - Supports elapsed time queries
- * - Lock-free: no allocations, no system calls in critical path
- * - Portable: works on x86-64, ARM64, etc.
- *
- * Overhead: ~20-40 nanoseconds per call (optimized)
+ * steady_clock: monotonic, no TZ adjustment, ~20ns overhead per call.
  */
 class LatencyProbe {
 public:
@@ -33,14 +23,8 @@ public:
 
     ~LatencyProbe() = default;
 
-    /**
-     * @brief Get elapsed nanoseconds since construction
-     */
     [[nodiscard]] uint64_t elapsed_ns() const noexcept { return now_ns() - start_ns_; }
 
-    /**
-     * @brief Get elapsed nanoseconds and reset
-     */
     uint64_t snapshot_and_reset() noexcept {
         const auto now     = now_ns();
         const auto elapsed = now - start_ns_;
@@ -51,47 +35,40 @@ public:
 private:
     uint64_t start_ns_;
 
-    /**
-     * @brief Get current time in nanoseconds
-     * Uses steady_clock which is faster than high_resolution_clock
-     */
     static uint64_t now_ns() noexcept {
-        return std::chrono::time_point_cast<std::chrono::nanoseconds>(
-                   std::chrono::steady_clock::now())
-            .time_since_epoch()
-            .count();
+        return static_cast<uint64_t>(
+            std::chrono::time_point_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now())
+                .time_since_epoch()
+                .count());
     }
 };
 
 /**
- * @brief Lock-free latency histogram for benchmark results
+ * @brief Lock-free SPSC latency histogram
  *
- * Accumulates latency samples and computes statistics:
- * - mean, min, max
- * - percentiles (p50, p95, p99, p999)
- * - standard deviation
- *
- * Uses a fixed-size ring buffer (no allocations during measurement)
+ * record(): one relaxed load + one store + one release store (~5ns).
+ * Keeps the most recent kCapacity samples in a power-of-2 ring buffer.
+ * Heap-allocated — safe to use as member without blowing stack.
  */
 class LatencyHistogram {
 public:
-    static constexpr size_t MAX_SAMPLES = 1000000; // 1M samples = 1GB
+    static constexpr uint32_t kCapacity = 4096;
+    static constexpr uint32_t kMask     = kCapacity - 1;
+    static_assert((kCapacity & kMask) == 0, "kCapacity must be power of 2");
 
     LatencyHistogram()
-        : samples_()
-        , count_(0) {}
+        : write_pos_(0)
+        , samples_(kCapacity, 0) {}
 
-    LatencyHistogram(LatencyHistogram&& other) noexcept {
-        std::lock_guard lock(other.lock_);
-        samples_ = other.samples_;
-        count_   = other.count_;
-    }
+    LatencyHistogram(LatencyHistogram&& other) noexcept
+        : write_pos_(other.write_pos_.load(std::memory_order_acquire))
+        , samples_(std::move(other.samples_)) {}
 
     LatencyHistogram& operator=(LatencyHistogram&& other) noexcept {
         if (this != &other) {
-            std::scoped_lock lock(lock_, other.lock_);
-            samples_ = other.samples_;
-            count_   = other.count_;
+            samples_ = std::move(other.samples_);
+            write_pos_.store(
+                other.write_pos_.load(std::memory_order_acquire), std::memory_order_release);
         }
         return *this;
     }
@@ -99,24 +76,17 @@ public:
     LatencyHistogram(const LatencyHistogram&)            = delete;
     LatencyHistogram& operator=(const LatencyHistogram&) = delete;
 
-    /**
-     * @brief Record a latency sample (nanoseconds)
-     */
-    void record(const uint64_t latency_ns) {
-        std::lock_guard lock(lock_);
-        if (count_ < MAX_SAMPLES) {
-            samples_[count_++] = latency_ns;
-        }
+    void record(const uint64_t latency_ns) noexcept {
+        const auto pos        = write_pos_.load(std::memory_order_relaxed);
+        samples_[pos & kMask] = latency_ns;
+        write_pos_.store(pos + 1, std::memory_order_release);
     }
 
-    /**
-     * @brief Compute statistics from recorded samples
-     */
     struct Stats {
         uint64_t min_ns;
         uint64_t max_ns;
         uint64_t mean_ns;
-        uint64_t p50_ns; // Median
+        uint64_t p50_ns;
         uint64_t p95_ns;
         uint64_t p99_ns;
         uint64_t p999_ns;
@@ -125,73 +95,67 @@ public:
     };
 
     [[nodiscard]] Stats compute() const {
-        std::vector<uint64_t> snapshot;
-        {
-            std::lock_guard lock(lock_);
-            snapshot.assign(samples_.begin(), samples_.begin() + count_);
-        }
+        const uint64_t end = write_pos_.load(std::memory_order_acquire);
+        const size_t total = static_cast<size_t>(end);
+        const size_t count = std::min(total, static_cast<size_t>(kCapacity));
 
-        const size_t count = snapshot.size();
         if (count == 0) {
             return {0, 0, 0, 0, 0, 0, 0, 0.0, 0};
         }
 
-        // Sort for percentile computation
-        std::ranges::sort(snapshot);
+        std::vector<uint64_t> snap(count);
+        if (total <= kCapacity) {
+            std::copy_n(samples_.data(), count, snap.data());
+        } else {
+            const size_t start = static_cast<size_t>(end) & kMask;
+            const size_t tail  = kCapacity - start;
+            std::copy_n(samples_.data() + start, tail, snap.data());
+            std::copy_n(samples_.data(), start, snap.data() + tail);
+        }
 
-        // Compute statistics
-        const auto min_val  = snapshot.front();
-        const auto max_val  = snapshot.back();
-        const auto sum      = std::accumulate(snapshot.begin(), snapshot.end(), 0UL);
+        std::ranges::sort(snap);
+
+        const auto min_val  = snap.front();
+        const auto max_val  = snap.back();
+        const auto sum      = std::accumulate(snap.begin(), snap.end(), 0ULL);
         const auto mean_val = sum / count;
 
-        // Percentiles (clamp to valid range to handle edge cases)
         const auto p50_idx  = std::min(count * 50 / 100, count - 1);
         const auto p95_idx  = std::min(count * 95 / 100, count - 1);
         const auto p99_idx  = std::min(count * 99 / 100, count - 1);
         const auto p999_idx = std::min(count * 999 / 1000, count - 1);
 
-        // Standard deviation
         double sum_sq       = 0.0;
         const double mean_d = static_cast<double>(mean_val);
-        for (size_t i = 0; i < count; i++) {
-            const double diff = static_cast<double>(snapshot[i]) - mean_d;
+        for (auto v : snap) {
+            const double diff = static_cast<double>(v) - mean_d;
             sum_sq += diff * diff;
         }
-        const double stddev = std::sqrt(sum_sq / static_cast<double>(count));
 
-        return {
-            min_val,
-            max_val,
-            mean_val,
-            snapshot[p50_idx],
-            snapshot[p95_idx],
-            snapshot[p99_idx],
-            snapshot[p999_idx],
-            stddev,
-            count};
+        return {min_val,        max_val,
+                mean_val,       snap[p50_idx],
+                snap[p95_idx],  snap[p99_idx],
+                snap[p999_idx], std::sqrt(sum_sq / static_cast<double>(count)),
+                count};
     }
 
-    /**
-     * @brief Pretty-print statistics
-     */
     void print_stats() const {
-        const auto stats = compute();
+        const auto s = compute();
         std::cout << "Latency Statistics (ns):\n"
-                  << "  Count:  " << stats.count << "\n"
-                  << "  Min:    " << stats.min_ns << " ns\n"
-                  << "  P50:    " << stats.p50_ns << " ns\n"
-                  << "  P95:    " << stats.p95_ns << " ns\n"
-                  << "  P99:    " << stats.p99_ns << " ns\n"
-                  << "  P99.9:  " << stats.p999_ns << " ns\n"
-                  << "  Mean:   " << stats.mean_ns << " ns\n"
-                  << "  Max:    " << stats.max_ns << " ns\n"
-                  << "  StdDev: " << stats.stddev_ns << " ns\n";
+                  << "  Count:  " << s.count << "\n"
+                  << "  Min:    " << s.min_ns << "\n"
+                  << "  P50:    " << s.p50_ns << "\n"
+                  << "  P95:    " << s.p95_ns << "\n"
+                  << "  P99:    " << s.p99_ns << "\n"
+                  << "  P99.9:  " << s.p999_ns << "\n"
+                  << "  Mean:   " << s.mean_ns << "\n"
+                  << "  Max:    " << s.max_ns << "\n"
+                  << "  StdDev: " << s.stddev_ns << "\n";
     }
 
 private:
-    mutable std::mutex lock_;
-    std::array<uint64_t, MAX_SAMPLES> samples_;
-    size_t count_;
+    alignas(64) std::atomic<uint64_t> write_pos_{0};
+    std::vector<uint64_t> samples_;
 };
+
 } // namespace talos::primitive

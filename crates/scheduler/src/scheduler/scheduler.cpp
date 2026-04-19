@@ -1565,9 +1565,7 @@ void Scheduler::run_fixed_rate_thread(FixedRateContext ctx) {
             static_cast<std::uint32_t>(ctx.policy.cpu_affinity));
         if (!result) {
             // Log warning but continue
-            SPDLOG_WARN(
-                "set CPU affinity for {}: {}", ctx.system->meta().name,
-                primitive::error_message(result.error()));
+            SPDLOG_WARN("{}: {}", ctx.system->meta().name, result.error());
         }
     }
 
@@ -1576,9 +1574,7 @@ void Scheduler::run_fixed_rate_thread(FixedRateContext ctx) {
         primitive::ThreadAffinity::RealtimeConfig rt_config{};
         rt_config.priority = static_cast<std::uint8_t>(ctx.policy.thread_priority);
         if (auto result = primitive::ThreadAffinity::set_realtime_priority(rt_config); !result) {
-            SPDLOG_WARN(
-                "set thread priority for {}: {}", ctx.system->meta().name,
-                primitive::error_message(result.error()));
+            SPDLOG_WARN("{}: {}", ctx.system->meta().name, result.error());
         }
     }
 

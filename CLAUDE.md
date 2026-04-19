@@ -225,9 +225,9 @@ crates/fast_tf/src/
 
 ### 错误处理
 
-- 使用 `std::expected` 表达错误，禁止吞掉异常
-- 错误消息必须包含完整上下文（`[模块::方法] 操作失败: 细节`），禁止 `"unknown error"` 之类的模糊描述
-- 使用 `magic_enum` 统一转换枚举为小写
+- 使用 `std::expected<T, std::string>` 表达错误，**禁止自定义错误枚举/错误码**
+- 错误类型用 `std::string`，每个 error site 内联 `fmt::format` 带完整上下文（方法名、参数值、系统错误描述），禁止模糊描述
+- 系统错误必须转为人类可读文本：Linux 用 `std::strerror(errno)`，macOS 用 `mach_error_string(kr)`，禁止裸 `errno=22` 或 `kern_return=46`
 - **异常是系统边界**，不允许在系统内部传播。所有内部错误通过 `std::expected` 传播
 - 返回 `std::expected` 的方法必须 `noexcept`，内部用 `try/catch(const std::exception&)` 捕获并带完整上下文转为 `std::unexpected`
 - **禁止 `catch(...)`** — 只允许 `catch(const std::exception&)`，必须携带 `e.what()` 上下文
