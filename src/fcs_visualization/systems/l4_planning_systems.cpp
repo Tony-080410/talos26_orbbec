@@ -393,7 +393,6 @@ inline void append_selection_trace_metadata(
         {           "source_value",                                static_cast<int>(plan.source)},
         {                    "yaw",                                                     plan.yaw},
         {                  "pitch",                                                   plan.pitch},
-        {               "diff_yaw",                                                plan.diff_yaw},
         {              "aim_phase",           std::string(magic_enum::enum_name(plan.aim_phase))},
         {        "aim_phase_value",                             static_cast<int>(plan.aim_phase)},
         {      "selected_armor_id",                                       plan.selected_armor_id},
@@ -403,8 +402,6 @@ inline void append_selection_trace_metadata(
         {                "yaw_acc",                                                 plan.yaw_acc},
         {              "pitch_acc",                                               plan.pitch_acc},
         {            "fire_advice",                                             plan.fire_advice},
-        {         "tracking_error",                                          plan.tracking_error},
-        {      "aimer_fire_advice",                                       plan.aimer_fire_advice},
         {                "aim_yaw",                                                 plan.aim_yaw},
         {              "aim_pitch",                                               plan.aim_pitch},
         {     "predicted_position",
@@ -433,8 +430,6 @@ inline void append_selection_trace_metadata(
     target_json["aim_phase"]               = std::string(magic_enum::enum_name(snapshot.aim_phase));
     target_json["selected_armor_id"]       = snapshot.selected_armor_id;
     target_json["rough_selected_armor_id"] = snapshot.rough_selected_armor_id;
-    target_json["fire_advice"]             = snapshot.fire_advice;
-    target_json["aimer_fire_advice"]       = snapshot.aimer_fire_advice;
 
     return target_json;
 }
@@ -459,7 +454,6 @@ inline void append_plan_metadata(
         .metadata("selected_armor_id", std::to_string(plan.selected_armor_id))
         .metadata("rough_selected_armor_id", std::to_string(plan.rough_selected_armor_id))
         .metadata("fire_advice", yes_no(plan.fire_advice))
-        .metadata("aimer_fire_advice", yes_no(plan.aimer_fire_advice))
         .metadata("predicted_future_ns", std::to_string(plan.predicted_future));
 
     if (selected_target) {
@@ -573,18 +567,10 @@ void register_l4_planning_systems(talos::scheduler::Scheduler& app) {
             cmd_json["fire_advice"] = cmd->fire;
             if (cmd->viz_debug) {
                 cmd_json["mpc"] = {
-                    {             "center_index",              cmd->viz_debug->center_index},
-                    {          "lookahead_index",           cmd->viz_debug->lookahead_index},
-                    {           "reference_size",     cmd->viz_debug->reference_plan.size()},
-                    {           "optimized_size",     cmd->viz_debug->optimized_plan.size()},
-                    {              "delay_steps",               cmd->viz_debug->delay_steps},
-                    {     "delay_gate_threshold",      cmd->viz_debug->delay_gate_threshold},
-                    { "delay_gate_forward_error",  cmd->viz_debug->delay_gate_forward_error},
-                    {"delay_gate_backward_error", cmd->viz_debug->delay_gate_backward_error},
-                    {    "delay_gate_forward_ok",     cmd->viz_debug->delay_gate_forward_ok},
-                    {   "delay_gate_backward_ok",    cmd->viz_debug->delay_gate_backward_ok},
-                    {            "phase_gate_ok",             cmd->viz_debug->phase_gate_ok},
-                    {       "final_fire_gate_ok",        cmd->viz_debug->final_fire_gate_ok},
+                    {   "center_index",          cmd->viz_debug->center_index},
+                    {"lookahead_index",       cmd->viz_debug->lookahead_index},
+                    { "reference_size", cmd->viz_debug->reference_plan.size()},
+                    { "optimized_size", cmd->viz_debug->optimized_plan.size()},
                 };
             }
             if (plan) {
@@ -618,18 +604,8 @@ void register_l4_planning_systems(talos::scheduler::Scheduler& app) {
             traj_json["plan_timestamp_ns"] = cmd->plan_timestamp_ns;
             traj_json["center_index"]      = cmd->viz_debug->center_index;
             traj_json["lookahead_index"]   = cmd->viz_debug->lookahead_index;
-            traj_json["fire_gate"]         = {
-                {              "delay_steps",               cmd->viz_debug->delay_steps},
-                {     "delay_gate_threshold",      cmd->viz_debug->delay_gate_threshold},
-                { "delay_gate_forward_error",  cmd->viz_debug->delay_gate_forward_error},
-                {"delay_gate_backward_error", cmd->viz_debug->delay_gate_backward_error},
-                {    "delay_gate_forward_ok",     cmd->viz_debug->delay_gate_forward_ok},
-                {   "delay_gate_backward_ok",    cmd->viz_debug->delay_gate_backward_ok},
-                {            "phase_gate_ok",             cmd->viz_debug->phase_gate_ok},
-                {       "final_fire_gate_ok",        cmd->viz_debug->final_fire_gate_ok},
-            };
-            traj_json["reference"] = nlohmann::json::array();
-            traj_json["optimized"] = nlohmann::json::array();
+            traj_json["reference"]         = nlohmann::json::array();
+            traj_json["optimized"]         = nlohmann::json::array();
             if (plan) {
                 traj_json["l4_plan"] = l4_detail::json_gimbal_plan(*plan);
             }
@@ -643,7 +619,6 @@ void register_l4_planning_systems(talos::scheduler::Scheduler& app) {
                     {                  "pitch",                                                        reference.pitch},
                     {               "distance",                                                     reference.distance},
                     {                    "tof",                                                          reference.tof},
-                    {               "diff_yaw",                                                     reference.diff_yaw},
                     {      "selected_armor_id", reference.selected_armor_id
  ? nlohmann::json(*reference.selected_armor_id)
  : nlohmann::json(nullptr)                                             },
@@ -664,7 +639,6 @@ void register_l4_planning_systems(talos::scheduler::Scheduler& app) {
                     {                  "pitch",                                                        optimized.pitch},
                     {               "distance",                                                     optimized.distance},
                     {                    "tof",                                                          optimized.tof},
-                    {               "diff_yaw",                                                     optimized.diff_yaw},
                     {      "selected_armor_id", optimized.selected_armor_id
  ? nlohmann::json(*optimized.selected_armor_id)
  : nlohmann::json(nullptr)                                             },
@@ -964,12 +938,6 @@ void register_l4_planning_systems(talos::scheduler::Scheduler& app) {
             const int center_index = std::clamp(
                 cmd->viz_debug->center_index, 0,
                 static_cast<int>(cmd->viz_debug->optimized_plan.size()) - 1);
-            const int forward_index = std::clamp(
-                center_index + cmd->viz_debug->delay_steps, 0,
-                static_cast<int>(cmd->viz_debug->optimized_plan.size()) - 1);
-            const int backward_index = std::clamp(
-                center_index - cmd->viz_debug->delay_steps, 0,
-                static_cast<int>(cmd->viz_debug->optimized_plan.size()) - 1);
 
             const auto add_key_marker = [&](const std::string& entity_id,
                                             const ::fcs::L5::TrajectoryPlanSample& sample,
@@ -998,26 +966,6 @@ void register_l4_planning_systems(talos::scheduler::Scheduler& app) {
                 l4_detail::key_point_label(
                     "Opt", cmd->viz_debug->optimized_plan[static_cast<size_t>(center_index)]),
                 tac::L4::MPC_PRESENT, tac::L4::SELECTION_SIZE);
-
-            if (forward_index != center_index) {
-                add_key_marker(
-                    "mpc_plus_delay",
-                    cmd->viz_debug->optimized_plan[static_cast<size_t>(forward_index)],
-                    fmt::format("Forward {:.4f}", cmd->viz_debug->delay_gate_forward_error),
-                    cmd->viz_debug->delay_gate_forward_ok ? tac::L5::FIRE_READY
-                                                          : tac::L5::FIRE_ABORTED,
-                    tac::L4::SELECTION_SIZE);
-            }
-
-            if (backward_index != center_index && backward_index != forward_index) {
-                add_key_marker(
-                    "mpc_minus_delay",
-                    cmd->viz_debug->optimized_plan[static_cast<size_t>(backward_index)],
-                    fmt::format("Backward {:.4f}", cmd->viz_debug->delay_gate_backward_error),
-                    cmd->viz_debug->delay_gate_backward_ok ? tac::L5::FIRE_READY
-                                                           : tac::L5::FIRE_ABORTED,
-                    tac::L4::SELECTION_SIZE);
-            }
 
             publish_scene_if_nonempty<MpcPredictionSceneMessage>(*server, std::move(entities));
         });

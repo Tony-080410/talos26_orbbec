@@ -660,9 +660,6 @@ TEST(AimerPhase, WholeCarCenterProjectsAlongMuzzleRay) {
     EXPECT_NEAR(prediction->predicted_position.y(), 4.8, 1e-6);
     EXPECT_NEAR(prediction->predicted_position.z(), target.position.z(), 1e-6);
     EXPECT_NEAR(prediction->distance, 4.8, 1e-6);
-    EXPECT_NEAR(
-        prediction->fire_yaw_diff,
-        std::remainder(target.yaw - std::numbers::pi / 2.0, 2.0 * std::numbers::pi), 1e-6);
 }
 
 TEST(AimerPhase, FlightTimeTracksFinalArmorAcrossHandoff) {
@@ -682,38 +679,6 @@ TEST(AimerPhase, FlightTimeTracksFinalArmorAcrossHandoff) {
     EXPECT_NEAR(
         prediction->flying_time, prediction->predicted_position.norm() / 0.6,
         fcs::L4::kFlyingTimeRefineTolerance);
-}
-
-TEST(AimerPhase, WholeCarCenterFireGateIgnoresLegacyYawLimit) {
-    const fcs::L4::FireDecisionConfig fire_cfg{};
-    const bool allowed = fcs::L4::is_on_target_phase_aware(
-        fire_cfg, fcs::L4::ArmorAimPhase::WholeCarCenter, fcs::ArmorType::Small,
-        50.0 * std::numbers::pi / 180.0, 0.25, 0.0, 0.0, 0.0, 0.0, 5.0);
-    EXPECT_TRUE(allowed);
-}
-
-TEST(AimerPhase, FireGateUsesShortestAngularDistanceAcrossWrap) {
-    const fcs::L4::FireDecisionConfig fire_cfg{};
-    const bool allowed = fcs::L4::is_on_target_phase_aware(
-        fire_cfg, fcs::L4::ArmorAimPhase::SingleArmor, fcs::ArmorType::Small, 0.0, 0.25,
-        std::numbers::pi - 1e-3, 0.0, -std::numbers::pi + 1e-3, 0.0, 100.0);
-    EXPECT_TRUE(allowed);
-}
-
-TEST(AimerPhase, FireGateUsesLargeArmorWindow) {
-    const fcs::L4::FireDecisionConfig fire_cfg{};
-    const double distance  = 10.0;
-    const double yaw_error = 0.01;
-
-    const bool small_allowed = fcs::L4::is_on_target_phase_aware(
-        fire_cfg, fcs::L4::ArmorAimPhase::SingleArmor, fcs::ArmorType::Small, 0.0, 0.25, 0.0, 0.0,
-        yaw_error, 0.0, distance);
-    const bool large_allowed = fcs::L4::is_on_target_phase_aware(
-        fire_cfg, fcs::L4::ArmorAimPhase::SingleArmor, fcs::ArmorType::Large, 0.0, 0.25, 0.0, 0.0,
-        yaw_error, 0.0, distance);
-
-    EXPECT_FALSE(small_allowed);
-    EXPECT_TRUE(large_allowed);
 }
 
 TEST(AimerPhase, TrackerJumpedLatchesWhenAnyVisibleArmorIsNonZero) {

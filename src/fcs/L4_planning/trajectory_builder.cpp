@@ -15,8 +15,6 @@ struct ReferenceSample {
     double yaw{0.0};
     double pitch{0.0};
     double distance{0.0};
-    double diff_yaw{0.0};
-    double fire_yaw_diff{0.0};
     double time_of_flight{0.0};
     Eigen::Vector3d position{Eigen::Vector3d::Zero()};
     int selected_armor_id{0};
@@ -70,8 +68,6 @@ template <typename TargetState>
         .yaw                     = prediction->aim_yaw,
         .pitch                   = prediction->aim_pitch,
         .distance                = prediction->distance,
-        .diff_yaw                = prediction->diff_yaw,
-        .fire_yaw_diff           = prediction->fire_yaw_diff,
         .time_of_flight          = prediction->flying_time,
         .position                = prediction->predicted_position,
         .selected_armor_id       = prediction->selected_armor_id,
@@ -92,8 +88,6 @@ template <typename TargetState>
     ReferenceTrajectory trajectory{
         .state                    = StateMatrix(4, horizon),
         .distances                = std::vector<double>(horizon, 0.0),
-        .diff_yaws                = std::vector<double>(horizon, 0.0),
-        .fire_yaw_diffs           = std::vector<double>(horizon, 0.0),
         .time_of_flights          = std::vector<double>(horizon, 0.0),
         .positions                = std::vector<Eigen::Vector3d>(horizon, Eigen::Vector3d::Zero()),
         .selected_armor_ids       = std::vector<int>(horizon, 0),
@@ -138,8 +132,6 @@ template <typename TargetState>
         yaw_samples[k]                         = sample->yaw;
         pitch_samples[k]                       = sample->pitch;
         trajectory.distances[k]                = sample->distance;
-        trajectory.diff_yaws[k]                = sample->diff_yaw;
-        trajectory.fire_yaw_diffs[k]           = sample->fire_yaw_diff;
         trajectory.time_of_flights[k]          = sample->time_of_flight;
         trajectory.positions[k]                = sample->position;
         trajectory.selected_armor_ids[k]       = sample->selected_armor_id;

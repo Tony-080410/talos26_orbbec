@@ -18,45 +18,6 @@
 
 namespace fcs::L5 {
 
-struct DelayGateAngles {
-    double yaw{0.0};
-    double pitch{0.0};
-};
-
-struct DualDelayGateErrors {
-    double forward{0.0};
-    double backward{0.0};
-};
-
-[[nodiscard]] inline double delay_gate_tracking_error(
-    const DelayGateAngles& reference, const DelayGateAngles& optimized) noexcept {
-    const double yaw_error = std::remainder(reference.yaw - optimized.yaw, 2.0 * std::numbers::pi);
-    return std::hypot(yaw_error, reference.pitch - optimized.pitch);
-}
-
-template <typename ReferenceFn, typename OptimizedFn>
-[[nodiscard]] inline DualDelayGateErrors compute_dual_delay_gate_errors(
-    int horizon, int sample_index, int delay_steps, ReferenceFn&& reference_angles,
-    OptimizedFn&& optimized_angles) noexcept {
-    if (horizon <= 0) {
-        return {};
-    }
-
-    const auto clamp_index = [horizon](int index) noexcept {
-        return std::clamp(index, 0, horizon - 1);
-    };
-    const int center_index   = clamp_index(sample_index);
-    const int forward_index  = clamp_index(center_index + delay_steps);
-    const int backward_index = clamp_index(center_index - delay_steps);
-
-    return {
-        .forward = delay_gate_tracking_error(
-            reference_angles(forward_index), optimized_angles(forward_index)),
-        .backward = delay_gate_tracking_error(
-            reference_angles(backward_index), optimized_angles(backward_index)),
-    };
-}
-
 /// TinyMPC-based trajectory optimizer for the L5 weapon layer.
 ///
 /// Consumes a pre-built reference trajectory from L4, solves independent

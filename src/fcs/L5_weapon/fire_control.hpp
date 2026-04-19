@@ -16,7 +16,6 @@ struct TrajectoryPlanSample {
     double pitch{0.0};
     double distance{0.0};
     double tof{0.0};
-    double diff_yaw{0.0};
     std::optional<int> selected_armor_id{};
     std::optional<int> rough_selected_armor_id{};
     Eigen::Vector3d world_position{Eigen::Vector3d::Zero()};
@@ -27,14 +26,6 @@ struct WeaponVisualizationDebugData {
     std::vector<TrajectoryPlanSample> optimized_plan;
     int center_index{0};
     int lookahead_index{0};        // Legacy alias, currently mirrors center_index in L5.
-    int delay_steps{0};
-    double delay_gate_threshold{0.0};
-    double delay_gate_forward_error{0.0};
-    double delay_gate_backward_error{0.0};
-    bool delay_gate_forward_ok{false};
-    bool delay_gate_backward_ok{false};
-    bool phase_gate_ok{false};
-    bool final_fire_gate_ok{false};
 };
 
 struct WeaponCommand {

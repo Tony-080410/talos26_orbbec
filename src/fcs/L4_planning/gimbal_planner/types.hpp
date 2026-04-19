@@ -88,8 +88,6 @@ struct GimbalPlan {
     // ========================================================================
     double yaw{0.0};
     double pitch{0.0};
-    double diff_yaw{0.0};
-    double fire_yaw_diff{0.0};
     ArmorAimPhase aim_phase{ArmorAimPhase::SingleArmor};
     int selected_armor_id{0};
     int rough_selected_armor_id{0};
@@ -103,12 +101,10 @@ struct GimbalPlan {
     // Fire Advice
     // ========================================================================
     bool fire_advice{false};
-    double tracking_error{0.0};
 
     // ========================================================================
     // Aimer's Original Advice (for debugging/comparison)
     // ========================================================================
-    bool aimer_fire_advice{false};
     double aim_yaw{0.0};
     double aim_pitch{0.0};
 

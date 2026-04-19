@@ -189,7 +189,6 @@ TEST(ConfigParse, VisionBaseTomlMatchesExpectedSemanticsAndValues) {
     EXPECT_DOUBLE_EQ(config.tracker().outpost.model.yaw_log_k, 0.005);
 
     EXPECT_DOUBLE_EQ(config.l4->fire_decision.fire_thresh, 0.01744444);
-    EXPECT_DOUBLE_EQ(config.l4->fire_decision.delay_gate_error_rad, 3.1744444);
     EXPECT_DOUBLE_EQ(config.l4->fire_decision.shooting_range_h, 0.12);
     EXPECT_DOUBLE_EQ(config.l4->fire_decision.shooting_range_w_small, 0.12);
     EXPECT_DOUBLE_EQ(config.l4->fire_decision.shooting_range_w_large, 0.24);
@@ -205,8 +204,6 @@ TEST(ConfigParse, VisionBaseTomlMatchesExpectedSemanticsAndValues) {
     EXPECT_DOUBLE_EQ(config.l4->aimer.front_window_deg, 60.0);
     EXPECT_DOUBLE_EQ(config.l4->aimer.coming_angle_deg, 55.0);
     EXPECT_DOUBLE_EQ(config.l4->aimer.leaving_angle_deg, 20.0);
-    EXPECT_DOUBLE_EQ(config.l4->aimer.yaw_limit_deg, 60.0);
-    EXPECT_DOUBLE_EQ(config.l4->aimer.min_enable_yaw_deg, 0.25);
     EXPECT_DOUBLE_EQ(config.l4->aimer.target_selection.temp_lost_state_score, 0.05);
     EXPECT_DOUBLE_EQ(config.l4->aimer.target_selection.optical_stale_timeout_s, 0.25);
     EXPECT_DOUBLE_EQ(config.l4->aimer.target_selection.switch_margin, 0.08);

@@ -18,8 +18,6 @@ struct SelectedTargetSnapshot {
     ArmorAimPhase aim_phase{ArmorAimPhase::SingleArmor};
     int selected_armor_id{0};
     int rough_selected_armor_id{0};
-    bool fire_advice{false};
-    bool aimer_fire_advice{false};
     L3::TrackerOutput tracker{};
 
     [[nodiscard]] bool has_target() const noexcept {

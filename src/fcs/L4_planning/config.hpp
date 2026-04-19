@@ -83,11 +83,6 @@ struct AimerConfig {
     double coming_angle_deg{60.0};
     double leaving_angle_deg{20.0};
 
-    /// Legacy config knob retained only for config stability; hard-aligned fire gate does not use
-    /// it.
-    double yaw_limit_deg{40.0};
-    double min_enable_yaw_deg{0.25};
-
     /// Weighted multi-target selection configuration.
     TargetSelectionConfig target_selection{};
 };

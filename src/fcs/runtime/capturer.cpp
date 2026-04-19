@@ -116,15 +116,12 @@ struct ControlSampleRecord {
     float plan_distance{0.0F};
     float plan_yaw{0.0F};
     float plan_pitch{0.0F};
-    float plan_diff_yaw{0.0F};
     float plan_yaw_vel{0.0F};
     float plan_pitch_vel{0.0F};
     float plan_yaw_acc{0.0F};
     float plan_pitch_acc{0.0F};
     uint8_t plan_source{0};
     uint8_t plan_aim_phase{0};
-    uint8_t plan_fire_advice{0};
-    uint8_t plan_aimer_fire_advice{0};
     int32_t plan_selected_armor_id{0};
     int32_t plan_rough_selected_armor_id{0};
 
@@ -228,15 +225,12 @@ auto serialize_control_chunk(
         append_le_float32(bytes, sample.plan_distance);
         append_le_float32(bytes, sample.plan_yaw);
         append_le_float32(bytes, sample.plan_pitch);
-        append_le_float32(bytes, sample.plan_diff_yaw);
         append_le_float32(bytes, sample.plan_yaw_vel);
         append_le_float32(bytes, sample.plan_pitch_vel);
         append_le_float32(bytes, sample.plan_yaw_acc);
         append_le_float32(bytes, sample.plan_pitch_acc);
         append_le_uint<uint8_t>(bytes, sample.plan_source);
         append_le_uint<uint8_t>(bytes, sample.plan_aim_phase);
-        append_le_uint<uint8_t>(bytes, sample.plan_fire_advice);
-        append_le_uint<uint8_t>(bytes, sample.plan_aimer_fire_advice);
         append_le_int32(bytes, sample.plan_selected_armor_id);
         append_le_int32(bytes, sample.plan_rough_selected_armor_id);
 
@@ -522,7 +516,6 @@ struct ConfigSnapshotSource {
         {                 "source",                          magic_enum::enum_name(plan.source)},
         {                    "yaw",                                                    plan.yaw},
         {                  "pitch",                                                  plan.pitch},
-        {               "diff_yaw",                                               plan.diff_yaw},
         {              "aim_phase",                       magic_enum::enum_name(plan.aim_phase)},
         {      "selected_armor_id",                                      plan.selected_armor_id},
         {"rough_selected_armor_id",                                plan.rough_selected_armor_id},
@@ -531,8 +524,6 @@ struct ConfigSnapshotSource {
         {                "yaw_acc",                                                plan.yaw_acc},
         {              "pitch_acc",                                              plan.pitch_acc},
         {            "fire_advice",                                            plan.fire_advice},
-        {         "tracking_error",                                         plan.tracking_error},
-        {      "aimer_fire_advice",                                      plan.aimer_fire_advice},
         {                "aim_yaw",                                                plan.aim_yaw},
         {              "aim_pitch",                                              plan.aim_pitch},
         {           "planner_seed",
@@ -567,8 +558,6 @@ struct ConfigSnapshotSource {
     result["aim_phase"]               = magic_enum::enum_name(snapshot.aim_phase);
     result["selected_armor_id"]       = snapshot.selected_armor_id;
     result["rough_selected_armor_id"] = snapshot.rough_selected_armor_id;
-    result["fire_advice"]             = snapshot.fire_advice;
-    result["aimer_fire_advice"]       = snapshot.aimer_fire_advice;
     return result;
 }
 
@@ -578,7 +567,6 @@ struct ConfigSnapshotSource {
         {                  "pitch",                                                sample.pitch},
         {               "distance",                                             sample.distance},
         {                    "tof",                                                  sample.tof},
-        {               "diff_yaw",                                             sample.diff_yaw},
         {      "selected_armor_id",
          sample.selected_armor_id ? json(*sample.selected_armor_id) : json(nullptr)            },
         {"rough_selected_armor_id",
@@ -623,18 +611,10 @@ struct ConfigSnapshotSource {
     }
 
     result["viz_debug"] = json{
-        {           "reference_plan",                std::move(reference_plan)},
-        {           "optimized_plan",                std::move(optimized_plan)},
-        {             "center_index",              cmd.viz_debug->center_index},
-        {          "lookahead_index",           cmd.viz_debug->lookahead_index},
-        {              "delay_steps",               cmd.viz_debug->delay_steps},
-        {     "delay_gate_threshold",      cmd.viz_debug->delay_gate_threshold},
-        { "delay_gate_forward_error",  cmd.viz_debug->delay_gate_forward_error},
-        {"delay_gate_backward_error", cmd.viz_debug->delay_gate_backward_error},
-        {    "delay_gate_forward_ok",     cmd.viz_debug->delay_gate_forward_ok},
-        {   "delay_gate_backward_ok",    cmd.viz_debug->delay_gate_backward_ok},
-        {            "phase_gate_ok",             cmd.viz_debug->phase_gate_ok},
-        {       "final_fire_gate_ok",        cmd.viz_debug->final_fire_gate_ok},
+        { "reference_plan",      std::move(reference_plan)},
+        { "optimized_plan",      std::move(optimized_plan)},
+        {   "center_index",    cmd.viz_debug->center_index},
+        {"lookahead_index", cmd.viz_debug->lookahead_index},
     };
     return result;
 }
@@ -1106,15 +1086,12 @@ public:
             sample.plan_distance          = static_cast<float>(gimbal_plan.value->distance);
             sample.plan_yaw               = static_cast<float>(gimbal_plan.value->yaw);
             sample.plan_pitch             = static_cast<float>(gimbal_plan.value->pitch);
-            sample.plan_diff_yaw          = static_cast<float>(gimbal_plan.value->diff_yaw);
             sample.plan_yaw_vel           = static_cast<float>(gimbal_plan.value->yaw_vel);
             sample.plan_pitch_vel         = static_cast<float>(gimbal_plan.value->pitch_vel);
             sample.plan_yaw_acc           = static_cast<float>(gimbal_plan.value->yaw_acc);
             sample.plan_pitch_acc         = static_cast<float>(gimbal_plan.value->pitch_acc);
             sample.plan_source            = static_cast<uint8_t>(gimbal_plan.value->source);
             sample.plan_aim_phase         = static_cast<uint8_t>(gimbal_plan.value->aim_phase);
-            sample.plan_fire_advice       = gimbal_plan.value->fire_advice ? 1 : 0;
-            sample.plan_aimer_fire_advice = gimbal_plan.value->aimer_fire_advice ? 1 : 0;
             sample.plan_selected_armor_id = gimbal_plan.value->selected_armor_id;
             sample.plan_rough_selected_armor_id = gimbal_plan.value->rough_selected_armor_id;
         }

@@ -91,8 +91,6 @@ private:
     struct PredictedAimPoint {
         Eigen::Vector3d position{Eigen::Vector3d::Zero()};
         int armor_id{0};
-        double diff_yaw{0.0};
-        double fire_yaw_diff{0.0};
     };
 
     // ========================================================================

@@ -27,12 +27,6 @@ struct ReferenceTrajectory {
     /// Distance to target at each horizon step (meters).
     std::vector<double> distances;
 
-    /// Yaw difference (target facing - gimbal center) at each step (rad).
-    std::vector<double> diff_yaws;
-
-    /// Armor attitude relative to the actual aim ray at each step (rad).
-    std::vector<double> fire_yaw_diffs;
-
     /// Projectile time-of-flight at each step (seconds).
     std::vector<double> time_of_flights;
 

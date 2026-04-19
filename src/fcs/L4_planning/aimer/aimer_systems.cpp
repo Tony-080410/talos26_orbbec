@@ -566,10 +566,6 @@ void register_aimer_systems(talos::Scheduler& scheduler, L4Config&& config) {
                     aim_result->armor_type =
                         cls_to_armor_type(selected_candidate->tracker.target_name);
                 }
-                aim_result->aimer_fire_advice = is_on_target_phase_aware(
-                    cfg->fire_decision, aim_result->aim_phase, aim_result->armor_type,
-                    aim_result->fire_yaw_diff, cfg->aimer.min_enable_yaw_deg, cur_yaw, cur_pitch,
-                    aim_result->aim_yaw, -aim_result->aim_pitch, aim_result->distance);
 
                 if (selected_candidate) {
                     auto& phase_state              = phase_states[selected_candidate->key];
@@ -596,8 +592,6 @@ void register_aimer_systems(talos::Scheduler& scheduler, L4Config&& config) {
                 selected_target.aim_phase               = aim_result->aim_phase;
                 selected_target.selected_armor_id       = aim_result->selected_armor_id;
                 selected_target.rough_selected_armor_id = aim_result->rough_selected_armor_id;
-                selected_target.aimer_fire_advice       = aim_result->aimer_fire_advice;
-                selected_target.fire_advice             = aim_result->aimer_fire_advice;
                 if (selected_candidate) {
                     selected_target.tracker = selected_candidate->tracker;
                 }
@@ -606,8 +600,6 @@ void register_aimer_systems(talos::Scheduler& scheduler, L4Config&& config) {
                 plan.timestamp_ns            = aim_result->timestamp_ns;
                 plan.yaw                     = aim_result->aim_yaw;
                 plan.pitch                   = aim_result->aim_pitch;
-                plan.diff_yaw                = aim_result->diff_yaw;
-                plan.fire_yaw_diff           = aim_result->fire_yaw_diff;
                 plan.aim_phase               = aim_result->aim_phase;
                 plan.selected_armor_id       = aim_result->selected_armor_id;
                 plan.rough_selected_armor_id = aim_result->rough_selected_armor_id;
@@ -615,8 +607,6 @@ void register_aimer_systems(talos::Scheduler& scheduler, L4Config&& config) {
                 plan.aim_yaw                 = aim_result->aim_yaw;
                 plan.aim_pitch               = aim_result->aim_pitch;
                 plan.distance                = aim_result->distance;
-                plan.aimer_fire_advice       = aim_result->aimer_fire_advice;
-                plan.fire_advice             = aim_result->aimer_fire_advice;
                 plan.predicted_future        = aim_result->predicted_future_ns;
                 plan.predicted_position      = aim_result->predicted_position;
                 plan.source                  = (aim_result->target_type == AimerTargetType::Rune)

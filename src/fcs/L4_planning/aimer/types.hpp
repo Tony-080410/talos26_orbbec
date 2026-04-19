@@ -68,13 +68,10 @@ struct TargetPrediction {
     ArmorAimPhase aim_phase{ArmorAimPhase::SingleArmor};
     int selected_armor_id{0};
     int rough_selected_armor_id{0};
-    double diff_yaw{0.0};
-    double fire_yaw_diff{0.0};
 
     // ========================================================================
     // Simple Fire Advice (is target in shooting window?)
     // ========================================================================
-    bool aimer_fire_advice{false}; ///< Aimer's fire advice
     ArmorType armor_type{ArmorType::Invalid};
 
     // ========================================================================
