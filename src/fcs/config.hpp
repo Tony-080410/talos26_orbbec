@@ -6,18 +6,17 @@
 #include <optional>
 #include <string>
 
-#include "L2_perception/ldm/ldm_config.hpp"
-#include "euler.hpp"
-#include "foxglove_config.hpp"
-#include "magic_enum.hpp"
-
 #include "L2_perception/armor/config.hpp"
+#include "L2_perception/ldm/ldm_config.hpp"
 #include "L2_perception/rune/rune_config.hpp"
 #include "L3_estimation/energy_meter/energy_meter_systems.hpp"
 #include "L3_estimation/tracker/config.hpp"
 #include "L4_planning/config.hpp"
 #include "L5_weapon/config.hpp"
 #include "camera_config.hpp"
+#include "core/trajectory/config.hpp"
+#include "euler.hpp"
+#include <magic_enum.hpp>
 
 namespace fcs {
 
@@ -55,32 +54,30 @@ struct RobotExtrinsicConfig {
     gimbal_yaw_t gimbal_yaw{};
 };
 
-enum class RobotType { Infantry, Hero, Sentry, Drone };
-
 enum class McuBackend : uint8_t {
     Usb,
     Serial,
 };
 
 struct McuConfig {
+    bool pretend_mcu{false};
     McuBackend mcu_backend{McuBackend::Usb};
     uint16_t mcu_vendor_id{0x0483};
     std::optional<uint16_t> mcu_product_id{std::nullopt};
     std::string serial_device{"/dev/ttyS4"};
     int serial_baud_rate{115200};
-    bool untrust_roll{true};
-    bool dynamic_self_color{true};
-    bool dynamic_bullet_speed{true};
+    bool mcu_authoritative_self_color{true};
+    bool mcu_authoritative_bullet_speed{true};
     double bullet_speed_default{22.0};
     double bullet_speed_min{25.0};
     double bullet_speed_max{15.0};
 };
 
 struct HardwareConfig {
-    toml_helper::required<RobotType> type{};
     toml_helper::required<CameraConfig> camera{};
     toml_helper::required<McuConfig> mcu{};
     toml_helper::required<RobotExtrinsicConfig> extrinsic{};
+    bool chiral{false};
 };
 
 struct VisionConfig {
@@ -111,13 +108,6 @@ struct VisionConfig {
 // ============================================================================
 
 namespace fmt {
-
-template <>
-struct formatter<fcs::RobotType> : formatter<std::string_view> {
-    auto format(fcs::RobotType type, format_context& ctx) const {
-        return formatter<std::string_view>::format(magic_enum::enum_name(type), ctx);
-    }
-};
 
 template <>
 struct formatter<fcs::McuBackend> : formatter<std::string_view> {

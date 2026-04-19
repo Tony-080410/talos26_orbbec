@@ -74,7 +74,6 @@ void init_coordinate_system(fast_tf::CoordinateSystem& system, const RobotExtrin
     init_coordinate_system(coordinate_system, config.hardware->extrinsic);
 
     // Insert config as shared resource (for foxglove and other systems)
-    world.insert_resource(config.robot_type);
     world.insert_resource(config.foxglove);
 
     // Save config values for logging before move
@@ -128,12 +127,13 @@ void init_coordinate_system(fast_tf::CoordinateSystem& system, const RobotExtrin
     L5::register_enhanced_weapon_system(scheduler, std::move(config.vision.l5->mpc_weapon));
 
     // Register Chiral data collection system (publishes TrackerOutput to shared memory)
-    chiral::register_chiral_collector_system(scheduler);
-    SPDLOG_INFO("Chiral data collection system registered");
+    if (config.hardware->chiral) {
+        chiral::register_chiral_collector_system(scheduler);
+        SPDLOG_INFO("chiral system registered");
+    }
 
     runtime::register_runtime_capturer_system(
-        scheduler, config.capturer, config.launch, config.robot_type,
-        setup_result.value().camera_config);
+        scheduler, config.capturer, config.launch, setup_result.value().camera_config);
 
     // Build scheduler (freezes resource structure)
     if (auto build_result = scheduler.build(); !build_result) {

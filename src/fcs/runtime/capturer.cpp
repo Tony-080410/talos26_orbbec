@@ -777,7 +777,7 @@ template <fast_tf::frame Frame>
 class RuntimeCapturer {
 public:
     static auto create(
-        const CapturerConfig& config, const CapturerLaunchContext& launch, RobotType robot_type,
+        const CapturerConfig& config, const CapturerLaunchContext& launch,
         const CameraConfig& camera_config)
         -> std::expected<std::shared_ptr<RuntimeCapturer>, std::string> {
         std::error_code ec;
@@ -820,7 +820,6 @@ public:
         json run_json{
             {     "created_ns",fcs::clock::now_ns()                               },
             {        "run_dir",                     run_dir.string()},
-            {     "robot_type",    magic_enum::enum_name(robot_type)},
             {  "camera_config", to_json_camera_config(camera_config)},
             {       "capturer",      to_json_capturer_config(config)},
             {"config_snapshot",                     *config_snapshot},
@@ -1459,12 +1458,12 @@ private:
 
 void register_runtime_capturer_system(
     talos::Scheduler& scheduler, const CapturerConfig& config, const CapturerLaunchContext& launch,
-    RobotType robot_type, const CameraConfig& camera_config) {
+    const CameraConfig& camera_config) {
     if (!config.enabled) {
         return;
     }
 
-    auto capturer_result = RuntimeCapturer::create(config, launch, robot_type, camera_config);
+    auto capturer_result = RuntimeCapturer::create(config, launch, camera_config);
     if (!capturer_result) {
         SPDLOG_ERROR("runtime capturer disabled: {}", capturer_result.error());
         return;

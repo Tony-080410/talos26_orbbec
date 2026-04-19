@@ -1,6 +1,7 @@
 #pragma once
 
 #include "config.hpp"
+#include "foxglove_config.hpp"
 #include "runtime/capturer.hpp"
 
 #include <expected>
@@ -21,7 +22,6 @@ struct LaunchConfig {
 
 // Fully-resolved runtime configuration after merging base + override TOML
 struct RuntimeConfig {
-    RobotType robot_type;
     std::optional<HardwareConfig> hardware;
     FoxgloveConfig foxglove;
     CapturerConfig capturer;

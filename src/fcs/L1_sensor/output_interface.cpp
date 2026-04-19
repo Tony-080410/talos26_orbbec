@@ -3,8 +3,6 @@
 #include "talos_gimbal/mcu_device.hpp"
 #include "talos_gimbal/packet.hpp"
 
-#include <spdlog/spdlog.h>
-
 namespace fcs::L1 {
 
 // ============================================================================
@@ -90,7 +88,6 @@ void McuOutput::send(const L5::WeaponCommand& cmd) const noexcept {
 
 std::expected<OutputInterface, std::string>
     OutputInterface::create_ipc(std::shared_ptr<ipc::ShmClient> client) noexcept {
-    SPDLOG_INFO("[OutputInterface] IPC mode connected");
     return OutputInterface(IpcOutput(std::move(client)));
 }
 
@@ -100,8 +97,6 @@ std::expected<OutputInterface, std::string> OutputInterface::create_usb(
     if (!device) {
         return std::unexpected("failed to connect USB device");
     }
-
-    SPDLOG_INFO("[OutputInterface] USB mode connected");
     return OutputInterface(McuOutput(std::move(device)));
 }
 
@@ -111,8 +106,6 @@ std::expected<OutputInterface, std::string>
     if (!device) {
         return std::unexpected("failed to connect serial device");
     }
-
-    SPDLOG_INFO("[OutputInterface] Serial mode connected");
     return OutputInterface(McuOutput(std::move(device)));
 }
 

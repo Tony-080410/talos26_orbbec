@@ -2,10 +2,7 @@
 
 #include "L4_planning/planning/fire_decision.hpp"
 #include "core/armor_types.hpp"
-#include "core/trajectory/config.hpp"
-#include "toml_helper_containers.hpp"
-
-#include <array>
+#include "toml/ext/containers.hpp"
 
 namespace fcs::L4 {
 

@@ -15,6 +15,6 @@ struct CapturerLaunchContext {
 
 void register_runtime_capturer_system(
     talos::Scheduler& scheduler, const CapturerConfig& config, const CapturerLaunchContext& launch,
-    RobotType robot_type, const CameraConfig& camera_config);
+    const CameraConfig& camera_config);
 
 } // namespace fcs::runtime

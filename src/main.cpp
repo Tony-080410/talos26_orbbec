@@ -25,7 +25,6 @@ int main() {
 
     init_logger();
     hook_cstream();
-    SPDLOG_INFO("talos is initializing...");
     const auto start = std::chrono::system_clock::now();
 
     auto config = fcs::load_config("at_vision.toml");

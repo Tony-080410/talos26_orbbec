@@ -98,12 +98,12 @@ FoxgloveServer::~FoxgloveServer() {
 
     if (websocket_server_) {
         if (auto r = websocket_server_->stop(); r != ::foxglove::FoxgloveError::Ok) {
-            SPDLOG_WARN("Foxglove WebSocket stop failed: {}", ::foxglove::strerror(r));
+            SPDLOG_ERROR("Foxglove WebSocket stop failed: {}", ::foxglove::strerror(r));
         }
     }
     if (mcap_writer_) {
         if (auto r = mcap_writer_->close(); r != ::foxglove::FoxgloveError::Ok) {
-            SPDLOG_WARN("Foxglove MCAP close failed: {}", ::foxglove::strerror(r));
+            SPDLOG_ERROR("Foxglove MCAP close failed: {}", ::foxglove::strerror(r));
         }
     }
 }
@@ -184,7 +184,6 @@ void FoxgloveServer::message_sender_thread() {
         if (!server)
             return std::unexpected(server.error());
         websocket_server = std::move(*server);
-        SPDLOG_INFO("Foxglove WebSocket listening on {}:{}", config.host, config.port);
         break;
     }
     case FoxgloveTransport::Mcap: {
@@ -192,7 +191,6 @@ void FoxgloveServer::message_sender_thread() {
         if (!writer)
             return std::unexpected(writer.error());
         mcap_writer = std::move(*writer);
-        SPDLOG_INFO("Foxglove MCAP writing to {}", config.mcap_path);
         break;
     }
     }

@@ -183,17 +183,17 @@ struct McuImu {
             timestamp_ns);
         fast_tf::update_rotate_only<fast_tf::gimbal_pitch_fuxk_frame>(
             *tf_buffer, math_fuxk::rpy<double>(0.0, imu_data->data.pitch, 0.0), timestamp_ns);
-        if (config.dynamic_bullet_speed && imu_data->data.bullet_speed > 0) {
+        if (config.mcu_authoritative_bullet_speed && imu_data->data.bullet_speed > 0) {
             double new_speed = std::clamp(
                 static_cast<double>(imu_data->data.bullet_speed), config.bullet_speed_min,
                 config.bullet_speed_max);
-            if (new_speed != bullet_speed->bullet_speed) [[unlikely]] {
+            if (new_speed != bullet_speed->bullet_speed) {
                 SPDLOG_INFO(
                     "bullet speed changed: {} -> {}", bullet_speed->bullet_speed, new_speed);
                 bullet_speed->bullet_speed = new_speed;
             }
         }
-        if (config.dynamic_self_color) {
+        if (config.mcu_authoritative_self_color) {
             auto new_detecting_color = imu_data->data.self_color == talos_gimbal::Color::Blue
                                          ? ArmorColor::Red
                                          : ArmorColor::Blue;
@@ -267,7 +267,7 @@ std::expected<L1L2SetupResult, std::string> setup_l1(
         camera    = std::make_shared<fcs::L1::CameraInterface>(std::move(*input_result));
         output    = std::make_shared<fcs::L1::OutputInterface>(std::move(*out_result));
         imu->impl = DaedalusImu{ipc_device};
-    } else {
+    } else if (!hardware->mcu->pretend_mcu) {
         if (hardware == nullptr) {
             return std::unexpected("hardware config is required when daedalus=false");
         }
@@ -278,37 +278,44 @@ std::expected<L1L2SetupResult, std::string> setup_l1(
         auto mcu_config    = config.mcu;
 
         std::shared_ptr<McuHandle> mcu_device;
+        if (hardware->mcu->mcu_authoritative_self_color) {
+            SPDLOG_INFO("MCU authoritative self color enabled");
+        } else {
+            SPDLOG_INFO("MCU authoritative self color disabled");
+        }
+        if (hardware->mcu->mcu_authoritative_bullet_speed) {
+            SPDLOG_INFO("MCU authoritative bullet speed enabled");
+        } else {
+            SPDLOG_INFO("MCU authoritative bullet speed disabled");
+        }
         if (mcu_config->mcu_backend == fcs::McuBackend::Serial) {
             SPDLOG_INFO(
-                "connecting to Serial {} @ {} baud", mcu_config->serial_device,
+                "connecting to mcu via serial with {} @ {} baud", mcu_config->serial_device,
                 mcu_config->serial_baud_rate);
             mcu_device =
                 McuHandle::create_serial(mcu_config->serial_device, mcu_config->serial_baud_rate);
-            if (!mcu_device) {
-                return std::unexpected("failed to connect serial device");
-            }
-            SPDLOG_INFO("connected to serial device");
         } else {
             if (mcu_config->mcu_product_id) {
                 SPDLOG_INFO(
-                    "connecting to USB {:#x}:{:#x}", mcu_config->mcu_vendor_id,
+                    "connecting to mcu via USB with {:#x}:{:#x}", mcu_config->mcu_vendor_id,
                     mcu_config->mcu_product_id);
             } else {
                 SPDLOG_INFO(
-                    "connecting to USB {:#x} (product_id unspecified)", mcu_config->mcu_vendor_id);
+                    "connecting to mcu via USB with {:#x} (product_id unspecified)",
+                    mcu_config->mcu_vendor_id);
             }
             mcu_device =
                 McuHandle::create_usb(mcu_config->mcu_vendor_id, mcu_config->mcu_product_id);
-            if (!mcu_device) {
-                return std::unexpected("failed to connect USB device");
-            }
-            SPDLOG_INFO("connected to USB device");
         }
-
-        SPDLOG_INFO("initializing hik input interface...");
+        if (!mcu_device) {
+            return std::unexpected(
+                fmt::format("failed connecting to mcu via {}", mcu_config->mcu_backend));
+        }
+        SPDLOG_INFO("connected to mcu via {}", mcu_config->mcu_backend);
+        SPDLOG_INFO("initializing hikrobot camera...");
         auto input_result = fcs::L1::CameraInterface::create_hik(config.camera);
         if (!input_result) {
-            return std::unexpected(fmt::format("init hik input: {}", input_result.error()));
+            return std::unexpected(fmt::format("init hikrobot camera: {}", input_result.error()));
         }
 
         camera    = std::make_shared<fcs::L1::CameraInterface>(std::move(*input_result));
@@ -319,17 +326,21 @@ std::expected<L1L2SetupResult, std::string> setup_l1(
     const auto& cam_info = camera->camera_info();
     world.insert_resource(cam_info);
 
-    // IMU: 1000Hz, silent update (no notify)
-    scheduler.add_system<talos::fixed_rate_silent<1000, 1>>(
-        "imu_reader",
-        [imu = std::move(imu)](
-            talos::res_mut<fast_tf::CoordinateSystem> tf_buffer,
-            core::trajectory::bullet_speed_mut bullet_speed,
-            core::detecting_color_mut detecting_color, core::imu_state_mut imu_state,
-            talos::spmc_mut<core::ControlResourceSnapshot, RuntimeControlStateChannelTopic>
-                control_out) {
-            imu->system(tf_buffer, bullet_speed, detecting_color, imu_state, control_out);
-        });
+    if (imu) {
+        // IMU: 1000Hz, silent update (no notify)
+        scheduler.add_system<talos::fixed_rate_silent<1000, 1>>(
+            "imu_reader",
+            [imu = std::move(imu)](
+                talos::res_mut<fast_tf::CoordinateSystem> tf_buffer,
+                core::trajectory::bullet_speed_mut bullet_speed,
+                core::detecting_color_mut detecting_color, core::imu_state_mut imu_state,
+                talos::spmc_mut<core::ControlResourceSnapshot, RuntimeControlStateChannelTopic>
+                    control_out) {
+                imu->system(tf_buffer, bullet_speed, detecting_color, imu_state, control_out);
+            });
+    } else {
+        SPDLOG_WARN("pretending mcu is connected, no mcu data will be available");
+    }
 
     // Camera: 160Hz, notify (triggers compute)
     auto last_seq = std::make_shared<std::atomic<uint64_t>>(0);

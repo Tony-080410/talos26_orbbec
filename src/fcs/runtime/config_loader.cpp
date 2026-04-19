@@ -102,17 +102,16 @@ auto validate_foxglove_config(const FoxgloveConfig& config) -> std::optional<std
     }
 
     return RuntimeConfig{
-        .robot_type = hardware_config->type,
-        .hardware   = std::optional<HardwareConfig>{std::move(*hardware_config)},
-        .foxglove   = std::move(launch.foxglove),
-        .capturer   = std::move(launch.capturer),
-        .vision     = std::move(*vision_config),
+        .hardware = std::optional<HardwareConfig>{std::move(*hardware_config)},
+        .foxglove = std::move(launch.foxglove),
+        .capturer = std::move(launch.capturer),
+        .vision   = std::move(*vision_config),
         .launch =
             runtime::CapturerLaunchContext{
-                                                    .daedalus = launch.daedalus,
-                                                    .robot    = launch.robot.get(),
-                                                    .vision   = launch.vision.get(),
-                                                    },
+                                                  .daedalus = launch.daedalus,
+                                                  .robot    = launch.robot.get(),
+                                                  .vision   = launch.vision.get(),
+                                                  },
     };
 }
 

@@ -254,7 +254,7 @@ TEST(Capturer, LowDiskStillWritesSnapshotRows) {
 
     fcs::runtime::register_runtime_capturer_system(
         scheduler, config, {.daedalus = false, .robot = "hero", .vision = "std"},
-        fcs::RobotType::Hero, fcs::CameraConfig{});
+        fcs::CameraConfig{});
 
     run_scheduler_for(scheduler, 2200ms);
 
@@ -286,7 +286,7 @@ TEST(Capturer, RunMetadataStoresConfigSnapshotCopies) {
 
     fcs::runtime::register_runtime_capturer_system(
         scheduler, config, {.daedalus = false, .robot = "hero", .vision = "std"},
-        fcs::RobotType::Hero, fcs::CameraConfig{});
+        fcs::CameraConfig{});
 
     const fs::path run_dir = find_run_dir(output_dir);
     ASSERT_FALSE(run_dir.empty());
@@ -338,7 +338,7 @@ TEST(Capturer, StaleDetectorKeepsItsOwnImagePath) {
 
     fcs::runtime::register_runtime_capturer_system(
         scheduler, config, {.daedalus = false, .robot = "hero", .vision = "std"},
-        fcs::RobotType::Hero, fcs::CameraConfig{});
+        fcs::CameraConfig{});
 
     run_scheduler_for(scheduler, 3500ms);
 
@@ -394,7 +394,7 @@ TEST(Capturer, SnapshotReferencesRecordedControlWindow) {
 
     fcs::runtime::register_runtime_capturer_system(
         scheduler, config, {.daedalus = false, .robot = "hero", .vision = "std"},
-        fcs::RobotType::Hero, fcs::CameraConfig{});
+        fcs::CameraConfig{});
 
     run_scheduler_for(scheduler, 2200ms);
 
@@ -452,7 +452,7 @@ TEST(Capturer, ControlResourcesGoStaleWhenPublisherIdles) {
 
     fcs::runtime::register_runtime_capturer_system(
         scheduler, config, {.daedalus = false, .robot = "hero", .vision = "std"},
-        fcs::RobotType::Hero, fcs::CameraConfig{});
+        fcs::CameraConfig{});
 
     run_scheduler_for(scheduler, 3500ms);
 
@@ -505,7 +505,7 @@ TEST(Capturer, ControlResourcesExposeImuPresenceBitWhenPresent) {
 
     fcs::runtime::register_runtime_capturer_system(
         scheduler, config, {.daedalus = false, .robot = "hero", .vision = "std"},
-        fcs::RobotType::Hero, fcs::CameraConfig{});
+        fcs::CameraConfig{});
 
     run_scheduler_for(scheduler, 2200ms);
 

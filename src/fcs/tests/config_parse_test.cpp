@@ -44,8 +44,6 @@ TEST(ConfigParse, HeroRobotTomlMatchesExpectedSemanticsAndValues) {
     ASSERT_TRUE(result.has_value()) << result.error();
     const auto& config = *result;
 
-    EXPECT_EQ(config.type.get(), fcs::RobotType::Hero);
-
     expect_matrix_values(
         config.camera->camera_matrix,
         std::array<double, 9>{2333.06, 0.0, 657.19, 0.0, 2323.58, 592.108, 0.0, 0.0, 1.0});
@@ -76,9 +74,8 @@ TEST(ConfigParse, HeroRobotTomlMatchesExpectedSemanticsAndValues) {
 
     EXPECT_EQ(config.mcu->mcu_vendor_id, 0x0483);
     EXPECT_FALSE(config.mcu->mcu_product_id.has_value());
-    EXPECT_TRUE(config.mcu->untrust_roll);
-    EXPECT_TRUE(config.mcu->dynamic_self_color);
-    EXPECT_TRUE(config.mcu->dynamic_bullet_speed);
+    EXPECT_TRUE(config.mcu->mcu_authoritative_self_color);
+    EXPECT_TRUE(config.mcu->mcu_authoritative_bullet_speed);
     EXPECT_DOUBLE_EQ(config.mcu->bullet_speed_default, 11.0);
     EXPECT_DOUBLE_EQ(config.mcu->bullet_speed_min, 10.0);
     EXPECT_DOUBLE_EQ(config.mcu->bullet_speed_max, 20.0);
@@ -292,7 +289,6 @@ TEST(ConfigParse, InlineHelpersAndFormattersBehaveAsExpected) {
     ASSERT_TRUE(vision_result.has_value()) << vision_result.error();
     const auto& vision = *vision_result;
 
-    EXPECT_EQ(fmt::format("{}", hardware.type.get()), "Hero");
     EXPECT_EQ(fmt::format("{}", hardware.camera->profile.rotate_angle), "None");
 
     const auto rotation = hardware.extrinsic->gimbal_yaw.gimbal_pitch.camera_link.rotation();

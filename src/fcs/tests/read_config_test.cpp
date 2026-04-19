@@ -50,10 +50,8 @@ TEST(ReadConfig, RepositoryLaunchConfigLoadsAndMergesOverrideSemantics) {
     ASSERT_TRUE(result.has_value()) << result.error();
 
     auto config = std::move(*result);
-    EXPECT_EQ(config.robot_type, fcs::RobotType::Infantry);
     EXPECT_TRUE(config.launch.daedalus);
     ASSERT_TRUE(config.hardware.has_value());
-    EXPECT_EQ(config.hardware->type.get(), fcs::RobotType::Infantry);
     EXPECT_DOUBLE_EQ(config.hardware->mcu->bullet_speed_default, 22.0);
 
     EXPECT_TRUE(config.foxglove.enabled);
@@ -101,10 +99,8 @@ TEST(ReadConfig, NonDaedalusLaunchReturnsHardwareAndMergedBaseVision) {
         ASSERT_TRUE(result.has_value()) << result.error();
 
         auto config = std::move(*result);
-        EXPECT_EQ(config.robot_type, fcs::RobotType::Hero);
         EXPECT_FALSE(config.launch.daedalus);
         ASSERT_TRUE(config.hardware.has_value());
-        EXPECT_EQ(config.hardware->type.get(), fcs::RobotType::Hero);
         EXPECT_TRUE(config.foxglove.enabled);
         EXPECT_EQ(config.foxglove.transport, fcs::FoxgloveTransport::WebSocket);
         EXPECT_EQ(
