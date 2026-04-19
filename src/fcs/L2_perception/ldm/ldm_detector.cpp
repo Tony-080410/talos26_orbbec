@@ -114,11 +114,6 @@ namespace {
     std::vector<LightBlob> blobs;
     blobs.reserve(contours.size());
     for (const auto& contour : contours) {
-        const double contour_area = cv::contourArea(contour);
-        if (contour_area < static_cast<double>(config.min_blob_area_px)) {
-            continue;
-        }
-
         const cv::Rect rect = cv::boundingRect(contour);
         if (rect.width <= 0 || rect.height <= 0) {
             continue;
@@ -131,11 +126,38 @@ namespace {
             continue;
         }
 
-        const float fill_ratio = static_cast<float>(contour_area)
-                               / static_cast<float>(std::max(1, rect.width * rect.height));
-        if (fill_ratio < static_cast<float>(config.min_blob_fill_ratio)) {
+        const double contour_area   = cv::contourArea(contour);
+        const int pixel_count       = cv::countNonZero(mask(rect));
+        const double effective_area = (contour_area >= static_cast<double>(config.min_blob_area_px))
+                                        ? contour_area
+                                        : static_cast<double>(pixel_count);
+        if (effective_area < static_cast<double>(config.min_blob_area_px)) {
             continue;
         }
+
+        const float rect_area = static_cast<float>(std::max(1, rect.width * rect.height));
+        // Geometric fill: how compact the contour is.  Low for loose outlines —
+        // this is used for noise gating because geometric compactness rejects
+        // stray noise patches that happen to have many thresholded pixels.
+        const float fill_ratio_geo = static_cast<float>(contour_area) / rect_area;
+        // Pixel fill: actual pixel density in the bounding rect.  More accurate
+        // for sparse sensor data where the contour is loose but pixels are real.
+        const float fill_ratio_px = static_cast<float>(pixel_count) / rect_area;
+        // Accept compact contours (high geometric fill) or blobs with enough
+        // raw pixels — sparse sensor data often produces loose outlines with
+        // plenty of detected pixels but low contourArea.
+        const bool passes_fill   = fill_ratio_geo >= static_cast<float>(config.min_blob_fill_ratio);
+        const bool passes_sparse = pixel_count >= config.min_sparse_blob_pixel_count;
+        if (!passes_fill && !passes_sparse) {
+            continue;
+        }
+
+        // Blobs that pass the geometric fill gate use geometric fill for scoring.
+        // Blobs that only entered via the sparse gate use pixel-based fill — their
+        // geometric fill is too low to be meaningful but they have enough real
+        // pixels to represent a valid sparse LED.
+        const bool used_sparse_gate = !passes_fill;
+        const float fill_ratio      = used_sparse_gate ? fill_ratio_px : fill_ratio_geo;
 
         blobs.push_back(
             LightBlob{
