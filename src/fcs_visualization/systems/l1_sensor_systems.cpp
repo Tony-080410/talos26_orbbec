@@ -238,18 +238,20 @@ void register_l1_sensor_systems(talos::scheduler::Scheduler& app) {
             // Box color is always green
             const cv::Scalar box_color(0, 255, 0);
             std::array<cv::Scalar, 4> colors = {
-                cv::Scalar(0, 255, 0),   // 绿色 (LT)
-                cv::Scalar(255, 255, 0), // 青色 (LB)
-                cv::Scalar(255, 0, 255), // 品红 (RB)
-                cv::Scalar(0, 255, 255)  // 黄色 (RT)
+                cv::Scalar(255, 0, 0),  // 红色 (RT)
+                cv::Scalar(0, 255, 0),  // 绿色 (LT)
+                cv::Scalar(0, 0, 255),  // 蓝色 (LB)
+                cv::Scalar(0, 255, 255) // 黄色 (RB)
             };
             for (const auto& det : batch->detections) {
                 // Draw detection box
                 for (size_t j = 0; j < det.corners.size(); j++) {
                     auto pp1 = det.corners[j];
                     auto pp2 = det.corners[(j + 1) % 4];
-                    cv::circle(img_bgr, pp1, 5, colors[(j + 1) % 4], 2);
-                    cv::line(img_bgr, pp1, pp2, box_color, 2);
+                    cv::circle(img_bgr, pp1, 2, colors[(j + 1) % 4], 2);
+                    cv::arrowedLine(
+                        img_bgr, pp1, pp2, colors[(j + 1) % 4], 2, cv::LINE_8, 0,
+                        10.0 / cv::norm(pp1 - pp2));
                 }
 
                 // Draw debug info below the box
