@@ -12,6 +12,7 @@ vision = "daedalus_vision"
 "ax650.local"      = { daedalus = false, robot = "drone",       vision = "drone_vision" }
 "blackjack.local"  = { daedalus = true,  robot = "infantry_4",  vision = "daedalus_vision" }
 "hero.local"       = { daedalus = false,  robot = "hero",        vision = "hero_vision" }
+"nuc"       = { daedalus = false,  robot = "radar",        vision = "radar" }
 
 [foxglove]
 enabled = true

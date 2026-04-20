@@ -23,6 +23,7 @@ camera_link.yaw = -1.45
 muzzle_link.translation = [0.06, 0.0, 0.0]
 
 [mcu]
+pretend_mcu = true
 mcu_authoritative_self_color = true
 mcu_authoritative_bullet_speed = true
 bullet_speed_default = 21.0
