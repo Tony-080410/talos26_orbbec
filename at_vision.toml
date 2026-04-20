@@ -3,6 +3,16 @@ daedalus = true
 robot = "infantry_4"  # any of: 'infantry', 'hero', 'sentry'
 vision = "daedalus_vision"
 
+
+# Hostname-based preset auto-matching.
+# The system hostname is looked up in [preset]; the matched entry provides
+# robot, vision, and optionally daedalus. If no match is found, falls back
+# to the explicit robot/vision/daedalus fields above.
+[preset]
+"ax650.local"      = { daedalus = false, robot = "drone",       vision = "drone_vision" }
+"blackjack.local"  = { daedalus = true,  robot = "infantry_4",  vision = "daedalus_vision" }
+"hero.local"       = { daedalus = false,  robot = "hero",        vision = "hero_vision" }
+
 [foxglove]
 enabled = true
 transport = "WebSocket"

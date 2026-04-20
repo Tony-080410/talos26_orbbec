@@ -242,7 +242,8 @@ std::expected<L1L2SetupResult, std::string> setup_l1(
     const HardwareConfig* hardware) {
     std::shared_ptr<fcs::L1::CameraInterface> camera;
     std::shared_ptr<fcs::L1::OutputInterface> output;
-    auto imu = std::make_shared<Imu>();
+    auto imu       = std::make_shared<Imu>();
+    bool imu_ready = false;
     world.insert_resource(core::ImuState{});
     if (daedalus) {
         SPDLOG_INFO("connecting to daedalus ipc...");
@@ -267,7 +268,8 @@ std::expected<L1L2SetupResult, std::string> setup_l1(
         camera    = std::make_shared<fcs::L1::CameraInterface>(std::move(*input_result));
         output    = std::make_shared<fcs::L1::OutputInterface>(std::move(*out_result));
         imu->impl = DaedalusImu{ipc_device};
-    } else if (!hardware->mcu->pretend_mcu) {
+        imu_ready = true;
+    } else {
         if (hardware == nullptr) {
             return std::unexpected("hardware config is required when daedalus=false");
         }
@@ -276,57 +278,59 @@ std::expected<L1L2SetupResult, std::string> setup_l1(
 
         const auto& config = *hardware;
         auto mcu_config    = config.mcu;
-
-        std::shared_ptr<McuHandle> mcu_device;
-        if (hardware->mcu->mcu_authoritative_self_color) {
-            SPDLOG_INFO("MCU authoritative self color enabled");
-        } else {
-            SPDLOG_INFO("MCU authoritative self color disabled");
-        }
-        if (hardware->mcu->mcu_authoritative_bullet_speed) {
-            SPDLOG_INFO("MCU authoritative bullet speed enabled");
-        } else {
-            SPDLOG_INFO("MCU authoritative bullet speed disabled");
-        }
-        if (mcu_config->mcu_backend == fcs::McuBackend::Serial) {
-            SPDLOG_INFO(
-                "connecting to mcu via serial with {} @ {} baud", mcu_config->serial_device,
-                mcu_config->serial_baud_rate);
-            mcu_device =
-                McuHandle::create_serial(mcu_config->serial_device, mcu_config->serial_baud_rate);
-        } else {
-            if (mcu_config->mcu_product_id) {
-                SPDLOG_INFO(
-                    "connecting to mcu via USB with {:#x}:{:#x}", mcu_config->mcu_vendor_id,
-                    mcu_config->mcu_product_id);
+        if (!hardware->mcu->pretend_mcu) {
+            std::shared_ptr<McuHandle> mcu_device;
+            if (hardware->mcu->mcu_authoritative_self_color) {
+                SPDLOG_INFO("MCU authoritative self color enabled");
             } else {
-                SPDLOG_INFO(
-                    "connecting to mcu via USB with {:#x} (product_id unspecified)",
-                    mcu_config->mcu_vendor_id);
+                SPDLOG_INFO("MCU authoritative self color disabled");
             }
-            mcu_device =
-                McuHandle::create_usb(mcu_config->mcu_vendor_id, mcu_config->mcu_product_id);
+            if (hardware->mcu->mcu_authoritative_bullet_speed) {
+                SPDLOG_INFO("MCU authoritative bullet speed enabled");
+            } else {
+                SPDLOG_INFO("MCU authoritative bullet speed disabled");
+            }
+            if (mcu_config->mcu_backend == fcs::McuBackend::Serial) {
+                SPDLOG_INFO(
+                    "connecting to mcu via serial with {} @ {} baud", mcu_config->serial_device,
+                    mcu_config->serial_baud_rate);
+                mcu_device = McuHandle::create_serial(
+                    mcu_config->serial_device, mcu_config->serial_baud_rate);
+            } else {
+                if (mcu_config->mcu_product_id) {
+                    SPDLOG_INFO(
+                        "connecting to mcu via USB with {:#x}:{:#x}", mcu_config->mcu_vendor_id,
+                        mcu_config->mcu_product_id);
+                } else {
+                    SPDLOG_INFO(
+                        "connecting to mcu via USB with {:#x} (product_id unspecified)",
+                        mcu_config->mcu_vendor_id);
+                }
+                mcu_device =
+                    McuHandle::create_usb(mcu_config->mcu_vendor_id, mcu_config->mcu_product_id);
+            }
+            if (!mcu_device) {
+                return std::unexpected(
+                    fmt::format("failed connecting to mcu via {}", mcu_config->mcu_backend));
+            }
+            SPDLOG_INFO("connected to mcu via {}", mcu_config->mcu_backend);
+            output    = std::make_shared<fcs::L1::OutputInterface>(fcs::L1::McuOutput(mcu_device));
+            imu->impl = McuImu{mcu_config, mcu_device, &g_imu_data};
+            imu_ready = true;
         }
-        if (!mcu_device) {
-            return std::unexpected(
-                fmt::format("failed connecting to mcu via {}", mcu_config->mcu_backend));
-        }
-        SPDLOG_INFO("connected to mcu via {}", mcu_config->mcu_backend);
         SPDLOG_INFO("initializing hikrobot camera...");
         auto input_result = fcs::L1::CameraInterface::create_hik(config.camera);
         if (!input_result) {
             return std::unexpected(fmt::format("init hikrobot camera: {}", input_result.error()));
         }
 
-        camera    = std::make_shared<fcs::L1::CameraInterface>(std::move(*input_result));
-        output    = std::make_shared<fcs::L1::OutputInterface>(fcs::L1::McuOutput(mcu_device));
-        imu->impl = McuImu{mcu_config, mcu_device, &g_imu_data};
+        camera = std::make_shared<fcs::L1::CameraInterface>(std::move(*input_result));
     }
 
     const auto& cam_info = camera->camera_info();
     world.insert_resource(cam_info);
 
-    if (imu) {
+    if (imu_ready) {
         // IMU: 1000Hz, silent update (no notify)
         scheduler.add_system<talos::fixed_rate_silent<1000, 1>>(
             "imu_reader",
@@ -363,17 +367,19 @@ std::expected<L1L2SetupResult, std::string> setup_l1(
             cam_out.write(fcs::ImageFrame{std::move(img), frame->timestamp_ns, seq});
         });
 
-    // L1 Output System: Send WeaponCommand to device
-    scheduler.add_system<talos::fixed_rate<250, 1>>(
-        "weapon_output",
-        [output = std::move(output)](
-            talos::spmc<fcs::L5::WeaponCommand, fcs::WeaponCommandChannelTopic> cmd_in) {
-            auto cmd = cmd_in.read();
-            if (!cmd) [[unlikely]] {
-                return;
-            }
-            output->send(*cmd);
-        });
+    if (imu_ready) {
+        // L1 Output System: Send WeaponCommand to device
+        scheduler.add_system<talos::fixed_rate<250, 1>>(
+            "weapon_output",
+            [output = std::move(output)](
+                talos::spmc<fcs::L5::WeaponCommand, fcs::WeaponCommandChannelTopic> cmd_in) {
+                auto cmd = cmd_in.read();
+                if (!cmd) [[unlikely]] {
+                    return;
+                }
+                output->send(*cmd);
+            });
+    }
 
     return L1L2SetupResult{.camera_config = cam_info};
 }

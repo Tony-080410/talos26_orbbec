@@ -3,6 +3,7 @@
 #include "toml_helper.hpp"
 
 #include <fmt/core.h>
+#include <primitive/system_info.hpp>
 #include <toml++/toml.hpp>
 
 namespace fcs {
@@ -37,6 +38,38 @@ auto validate_foxglove_config(const FoxgloveConfig& config) -> std::optional<std
     return std::nullopt;
 }
 
+/// Apply hostname-based preset override to a fully-parsed LaunchConfig.
+/// When [preset] exists and hostname matches, the matched entry overrides
+/// robot, vision, and daedalus. Otherwise the explicit fields are used as-is.
+auto apply_preset(LaunchConfig& launch) -> std::expected<void, std::string> {
+    const auto hostname_result = talos::primitive::SystemInfo::get_hostname();
+    if (!hostname_result) {
+        return std::unexpected(
+            fmt::format(
+                "entry config: [preset] table present but hostname lookup failed: {}",
+                hostname_result.error()));
+    }
+    const std::string_view hostname = *hostname_result;
+
+    const auto it = launch.preset.find(std::string{hostname});
+    if (it == launch.preset.end()) {
+        // Hostname not in preset — fall through to explicit fields
+        SPDLOG_INFO("hostname '{}' not in [preset], using explicit robot/vision fields", hostname);
+        return {};
+    }
+
+    const auto& entry = it->second;
+    launch.daedalus   = entry.daedalus;
+    launch.robot      = entry.robot;
+    launch.vision     = entry.vision;
+
+    SPDLOG_INFO(
+        "hostname auto-match: '{}' -> robot='{}', vision='{}', daedalus={}", hostname,
+        entry.robot.get(), entry.vision.get(), entry.daedalus);
+
+    return {};
+}
+
 } // namespace
 
 [[nodiscard]] std::expected<RuntimeConfig, std::string> load_config(std::string_view path) {
@@ -51,6 +84,12 @@ auto validate_foxglove_config(const FoxgloveConfig& config) -> std::optional<std
         return std::unexpected(fmt::format("entry config: {}", launch_config.error()));
     }
     auto launch = std::move(*launch_config);
+
+    // Apply hostname-based preset override
+    if (auto r = apply_preset(launch); !r) {
+        return std::unexpected(r.error());
+    }
+
     if (launch.capturer.enabled && launch.capturer.output_dir.empty()) {
         return std::unexpected(
             "entry config: capturer.output_dir is required when capturer.enabled=true");
