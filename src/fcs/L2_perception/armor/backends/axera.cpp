@@ -59,7 +59,7 @@ constexpr const char* AX_CMM_SESSION_NAME = "ax-samples-cmm";
 constexpr float GRID_OFFSET               = 0.5f;
 constexpr float FOUR_THIRDS               = 4.0f / 3.0f;
 constexpr float FOUR_THIRDS_TOLERANCE     = 0.01f;
-constexpr std::array<int, 4> KPT_ORDER    = {1, 2, 3, 0};
+constexpr std::array<int, 4> KPT_ORDER    = {0, 3, 2, 1};
 
 enum class AX_ENGINE_ALLOC_BUFFER_STRATEGY_T {
     DEFAULT = 0,
