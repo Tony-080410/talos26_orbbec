@@ -14,7 +14,7 @@ concept ReflectDeserializeCandidate =
     Reflectable<T> && !ReadFrom<T> && !TomlScalarValue<T> && !std::is_enum_v<T>
     && !is_flatten_v<std::remove_cvref_t<T>> && !is_required_v<std::remove_cvref_t<T>>
     && !is_std_optional_v<std::remove_cvref_t<T>> && !is_std_vector_v<std::remove_cvref_t<T>>
-    && !is_std_array_v<std::remove_cvref_t<T>>;
+    && !is_std_array_v<std::remove_cvref_t<T>> && !is_std_map_v<std::remove_cvref_t<T>>;
 
 template <typename T>
 concept TableReadable = ReadFrom<T> || ReflectDeserializeCandidate<T>;

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <array>
+#include <map>
 #include <optional>
 #include <vector>
 
@@ -83,6 +84,28 @@ template <typename T, std::size_t N>
     return result;
 }
 
+template <typename V>
+[[nodiscard]] std::expected<std::map<std::string, V>, std::string>
+    parse_map_value(const toml::node& node, std::string_view key, bool ensure_all_tables_read) {
+    const auto* tbl = node.as_table();
+    if (!tbl) {
+        return std::unexpected(invalid_value_error(key, "table", node.type()));
+    }
+
+    std::map<std::string, V> result;
+
+    for (const auto& [k, v] : *tbl) {
+        const auto entry_context = fmt::format("{}.{}", key, std::string_view{k});
+        auto entry_result        = parse_value<V>(v, entry_context, ensure_all_tables_read);
+        if (!entry_result) {
+            return std::unexpected(entry_result.error());
+        }
+        result.emplace(std::string{k}, std::move(*entry_result));
+    }
+
+    return result;
+}
+
 template <typename T>
 [[nodiscard]] std::expected<T, std::string>
     parse_value(const toml::node& node, std::string_view context, bool ensure_all_tables_read) {
@@ -119,6 +142,8 @@ template <typename T>
     } else if constexpr (is_std_array_v<T>) {
         return parse_array_value<array_value_t<T>, array_value<T>::size>(
             node, context, ensure_all_tables_read);
+    } else if constexpr (is_std_map_v<T>) {
+        return parse_map_value<map_value_t<T>>(node, context, ensure_all_tables_read);
     } else {
         static_assert(
             always_false_v<T>,
@@ -305,6 +330,65 @@ struct Deserialize<std::array<T, N>, void> {
 
         (void)const_cast<toml::table&>(table).erase(key);
         return std::optional<std::array<T, N>>{std::move(*result)};
+    }
+};
+
+template <typename V>
+struct Deserialize<std::map<std::string, V>, void> {
+    [[nodiscard]] static std::expected<std::map<std::string, V>, std::string>
+        read(const toml::table& table, std::string_view key) {
+        const toml::node* node = table.get(key);
+        if (!node) {
+            return std::unexpected(detail::missing_key_error(key));
+        }
+
+        return detail::parse_map_value<V>(*node, key, true);
+    }
+
+    [[nodiscard]] static std::expected<std::optional<std::map<std::string, V>>, std::string>
+        read_optional(const toml::table& table, std::string_view key) {
+        const toml::node* node = table.get(key);
+        if (!node) {
+            return std::optional<std::map<std::string, V>>{};
+        }
+
+        auto result = detail::parse_map_value<V>(*node, key, true);
+        if (!result) {
+            return std::unexpected(result.error());
+        }
+        return std::optional<std::map<std::string, V>>{std::move(*result)};
+    }
+
+    [[nodiscard]] static std::expected<std::map<std::string, V>, std::string>
+        take(const toml::table& table, std::string_view key) {
+        const toml::node* node = table.get(key);
+        if (!node) {
+            return std::unexpected(detail::missing_key_error(key));
+        }
+
+        auto result = detail::parse_map_value<V>(*node, key, true);
+        if (!result) {
+            return std::unexpected(result.error());
+        }
+
+        (void)const_cast<toml::table&>(table).erase(key);
+        return std::move(*result);
+    }
+
+    [[nodiscard]] static std::expected<std::optional<std::map<std::string, V>>, std::string>
+        take_optional(const toml::table& table, std::string_view key) {
+        const toml::node* node = table.get(key);
+        if (!node) {
+            return std::optional<std::map<std::string, V>>{};
+        }
+
+        auto result = detail::parse_map_value<V>(*node, key, true);
+        if (!result) {
+            return std::unexpected(result.error());
+        }
+
+        (void)const_cast<toml::table&>(table).erase(key);
+        return std::optional<std::map<std::string, V>>{std::move(*result)};
     }
 };
 

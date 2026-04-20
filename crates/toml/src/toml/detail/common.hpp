@@ -230,6 +230,34 @@ struct array_value<std::array<T, N>> {
 };
 
 template <typename T>
+inline constexpr bool is_std_map_v = false;
+
+template <typename K, typename V>
+inline constexpr bool is_std_map_v<std::map<K, V>> = true;
+
+template <typename T>
+struct map_key;
+
+template <typename K, typename V>
+struct map_key<std::map<K, V>> {
+    using type = K;
+};
+
+template <typename T>
+using map_key_t = typename map_key<T>::type;
+
+template <typename T>
+struct map_value;
+
+template <typename K, typename V>
+struct map_value<std::map<K, V>> {
+    using type = V;
+};
+
+template <typename T>
+using map_value_t = typename map_value<T>::type;
+
+template <typename T>
 using array_value_t = typename array_value<T>::type;
 
 [[nodiscard]] inline const char* node_type_name(toml::node_type t) noexcept {
