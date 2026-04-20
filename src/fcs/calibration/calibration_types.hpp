@@ -5,6 +5,7 @@
 #include <opencv2/calib3d.hpp>
 #include <opencv2/core.hpp>
 #include <opencv2/core/eigen.hpp>
+#undef HAVE_OPENCV_ARUCO
 #ifdef HAVE_OPENCV_ARUCO
 # include <opencv2/aruco.hpp>
 #endif

@@ -22,6 +22,7 @@
 #include <opencv2/imgproc.hpp>
 #include <spdlog/spdlog.h>
 #include <thread>
+#include <utility.hpp>
 
 namespace fcs::calibration {
 
@@ -29,16 +30,16 @@ namespace fcs::calibration {
 /// @tparam App Scheduler application type
 /// @param app Scheduler application
 /// @param config Calibration configuration
-template <typename App>
 void register_calibration_systems(
-    App& app, std::shared_ptr<CalibrationConfig> config, std::shared_ptr<CalibrationBoard> board,
+    talos::scheduler::Scheduler& app, std::shared_ptr<CalibrationConfig> config,
+    std::shared_ptr<CalibrationBoard> board,
     std::shared_ptr<IntrinsicCalibrator> intrinsic_calibrator,
     std::shared_ptr<HandEyeCalibrator> handeye_calibrator,
     std::shared_ptr<IntrinsicResult> intrinsic_result) {
 
     // 1. Corner detection system (pool_compute)
     // Detects calibration board corners in incoming images
-    app.template add_system<talos::pool_compute>(
+    app.add_system<talos::pool_compute>(
         "calibration_corner_detector",
         [board](
             talos::spmc<ImageFrame, ImageChannelTopic> img_in,
@@ -66,7 +67,7 @@ void register_calibration_systems(
         });
 
     // 2. Intrinsic calibration sample collector (pool_compute)
-    app.template add_system<talos::pool_compute>(
+    app.add_system<talos::pool_compute>(
         "calibration_intrinsic_collector",
         [intrinsic_calibrator, config](
             talos::spmc<CornerDetection, CalibrationCornerChannelTopic> corner_in,
@@ -111,7 +112,7 @@ void register_calibration_systems(
         });
 
     // 3. Hand-eye calibration sample collector (pool_compute)
-    app.template add_system<talos::pool_compute>(
+    app.add_system<talos::pool_compute>(
         "calibration_handeye_collector",
         [handeye_calibrator, intrinsic_result, config](
             talos::spmc<CornerDetection, CalibrationCornerChannelTopic> corner_in,
@@ -185,12 +186,12 @@ void register_calibration_systems(
         });
 
     // 4. Foxglove visualization system (pool_compute)
-    app.template add_system<talos::fixed_rate<30>>(
+    app.add_system<talos::fixed_rate<30>>(
         "calibration_visualization",
         [board, config](
             talos::spmc<CornerDetection, CalibrationCornerChannelTopic> corner_in,
             talos::spmc<ImageFrame, ImageChannelTopic> img_in,
-            talos::res<std::shared_ptr<FoxgloveServer>> server,
+            talos::res<std::shared_ptr<visualization::FoxgloveServer>> server,
             talos::res<std::shared_ptr<CalibrationStatus>> status) {
             if (!(*server)->is_initialized()) {
                 return;
@@ -231,11 +232,11 @@ void register_calibration_systems(
                 return;
             }
 
-            CalibrationImageMessage msg;
-            msg.img.timestamp = timestamp_from_ns(ts);
-            msg.img.frame_id  = "calibration_view";
-            msg.img.format    = "jpeg";
-            msg.img.data      = std::vector<std::byte>(
+            visualization::CalibrationImageMessage msg;
+            msg.payload.timestamp = visualization::timestamp_from_ns(ts);
+            msg.payload.frame_id  = "calibration_view";
+            msg.payload.format    = "jpeg";
+            msg.payload.data      = std::vector<std::byte>(
                 reinterpret_cast<const std::byte*>(compressed.data()),
                 reinterpret_cast<const std::byte*>(compressed.data() + compressed.size()));
 

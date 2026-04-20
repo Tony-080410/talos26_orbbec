@@ -15,6 +15,9 @@
 #include "calibration/chessboard_detector.hpp"
 #include "calibration/handeye_calibrator.hpp"
 #include "calibration/intrinsic_calibrator.hpp"
+#include "camera_config.hpp"
+#include "core/armor_types.hpp"
+#include "core/trajectory/resource.hpp"
 #include "spdlog_hook.hpp"
 
 #include "config.hpp"
@@ -26,6 +29,7 @@
 #include "scheduler/scheduler.hpp"
 #include "toml_helper.hpp"
 
+#include "scheduler/error_formatter.hpp"
 #include <atomic>
 #include <chrono>
 #include <csignal>
@@ -190,9 +194,13 @@ int main(int argc, char* argv[]) {
 
     // Create hardware config if using real hardware
     fcs::HardwareConfig hardware_config;
-    hardware_config.camera.width   = config->width;
-    hardware_config.camera.height  = config->height;
-    hardware_config.camera.profile = config->profile;
+    hardware_config.camera          = fcs::CameraConfig{};
+    hardware_config.camera->width   = config->width;
+    hardware_config.camera->height  = config->height;
+    hardware_config.camera->profile = config->profile;
+    hardware_config.mcu             = fcs::McuConfig{};
+    world.insert_resource(fcs::core::trajectory::bullet_speed_data{.bullet_speed = 25.0});
+    world.insert_resource(fcs::ArmorColor::Blue);
 
     // Setup L1_L2 runtime (camera + IMU)
     auto setup_result = fcs::runtime::setup_l1(
@@ -203,14 +211,15 @@ int main(int argc, char* argv[]) {
     }
 
     // Initialize Foxglove server
-    std::shared_ptr<fcs::FoxgloveServer> foxglove_server;
+    std::shared_ptr<fcs::visualization::FoxgloveServer> foxglove_server;
     if (config->foxglove.enabled) {
-        auto server_result = fcs::create_foxglove_server(config->foxglove);
+        auto server_result = fcs::visualization::create_foxglove_server(
+            config->foxglove.port, config->foxglove.host);
         if (!server_result) {
             SPDLOG_WARN("Foxglove transport failed to initialize: {}", server_result.error());
         } else {
             foxglove_server = std::move(*server_result);
-            fcs::attach_foxglove_sink(*foxglove_server);
+            fcs::visualization::attach_foxglove_sink(*foxglove_server);
             world.insert_resource(foxglove_server);
             if (config->foxglove.transport == fcs::FoxgloveTransport::WebSocket) {
                 SPDLOG_INFO(
@@ -233,7 +242,7 @@ int main(int argc, char* argv[]) {
 
     // Build scheduler
     if (auto build_result = scheduler.build(); !build_result) {
-        SPDLOG_CRITICAL("Failed to build scheduler");
+        SPDLOG_CRITICAL("Failed to build scheduler: {}", build_result.error());
         return 1;
     }
 

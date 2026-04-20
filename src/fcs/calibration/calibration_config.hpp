@@ -123,24 +123,6 @@ struct CalibrationConfig {
                     "calibration.foxglove.mcap_path is required when "
                     "calibration.foxglove.transport=\"Mcap\"");
             }
-            if (config->foxglove.quanta.target_bitrate <= 0) {
-                return std::unexpected(
-                    "calibration.foxglove.quanta.target_bitrate must be positive");
-            }
-            if (config->foxglove.quanta.max_width <= 0 || config->foxglove.quanta.max_height <= 0) {
-                return std::unexpected(
-                    "calibration.foxglove.quanta.max_width and max_height must be positive");
-            }
-            if (config->foxglove.quanta.gop_size <= 0) {
-                return std::unexpected("calibration.foxglove.quanta.gop_size must be positive");
-            }
-            if (config->foxglove.quanta.framerate <= 0) {
-                return std::unexpected("calibration.foxglove.quanta.framerate must be positive");
-            }
-            if (config->foxglove.quanta.lookahead < 0) {
-                return std::unexpected(
-                    "calibration.foxglove.quanta.lookahead must be non-negative");
-            }
             return std::move(*config);
         }
 
