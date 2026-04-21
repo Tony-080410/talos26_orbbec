@@ -60,7 +60,6 @@ enum class McuBackend : uint8_t {
 };
 
 struct McuConfig {
-    bool pretend_mcu{false};
     McuBackend mcu_backend{McuBackend::Usb};
     uint16_t mcu_vendor_id{0x0483};
     std::optional<uint16_t> mcu_product_id{std::nullopt};

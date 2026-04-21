@@ -1,4 +1,5 @@
 daedalus = true
+mock_mcu = false
 
 robot = "infantry_4"  # any of: 'infantry', 'hero', 'sentry'
 vision = "daedalus_vision"
@@ -12,7 +13,7 @@ vision = "daedalus_vision"
 "ax650.local"      = { daedalus = false, robot = "drone",       vision = "drone_vision" }
 "blackjack.local"  = { daedalus = true,  robot = "infantry_4",  vision = "daedalus_vision" }
 "hero.local"       = { daedalus = false,  robot = "hero",        vision = "hero_vision" }
-"nuc"       = { daedalus = false,  robot = "radar",        vision = "radar" }
+"nuc"       = { daedalus = false,  mock_mcu = true, robot = "radar",        vision = "radar" }
 
 [foxglove]
 enabled = true
@@ -34,3 +35,6 @@ tune = "ssim"
 enabled = false
 output_dir = "record"
 reserved_free_bytes = 2097152
+
+[scheduler]
+print_stats = false

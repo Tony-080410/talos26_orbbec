@@ -38,7 +38,7 @@ int main() {
     auto foxglove_cfg = config->foxglove;
 
     talos::World world;
-    talos::Scheduler scheduler(world);
+    talos::Scheduler scheduler(world, config->scheduler);
 
     // Foxglove visualization setup (separate library dependency)
     if (foxglove_cfg.enabled) {

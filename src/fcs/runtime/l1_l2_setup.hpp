@@ -25,7 +25,7 @@ struct L1L2SetupResult {
 //
 // `hardware` must be non-null when `daedalus == false`.
 [[nodiscard]] std::expected<L1L2SetupResult, std::string> setup_l1(
-    talos::World& world, talos::Scheduler& scheduler, bool daedalus,
+    talos::World& world, talos::Scheduler& scheduler, bool mock_mcu, bool daedalus,
     const HardwareConfig* hardware);
 
 } // namespace fcs::runtime

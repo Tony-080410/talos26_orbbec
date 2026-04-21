@@ -238,7 +238,7 @@ struct Imu {
 } // namespace
 
 std::expected<L1L2SetupResult, std::string> setup_l1(
-    talos::World& world, talos::Scheduler& scheduler, bool daedalus,
+    talos::World& world, talos::Scheduler& scheduler, bool mock_mcu, bool daedalus,
     const HardwareConfig* hardware) {
     std::shared_ptr<fcs::L1::CameraInterface> camera;
     std::shared_ptr<fcs::L1::OutputInterface> output;
@@ -278,7 +278,7 @@ std::expected<L1L2SetupResult, std::string> setup_l1(
 
         const auto& config = *hardware;
         auto mcu_config    = config.mcu;
-        if (!hardware->mcu->pretend_mcu) {
+        if (!mock_mcu) {
             std::shared_ptr<McuHandle> mcu_device;
             if (hardware->mcu->mcu_authoritative_self_color) {
                 SPDLOG_INFO("MCU authoritative self color enabled");

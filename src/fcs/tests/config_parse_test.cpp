@@ -188,11 +188,10 @@ TEST(ConfigParse, VisionBaseTomlMatchesExpectedSemanticsAndValues) {
     EXPECT_DOUBLE_EQ(config.tracker().outpost.model.meas_dist_k, 0.43);
     EXPECT_DOUBLE_EQ(config.tracker().outpost.model.yaw_log_k, 0.005);
 
-    EXPECT_DOUBLE_EQ(config.l4->fire_decision.fire_thresh, 0.01744444);
-    EXPECT_DOUBLE_EQ(config.l4->fire_decision.shooting_range_h, 0.12);
-    EXPECT_DOUBLE_EQ(config.l4->fire_decision.shooting_range_w_small, 0.12);
-    EXPECT_DOUBLE_EQ(config.l4->fire_decision.shooting_range_w_large, 0.24);
-    EXPECT_DOUBLE_EQ(config.l4->fire_decision.min_enable_pitch_deg, 0.25);
+    EXPECT_DOUBLE_EQ(config.l5->fire_decision.fire_thresh, 0.01744444);
+    EXPECT_DOUBLE_EQ(config.l5->fire_decision.shooting_range_h, 0.12);
+    EXPECT_DOUBLE_EQ(config.l5->fire_decision.shooting_range_w_small, 0.12);
+    EXPECT_DOUBLE_EQ(config.l5->fire_decision.shooting_range_w_large, 0.24);
     EXPECT_DOUBLE_EQ(config.l4->aimer.delay, 0.2);
     EXPECT_DOUBLE_EQ(config.l4->aimer.single_whole_up, 1.5);
     EXPECT_DOUBLE_EQ(config.l4->aimer.single_whole_down, 1.0);

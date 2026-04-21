@@ -1,5 +1,6 @@
 #include "foxglove_server.hpp"
 
+#include <server.hpp>
 #include <spdlog/spdlog.h>
 
 namespace fcs::visualization {
@@ -13,10 +14,12 @@ namespace detail {
 [[nodiscard]] std::expected<::foxglove::WebSocketServer, std::string>
     create_websocket_sink(const FoxgloveConfig& config, const ::foxglove::Context& context) {
     ::foxglove::WebSocketServerOptions ws;
-    ws.context    = context;
-    ws.host       = config.host;
-    ws.port       = config.port;
-    ws.session_id = "talos";
+    ws.context      = context;
+    ws.name         = "talos";
+    ws.host         = config.host;
+    ws.port         = config.port;
+    ws.session_id   = "talos-forever";
+    ws.capabilities = foxglove::WebSocketServerCapabilities::Time;
 
     auto server = ::foxglove::WebSocketServer::create(std::move(ws));
     if (server.has_value())
@@ -117,7 +120,9 @@ void FoxgloveServer::publish_camera_calibration(
     const std::vector<double>& distortion, uint64_t timestamp_ns) {
     if (!channels_.camera_calib_ch)
         return;
-
+    if (websocket_server_) {
+        websocket_server_->broadcastTime(timestamp_ns);
+    }
     ::foxglove::schemas::CameraCalibration calib;
     calib.timestamp        = timestamp_from_ns(timestamp_ns);
     calib.frame_id         = "camera_optical_frame";
@@ -140,7 +145,7 @@ void FoxgloveServer::publish_camera_calibration(
         0.0,
         1.0,
         0.0};
-    channels_.camera_calib_ch->log(calib);
+    channels_.camera_calib_ch->log(calib, timestamp_ns);
 }
 
 // ============================================================================

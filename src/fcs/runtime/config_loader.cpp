@@ -62,10 +62,11 @@ auto apply_preset(LaunchConfig& launch) -> std::expected<void, std::string> {
     launch.daedalus   = entry.daedalus;
     launch.robot      = entry.robot;
     launch.vision     = entry.vision;
+    launch.mock_mcu   = entry.mock_mcu;
 
     SPDLOG_INFO(
-        "hostname auto-match: '{}' -> robot='{}', vision='{}', daedalus={}", hostname,
-        entry.robot.get(), entry.vision.get(), entry.daedalus);
+        "hostname: '{}' -> robot='{}', vision='{}', mock_mcu={}, daedalus={}", hostname,
+        entry.robot.get(), entry.vision.get(), entry.mock_mcu, entry.daedalus);
 
     return {};
 }
@@ -151,6 +152,7 @@ auto apply_preset(LaunchConfig& launch) -> std::expected<void, std::string> {
                                                   .robot    = launch.robot.get(),
                                                   .vision   = launch.vision.get(),
                                                   },
+        .scheduler = launch.scheduler
     };
 }
 

@@ -34,6 +34,7 @@
 #include "scheduler/error.hpp"
 #include "scheduler/system/execution_policy.hpp"
 #include "scheduler/system/system.hpp"
+#include "scheduler/thin.hpp"
 #include "scheduler/world.hpp"
 
 #include <spdlog/spdlog.h>
@@ -55,26 +56,6 @@
 #include <vector>
 
 namespace talos::scheduler {
-
-// ============================================================================
-// Configuration
-// ============================================================================
-
-/**
- * @brief Scheduler configuration
- */
-struct SchedulerConfig {
-    /**
-     * @brief TBB arena concurrency
-     *
-     * Number of threads in the compute pool. 0 = hardware concurrency.
-     *
-     * ## Default
-     *
-     * 0 (use all available cores)
-     */
-    std::size_t compute_concurrency = 0;
-};
 
 // ============================================================================
 // System Entry

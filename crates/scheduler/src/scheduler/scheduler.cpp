@@ -1636,8 +1636,10 @@ void Scheduler::run_compute_loop() {
     constexpr std::size_t YIELD_LIMIT = 1000; // Yield iterations before sleep
     constexpr auto SLEEP_DURATION     = std::chrono::microseconds(10); // Short sleep
     std::size_t idle_count            = 0;
-    const auto print_interval         = std::chrono::seconds(5);
-    auto last_print                   = Clock::now();
+
+    const auto should_print = config_.print_stats;
+    auto print_interval     = std::chrono::seconds(5);
+    auto last_print         = Clock::now();
 
     while (is_running()) [[likely]] {
         // Check for pause request (hot-add in progress)
@@ -1687,13 +1689,13 @@ void Scheduler::run_compute_loop() {
             }
 
             // Check stats after compute (amortize cost)
-            // /*
-            const auto now = Clock::now();
-            if (now - last_print >= print_interval) [[unlikely]] {
-                print_stats();
-                last_print = now;
+            if (should_print) [[unlikely]] {
+                const auto now = Clock::now();
+                if (now - last_print >= print_interval) [[unlikely]] {
+                    print_stats();
+                    last_print = now;
+                }
             }
-            // */
         } else {
             // Adaptive backoff strategy:
             // - Spin first (lowest latency, ~10 cycles per SPIN_HINT)
