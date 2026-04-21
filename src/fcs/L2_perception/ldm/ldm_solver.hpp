@@ -498,7 +498,7 @@ private:
         cv::Mat rvec, tvec;
         bool success = cv::solvePnP(
             obj_points, img_points, camera_matrix_, dist_coeffs_, rvec, tvec, false,
-            cv::SOLVEPNP_SQPNP);
+            cv::SOLVEPNP_IPPE);
         if (success) {
             cv::solvePnP(
                 obj_points, img_points, camera_matrix_, dist_coeffs_, rvec, tvec, true,
