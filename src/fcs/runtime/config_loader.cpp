@@ -149,6 +149,7 @@ auto apply_preset(LaunchConfig& launch) -> std::expected<void, std::string> {
         .launch =
             runtime::CapturerLaunchContext{
                                                   .daedalus = launch.daedalus,
+                                                  .mock_mcu = launch.mock_mcu,
                                                   .robot    = launch.robot.get(),
                                                   .vision   = launch.vision.get(),
                                                   },

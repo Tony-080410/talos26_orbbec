@@ -9,6 +9,7 @@ namespace fcs::runtime {
 
 struct CapturerLaunchContext {
     bool daedalus{false};
+    bool mock_mcu{false};
     std::string robot;
     std::string vision;
 };

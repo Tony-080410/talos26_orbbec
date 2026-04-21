@@ -787,6 +787,7 @@ public:
             {         "launch",
              json{
              {"daedalus", launch.daedalus},
+             {"mock_mcu", launch.mock_mcu},
              {"robot", launch.robot},
              {"vision", launch.vision},
              }                                                      },
