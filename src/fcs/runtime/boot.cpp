@@ -86,7 +86,7 @@ void init_coordinate_system(fast_tf::CoordinateSystem& system, const RobotExtrin
 
     // Setup L1 sensor systems
     auto setup_result = runtime::setup_l1(
-        world, scheduler, config.mock_mcu, config.launch.daedalus,
+        world, scheduler, config.launch.mock_mcu, config.launch.daedalus,
         config.hardware ? &*config.hardware : nullptr);
     if (!setup_result) {
         return std::unexpected(fmt::format("setup l1: {}", setup_result.error()));
