@@ -1,0 +1,29 @@
+[camera]
+camera_matrix = [1804.9, 0, 700.121, 0, 1800.17, 635.201, 0, 0, 1]
+distort_coefficient = [-0.0886063, 0.280987, 0.00128406, -0.00286645, -0.603744]
+width = 1440
+height = 1080
+
+[camera.profile]
+trigger_mode = false
+invert_image = false
+exposure_time_us = 5000 # 0.15ms in microseconds
+gain = 16.9
+
+[extrinsic.gimbal_yaw.gimbal_pitch]
+translation = [0, 0, 0]
+
+camera_link.translation = [0.1760306, 0, 0.00]
+camera_link.roll = 0.0
+camera_link.pitch = 0.0
+camera_link.yaw = 0.0
+
+muzzle_link.translation = [0.1760306, 0.0, 0.0]
+
+[mcu]
+mcu_backend = "Serial"
+mcu_authoritative_self_color = false
+mcu_authoritative_bullet_speed = false
+bullet_speed_default = 500.0
+bullet_speed_min = 500.0
+bullet_speed_max = 500.0

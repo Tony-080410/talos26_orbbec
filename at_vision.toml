@@ -14,7 +14,7 @@ vision = "daedalus_vision"
 "blackjack.local"  = { daedalus = true,  robot = "infantry_4",  vision = "daedalus_vision" }
 "hero.local"       = { daedalus = false,  robot = "hero",        vision = "hero_vision" }
 "nuc"       = { daedalus = false,  mock_mcu = true, robot = "radar",        vision = "radar" }
-
+"ax650-2.local" = {daedalus = false, robot = "omni", vision="omni" }
 [foxglove]
 enabled = true
 transport = "WebSocket"
