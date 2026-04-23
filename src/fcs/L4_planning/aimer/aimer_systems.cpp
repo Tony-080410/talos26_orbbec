@@ -1,4 +1,5 @@
 #include "L4_planning/aimer/aimer_systems.hpp"
+#include "L3_estimation/ldm_naive/types.hpp"
 #include "L4_planning/aimer/aimer.hpp"
 #include "L4_planning/aimer/fsm.hpp"
 
@@ -381,7 +382,7 @@ void register_aimer_systems(talos::Scheduler& scheduler, L4Config&& config) {
             core::trajectory::bullet_speed bullet_speed_,
             talos::spmc<L3::TrackerOutputs, TrackerOutputChannelTopic> tracker_in,
             talos::spmc<energy_meter::EnergyMeterState, EnergyMeterStateChannelTopic> rune_in,
-            talos::res<fast_tf::CoordinateSystem> tf_buffer,
+            talos::spmc<L3::ldm::LdmState> ldm_in, talos::res<fast_tf::CoordinateSystem> tf_buffer,
             talos::spmc_mut<SelectedTargetSnapshot, SelectedTargetSnapshotChannelTopic>
                 selected_target_out,
             talos::spmc_mut<TargetSelectionTrace, TargetSelectionTraceChannelTopic>
@@ -552,10 +553,16 @@ void register_aimer_systems(talos::Scheduler& scheduler, L4Config&& config) {
 
             // Try Rune (fallback)
             if (!aim_result) {
-                const auto rune_state = rune_in.read_current();
+                const auto rune_state = rune_in.read();
                 if (rune_state && rune_state->tracking_valid) {
                     aim_result = aimer->aim(
                         *rune_state, gimbal, muzzle, current_ns, bullet_speed, solver_ref);
+                }
+                // FIXME read_current or read?
+                const auto ldm_state = ldm_in.read();
+                if (ldm_state) {
+                    aim_result = aimer->aim(
+                        ldm_state.value(), gimbal, muzzle, current_ns, bullet_speed, solver_ref);
                 }
             }
 
@@ -563,9 +570,6 @@ void register_aimer_systems(talos::Scheduler& scheduler, L4Config&& config) {
                 if (selected_candidate) {
                     aim_result->armor_type =
                         cls_to_armor_type(selected_candidate->tracker.target_name);
-                }
-
-                if (selected_candidate) {
                     auto& phase_state              = phase_states[selected_candidate->key];
                     const bool tracker_jump_active = selected_candidate->tracker.is_tracking()
                                                   && selected_candidate->tracker.target_jumped;

@@ -1,4 +1,5 @@
 #include "L4_planning/aimer/aimer.hpp"
+#include "L3_estimation/ldm_naive/types.hpp"
 #include "core/math/normalize.hpp"
 
 #include <algorithm>
@@ -425,6 +426,35 @@ std::expected<TargetPrediction, std::string> Aimer::aim(
     const MuzzleTransform& muzzle, uint64_t current_ns, double bullet_speed,
     const core::trajectory::solver::TrajectorySolver& solver) const noexcept {
     return aim_generic_no_prediction(state, gimbal, muzzle, current_ns, bullet_speed, solver);
+}
+
+std::expected<TargetPrediction, std::string> Aimer::aim(
+    const L3::ldm::LdmState& target, const GimbalTransform& gimbal, const MuzzleTransform& muzzle,
+    uint64_t current_ns, double bullet_speed,
+    const core::trajectory::solver::TrajectorySolver& solver) const noexcept {
+
+    TargetPrediction output;
+    output.target_type     = get_target_type<L3::ldm::LdmState>();
+    output.timestamp_ns    = current_ns;
+    output.target_velocity = Eigen::Vector3d::Zero();
+    output.target_v_yaw    = 0.0;
+
+    output.predicted_position  = target.position;
+    output.predicted_future_ns = target.timestamp_ns;
+    const auto solution =
+        solver.solve(output.predicted_position - muzzle.translation(), bullet_speed);
+    if (!solution.is_valid()) {
+        return std::unexpected("ballistic solver failed to produce a valid aim solution");
+    }
+    output.flying_time = solution.time_of_flight;
+
+    const auto [yaw, pitch] = compose_gimbal_aim_angles(solution, gimbal, muzzle);
+
+    output.aim_yaw   = yaw;
+    output.aim_pitch = pitch;
+    output.distance  = (output.predicted_position - muzzle.translation()).norm();
+
+    return output;
 }
 
 } // namespace fcs::L4

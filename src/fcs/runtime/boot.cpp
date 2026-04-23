@@ -5,6 +5,7 @@
 #include "L2_perception/ldm/ldm_systems.hpp"
 #include "L2_perception/rune/rune_systems.hpp"
 #include "L3_estimation/energy_meter/energy_meter_systems.hpp"
+#include "L3_estimation/ldm_naive/ldm_naive_systems.hpp"
 #include "L3_estimation/tracker_systems.hpp"
 #include "L4_planning/planning_systems.hpp"
 #include "L5_weapon/enhanced/weapon_systems.hpp"
@@ -119,6 +120,7 @@ void init_coordinate_system(fast_tf::CoordinateSystem& system, const RobotExtrin
 
     // Register L3 Tracker pipeline (Measurement -> TrackerOutput)
     L3::register_tracker_systems(scheduler, std::move(config.vision.l3->tracker));
+    L3::ldm::register_naive_ldm_systems(scheduler, config.vision.naive_ldm);
     energy_meter::register_energy_meter_systems(scheduler, std::move(config.vision.energy_meter));
 
     // Register L4 Planning pipeline (Aimer + Armor Plan Adapter)

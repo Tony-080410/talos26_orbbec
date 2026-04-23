@@ -26,6 +26,7 @@ enum class AimerTargetType : uint8_t {
     Robot,   ///< Robot target (Infantry/Hero/Sentry)
     Outpost, ///< Outpost target
     Rune,    ///< Rune (Energy Depot) target
+    Ldm,     ///< Rune (Energy Depot) target
 };
 
 // ============================================================================

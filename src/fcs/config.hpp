@@ -10,6 +10,7 @@
 #include "L2_perception/ldm/ldm_config.hpp"
 #include "L2_perception/rune/rune_config.hpp"
 #include "L3_estimation/energy_meter/energy_meter_systems.hpp"
+#include "L3_estimation/ldm_naive/ldm_naive_systems.hpp"
 #include "L3_estimation/tracker/config.hpp"
 #include "L4_planning/config.hpp"
 #include "L5_weapon/config.hpp"
@@ -87,6 +88,7 @@ struct VisionConfig {
 
     toml_helper::flatten<L3::L3Config> l3{};
     energy_meter::EnergyMeterL3Config energy_meter{};
+    L3::ldm::NaiveLdmConfig naive_ldm{};
 
     toml_helper::flatten<L4::L4Config> l4{};
 

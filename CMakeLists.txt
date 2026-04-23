@@ -177,6 +177,7 @@ set(FCS_SOURCES
         src/fcs/L3_estimation/energy_meter_solver/angle_fitter.cpp
         src/fcs/L3_estimation/energy_meter_solver/energy_meter_tracker.cpp
         src/fcs/L3_estimation/energy_meter/energy_meter_systems.cpp
+        src/fcs/L3_estimation/ldm_naive/ldm_naive_systems.cpp
         src/fcs/L4_planning/aimer/aimer.cpp
         src/fcs/L4_planning/aimer/aimer_systems.cpp
         src/fcs/L4_planning/planning_systems.cpp

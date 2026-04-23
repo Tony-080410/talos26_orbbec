@@ -5,6 +5,7 @@
 #include <string>
 
 #include "L3_estimation/energy_meter/types.hpp"
+#include "L3_estimation/ldm_naive/types.hpp"
 #include "L3_estimation/tracker/types.hpp"
 #include "L4_planning/aimer/aimer_utils.hpp"
 #include "L4_planning/aimer/types.hpp"
@@ -72,6 +73,12 @@ public:
     /// Compute aim point for rune target (EnergyMeterState)
     [[nodiscard]] std::expected<TargetPrediction, std::string>
         aim(const energy_meter::EnergyMeterState& state, const GimbalTransform& gimbal,
+            const MuzzleTransform& muzzle, uint64_t current_ns, double bullet_speed,
+            const core::trajectory::solver::TrajectorySolver& solver) const noexcept;
+
+    /// Compute aim point for rune target (EnergyMeterState)
+    [[nodiscard]] std::expected<TargetPrediction, std::string>
+        aim(const L3::ldm::LdmState& state, const GimbalTransform& gimbal,
             const MuzzleTransform& muzzle, uint64_t current_ns, double bullet_speed,
             const core::trajectory::solver::TrajectorySolver& solver) const noexcept;
 
@@ -177,6 +184,10 @@ inline constexpr AimerTargetType Aimer::get_target_type<L3::OutpostTargetState>(
 template <>
 inline constexpr AimerTargetType Aimer::get_target_type<energy_meter::EnergyMeterState>() noexcept {
     return AimerTargetType::Rune;
+}
+template <>
+inline constexpr AimerTargetType Aimer::get_target_type<L3::ldm::LdmState>() noexcept {
+    return AimerTargetType::Ldm;
 }
 
 } // namespace fcs::L4
