@@ -4,10 +4,12 @@
 
 #include <Eigen/Core>
 #include <Eigen/Geometry>
+#include <algorithm>
+#include <cassert>
+#include <concepts>
 #include <groups/SEn3.hpp>
-#include <opencv2/calib3d.hpp>
-#include <opencv2/core/cvdef.h>
-#include <opencv2/core/eigen.hpp>
+#include <opencv2/core/types.hpp>
+#include <type_traits>
 
 namespace fast_tf {
 
@@ -17,9 +19,9 @@ namespace fast_tf {
 /// re-expresses a point from frame B into frame A.
 ///
 /// Algebra:
-/// - T<A, B> * T<B, C> → T<A, C>   (composition)
-/// - inv(T<A, B>)      → T<B, A>    (inverse)
-/// - I<A>              → T<A, A>    (identity)
+/// - T<A, B> * T<B, C> :  T<A, C>   (composition)
+/// - inv(T<A, B>)      :  T<B, A>    (inverse)
+/// - I<A>              :  T<A, A>    (identity)
 template <typename T, typename A, typename B>
 class TransformMatrix {
 public:
@@ -49,18 +51,40 @@ public:
     // Factory Methods
     // ========================================================================
 
-    static TransformMatrix from_pnp(cv::Vec<T, 3> rvec, cv::Vec<T, 3> tvec) {
-        cv::Mat rmat_cv;
-        cv::Rodrigues(rvec, rmat_cv);
-
+    /// Create from rotation vector (rodrigues) + translation vector (OpenCV PnP convention)
+    /// Uses a hand-rolled Rodrigues formula to avoid pulling calib3d.hpp into every TU.
+    static TransformMatrix
+        from_rvec_tvec(const Eigen::Matrix<T, 3, 1>& rvec, const Eigen::Matrix<T, 3, 1>& tvec) {
+        const T theta = rvec.norm();
         Eigen::Matrix<T, 3, 3> R;
-        cv::cv2eigen(rmat_cv, R);
 
-        assert(
-            std::abs(R.determinant() - T(1)) < T(1e-6)
-            && "Rotation matrix must have determinant 1");
+        if (theta < T(1e-8)) {
+            R = Eigen::Matrix<T, 3, 3>::Identity();
+        } else {
+            const Eigen::Matrix<T, 3, 1> k = rvec / theta;
+            const T c                      = std::cos(theta);
+            const T s                      = std::sin(theta);
+            const T omc                    = T(1) - c;
 
-        return from_rt(R, Eigen::Matrix<T, 3, 1>(tvec[0], tvec[1], tvec[2]));
+            R(0, 0) = c + k(0) * k(0) * omc;
+            R(0, 1) = k(0) * k(1) * omc - k(2) * s;
+            R(0, 2) = k(0) * k(2) * omc + k(1) * s;
+            R(1, 0) = k(1) * k(0) * omc + k(2) * s;
+            R(1, 1) = c + k(1) * k(1) * omc;
+            R(1, 2) = k(1) * k(2) * omc - k(0) * s;
+            R(2, 0) = k(2) * k(0) * omc - k(1) * s;
+            R(2, 1) = k(2) * k(1) * omc + k(0) * s;
+            R(2, 2) = c + k(2) * k(2) * omc;
+        }
+
+        return from_rt(R, tvec);
+    }
+
+    /// Create from OpenCV rvec/tvec. Thin wrapper around from_rvec_tvec.
+    static TransformMatrix from_pnp(cv::Vec<T, 3> rvec, cv::Vec<T, 3> tvec) {
+        return from_rvec_tvec(
+            Eigen::Matrix<T, 3, 1>(rvec[0], rvec[1], rvec[2]),
+            Eigen::Matrix<T, 3, 1>(tvec[0], tvec[1], tvec[2]));
     }
 
     /// Create EulerRot::XYZ intrinsic
@@ -103,7 +127,7 @@ public:
     // Type-level Transform Algebra
     // ========================================================================
 
-    /// Composition: T<A,B> * T<B,C> → T<A,C>
+    /// Composition: T<A,B> * T<B,C> :  T<A,C>
     template <typename C>
     [[nodiscard]] TransformMatrix<T, A, C> operator*(const TransformMatrix<T, B, C>& other) const {
         return TransformMatrix<T, A, C>(pose_ * other.pose_);
@@ -119,7 +143,7 @@ public:
     // Compatibility Helpers
     // ========================================================================
 
-    /// reparent_to(T<Parent,A>, T<A,B>) → T<Parent,B>
+    /// reparent_to(T<Parent,A>, T<A,B>) :  T<Parent,B>
     template <typename Parent>
     [[nodiscard]] TransformMatrix<T, Parent, B>
         reparent_to(const TransformMatrix<T, Parent, A>& parent_tf) const {
@@ -198,7 +222,7 @@ private:
     SE3 pose_{};
 };
 
-/// Identity transform for frame F: I<F> → TransformMatrix<Scalar, F, F>
+/// Identity transform for frame F: I<F> :  TransformMatrix<Scalar, F, F>
 template <typename Frame, typename Scalar = double>
 [[nodiscard]] TransformMatrix<Scalar, Frame, Frame> I() {
     return TransformMatrix<Scalar, Frame, Frame>::identity();
