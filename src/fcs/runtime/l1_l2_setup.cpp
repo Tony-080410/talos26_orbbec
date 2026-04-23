@@ -159,7 +159,6 @@ struct McuImu {
     McuConfig config;
     std::shared_ptr<McuHandle> device;
     talos_gimbal::ReceiveImuData* imu_data = nullptr;
-    std::optional<uint32_t> last_mcu_timestamp_ms{};
 
     void system(
         talos::res_mut<fast_tf::CoordinateSystem> tf_buffer,
@@ -172,11 +171,6 @@ struct McuImu {
             || imu_data->eof != talos_gimbal::HeaderFrame::EoF()) [[unlikely]] {
             return;
         }
-        if (last_mcu_timestamp_ms.has_value() && *last_mcu_timestamp_ms == imu_data->time_stamp)
-            [[unlikely]] {
-            return;
-        }
-        last_mcu_timestamp_ms       = imu_data->time_stamp;
         const uint64_t timestamp_ns = fcs::clock::now_ns();
         fast_tf::update_rotate_only<fast_tf::gimbal_yaw_fuxk_frame>(
             *tf_buffer, math_fuxk::rpy<double>(imu_data->data.roll, 0.0, imu_data->data.yaw),
