@@ -916,10 +916,10 @@ std::vector<ArmorDetection>
     const auto total_us =
         std::chrono::duration_cast<std::chrono::microseconds>(total_end - total_start).count();
 
-    SPDLOG_INFO(
-        "[AxeraBackend] Postproc: scan={}ms decode={}ms nms={}ms total={}ms | passed={}/{}",
-        phase2_us / 1000.0, phase3_us / 1000.0, nms_us / 1000.0, total_us / 1000.0,
-        anchor_scan_count, num_anchors);
+    // SPDLOG_INFO(
+    //     "[AxeraBackend] Postproc: scan={}ms decode={}ms nms={}ms total={}ms | passed={}/{}",
+    //     phase2_us / 1000.0, phase3_us / 1000.0, nms_us / 1000.0, total_us / 1000.0,
+    //     anchor_scan_count, num_anchors);
 
     return result;
 }
@@ -1050,10 +1050,10 @@ AxeraBackend::DetectionResult AxeraBackend::detect_impl(const cv::Mat& image) no
     const auto total_us =
         std::chrono::duration_cast<std::chrono::microseconds>(total_end - total_start).count();
 
-    SPDLOG_INFO(
-        "[AxeraBackend] Timing: preproc={:.2f}ms, infer={:.2f}ms, postproc={:.2f}ms, "
-        "total={:.2f}ms",
-        preproc_us / 1000.0, infer_us / 1000.0, postproc_us / 1000.0, total_us / 1000.0);
+    // SPDLOG_INFO(
+    //     "[AxeraBackend] Timing: preproc={:.2f}ms, infer={:.2f}ms, postproc={:.2f}ms, "
+    //     "total={:.2f}ms",
+    //     preproc_us / 1000.0, infer_us / 1000.0, postproc_us / 1000.0, total_us / 1000.0);
 
     return detections;
 }
