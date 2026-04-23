@@ -7,11 +7,13 @@
 
 #include <chrono>
 #include <expected>
-#include <fmt/core.h>
+#include <fmt/base.h>
+#include <fmt/format.h>
 #include <memory>
 #include <opencv2/core/mat.hpp>
 #include <ratio>
 #include <string>
+#include <string_view>
 #include <tuple>
 
 namespace hikcamera {

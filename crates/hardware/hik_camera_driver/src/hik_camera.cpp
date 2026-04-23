@@ -2,22 +2,22 @@
 #include "CameraParams.h"
 #include "MvErrorDefine.h"
 
-#include <cstdlib>
 #include <cstring>
+#include <exception>
+#include <memory>
 #include <mutex>
 
 #include <chrono>
-#include <memory>
+#include <opencv2/core.hpp>
 #include <opencv2/imgproc.hpp>
 #include <ratio>
-#include <thread>
 #include <tuple>
 
 #include <spdlog/sinks/stdout_color_sinks.h>
 #include <spdlog/spdlog.h>
 
 #include <MvCameraControl.h>
-#include <opencv2/opencv.hpp>
+#include <PixelType.h>
 
 namespace hikcamera {
 
