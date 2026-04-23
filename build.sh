@@ -318,6 +318,7 @@ configure_linux() {
 # -----------------------------------------------------------------------------
 configure_cmake() {
     CMAKE_CONFIGURE_ARGS=(
+        -DCMAKE_COLOR_DIAGNOSTICS=ON
         -G "$GENERATOR"
         -B build
         -S .
