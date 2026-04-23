@@ -2,7 +2,10 @@
 
 #include "../system/execution_policy.hpp"
 #include "system.hpp"
-#include <spdlog/spdlog.h>
+#include <cstdint>
+#include <functional>
+#include <string>
+#include <utility>
 
 namespace talos::scheduler::rclcompat {
 

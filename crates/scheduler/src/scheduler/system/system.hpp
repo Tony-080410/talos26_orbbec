@@ -6,8 +6,13 @@
 #include "system_meta.hpp"
 
 #include <atomic>
+#include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <optional>
+#include <string>
+#include <tuple>
+#include <type_traits>
 #include <utility>
 
 namespace talos::scheduler::system {

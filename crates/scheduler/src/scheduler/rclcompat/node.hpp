@@ -7,11 +7,17 @@
 #include "../system/system.hpp"
 #include "registry.hpp"
 #include "system.hpp"
-#include "timer_factory.hpp"
+#include "timer_constants.hpp"
 
+#include <any>
 #include <cstddef>
+#include <functional>
 #include <memory>
+#include <string>
+#include <string_view>
+#include <unordered_map>
 #include <utility>
+#include <vector>
 
 namespace talos::scheduler::rclcompat {
 using namespace system;
@@ -54,9 +60,7 @@ public:
      * - `name`: node name (used as prefix for system names)
      * - `scheduler`: reference to the scheduler to register systems with
      */
-    explicit Node(std::string name, Scheduler& scheduler) noexcept
-        : name_(std::move(name))
-        , scheduler_(scheduler) {}
+    explicit Node(std::string name, Scheduler& scheduler) noexcept;
 
     // Non-copyable, non-movable (owns references to internal data)
     Node(const Node&)            = delete;
@@ -182,12 +186,7 @@ public:
      * move semantics when forwarding to the underlying timer system. For large
      * capture lists, consider capturing by reference in the lambda itself.
      */
-    void create_wall_timer(const Frequency frequency, std::function<void()> callback) {
-        std::string system_name = name_ + "/timer/" + std::to_string(pending_systems_.size());
-
-        auto system = create_timer_system(std::move(system_name), frequency, std::move(callback));
-        pending_systems_.push_back(std::move(system));
-    }
+    void create_wall_timer(Frequency frequency, std::function<void()> callback);
 
     /**
      * @brief Create a resource accessor
@@ -289,7 +288,7 @@ public:
      *
      * Node name as string_view
      */
-    [[nodiscard]] std::string_view name() const noexcept { return name_; }
+    [[nodiscard]] std::string_view name() const noexcept;
 
     /**
      * @brief Finalize and register all systems with the scheduler
@@ -310,7 +309,7 @@ public:
      * Must be called from a single thread. Calling this while the scheduler is running aborts
      * and points callers at `unsafe_finalize()`.
      */
-    [[nodiscard]] BuildResult finalize() { return finalize_impl(false); }
+    [[nodiscard]] BuildResult finalize();
 
     /**
      * @brief Experimental finalize escape hatch for runtime hot-add
@@ -318,7 +317,7 @@ public:
      * Preserves the legacy running finalize path by routing through
      * `Scheduler::unsafe_hot_add_system()`.
      */
-    [[nodiscard]] BuildResult unsafe_finalize() { return finalize_impl(true); }
+    [[nodiscard]] BuildResult unsafe_finalize();
 
     /**
      * @brief Get the ownership registry
@@ -327,7 +326,7 @@ public:
      *
      * Reference to the ownership registry
      */
-    [[nodiscard]] OwnershipRegistry& registry() noexcept { return *registry_; }
+    [[nodiscard]] OwnershipRegistry& registry() noexcept;
 
     /**
      * @brief Get a raw pointer to a PubSlot (for advanced use)
@@ -361,42 +360,7 @@ private:
 
     std::vector<std::unique_ptr<SystemBase>> pending_systems_;
 
-    [[nodiscard]] BuildResult finalize_impl(const bool allow_running_finalize) {
-        if (scheduler_.is_running() && !allow_running_finalize) {
-            using namespace talos::scheduler;
-            panic(
-                "Node '{}': finalize() while scheduler is running is unsafe; use "
-                "unsafe_finalize() if you need the explicit escape hatch",
-                name_);
-        }
-
-        std::size_t consumed = 0;
-        for (; consumed < pending_systems_.size(); ++consumed) {
-            auto& sys = pending_systems_[consumed];
-            if (scheduler_.is_running()) {
-                if (auto result = scheduler_.unsafe_hot_add_system(std::move(sys)); !result) {
-                    pending_systems_.erase(
-                        pending_systems_.begin(),
-                        pending_systems_.begin() + static_cast<std::ptrdiff_t>(consumed + 1));
-                    return result;
-                }
-            } else {
-                if (auto result = scheduler_.add_system(std::move(sys)); !result) {
-                    pending_systems_.erase(
-                        pending_systems_.begin(),
-                        pending_systems_.begin() + static_cast<std::ptrdiff_t>(consumed + 1));
-                    return std::unexpected(BuildError{result.error()});
-                }
-            }
-        }
-        pending_systems_.clear();
-
-        if (!scheduler_.is_running()) {
-            return scheduler_.build();
-        }
-
-        return {};
-    }
+    [[nodiscard]] BuildResult finalize_impl(bool allow_running_finalize);
 
     /// Helper: build system name from type, topic, and kind (eliminates duplicate string
     /// construction)

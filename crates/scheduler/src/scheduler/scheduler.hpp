@@ -37,23 +37,26 @@
 #include "scheduler/thin.hpp"
 #include "scheduler/world.hpp"
 
-#include <spdlog/spdlog.h>
-#include <tbb/task_arena.h>
-#include <tbb/task_group.h>
-
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
+#include <cstddef>
 #include <cstdint>
-#include <cstdlib>
 #include <expected>
 #include <memory>
 #include <mutex>
+#include <new>
 #include <string>
 #include <thread>
 #include <utility>
-#include <variant>
 #include <vector>
+
+namespace tbb::detail::d1 {
+class task_arena;
+} // namespace tbb::detail::d1
+namespace tbb {
+using task_arena = tbb::detail::d1::task_arena;
+} // namespace tbb
 
 namespace talos::scheduler {
 
@@ -194,7 +197,7 @@ public:
      * pointer stability. Channel acquisition through `World` is reserved for scheduler
      * bind-time; external code must not lazily create or claim channel endpoints after build.
      */
-    [[nodiscard]] World& world() noexcept { return world_; }
+    [[nodiscard]] World& world() noexcept;
 
     // ========================================================================
     // Lifecycle
@@ -445,11 +448,7 @@ private:
         FixedRateStats() = default;
 
         // Move constructor: atomics are not movable, so we load and store
-        FixedRateStats(FixedRateStats&& other) noexcept
-            : notify_count(other.notify_count.load(std::memory_order_relaxed))
-            , execution_count(other.execution_count.load(std::memory_order_relaxed))
-            , record_count(other.record_count.load(std::memory_order_relaxed))
-            , latency_hist(std::move(other.latency_hist)) {}
+        FixedRateStats(FixedRateStats&& other) noexcept;
 
         // Non-copyable, non-movable-assignable
         FixedRateStats(const FixedRateStats&)            = delete;
@@ -465,9 +464,7 @@ private:
         primitive::LatencyHistogram latency_hist;
 
         ComputeStats() = default;
-        ComputeStats(ComputeStats&& other) noexcept
-            : run_count(other.run_count.load(std::memory_order_relaxed))
-            , latency_hist(std::move(other.latency_hist)) {}
+        ComputeStats(ComputeStats&& other) noexcept;
         ComputeStats(const ComputeStats&)            = delete;
         ComputeStats& operator=(const ComputeStats&) = delete;
         ComputeStats& operator=(ComputeStats&&)      = delete;
@@ -496,9 +493,7 @@ private:
         -> std::expected<TopologySnapshot, BuildError>;
     void commit_topology(TopologySnapshot snapshot) noexcept;
     void bind_external_compute_sources() noexcept;
-    static constexpr bool is_running_state(const LifecycleState state) noexcept {
-        return state == LifecycleState::Running;
-    }
+    static bool is_running_state(LifecycleState state) noexcept;
 
     // Pause/resume helpers for hot-add
     void request_compute_loop_pause() noexcept;
@@ -508,16 +503,9 @@ private:
     [[nodiscard]] std::uint64_t sum_notify_counts() const noexcept;
 
     // Helper: check if scheduler is running and abort if so (eliminates duplicate checks)
-    void ensure_not_running() const noexcept {
-        if (is_running_state(lifecycle_.load(std::memory_order_acquire))) {
-            SPDLOG_CRITICAL("add_system: system already running!");
-            std::abort();
-        }
-    }
+    void ensure_not_running() const noexcept;
 
-    void mark_topology_dirty() noexcept {
-        lifecycle_.store(LifecycleState::Configuring, std::memory_order_release);
-    }
+    void mark_topology_dirty() noexcept;
 
     // ========================================================================
     // Members

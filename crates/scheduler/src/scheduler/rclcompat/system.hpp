@@ -1,13 +1,32 @@
 #pragma once
 
 #include "../demangle.hpp"
+#include "../error.hpp"
 #include "../system/system.hpp"
 #include "registry.hpp"
 #include "system_builder.hpp"
+#include <atomic>
+#include <cstddef>
 #include <cstdint>
-#include <spdlog/spdlog.h>
+#include <functional>
+#include <memory>
+#include <optional>
+#include <string>
+#include <utility>
 
 namespace talos::scheduler::rclcompat {
+
+using system::ChannelKey;
+using system::DefaultTopic;
+using system::ExternalComputeSource;
+using system::fixed_rate;
+using system::pool_compute;
+using system::res;
+using system::res_mut;
+using system::spmc;
+using system::spmc_mut;
+using system::SystemBase;
+using system::SystemMeta;
 
 // Forward declaration
 class RclSubSystemBase;
@@ -35,7 +54,7 @@ struct CallbackContext {
 };
 
 /// Global thread-local callback context
-inline thread_local CallbackContext g_callback_context;
+extern thread_local CallbackContext g_callback_context;
 
 /**
  * @brief RAII scope guard for setting/restoring callback context
@@ -47,13 +66,9 @@ struct CallbackContextScope {
     CallbackContext* ctx_;
     RclSubSystemBase* prev_system_;
 
-    explicit CallbackContextScope(RclSubSystemBase* current) noexcept
-        : ctx_(&g_callback_context)
-        , prev_system_(ctx_->current_system) {
-        ctx_->current_system = current;
-    }
+    explicit CallbackContextScope(RclSubSystemBase* current) noexcept;
 
-    ~CallbackContextScope() noexcept { ctx_->current_system = prev_system_; }
+    ~CallbackContextScope() noexcept;
 
     // Non-copyable, non-movable
     CallbackContextScope(const CallbackContextScope&)            = delete;
@@ -69,7 +84,7 @@ class RclSubSystemBase : public SystemBase {
 public:
     ~RclSubSystemBase() override = default;
 
-    const SystemMeta& meta() const noexcept override { return meta_; }
+    const SystemMeta& meta() const noexcept override;
 
 protected:
     /**
@@ -278,16 +293,15 @@ public:
      */
     void publish(T msg) noexcept {
         if (!slot_) [[unlikely]] {
-            SPDLOG_CRITICAL("Publisher::publish() called on invalid (moved-from) publisher");
-            std::abort();
+            panic("Publisher::publish() called on invalid (moved-from) publisher");
         }
 
         // Automatic callback ownership check. This is not part of graph construction.
         auto* current_callback = g_callback_context.current_system;
 
         // Helper lambda: log ownership error
-        auto log_ownership_error = [&](RclSubSystemBase* owner, RclSubSystemBase* used_by) {
-            SPDLOG_CRITICAL(
+        auto abort_ownership_error = [&](RclSubSystemBase* owner, RclSubSystemBase* used_by) {
+            panic(
                 "Publisher {}@{} owned by callback '{}', used by '{}'",
                 scheduler::detail::demangle(typeid(T).name()),
                 scheduler::detail::demangle(typeid(Topic).name()),
@@ -305,15 +319,13 @@ public:
                 slot_->auto_bound.store(true, std::memory_order_release);
             } else if (expected != current_callback) {
                 // Another callback already owns this publisher
-                log_ownership_error(expected, current_callback);
-                std::abort();
+                abort_ownership_error(expected, current_callback);
             }
         } else if (current_callback) {
             // Already bound: verify the current callback is the owner
             auto* owner = slot_->owner_callback.load(std::memory_order_acquire);
             if (owner && owner != current_callback) {
-                log_ownership_error(owner, current_callback);
-                std::abort();
+                abort_ownership_error(owner, current_callback);
             }
         }
 
@@ -543,8 +555,7 @@ private:
 
     [[nodiscard]] World* validate_world() const noexcept {
         if (!world_ || lifetime_.expired()) [[unlikely]] {
-            SPDLOG_CRITICAL("ResourceAccessor::get() called on invalid accessor");
-            std::abort();
+            panic("ResourceAccessor::get() called on invalid accessor");
         }
         return world_;
     }

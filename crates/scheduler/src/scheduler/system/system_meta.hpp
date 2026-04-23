@@ -13,9 +13,13 @@
 #include "components.hpp"
 #include "execution_policy.hpp"
 
+#include <cstddef>
+#include <functional>
 #include <string>
 #include <tuple>
+#include <type_traits>
 #include <typeindex>
+#include <utility>
 #include <vector>
 
 namespace talos::scheduler::system {

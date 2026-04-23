@@ -1,4 +1,8 @@
 #include "scheduler.hpp"
+
+#include <tbb/task_arena.h>
+#include <tbb/task_group.h>
+
 #include "demangle.hpp"
 #include "primitive/performance_probe.hpp"
 #include "primitive/spin.hpp"
@@ -188,6 +192,32 @@ Scheduler::~Scheduler() {
             t.join();
         }
     }
+}
+
+Scheduler::FixedRateStats::FixedRateStats(FixedRateStats&& other) noexcept
+    : notify_count(other.notify_count.load(std::memory_order_relaxed))
+    , execution_count(other.execution_count.load(std::memory_order_relaxed))
+    , record_count(other.record_count.load(std::memory_order_relaxed))
+    , latency_hist(std::move(other.latency_hist)) {}
+
+Scheduler::ComputeStats::ComputeStats(ComputeStats&& other) noexcept
+    : run_count(other.run_count.load(std::memory_order_relaxed))
+    , latency_hist(std::move(other.latency_hist)) {}
+
+World& Scheduler::world() noexcept { return world_; }
+
+bool Scheduler::is_running_state(const LifecycleState state) noexcept {
+    return state == LifecycleState::Running;
+}
+
+void Scheduler::ensure_not_running() const noexcept {
+    if (is_running_state(lifecycle_.load(std::memory_order_acquire))) {
+        panic("add_system: system already running!");
+    }
+}
+
+void Scheduler::mark_topology_dirty() noexcept {
+    lifecycle_.store(LifecycleState::Configuring, std::memory_order_release);
 }
 
 // ============================================================================

@@ -4,31 +4,6 @@
 
 namespace talos::scheduler::rclcompat {
 
-// ============================================================================
-// X-Macro: List of supported timer frequencies
-// ============================================================================
-// Used to generate:
-// - Frequency enum values
-// - Timer factory switch cases
-// ============================================================================
-#define TALOS_TIMER_FREQUENCIES       \
-    X(1, "Low frequency monitoring")  \
-    X(2, "Low frequency monitoring")  \
-    X(5, "Low frequency monitoring")  \
-    X(10, "Standard control")         \
-    X(20, "Standard control")         \
-    X(27, "Standard control (~37ms)") \
-    X(30, "Sensors/cameras")          \
-    X(50, "Sensors/cameras")          \
-    X(60, "Sensors/cameras")          \
-    X(100, "Sensors/cameras")         \
-    X(120, "High-frequency")          \
-    X(150, "High-frequency")          \
-    X(200, "High-frequency")          \
-    X(250, "High-frequency")          \
-    X(500, "High-frequency")          \
-    X(1000, "High-frequency")
-
 /**
  * @brief Supported timer frequencies
  *
@@ -36,9 +11,22 @@ namespace talos::scheduler::rclcompat {
  * Only these frequencies are allowed - no custom frequencies.
  */
 enum class Frequency : std::uint32_t {
-#define X(freq, desc) Hz_##freq = (freq),
-    TALOS_TIMER_FREQUENCIES
-#undef X
+    Hz_1    = 1,
+    Hz_2    = 2,
+    Hz_5    = 5,
+    Hz_10   = 10,
+    Hz_20   = 20,
+    Hz_27   = 27,
+    Hz_30   = 30,
+    Hz_50   = 50,
+    Hz_60   = 60,
+    Hz_100  = 100,
+    Hz_120  = 120,
+    Hz_150  = 150,
+    Hz_200  = 200,
+    Hz_250  = 250,
+    Hz_500  = 500,
+    Hz_1000 = 1000,
 };
 
 [[nodiscard]] constexpr std::uint32_t to_uint32(Frequency freq) noexcept {

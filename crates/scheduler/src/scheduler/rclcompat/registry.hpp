@@ -1,16 +1,14 @@
 #pragma once
 
-#include "../error.hpp"
 #include "../system/system_meta.hpp"
 
-#include "../demangle.hpp"
+#include <concepts>
 #include <map>
 #include <mutex>
 #include <set>
-#include <spdlog/spdlog.h>
 #include <string>
 #include <string_view>
-#include <utility>
+#include <type_traits>
 
 namespace talos::scheduler::rclcompat {
 
@@ -38,18 +36,7 @@ public:
      *
      * Thread-safe (mutex protected)
      */
-    void register_owner(const system::ChannelKey key, std::string owner) noexcept {
-        with_lock([&] {
-            if (owners_.contains(key)) {
-                SPDLOG_CRITICAL(
-                    "Channel {}@{} is already owned by '{}', but '{}' attempted to register",
-                    talos::scheduler::detail::demangle(key.type.name()),
-                    talos::scheduler::detail::demangle(key.topic.name()), owners_[key], owner);
-                std::abort();
-            }
-            owners_[key] = std::move(owner);
-        });
-    }
+    void register_owner(system::ChannelKey key, std::string owner) noexcept;
 
     /**
      * @brief Try to claim a publisher handle
@@ -68,15 +55,7 @@ public:
      *
      * Thread-safe (mutex protected)
      */
-    [[nodiscard]] bool try_claim(const system::ChannelKey key) noexcept {
-        return with_lock([&] {
-            if (claimed_.contains(key)) {
-                return false;
-            }
-            claimed_.insert(key);
-            return true;
-        });
-    }
+    [[nodiscard]] bool try_claim(system::ChannelKey key) noexcept;
 
     /**
      * @brief Release a claimed publisher handle
@@ -91,9 +70,7 @@ public:
      *
      * Thread-safe (mutex protected)
      */
-    void release_claim(const system::ChannelKey key) noexcept {
-        with_lock([&] { claimed_.erase(key); });
-    }
+    void release_claim(system::ChannelKey key) noexcept;
 
     /**
      * @brief Assert that a channel is owned by a specific system
@@ -107,17 +84,7 @@ public:
      *
      * Aborts if the channel is not owned by the caller
      */
-    void assert_owner(const system::ChannelKey key, std::string_view caller) const noexcept {
-        with_lock([&] {
-            if (const auto it = owners_.find(key); it == owners_.end()) {
-                using namespace talos::scheduler;
-                panic(
-                    "Channel {}@{} is not registered, but '{}' attempted to access",
-                    talos::scheduler::detail::demangle(key.type.name()),
-                    talos::scheduler::detail::demangle(key.topic.name()), caller);
-            }
-        });
-    }
+    void assert_owner(system::ChannelKey key, std::string_view caller) const noexcept;
 
 private:
     mutable std::mutex lock_;

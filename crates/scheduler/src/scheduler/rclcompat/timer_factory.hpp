@@ -1,9 +1,10 @@
 #pragma once
 
-#include "system.hpp"
+#include "../system/system.hpp"
 #include "timer_constants.hpp"
 #include <functional>
 #include <memory>
+#include <string>
 
 namespace talos::scheduler::rclcompat {
 
@@ -33,7 +34,7 @@ namespace talos::scheduler::rclcompat {
  *
  * Unique pointer to the timer system (type-erased as SystemBase)
  */
-[[nodiscard]] std::unique_ptr<SystemBase>
+[[nodiscard]] std::unique_ptr<system::SystemBase>
     create_timer_system(std::string&& name, Frequency frequency, std::function<void()> callback);
 
 } // namespace talos::scheduler::rclcompat

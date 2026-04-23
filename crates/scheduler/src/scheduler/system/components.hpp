@@ -1,9 +1,8 @@
 #pragma once
 
 #include "primitive/channel.hpp"
-#include <atomic>
-#include <optional>
 #include <type_traits>
+#include <utility>
 
 namespace talos::scheduler::system {
 

@@ -10,12 +10,11 @@
 #include <concepts>
 #include <cstdint>
 #include <memory>
-#include <spdlog/spdlog.h>
-#include <string>
 #include <type_traits>
 #include <typeindex>
 #include <unordered_map>
 #include <utility>
+#include <vector>
 
 namespace talos::scheduler {
 
@@ -156,19 +155,13 @@ public:
         return value;
     }
 
-    void freeze_resource_structure() noexcept {
-        resource_structure_frozen_.store(true, std::memory_order_release);
-    }
+    void freeze_resource_structure() noexcept;
 
-    [[nodiscard]] bool resource_structure_frozen() const noexcept {
-        return resource_structure_frozen_.load(std::memory_order_acquire);
-    }
+    [[nodiscard]] bool resource_structure_frozen() const noexcept;
 
-    void freeze_resource_identity() noexcept { freeze_resource_structure(); }
+    void freeze_resource_identity() noexcept;
 
-    [[nodiscard]] bool resource_identity_frozen() const noexcept {
-        return resource_structure_frozen();
-    }
+    [[nodiscard]] bool resource_identity_frozen() const noexcept;
 
     template <typename T>
     [[nodiscard]] bool has_resource() const noexcept {
@@ -225,31 +218,15 @@ public:
     }
 
 private:
-private:
     friend class Scheduler;
     template <typename T, typename Topic>
     friend struct rclcompat::PubSlot;
 
-    void open_channel_binding() noexcept {
-        channel_binding_depth_.fetch_add(1, std::memory_order_acq_rel);
-    }
+    void open_channel_binding() noexcept;
 
-    void close_channel_binding() noexcept {
-        auto depth = channel_binding_depth_.load(std::memory_order_acquire);
-        while (true) {
-            if (depth == 0) [[unlikely]] {
-                panic("Channel binding scope underflow");
-            }
-            if (channel_binding_depth_.compare_exchange_weak(
-                    depth, depth - 1, std::memory_order_acq_rel, std::memory_order_acquire)) {
-                return;
-            }
-        }
-    }
+    void close_channel_binding() noexcept;
 
-    [[nodiscard]] bool channel_binding_open() const noexcept {
-        return channel_binding_depth_.load(std::memory_order_acquire) != 0;
-    }
+    [[nodiscard]] bool channel_binding_open() const noexcept;
 
     // Unified channel accessor: one template for all member-pointer-based access
     template <typename Ret, typename Topic, typename Storage, auto MemberPtr>
@@ -263,10 +240,9 @@ private:
     [[nodiscard]] auto get_impl(spsc<T, Topic>) noexcept {
         auto* s = get_channel_storage<SpscStorage<T>, Topic>();
         if (s->reader_claimed) [[unlikely]] {
-            SPDLOG_CRITICAL(
+            panic(
                 "SPSC reader already bound: {}@{}", demangle(typeid(T).name()),
                 demangle(typeid(Topic).name()));
-            std::abort();
         }
         s->reader_claimed = true;
         return spsc<T, Topic>{s->reader.get()};
@@ -276,10 +252,9 @@ private:
     [[nodiscard]] auto get_impl(spsc_mut<T, Topic>) noexcept {
         auto* s = get_channel_storage<SpscStorage<T>, Topic>();
         if (s->writer_claimed) [[unlikely]] {
-            SPDLOG_CRITICAL(
+            panic(
                 "SPSC writer already bound: {}@{}", demangle(typeid(T).name()),
                 demangle(typeid(Topic).name()));
-            std::abort();
         }
         s->writer_claimed = true;
         return spsc_mut<T, Topic>{s->writer.get()};
@@ -340,16 +315,10 @@ private:
         }
     }
 
-    void ensure_channel_binding_open() const noexcept {
-        if (channel_binding_depth_.load(std::memory_order_acquire) == 0) [[unlikely]] {
-            panic("Channel access through World is only allowed during scheduler bind()");
-        }
-    }
+    void ensure_channel_binding_open() const noexcept;
 
 public:
-    [[nodiscard]] std::weak_ptr<WorldLifetimeToken> lifetime_token() const noexcept {
-        return lifetime_token_;
-    }
+    [[nodiscard]] std::weak_ptr<WorldLifetimeToken> lifetime_token() const noexcept;
 
 private:
     /// Helper: Get resource storage with unified error handling
@@ -357,8 +326,7 @@ private:
     [[nodiscard]] Return get_resource_helper(MapFn&& map_fn) const noexcept {
         const auto it = resources_.find(typeid(T));
         if (it == resources_.end()) [[unlikely]] {
-            SPDLOG_CRITICAL("Resource not found: {}", demangle(typeid(T).name()));
-            std::abort();
+            panic("Resource not found: {}", demangle(typeid(T).name()));
         }
         auto storage = std::any_cast<std::shared_ptr<Resource<T>>>(it->second);
         return map_fn(storage.get());

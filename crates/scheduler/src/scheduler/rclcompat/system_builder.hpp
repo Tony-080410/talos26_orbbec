@@ -3,6 +3,8 @@
 #include "../system/execution_policy.hpp"
 #include "../system/system_meta.hpp"
 #include <string>
+#include <typeindex>
+#include <utility>
 
 namespace talos::scheduler::rclcompat {
 
