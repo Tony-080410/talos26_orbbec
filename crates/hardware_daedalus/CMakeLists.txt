@@ -3,4 +3,5 @@ crate(
     TYPE INTERFACE
     DEPS
         ${OpenCV_LIBS}
+        magic_enum
 )
