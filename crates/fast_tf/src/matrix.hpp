@@ -4,14 +4,10 @@
 
 #include <Eigen/Core>
 #include <Eigen/Geometry>
-#include <algorithm>
-#include <cassert>
-#include <concepts>
 #include <groups/SEn3.hpp>
 #include <opencv2/calib3d.hpp>
+#include <opencv2/core/cvdef.h>
 #include <opencv2/core/eigen.hpp>
-#include <type_traits>
-#include <utility>
 
 namespace fast_tf {
 
@@ -221,5 +217,43 @@ using TransformMatrixd = TransformMatrix<double, A, B>;
 
 template <typename A, typename B>
 using TransformMatrixf = TransformMatrix<float, A, B>;
+
+template <std::floating_point T>
+struct Spherial {
+public:
+    T yaw{};
+    T pitch{};
+    T distance{};
+
+    using Vec3 = Eigen::Matrix<T, 3, 1>;
+
+    static Spherial<T> lerp(const Spherial<T>& a, const Spherial<T>& b, T t) {
+        if (t <= T(0)) {
+            return a;
+        }
+        if (t >= T(1)) {
+            return b;
+        }
+
+        const auto Ra = math_fuxk::rpy(T(0), a.pitch, a.yaw).so3();
+        const auto Rb = math_fuxk::rpy(T(0), b.pitch, b.yaw).so3();
+        const auto w  = decltype(Ra)::log(Ra.inv() * Rb);
+        const auto Rt = Ra * decltype(Ra)::exp(w * t);
+
+        const Vec3 unit_x = Vec3::UnitX();
+        const Vec3 dir_a  = Ra * unit_x;
+        const Vec3 dir_b  = Rb * unit_x;
+
+        const Vec3 pos_a = a.distance * dir_a;
+        const Vec3 pos_b = b.distance * dir_b;
+
+        const Vec3 pos  = (T(1) - t) * pos_a + t * pos_b;
+        auto [_r, p, y] = math_fuxk::rpy(Rt).rpy();
+        return {.yaw = y, .pitch = p, .distance = pos.norm()};
+    }
+};
+
+using Spheriald = Spherial<double>;
+using Spherialf = Spherial<float>;
 
 } // namespace fast_tf

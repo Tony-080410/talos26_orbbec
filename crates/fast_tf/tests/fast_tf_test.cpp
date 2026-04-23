@@ -213,7 +213,8 @@ TEST(BufferTest, ExactRequiresMatchingTimestamp) {
 
     const auto result = buffer.lookup(1500, exact);
     EXPECT_FALSE(result.has_value());
-    EXPECT_EQ(result.error(), TransformError::ExactTimestampNotFound);
+    EXPECT_TRUE(result.error().find("exact") != std::string::npos)
+        << "expected 'exact' in error, got: " << result.error();
 }
 
 TEST(BufferTest, NearestReturnsClosestInRangeSample) {
@@ -258,7 +259,8 @@ TEST(BufferTest, InterpolateUsesAdjacentSamplesWithoutExtrapolation) {
 
     result = buffer.lookup(500, interpolate);
     EXPECT_FALSE(result.has_value());
-    EXPECT_EQ(result.error(), TransformError::PastExtrapolationRequired);
+    EXPECT_TRUE(result.error().find("past extrapolation") != std::string::npos)
+        << "expected 'past extrapolation' in error, got: " << result.error();
 }
 
 TEST(BufferTest, ClampedReturnsBoundarySamplesOutsideRange) {
@@ -290,6 +292,155 @@ TEST(BufferTest, StaticModeReturnsSameValueForAnyQueryTime) {
     ASSERT_TRUE(result.has_value());
     EXPECT_EQ(result->timestamp, 4242);
     EXPECT_NEAR(result->value.translation().x(), 5.0, 1e-6);
+}
+
+// ==================== Spherial Tests ====================
+
+// --- from_cartesian ---
+
+TEST(SpherialTest, FromCartesianPositiveX) {
+    auto s = Spherial<double>::from_cartesian({3.0, 0.0, 0.0});
+    EXPECT_NEAR(s.distance, 3.0, 1e-9);
+    EXPECT_NEAR(s.yaw, 0.0, 1e-9);
+    EXPECT_NEAR(s.pitch, 0.0, 1e-9);
+}
+
+TEST(SpherialTest, FromCartesianPositiveY) {
+    auto s = Spherial<double>::from_cartesian({0.0, 5.0, 0.0});
+    EXPECT_NEAR(s.distance, 5.0, 1e-9);
+    EXPECT_NEAR(s.yaw, M_PI / 2.0, 1e-9);
+    EXPECT_NEAR(s.pitch, 0.0, 1e-9);
+}
+
+TEST(SpherialTest, FromCartesianPositiveZ) {
+    auto s = Spherial<double>::from_cartesian({0.0, 0.0, 4.0});
+    EXPECT_NEAR(s.distance, 4.0, 1e-9);
+    EXPECT_NEAR(s.yaw, 0.0, 1e-9);
+    EXPECT_NEAR(s.pitch, M_PI / 2.0, 1e-9);
+}
+
+TEST(SpherialTest, FromCartesianZeroVector) {
+    auto s = Spherial<double>::from_cartesian({0.0, 0.0, 0.0});
+    EXPECT_NEAR(s.distance, 0.0, 1e-9);
+    EXPECT_NEAR(s.yaw, 0.0, 1e-9);
+    EXPECT_NEAR(s.pitch, 0.0, 1e-9);
+}
+
+TEST(SpherialTest, FromCartesianNegativeQuadrant) {
+    // x=-1, y=-1, z=0 → yaw = atan2(-1,-1) = -3π/4
+    auto s = Spherial<double>::from_cartesian({-1.0, -1.0, 0.0});
+    EXPECT_NEAR(s.distance, std::sqrt(2.0), 1e-9);
+    EXPECT_NEAR(s.yaw, std::atan2(-1.0, -1.0), 1e-9);
+    EXPECT_NEAR(s.pitch, 0.0, 1e-9);
+}
+
+TEST(SpherialTest, FromCartesianRoundTrip) {
+    // from_cartesian extracts yaw=atan2(y,x), pitch=atan2(z,hypot(x,y)).
+    // For exact round-trip we construct Cartesian from those formulas directly.
+    const double yaw = 0.7, pitch = -0.3, dist = 5.0;
+    const double cos_p = std::cos(pitch);
+    Eigen::Vector3d pos(
+        dist * cos_p * std::cos(yaw), dist * cos_p * std::sin(yaw), dist * std::sin(pitch));
+    const auto s = Spherial<double>::from_cartesian(pos);
+    EXPECT_NEAR(s.distance, dist, 1e-9);
+    EXPECT_NEAR(s.yaw, yaw, 1e-9);
+    EXPECT_NEAR(s.pitch, pitch, 1e-9);
+}
+
+// --- lerp ---
+
+TEST(SpherialTest, LerpAtZeroReturnsFirst) {
+    const Spherial<double> a{.yaw = 0.5, .pitch = 0.3, .distance = 4.0};
+    const Spherial<double> b{.yaw = 1.0, .pitch = 0.6, .distance = 8.0};
+    const auto result = Spherial<double>::lerp(a, b, 0.0);
+    EXPECT_NEAR(result.yaw, a.yaw, 1e-6);
+    EXPECT_NEAR(result.pitch, a.pitch, 1e-6);
+    EXPECT_NEAR(result.distance, a.distance, 1e-6);
+}
+
+TEST(SpherialTest, LerpAtOneReturnsSecond) {
+    const Spherial<double> a{.yaw = 0.5, .pitch = 0.3, .distance = 4.0};
+    const Spherial<double> b{.yaw = 1.0, .pitch = 0.6, .distance = 8.0};
+    const auto result = Spherial<double>::lerp(a, b, 1.0);
+    EXPECT_NEAR(result.yaw, b.yaw, 1e-6);
+    EXPECT_NEAR(result.pitch, b.pitch, 1e-6);
+    EXPECT_NEAR(result.distance, b.distance, 1e-6);
+}
+
+TEST(SpherialTest, LerpClampsBelowZero) {
+    const Spherial<double> a{.yaw = 0.5, .pitch = 0.3, .distance = 4.0};
+    const Spherial<double> b{.yaw = 1.0, .pitch = 0.6, .distance = 8.0};
+    const auto result = Spherial<double>::lerp(a, b, -0.5);
+    EXPECT_NEAR(result.yaw, a.yaw, 1e-6);
+    EXPECT_NEAR(result.pitch, a.pitch, 1e-6);
+    EXPECT_NEAR(result.distance, a.distance, 1e-6);
+}
+
+TEST(SpherialTest, LerpClampsAboveOne) {
+    const Spherial<double> a{.yaw = 0.5, .pitch = 0.3, .distance = 4.0};
+    const Spherial<double> b{.yaw = 1.0, .pitch = 0.6, .distance = 8.0};
+    const auto result = Spherial<double>::lerp(a, b, 1.5);
+    EXPECT_NEAR(result.yaw, b.yaw, 1e-6);
+    EXPECT_NEAR(result.pitch, b.pitch, 1e-6);
+    EXPECT_NEAR(result.distance, b.distance, 1e-6);
+}
+
+TEST(SpherialTest, LerpLinearDistance) {
+    // Same direction (yaw=0, pitch=0) — Cartesian lerp is equivalent to
+    // linear distance interpolation because both directions are identical.
+    const Spherial<double> a{.yaw = 0.0, .pitch = 0.0, .distance = 2.0};
+    const Spherial<double> b{.yaw = 0.0, .pitch = 0.0, .distance = 6.0};
+    const auto result = Spherial<double>::lerp(a, b, 0.5);
+    EXPECT_NEAR(result.distance, 4.0, 1e-6);
+    EXPECT_NEAR(result.yaw, 0.0, 1e-6);
+    EXPECT_NEAR(result.pitch, 0.0, 1e-6);
+}
+
+TEST(SpherialTest, LerpMidpointSymmetry) {
+    // Interpolating from A to B at t=0.5 and B to A at t=0.5 should produce
+    // the same distance (direction reversed, but magnitude equal)
+    const Spherial<double> a{.yaw = 0.3, .pitch = 0.1, .distance = 3.0};
+    const Spherial<double> b{.yaw = 0.8, .pitch = -0.2, .distance = 7.0};
+    const auto ab = Spherial<double>::lerp(a, b, 0.5);
+    const auto ba = Spherial<double>::lerp(b, a, 0.5);
+    EXPECT_NEAR(ab.distance, ba.distance, 1e-6);
+}
+
+TEST(SpherialTest, LerpIdentityAtSamePoint) {
+    // Same inputs produce same outputs (Cartesian round-trip is exact)
+    const Spherial<double> a{.yaw = 0.0, .pitch = 0.0, .distance = 5.0};
+    const auto result = Spherial<double>::lerp(a, a, 0.5);
+    EXPECT_NEAR(result.yaw, a.yaw, 1e-6);
+    EXPECT_NEAR(result.pitch, a.pitch, 1e-6);
+    EXPECT_NEAR(result.distance, a.distance, 1e-6);
+}
+
+TEST(SpherialTest, LerpZeroDistanceStaysZero) {
+    const Spherial<double> a{.yaw = 0.0, .pitch = 0.0, .distance = 0.0};
+    const Spherial<double> b{.yaw = 1.0, .pitch = 1.0, .distance = 0.0};
+    const auto result = Spherial<double>::lerp(a, b, 0.5);
+    EXPECT_NEAR(result.distance, 0.0, 1e-9);
+}
+
+TEST(SpherialTest, LerpPreservesFloatPrecision) {
+    // Colinear case (same direction) — distance is linear, direction unchanged
+    const Spherial<double> a{.yaw = 0.0, .pitch = 0.0, .distance = 1.0};
+    const Spherial<double> b{.yaw = 0.0, .pitch = 0.0, .distance = 2.0};
+    const auto result = Spherial<double>::lerp(a, b, 0.5);
+    EXPECT_NEAR(result.distance, 1.5, 1e-6);
+    EXPECT_NEAR(result.yaw, 0.0, 1e-6);
+}
+
+TEST(SpherialTest, LerpNegativeYawProducesCorrectQuadrant) {
+    // Symmetric yaw around x-axis at same pitch and distance:
+    // Cartesian midpoint lies on x-axis with distance = cos(yaw)*d
+    const Spherial<double> a{.yaw = -0.5, .pitch = 0.0, .distance = 1.0};
+    const Spherial<double> b{.yaw = 0.5, .pitch = 0.0, .distance = 1.0};
+    const auto result = Spherial<double>::lerp(a, b, 0.5);
+    // Midpoint on x-axis → yaw=0
+    EXPECT_NEAR(result.yaw, 0.0, 1e-6);
+    EXPECT_NEAR(result.pitch, 0.0, 1e-6);
+    EXPECT_NEAR(result.distance, std::cos(0.5), 1e-6);
 }
 
 // TODO: Restore FrameLookupTest after implementing hero_new() factory or similar

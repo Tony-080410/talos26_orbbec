@@ -1,7 +1,7 @@
 #pragma once
 
-#include "error.hpp"
 #include "euler.hpp"
+#include "groups/SO3.hpp"
 #include "matrix.hpp"
 #include "types.hpp"
 #include "validation.hpp"
@@ -10,6 +10,7 @@
 #include <concepts>
 #include <cstdint>
 #include <expected>
+#include <fmt/format.h>
 #include <optional>
 #include <tbb/spin_rw_mutex.h>
 #include <type_traits>
@@ -63,6 +64,28 @@ struct BufferOps<TransformMatrix<T, From, To>> {
             static_cast<T>(roll), static_cast<T>(pitch), static_cast<T>(yaw), translation.x(),
             translation.y(), translation.z());
     }
+};
+
+template <typename T>
+struct BufferOps<group::SO3<T>> {
+    static group::SO3<T> identity() { return group::SO3<T>{}; }
+
+    static group::SO3<T> interpolate(const group::SO3<T>& a, const group::SO3<T>& b, fp_t ratio) {
+        return a * group::SO3<T>::exp(group::SO3<T>::log(a.inv() * b) * ratio);
+    }
+
+    static bool is_valid(const group::SO3<T>& value) { return true; }
+};
+
+template <typename T>
+struct BufferOps<Spherial<T>> {
+    static Spherial<T> identity() { return Spherial<T>{}; }
+
+    static Spherial<T> interpolate(const Spherial<T>& a, const Spherial<T>& b, fp_t ratio) {
+        return Spherial<T>::lerp(a, b, ratio);
+    }
+
+    static bool is_valid(const Spherial<T>& value) { return true; }
 };
 
 template <typename T, sec Range, sample_per_sec Density, typename Ops = BufferOps<T>>
@@ -142,21 +165,22 @@ public:
         push(timestamp_ns, Ops::with_rotation(base, rot));
     }
 
-    [[nodiscard]] std::expected<Timestamped, TransformError> latest() const noexcept {
+    [[nodiscard]] std::expected<Timestamped, std::string> latest() const noexcept {
         if constexpr (is_static) {
             return Timestamped{buffer_[0].value, 0};
         }
 
         mutex_type::scoped_lock lock(mutex_, false);
         if (size_ == 0) {
-            return std::unexpected(TransformError::NoDataAvailable);
+            return std::unexpected(
+                fmt::format("Buffer::latest(): buffer is empty (capacity={})", capacity_value));
         }
 
         return materialize(at_logical(size_ - 1));
     }
 
     template <buffer_lookup_mode Mode>
-    [[nodiscard]] std::expected<Timestamped, TransformError>
+    [[nodiscard]] std::expected<Timestamped, std::string>
         lookup(timestamp_ns_t ts, Mode) const noexcept {
         if constexpr (is_static) {
             return Timestamped{buffer_[0].value, ts};
@@ -164,7 +188,9 @@ public:
 
         mutex_type::scoped_lock lock(mutex_, false);
         if (size_ == 0) {
-            return std::unexpected(TransformError::NoDataAvailable);
+            return std::unexpected(
+                fmt::format(
+                    "Buffer::lookup({}ns): buffer is empty (capacity={})", ts, capacity_value));
         }
 
         const auto& oldest = at_logical(0);
@@ -179,10 +205,18 @@ public:
             }
         } else {
             if (ts < oldest.timestamp) {
-                return std::unexpected(TransformError::PastExtrapolationRequired);
+                return std::unexpected(
+                    fmt::format(
+                        "Buffer::lookup({}ns): past extrapolation required, "
+                        "buffer range=[{}, {}], size={}, query_ts={}",
+                        ts, oldest.timestamp, newest.timestamp, size_, ts));
             }
             if (ts > newest.timestamp) {
-                return std::unexpected(TransformError::FutureExtrapolationRequired);
+                return std::unexpected(
+                    fmt::format(
+                        "Buffer::lookup({}ns): future extrapolation required, "
+                        "buffer range=[{}, {}], size={}, query_ts={}",
+                        ts, oldest.timestamp, newest.timestamp, size_, ts));
             }
         }
 
@@ -193,7 +227,11 @@ public:
         }
 
         if constexpr (std::same_as<Mode, exact_t>) {
-            return std::unexpected(TransformError::ExactTimestampNotFound);
+            return std::unexpected(
+                fmt::format(
+                    "Buffer::lookup({}ns, exact): no exact match, "
+                    "nearest floor={}ns, buffer range=[{}, {}]",
+                    ts, lower.timestamp, oldest.timestamp, newest.timestamp));
         } else if constexpr (std::same_as<Mode, nearest_t>) {
             if (lower_idx + 1 >= size_) {
                 return materialize(lower);

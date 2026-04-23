@@ -8,7 +8,6 @@
 #include <tuple>
 #include <type_traits>
 #include <utility>
-#include <variant>
 
 namespace stdx {
 
@@ -316,17 +315,25 @@ constexpr void update_rotate_only(
 template <frame Target, frame Source, frame CurrentFrame>
 constexpr auto lookup(
     const CoordinateSystem& system, TransformMatrixd<CurrentFrame, Source> acc,
-    timestamp_ns_t ns) noexcept -> std::expected<TransformMatrixd<Target, Source>, TransformError> {
+    timestamp_ns_t ns) noexcept -> std::expected<TransformMatrixd<Target, Source>, std::string> {
     static_assert(is_descendant_of<Source, Target>(), "Source must be a descendant of Target");
     if constexpr (std::is_same_v<CurrentFrame, Target>) {
         return acc;
     } else if constexpr (root_frame<CurrentFrame>) {
-        return std::unexpected(TransformError::FrameNotFound);
+        return std::unexpected(
+            fmt::format(
+                "lookup({} -> {}, {}ns): traversed past root without finding target, "
+                "stopped at root frame '{}'",
+                Source::frame_id, Target::frame_id, ns, CurrentFrame::frame_id));
     } else {
         const auto& buffer = buffer_of<CurrentFrame>(system);
         auto result        = buffer.lookup(ns, interpolate);
         if (!result) {
-            return std::unexpected(result.error());
+            return std::unexpected(
+                fmt::format(
+                    "lookup({} -> {}, {}ns): failed at edge {} -> {}: {}", Source::frame_id,
+                    Target::frame_id, ns, CurrentFrame::ancestor::frame_id, CurrentFrame::frame_id,
+                    result.error()));
         }
         // edge: T<CurrentFrame::ancestor, CurrentFrame>
         // acc:  T<CurrentFrame, Source>
@@ -338,7 +345,7 @@ constexpr auto lookup(
 /// Lookup transform: T<Target, Source> (re-express Source in Target's frame).
 template <frame Target, frame Source>
 constexpr auto lookup(const CoordinateSystem& system, timestamp_ns_t ns) noexcept
-    -> std::expected<TransformMatrixd<Target, Source>, TransformError> {
+    -> std::expected<TransformMatrixd<Target, Source>, std::string> {
     return lookup<Target, Source>(system, I<Source>(), ns);
 }
 
@@ -350,17 +357,25 @@ constexpr auto lookup(const CoordinateSystem& system, timestamp_ns_t ns) noexcep
 template <frame Target, frame Source, frame CurrentFrame>
 constexpr auto lookup_clamped(
     const CoordinateSystem& system, TransformMatrixd<CurrentFrame, Source> acc,
-    timestamp_ns_t ns) noexcept -> std::expected<TransformMatrixd<Target, Source>, TransformError> {
+    timestamp_ns_t ns) noexcept -> std::expected<TransformMatrixd<Target, Source>, std::string> {
     static_assert(is_descendant_of<Source, Target>(), "Source must be a descendant of Target");
     if constexpr (std::is_same_v<CurrentFrame, Target>) {
         return acc;
     } else if constexpr (root_frame<CurrentFrame>) {
-        return std::unexpected(TransformError::FrameNotFound);
+        return std::unexpected(
+            fmt::format(
+                "lookup_clamped({} -> {}, {}ns): traversed past root without finding target, "
+                "stopped at root frame '{}'",
+                Source::frame_id, Target::frame_id, ns, CurrentFrame::frame_id));
     } else {
         const auto& buffer = buffer_of<CurrentFrame>(system);
         auto result        = buffer.lookup(ns, clamped);
         if (!result) {
-            return std::unexpected(result.error());
+            return std::unexpected(
+                fmt::format(
+                    "lookup_clamped({} -> {}, {}ns): failed at edge {} -> {}: {}", Source::frame_id,
+                    Target::frame_id, ns, CurrentFrame::ancestor::frame_id, CurrentFrame::frame_id,
+                    result.error()));
         }
         // edge: T<CurrentFrame::ancestor, CurrentFrame>
         // acc:  T<CurrentFrame, Source>
@@ -371,7 +386,7 @@ constexpr auto lookup_clamped(
 
 template <frame Target, frame Source>
 constexpr auto lookup_clamped(const CoordinateSystem& system, timestamp_ns_t ns) noexcept
-    -> std::expected<TransformMatrixd<Target, Source>, TransformError> {
+    -> std::expected<TransformMatrixd<Target, Source>, std::string> {
     return lookup_clamped<Target, Source, Source>(system, I<Source>(), ns);
 }
 

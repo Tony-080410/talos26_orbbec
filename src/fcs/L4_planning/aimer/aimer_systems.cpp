@@ -394,7 +394,7 @@ void register_aimer_systems(talos::Scheduler& scheduler, L4Config&& config) {
 
             auto transforms = lookup_gimbal_muzzle_transforms(*tf_buffer, current_ns);
             if (!transforms) [[unlikely]] {
-                SPDLOG_WARN("Transform lookup failed: {}", transforms.error());
+                SPDLOG_WARN("tf lookup failed: {}", transforms.error());
                 return;
             }
             const auto& [gimbal, muzzle, timestamp_ns] = *transforms;

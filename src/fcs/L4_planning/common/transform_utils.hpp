@@ -39,18 +39,12 @@ struct TransformLookupResult {
 
     auto muzzle_tf = lookup_clamped<odom, muzzle>(tf_buffer, current_ns);
     if (!muzzle_tf) {
-        return std::unexpected(
-            fmt::format(
-                "Transform lookup failed: odom -> muzzle. Error: {}. Query timestamp: {} ns",
-                muzzle_tf.error(), current_ns));
+        return std::unexpected(muzzle_tf.error());
     }
 
     auto gimbal_tf = lookup_clamped<odom, gimbal_pitch>(tf_buffer, current_ns);
     if (!gimbal_tf) {
-        return std::unexpected(
-            fmt::format(
-                "Transform lookup failed: odom -> gimbal_pitch. Error: {}. Query timestamp: {} ns",
-                gimbal_tf.error(), current_ns));
+        return std::unexpected(gimbal_tf.error());
     }
 
     return TransformLookupResult{
@@ -72,10 +66,7 @@ struct TransformLookupResult {
 
     auto gimbal_tf = lookup_clamped<odom, gimbal_pitch>(tf_buffer, current_ns);
     if (!gimbal_tf) {
-        return std::unexpected(
-            fmt::format(
-                "Transform lookup failed: odom -> gimbal. Error: {}. Query timestamp: {} ns",
-                gimbal_tf.error(), current_ns));
+        return std::unexpected(gimbal_tf.error());
     }
 
     return *gimbal_tf;
