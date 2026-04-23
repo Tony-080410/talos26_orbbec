@@ -439,6 +439,7 @@ private:
     struct alignas(std::hardware_destructive_interference_size) FixedRateStats {
         std::atomic<std::uint64_t> notify_count{0};
         std::atomic<std::uint64_t> execution_count{0};
+        std::atomic<std::uint64_t> record_count{0};
         primitive::LatencyHistogram latency_hist;
 
         FixedRateStats() = default;
@@ -447,6 +448,7 @@ private:
         FixedRateStats(FixedRateStats&& other) noexcept
             : notify_count(other.notify_count.load(std::memory_order_relaxed))
             , execution_count(other.execution_count.load(std::memory_order_relaxed))
+            , record_count(other.record_count.load(std::memory_order_relaxed))
             , latency_hist(std::move(other.latency_hist)) {}
 
         // Non-copyable, non-movable-assignable
@@ -459,10 +461,13 @@ private:
      * @brief Performance statistics for compute systems
      */
     struct ComputeStats {
+        std::atomic<std::uint64_t> run_count{0};
         primitive::LatencyHistogram latency_hist;
 
-        ComputeStats()                               = default;
-        ComputeStats(ComputeStats&&) noexcept        = default;
+        ComputeStats() = default;
+        ComputeStats(ComputeStats&& other) noexcept
+            : run_count(other.run_count.load(std::memory_order_relaxed))
+            , latency_hist(std::move(other.latency_hist)) {}
         ComputeStats(const ComputeStats&)            = delete;
         ComputeStats& operator=(const ComputeStats&) = delete;
         ComputeStats& operator=(ComputeStats&&)      = delete;

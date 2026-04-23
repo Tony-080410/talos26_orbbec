@@ -1415,7 +1415,7 @@ void Scheduler::print_stats() const {
 
     // Helper lambda: print latency statistics
     auto print_latency_stats = [](const auto& latency) {
-        if (latency.count > 0) {
+        if (latency.sample_count > 0) {
             printf(
                 "   min:%.2f p50:%.2f p95:%.2f max:%.2f ms", latency.min_ns / 1e6,
                 latency.p50_ns / 1e6, latency.p95_ns / 1e6, latency.max_ns / 1e6);
@@ -1438,13 +1438,14 @@ void Scheduler::print_stats() const {
         [&](const auto& entry, const auto& sys_stats, double) {
             const auto notify_cnt = sys_stats.notify_count.load(std::memory_order_relaxed);
             const auto exec_count = sys_stats.execution_count.load(std::memory_order_relaxed);
+            const auto record_cnt = sys_stats.record_count.load(std::memory_order_relaxed);
             const auto latency    = sys_stats.latency_hist.compute();
-            const auto actual_hz  = latency.count / elapsed_sec;
+            const auto actual_hz  = record_cnt / elapsed_sec;
             const bool write_mode = counts_written_calls(entry.system->meta());
 
             printf(
-                "  %-30s@%.1fHz(%uHz) %s:%zu", entry.system->meta().name.c_str(), actual_hz,
-                entry.policy.frequency_hz, write_mode ? "writes" : "runs", latency.count);
+                "  %-30s@%.1fHz(%uHz) %s:%" PRIu64, entry.system->meta().name.c_str(), actual_hz,
+                entry.policy.frequency_hz, write_mode ? "writes" : "runs", record_cnt);
             if (write_mode) {
                 printf(" exec:%" PRIu64, exec_count);
             }
@@ -1459,12 +1460,13 @@ void Scheduler::print_stats() const {
     // Compute systems - system name on one line, stats on the next
     print_system_stats(
         compute_systems_, compute_stats_, [&](const auto& entry, const auto& sys_stats, double) {
+            const auto run_count = sys_stats.run_count.load(std::memory_order_relaxed);
             const auto latency   = sys_stats.latency_hist.compute();
-            const auto actual_hz = latency.count / elapsed_sec;
+            const auto actual_hz = run_count / elapsed_sec;
 
             printf(
-                "  %-30s@%.1fHz runs:%zu", entry.system->meta().name.c_str(), actual_hz,
-                latency.count);
+                "  %-30s@%.1fHz runs:%" PRIu64, entry.system->meta().name.c_str(), actual_hz,
+                run_count);
             printf("\n");
 
             print_latency_stats(latency);
@@ -1498,17 +1500,16 @@ auto Scheduler::get_stats_json() const -> std::string {
     compute_json["total_notifies"] = notify_total;
 
     // Helper lambda: add latency statistics to JSON object
-    auto add_latency_stats = [](json& sys, const auto& latency, double elapsed_sec) {
-        sys["runs"]      = latency.count;
-        sys["actual_hz"] = latency.count / elapsed_sec;
-        sys["min_ms"]    = latency.min_ns / 1e6;
-        sys["p50_ms"]    = latency.p50_ns / 1e6;
-        sys["p95_ms"]    = latency.p95_ns / 1e6;
-        sys["p99_ms"]    = latency.p99_ns / 1e6;
-        sys["p999_ms"]   = latency.p999_ns / 1e6;
-        sys["mean_ms"]   = latency.mean_ns / 1e6;
-        sys["max_ms"]    = latency.max_ns / 1e6;
-        sys["stddev_ms"] = latency.stddev_ns / 1e6;
+    auto add_latency_stats = [](json& sys, const auto& latency, double) {
+        sys["sampled_runs"] = latency.sample_count;
+        sys["min_ms"]       = latency.min_ns / 1e6;
+        sys["p50_ms"]       = latency.p50_ns / 1e6;
+        sys["p95_ms"]       = latency.p95_ns / 1e6;
+        sys["p99_ms"]       = latency.p99_ns / 1e6;
+        sys["p999_ms"]      = latency.p999_ns / 1e6;
+        sys["mean_ms"]      = latency.mean_ns / 1e6;
+        sys["max_ms"]       = latency.max_ns / 1e6;
+        sys["stddev_ms"]    = latency.stddev_ns / 1e6;
     };
 
     // Unified JSON stats generator (eliminates duplicate loop structure)
@@ -1530,21 +1531,27 @@ auto Scheduler::get_stats_json() const -> std::string {
     json& fixed_rate_arr = root["fixed_rate_systems"] = json::object();
     generate_system_stats(
         fixed_rate_systems_, fixed_rate_stats_, fixed_rate_arr,
-        [](json& sys, const auto& entry, const auto& stats) {
+        [elapsed_sec](json& sys, const auto& entry, const auto& stats) {
             const auto notify_cnt = stats.notify_count.load(std::memory_order_relaxed);
             const auto exec_count = stats.execution_count.load(std::memory_order_relaxed);
+            const auto record_cnt = stats.record_count.load(std::memory_order_relaxed);
             const bool write_mode = counts_written_calls(entry.system->meta());
             sys["target_hz"]      = entry.policy.frequency_hz;
             sys["notifies"]       = notify_cnt;
             sys["executions"]     = exec_count;
+            sys["runs"]           = record_cnt;
+            sys["actual_hz"]      = record_cnt / elapsed_sec;
             sys["count_mode"]     = write_mode ? "written_calls" : "run_calls";
         });
 
     // Compute systems
     json& compute_arr = root["compute_systems"] = json::object();
     generate_system_stats(
-        compute_systems_, compute_stats_, compute_arr, [](json&, const auto&, const auto&) {
-            // Compute systems have no extra fields
+        compute_systems_, compute_stats_, compute_arr,
+        [elapsed_sec](json& sys, const auto&, const auto& stats) {
+            const auto run_count = stats.run_count.load(std::memory_order_relaxed);
+            sys["runs"]          = run_count;
+            sys["actual_hz"]     = run_count / elapsed_sec;
         });
 
     return root.dump();
@@ -1584,6 +1591,7 @@ void Scheduler::run_fixed_rate_thread(FixedRateContext ctx) {
     const auto record_execution = [&](const bool written, const std::uint64_t elapsed) {
         stats.execution_count.fetch_add(1, std::memory_order_relaxed);
         if (!write_mode || written) {
+            stats.record_count.fetch_add(1, std::memory_order_relaxed);
             stats.latency_hist.record(elapsed);
         }
         if (written && ctx.policy.notifies) [[likely]] {
@@ -1769,6 +1777,7 @@ auto Scheduler::run_compute_selective(const std::uint64_t ready_mask) -> Compute
                     const bool written = compute_systems_[idx].system->run(world_);
                     const auto elapsed = probe.elapsed_ns();
 
+                    compute_stats_[idx].run_count.fetch_add(1, std::memory_order_relaxed);
                     compute_stats_[idx].latency_hist.record(elapsed);
                     if (written) [[likely]] {
                         level_written.store(1ULL << idx, std::memory_order_relaxed);
@@ -1782,6 +1791,7 @@ auto Scheduler::run_compute_selective(const std::uint64_t ready_mask) -> Compute
                             const bool written = compute_systems_[idx].system->run(world_);
                             const auto elapsed = probe.elapsed_ns();
 
+                            compute_stats_[idx].run_count.fetch_add(1, std::memory_order_relaxed);
                             compute_stats_[idx].latency_hist.record(elapsed);
                             if (written) [[likely]] {
                                 level_written.fetch_or(1ULL << idx, std::memory_order_relaxed);

@@ -8,6 +8,7 @@
 #include <thread>
 #include <vector>
 
+#include "primitive/performance_probe.hpp"
 #include "primitive/spmc_triple_buffer.hpp"
 
 using namespace talos;
@@ -90,4 +91,19 @@ TEST(SpmcTripleBufferTest, ConcurrentReadersSeeConsistentSnapshots) {
     }
 
     EXPECT_FALSE(violated.load(std::memory_order_acquire));
+}
+
+TEST(LatencyHistogramTest, CountKeepsGrowingPastSampleWindow) {
+    primitive::LatencyHistogram hist;
+
+    const auto total_samples = primitive::LatencyHistogram::SAMPLE_WINDOW + 257U;
+    for (size_t i = 0; i < total_samples; ++i) {
+        hist.record(static_cast<std::uint64_t>(i + 1));
+    }
+
+    const auto stats = hist.compute();
+    EXPECT_EQ(stats.count, total_samples);
+    EXPECT_EQ(stats.sample_count, primitive::LatencyHistogram::SAMPLE_WINDOW);
+    EXPECT_EQ(stats.min_ns, 1U);
+    EXPECT_EQ(stats.max_ns, static_cast<std::uint64_t>(total_samples));
 }

@@ -2,11 +2,12 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <iostream>
-#include <mutex>
+#include <limits>
 #include <numeric>
 #include <ranges>
 #include <vector>
@@ -64,34 +65,23 @@ private:
 };
 
 /**
- * @brief Lock-free latency histogram for benchmark results
+ * @brief Low-overhead latency tracker for online scheduler statistics
  *
- * Accumulates latency samples and computes statistics:
- * - mean, min, max
- * - percentiles (p50, p95, p99, p999)
- * - standard deviation
- *
- * Uses a fixed-size ring buffer (no allocations during measurement)
+ * The hot path keeps an exact total count plus a bounded recent sample window.
+ * This avoids mutex contention and unbounded per-system storage while still
+ * providing useful percentile snapshots for long-running workloads.
  */
 class LatencyHistogram {
 public:
-    static constexpr size_t MAX_SAMPLES = 1000000; // 1M samples = 1GB
+    static constexpr size_t SAMPLE_WINDOW = 8192;
 
-    LatencyHistogram()
-        : samples_()
-        , count_(0) {}
+    LatencyHistogram() noexcept = default;
 
-    LatencyHistogram(LatencyHistogram&& other) noexcept {
-        std::lock_guard lock(other.lock_);
-        samples_ = other.samples_;
-        count_   = other.count_;
-    }
+    LatencyHistogram(LatencyHistogram&& other) noexcept { copy_from(other); }
 
     LatencyHistogram& operator=(LatencyHistogram&& other) noexcept {
         if (this != &other) {
-            std::scoped_lock lock(lock_, other.lock_);
-            samples_ = other.samples_;
-            count_   = other.count_;
+            copy_from(other);
         }
         return *this;
     }
@@ -102,11 +92,13 @@ public:
     /**
      * @brief Record a latency sample (nanoseconds)
      */
-    void record(const uint64_t latency_ns) {
-        std::lock_guard lock(lock_);
-        if (count_ < MAX_SAMPLES) {
-            samples_[count_++] = latency_ns;
-        }
+    void record(const uint64_t latency_ns) noexcept {
+        const auto index = write_index_.load(std::memory_order_relaxed);
+        samples_[index % SAMPLE_WINDOW].value.store(latency_ns, std::memory_order_relaxed);
+        update_min(latency_ns);
+        update_max(latency_ns);
+        write_index_.store(index + 1, std::memory_order_relaxed);
+        count_.store(index + 1, std::memory_order_release);
     }
 
     /**
@@ -121,55 +113,51 @@ public:
         uint64_t p99_ns;
         uint64_t p999_ns;
         double stddev_ns;
-        size_t count;
+        std::uint64_t count;
+        size_t sample_count;
     };
 
     [[nodiscard]] Stats compute() const {
+        const auto total_count = count_.load(std::memory_order_acquire);
+        if (total_count == 0) {
+            return {0, 0, 0, 0, 0, 0, 0, 0.0, 0, 0};
+        }
+
+        const auto sample_count =
+            static_cast<size_t>(std::min<std::uint64_t>(total_count, SAMPLE_WINDOW));
+
         std::vector<uint64_t> snapshot;
-        {
-            std::lock_guard lock(lock_);
-            snapshot.assign(samples_.begin(), samples_.begin() + count_);
+        snapshot.reserve(sample_count);
+        for (size_t i = 0; i < sample_count; ++i) {
+            snapshot.push_back(samples_[i].value.load(std::memory_order_relaxed));
         }
 
-        const size_t count = snapshot.size();
-        if (count == 0) {
-            return {0, 0, 0, 0, 0, 0, 0, 0.0, 0};
-        }
-
-        // Sort for percentile computation
         std::ranges::sort(snapshot);
 
-        // Compute statistics
-        const auto min_val  = snapshot.front();
-        const auto max_val  = snapshot.back();
-        const auto sum      = std::accumulate(snapshot.begin(), snapshot.end(), 0UL);
-        const auto mean_val = sum / count;
+        auto min_val = min_ns_.load(std::memory_order_relaxed);
+        if (min_val == std::numeric_limits<std::uint64_t>::max()) {
+            min_val = 0;
+        }
+        const auto max_val  = max_ns_.load(std::memory_order_relaxed);
+        const auto sum      = std::accumulate(snapshot.begin(), snapshot.end(), 0ULL);
+        const auto mean_val = sum / sample_count;
 
-        // Percentiles (clamp to valid range to handle edge cases)
-        const auto p50_idx  = std::min(count * 50 / 100, count - 1);
-        const auto p95_idx  = std::min(count * 95 / 100, count - 1);
-        const auto p99_idx  = std::min(count * 99 / 100, count - 1);
-        const auto p999_idx = std::min(count * 999 / 1000, count - 1);
+        const auto p50_idx  = std::min(sample_count * 50 / 100, sample_count - 1);
+        const auto p95_idx  = std::min(sample_count * 95 / 100, sample_count - 1);
+        const auto p99_idx  = std::min(sample_count * 99 / 100, sample_count - 1);
+        const auto p999_idx = std::min(sample_count * 999 / 1000, sample_count - 1);
 
-        // Standard deviation
         double sum_sq       = 0.0;
         const double mean_d = static_cast<double>(mean_val);
-        for (size_t i = 0; i < count; i++) {
+        for (size_t i = 0; i < sample_count; i++) {
             const double diff = static_cast<double>(snapshot[i]) - mean_d;
             sum_sq += diff * diff;
         }
-        const double stddev = std::sqrt(sum_sq / static_cast<double>(count));
+        const double stddev = std::sqrt(sum_sq / static_cast<double>(sample_count));
 
-        return {
-            min_val,
-            max_val,
-            mean_val,
-            snapshot[p50_idx],
-            snapshot[p95_idx],
-            snapshot[p99_idx],
-            snapshot[p999_idx],
-            stddev,
-            count};
+        return {min_val,           max_val,           mean_val,           snapshot[p50_idx],
+                snapshot[p95_idx], snapshot[p99_idx], snapshot[p999_idx], stddev,
+                total_count,       sample_count};
     }
 
     /**
@@ -190,8 +178,41 @@ public:
     }
 
 private:
-    mutable std::mutex lock_;
-    std::array<uint64_t, MAX_SAMPLES> samples_;
-    size_t count_;
+    struct SampleSlot {
+        std::atomic<std::uint64_t> value{0};
+    };
+
+    void copy_from(const LatencyHistogram& other) noexcept {
+        write_index_.store(
+            other.write_index_.load(std::memory_order_relaxed), std::memory_order_relaxed);
+        count_.store(other.count_.load(std::memory_order_relaxed), std::memory_order_relaxed);
+        min_ns_.store(other.min_ns_.load(std::memory_order_relaxed), std::memory_order_relaxed);
+        max_ns_.store(other.max_ns_.load(std::memory_order_relaxed), std::memory_order_relaxed);
+
+        for (size_t i = 0; i < SAMPLE_WINDOW; ++i) {
+            samples_[i].value.store(
+                other.samples_[i].value.load(std::memory_order_relaxed), std::memory_order_relaxed);
+        }
+    }
+
+    void update_min(const std::uint64_t latency_ns) noexcept {
+        auto current = min_ns_.load(std::memory_order_relaxed);
+        while (latency_ns < current
+               && !min_ns_.compare_exchange_weak(
+                   current, latency_ns, std::memory_order_relaxed, std::memory_order_relaxed)) {}
+    }
+
+    void update_max(const std::uint64_t latency_ns) noexcept {
+        auto current = max_ns_.load(std::memory_order_relaxed);
+        while (latency_ns > current
+               && !max_ns_.compare_exchange_weak(
+                   current, latency_ns, std::memory_order_relaxed, std::memory_order_relaxed)) {}
+    }
+
+    std::array<SampleSlot, SAMPLE_WINDOW> samples_{};
+    std::atomic<std::uint64_t> write_index_{0};
+    std::atomic<std::uint64_t> count_{0};
+    std::atomic<std::uint64_t> min_ns_{std::numeric_limits<std::uint64_t>::max()};
+    std::atomic<std::uint64_t> max_ns_{0};
 };
 } // namespace talos::primitive
