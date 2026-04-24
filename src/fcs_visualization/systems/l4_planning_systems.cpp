@@ -537,15 +537,21 @@ void register_l4_planning_systems(talos::scheduler::Scheduler& app) {
                 {      "pitch", cmd->pitch},
                 {"fire_advice",  cmd->fire},
             };
-            cmd_json["yaw"]         = cmd->yaw;
-            cmd_json["pitch"]       = cmd->pitch;
-            cmd_json["v_yaw"]       = cmd->yaw_vel;
-            cmd_json["v_pitch"]     = cmd->pitch_vel;
-            cmd_json["a_yaw"]       = cmd->yaw_accel;
-            cmd_json["a_pitch"]     = cmd->pitch_accel;
-            cmd_json["distance"]    = cmd->distance;
-            cmd_json["tof"]         = cmd->tof;
-            cmd_json["fire_advice"] = cmd->fire;
+            cmd_json["yaw"]                  = cmd->yaw;
+            cmd_json["pitch"]                = cmd->pitch;
+            cmd_json["v_yaw"]                = cmd->yaw_vel;
+            cmd_json["v_pitch"]              = cmd->pitch_vel;
+            cmd_json["a_yaw"]                = cmd->yaw_accel;
+            cmd_json["a_pitch"]              = cmd->pitch_accel;
+            cmd_json["distance"]             = cmd->distance;
+            cmd_json["tof"]                  = cmd->tof;
+            cmd_json["fire_advice"]          = cmd->fire;
+            cmd_json["yaw_error"]            = cmd->yaw_error;
+            cmd_json["pitch_error"]          = cmd->pitch_error;
+            cmd_json["shooting_range_yaw"]   = cmd->shooting_range_yaw;
+            cmd_json["shooting_range_pitch"] = cmd->shooting_range_pitch;
+            cmd_json["ref_yaw"]              = cmd->ref_yaw;
+            cmd_json["ref_pitch"]            = cmd->ref_pitch;
             if (cmd->viz_debug) {
                 cmd_json["mpc"] = {
                     {   "center_index",          cmd->viz_debug->center_index},

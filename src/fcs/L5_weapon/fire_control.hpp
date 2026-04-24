@@ -50,6 +50,12 @@ struct WeaponCommand {
 
     // 发射控制
     bool fire{false}; // 发射指令
+    double yaw_error{-1.0};
+    double pitch_error{-1.0};
+    double shooting_range_yaw{-1.0};
+    double shooting_range_pitch{-1.0};
+    double ref_yaw{-1.0};
+    double ref_pitch{-1.0};
 
     // 弹道信息
     double tof{0.0};      // 飞行时间 (秒)

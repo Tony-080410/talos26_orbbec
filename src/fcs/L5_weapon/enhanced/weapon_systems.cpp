@@ -43,15 +43,22 @@ void register_enhanced_weapon_system(talos::Scheduler& scheduler, L5Config&& con
             auto tf = L4::lookup_gimbal_transform(*tf_buffer, command_timestamp_ns);
             if (tf) {
                 auto [r, p, y] = tf->euler_rot().rpy();
-                cmd.fire       = is_on_target(
+                auto result    = is_on_target(
                     l5_config->fire_decision, y, -p, cmd.plan_yaw, cmd.plan_pitch,
                     cmd.plan_distance);
+                cmd.fire                 = result.fire;
+                cmd.yaw_error            = result.yaw_error;
+                cmd.pitch_error          = result.pitch_error;
+                cmd.shooting_range_yaw   = result.shooting_range_yaw;
+                cmd.shooting_range_pitch = result.shooting_range_pitch;
+                cmd.ref_yaw              = cmd.plan_yaw;
+                cmd.ref_pitch            = cmd.plan_pitch;
             } else {
                 SPDLOG_ERROR("Gimbal transform lookup failed: {}", tf.error());
             }
 
             if (!optimized) {
-                SPDLOG_ERROR(
+                SPDLOG_WARN(
                     "Optimization failed, using passthrough command: {}", optimized.error());
             }
 

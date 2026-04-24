@@ -211,6 +211,7 @@ void register_l3_estimation_systems(talos::scheduler::Scheduler& app) {
         "foxglove_l3_ekf_heatmap",
         [](talos::spmc<std::vector<::fcs::L3::TrackerOutput>, TrackerOutputChannelTopic> tracker_in,
            talos::res<std::shared_ptr<FoxgloveServer>> server) {
+            return;
             if (!detail::foxglove_ready(*server, tracker_in))
                 return;
             auto outputs = tracker_in.read();
