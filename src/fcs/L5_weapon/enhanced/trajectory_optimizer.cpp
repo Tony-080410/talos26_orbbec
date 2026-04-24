@@ -30,6 +30,13 @@ using fcs::core::math::normalize_angle;
 
 using ReferenceTrajectory = core::trajectory::ReferenceTrajectory;
 
+[[nodiscard]] int quantize_reference_age_steps(double reference_age_s, double dt_s) noexcept {
+    if (!(reference_age_s > 0.0) || !(dt_s > 0.0)) {
+        return 0;
+    }
+    return std::max(0, static_cast<int>(std::lround(reference_age_s / dt_s)));
+}
+
 template <typename Solver>
 struct AxisSolverView {
     const Solver* solver{nullptr};
@@ -58,44 +65,44 @@ struct AxisSolverView {
 
 template <typename YawSolver, typename PitchSolver>
 [[nodiscard]] WeaponVisualizationDebugData build_debug_data(
-    int horizon_back, const ReferenceTrajectory& trajectory, const YawSolver& yaw_solver,
-    const PitchSolver& pitch_solver) {
+    int center_index, const ReferenceTrajectory& trajectory, int reference_start_index,
+    int reference_horizon, const YawSolver& yaw_solver, const PitchSolver& pitch_solver) {
     WeaponVisualizationDebugData debug;
-    const int horizon     = static_cast<int>(trajectory.distances.size());
-    debug.center_index    = horizon_back;
+    debug.center_index    = center_index;
     debug.lookahead_index = debug.center_index;
-    debug.reference_plan.reserve(horizon);
-    debug.optimized_plan.reserve(horizon);
+    debug.reference_plan.reserve(reference_horizon);
+    debug.optimized_plan.reserve(reference_horizon);
 
-    for (int k = 0; k < horizon; ++k) {
+    for (int k = 0; k < reference_horizon; ++k) {
+        const int ref_k = reference_start_index + k;
         debug.reference_plan.push_back(
             TrajectoryPlanSample{
-                .yaw      = normalize_angle(trajectory.state(0, k) + trajectory.yaw_origin),
-                .pitch    = trajectory.state(2, k),
-                .distance = trajectory.distances[k],
-                .tof      = trajectory.time_of_flights[k],
-                .selected_armor_id       = trajectory.selected_armor_ids[k],
-                .rough_selected_armor_id = trajectory.rough_selected_armor_ids[k],
-                .world_position          = trajectory.positions[k],
+                .yaw      = normalize_angle(trajectory.state(0, ref_k) + trajectory.yaw_origin),
+                .pitch    = trajectory.state(2, ref_k),
+                .distance = trajectory.distances[ref_k],
+                .tof      = trajectory.time_of_flights[ref_k],
+                .selected_armor_id       = trajectory.selected_armor_ids[ref_k],
+                .rough_selected_armor_id = trajectory.rough_selected_armor_ids[ref_k],
+                .world_position          = trajectory.positions[ref_k],
             });
 
         const Eigen::Vector3d reconstructed_reference = spherical_to_cartesian(
-            trajectory.distances[k], debug.reference_plan.back().yaw,
+            trajectory.distances[ref_k], debug.reference_plan.back().yaw,
             debug.reference_plan.back().pitch);
-        const Eigen::Vector3d world_bias = trajectory.positions[k] - reconstructed_reference;
+        const Eigen::Vector3d world_bias = trajectory.positions[ref_k] - reconstructed_reference;
         const double optimized_yaw =
             normalize_angle(static_cast<double>(yaw_solver.state(0, k)) + trajectory.yaw_origin);
         const double optimized_pitch = static_cast<double>(pitch_solver.state(0, k));
         const Eigen::Vector3d reconstructed_optimized =
-            spherical_to_cartesian(trajectory.distances[k], optimized_yaw, optimized_pitch);
+            spherical_to_cartesian(trajectory.distances[ref_k], optimized_yaw, optimized_pitch);
         debug.optimized_plan.push_back(
             TrajectoryPlanSample{
                 .yaw                     = optimized_yaw,
                 .pitch                   = optimized_pitch,
-                .distance                = trajectory.distances[k],
-                .tof                     = trajectory.time_of_flights[k],
-                .selected_armor_id       = trajectory.selected_armor_ids[k],
-                .rough_selected_armor_id = trajectory.rough_selected_armor_ids[k],
+                .distance                = trajectory.distances[ref_k],
+                .tof                     = trajectory.time_of_flights[ref_k],
+                .selected_armor_id       = trajectory.selected_armor_ids[ref_k],
+                .rough_selected_armor_id = trajectory.rough_selected_armor_ids[ref_k],
                 .world_position          = reconstructed_optimized + world_bias,
             });
     }
@@ -163,25 +170,33 @@ std::expected<WeaponCommand, std::string> TinyMpcTrajectoryOptimizer::optimize(
 
     const ReferenceTrajectory& reference = *plan.reference_trajectory;
 
-    // --- seed yaw solver ---
+    // Age the reference window forward so the sampled "current" command stays aligned with now.
     const int solver_horizon    = batched_solver_.horizon();
     const int reference_horizon = reference.horizon();
-    const int effective_horizon = std::min(reference_horizon, solver_horizon);
+    const int reference_shift_steps =
+        quantize_reference_age_steps(std::max(reference_age_s, 0.0), trajectory_cfg_.dt);
+    const int reference_start_index =
+        std::clamp(reference_shift_steps, 0, std::max(reference_horizon - 1, 0));
+    const int available_reference_horizon = reference_horizon - reference_start_index;
+    const int effective_horizon           = std::min(available_reference_horizon, solver_horizon);
     if (effective_horizon < 2) {
         return std::unexpected("reference trajectory horizon is too short for MPC");
     }
 
     batched_solver_.set_x0(
-        reference.state(0, 0), reference.state(1, 0), reference.state(2, 0), reference.state(3, 0));
-    const int N = std::min(static_cast<int>(reference.state.cols()), solver_horizon);
-    for (int i = 0; i < N; ++i) {
+        reference.state(0, reference_start_index), reference.state(1, reference_start_index),
+        reference.state(2, reference_start_index), reference.state(3, reference_start_index));
+    for (int i = 0; i < effective_horizon; ++i) {
+        const int ref_i = reference_start_index + i;
         batched_solver_.set_ref_col(
-            i, static_cast<float>(reference.state(0, i)), static_cast<float>(reference.state(1, i)),
-            static_cast<float>(reference.state(2, i)), static_cast<float>(reference.state(3, i)));
+            i, static_cast<float>(reference.state(0, ref_i)),
+            static_cast<float>(reference.state(1, ref_i)),
+            static_cast<float>(reference.state(2, ref_i)),
+            static_cast<float>(reference.state(3, ref_i)));
     }
-    if (N < solver_horizon) {
-        const int last_ref = N - 1;
-        for (int i = N; i < solver_horizon; ++i) {
+    if (effective_horizon < solver_horizon) {
+        const int last_ref = reference_start_index + effective_horizon - 1;
+        for (int i = effective_horizon; i < solver_horizon; ++i) {
             batched_solver_.set_ref_col(
                 i, static_cast<float>(reference.state(0, last_ref)),
                 static_cast<float>(reference.state(1, last_ref)),
@@ -197,6 +212,7 @@ std::expected<WeaponCommand, std::string> TinyMpcTrajectoryOptimizer::optimize(
 
     const int center_index  = std::clamp(trajectory_cfg_.horizon_back, 0, effective_horizon - 1);
     const int control_index = std::clamp(center_index, 0, effective_horizon - 2);
+    const int reference_center_index = reference_start_index + center_index;
 
     WeaponCommand cmd;
     cmd.timestamp_ns      = command_timestamp_ns;
@@ -213,10 +229,12 @@ std::expected<WeaponCommand, std::string> TinyMpcTrajectoryOptimizer::optimize(
     cmd.pitch_vel   = static_cast<double>(pitch_solver.state(1, center_index));
     cmd.yaw_accel   = static_cast<double>(yaw_solver.input(control_index));
     cmd.pitch_accel = static_cast<double>(pitch_solver.input(control_index));
-    cmd.distance    = reference.distances[center_index];
-    cmd.tof         = reference.time_of_flights[center_index];
+    cmd.distance    = reference.distances[reference_center_index];
+    cmd.tof         = reference.time_of_flights[reference_center_index];
     if (config_.enable_debug) {
-        cmd.viz_debug = build_debug_data(center_index, reference, yaw_solver, pitch_solver);
+        cmd.viz_debug = build_debug_data(
+            center_index, reference, reference_start_index, effective_horizon, yaw_solver,
+            pitch_solver);
     }
 
     const auto finite = [](double value) noexcept { return std::isfinite(value); };
