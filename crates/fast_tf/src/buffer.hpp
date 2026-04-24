@@ -79,10 +79,9 @@ struct BufferOps<group::SO3<T>> {
         return true;
     }
 };
-ß
 
-    template <typename T>
-    struct BufferOps<Spherial<T>> {
+template <typename T>
+struct BufferOps<Spherial<T>> {
     static Spherial<T> identity() { return Spherial<T>{}; }
 
     static Spherial<T> interpolate(const Spherial<T>& a, const Spherial<T>& b, fp_t ratio) {
