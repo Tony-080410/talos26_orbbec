@@ -15,6 +15,7 @@ vision = "daedalus_vision"
 "nuc" = { daedalus = false, mock_mcu = true, robot = "radar", vision = "radar" }
 "ax650-2.local" = { daedalus = false, robot = "omni", vision = "omni" }
 "ax650-1.local" = { deadalus = false, robot = "infantry_ax_1", vision = "std" }
+"sentry" = { daedalus = false, robot = "sentry", vision = "sentry" }
 
 [foxglove]
 enabled = true
