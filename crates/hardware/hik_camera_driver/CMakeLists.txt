@@ -50,7 +50,8 @@ if (HIK_USE_SDK)
             talos_math
             fmt::fmt
             talos_log
-            ${OpenCV_LIBS}
+            opencv_core
+            opencv_imgproc
     )
 
     target_include_directories(hikcamera SYSTEM PUBLIC ${HIK_SDK_ROOT}/include)
@@ -81,6 +82,7 @@ else ()
             talos_math
             talos_log
             fmt::fmt
-            ${OpenCV_LIBS}
+            opencv_core
+            opencv_imgproc
     )
 endif ()

@@ -6,5 +6,5 @@ crate(
         fmt::fmt
         lieplusplus
         TBB::tbb
-        ${OpenCV_LIBS}
+        opencv_core
 )

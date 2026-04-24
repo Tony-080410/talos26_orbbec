@@ -259,7 +259,6 @@ target_link_libraries(fcs PUBLIC
         scheduler
         Eigen3::Eigen
         Ceres::ceres
-        lieplusplus
         talos_gimbal
         hikcamera
         ipc
@@ -268,6 +267,8 @@ target_link_libraries(fcs PUBLIC
         $<$<TARGET_EXISTS:openvino::runtime>:openvino::runtime>
         $<$<TARGET_EXISTS:TensorRT::TensorRT>:TensorRT::TensorRT>
         $<$<TARGET_EXISTS:TensorRT::nvonnxparser>:TensorRT::nvonnxparser>
+PRIVATE
+        lieplusplus
 )
 
 target_precompile_headers(fcs PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/fcs/pch.hpp)
@@ -298,7 +299,9 @@ target_link_libraries(fcs_visualization PUBLIC
         scheduler
         foxglove_cpp
         quanta
-        ${OpenCV_LIBS}
+        opencv_core
+        opencv_imgproc
+        opencv_imgcodecs
         Eigen3::Eigen
         spdlog::spdlog
 )
