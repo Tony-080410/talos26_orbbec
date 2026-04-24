@@ -74,18 +74,25 @@ struct BufferOps<group::SO3<T>> {
         return a * group::SO3<T>::exp(group::SO3<T>::log(a.inv() * b) * ratio);
     }
 
-    static bool is_valid(const group::SO3<T>& value) { return true; }
+    static bool is_valid(const group::SO3<T>& value) {
+        (void)value;
+        return true;
+    }
 };
+ß
 
-template <typename T>
-struct BufferOps<Spherial<T>> {
+    template <typename T>
+    struct BufferOps<Spherial<T>> {
     static Spherial<T> identity() { return Spherial<T>{}; }
 
     static Spherial<T> interpolate(const Spherial<T>& a, const Spherial<T>& b, fp_t ratio) {
         return Spherial<T>::lerp(a, b, ratio);
     }
 
-    static bool is_valid(const Spherial<T>& value) { return true; }
+    static bool is_valid(const Spherial<T>& value) {
+        (void)value;
+        return true;
+    }
 };
 
 template <typename T, sec Range, sample_per_sec Density, typename Ops = BufferOps<T>>
