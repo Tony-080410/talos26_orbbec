@@ -24,7 +24,7 @@ camera_link.roll = 0.0
 
 # 偏高就+n 偏低就-n
 # 压低 +n 抬高 -n
-#camera_link.pitch = -0.25
+# camera_link.pitch = -0.25
 camera_link.pitch = 0.6
 #
 camera_link.yaw = -2.3
