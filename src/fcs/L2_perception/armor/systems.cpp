@@ -16,6 +16,48 @@ namespace fcs::L2 {
 
 namespace {
 
+std::array<cv::Point2f, 4> sort_corners(const std::array<cv::Point2f, 4>& points) {
+    cv::Point2f center(0.0f, 0.0f);
+
+    for (const auto& p : points) {
+        center += p;
+    }
+    center *= 0.25f;
+
+    struct Item {
+        cv::Point2f point;
+        float angle;
+    };
+
+    std::vector<Item> sorted;
+    sorted.reserve(4);
+
+    for (const auto& p : points) {
+        cv::Point2f dir = p - center;
+
+        float len = std::sqrt(dir.x * dir.x + dir.y * dir.y);
+        if (len > 1e-6f) {
+            dir.x /= len;
+            dir.y /= len;
+        }
+
+        // 等价于 Rust glam::Vec2::angle_to(Vec2::X)
+        // angle_to(X) = atan2(cross(dir, X), dot(dir, X))
+        // cross(dir, X) = dir.x * 0 - dir.y * 1 = -dir.y
+        // dot(dir, X) = dir.x
+        float angle = std::atan2(-dir.y, dir.x) * 180.0f / static_cast<float>(CV_PI);
+
+        sorted.push_back({p, angle});
+    }
+
+    // 角度 descending 排序
+    std::sort(sorted.begin(), sorted.end(), [](const Item& a, const Item& b) {
+        return a.angle > b.angle;
+    });
+
+    return {sorted[0].point, sorted[1].point, sorted[2].point, sorted[3].point};
+}
+
 [[nodiscard]] std::optional<cv::Point2f> normalize_image_point(
     const cv::Point2f& image_point, const cv::Mat& camera_matrix,
     const cv::Mat& dist_coeffs) noexcept {
@@ -219,6 +261,9 @@ void register_detection_systems(talos::Scheduler& scheduler) noexcept {
             }
 
             auto detections = std::move(*result);
+            for (auto& detection : detections) {
+                detection.corners = sort_corners(detection.corners);
+            }
             offset_detections(detections, detector_roi.tl());
             std::vector<ArmorDetection> detections_for_pnp;
             detections_for_pnp.reserve(detections.size());
