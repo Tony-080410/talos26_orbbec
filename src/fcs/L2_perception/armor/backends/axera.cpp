@@ -870,6 +870,11 @@ std::vector<ArmorDetection>
             }
         }
 
+        // Early-out: skip detections whose color doesn't match the target
+        if (static_cast<ArmorColor>(best_color_id) != detect_color_) {
+            continue;
+        }
+
         // Decode pts (keypoints) only — skip bbox
         std::array<cv::Point2f, 4> model_corners{};
         for (int k = 0; k < config_.num_kpts; ++k) {
