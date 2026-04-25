@@ -245,7 +245,7 @@ endif ()
 
 message(STATUS "Foxglove platform: ${FOXGLOVE_PLATFORM}")
 
-set(FOXGLOVE_VERSION "v0.21.0")
+set(FOXGLOVE_VERSION "v0.22.0")
 
 # Fetch foxglove (custom URL + ZIP_NAME)
 fetch_dependency(NAME foxglove
@@ -263,16 +263,16 @@ FetchContent_GetProperties(foxglove SOURCE_DIR foxglove_SOURCE_DIR)
 # This list is stable for the pinned SDK version above; update it only when bumping Foxglove.
 set(FOXGLOVE_SOURCES
     "${foxglove_SOURCE_DIR}/src/channel.cpp"
+    "${foxglove_SOURCE_DIR}/src/connection_graph.cpp"
     "${foxglove_SOURCE_DIR}/src/context.cpp"
     "${foxglove_SOURCE_DIR}/src/error.cpp"
+    "${foxglove_SOURCE_DIR}/src/fetch_asset.cpp"
     "${foxglove_SOURCE_DIR}/src/foxglove.cpp"
     "${foxglove_SOURCE_DIR}/src/mcap.cpp"
     "${foxglove_SOURCE_DIR}/src/messages.cpp"
-    "${foxglove_SOURCE_DIR}/src/server.cpp"
-    "${foxglove_SOURCE_DIR}/src/server/connection_graph.cpp"
-    "${foxglove_SOURCE_DIR}/src/server/fetch_asset.cpp"
-    "${foxglove_SOURCE_DIR}/src/server/parameter.cpp"
-    "${foxglove_SOURCE_DIR}/src/server/service.cpp"
+    "${foxglove_SOURCE_DIR}/src/parameter.cpp"
+    "${foxglove_SOURCE_DIR}/src/service.cpp"
+    "${foxglove_SOURCE_DIR}/src/websocket.cpp"
 )
 
 function(silence_target_warnings tgt)
