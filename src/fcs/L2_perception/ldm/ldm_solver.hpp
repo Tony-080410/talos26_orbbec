@@ -10,12 +10,15 @@
 #include <cmath>
 #include <expected>
 #include <limits>
+#include <numbers>
 #include <optional>
 #include <utility>
 #include <vector>
 
 #include <Eigen/Core>
 #include <Eigen/Geometry>
+#include <Eigen/QR>
+#include <ceres/ceres.h>
 #include <opencv2/calib3d.hpp>
 #include <opencv2/core.hpp>
 #include <opencv2/core/eigen.hpp>
@@ -68,6 +71,13 @@ public:
                 candidate.score                = 0.55f * candidate.preliminary_score + 0.20f;
                 candidate.estimated_center_image_px =
                     estimate_candidate_center_image(detection.pairs, candidate.pair_indices);
+                evaluated_candidates.push_back(std::move(candidate));
+                continue;
+            }
+
+            if (has_face_assignment(base_candidate)) {
+                auto candidate = base_candidate;
+                evaluate_candidate(candidate, detection.pairs, T_odom_camera);
                 evaluated_candidates.push_back(std::move(candidate));
                 continue;
             }
@@ -138,6 +148,67 @@ public:
     }
 
 private:
+    struct PoseSeed {
+        double yaw{0.0};
+        Eigen::Vector3d translation{0.0, 0.0, 1.0};
+        double normalized_rmse{std::numeric_limits<double>::infinity()};
+    };
+
+    struct CandidateCorrespondences {
+        std::vector<cv::Point3f> obj_points_cv{};
+        std::vector<cv::Point2f> img_points_cv{};
+        std::vector<Eigen::Vector3d> obj_points{};
+        std::vector<Eigen::Vector2d> normalized_points{};
+    };
+
+    struct ConstrainedPoseSolution {
+        Eigen::Matrix3d rotation_cam{Eigen::Matrix3d::Identity()};
+        Eigen::Vector3d center_cam{0.0, 0.0, 1.0};
+        cv::Mat rvec{};
+        cv::Mat tvec{};
+        float reprojection_rmse_px{std::numeric_limits<float>::infinity()};
+        float vertical_axis_term{0.0f};
+        float face_visibility_term{0.0f};
+        cv::Point2f projected_center_image{};
+        std::vector<cv::Point2f> projected_outline_image{};
+    };
+
+    struct NormalizedReprojectionError {
+        NormalizedReprojectionError(
+            const Eigen::Vector3d& model_point, const Eigen::Vector2d& normalized_point)
+            : model_x(model_point.x())
+            , model_y(model_point.y())
+            , model_z(model_point.z())
+            , observed_x(normalized_point.x())
+            , observed_y(normalized_point.y()) {}
+
+        template <typename T>
+        bool operator()(const T* const yaw, const T* const translation, T* residuals) const {
+            const T cy = ceres::cos(yaw[0]);
+            const T sy = ceres::sin(yaw[0]);
+
+            const T x = cy * T(model_x) + sy * T(model_z) + translation[0];
+            const T y = T(model_y) + translation[1];
+            const T z = -sy * T(model_x) + cy * T(model_z) + translation[2];
+
+            residuals[0] = x / z - T(observed_x);
+            residuals[1] = y / z - T(observed_y);
+            return true;
+        }
+
+        [[nodiscard]] static ceres::CostFunction*
+            Create(const Eigen::Vector3d& model_point, const Eigen::Vector2d& normalized_point) {
+            return new ceres::AutoDiffCostFunction<NormalizedReprojectionError, 2, 1, 3>(
+                new NormalizedReprojectionError(model_point, normalized_point));
+        }
+
+        double model_x{0.0};
+        double model_y{0.0};
+        double model_z{0.0};
+        double observed_x{0.0};
+        double observed_y{0.0};
+    };
+
     [[nodiscard]] std::vector<int>
         make_face_assignment(int start_face, size_t pair_count, bool reverse) const {
         std::vector<int> face_indices;
@@ -178,7 +249,7 @@ private:
             if (step < 0) {
                 step += 8;
             }
-            if (step <= 0 || step > 4) {
+            if (step != 1) {
                 return false;
             }
         }
@@ -394,21 +465,308 @@ private:
         return center;
     }
 
-    [[nodiscard]] Eigen::Vector3d bearing_for_image_point(const cv::Point2f& point_px) const {
+    [[nodiscard]] std::optional<Eigen::Vector2d>
+        normalized_image_point(const cv::Point2f& point_px) const {
         std::vector<cv::Point2f> undistorted;
         cv::undistortPoints(
             std::vector<cv::Point2f>{point_px}, undistorted, camera_matrix_, dist_coeffs_);
-        if (undistorted.size() != 1) {
+        if (undistorted.size() != 1u) {
+            return std::nullopt;
+        }
+        return Eigen::Vector2d(
+            static_cast<double>(undistorted.front().x), static_cast<double>(undistorted.front().y));
+    }
+
+    [[nodiscard]] Eigen::Vector3d bearing_for_image_point(const cv::Point2f& point_px) const {
+        const auto normalized_point = normalized_image_point(point_px);
+        if (!normalized_point.has_value()) {
             return Eigen::Vector3d(0.0, 0.0, 1.0);
         }
 
-        Eigen::Vector3d bearing(
-            static_cast<double>(undistorted.front().x), static_cast<double>(undistorted.front().y),
-            1.0);
+        Eigen::Vector3d bearing(normalized_point->x(), normalized_point->y(), 1.0);
         if (bearing.norm() <= 1e-9) {
             return Eigen::Vector3d(0.0, 0.0, 1.0);
         }
         return bearing.normalized();
+    }
+
+    [[nodiscard]] static Eigen::Matrix3d yaw_rotation_matrix(double yaw) {
+        return Eigen::AngleAxisd(yaw, Eigen::Vector3d::UnitY()).toRotationMatrix();
+    }
+
+    [[nodiscard]] static double normalize_yaw(double yaw) {
+        return std::remainder(yaw, 2.0 * std::numbers::pi_v<double>);
+    }
+
+    [[nodiscard]] std::optional<CandidateCorrespondences> build_candidate_correspondences(
+        const LdmMeshCandidate& candidate, const std::vector<LightPair>& pairs) const {
+        if (!has_face_assignment(candidate)) {
+            return std::nullopt;
+        }
+
+        CandidateCorrespondences correspondences;
+        correspondences.obj_points_cv.reserve(candidate.pair_indices.size() * 2u);
+        correspondences.img_points_cv.reserve(candidate.pair_indices.size() * 2u);
+        correspondences.obj_points.reserve(candidate.pair_indices.size() * 2u);
+        correspondences.normalized_points.reserve(candidate.pair_indices.size() * 2u);
+
+        for (size_t i = 0; i < candidate.pair_indices.size(); ++i) {
+            const int pair_idx = candidate.pair_indices[i];
+            const int face_idx = candidate.octagon_face_indices[i];
+            if (pair_idx < 0 || static_cast<size_t>(pair_idx) >= pairs.size()) {
+                return std::nullopt;
+            }
+            if (face_idx < 0 || face_idx >= 8) {
+                return std::nullopt;
+            }
+
+            const auto model_pair_points = pair_model_points_for_face(config_.geometry, face_idx);
+            const std::array<cv::Point2f, 2> image_points{
+                pairs[static_cast<size_t>(pair_idx)].top_center_px,
+                pairs[static_cast<size_t>(pair_idx)].bottom_center_px,
+            };
+
+            for (size_t point_idx = 0; point_idx < 2u; ++point_idx) {
+                const auto normalized_point = normalized_image_point(image_points[point_idx]);
+                if (!normalized_point.has_value()) {
+                    return std::nullopt;
+                }
+
+                const auto& model_point = model_pair_points[point_idx];
+                correspondences.obj_points_cv.push_back(model_point);
+                correspondences.img_points_cv.push_back(image_points[point_idx]);
+                correspondences.obj_points.emplace_back(
+                    static_cast<double>(model_point.x), static_cast<double>(model_point.y),
+                    static_cast<double>(model_point.z));
+                correspondences.normalized_points.push_back(*normalized_point);
+            }
+        }
+
+        if (correspondences.obj_points.size() < 4u) {
+            return std::nullopt;
+        }
+        return correspondences;
+    }
+
+    [[nodiscard]] static std::optional<Eigen::Vector3d>
+        solve_translation_for_yaw(const CandidateCorrespondences& correspondences, double yaw) {
+        const Eigen::Matrix3d rotation = yaw_rotation_matrix(yaw);
+        Eigen::MatrixXd lhs(static_cast<Eigen::Index>(correspondences.obj_points.size() * 2u), 3);
+        Eigen::VectorXd rhs(static_cast<Eigen::Index>(correspondences.obj_points.size() * 2u));
+
+        Eigen::Index row = 0;
+        for (size_t i = 0; i < correspondences.obj_points.size(); ++i) {
+            const Eigen::Vector3d rotated = rotation * correspondences.obj_points[i];
+            const double u                = correspondences.normalized_points[i].x();
+            const double v                = correspondences.normalized_points[i].y();
+
+            lhs(row, 0) = 1.0;
+            lhs(row, 1) = 0.0;
+            lhs(row, 2) = -u;
+            rhs(row)    = u * rotated.z() - rotated.x();
+            ++row;
+
+            lhs(row, 0) = 0.0;
+            lhs(row, 1) = 1.0;
+            lhs(row, 2) = -v;
+            rhs(row)    = v * rotated.z() - rotated.y();
+            ++row;
+        }
+
+        const Eigen::Vector3d translation = lhs.colPivHouseholderQr().solve(rhs);
+        if (!std::isfinite(translation.x()) || !std::isfinite(translation.y())
+            || !std::isfinite(translation.z()) || translation.z() <= 1e-3) {
+            return std::nullopt;
+        }
+        return translation;
+    }
+
+    [[nodiscard]] static double normalized_reprojection_rmse(
+        const CandidateCorrespondences& correspondences, double yaw,
+        const Eigen::Vector3d& translation) {
+        const Eigen::Matrix3d rotation = yaw_rotation_matrix(yaw);
+        double sq_error_sum            = 0.0;
+        size_t count                   = 0;
+
+        for (size_t i = 0; i < correspondences.obj_points.size(); ++i) {
+            const Eigen::Vector3d cam_point =
+                rotation * correspondences.obj_points[i] + translation;
+            if (!std::isfinite(cam_point.x()) || !std::isfinite(cam_point.y())
+                || !std::isfinite(cam_point.z()) || cam_point.z() <= 1e-6) {
+                return std::numeric_limits<double>::infinity();
+            }
+            const Eigen::Vector2d projected(
+                cam_point.x() / cam_point.z(), cam_point.y() / cam_point.z());
+            const Eigen::Vector2d delta = projected - correspondences.normalized_points[i];
+            sq_error_sum += delta.squaredNorm();
+            ++count;
+        }
+
+        if (count == 0u) {
+            return std::numeric_limits<double>::infinity();
+        }
+        return std::sqrt(sq_error_sum / static_cast<double>(count));
+    }
+
+    [[nodiscard]] std::vector<PoseSeed>
+        make_pose_seeds(const CandidateCorrespondences& correspondences) const {
+        std::vector<PoseSeed> seeds;
+        constexpr int kYawSeedCount = 64;
+        seeds.reserve(kYawSeedCount);
+
+        for (int i = 0; i < kYawSeedCount; ++i) {
+            const double yaw = -std::numbers::pi_v<double>
+                             + (2.0 * std::numbers::pi_v<double>
+                                * static_cast<double>(i) / static_cast<double>(kYawSeedCount));
+            auto translation = solve_translation_for_yaw(correspondences, yaw);
+            if (!translation.has_value()) {
+                continue;
+            }
+            PoseSeed seed;
+            seed.yaw             = yaw;
+            seed.translation     = *translation;
+            seed.normalized_rmse = normalized_reprojection_rmse(correspondences, yaw, *translation);
+            if (std::isfinite(seed.normalized_rmse)) {
+                seeds.push_back(seed);
+            }
+        }
+
+        std::sort(seeds.begin(), seeds.end(), [](const PoseSeed& lhs, const PoseSeed& rhs) {
+            return lhs.normalized_rmse < rhs.normalized_rmse;
+        });
+        if (seeds.size() > 6u) {
+            seeds.resize(6u);
+        }
+        return seeds;
+    }
+
+    [[nodiscard]] std::optional<PoseSeed> refine_pose_seed(
+        const CandidateCorrespondences& correspondences, const PoseSeed& seed) const {
+        double yaw            = seed.yaw;
+        double translation[3] = {seed.translation.x(), seed.translation.y(), seed.translation.z()};
+        ceres::Problem problem;
+        for (size_t i = 0; i < correspondences.obj_points.size(); ++i) {
+            problem.AddResidualBlock(
+                NormalizedReprojectionError::Create(
+                    correspondences.obj_points[i], correspondences.normalized_points[i]),
+                new ceres::HuberLoss(0.005), &yaw, translation);
+        }
+        problem.SetParameterLowerBound(translation, 2, 1e-3);
+
+        ceres::Solver::Options options;
+        options.linear_solver_type           = ceres::DENSE_QR;
+        options.max_num_iterations           = 35;
+        options.minimizer_progress_to_stdout = false;
+        options.function_tolerance           = 1e-12;
+        options.parameter_tolerance          = 1e-12;
+
+        ceres::Solver::Summary summary;
+        ceres::Solve(options, &problem, &summary);
+
+        PoseSeed refined;
+        refined.yaw         = normalize_yaw(yaw);
+        refined.translation = Eigen::Vector3d(translation[0], translation[1], translation[2]);
+        if (!summary.IsSolutionUsable() || !std::isfinite(refined.yaw)
+            || !std::isfinite(refined.translation.x()) || !std::isfinite(refined.translation.y())
+            || !std::isfinite(refined.translation.z()) || refined.translation.z() <= 1e-3) {
+            return std::nullopt;
+        }
+
+        refined.normalized_rmse =
+            normalized_reprojection_rmse(correspondences, refined.yaw, refined.translation);
+        if (!std::isfinite(refined.normalized_rmse)) {
+            return std::nullopt;
+        }
+        return refined;
+    }
+
+    [[nodiscard]] std::optional<PoseSeed>
+        solve_constrained_pose_seed(const CandidateCorrespondences& correspondences) const {
+        const auto seeds = make_pose_seeds(correspondences);
+        if (seeds.empty()) {
+            return std::nullopt;
+        }
+
+        std::optional<PoseSeed> best_seed;
+        for (const auto& seed : seeds) {
+            const auto refined = refine_pose_seed(correspondences, seed);
+            if (!refined.has_value()) {
+                continue;
+            }
+            if (!best_seed.has_value() || refined->normalized_rmse < best_seed->normalized_rmse) {
+                best_seed = *refined;
+            }
+        }
+        return best_seed;
+    }
+
+    [[nodiscard]] float pixel_reprojection_rmse(
+        const CandidateCorrespondences& correspondences, const cv::Mat& rvec,
+        const cv::Mat& tvec) const {
+        std::vector<cv::Point2f> reproj_points;
+        cv::projectPoints(
+            correspondences.obj_points_cv, rvec, tvec, camera_matrix_, dist_coeffs_, reproj_points);
+        if (reproj_points.size() != correspondences.img_points_cv.size()) {
+            return std::numeric_limits<float>::infinity();
+        }
+
+        double sq_error_sum = 0.0;
+        for (size_t i = 0; i < reproj_points.size(); ++i) {
+            const cv::Point2f delta = reproj_points[i] - correspondences.img_points_cv[i];
+            sq_error_sum += static_cast<double>(delta.x) * static_cast<double>(delta.x)
+                          + static_cast<double>(delta.y) * static_cast<double>(delta.y);
+        }
+        return static_cast<float>(std::sqrt(
+            sq_error_sum / static_cast<double>(std::max<size_t>(1, reproj_points.size()))));
+    }
+
+    [[nodiscard]] std::optional<ConstrainedPoseSolution> solve_constrained_candidate_pose(
+        const LdmMeshCandidate& candidate, const std::vector<LightPair>& pairs) const {
+        const auto correspondences = build_candidate_correspondences(candidate, pairs);
+        if (!correspondences.has_value()) {
+            return std::nullopt;
+        }
+
+        const auto seed = solve_constrained_pose_seed(*correspondences);
+        if (!seed.has_value()) {
+            return std::nullopt;
+        }
+
+        ConstrainedPoseSolution solution;
+        solution.rotation_cam = yaw_rotation_matrix(seed->yaw);
+        solution.center_cam   = seed->translation;
+
+        cv::Mat rotation_cv;
+        cv::eigen2cv(solution.rotation_cam, rotation_cv);
+        cv::Rodrigues(rotation_cv, solution.rvec);
+        solution.tvec =
+            (cv::Mat_<double>(3, 1) << solution.center_cam.x(), solution.center_cam.y(),
+             solution.center_cam.z());
+
+        solution.reprojection_rmse_px =
+            pixel_reprojection_rmse(*correspondences, solution.rvec, solution.tvec);
+        if (!std::isfinite(solution.reprojection_rmse_px)) {
+            return std::nullopt;
+        }
+
+        std::vector<cv::Point2f> projected_center;
+        cv::projectPoints(
+            std::vector<cv::Point3f>{cv::Point3f(0.0f, 0.0f, 0.0f)}, solution.rvec, solution.tvec,
+            camera_matrix_, dist_coeffs_, projected_center);
+        if (!projected_center.empty()) {
+            solution.projected_center_image = projected_center.front();
+        }
+
+        const auto outline_model_points = volume_outline_points(config_.geometry);
+        cv::projectPoints(
+            std::vector<cv::Point3f>(outline_model_points.begin(), outline_model_points.end()),
+            solution.rvec, solution.tvec, camera_matrix_, dist_coeffs_,
+            solution.projected_outline_image);
+
+        solution.vertical_axis_term = projected_vertical_axis_score(solution.rvec, solution.tvec);
+        solution.face_visibility_term =
+            visible_face_score(candidate, solution.rotation_cam, solution.center_cam);
+        return solution;
     }
 
     [[nodiscard]] float
@@ -466,33 +824,8 @@ private:
         const OdomCameraTransform& T_odom_camera) const {
         candidate.estimated_center_image_px =
             estimate_candidate_center_image(pairs, candidate.pair_indices);
-
-        std::vector<cv::Point3f> obj_points;
-        std::vector<cv::Point2f> img_points;
-        obj_points.reserve(candidate.pair_indices.size() * 2);
-        img_points.reserve(candidate.pair_indices.size() * 2);
-
-        for (size_t i = 0; i < candidate.pair_indices.size(); ++i) {
-            const auto pair_idx          = static_cast<size_t>(candidate.pair_indices[i]);
-            const auto face_idx          = candidate.octagon_face_indices[i];
-            const auto model_pair_points = pair_model_points_for_face(config_.geometry, face_idx);
-            obj_points.push_back(model_pair_points[0]);
-            obj_points.push_back(model_pair_points[1]);
-            img_points.push_back(pairs[pair_idx].top_center_px);
-            img_points.push_back(pairs[pair_idx].bottom_center_px);
-        }
-
-        cv::Mat rvec, tvec;
-        bool success = cv::solvePnP(
-            obj_points, img_points, camera_matrix_, dist_coeffs_, rvec, tvec, false,
-            cv::SOLVEPNP_IPPE);
-        if (success) {
-            cv::solvePnP(
-                obj_points, img_points, camera_matrix_, dist_coeffs_, rvec, tvec, true,
-                cv::SOLVEPNP_ITERATIVE);
-        }
-
-        if (!success) {
+        if (!face_sequence_is_consistent(
+                candidate.octagon_face_indices, candidate.reverse_assignment)) {
             candidate.solved               = false;
             candidate.depth_valid          = false;
             candidate.reprojection_rmse_px = std::numeric_limits<float>::infinity();
@@ -500,57 +833,39 @@ private:
             return;
         }
 
-        std::vector<cv::Point2f> reproj_points;
-        cv::projectPoints(obj_points, rvec, tvec, camera_matrix_, dist_coeffs_, reproj_points);
-        double sq_error_sum = 0.0;
-        for (size_t i = 0; i < reproj_points.size(); ++i) {
-            const cv::Point2f delta = reproj_points[i] - img_points[i];
-            sq_error_sum += static_cast<double>(delta.x) * static_cast<double>(delta.x)
-                          + static_cast<double>(delta.y) * static_cast<double>(delta.y);
+        const auto solution = solve_constrained_candidate_pose(candidate, pairs);
+        if (!solution.has_value()) {
+            candidate.solved               = false;
+            candidate.depth_valid          = false;
+            candidate.reprojection_rmse_px = std::numeric_limits<float>::infinity();
+            candidate.score                = 0.35f * candidate.preliminary_score;
+            return;
         }
 
-        candidate.solved               = true;
-        candidate.reprojection_rmse_px = static_cast<float>(std::sqrt(
-            sq_error_sum / static_cast<double>(std::max<size_t>(1, reproj_points.size()))));
+        candidate.solved                    = true;
+        candidate.reprojection_rmse_px      = solution->reprojection_rmse_px;
+        candidate.estimated_center_image_px = solution->projected_center_image;
 
-        std::vector<cv::Point2f> projected_center;
-        cv::projectPoints(
-            std::vector<cv::Point3f>{cv::Point3f(0.0f, 0.0f, 0.0f)}, rvec, tvec, camera_matrix_,
-            dist_coeffs_, projected_center);
-        if (!projected_center.empty()) {
-            candidate.estimated_center_image_px = projected_center.front();
-        }
-
-        Eigen::Vector3d center_cam;
-        cv::cv2eigen(tvec, center_cam);
-
-        cv::Mat rotation_cv;
-        cv::Rodrigues(rvec, rotation_cv);
-        Eigen::Matrix3d rotation_cam;
-        cv::cv2eigen(rotation_cv, rotation_cam);
-
-        const auto transform_cam = CameraLdmTransform::from_rt(rotation_cam, center_cam);
-        candidate.pose           = LdmCandidatePose{
-                      .camera = transform_cam,
-                      .odom   = T_odom_camera * transform_cam,
+        const auto transform_cam =
+            CameraLdmTransform::from_rt(solution->rotation_cam, solution->center_cam);
+        candidate.pose = LdmCandidatePose{
+            .camera = transform_cam,
+            .odom   = T_odom_camera * transform_cam,
         };
+        candidate.projected_outline_image = solution->projected_outline_image;
 
-        const auto outline_model_points = volume_outline_points(config_.geometry);
-        cv::projectPoints(
-            std::vector<cv::Point3f>(outline_model_points.begin(), outline_model_points.end()),
-            rvec, tvec, camera_matrix_, dist_coeffs_, candidate.projected_outline_image);
-
-        const float vertical_axis_term   = projected_vertical_axis_score(rvec, tvec);
-        const float face_visibility_term = visible_face_score(candidate, rotation_cam, center_cam);
+        const float vertical_axis_term                 = solution->vertical_axis_term;
+        const float face_visibility_term               = solution->face_visibility_term;
         constexpr float kMinProjectedVerticalAxisScore = 0.45f;
 
         const double rmse_limit = (candidate.pair_indices.size() >= 3)
                                     ? config_.rmse_stable_threshold_px
                                     : config_.rmse_constrained_threshold_px;
-        candidate.depth_valid   = std::isfinite(center_cam.x()) && std::isfinite(center_cam.y())
-                             && std::isfinite(center_cam.z()) && center_cam.z() > 1e-3
-                             && candidate.reprojection_rmse_px <= static_cast<float>(rmse_limit)
-                             && vertical_axis_term >= kMinProjectedVerticalAxisScore;
+        candidate.depth_valid =
+            std::isfinite(solution->center_cam.x()) && std::isfinite(solution->center_cam.y())
+            && std::isfinite(solution->center_cam.z()) && solution->center_cam.z() > 1e-3
+            && candidate.reprojection_rmse_px <= static_cast<float>(rmse_limit)
+            && vertical_axis_term >= kMinProjectedVerticalAxisScore;
 
         const float pair_term = pair_count_score(static_cast<int>(candidate.pair_indices.size()));
         const float rmse_term = std::exp(

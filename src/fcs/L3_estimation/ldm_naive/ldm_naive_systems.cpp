@@ -24,7 +24,7 @@ void register_naive_ldm_systems(talos::Scheduler& scheduler, const NaiveLdmConfi
                 return;
             }
             if (!meas->transform_odom.has_value()) {
-                SPDLOG_INFO("skip ldm measurement for no transform_odom");
+                SPDLOG_INFO("skip {} ldm measurement for no transform_odom", meas->depth_quality);
                 return;
             }
             LdmState state{};

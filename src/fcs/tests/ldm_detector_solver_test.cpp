@@ -424,6 +424,31 @@ TEST(LdmSolver, CombinesMultipleMeshInfosIntoStableCenter) {
     EXPECT_TRUE(has_combined_four_pair_candidate);
 }
 
+TEST(LdmSolver, NonAdjacentMeshesStayBearingOnly) {
+    const auto camera_config = make_test_camera_config();
+    const auto ldm_config    = make_ldm_config();
+    fcs::L2::ldm::LdmSolver solver(camera_config, ldm_config);
+
+    const Eigen::Matrix3d rotation =
+        Eigen::AngleAxisd(0.10, Eigen::Vector3d::UnitY()).toRotationMatrix();
+    const Eigen::Vector3d translation(0.02, 0.01, 4.0);
+    auto detection = make_detection_from_pairs(
+        make_projected_pairs({0, 2}, rotation, translation, camera_config, ldm_config), ldm_config);
+    detection.mesh_candidates = {
+        fcs::L2::ldm::LdmMeshCandidate{
+                                       .pair_indices         = {0, 1},
+                                       .octagon_face_indices = {0, 2},
+                                       .preliminary_score    = 1.0f,
+                                       },
+    };
+
+    const auto result = solver.solve(detection, aligned_odom_camera_transform());
+    ASSERT_TRUE(result.has_value());
+    EXPECT_EQ(result->depth_quality, fcs::L2::ldm::LdmDepthQuality::BearingOnly);
+    EXPECT_FALSE(result->transform_cam.has_value());
+    EXPECT_FALSE(result->transform_odom.has_value());
+}
+
 TEST(LdmSolver, ThreePairsRecoverStableCenterAndOdomProjection) {
     const auto camera_config = make_test_camera_config();
     const auto ldm_config    = make_ldm_config();
