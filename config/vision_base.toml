@@ -163,9 +163,6 @@ pair_center_down = 6.0
 transfer_thresh = 20
 # Armor selection windows
 front_window_deg = 60.0
-# Legacy knobs retained for config stability; authoritative selection ignores them.
-coming_angle_deg = 55.0
-leaving_angle_deg = 20.0
 
 [aimer.target_selection]
 temp_lost_state_score = 0.05

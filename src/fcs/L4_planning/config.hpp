@@ -78,10 +78,6 @@ struct AimerConfig {
     /// Front-window limit for single-armor locking (degrees).
     double front_window_deg{60.0};
 
-    /// Legacy knobs retained only for config stability; authoritative selection does not use them.
-    double coming_angle_deg{60.0};
-    double leaving_angle_deg{20.0};
-
     /// Weighted multi-target selection configuration.
     TargetSelectionConfig target_selection{};
 };

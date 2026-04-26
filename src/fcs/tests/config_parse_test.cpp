@@ -201,8 +201,6 @@ TEST(ConfigParse, VisionBaseTomlMatchesExpectedSemanticsAndValues) {
     EXPECT_DOUBLE_EQ(config.l4->aimer.pair_center_down, 6.0);
     EXPECT_EQ(config.l4->aimer.transfer_thresh, 20);
     EXPECT_DOUBLE_EQ(config.l4->aimer.front_window_deg, 60.0);
-    EXPECT_DOUBLE_EQ(config.l4->aimer.coming_angle_deg, 55.0);
-    EXPECT_DOUBLE_EQ(config.l4->aimer.leaving_angle_deg, 20.0);
     EXPECT_DOUBLE_EQ(config.l4->aimer.target_selection.temp_lost_state_score, 0.05);
     EXPECT_DOUBLE_EQ(config.l4->aimer.target_selection.optical_stale_timeout_s, 0.25);
     EXPECT_DOUBLE_EQ(config.l4->aimer.target_selection.switch_margin, 0.08);
