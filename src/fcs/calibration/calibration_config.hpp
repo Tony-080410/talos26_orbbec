@@ -72,15 +72,6 @@ struct OutputConfig {
     std::string extrinsic_path{"camera_extrinsic.toml"};
 };
 
-/// @brief Foxglove server configuration
-struct FoxgloveCalibConfig {
-    bool enabled{true};
-    FoxgloveTransport transport{FoxgloveTransport::WebSocket};
-    std::string host{"0.0.0.0"};
-    uint16_t port{8766}; // Different from main program (8765)
-    std::string mcap_path{};
-};
-
 /// @brief Input source configuration (hardware vs simulator)
 struct InputConfig {
     bool daedalus{false}; ///< Use daedalus simulator instead of real hardware
@@ -99,7 +90,7 @@ struct CalibrationConfig {
     HandeyeConfig handeye{};
     VisualizationConfig visualization{};
     OutputConfig output{};
-    FoxgloveCalibConfig foxglove{};
+    FoxgloveConfig foxglove{};
     InputConfig input{}; ///< Input source (hardware/daedalus)
 
     /// @brief Load configuration from TOML file

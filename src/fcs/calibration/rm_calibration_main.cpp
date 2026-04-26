@@ -199,22 +199,23 @@ int main(int argc, char* argv[]) {
     hardware_config.camera->height  = config->height;
     hardware_config.camera->profile = config->profile;
     hardware_config.mcu             = fcs::McuConfig{};
+    hardware_config.extrinsic       = fcs::RobotExtrinsicConfig{};
     world.insert_resource(fcs::core::trajectory::bullet_speed_data{.bullet_speed = 25.0});
     world.insert_resource(fcs::ArmorColor::Blue);
 
     // Setup L1_L2 runtime (camera + IMU)
     auto setup_result = fcs::runtime::setup_l1(
-        world, scheduler, use_daedalus, use_daedalus ? nullptr : &hardware_config);
+        world, scheduler, /*mock_mcu=*/false, use_daedalus,
+        use_daedalus ? nullptr : &hardware_config);
     if (!setup_result) {
         SPDLOG_ERROR("Failed to setup L1/L2: {}", setup_result.error());
         return 1;
     }
 
-    // Initialize Foxglove server
+    // Initialize Foxglove server (reuse fcs::FoxgloveConfig from calibration config)
     std::shared_ptr<fcs::visualization::FoxgloveServer> foxglove_server;
     if (config->foxglove.enabled) {
-        auto server_result = fcs::visualization::create_foxglove_server(
-            config->foxglove.port, config->foxglove.host);
+        auto server_result = fcs::visualization::create_foxglove_server(config->foxglove);
         if (!server_result) {
             SPDLOG_WARN("Foxglove transport failed to initialize: {}", server_result.error());
         } else {
