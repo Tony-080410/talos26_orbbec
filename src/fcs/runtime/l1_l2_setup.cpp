@@ -345,8 +345,10 @@ std::expected<L1L2SetupResult, std::string> setup_l1(
     scheduler.add_system<talos::fixed_rate<250, 1>>(
         "camera_reader", [camera = std::move(camera),
                           last_seq](talos::spmc_mut<ImageFrame, ImageChannelTopic> cam_out) {
-            const auto frame = camera->try_recv();
+            using namespace std::chrono_literals;
+            const auto frame = camera->recv(1s);
             if (!frame) [[unlikely]] {
+                SPDLOG_ERROR("read camera: {}", frame.error());
                 return;
             }
 
