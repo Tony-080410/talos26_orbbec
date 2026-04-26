@@ -58,17 +58,11 @@ void register_ldm_systems(
                 detection.color        = *detecting_color_;
             }
 
-            std::optional<fast_tf::TransformMatrixd<fast_tf::odom, fast_tf::camera_optical>>
-                T_camera_odom;
-            auto tf_lookup = fast_tf::lookup_clamped<
-                fast_tf::odom_fuxk_frame, fast_tf::camera_optical_fuxk_frame>(
+            auto tf_lookup = fast_tf::lookup_clamped<fast_tf::odom, fast_tf::camera_optical>(
                 *tf_system, frame->timestamp_ns);
-            if (tf_lookup) {
-                T_camera_odom = *tf_lookup;
-            }
 
-            if (detection.valid) {
-                auto meas_result = solver_ptr->solve(detection, T_camera_odom);
+            if (detection.valid && tf_lookup) {
+                auto meas_result = solver_ptr->solve(detection, *tf_lookup);
                 if (meas_result) {
                     detection.mesh_candidates        = meas_result->mesh_candidates;
                     detection.selected_candidate_idx = meas_result->selected_candidate_idx;

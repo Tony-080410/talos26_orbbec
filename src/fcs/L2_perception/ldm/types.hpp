@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/armor_types.hpp"
+#include "frame.hpp"
 
 #include <array>
 #include <cstdint>
@@ -17,6 +18,19 @@
 
 namespace fcs::L2::ldm {
 enum class DetectorError { InvalidImage };
+
+struct ldm_frame {
+    static constexpr std::string_view frame_id = "ldm";
+    using ancestor                             = void;
+};
+
+using CameraLdmTransform = fast_tf::FrameTransform<fast_tf::camera_optical, ldm_frame>;
+using OdomLdmTransform   = fast_tf::FrameTransform<fast_tf::odom, ldm_frame>;
+
+struct LdmCandidatePose {
+    CameraLdmTransform camera{};
+    OdomLdmTransform odom{};
+};
 
 enum class LdmDepthQuality : uint8_t {
     None = 0,
@@ -61,10 +75,8 @@ struct LdmMeshCandidate {
     float reprojection_rmse_px{std::numeric_limits<float>::infinity()};
     float score{0.0f};
     cv::Point2f estimated_center_image_px{};
-    std::optional<Eigen::Quaterniond> orientation_cam{};
+    LdmCandidatePose pose{};
     std::vector<cv::Point2f> projected_outline_image{};
-    std::optional<Eigen::Vector3d> whole_center_cam{};
-    std::optional<Eigen::Vector3d> whole_center_odom{};
 };
 
 struct LdmDetection {
@@ -91,33 +103,12 @@ struct LdmMeasurement {
     int selected_pair_count{0};
     cv::Point2f center_image_px{};
     Eigen::Vector3d bearing_cam{0.0, 0.0, 1.0};
-    std::optional<Eigen::Quaterniond> orientation_cam{};
-    std::optional<Eigen::Quaterniond> orientation_odom{};
-    std::optional<Eigen::Vector3d> whole_center_cam{};
-    std::optional<Eigen::Vector3d> whole_center_odom{};
-    std::optional<double> whole_center_z_odom{};
+    std::optional<CameraLdmTransform> transform_cam{};
+    std::optional<OdomLdmTransform> transform_odom{};
     LdmDepthQuality depth_quality{LdmDepthQuality::None};
     float confidence{0.0f};
     std::vector<LdmMeshCandidate> mesh_candidates{};
     std::optional<int> selected_candidate_idx{};
-};
-
-struct RadarLdmPosition {
-    uint64_t timestamp_ns{0};
-    Eigen::Vector3d position{0, 0, 0};
-    Eigen::Vector3d velocity{0, 0, 0};
-    float confidence{0.0f};
-    int radar_id{0};
-
-    RadarLdmPosition() = default;
-    RadarLdmPosition(
-        Eigen::Vector3d pos, float conf, uint64_t ts, int id = 0,
-        Eigen::Vector3d vel = Eigen::Vector3d::Zero())
-        : timestamp_ns(ts)
-        , position(std::move(pos))
-        , velocity(std::move(vel))
-        , confidence(conf)
-        , radar_id(id) {}
 };
 
 } // namespace fcs::L2::ldm

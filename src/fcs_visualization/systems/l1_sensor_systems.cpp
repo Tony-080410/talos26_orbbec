@@ -402,8 +402,8 @@ void register_l1_sensor_systems(talos::scheduler::Scheduler& app) {
                     cv::Point(30, 32), cv::FONT_HERSHEY_SIMPLEX, 0.6, cv::Scalar(0, 255, 255), 2,
                     cv::LINE_AA);
 
-                if (ldm_meas.whole_center_cam.has_value()) {
-                    const auto& center = *ldm_meas.whole_center_cam;
+                if (ldm_meas.transform_cam.has_value()) {
+                    const auto center = ldm_meas.transform_cam->translation();
                     cv::putText(
                         img_bgr,
                         fmt::format(

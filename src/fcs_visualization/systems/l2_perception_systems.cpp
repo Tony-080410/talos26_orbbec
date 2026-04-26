@@ -73,13 +73,13 @@ constexpr uint64_t kLdmSceneLifetimeNs = 1000'000'000;
     const fcs::L2::ldm::LdmMeasurement& measurement,
     const fcs::L2::ldm::LdmDetectorConfig& config) {
     const auto color = ldm_scene_color(measurement);
-    const auto& pos  = *measurement.whole_center_odom;
+    const auto& pose = *measurement.transform_odom;
 
     auto builder = viz::EntityBuilder::create<fast_tf::odom>("l2", "ldm");
-    builder.timestamp(measurement.timestamp_ns).lifetime(kLdmSceneLifetimeNs).position(pos);
-    if (measurement.orientation_odom.has_value()) {
-        builder.orientation(*measurement.orientation_odom);
-    }
+    builder.timestamp(measurement.timestamp_ns)
+        .lifetime(kLdmSceneLifetimeNs)
+        .position(pose.translation())
+        .orientation(pose.quaternion());
     builder.color(color)
         .line_loop(ldm_top_outline_points(config), color, 0.01)
         .line_loop(ldm_bottom_outline_points(config), color, 0.01)
@@ -100,13 +100,13 @@ constexpr uint64_t kLdmSceneLifetimeNs = 1000'000'000;
     const fcs::L2::ldm::LdmMeasurement& measurement,
     const fcs::L2::ldm::LdmDetectorConfig& config) {
     const auto color = ldm_scene_color(measurement);
-    const auto& pos  = *measurement.whole_center_cam;
+    const auto& pose = *measurement.transform_cam;
 
     auto builder = viz::EntityBuilder::create<fast_tf::camera_optical>("l2", "ldm_cam");
-    builder.timestamp(measurement.timestamp_ns).lifetime(kLdmSceneLifetimeNs).position(pos);
-    if (measurement.orientation_cam.has_value()) {
-        builder.orientation(*measurement.orientation_cam);
-    }
+    builder.timestamp(measurement.timestamp_ns)
+        .lifetime(kLdmSceneLifetimeNs)
+        .position(pose.translation())
+        .orientation(pose.quaternion());
     builder.color(color)
         .line_loop(ldm_top_outline_points(config), color, 0.01)
         .line_loop(ldm_bottom_outline_points(config), color, 0.01)
@@ -262,9 +262,9 @@ void register_l2_perception_systems(talos::scheduler::Scheduler& app) {
             }
 
             std::vector<::foxglove::schemas::SceneEntity> entities;
-            if (measurement->whole_center_odom.has_value()) {
+            if (measurement->transform_odom.has_value()) {
                 entities.push_back(make_ldm_volume_entity_odom(*measurement, *ldm_config));
-            } else if (measurement->whole_center_cam.has_value()) {
+            } else if (measurement->transform_cam.has_value()) {
                 entities.push_back(make_ldm_volume_entity_camera(*measurement, *ldm_config));
             } else {
                 entities.push_back(make_ldm_bearing_entity(*measurement));

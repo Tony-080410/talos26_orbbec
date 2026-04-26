@@ -11,6 +11,7 @@
 #include <expected>
 #include <limits>
 #include <optional>
+#include <utility>
 #include <vector>
 
 #include <Eigen/Core>
@@ -28,6 +29,8 @@ enum class PnPError {
 
 class LdmSolver {
 public:
+    using OdomCameraTransform = fast_tf::FrameTransform<fast_tf::odom, fast_tf::camera_optical>;
+
     explicit LdmSolver(
         const CameraConfig& config, const LdmDetectorConfig& detector_config) noexcept
         : config_(detector_config) {
@@ -35,10 +38,8 @@ public:
         cv::eigen2cv(config.distort_coefficient, dist_coeffs_);
     }
 
-    [[nodiscard]] std::expected<LdmMeasurement, PnPError> solve(
-        const LdmDetection& detection,
-        const std::optional<fast_tf::TransformMatrixd<fast_tf::odom, fast_tf::camera_optical>>&
-            T_camera_odom = std::nullopt) const {
+    [[nodiscard]] std::expected<LdmMeasurement, PnPError>
+        solve(const LdmDetection& detection, const OdomCameraTransform& T_odom_camera) const {
         if (!detection.valid || detection.pairs.empty()) {
             return std::unexpected(PnPError::InvalidDetection);
         }
@@ -77,7 +78,7 @@ public:
                     candidate.octagon_face_indices =
                         make_face_assignment(start_face, candidate.pair_indices.size(), reverse);
                     candidate.reverse_assignment = reverse;
-                    evaluate_candidate(candidate, detection.pairs, T_camera_odom);
+                    evaluate_candidate(candidate, detection.pairs, T_odom_camera);
                     evaluated_candidates.push_back(std::move(candidate));
                 }
             }
@@ -88,7 +89,7 @@ public:
         }
 
         auto combined_candidates =
-            build_combined_candidates(evaluated_candidates, detection.pairs, T_camera_odom);
+            build_combined_candidates(evaluated_candidates, detection.pairs, T_odom_camera);
         evaluated_candidates.insert(
             evaluated_candidates.end(), combined_candidates.begin(), combined_candidates.end());
 
@@ -122,21 +123,12 @@ public:
         measurement.mesh_candidates = std::move(evaluated_candidates);
         measurement.selected_candidate_idx = static_cast<int>(selected_idx);
 
-        if (selected.depth_valid && selected.whole_center_cam.has_value()) {
-            measurement.orientation_cam   = selected.orientation_cam;
-            measurement.whole_center_cam  = selected.whole_center_cam;
-            measurement.whole_center_odom = selected.whole_center_odom;
-            if (measurement.whole_center_odom.has_value()) {
-                measurement.whole_center_z_odom = measurement.whole_center_odom->z();
-            }
-            if (measurement.orientation_cam.has_value() && T_camera_odom.has_value()) {
-                const Eigen::Quaterniond q_camera_odom(T_camera_odom->rotation());
-                measurement.orientation_odom =
-                    (q_camera_odom * *measurement.orientation_cam).normalized();
-            }
-            measurement.depth_quality = (selected.pair_indices.size() >= 3)
-                                          ? LdmDepthQuality::Stable
-                                          : LdmDepthQuality::Constrained;
+        if (selected.depth_valid && selected.solved) {
+            measurement.transform_cam  = selected.pose.camera;
+            measurement.transform_odom = selected.pose.odom;
+            measurement.depth_quality  = (selected.pair_indices.size() >= 3)
+                                           ? LdmDepthQuality::Stable
+                                           : LdmDepthQuality::Constrained;
         } else {
             measurement.depth_quality = LdmDepthQuality::BearingOnly;
         }
@@ -195,15 +187,15 @@ private:
 
     [[nodiscard]] bool center_estimates_are_compatible(
         const LdmMeshCandidate& lhs, const LdmMeshCandidate& rhs) const noexcept {
-        if (!lhs.whole_center_cam.has_value() || !rhs.whole_center_cam.has_value()) {
+        if (!lhs.solved || !rhs.solved) {
             return true;
         }
 
-        const double min_depth =
-            std::max(1.0, std::min(lhs.whole_center_cam->z(), rhs.whole_center_cam->z()));
-        const double max_center_delta_m = std::max(0.08, 0.03 * min_depth);
-        return (lhs.whole_center_cam.value() - rhs.whole_center_cam.value()).norm()
-            <= max_center_delta_m;
+        const Eigen::Vector3d lhs_center = lhs.pose.camera.translation();
+        const Eigen::Vector3d rhs_center = rhs.pose.camera.translation();
+        const double min_depth           = std::max(1.0, std::min(lhs_center.z(), rhs_center.z()));
+        const double max_center_delta_m  = std::max(0.08, 0.03 * min_depth);
+        return (lhs_center - rhs_center).norm() <= max_center_delta_m;
     }
 
     [[nodiscard]] bool
@@ -215,9 +207,7 @@ private:
 
     [[nodiscard]] std::optional<LdmMeshCandidate> try_merge_candidates(
         const LdmMeshCandidate& base, const LdmMeshCandidate& extra,
-        const std::vector<LightPair>& pairs,
-        const std::optional<fast_tf::TransformMatrixd<fast_tf::odom, fast_tf::camera_optical>>&
-            T_camera_odom) const {
+        const std::vector<LightPair>& pairs, const OdomCameraTransform& T_odom_camera) const {
         if (!has_face_assignment(base) || !has_face_assignment(extra)) {
             return std::nullopt;
         }
@@ -291,7 +281,7 @@ private:
         merged.preliminary_score =
             ((lhs_weight * base.preliminary_score) + (rhs_weight * extra.preliminary_score))
             / std::max(1.0f, lhs_weight + rhs_weight);
-        evaluate_candidate(merged, pairs, T_camera_odom);
+        evaluate_candidate(merged, pairs, T_odom_camera);
         if (!merged.solved) {
             return std::nullopt;
         }
@@ -300,9 +290,7 @@ private:
 
     [[nodiscard]] std::vector<LdmMeshCandidate> build_combined_candidates(
         const std::vector<LdmMeshCandidate>& evaluated_candidates,
-        const std::vector<LightPair>& pairs,
-        const std::optional<fast_tf::TransformMatrixd<fast_tf::odom, fast_tf::camera_optical>>&
-            T_camera_odom) const {
+        const std::vector<LightPair>& pairs, const OdomCameraTransform& T_odom_camera) const {
         std::vector<size_t> source_indices;
         source_indices.reserve(evaluated_candidates.size());
         for (size_t i = 0; i < evaluated_candidates.size(); ++i) {
@@ -343,7 +331,7 @@ private:
                     }
 
                     auto merged = try_merge_candidates(
-                        current, evaluated_candidates[other_idx], pairs, T_camera_odom);
+                        current, evaluated_candidates[other_idx], pairs, T_odom_camera);
                     if (!merged.has_value()) {
                         continue;
                     }
@@ -475,8 +463,7 @@ private:
 
     void evaluate_candidate(
         LdmMeshCandidate& candidate, const std::vector<LightPair>& pairs,
-        const std::optional<fast_tf::TransformMatrixd<fast_tf::odom, fast_tf::camera_optical>>&
-            T_camera_odom) const {
+        const OdomCameraTransform& T_odom_camera) const {
         candidate.estimated_center_image_px =
             estimate_candidate_center_image(pairs, candidate.pair_indices);
 
@@ -536,18 +523,17 @@ private:
 
         Eigen::Vector3d center_cam;
         cv::cv2eigen(tvec, center_cam);
-        candidate.whole_center_cam = center_cam;
 
         cv::Mat rotation_cv;
         cv::Rodrigues(rvec, rotation_cv);
         Eigen::Matrix3d rotation_cam;
         cv::cv2eigen(rotation_cv, rotation_cam);
-        candidate.orientation_cam = Eigen::Quaterniond(rotation_cam).normalized();
 
-        if (T_camera_odom.has_value()) {
-            candidate.whole_center_odom =
-                T_camera_odom->rotation() * center_cam + T_camera_odom->translation();
-        }
+        const auto transform_cam = CameraLdmTransform::from_rt(rotation_cam, center_cam);
+        candidate.pose           = LdmCandidatePose{
+                      .camera = transform_cam,
+                      .odom   = T_odom_camera * transform_cam,
+        };
 
         const auto outline_model_points = volume_outline_points(config_.geometry);
         cv::projectPoints(

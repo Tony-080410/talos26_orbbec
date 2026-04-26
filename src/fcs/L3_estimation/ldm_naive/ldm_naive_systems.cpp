@@ -18,23 +18,19 @@ void register_naive_ldm_systems(talos::Scheduler& scheduler, const NaiveLdmConfi
         [](talos::res<NaiveLdmConfig> cfg,
            talos::subscribe<fcs::L2::ldm::LdmMeasurement, LdmMeasurementChannelTopic> meas_in,
            talos::publish<LdmState> state_out) mutable {
+            (void)cfg;
             auto meas = meas_in.read();
             if (!meas || !meas->valid) {
                 return;
             }
-            if (!meas->whole_center_odom.has_value() && !meas->orientation_cam.has_value()) {
-                SPDLOG_INFO("skip ldm measurement for no whole_center_odom");
+            if (!meas->transform_odom.has_value()) {
+                SPDLOG_INFO("skip ldm measurement for no transform_odom");
                 return;
             }
             LdmState state{};
             state.timestamp_ns = meas->timestamp_ns;
             state.accurate     = false;
-            if (meas->whole_center_odom.has_value()) {
-                state.position = meas->whole_center_odom.value();
-            } else {
-                Eigen::Vector3d dir = meas->orientation_odom.value() * Eigen::Vector3d::UnitX();
-                state.position      = dir;
-            }
+            state.position     = meas->transform_odom->translation();
             state_out.write(state);
         });
 }

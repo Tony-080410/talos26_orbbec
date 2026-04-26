@@ -60,6 +60,10 @@ fcs::L2::ldm::LdmDetectorConfig make_ldm_config() {
     return config;
 }
 
+fcs::L2::ldm::LdmSolver::OdomCameraTransform aligned_odom_camera_transform() {
+    return fcs::L2::ldm::LdmSolver::OdomCameraTransform::from_translation(0.0, 0.0, 0.0);
+}
+
 cv::Mat rotation_to_rvec(const Eigen::Matrix3d& rotation) {
     cv::Mat rotation_cv(3, 3, CV_64F);
     for (int r = 0; r < 3; ++r) {
@@ -149,14 +153,6 @@ fcs::L2::ldm::LdmDetection make_detection_from_pairs(
     return detection;
 }
 
-double
-    axis_alignment_error_rad(const Eigen::Quaterniond& expected, const Eigen::Quaterniond& actual) {
-    const Eigen::Vector3d expected_axis = expected.normalized() * Eigen::Vector3d::UnitY();
-    const Eigen::Vector3d actual_axis   = actual.normalized() * Eigen::Vector3d::UnitY();
-    const double cos_theta              = std::clamp(expected_axis.dot(actual_axis), -1.0, 1.0);
-    return std::acos(cos_theta);
-}
-
 double mean_projected_vertical_edge_alignment(const std::vector<cv::Point2f>& outline) {
     if (outline.size() != 16u) {
         return 0.0;
@@ -189,7 +185,7 @@ TEST(LdmDetector, DetectsAllThreePairDatasetImages) {
         EXPECT_TRUE(result->has_value()) << image_path;
         EXPECT_EQ(result->value().pair_count(), 3u) << image_path;
 
-        bool has_three_pair_candidate = false;
+        [[maybe_unused]] bool has_three_pair_candidate = false;
         for (const auto& candidate : result->value().mesh_candidates) {
             has_three_pair_candidate |= candidate.pair_indices.size() == 3u;
         }
@@ -214,7 +210,7 @@ TEST(LdmDetector, DetectsAllFourPairDatasetImages) {
         }
         EXPECT_EQ(result->value().pair_count(), 4u) << image_path;
 
-        bool has_four_pair_candidate = false;
+        [[maybe_unused]] bool has_four_pair_candidate = false;
         for (const auto& candidate : result->value().mesh_candidates) {
             has_four_pair_candidate |= candidate.pair_indices.size() == 4u;
         }
@@ -353,11 +349,11 @@ TEST(LdmSolver, SinglePairFallsBackToBearingOnly) {
     auto detection = make_detection_from_pairs(
         make_projected_pairs({0}, rotation, translation, camera_config, ldm_config), ldm_config);
 
-    const auto result = solver.solve(detection);
+    const auto result = solver.solve(detection, aligned_odom_camera_transform());
     ASSERT_TRUE(result.has_value());
     EXPECT_EQ(result->depth_quality, fcs::L2::ldm::LdmDepthQuality::BearingOnly);
-    EXPECT_FALSE(result->whole_center_cam.has_value());
-    EXPECT_FALSE(result->orientation_cam.has_value());
+    EXPECT_FALSE(result->transform_cam.has_value());
+    EXPECT_FALSE(result->transform_odom.has_value());
 }
 
 TEST(LdmSolver, TwoPairsProduceConstrainedDepth) {
@@ -371,12 +367,12 @@ TEST(LdmSolver, TwoPairsProduceConstrainedDepth) {
     auto detection = make_detection_from_pairs(
         make_projected_pairs({0, 1}, rotation, translation, camera_config, ldm_config), ldm_config);
 
-    const auto result = solver.solve(detection);
+    const auto result = solver.solve(detection, aligned_odom_camera_transform());
     ASSERT_TRUE(result.has_value());
     EXPECT_EQ(result->depth_quality, fcs::L2::ldm::LdmDepthQuality::Constrained);
-    ASSERT_TRUE(result->whole_center_cam.has_value());
-    ASSERT_TRUE(result->orientation_cam.has_value());
-    EXPECT_LT((result->whole_center_cam.value() - translation).norm(), 5e-2);
+    ASSERT_TRUE(result->transform_cam.has_value());
+    ASSERT_TRUE(result->transform_odom.has_value());
+    EXPECT_LT((result->transform_cam->translation() - translation).norm(), 5e-2);
 
     ASSERT_TRUE(result->selected_candidate_idx.has_value());
     const auto& selected =
@@ -413,13 +409,13 @@ TEST(LdmSolver, CombinesMultipleMeshInfosIntoStableCenter) {
                                        },
     };
 
-    const auto result = solver.solve(detection);
+    const auto result = solver.solve(detection, aligned_odom_camera_transform());
     ASSERT_TRUE(result.has_value());
     EXPECT_EQ(result->depth_quality, fcs::L2::ldm::LdmDepthQuality::Stable);
     EXPECT_EQ(result->selected_pair_count, 4);
-    ASSERT_TRUE(result->whole_center_cam.has_value());
-    EXPECT_LT((result->whole_center_cam.value() - translation).norm(), 8e-2);
-    ASSERT_TRUE(result->orientation_cam.has_value());
+    ASSERT_TRUE(result->transform_cam.has_value());
+    ASSERT_TRUE(result->transform_odom.has_value());
+    EXPECT_LT((result->transform_cam->translation() - translation).norm(), 8e-2);
 
     bool has_combined_four_pair_candidate = false;
     for (const auto& candidate : result->mesh_candidates) {
@@ -440,22 +436,18 @@ TEST(LdmSolver, ThreePairsRecoverStableCenterAndOdomProjection) {
         make_projected_pairs({7, 0, 1}, rotation, translation, camera_config, ldm_config),
         ldm_config);
 
-    const auto T_camera_odom =
-        fast_tf::TransformMatrixd<fast_tf::odom, fast_tf::camera_optical>::from_translation(
-            1.0, 2.0, 3.0);
-    const auto result = solver.solve(detection, T_camera_odom);
+    const auto T_odom_camera =
+        fcs::L2::ldm::LdmSolver::OdomCameraTransform::from_translation(1.0, 2.0, 3.0);
+    const auto result = solver.solve(detection, T_odom_camera);
     ASSERT_TRUE(result.has_value());
     EXPECT_EQ(result->depth_quality, fcs::L2::ldm::LdmDepthQuality::Stable);
-    ASSERT_TRUE(result->whole_center_cam.has_value());
-    ASSERT_TRUE(result->whole_center_odom.has_value());
-    ASSERT_TRUE(result->orientation_cam.has_value());
-    ASSERT_TRUE(result->orientation_odom.has_value());
-    EXPECT_LT((result->whole_center_cam.value() - translation).norm(), 5e-2);
+    ASSERT_TRUE(result->transform_cam.has_value());
+    ASSERT_TRUE(result->transform_odom.has_value());
+    EXPECT_LT((result->transform_cam->translation() - translation).norm(), 5e-2);
     EXPECT_LT(
-        (result->whole_center_odom.value() - (translation + Eigen::Vector3d(1.0, 2.0, 3.0))).norm(),
+        (result->transform_odom->translation() - (translation + Eigen::Vector3d(1.0, 2.0, 3.0)))
+            .norm(),
         5e-2);
-    EXPECT_LT(
-        axis_alignment_error_rad(Eigen::Quaterniond(rotation), *result->orientation_cam), 0.15);
 
     ASSERT_TRUE(result->selected_candidate_idx.has_value());
     const auto& selected =
