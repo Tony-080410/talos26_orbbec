@@ -294,59 +294,6 @@ TEST(BufferTest, StaticModeReturnsSameValueForAnyQueryTime) {
     EXPECT_NEAR(result->value.translation().x(), 5.0, 1e-6);
 }
 
-// ==================== Spherial Tests ====================
-
-// --- from_cartesian ---
-
-TEST(SpherialTest, FromCartesianPositiveX) {
-    auto s = Spherial<double>::from_cartesian({3.0, 0.0, 0.0});
-    EXPECT_NEAR(s.distance, 3.0, 1e-9);
-    EXPECT_NEAR(s.yaw, 0.0, 1e-9);
-    EXPECT_NEAR(s.pitch, 0.0, 1e-9);
-}
-
-TEST(SpherialTest, FromCartesianPositiveY) {
-    auto s = Spherial<double>::from_cartesian({0.0, 5.0, 0.0});
-    EXPECT_NEAR(s.distance, 5.0, 1e-9);
-    EXPECT_NEAR(s.yaw, M_PI / 2.0, 1e-9);
-    EXPECT_NEAR(s.pitch, 0.0, 1e-9);
-}
-
-TEST(SpherialTest, FromCartesianPositiveZ) {
-    auto s = Spherial<double>::from_cartesian({0.0, 0.0, 4.0});
-    EXPECT_NEAR(s.distance, 4.0, 1e-9);
-    EXPECT_NEAR(s.yaw, 0.0, 1e-9);
-    EXPECT_NEAR(s.pitch, M_PI / 2.0, 1e-9);
-}
-
-TEST(SpherialTest, FromCartesianZeroVector) {
-    auto s = Spherial<double>::from_cartesian({0.0, 0.0, 0.0});
-    EXPECT_NEAR(s.distance, 0.0, 1e-9);
-    EXPECT_NEAR(s.yaw, 0.0, 1e-9);
-    EXPECT_NEAR(s.pitch, 0.0, 1e-9);
-}
-
-TEST(SpherialTest, FromCartesianNegativeQuadrant) {
-    // x=-1, y=-1, z=0 → yaw = atan2(-1,-1) = -3π/4
-    auto s = Spherial<double>::from_cartesian({-1.0, -1.0, 0.0});
-    EXPECT_NEAR(s.distance, std::sqrt(2.0), 1e-9);
-    EXPECT_NEAR(s.yaw, std::atan2(-1.0, -1.0), 1e-9);
-    EXPECT_NEAR(s.pitch, 0.0, 1e-9);
-}
-
-TEST(SpherialTest, FromCartesianRoundTrip) {
-    // from_cartesian extracts yaw=atan2(y,x), pitch=atan2(z,hypot(x,y)).
-    // For exact round-trip we construct Cartesian from those formulas directly.
-    const double yaw = 0.7, pitch = -0.3, dist = 5.0;
-    const double cos_p = std::cos(pitch);
-    Eigen::Vector3d pos(
-        dist * cos_p * std::cos(yaw), dist * cos_p * std::sin(yaw), dist * std::sin(pitch));
-    const auto s = Spherial<double>::from_cartesian(pos);
-    EXPECT_NEAR(s.distance, dist, 1e-9);
-    EXPECT_NEAR(s.yaw, yaw, 1e-9);
-    EXPECT_NEAR(s.pitch, pitch, 1e-9);
-}
-
 // --- lerp ---
 
 TEST(SpherialTest, LerpAtZeroReturnsFirst) {

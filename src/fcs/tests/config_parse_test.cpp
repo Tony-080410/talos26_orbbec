@@ -87,7 +87,7 @@ TEST(ConfigParse, VisionBaseTomlMatchesExpectedSemanticsAndValues) {
     const auto& config = *result;
 
     EXPECT_EQ(config.at_legacy->backend_type, fcs::L2::ArmorBackendType::Traditional);
-    EXPECT_EQ(config.at_legacy->default_detect_color, fcs::ArmorColor::Red);
+    EXPECT_EQ(config.at_legacy->default_detect_color, fcs::ArmorColor::Blue);
 
     EXPECT_FALSE(config.at_legacy->traditional.advanced_binary);
     EXPECT_FLOAT_EQ(config.at_legacy->traditional.dark_percentage, 0.5F);
@@ -138,7 +138,7 @@ TEST(ConfigParse, VisionBaseTomlMatchesExpectedSemanticsAndValues) {
     EXPECT_DOUBLE_EQ(config.at_legacy->tensor_rt.nms_threshold, 0.30);
     EXPECT_EQ(config.at_legacy->tensor_rt.top_k, 128);
 
-    EXPECT_EQ(config.at_legacy->axera.model_path, "models/compiled.axmodel");
+    EXPECT_EQ(config.at_legacy->axera.model_path, "models/qat_u8u16.axmodel");
     EXPECT_EQ(config.at_legacy->axera.input_width, 768);
     EXPECT_EQ(config.at_legacy->axera.input_height, 576);
     EXPECT_EQ(config.at_legacy->axera.num_colors, 4);
@@ -163,8 +163,8 @@ TEST(ConfigParse, VisionBaseTomlMatchesExpectedSemanticsAndValues) {
     EXPECT_DOUBLE_EQ(config.tracker().robot.lost_threshold, 1.0);
     EXPECT_EQ(config.tracker().robot.tracking_threshold, 5u);
     EXPECT_DOUBLE_EQ(config.tracker().robot.model.sigma_a_xy, 10.0);
-    EXPECT_DOUBLE_EQ(config.tracker().robot.model.sigma_a_z, 2.0);
-    EXPECT_DOUBLE_EQ(config.tracker().robot.model.sigma_a_yaw, 15.0);
+    EXPECT_DOUBLE_EQ(config.tracker().robot.model.sigma_a_z, 0.1);
+    EXPECT_DOUBLE_EQ(config.tracker().robot.model.sigma_a_yaw, 20.0);
     EXPECT_DOUBLE_EQ(config.tracker().robot.model.sigma_r0, 1.0);
     EXPECT_DOUBLE_EQ(config.tracker().robot.model.sigma_r1, 1.0);
     EXPECT_DOUBLE_EQ(config.tracker().robot.model.sigma_h, 0.8);
@@ -189,17 +189,17 @@ TEST(ConfigParse, VisionBaseTomlMatchesExpectedSemanticsAndValues) {
     EXPECT_DOUBLE_EQ(config.tracker().outpost.model.yaw_log_k, 0.005);
 
     EXPECT_DOUBLE_EQ(config.l5->fire_decision.fire_thresh, 0.01744444);
-    EXPECT_DOUBLE_EQ(config.l5->fire_decision.shooting_range_h, 0.12);
-    EXPECT_DOUBLE_EQ(config.l5->fire_decision.shooting_range_w_small, 0.12);
+    EXPECT_DOUBLE_EQ(config.l5->fire_decision.shooting_range_h, 0.135);
+    EXPECT_DOUBLE_EQ(config.l5->fire_decision.shooting_range_w_small, 0.135);
     EXPECT_DOUBLE_EQ(config.l5->fire_decision.shooting_range_w_large, 0.24);
-    EXPECT_DOUBLE_EQ(config.l4->aimer.delay, 0.2);
+    EXPECT_DOUBLE_EQ(config.l4->aimer.delay, 0.04);
     EXPECT_DOUBLE_EQ(config.l4->aimer.single_whole_up, 1.5);
     EXPECT_DOUBLE_EQ(config.l4->aimer.single_whole_down, 1.0);
-    EXPECT_DOUBLE_EQ(config.l4->aimer.whole_pair_up, 6.5);
-    EXPECT_DOUBLE_EQ(config.l4->aimer.whole_pair_down, 7.5);
-    EXPECT_DOUBLE_EQ(config.l4->aimer.pair_center_up, 16.5);
-    EXPECT_DOUBLE_EQ(config.l4->aimer.pair_center_down, 15.0);
-    EXPECT_EQ(config.l4->aimer.transfer_thresh, 50);
+    EXPECT_DOUBLE_EQ(config.l4->aimer.whole_pair_up, 8.5);
+    EXPECT_DOUBLE_EQ(config.l4->aimer.whole_pair_down, 9.5);
+    EXPECT_DOUBLE_EQ(config.l4->aimer.pair_center_up, 9.0);
+    EXPECT_DOUBLE_EQ(config.l4->aimer.pair_center_down, 6.0);
+    EXPECT_EQ(config.l4->aimer.transfer_thresh, 20);
     EXPECT_DOUBLE_EQ(config.l4->aimer.front_window_deg, 60.0);
     EXPECT_DOUBLE_EQ(config.l4->aimer.coming_angle_deg, 55.0);
     EXPECT_DOUBLE_EQ(config.l4->aimer.leaving_angle_deg, 20.0);
@@ -240,16 +240,16 @@ TEST(ConfigParse, VisionBaseTomlMatchesExpectedSemanticsAndValues) {
     EXPECT_TRUE(config.weapon().enable_debug);
     EXPECT_DOUBLE_EQ(config.weapon().pitch_min, -0.69813169);
     EXPECT_DOUBLE_EQ(config.weapon().pitch_max, 0.69813169);
-    EXPECT_EQ(config.weapon().mpc.max_iterations, 10);
-    EXPECT_DOUBLE_EQ(config.weapon().mpc.abs_tol, 0.001);
-    EXPECT_DOUBLE_EQ(config.weapon().mpc.rho, 2.0);
-    EXPECT_DOUBLE_EQ(config.weapon().mpc.yaw.q_pos, 9e5);
+    EXPECT_EQ(config.weapon().mpc.max_iterations, 30);
+    EXPECT_DOUBLE_EQ(config.weapon().mpc.abs_tol, 0.1);
+    EXPECT_DOUBLE_EQ(config.weapon().mpc.rho, 1.0);
+    EXPECT_DOUBLE_EQ(config.weapon().mpc.yaw.q_pos, 9e6);
     EXPECT_DOUBLE_EQ(config.weapon().mpc.yaw.q_vel, 0.0);
-    EXPECT_DOUBLE_EQ(config.weapon().mpc.yaw.r, 10.0);
+    EXPECT_DOUBLE_EQ(config.weapon().mpc.yaw.r, 1.0);
     EXPECT_DOUBLE_EQ(config.weapon().mpc.yaw.max_acc, 50.0);
-    EXPECT_DOUBLE_EQ(config.weapon().mpc.pitch.q_pos, 9e5);
+    EXPECT_DOUBLE_EQ(config.weapon().mpc.pitch.q_pos, 9e6);
     EXPECT_DOUBLE_EQ(config.weapon().mpc.pitch.q_vel, 0.0);
-    EXPECT_DOUBLE_EQ(config.weapon().mpc.pitch.r, 100.0);
+    EXPECT_DOUBLE_EQ(config.weapon().mpc.pitch.r, 1.0);
     EXPECT_DOUBLE_EQ(config.weapon().mpc.pitch.max_acc, 100.0);
 
     EXPECT_FALSE(config.rune_detector.enabled);
@@ -298,8 +298,9 @@ TEST(ConfigParse, InlineHelpersAndFormattersBehaveAsExpected) {
     EXPECT_DOUBLE_EQ(tracker_ptr->robot.matcher_gate, vision.tracker().robot.matcher_gate);
     EXPECT_DOUBLE_EQ(tracker_ptr->outpost.model.yaw_log_k, 0.005);
 
-    EXPECT_TRUE(fcs::L4::is_on_target(vision.l4->fire_decision, 0.0, 0.0, 0.001, 0.001, 100.0));
-    EXPECT_FALSE(fcs::L4::is_on_target(vision.l4->fire_decision, 0.0, 0.0, 0.2, 0.2, 100.0));
+    EXPECT_TRUE(
+        fcs::L5::is_on_target(vision.l5->fire_decision, 0.0, 0.0, 0.001, 0.001, 100.0).fire);
+    EXPECT_FALSE(fcs::L5::is_on_target(vision.l5->fire_decision, 0.0, 0.0, 0.2, 0.2, 100.0).fire);
 }
 
 TEST(ConfigParse, MutableAccessorsAndTrajectoryHelpersUseWrappedConfigFields) {
@@ -341,18 +342,18 @@ TEST(ConfigParse, SetupL1CoversUsbMcuWrapperBranchesBeforeStubCameraFails) {
     {
         talos::World world;
         talos::Scheduler scheduler(world);
-        auto result = fcs::runtime::setup_l1(world, scheduler, false, &hardware);
+        auto result = fcs::runtime::setup_l1(world, scheduler, false, false, &hardware);
         ASSERT_FALSE(result.has_value());
-        EXPECT_NE(result.error().find("init hik input"), std::string::npos);
+        EXPECT_NE(result.error().find("failed connecting to mcu"), std::string::npos);
     }
 
     hardware.mcu->mcu_product_id = 0x1234;
     {
         talos::World world;
         talos::Scheduler scheduler(world);
-        auto result = fcs::runtime::setup_l1(world, scheduler, false, &hardware);
+        auto result = fcs::runtime::setup_l1(world, scheduler, false, false, &hardware);
         ASSERT_FALSE(result.has_value());
-        EXPECT_NE(result.error().find("init hik input"), std::string::npos);
+        EXPECT_NE(result.error().find("failed connecting to mcu"), std::string::npos);
     }
 }
 

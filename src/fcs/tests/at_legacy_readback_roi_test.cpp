@@ -64,11 +64,11 @@ TEST(ReadbackRoi, ProjectBoxToImageProducesFiniteRoi) {
     fcs::CameraConfig camera_config;
     camera_config.camera_matrix << 100.0, 0.0, 50.0, 0.0, 100.0, 60.0, 0.0, 0.0, 1.0;
 
-    const auto T_odom_camera =
-        fast_tf::TransformMatrixd<fast_tf::odom, fast_tf::camera_optical>::from_translation(
+    const auto T_camera_odom =
+        fast_tf::TransformMatrixd<fast_tf::camera_optical, fast_tf::odom>::from_translation(
             0.0, 0.0, 0.0);
     const auto roi = fcs::L2::project_box_to_image(
-        Eigen::Vector3d(0.0, 0.0, 10.0), 0.0, T_odom_camera, camera_config, {0.8, 0.8, 0.6});
+        Eigen::Vector3d(0.0, 0.0, 10.0), 0.0, T_camera_odom, camera_config, {0.8, 0.8, 0.6});
 
     ASSERT_TRUE(roi.has_value());
     EXPECT_GT(roi->width, 0.0f);

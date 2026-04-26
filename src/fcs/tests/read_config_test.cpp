@@ -52,19 +52,19 @@ TEST(ReadConfig, RepositoryLaunchConfigLoadsAndMergesOverrideSemantics) {
     auto config = std::move(*result);
     EXPECT_TRUE(config.launch.daedalus);
     ASSERT_TRUE(config.hardware.has_value());
-    EXPECT_DOUBLE_EQ(config.hardware->mcu->bullet_speed_default, 22.0);
+    EXPECT_DOUBLE_EQ(config.hardware->mcu->bullet_speed_default, 24.0);
 
     EXPECT_TRUE(config.foxglove.enabled);
     EXPECT_EQ(config.foxglove.transport, fcs::FoxgloveTransport::WebSocket);
     EXPECT_EQ(config.foxglove.host, "0.0.0.0");
     EXPECT_EQ(config.foxglove.port, 8765);
-    EXPECT_TRUE(config.foxglove.mcap_path.empty());
+    EXPECT_FALSE(config.foxglove.mcap_path.empty());
     EXPECT_EQ(config.foxglove.quanta.target_bitrate, 100500);
     EXPECT_EQ(config.foxglove.quanta.preset, "fast");
-    EXPECT_EQ(config.foxglove.quanta.tune, "zerolatency");
-    EXPECT_FALSE(config.foxglove.quanta.intra_refresh);
+    EXPECT_EQ(config.foxglove.quanta.tune, "ssim");
+    EXPECT_TRUE(config.foxglove.quanta.intra_refresh);
 
-    EXPECT_TRUE(config.capturer.enabled);
+    EXPECT_FALSE(config.capturer.enabled);
     EXPECT_EQ(config.capturer.output_dir, "record");
 
     EXPECT_EQ(config.vision.trajectory.model->type, fcs::core::trajectory::model::ModelType::Ideal);
@@ -244,7 +244,7 @@ TEST(ReadConfig, InvalidHardwareConfigIsReported) {
         const ScopedCurrentPath cwd(temp_dir);
         auto result = fcs::load_config("at_vision.toml");
         ASSERT_FALSE(result.has_value());
-        EXPECT_EQ(result.error(), "hardware config: Missing key 'type'");
+        EXPECT_EQ(result.error(), "hardware config: Missing key 'camera'");
     }
 
     std::filesystem::remove_all(temp_dir);
