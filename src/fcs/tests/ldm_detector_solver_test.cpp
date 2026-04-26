@@ -338,7 +338,7 @@ TEST(LdmGeometry, VisibleFaceLiesInFrontOfCenterAtIdentityPose) {
     EXPECT_LT(min_z, 0.0f);
 }
 
-TEST(LdmSolver, SinglePairFallsBackToBearingOnly) {
+TEST(LdmSolver, SinglePairProducesConstrainedDepth) {
     const auto camera_config = make_test_camera_config();
     const auto ldm_config    = make_ldm_config();
     fcs::L2::ldm::LdmSolver solver(camera_config, ldm_config);
@@ -351,9 +351,10 @@ TEST(LdmSolver, SinglePairFallsBackToBearingOnly) {
 
     const auto result = solver.solve(detection, aligned_odom_camera_transform());
     ASSERT_TRUE(result.has_value());
-    EXPECT_EQ(result->depth_quality, fcs::L2::ldm::LdmDepthQuality::BearingOnly);
-    EXPECT_FALSE(result->transform_cam.has_value());
-    EXPECT_FALSE(result->transform_odom.has_value());
+    EXPECT_EQ(result->depth_quality, fcs::L2::ldm::LdmDepthQuality::Constrained);
+    ASSERT_TRUE(result->transform_cam.has_value());
+    ASSERT_TRUE(result->transform_odom.has_value());
+    EXPECT_LT((result->transform_cam->translation() - translation).norm(), 5e-2);
 }
 
 TEST(LdmSolver, TwoPairsProduceConstrainedDepth) {
@@ -424,7 +425,7 @@ TEST(LdmSolver, CombinesMultipleMeshInfosIntoStableCenter) {
     EXPECT_TRUE(has_combined_four_pair_candidate);
 }
 
-TEST(LdmSolver, NonAdjacentMeshesStayBearingOnly) {
+TEST(LdmSolver, NonAdjacentMeshAssignmentIsRejected) {
     const auto camera_config = make_test_camera_config();
     const auto ldm_config    = make_ldm_config();
     fcs::L2::ldm::LdmSolver solver(camera_config, ldm_config);
@@ -443,10 +444,8 @@ TEST(LdmSolver, NonAdjacentMeshesStayBearingOnly) {
     };
 
     const auto result = solver.solve(detection, aligned_odom_camera_transform());
-    ASSERT_TRUE(result.has_value());
-    EXPECT_EQ(result->depth_quality, fcs::L2::ldm::LdmDepthQuality::BearingOnly);
-    EXPECT_FALSE(result->transform_cam.has_value());
-    EXPECT_FALSE(result->transform_odom.has_value());
+    ASSERT_FALSE(result.has_value());
+    EXPECT_EQ(result.error(), fcs::L2::ldm::PnPError::NoCandidate);
 }
 
 TEST(LdmSolver, ThreePairsRecoverStableCenterAndOdomProjection) {

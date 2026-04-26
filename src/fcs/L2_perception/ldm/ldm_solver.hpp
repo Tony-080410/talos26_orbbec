@@ -63,18 +63,6 @@ public:
                 continue;
             }
 
-            if (base_candidate.pair_indices.size() == 1) {
-                auto candidate                 = base_candidate;
-                candidate.solved               = false;
-                candidate.depth_valid          = false;
-                candidate.reprojection_rmse_px = std::numeric_limits<float>::infinity();
-                candidate.score                = 0.55f * candidate.preliminary_score + 0.20f;
-                candidate.estimated_center_image_px =
-                    estimate_candidate_center_image(detection.pairs, candidate.pair_indices);
-                evaluated_candidates.push_back(std::move(candidate));
-                continue;
-            }
-
             if (has_face_assignment(base_candidate)) {
                 auto candidate = base_candidate;
                 evaluate_candidate(candidate, detection.pairs, T_odom_camera);
@@ -103,22 +91,20 @@ public:
         evaluated_candidates.insert(
             evaluated_candidates.end(), combined_candidates.begin(), combined_candidates.end());
 
-        std::optional<size_t> best_any_idx;
         std::optional<size_t> best_depth_idx;
         for (size_t i = 0; i < evaluated_candidates.size(); ++i) {
             const auto& candidate = evaluated_candidates[i];
-            if (!best_any_idx.has_value()
-                || candidate.score > evaluated_candidates[*best_any_idx].score) {
-                best_any_idx = i;
-            }
             if (candidate.depth_valid
                 && (!best_depth_idx.has_value()
                     || candidate.score > evaluated_candidates[*best_depth_idx].score)) {
                 best_depth_idx = i;
             }
         }
+        if (!best_depth_idx.has_value()) {
+            return std::unexpected(PnPError::NoCandidate);
+        }
 
-        const size_t selected_idx = best_depth_idx.value_or(*best_any_idx);
+        const size_t selected_idx = *best_depth_idx;
         const auto selected       = evaluated_candidates[selected_idx];
 
         LdmMeasurement measurement;
@@ -133,17 +119,13 @@ public:
         measurement.mesh_candidates = std::move(evaluated_candidates);
         measurement.selected_candidate_idx = static_cast<int>(selected_idx);
 
-        if (selected.depth_valid && selected.solved) {
-            measurement.transform_cam  = selected.pose.camera;
-            measurement.transform_odom = selected.pose.odom;
-            measurement.depth_quality  = (selected.pair_indices.size() >= 3)
-                                           ? LdmDepthQuality::Stable
-                                           : LdmDepthQuality::Constrained;
-        } else {
-            measurement.depth_quality = LdmDepthQuality::BearingOnly;
-        }
+        measurement.transform_cam  = selected.pose.camera;
+        measurement.transform_odom = selected.pose.odom;
+        measurement.depth_quality  = (selected.pair_indices.size() >= 3)
+                                       ? LdmDepthQuality::Stable
+                                       : LdmDepthQuality::Constrained;
 
-        measurement.confidence = confidence_for(selected, measurement.depth_quality);
+        measurement.confidence = confidence_for(selected);
         return measurement;
     }
 
@@ -542,7 +524,7 @@ private:
             }
         }
 
-        if (correspondences.obj_points.size() < 4u) {
+        if (correspondences.obj_points.size() < 2u) {
             return std::nullopt;
         }
         return correspondences;
@@ -720,21 +702,17 @@ private:
             sq_error_sum / static_cast<double>(std::max<size_t>(1, reproj_points.size()))));
     }
 
-    [[nodiscard]] std::optional<ConstrainedPoseSolution> solve_constrained_candidate_pose(
-        const LdmMeshCandidate& candidate, const std::vector<LightPair>& pairs) const {
-        const auto correspondences = build_candidate_correspondences(candidate, pairs);
-        if (!correspondences.has_value()) {
-            return std::nullopt;
-        }
-
-        const auto seed = solve_constrained_pose_seed(*correspondences);
-        if (!seed.has_value()) {
+    [[nodiscard]] std::optional<ConstrainedPoseSolution> build_pose_solution(
+        const LdmMeshCandidate& candidate, const CandidateCorrespondences& correspondences,
+        const Eigen::Matrix3d& rotation_cam, const Eigen::Vector3d& center_cam) const {
+        if (!std::isfinite(center_cam.x()) || !std::isfinite(center_cam.y())
+            || !std::isfinite(center_cam.z()) || center_cam.z() <= 1e-3) {
             return std::nullopt;
         }
 
         ConstrainedPoseSolution solution;
-        solution.rotation_cam = yaw_rotation_matrix(seed->yaw);
-        solution.center_cam   = seed->translation;
+        solution.rotation_cam = rotation_cam;
+        solution.center_cam   = center_cam;
 
         cv::Mat rotation_cv;
         cv::eigen2cv(solution.rotation_cam, rotation_cv);
@@ -744,7 +722,7 @@ private:
              solution.center_cam.z());
 
         solution.reprojection_rmse_px =
-            pixel_reprojection_rmse(*correspondences, solution.rvec, solution.tvec);
+            pixel_reprojection_rmse(correspondences, solution.rvec, solution.tvec);
         if (!std::isfinite(solution.reprojection_rmse_px)) {
             return std::nullopt;
         }
@@ -763,10 +741,75 @@ private:
             solution.rvec, solution.tvec, camera_matrix_, dist_coeffs_,
             solution.projected_outline_image);
 
-        solution.vertical_axis_term = projected_vertical_axis_score(solution.rvec, solution.tvec);
-        solution.face_visibility_term =
-            visible_face_score(candidate, solution.rotation_cam, solution.center_cam);
+        solution.vertical_axis_term   = projected_vertical_axis_score(solution.rvec, solution.tvec);
+        solution.face_visibility_term = visible_face_score(candidate, rotation_cam, center_cam);
         return solution;
+    }
+
+    [[nodiscard]] std::optional<ConstrainedPoseSolution> solve_single_face_candidate_pose(
+        const LdmMeshCandidate& candidate, const std::vector<LightPair>& pairs) const {
+        if (!has_face_assignment(candidate) || candidate.pair_indices.size() != 1u) {
+            return std::nullopt;
+        }
+
+        const auto correspondences = build_candidate_correspondences(candidate, pairs);
+        if (!correspondences.has_value() || correspondences->normalized_points.size() != 2u) {
+            return std::nullopt;
+        }
+
+        const int face_idx = candidate.octagon_face_indices.front();
+        if (face_idx < 0 || face_idx >= 8) {
+            return std::nullopt;
+        }
+
+        const Eigen::Vector2d top_norm    = correspondences->normalized_points[0];
+        const Eigen::Vector2d bottom_norm = correspondences->normalized_points[1];
+        const double normalized_height    = bottom_norm.y() - top_norm.y();
+        const double model_height         = config_.geometry.pair_center_separation_m;
+        if (!std::isfinite(normalized_height) || normalized_height <= 1e-6
+            || model_height <= 1e-6) {
+            return std::nullopt;
+        }
+
+        const double face_center_z = model_height / normalized_height;
+        const double face_center_x = 0.5 * (top_norm.x() + bottom_norm.x()) * face_center_z;
+        const double face_center_y = 0.5 * (top_norm.y() + bottom_norm.y()) * face_center_z;
+        const Eigen::Vector3d face_center_cam(face_center_x, face_center_y, face_center_z);
+
+        const double yaw = static_cast<double>(face_idx) * (std::numbers::pi_v<double> / 4.0);
+        const Eigen::Matrix3d rotation_cam = yaw_rotation_matrix(yaw);
+
+        const auto model_pair = pair_model_points_for_face(config_.geometry, face_idx);
+        const Eigen::Vector3d face_center_model(
+            0.5 * static_cast<double>(model_pair[0].x + model_pair[1].x),
+            0.5 * static_cast<double>(model_pair[0].y + model_pair[1].y),
+            0.5 * static_cast<double>(model_pair[0].z + model_pair[1].z));
+        const Eigen::Vector3d center_cam = face_center_cam - rotation_cam * face_center_model;
+
+        return build_pose_solution(candidate, *correspondences, rotation_cam, center_cam);
+    }
+
+    [[nodiscard]] std::optional<ConstrainedPoseSolution> solve_constrained_candidate_pose(
+        const LdmMeshCandidate& candidate, const std::vector<LightPair>& pairs) const {
+        if (candidate.pair_indices.size() == 1u) {
+            return solve_single_face_candidate_pose(candidate, pairs);
+        }
+
+        const auto correspondences = build_candidate_correspondences(candidate, pairs);
+        if (!correspondences.has_value()) {
+            return std::nullopt;
+        }
+        if (correspondences->obj_points.size() < 4u) {
+            return std::nullopt;
+        }
+
+        const auto seed = solve_constrained_pose_seed(*correspondences);
+        if (!seed.has_value()) {
+            return std::nullopt;
+        }
+
+        return build_pose_solution(
+            candidate, *correspondences, yaw_rotation_matrix(seed->yaw), seed->translation);
     }
 
     [[nodiscard]] float
@@ -887,17 +930,10 @@ private:
         }
     }
 
-    [[nodiscard]] float
-        confidence_for(const LdmMeshCandidate& candidate, LdmDepthQuality quality) const {
+    [[nodiscard]] float confidence_for(const LdmMeshCandidate& candidate) const {
         const float base_pair = pair_count_score(static_cast<int>(candidate.pair_indices.size()));
         const float prelim    = candidate.preliminary_score;
-        float quality_term    = 0.15f;
-        switch (quality) {
-        case LdmDepthQuality::Stable: quality_term = 0.95f; break;
-        case LdmDepthQuality::Constrained: quality_term = 0.70f; break;
-        case LdmDepthQuality::BearingOnly: quality_term = 0.35f; break;
-        case LdmDepthQuality::None: quality_term = 0.0f; break;
-        }
+        const float quality_term = (candidate.pair_indices.size() >= 3u) ? 0.95f : 0.70f;
 
         const float rmse_term =
             std::isfinite(candidate.reprojection_rmse_px)
