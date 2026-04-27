@@ -517,7 +517,7 @@ private:
     }
 
     [[nodiscard]] static std::optional<std::array<double, 3>>
-        decompose_bounded_pose_rotation(const Eigen::Matrix3d& rotation, double max_angle) {
+        decompose_rotation(const Eigen::Matrix3d& rotation) noexcept {
         const double pitch = std::asin(std::clamp(rotation(2, 1), -1.0, 1.0));
         if (std::abs(std::cos(pitch)) <= 1e-6) {
             return std::nullopt;
@@ -525,10 +525,19 @@ private:
 
         const double yaw  = std::atan2(-rotation(2, 0), rotation(2, 2));
         const double roll = std::atan2(-rotation(0, 1), rotation(1, 1));
-        if (!pose_angles_within_limit(yaw, pitch, roll, max_angle)) {
+        return std::array<double, 3>{yaw, pitch, roll};
+    }
+
+    [[nodiscard]] static std::optional<std::array<double, 3>>
+        decompose_bounded_pose_rotation(const Eigen::Matrix3d& rotation, double max_angle) {
+        const auto angles = decompose_rotation(rotation);
+        if (!angles.has_value()) {
             return std::nullopt;
         }
-        return std::array<double, 3>{yaw, pitch, roll};
+        if (!pose_angles_within_limit((*angles)[0], (*angles)[1], (*angles)[2], max_angle)) {
+            return std::nullopt;
+        }
+        return angles;
     }
 
     [[nodiscard]] bool rotation_within_pose_limit(const Eigen::Matrix3d& rotation) const {
@@ -667,7 +676,6 @@ private:
 
         std::vector<BoundedPoseSeed> seeds;
         seeds.reserve(pnp_flags.size());
-        const double max_angle = pose_angle_limit(config_.max_pose_angle_rad);
 
         for (const int flag : pnp_flags) {
             cv::Mat rvec;
@@ -701,7 +709,7 @@ private:
 
             Eigen::Matrix3d rotation_cam;
             cv::cv2eigen(rotation_cv64, rotation_cam);
-            const auto angles = decompose_bounded_pose_rotation(rotation_cam, max_angle);
+            const auto angles = decompose_rotation(rotation_cam);
             if (!angles.has_value()) {
                 continue;
             }
@@ -729,15 +737,15 @@ private:
     [[nodiscard]] std::vector<BoundedPoseSeed>
         make_pose_seeds(const CandidateCorrespondences& correspondences) const {
         std::vector<BoundedPoseSeed> seeds = make_pnp_pose_seeds(correspondences);
-        constexpr int kYawSeedCount        = 17;
+        constexpr int kYawSeedCount        = 33;
         constexpr std::array<double, 5> kPitchRollRatios{-1.0, -0.5, 0.0, 0.5, 1.0};
         const double max_angle = pose_angle_limit(config_.max_pose_angle_rad);
         seeds.reserve(
             seeds.size() + kYawSeedCount * kPitchRollRatios.size() * kPitchRollRatios.size());
 
         for (int yaw_idx = 0; yaw_idx < kYawSeedCount; ++yaw_idx) {
-            const double yaw = -max_angle
-                             + (2.0 * max_angle * static_cast<double>(yaw_idx)
+            const double yaw = -std::numbers::pi_v<double>
+                             + (2.0 * std::numbers::pi_v<double> * static_cast<double>(yaw_idx)
                                 / static_cast<double>(kYawSeedCount - 1));
             for (const double pitch_ratio : kPitchRollRatios) {
                 const double pitch = pitch_ratio * max_angle;
@@ -776,7 +784,7 @@ private:
         const CandidateCorrespondences& correspondences, const BoundedPoseSeed& seed) const {
         const double max_angle = pose_angle_limit(config_.max_pose_angle_rad);
         double angles[3]       = {
-            std::clamp(seed.yaw, -max_angle, max_angle),
+            std::remainder(seed.yaw, 2.0 * std::numbers::pi_v<double>),
             std::clamp(seed.pitch, -max_angle, max_angle),
             std::clamp(seed.roll, -max_angle, max_angle),
         };
@@ -788,10 +796,12 @@ private:
                     correspondences.obj_points[i], correspondences.normalized_points[i]),
                 new ceres::HuberLoss(0.005), angles, translation);
         }
-        for (int i = 0; i < 3; ++i) {
-            problem.SetParameterLowerBound(angles, i, -max_angle);
-            problem.SetParameterUpperBound(angles, i, max_angle);
-        }
+        problem.SetParameterLowerBound(angles, 0, -std::numbers::pi_v<double>);
+        problem.SetParameterUpperBound(angles, 0, std::numbers::pi_v<double>);
+        problem.SetParameterLowerBound(angles, 1, -max_angle);
+        problem.SetParameterUpperBound(angles, 1, max_angle);
+        problem.SetParameterLowerBound(angles, 2, -max_angle);
+        problem.SetParameterUpperBound(angles, 2, max_angle);
         problem.SetParameterLowerBound(translation, 2, 1e-3);
 
         ceres::Solver::Options options;
@@ -805,12 +815,12 @@ private:
         ceres::Solve(options, &problem, &summary);
 
         BoundedPoseSeed refined;
-        refined.yaw         = angles[0];
+        refined.yaw         = std::remainder(angles[0], 2.0 * std::numbers::pi_v<double>);
         refined.pitch       = angles[1];
         refined.roll        = angles[2];
         refined.translation = Eigen::Vector3d(translation[0], translation[1], translation[2]);
-        if (!summary.IsSolutionUsable()
-            || !pose_angles_within_limit(refined.yaw, refined.pitch, refined.roll, max_angle)
+        if (!summary.IsSolutionUsable() || !angle_within_limit(refined.pitch, max_angle)
+            || !angle_within_limit(refined.roll, max_angle)
             || !std::isfinite(refined.translation.x()) || !std::isfinite(refined.translation.y())
             || !std::isfinite(refined.translation.z()) || refined.translation.z() <= 1e-3) {
             return std::nullopt;
@@ -867,8 +877,7 @@ private:
         const LdmMeshCandidate& candidate, const CandidateCorrespondences& correspondences,
         const Eigen::Matrix3d& rotation_cam, const Eigen::Vector3d& center_cam) const {
         if (!std::isfinite(center_cam.x()) || !std::isfinite(center_cam.y())
-            || !std::isfinite(center_cam.z()) || center_cam.z() <= 1e-3
-            || !rotation_within_pose_limit(rotation_cam)) {
+            || !std::isfinite(center_cam.z()) || center_cam.z() <= 1e-3) {
             return std::nullopt;
         }
 
@@ -1048,6 +1057,31 @@ private:
             candidate.reprojection_rmse_px = std::numeric_limits<float>::infinity();
             candidate.score                = 0.35f * candidate.preliminary_score;
             return;
+        }
+
+        // Hard geometric constraint: the octagon center MUST be behind every assigned face.
+        // If PnP/Ceres converged to a center on the near side of any face (between camera
+        // and the faces), the candidate is physically impossible — reject it immediately.
+        // This eliminates the "mirror" solution ambiguity for near-planar correspondences.
+        {
+            const double min_behind_m =
+                std::max(1e-3, octagon_face_center_radius_m(config_.geometry) * 0.5);
+            for (const int face_idx : candidate.octagon_face_indices) {
+                const auto mp = pair_model_points_for_face(config_.geometry, face_idx);
+                const Eigen::Vector3d face_center_model(
+                    0.5 * static_cast<double>(mp[0].x + mp[1].x),
+                    0.5 * static_cast<double>(mp[0].y + mp[1].y),
+                    0.5 * static_cast<double>(mp[0].z + mp[1].z));
+                const Eigen::Vector3d face_center_cam =
+                    solution->rotation_cam * face_center_model + solution->center_cam;
+                if (solution->center_cam.z() - face_center_cam.z() < min_behind_m) {
+                    candidate.solved               = false;
+                    candidate.depth_valid          = false;
+                    candidate.reprojection_rmse_px = std::numeric_limits<float>::infinity();
+                    candidate.score                = 0.35f * candidate.preliminary_score;
+                    return;
+                }
+            }
         }
 
         candidate.solved                    = true;

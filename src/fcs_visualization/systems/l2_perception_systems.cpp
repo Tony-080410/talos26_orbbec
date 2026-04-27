@@ -81,10 +81,10 @@ constexpr uint64_t kLdmSceneLifetimeNs = 5'000'000;
         .position(pose.translation())
         .orientation(pose.quaternion());
     builder.color(color)
-        .line_loop(ldm_top_outline_points(config), color, 0.01)
-        .line_loop(ldm_bottom_outline_points(config), color, 0.01)
-        .line_list(ldm_vertical_outline_points(config), color, 0.01)
-        .size(0.04)
+        .line_loop(ldm_top_outline_points(config), color, 0.0025)
+        .line_loop(ldm_bottom_outline_points(config), color, 0.0025)
+        .line_list(ldm_vertical_outline_points(config), color, 0.0025)
+        .size(0.025)
         .sphere()
         .text_with_offset(
             ldm_label(measurement), 0.0, 0.0, config.geometry.volume_height_m * 0.8,
@@ -108,10 +108,10 @@ constexpr uint64_t kLdmSceneLifetimeNs = 5'000'000;
         .position(pose.translation())
         .orientation(pose.quaternion());
     builder.color(color)
-        .line_loop(ldm_top_outline_points(config), color, 0.01)
-        .line_loop(ldm_bottom_outline_points(config), color, 0.01)
-        .line_list(ldm_vertical_outline_points(config), color, 0.01)
-        .size(0.04)
+        .line_loop(ldm_top_outline_points(config), color, 0.0025)
+        .line_loop(ldm_bottom_outline_points(config), color, 0.0025)
+        .line_list(ldm_vertical_outline_points(config), color, 0.0025)
+        .size(0.0025)
         .sphere()
         .text_with_offset(
             ldm_label(measurement), 0.0, 0.0, config.geometry.volume_height_m * 0.8,
@@ -131,10 +131,10 @@ constexpr uint64_t kLdmSceneLifetimeNs = 5'000'000;
     return viz::EntityBuilder::create<fast_tf::camera_optical>("l2", "ldm_bearing")
         .timestamp(measurement.timestamp_ns)
         .lifetime(kLdmSceneLifetimeNs)
-        .line_strip({viz::make_point3(0.0, 0.0, 0.0), viz::make_point3(end)}, color, 0.01)
+        .line_strip({viz::make_point3(0.0, 0.0, 0.0), viz::make_point3(end)}, color, 0.0025)
         .position(end)
         .color(color)
-        .size(0.04)
+        .size(0.025)
         .sphere()
         .text_with_offset(ldm_label(measurement), 0.0, 0.0, 0.08, tac::L2::LABEL_FONT_SIZE)
         .metadata("confidence", fmt::format("{:.3f}", measurement.confidence))
