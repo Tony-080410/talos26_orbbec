@@ -17,6 +17,7 @@ vision = "daedalus_vision"
 "ax650-1.local" = { daedalus = false, robot = "infantry_ax_1", vision = "std" }
 "sentry" = { daedalus = false, robot = "sentry", vision = "sentry" }
 "ax650-hero" = { daedalus = false, robot = "hero", vision = "hero" }
+"ax650-doggy" = { daedalus = false, robot = "doggy", vision = "doggy" }
 
 [foxglove]
 enabled = true
