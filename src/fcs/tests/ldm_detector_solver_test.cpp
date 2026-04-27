@@ -73,6 +73,24 @@ fcs::L2::ldm::LdmSolver::OdomCameraTransform aligned_odom_camera_transform() {
     return fcs::L2::ldm::LdmSolver::OdomCameraTransform::from_translation(0.0, 0.0, 0.0);
 }
 
+Eigen::Matrix3d bounded_pose_rotation(double yaw, double pitch, double roll) {
+    return Eigen::AngleAxisd(roll, Eigen::Vector3d::UnitZ()).toRotationMatrix()
+         * Eigen::AngleAxisd(pitch, Eigen::Vector3d::UnitX()).toRotationMatrix()
+         * Eigen::AngleAxisd(yaw, Eigen::Vector3d::UnitY()).toRotationMatrix();
+}
+
+std::optional<std::array<double, 3>> bounded_pose_angles(const Eigen::Matrix3d& rotation) {
+    const double pitch = std::asin(std::clamp(rotation(2, 1), -1.0, 1.0));
+    if (std::abs(std::cos(pitch)) <= 1e-6) {
+        return std::nullopt;
+    }
+    return std::array<double, 3>{
+        std::atan2(-rotation(2, 0), rotation(2, 2)),
+        pitch,
+        std::atan2(-rotation(0, 1), rotation(1, 1)),
+    };
+}
+
 cv::Mat rotation_to_rvec(const Eigen::Matrix3d& rotation) {
     cv::Mat rotation_cv(3, 3, CV_64F);
     for (int r = 0; r < 3; ++r) {
@@ -148,6 +166,61 @@ std::vector<fcs::L2::ldm::LightPair> make_projected_pairs(
     return pairs;
 }
 
+std::vector<fcs::L2::ldm::LightPair> make_projected_pairs_preserving_model_order(
+    const std::vector<int>& face_indices, const Eigen::Matrix3d& rotation,
+    const Eigen::Vector3d& translation, const fcs::CameraConfig& camera_config,
+    const fcs::L2::ldm::LdmDetectorConfig& config) {
+    cv::Mat camera_matrix(3, 3, CV_64F);
+    cv::Mat dist_coeffs(1, 5, CV_64F);
+    for (int r = 0; r < 3; ++r) {
+        for (int c = 0; c < 3; ++c) {
+            camera_matrix.at<double>(r, c) = camera_config.camera_matrix(r, c);
+        }
+    }
+    for (int i = 0; i < 5; ++i) {
+        dist_coeffs.at<double>(0, i) = camera_config.distort_coefficient(i);
+    }
+
+    const cv::Mat rvec = rotation_to_rvec(rotation);
+    const cv::Mat tvec =
+        (cv::Mat_<double>(3, 1) << translation.x(), translation.y(), translation.z());
+
+    std::vector<fcs::L2::ldm::LightPair> pairs;
+    pairs.reserve(face_indices.size());
+    for (const int face_index : face_indices) {
+        const auto model_pair =
+            fcs::L2::ldm::pair_model_points_for_face(config.geometry, face_index);
+        std::vector<cv::Point2f> projected;
+        cv::projectPoints(
+            std::vector<cv::Point3f>{model_pair[0], model_pair[1]}, rvec, tvec, camera_matrix,
+            dist_coeffs, projected);
+        EXPECT_EQ(projected.size(), 2u);
+        if (projected.size() != 2u) {
+            continue;
+        }
+
+        const cv::Point2f top    = projected[0];
+        const cv::Point2f bottom = projected[1];
+        pairs.push_back(
+            fcs::L2::ldm::LightPair{
+                .top_blob_index    = static_cast<int>(pairs.size() * 2),
+                .bottom_blob_index = static_cast<int>(pairs.size() * 2 + 1),
+                .top_center_px     = top,
+                .bottom_center_px  = bottom,
+                .midpoint_px       = (top + bottom) * 0.5f,
+                .center_dx_px      = std::abs(bottom.x - top.x),
+                .center_dy_px      = bottom.y - top.y,
+                .cluster_id        = 0,
+                .score             = 1.0f});
+    }
+
+    for (auto& pair : pairs) {
+        pair.local_order_px     = pair.midpoint_px.x;
+        pair.local_layer_sep_px = std::abs(pair.center_dy_px);
+    }
+    return pairs;
+}
+
 fcs::L2::ldm::LdmDetection make_detection_from_pairs(
     std::vector<fcs::L2::ldm::LightPair> pairs, const fcs::L2::ldm::LdmDetectorConfig& config) {
     fcs::L2::ldm::LdmDetection detection;
@@ -158,6 +231,32 @@ fcs::L2::ldm::LdmDetection make_detection_from_pairs(
     detection.rect         = fcs::L2::ldm::bounding_rect_from_pairs(detection.pairs);
     detection.mesh_candidates =
         fcs::L2::ldm::build_preliminary_mesh_candidates(detection.pairs, config);
+    return detection;
+}
+
+fcs::L2::ldm::LdmDetection make_detection_with_assigned_faces(
+    std::vector<fcs::L2::ldm::LightPair> pairs, std::vector<int> face_indices,
+    bool reverse_assignment) {
+    fcs::L2::ldm::LdmDetection detection;
+    detection.color        = fcs::ArmorColor::Red;
+    detection.timestamp_ns = 1234;
+    detection.frame_id     = 7;
+    detection.pairs        = std::move(pairs);
+    detection.rect         = fcs::L2::ldm::bounding_rect_from_pairs(detection.pairs);
+
+    fcs::L2::ldm::LdmMeshCandidate candidate;
+    candidate.cluster_id           = 0;
+    candidate.reverse_assignment   = reverse_assignment;
+    candidate.preliminary_score    = 1.0f;
+    candidate.octagon_face_indices = std::move(face_indices);
+    candidate.pair_indices.reserve(candidate.octagon_face_indices.size());
+    for (size_t i = 0; i < candidate.octagon_face_indices.size(); ++i) {
+        candidate.pair_indices.push_back(static_cast<int>(i));
+        candidate.estimated_center_image_px += detection.pairs[i].midpoint_px;
+    }
+    candidate.estimated_center_image_px *=
+        (1.0f / static_cast<float>(candidate.pair_indices.size()));
+    detection.mesh_candidates = {std::move(candidate)};
     return detection;
 }
 
@@ -486,6 +585,65 @@ TEST(LdmSolver, NonAdjacentMeshAssignmentIsRejected) {
                                        .preliminary_score    = 1.0f,
                                        },
     };
+
+    const auto result = solver.solve(detection, aligned_odom_camera_transform());
+    ASSERT_FALSE(result.has_value());
+    EXPECT_EQ(result.error(), fcs::L2::ldm::PnPError::NoCandidate);
+}
+
+TEST(LdmSolver, ThreeAxisPoseNearLimitStaysInsideBoundedStateSpace) {
+    const auto camera_config                 = make_test_camera_config();
+    auto ldm_config                          = make_ldm_config();
+    ldm_config.rmse_stable_threshold_px      = 0.5;
+    ldm_config.rmse_constrained_threshold_px = 0.5;
+    fcs::L2::ldm::LdmSolver solver(camera_config, ldm_config);
+
+    const double yaw   = 0.78;
+    const double pitch = -0.68;
+    const double roll  = 0.62;
+    ASSERT_LT(std::abs(yaw), ldm_config.max_pose_angle_rad);
+    ASSERT_LT(std::abs(pitch), ldm_config.max_pose_angle_rad);
+    ASSERT_LT(std::abs(roll), ldm_config.max_pose_angle_rad);
+
+    const Eigen::Matrix3d rotation = bounded_pose_rotation(yaw, pitch, roll);
+    const Eigen::Vector3d translation(0.12, -0.05, 4.6);
+    auto detection = make_detection_with_assigned_faces(
+        make_projected_pairs_preserving_model_order(
+            {7, 0, 1, 2}, rotation, translation, camera_config, ldm_config),
+        {7, 0, 1, 2}, false);
+
+    const auto result = solver.solve(detection, aligned_odom_camera_transform());
+    ASSERT_TRUE(result.has_value());
+    ASSERT_TRUE(result->transform_cam.has_value());
+    EXPECT_LT((result->transform_cam->translation() - translation).norm(), 8e-2);
+
+    ASSERT_TRUE(result->selected_candidate_idx.has_value());
+    const auto& selected =
+        result->mesh_candidates[static_cast<size_t>(*result->selected_candidate_idx)];
+    EXPECT_TRUE(selected.depth_valid);
+    EXPECT_TRUE(std::isfinite(selected.reprojection_rmse_px));
+    EXPECT_LT(selected.reprojection_rmse_px, 0.5f);
+
+    const auto angles = bounded_pose_angles(result->transform_cam->rotation());
+    ASSERT_TRUE(angles.has_value());
+    EXPECT_LE(std::abs((*angles)[0]), ldm_config.max_pose_angle_rad + 1e-9);
+    EXPECT_LE(std::abs((*angles)[1]), ldm_config.max_pose_angle_rad + 1e-9);
+    EXPECT_LE(std::abs((*angles)[2]), ldm_config.max_pose_angle_rad + 1e-9);
+}
+
+TEST(LdmSolver, PoseOutsideBoundedStateSpaceIsRejected) {
+    const auto camera_config                 = make_test_camera_config();
+    auto ldm_config                          = make_ldm_config();
+    ldm_config.rmse_stable_threshold_px      = 0.25;
+    ldm_config.rmse_constrained_threshold_px = 0.25;
+    fcs::L2::ldm::LdmSolver solver(camera_config, ldm_config);
+
+    const Eigen::Matrix3d rotation = bounded_pose_rotation(0.15, 1.35, 0.10);
+    const Eigen::Vector3d translation(0.02, -0.03, 4.3);
+    auto detection = make_detection_with_assigned_faces(
+        make_projected_pairs_preserving_model_order(
+            {7, 0, 1, 2}, rotation, translation, camera_config, ldm_config),
+        {7, 0, 1, 2}, false);
 
     const auto result = solver.solve(detection, aligned_odom_camera_transform());
     ASSERT_FALSE(result.has_value());

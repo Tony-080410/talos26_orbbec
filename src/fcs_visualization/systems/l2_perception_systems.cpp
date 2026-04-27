@@ -16,7 +16,7 @@ namespace fcs::visualization::foxglove::systems {
 
 namespace {
 
-constexpr uint64_t kLdmSceneLifetimeNs = 1000'000'000;
+constexpr uint64_t kLdmSceneLifetimeNs = 5'000'000;
 
 [[nodiscard]] ::foxglove::schemas::Color
     ldm_scene_color(const fcs::L2::ldm::LdmMeasurement& measurement) noexcept {

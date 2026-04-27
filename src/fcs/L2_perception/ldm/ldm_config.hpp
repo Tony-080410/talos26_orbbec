@@ -35,6 +35,7 @@ struct LdmDetectorConfig {
     int max_pairs_per_candidate{4};
     double rmse_stable_threshold_px{8.0};
     double rmse_constrained_threshold_px{8.0};
+    double max_pose_angle_rad{0.872664626};
     LdmGeometryConfig geometry{};
 };
 

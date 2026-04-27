@@ -129,8 +129,10 @@ public:
     }
 
 private:
-    struct PoseSeed {
+    struct BoundedPoseSeed {
         double yaw{0.0};
+        double pitch{0.0};
+        double roll{0.0};
         Eigen::Vector3d translation{0.0, 0.0, 1.0};
         double normalized_rmse{std::numeric_limits<double>::infinity()};
     };
@@ -154,8 +156,8 @@ private:
         std::vector<cv::Point2f> projected_outline_image{};
     };
 
-    struct NormalizedReprojectionError {
-        NormalizedReprojectionError(
+    struct BoundedPoseReprojectionError {
+        BoundedPoseReprojectionError(
             const Eigen::Vector3d& model_point, const Eigen::Vector2d& normalized_point)
             : model_x(model_point.x())
             , model_y(model_point.y())
@@ -164,13 +166,28 @@ private:
             , observed_y(normalized_point.y()) {}
 
         template <typename T>
-        bool operator()(const T* const yaw, const T* const translation, T* residuals) const {
-            const T cy = ceres::cos(yaw[0]);
-            const T sy = ceres::sin(yaw[0]);
+        bool operator()(const T* const angles, const T* const translation, T* residuals) const {
+            const T yaw   = angles[0];
+            const T pitch = angles[1];
+            const T roll  = angles[2];
+            const T cy    = ceres::cos(yaw);
+            const T sy    = ceres::sin(yaw);
+            const T cp    = ceres::cos(pitch);
+            const T sp    = ceres::sin(pitch);
+            const T cr    = ceres::cos(roll);
+            const T sr    = ceres::sin(roll);
 
-            const T x = cy * T(model_x) + sy * T(model_z) + translation[0];
-            const T y = T(model_y) + translation[1];
-            const T z = -sy * T(model_x) + cy * T(model_z) + translation[2];
+            const T yaw_x = cy * T(model_x) + sy * T(model_z);
+            const T yaw_y = T(model_y);
+            const T yaw_z = -sy * T(model_x) + cy * T(model_z);
+
+            const T pitch_x = yaw_x;
+            const T pitch_y = cp * yaw_y - sp * yaw_z;
+            const T pitch_z = sp * yaw_y + cp * yaw_z;
+
+            const T x = cr * pitch_x - sr * pitch_y + translation[0];
+            const T y = sr * pitch_x + cr * pitch_y + translation[1];
+            const T z = pitch_z + translation[2];
 
             residuals[0] = x / z - T(observed_x);
             residuals[1] = y / z - T(observed_y);
@@ -179,8 +196,8 @@ private:
 
         [[nodiscard]] static ceres::CostFunction*
             Create(const Eigen::Vector3d& model_point, const Eigen::Vector2d& normalized_point) {
-            return new ceres::AutoDiffCostFunction<NormalizedReprojectionError, 2, 1, 3>(
-                new NormalizedReprojectionError(model_point, normalized_point));
+            return new ceres::AutoDiffCostFunction<BoundedPoseReprojectionError, 2, 3, 3>(
+                new BoundedPoseReprojectionError(model_point, normalized_point));
         }
 
         double model_x{0.0};
@@ -472,11 +489,52 @@ private:
     }
 
     [[nodiscard]] static Eigen::Matrix3d yaw_rotation_matrix(double yaw) {
-        return Eigen::AngleAxisd(yaw, Eigen::Vector3d::UnitY()).toRotationMatrix();
+        return bounded_pose_rotation(yaw, 0.0, 0.0);
     }
 
-    [[nodiscard]] static double normalize_yaw(double yaw) {
-        return std::remainder(yaw, 2.0 * std::numbers::pi_v<double>);
+    [[nodiscard]] static Eigen::Matrix3d
+        bounded_pose_rotation(double yaw, double pitch, double roll) {
+        return Eigen::AngleAxisd(roll, Eigen::Vector3d::UnitZ()).toRotationMatrix()
+             * Eigen::AngleAxisd(pitch, Eigen::Vector3d::UnitX()).toRotationMatrix()
+             * Eigen::AngleAxisd(yaw, Eigen::Vector3d::UnitY()).toRotationMatrix();
+    }
+
+    [[nodiscard]] static double pose_angle_limit(double raw_limit) {
+        if (!std::isfinite(raw_limit) || raw_limit <= 0.0) {
+            return 0.872664626;
+        }
+        return std::min(raw_limit, std::numbers::pi_v<double> * 0.5 - 1e-3);
+    }
+
+    [[nodiscard]] static bool angle_within_limit(double angle, double max_angle) {
+        return std::isfinite(angle) && std::abs(angle) <= max_angle + 1e-9;
+    }
+
+    [[nodiscard]] static bool
+        pose_angles_within_limit(double yaw, double pitch, double roll, double max_angle) {
+        return angle_within_limit(yaw, max_angle) && angle_within_limit(pitch, max_angle)
+            && angle_within_limit(roll, max_angle);
+    }
+
+    [[nodiscard]] static std::optional<std::array<double, 3>>
+        decompose_bounded_pose_rotation(const Eigen::Matrix3d& rotation, double max_angle) {
+        const double pitch = std::asin(std::clamp(rotation(2, 1), -1.0, 1.0));
+        if (std::abs(std::cos(pitch)) <= 1e-6) {
+            return std::nullopt;
+        }
+
+        const double yaw  = std::atan2(-rotation(2, 0), rotation(2, 2));
+        const double roll = std::atan2(-rotation(0, 1), rotation(1, 1));
+        if (!pose_angles_within_limit(yaw, pitch, roll, max_angle)) {
+            return std::nullopt;
+        }
+        return std::array<double, 3>{yaw, pitch, roll};
+    }
+
+    [[nodiscard]] bool rotation_within_pose_limit(const Eigen::Matrix3d& rotation) const {
+        return decompose_bounded_pose_rotation(
+                   rotation, pose_angle_limit(config_.max_pose_angle_rad))
+            .has_value();
     }
 
     [[nodiscard]] std::optional<CandidateCorrespondences> build_candidate_correspondences(
@@ -529,9 +587,8 @@ private:
         return correspondences;
     }
 
-    [[nodiscard]] static std::optional<Eigen::Vector3d>
-        solve_translation_for_yaw(const CandidateCorrespondences& correspondences, double yaw) {
-        const Eigen::Matrix3d rotation = yaw_rotation_matrix(yaw);
+    [[nodiscard]] static std::optional<Eigen::Vector3d> solve_translation_for_rotation(
+        const CandidateCorrespondences& correspondences, const Eigen::Matrix3d& rotation) {
         Eigen::MatrixXd lhs(static_cast<Eigen::Index>(correspondences.obj_points.size() * 2u), 3);
         Eigen::VectorXd rhs(static_cast<Eigen::Index>(correspondences.obj_points.size() * 2u));
 
@@ -563,11 +620,10 @@ private:
     }
 
     [[nodiscard]] static double normalized_reprojection_rmse(
-        const CandidateCorrespondences& correspondences, double yaw,
+        const CandidateCorrespondences& correspondences, const Eigen::Matrix3d& rotation,
         const Eigen::Vector3d& translation) {
-        const Eigen::Matrix3d rotation = yaw_rotation_matrix(yaw);
-        double sq_error_sum            = 0.0;
-        size_t count                   = 0;
+        double sq_error_sum = 0.0;
+        size_t count        = 0;
 
         for (size_t i = 0; i < correspondences.obj_points.size(); ++i) {
             const Eigen::Vector3d cam_point =
@@ -589,54 +645,158 @@ private:
         return std::sqrt(sq_error_sum / static_cast<double>(count));
     }
 
-    [[nodiscard]] std::vector<PoseSeed>
-        make_pose_seeds(const CandidateCorrespondences& correspondences) const {
-        std::vector<PoseSeed> seeds;
-        constexpr int kYawSeedCount = 64;
-        seeds.reserve(kYawSeedCount);
+    [[nodiscard]] static double normalized_reprojection_rmse(
+        const CandidateCorrespondences& correspondences, const BoundedPoseSeed& seed) {
+        return normalized_reprojection_rmse(
+            correspondences, bounded_pose_rotation(seed.yaw, seed.pitch, seed.roll),
+            seed.translation);
+    }
 
-        for (int i = 0; i < kYawSeedCount; ++i) {
-            const double yaw = -std::numbers::pi_v<double>
-                             + (2.0 * std::numbers::pi_v<double>
-                                * static_cast<double>(i) / static_cast<double>(kYawSeedCount));
-            auto translation = solve_translation_for_yaw(correspondences, yaw);
-            if (!translation.has_value()) {
+    [[nodiscard]] std::vector<BoundedPoseSeed>
+        make_pnp_pose_seeds(const CandidateCorrespondences& correspondences) const {
+        if (correspondences.obj_points_cv.size() < 4u) {
+            return {};
+        }
+
+        const std::array<int, 4> pnp_flags = {
+            cv::SOLVEPNP_ITERATIVE,
+            cv::SOLVEPNP_SQPNP,
+            cv::SOLVEPNP_EPNP,
+            cv::SOLVEPNP_IPPE,
+        };
+
+        std::vector<BoundedPoseSeed> seeds;
+        seeds.reserve(pnp_flags.size());
+        const double max_angle = pose_angle_limit(config_.max_pose_angle_rad);
+
+        for (const int flag : pnp_flags) {
+            cv::Mat rvec;
+            cv::Mat tvec;
+            bool solved = false;
+            try {
+                solved = cv::solvePnP(
+                    correspondences.obj_points_cv, correspondences.img_points_cv, camera_matrix_,
+                    dist_coeffs_, rvec, tvec, false, flag);
+            } catch (const cv::Exception&) {
                 continue;
             }
-            PoseSeed seed;
-            seed.yaw             = yaw;
-            seed.translation     = *translation;
-            seed.normalized_rmse = normalized_reprojection_rmse(correspondences, yaw, *translation);
+            if (!solved) {
+                continue;
+            }
+
+            cv::Mat rotation_cv;
+            try {
+                cv::Rodrigues(rvec, rotation_cv);
+            } catch (const cv::Exception&) {
+                continue;
+            }
+
+            cv::Mat rotation_cv64;
+            cv::Mat tvec64;
+            rotation_cv.convertTo(rotation_cv64, CV_64F);
+            tvec.convertTo(tvec64, CV_64F);
+            if (rotation_cv64.rows != 3 || rotation_cv64.cols != 3 || tvec64.total() != 3u) {
+                continue;
+            }
+
+            Eigen::Matrix3d rotation_cam;
+            cv::cv2eigen(rotation_cv64, rotation_cam);
+            const auto angles = decompose_bounded_pose_rotation(rotation_cam, max_angle);
+            if (!angles.has_value()) {
+                continue;
+            }
+
+            const cv::Mat tvec_col = tvec64.reshape(1, 3);
+            BoundedPoseSeed seed;
+            seed.yaw         = (*angles)[0];
+            seed.pitch       = (*angles)[1];
+            seed.roll        = (*angles)[2];
+            seed.translation = Eigen::Vector3d(
+                tvec_col.at<double>(0, 0), tvec_col.at<double>(1, 0), tvec_col.at<double>(2, 0));
+            if (!std::isfinite(seed.translation.x()) || !std::isfinite(seed.translation.y())
+                || !std::isfinite(seed.translation.z()) || seed.translation.z() <= 1e-3) {
+                continue;
+            }
+
+            seed.normalized_rmse = normalized_reprojection_rmse(correspondences, seed);
             if (std::isfinite(seed.normalized_rmse)) {
                 seeds.push_back(seed);
             }
         }
+        return seeds;
+    }
 
-        std::sort(seeds.begin(), seeds.end(), [](const PoseSeed& lhs, const PoseSeed& rhs) {
+    [[nodiscard]] std::vector<BoundedPoseSeed>
+        make_pose_seeds(const CandidateCorrespondences& correspondences) const {
+        std::vector<BoundedPoseSeed> seeds = make_pnp_pose_seeds(correspondences);
+        constexpr int kYawSeedCount        = 17;
+        constexpr std::array<double, 5> kPitchRollRatios{-1.0, -0.5, 0.0, 0.5, 1.0};
+        const double max_angle = pose_angle_limit(config_.max_pose_angle_rad);
+        seeds.reserve(
+            seeds.size() + kYawSeedCount * kPitchRollRatios.size() * kPitchRollRatios.size());
+
+        for (int yaw_idx = 0; yaw_idx < kYawSeedCount; ++yaw_idx) {
+            const double yaw = -max_angle
+                             + (2.0 * max_angle * static_cast<double>(yaw_idx)
+                                / static_cast<double>(kYawSeedCount - 1));
+            for (const double pitch_ratio : kPitchRollRatios) {
+                const double pitch = pitch_ratio * max_angle;
+                for (const double roll_ratio : kPitchRollRatios) {
+                    const double roll              = roll_ratio * max_angle;
+                    const Eigen::Matrix3d rotation = bounded_pose_rotation(yaw, pitch, roll);
+                    std::optional<Eigen::Vector3d> translation =
+                        solve_translation_for_rotation(correspondences, rotation);
+                    if (!translation.has_value()) {
+                        continue;
+                    }
+
+                    BoundedPoseSeed seed;
+                    seed.yaw             = yaw;
+                    seed.pitch           = pitch;
+                    seed.roll            = roll;
+                    seed.translation     = *translation;
+                    seed.normalized_rmse = normalized_reprojection_rmse(correspondences, seed);
+                    if (std::isfinite(seed.normalized_rmse)) {
+                        seeds.push_back(seed);
+                    }
+                }
+            }
+        }
+
+        std::sort(seeds.begin(), seeds.end(), [](const auto& lhs, const auto& rhs) {
             return lhs.normalized_rmse < rhs.normalized_rmse;
         });
-        if (seeds.size() > 6u) {
-            seeds.resize(6u);
+        if (seeds.size() > 8u) {
+            seeds.resize(8u);
         }
         return seeds;
     }
 
-    [[nodiscard]] std::optional<PoseSeed> refine_pose_seed(
-        const CandidateCorrespondences& correspondences, const PoseSeed& seed) const {
-        double yaw            = seed.yaw;
+    [[nodiscard]] std::optional<BoundedPoseSeed> refine_pose_seed(
+        const CandidateCorrespondences& correspondences, const BoundedPoseSeed& seed) const {
+        const double max_angle = pose_angle_limit(config_.max_pose_angle_rad);
+        double angles[3]       = {
+            std::clamp(seed.yaw, -max_angle, max_angle),
+            std::clamp(seed.pitch, -max_angle, max_angle),
+            std::clamp(seed.roll, -max_angle, max_angle),
+        };
         double translation[3] = {seed.translation.x(), seed.translation.y(), seed.translation.z()};
         ceres::Problem problem;
         for (size_t i = 0; i < correspondences.obj_points.size(); ++i) {
             problem.AddResidualBlock(
-                NormalizedReprojectionError::Create(
+                BoundedPoseReprojectionError::Create(
                     correspondences.obj_points[i], correspondences.normalized_points[i]),
-                new ceres::HuberLoss(0.005), &yaw, translation);
+                new ceres::HuberLoss(0.005), angles, translation);
+        }
+        for (int i = 0; i < 3; ++i) {
+            problem.SetParameterLowerBound(angles, i, -max_angle);
+            problem.SetParameterUpperBound(angles, i, max_angle);
         }
         problem.SetParameterLowerBound(translation, 2, 1e-3);
 
         ceres::Solver::Options options;
         options.linear_solver_type           = ceres::DENSE_QR;
-        options.max_num_iterations           = 35;
+        options.max_num_iterations           = 50;
         options.minimizer_progress_to_stdout = false;
         options.function_tolerance           = 1e-12;
         options.parameter_tolerance          = 1e-12;
@@ -644,31 +804,33 @@ private:
         ceres::Solver::Summary summary;
         ceres::Solve(options, &problem, &summary);
 
-        PoseSeed refined;
-        refined.yaw         = normalize_yaw(yaw);
+        BoundedPoseSeed refined;
+        refined.yaw         = angles[0];
+        refined.pitch       = angles[1];
+        refined.roll        = angles[2];
         refined.translation = Eigen::Vector3d(translation[0], translation[1], translation[2]);
-        if (!summary.IsSolutionUsable() || !std::isfinite(refined.yaw)
+        if (!summary.IsSolutionUsable()
+            || !pose_angles_within_limit(refined.yaw, refined.pitch, refined.roll, max_angle)
             || !std::isfinite(refined.translation.x()) || !std::isfinite(refined.translation.y())
             || !std::isfinite(refined.translation.z()) || refined.translation.z() <= 1e-3) {
             return std::nullopt;
         }
 
-        refined.normalized_rmse =
-            normalized_reprojection_rmse(correspondences, refined.yaw, refined.translation);
+        refined.normalized_rmse = normalized_reprojection_rmse(correspondences, refined);
         if (!std::isfinite(refined.normalized_rmse)) {
             return std::nullopt;
         }
         return refined;
     }
 
-    [[nodiscard]] std::optional<PoseSeed>
+    [[nodiscard]] std::optional<BoundedPoseSeed>
         solve_constrained_pose_seed(const CandidateCorrespondences& correspondences) const {
         const auto seeds = make_pose_seeds(correspondences);
         if (seeds.empty()) {
             return std::nullopt;
         }
 
-        std::optional<PoseSeed> best_seed;
+        std::optional<BoundedPoseSeed> best_seed;
         for (const auto& seed : seeds) {
             const auto refined = refine_pose_seed(correspondences, seed);
             if (!refined.has_value()) {
@@ -705,7 +867,8 @@ private:
         const LdmMeshCandidate& candidate, const CandidateCorrespondences& correspondences,
         const Eigen::Matrix3d& rotation_cam, const Eigen::Vector3d& center_cam) const {
         if (!std::isfinite(center_cam.x()) || !std::isfinite(center_cam.y())
-            || !std::isfinite(center_cam.z()) || center_cam.z() <= 1e-3) {
+            || !std::isfinite(center_cam.z()) || center_cam.z() <= 1e-3
+            || !rotation_within_pose_limit(rotation_cam)) {
             return std::nullopt;
         }
 
@@ -745,70 +908,6 @@ private:
         return solution;
     }
 
-    [[nodiscard]] std::optional<ConstrainedPoseSolution> solve_full_pnp_candidate_pose(
-        const LdmMeshCandidate& candidate, const CandidateCorrespondences& correspondences) const {
-        if (correspondences.obj_points_cv.size() < 4u) {
-            return std::nullopt;
-        }
-
-        const std::array<int, 4> pnp_flags = {
-            cv::SOLVEPNP_ITERATIVE,
-            cv::SOLVEPNP_SQPNP,
-            cv::SOLVEPNP_EPNP,
-            cv::SOLVEPNP_IPPE,
-        };
-
-        std::optional<ConstrainedPoseSolution> best_solution;
-        for (const int flag : pnp_flags) {
-            cv::Mat rvec;
-            cv::Mat tvec;
-            bool solved = false;
-            try {
-                solved = cv::solvePnP(
-                    correspondences.obj_points_cv, correspondences.img_points_cv, camera_matrix_,
-                    dist_coeffs_, rvec, tvec, false, flag);
-            } catch (const cv::Exception&) {
-                continue;
-            }
-            if (!solved) {
-                continue;
-            }
-
-            cv::Mat rotation_cv;
-            try {
-                cv::Rodrigues(rvec, rotation_cv);
-            } catch (const cv::Exception&) {
-                continue;
-            }
-
-            cv::Mat rotation_cv64;
-            cv::Mat tvec64;
-            rotation_cv.convertTo(rotation_cv64, CV_64F);
-            tvec.convertTo(tvec64, CV_64F);
-            if (rotation_cv64.rows != 3 || rotation_cv64.cols != 3 || tvec64.total() != 3u) {
-                continue;
-            }
-
-            Eigen::Matrix3d rotation_cam;
-            cv::cv2eigen(rotation_cv64, rotation_cam);
-            const cv::Mat tvec_col = tvec64.reshape(1, 3);
-            const Eigen::Vector3d center_cam(
-                tvec_col.at<double>(0, 0), tvec_col.at<double>(1, 0), tvec_col.at<double>(2, 0));
-
-            auto solution =
-                build_pose_solution(candidate, correspondences, rotation_cam, center_cam);
-            if (!solution.has_value()) {
-                continue;
-            }
-            if (!best_solution.has_value()
-                || solution->reprojection_rmse_px < best_solution->reprojection_rmse_px) {
-                best_solution = std::move(solution);
-            }
-        }
-
-        return best_solution;
-    }
-
     [[nodiscard]] std::optional<ConstrainedPoseSolution> solve_single_face_candidate_pose(
         const LdmMeshCandidate& candidate, const std::vector<LightPair>& pairs) const {
         if (!has_face_assignment(candidate) || candidate.pair_indices.size() != 1u) {
@@ -839,7 +938,9 @@ private:
         const double face_center_y = 0.5 * (top_norm.y() + bottom_norm.y()) * face_center_z;
         const Eigen::Vector3d face_center_cam(face_center_x, face_center_y, face_center_z);
 
-        const double yaw = static_cast<double>(face_idx) * (std::numbers::pi_v<double> / 4.0);
+        const double yaw = std::remainder(
+            static_cast<double>(face_idx) * (std::numbers::pi_v<double> / 4.0),
+            2.0 * std::numbers::pi_v<double>);
         const Eigen::Matrix3d rotation_cam = yaw_rotation_matrix(yaw);
 
         const auto model_pair = pair_model_points_for_face(config_.geometry, face_idx);
@@ -866,22 +967,14 @@ private:
             return std::nullopt;
         }
 
-        std::optional<ConstrainedPoseSolution> best_solution =
-            solve_full_pnp_candidate_pose(candidate, *correspondences);
-
         const auto seed = solve_constrained_pose_seed(*correspondences);
-        if (seed.has_value()) {
-            auto yaw_only_solution = build_pose_solution(
-                candidate, *correspondences, yaw_rotation_matrix(seed->yaw), seed->translation);
-            if (yaw_only_solution.has_value()
-                && (!best_solution.has_value()
-                    || yaw_only_solution->reprojection_rmse_px
-                           < best_solution->reprojection_rmse_px)) {
-                best_solution = std::move(yaw_only_solution);
-            }
+        if (!seed.has_value()) {
+            return std::nullopt;
         }
 
-        return best_solution;
+        return build_pose_solution(
+            candidate, *correspondences, bounded_pose_rotation(seed->yaw, seed->pitch, seed->roll),
+            seed->translation);
     }
 
     [[nodiscard]] float

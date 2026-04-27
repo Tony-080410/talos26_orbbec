@@ -6,6 +6,7 @@
 #include <cmath>
 #include <cstdint>
 #include <limits>
+#include <numbers>
 #include <numeric>
 #include <opencv2/imgproc.hpp>
 #include <spdlog/spdlog.h>
@@ -55,6 +56,14 @@ namespace {
     }
 
     return true;
+}
+
+[[nodiscard]] float min_projected_pair_vertical_ratio(const LdmDetectorConfig& config) {
+    const double max_pose_angle =
+        (std::isfinite(config.max_pose_angle_rad) && config.max_pose_angle_rad > 0.0)
+            ? std::min(config.max_pose_angle_rad, std::numbers::pi_v<double> * 0.5 - 1e-3)
+            : 0.872664626;
+    return std::max(0.35f, 0.75f * static_cast<float>(std::cos(max_pose_angle)));
 }
 
 [[nodiscard]] cv::Point2f rect_center(const cv::Rect& rect) {
@@ -533,6 +542,17 @@ struct ProjectedMatching {
     const float max_layer_sep =
         static_cast<float>(config.max_pair_center_dy_ratio) * std::max(avg_h, 1.0f);
     if (layer_separation < min_layer_sep || layer_separation > max_layer_sep) {
+        return std::nullopt;
+    }
+
+    const cv::Point2f image_delta = second.center_px - first.center_px;
+    const float image_distance =
+        std::sqrt(image_delta.x * image_delta.x + image_delta.y * image_delta.y);
+    if (image_distance <= 1e-3f) {
+        return std::nullopt;
+    }
+    const float projected_vertical_ratio = std::abs(image_delta.y) / image_distance;
+    if (projected_vertical_ratio < min_projected_pair_vertical_ratio(config)) {
         return std::nullopt;
     }
 
