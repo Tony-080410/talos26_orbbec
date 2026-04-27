@@ -1,7 +1,5 @@
 # Hero Vision Configuration
 # extend from vision_base.toml
 
-compensator_type = "RK4"
-
 trajectory.diameter = 0.041
 trajectory.mass = 0.052
