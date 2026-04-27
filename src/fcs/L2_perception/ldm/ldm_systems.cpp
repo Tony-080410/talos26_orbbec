@@ -43,6 +43,7 @@ void register_ldm_systems(
 
             auto det_result = detector->detect(frame->image);
             if (!det_result) {
+                SPDLOG_ERROR("ldm detect failed: {}", magic_enum::enum_name(det_result.error()));
                 return;
             }
 

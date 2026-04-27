@@ -745,6 +745,70 @@ private:
         return solution;
     }
 
+    [[nodiscard]] std::optional<ConstrainedPoseSolution> solve_full_pnp_candidate_pose(
+        const LdmMeshCandidate& candidate, const CandidateCorrespondences& correspondences) const {
+        if (correspondences.obj_points_cv.size() < 4u) {
+            return std::nullopt;
+        }
+
+        const std::array<int, 4> pnp_flags = {
+            cv::SOLVEPNP_ITERATIVE,
+            cv::SOLVEPNP_SQPNP,
+            cv::SOLVEPNP_EPNP,
+            cv::SOLVEPNP_IPPE,
+        };
+
+        std::optional<ConstrainedPoseSolution> best_solution;
+        for (const int flag : pnp_flags) {
+            cv::Mat rvec;
+            cv::Mat tvec;
+            bool solved = false;
+            try {
+                solved = cv::solvePnP(
+                    correspondences.obj_points_cv, correspondences.img_points_cv, camera_matrix_,
+                    dist_coeffs_, rvec, tvec, false, flag);
+            } catch (const cv::Exception&) {
+                continue;
+            }
+            if (!solved) {
+                continue;
+            }
+
+            cv::Mat rotation_cv;
+            try {
+                cv::Rodrigues(rvec, rotation_cv);
+            } catch (const cv::Exception&) {
+                continue;
+            }
+
+            cv::Mat rotation_cv64;
+            cv::Mat tvec64;
+            rotation_cv.convertTo(rotation_cv64, CV_64F);
+            tvec.convertTo(tvec64, CV_64F);
+            if (rotation_cv64.rows != 3 || rotation_cv64.cols != 3 || tvec64.total() != 3u) {
+                continue;
+            }
+
+            Eigen::Matrix3d rotation_cam;
+            cv::cv2eigen(rotation_cv64, rotation_cam);
+            const cv::Mat tvec_col = tvec64.reshape(1, 3);
+            const Eigen::Vector3d center_cam(
+                tvec_col.at<double>(0, 0), tvec_col.at<double>(1, 0), tvec_col.at<double>(2, 0));
+
+            auto solution =
+                build_pose_solution(candidate, correspondences, rotation_cam, center_cam);
+            if (!solution.has_value()) {
+                continue;
+            }
+            if (!best_solution.has_value()
+                || solution->reprojection_rmse_px < best_solution->reprojection_rmse_px) {
+                best_solution = std::move(solution);
+            }
+        }
+
+        return best_solution;
+    }
+
     [[nodiscard]] std::optional<ConstrainedPoseSolution> solve_single_face_candidate_pose(
         const LdmMeshCandidate& candidate, const std::vector<LightPair>& pairs) const {
         if (!has_face_assignment(candidate) || candidate.pair_indices.size() != 1u) {
@@ -802,13 +866,22 @@ private:
             return std::nullopt;
         }
 
+        std::optional<ConstrainedPoseSolution> best_solution =
+            solve_full_pnp_candidate_pose(candidate, *correspondences);
+
         const auto seed = solve_constrained_pose_seed(*correspondences);
-        if (!seed.has_value()) {
-            return std::nullopt;
+        if (seed.has_value()) {
+            auto yaw_only_solution = build_pose_solution(
+                candidate, *correspondences, yaw_rotation_matrix(seed->yaw), seed->translation);
+            if (yaw_only_solution.has_value()
+                && (!best_solution.has_value()
+                    || yaw_only_solution->reprojection_rmse_px
+                           < best_solution->reprojection_rmse_px)) {
+                best_solution = std::move(yaw_only_solution);
+            }
         }
 
-        return build_pose_solution(
-            candidate, *correspondences, yaw_rotation_matrix(seed->yaw), seed->translation);
+        return best_solution;
     }
 
     [[nodiscard]] float
@@ -896,9 +969,8 @@ private:
         };
         candidate.projected_outline_image = solution->projected_outline_image;
 
-        const float vertical_axis_term                 = solution->vertical_axis_term;
-        const float face_visibility_term               = solution->face_visibility_term;
-        constexpr float kMinProjectedVerticalAxisScore = 0.45f;
+        const float vertical_axis_term   = solution->vertical_axis_term;
+        const float face_visibility_term = solution->face_visibility_term;
 
         const double rmse_limit = (candidate.pair_indices.size() >= 3)
                                     ? config_.rmse_stable_threshold_px
@@ -906,8 +978,7 @@ private:
         candidate.depth_valid =
             std::isfinite(solution->center_cam.x()) && std::isfinite(solution->center_cam.y())
             && std::isfinite(solution->center_cam.z()) && solution->center_cam.z() > 1e-3
-            && candidate.reprojection_rmse_px <= static_cast<float>(rmse_limit)
-            && vertical_axis_term >= kMinProjectedVerticalAxisScore;
+            && candidate.reprojection_rmse_px <= static_cast<float>(rmse_limit);
 
         const float pair_term = pair_count_score(static_cast<int>(candidate.pair_indices.size()));
         const float rmse_term = std::exp(

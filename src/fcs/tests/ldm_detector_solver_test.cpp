@@ -54,6 +54,15 @@ fcs::CameraConfig make_test_camera_config() {
     return config;
 }
 
+fcs::CameraConfig make_ldm_dataset_camera_config() {
+    fcs::CameraConfig config;
+    config.camera_matrix << 2468.288, 0.0, 706.247, 0.0, 2450.042, 521.525, 0.0, 0.0, 1.0;
+    config.distort_coefficient << -0.125, 0.111, 0.001, -0.001, 1.727;
+    config.width  = 1440;
+    config.height = 1080;
+    return config;
+}
+
 fcs::L2::ldm::LdmDetectorConfig make_ldm_config() {
     fcs::L2::ldm::LdmDetectorConfig config;
     config.target_color = fcs::ArmorColor::Red;
@@ -481,6 +490,56 @@ TEST(LdmSolver, NonAdjacentMeshAssignmentIsRejected) {
     const auto result = solver.solve(detection, aligned_odom_camera_transform());
     ASSERT_FALSE(result.has_value());
     EXPECT_EQ(result.error(), fcs::L2::ldm::PnPError::NoCandidate);
+}
+
+TEST(LdmSolver, DetectedDatasetTargetsHaveFiniteRmse) {
+    const auto camera_config = make_ldm_dataset_camera_config();
+    const auto ldm_config    = make_ldm_config();
+    fcs::L2::ldm::LdmDetector detector(ldm_config);
+    fcs::L2::ldm::LdmSolver solver(camera_config, ldm_config);
+
+    const std::array<const char*, 5> dataset_buckets = {
+        "2pair", "2-3pair", "3pair", "3-4pair", "4pair",
+    };
+
+    size_t solved_measurement_count = 0;
+    for (const char* bucket : dataset_buckets) {
+        const auto images = dataset_images(ldm_dataset_root() / bucket);
+        ASSERT_FALSE(images.empty()) << bucket;
+
+        for (const auto& image_path : images) {
+            cv::Mat image = cv::imread(image_path.string(), cv::IMREAD_COLOR);
+            ASSERT_FALSE(image.empty()) << image_path;
+
+            const auto detection_result = detector.detect(image);
+            ASSERT_TRUE(detection_result.has_value()) << image_path;
+            if (!detection_result->has_value()) {
+                continue;
+            }
+
+            const auto measurement =
+                solver.solve(detection_result->value(), aligned_odom_camera_transform());
+            ASSERT_TRUE(measurement.has_value())
+                << image_path << " error=" << static_cast<int>(measurement.error());
+            ++solved_measurement_count;
+
+            size_t solved_candidate_count = 0;
+            for (size_t candidate_idx = 0; candidate_idx < measurement->mesh_candidates.size();
+                 ++candidate_idx) {
+                const auto& candidate = measurement->mesh_candidates[candidate_idx];
+                if (!candidate.solved) {
+                    continue;
+                }
+
+                ++solved_candidate_count;
+                EXPECT_TRUE(std::isfinite(candidate.reprojection_rmse_px))
+                    << image_path << " candidate_idx=" << candidate_idx
+                    << " rmse=" << candidate.reprojection_rmse_px;
+            }
+            EXPECT_GT(solved_candidate_count, 0u) << image_path;
+        }
+    }
+    EXPECT_GT(solved_measurement_count, 0u);
 }
 
 TEST(LdmSolver, ThreePairsRecoverStableCenterAndOdomProjection) {

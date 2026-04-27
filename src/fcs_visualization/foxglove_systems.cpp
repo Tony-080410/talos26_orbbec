@@ -10,6 +10,7 @@ namespace fcs::visualization {
 std::shared_ptr<FoxgloveServer> try_create_foxglove_server(FoxgloveConfig config) {
     auto server = create_foxglove_server(std::move(config));
     if (!server.has_value()) {
+        SPDLOG_ERROR("foxglove server creation failed: {}. Visualization disabled", server.error());
         return {};
     }
     return std::move(*server);
