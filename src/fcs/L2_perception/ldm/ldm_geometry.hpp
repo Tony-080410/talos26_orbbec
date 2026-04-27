@@ -115,7 +115,8 @@ namespace fcs::L2::ldm {
         if (gap_cv > static_cast<float>(config.max_gap_cv)) {
             return 0.0f;
         }
-        gap_consistency = std::max(0.0f, 1.0f - gap_cv / static_cast<float>(config.max_gap_cv));
+        gap_consistency =
+            std::max(0.0f, 1.0f - 0.5f * gap_cv / static_cast<float>(config.max_gap_cv));
     }
 
     if (mean_pair_layer > 1e-3f) {

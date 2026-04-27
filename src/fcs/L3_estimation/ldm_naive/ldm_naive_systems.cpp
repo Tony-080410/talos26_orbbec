@@ -20,7 +20,7 @@ void register_naive_ldm_systems(talos::Scheduler& scheduler, const NaiveLdmConfi
            talos::publish<LdmState> state_out) mutable {
             (void)cfg;
             auto meas = meas_in.read();
-            if (!meas || !meas->valid) {
+            if (!meas) {
                 return;
             }
             if (!meas->transform_odom.has_value()) {

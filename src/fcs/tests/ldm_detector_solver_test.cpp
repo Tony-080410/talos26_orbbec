@@ -142,7 +142,6 @@ std::vector<fcs::L2::ldm::LightPair> make_projected_pairs(
 fcs::L2::ldm::LdmDetection make_detection_from_pairs(
     std::vector<fcs::L2::ldm::LightPair> pairs, const fcs::L2::ldm::LdmDetectorConfig& config) {
     fcs::L2::ldm::LdmDetection detection;
-    detection.valid        = true;
     detection.color        = fcs::ArmorColor::Red;
     detection.timestamp_ns = 1234;
     detection.frame_id     = 7;
@@ -183,6 +182,9 @@ TEST(LdmDetector, DetectsAllThreePairDatasetImages) {
         const auto result = detector.detect(image);
         EXPECT_TRUE(result.has_value()) << image_path;
         EXPECT_TRUE(result->has_value()) << image_path;
+        if (!result.has_value() || !result->has_value()) {
+            continue;
+        }
         EXPECT_EQ(result->value().pair_count(), 3u) << image_path;
 
         [[maybe_unused]] bool has_three_pair_candidate = false;
@@ -251,6 +253,9 @@ TEST(LdmDetector, DetectsAllTwoPairDatasetImages) {
         const auto result = detector.detect(image);
         EXPECT_TRUE(result.has_value()) << image_path;
         EXPECT_TRUE(result->has_value()) << image_path;
+        if (!result.has_value() || !result->has_value()) {
+            continue;
+        }
         EXPECT_EQ(result->value().pair_count(), 2u) << image_path;
 
         bool has_two_pair_candidate = false;
@@ -274,6 +279,9 @@ TEST(LdmDetector, DetectsAllTwoOrThreePairDatasetImages) {
         const auto result = detector.detect(image);
         EXPECT_TRUE(result.has_value()) << image_path;
         EXPECT_TRUE(result->has_value()) << image_path;
+        if (!result.has_value() || !result->has_value()) {
+            continue;
+        }
         EXPECT_TRUE(result->value().pair_count() == 2u || result->value().pair_count() == 3u)
             << image_path;
 
@@ -281,6 +289,34 @@ TEST(LdmDetector, DetectsAllTwoOrThreePairDatasetImages) {
         for (const auto& candidate : result->value().mesh_candidates) {
             has_expected_candidate |= candidate.pair_indices.size() == 2u;
             has_expected_candidate |= candidate.pair_indices.size() == 3u;
+        }
+        EXPECT_TRUE(has_expected_candidate) << image_path;
+    }
+}
+
+TEST(LdmDetector, DetectsAllThreeOrFourPairDatasetImages) {
+    const auto config = make_ldm_config();
+    fcs::L2::ldm::LdmDetector detector(config);
+    const auto images = dataset_images(ldm_dataset_root() / "3-4pair");
+
+    ASSERT_FALSE(images.empty());
+    for (const auto& image_path : images) {
+        cv::Mat image = cv::imread(image_path.string(), cv::IMREAD_COLOR);
+        ASSERT_FALSE(image.empty()) << image_path;
+
+        const auto result = detector.detect(image);
+        EXPECT_TRUE(result.has_value()) << image_path;
+        EXPECT_TRUE(result->has_value()) << image_path;
+        if (!result.has_value() || !result->has_value()) {
+            continue;
+        }
+        EXPECT_TRUE(result->value().pair_count() == 3u || result->value().pair_count() == 4u)
+            << image_path;
+
+        bool has_expected_candidate = false;
+        for (const auto& candidate : result->value().mesh_candidates) {
+            has_expected_candidate |= candidate.pair_indices.size() == 3u;
+            has_expected_candidate |= candidate.pair_indices.size() == 4u;
         }
         EXPECT_TRUE(has_expected_candidate) << image_path;
     }
@@ -392,7 +428,6 @@ TEST(LdmSolver, CombinesMultipleMeshInfosIntoStableCenter) {
     const Eigen::Vector3d translation(0.10, -0.03, 4.3);
 
     fcs::L2::ldm::LdmDetection detection;
-    detection.valid        = true;
     detection.color        = fcs::ArmorColor::Red;
     detection.timestamp_ns = 4321;
     detection.frame_id     = 11;

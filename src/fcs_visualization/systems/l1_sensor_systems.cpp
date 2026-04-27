@@ -271,7 +271,7 @@ void register_l1_sensor_systems(talos::scheduler::Scheduler& app) {
                 cv::putText(
                     img_bgr, conf_str, conf_pos, cv::FONT_HERSHEY_SIMPLEX, 0.5, box_color, 1);
             }
-            constexpr uint64_t kMaxLdmOverlaySkewNs = 100'000'000;
+            constexpr uint64_t kMaxLdmOverlaySkewNs = 200'000'000;
             const auto maybe_ldm_det                = ldm_in.read_current();
             const auto maybe_ldm_meas               = ldm_meas_in.read_current();
             if (maybe_ldm_det) {
@@ -282,7 +282,6 @@ void register_l1_sensor_systems(talos::scheduler::Scheduler& app) {
             }
 
             const auto use_ldm_det = ldm_state.latest_detection.has_value()
-                                  && ldm_state.latest_detection->valid
                                   && (ldm_state.latest_detection->frame_id == batch->frame_id
                                       || detail::frame_sync_ok(
                                           ldm_state.latest_detection->timestamp_ns,
@@ -290,7 +289,7 @@ void register_l1_sensor_systems(talos::scheduler::Scheduler& app) {
 
             if (use_ldm_det) {
                 const auto& ldm_det = *ldm_state.latest_detection;
-                const cv::Scalar blob_color(0, 165, 255);
+                const cv::Scalar blob_color(0, 255, 0);
                 const cv::Scalar pair_color(255, 0, 255);
                 const cv::Scalar center_color(0, 255, 255);
                 cv::Rect2f ldm_rect     = ldm_det.rect;
@@ -387,7 +386,6 @@ void register_l1_sensor_systems(talos::scheduler::Scheduler& app) {
             }
 
             const auto use_ldm_meas = ldm_state.latest_measurement.has_value()
-                                   && ldm_state.latest_measurement->valid
                                    && (ldm_state.latest_measurement->frame_id == batch->frame_id
                                        || detail::frame_sync_ok(
                                            ldm_state.latest_measurement->timestamp_ns,

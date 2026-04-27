@@ -43,7 +43,7 @@ public:
 
     [[nodiscard]] std::expected<LdmMeasurement, PnPError>
         solve(const LdmDetection& detection, const OdomCameraTransform& T_odom_camera) const {
-        if (!detection.valid || detection.pairs.empty()) {
+        if (detection.pairs.empty()) {
             return std::unexpected(PnPError::InvalidDetection);
         }
 
@@ -108,7 +108,6 @@ public:
         const auto selected       = evaluated_candidates[selected_idx];
 
         LdmMeasurement measurement;
-        measurement.valid               = true;
         measurement.timestamp_ns        = detection.timestamp_ns;
         measurement.frame_id            = detection.frame_id;
         measurement.color               = detection.color;

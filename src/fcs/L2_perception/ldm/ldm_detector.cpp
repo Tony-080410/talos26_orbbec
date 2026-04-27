@@ -32,21 +32,25 @@ namespace {
     }
 
     if (candidate.pair_indices.size() <= 2) {
-        double mean_layer_sep_px = 0.0;
+        double mean_center_dy_px = 0.0;
         int valid_pair_count     = 0;
         for (const int pair_idx : candidate.pair_indices) {
             if (pair_idx < 0 || static_cast<size_t>(pair_idx) >= pairs.size()) {
                 continue;
             }
-            mean_layer_sep_px += pair_layer_separation_px(pairs[static_cast<size_t>(pair_idx)]);
+            mean_center_dy_px += pairs[static_cast<size_t>(pair_idx)].center_dy_px;
             ++valid_pair_count;
         }
         if (valid_pair_count == 0) {
             return false;
         }
-        mean_layer_sep_px /= static_cast<double>(valid_pair_count);
-        if (mean_layer_sep_px < config.min_two_pair_mean_center_dy_px) {
-            return false;
+        mean_center_dy_px /= static_cast<double>(valid_pair_count);
+        if (mean_center_dy_px < config.min_two_pair_mean_center_dy_px) {
+            constexpr float kFlatTwoPairScoreMargin = 0.015f;
+            if (candidate.preliminary_score
+                < min_candidate_score(candidate, config) + kFlatTwoPairScoreMargin) {
+                return false;
+            }
         }
     }
 
@@ -65,25 +69,26 @@ namespace {
         static_cast<float>(rect.height));
 }
 
-[[nodiscard]] cv::Mat threshold_target_color(const cv::Mat& image_bgr, ArmorColor color) {
+[[nodiscard]] cv::Mat
+    threshold_target_color(const cv::Mat& image_bgr, ArmorColor color, int min_value = 80) {
     cv::Mat hsv;
     cv::cvtColor(image_bgr, hsv, cv::COLOR_BGR2HSV);
 
     cv::Mat mask;
     switch (color) {
     case ArmorColor::Blue:
-        cv::inRange(hsv, cv::Scalar(90, 70, 70), cv::Scalar(140, 255, 255), mask);
+        cv::inRange(hsv, cv::Scalar(90, 70, min_value), cv::Scalar(140, 255, 255), mask);
         break;
     case ArmorColor::Red: {
         cv::Mat mask1, mask2;
-        cv::inRange(hsv, cv::Scalar(0, 80, 80), cv::Scalar(10, 255, 255), mask1);
-        cv::inRange(hsv, cv::Scalar(160, 80, 80), cv::Scalar(180, 255, 255), mask2);
+        cv::inRange(hsv, cv::Scalar(0, 80, min_value), cv::Scalar(30, 255, 255), mask1);
+        cv::inRange(hsv, cv::Scalar(160, 80, min_value), cv::Scalar(180, 255, 255), mask2);
         mask = mask1 | mask2;
         break;
     }
     default: {
-        cv::Mat red  = threshold_target_color(image_bgr, ArmorColor::Red);
-        cv::Mat blue = threshold_target_color(image_bgr, ArmorColor::Blue);
+        cv::Mat red  = threshold_target_color(image_bgr, ArmorColor::Red, min_value);
+        cv::Mat blue = threshold_target_color(image_bgr, ArmorColor::Blue, min_value);
         mask         = red | blue;
         break;
     }
@@ -101,71 +106,246 @@ namespace {
     return mask;
 }
 
+[[nodiscard]] std::optional<LightBlob> make_light_blob_from_contour(
+    const std::vector<cv::Point>& contour, const cv::Mat& mask, const cv::Point& offset,
+    const LdmDetectorConfig& config) {
+    cv::Rect rect = cv::boundingRect(contour);
+    if (offset.x != 0 || offset.y != 0) {
+        rect.x += offset.x;
+        rect.y += offset.y;
+    }
+    if (rect.width <= 0 || rect.height <= 0) {
+        return std::nullopt;
+    }
+
+    const float aspect_ratio =
+        static_cast<float>(rect.width) / static_cast<float>(std::max(rect.height, 1));
+    if (aspect_ratio < static_cast<float>(config.min_blob_aspect_ratio)
+        || aspect_ratio > static_cast<float>(config.max_blob_aspect_ratio)) {
+        return std::nullopt;
+    }
+
+    const double contour_area   = cv::contourArea(contour);
+    const int pixel_count       = cv::countNonZero(mask(rect));
+    const double effective_area = (contour_area >= static_cast<double>(config.min_blob_area_px))
+                                    ? contour_area
+                                    : static_cast<double>(pixel_count);
+    if (effective_area < static_cast<double>(config.min_blob_area_px)) {
+        return std::nullopt;
+    }
+
+    const float rect_area      = static_cast<float>(std::max(1, rect.width * rect.height));
+    const float fill_ratio_geo = static_cast<float>(contour_area) / rect_area;
+    const float fill_ratio_px  = static_cast<float>(pixel_count) / rect_area;
+    const bool passes_fill     = fill_ratio_geo >= static_cast<float>(config.min_blob_fill_ratio);
+    const bool passes_sparse   = pixel_count >= config.min_sparse_blob_pixel_count;
+    if (!passes_fill && !passes_sparse) {
+        return std::nullopt;
+    }
+
+    const bool used_sparse_gate = !passes_fill;
+    const float fill_ratio      = used_sparse_gate ? fill_ratio_px : fill_ratio_geo;
+    return LightBlob{
+        .rect         = rect2f_from_rect(rect),
+        .center_px    = rect_center(rect),
+        .area_px      = static_cast<float>(contour_area),
+        .aspect_ratio = aspect_ratio,
+        .fill_ratio   = fill_ratio};
+}
+
+[[nodiscard]] std::optional<LightBlob> make_narrow_yaw_blob_from_contour(
+    const std::vector<cv::Point>& contour, const cv::Mat& hsv, const cv::Mat& mask,
+    const cv::Point& offset, const LdmDetectorConfig& config) {
+    cv::Rect rect = cv::boundingRect(contour);
+    if (offset.x != 0 || offset.y != 0) {
+        rect.x += offset.x;
+        rect.y += offset.y;
+    }
+    if (rect.width <= 0 || rect.height <= 0) {
+        return std::nullopt;
+    }
+
+    constexpr float kMinNarrowAspect = 0.15f;
+    constexpr int kMaxNarrowWidth    = 5;
+    constexpr int kMinNarrowHeight   = 10;
+    constexpr int kMaxNarrowHeight   = 24;
+    constexpr int kMinNarrowPixels   = 36;
+    constexpr double kMinNarrowArea  = 20.0;
+
+    const float aspect_ratio =
+        static_cast<float>(rect.width) / static_cast<float>(std::max(rect.height, 1));
+    if (aspect_ratio >= static_cast<float>(config.min_blob_aspect_ratio)
+        || aspect_ratio < kMinNarrowAspect || rect.width > kMaxNarrowWidth
+        || rect.height < kMinNarrowHeight || rect.height > kMaxNarrowHeight) {
+        return std::nullopt;
+    }
+    if (rect.x < 0 || rect.y < 0 || rect.x + rect.width > hsv.cols
+        || rect.y + rect.height > hsv.rows) {
+        return std::nullopt;
+    }
+
+    const double contour_area = cv::contourArea(contour);
+    const int pixel_count     = cv::countNonZero(mask(rect));
+    if (contour_area < kMinNarrowArea || pixel_count < kMinNarrowPixels) {
+        return std::nullopt;
+    }
+
+    const double mean_hue = cv::mean(hsv(rect), mask(rect))[0];
+    if (mean_hue < 5.0 || mean_hue > 35.0) {
+        return std::nullopt;
+    }
+
+    const float rect_area     = static_cast<float>(std::max(1, rect.width * rect.height));
+    const float fill_ratio_px = static_cast<float>(pixel_count) / rect_area;
+    return LightBlob{
+        .rect         = rect2f_from_rect(rect),
+        .center_px    = rect_center(rect),
+        .area_px      = static_cast<float>(contour_area),
+        .aspect_ratio = aspect_ratio,
+        .fill_ratio   = fill_ratio_px};
+}
+
+[[nodiscard]] std::vector<LightBlob>
+    split_wide_small_blob(const LightBlob& blob, const cv::Mat& hsv, const cv::Mat& mask) {
+    constexpr float kMinSplitAspect = 1.45f;
+    constexpr float kMaxSplitAspect = 2.40f;
+    constexpr float kMinSplitWidth  = 14.0f;
+    constexpr float kMinSplitHeight = 7.0f;
+    constexpr float kMaxSplitHeight = 18.0f;
+
+    if (blob.aspect_ratio < kMinSplitAspect || blob.aspect_ratio > kMaxSplitAspect
+        || blob.rect.width < kMinSplitWidth || blob.rect.height < kMinSplitHeight
+        || blob.rect.height > kMaxSplitHeight) {
+        return {blob};
+    }
+
+    const cv::Rect rect(
+        static_cast<int>(std::round(blob.rect.x)), static_cast<int>(std::round(blob.rect.y)),
+        static_cast<int>(std::round(blob.rect.width)),
+        static_cast<int>(std::round(blob.rect.height)));
+    if (rect.x < 0 || rect.y < 0 || rect.x + rect.width > hsv.cols
+        || rect.y + rect.height > hsv.rows) {
+        return {blob};
+    }
+
+    const double mean_hue = cv::mean(hsv(rect), mask(rect))[0];
+    if (mean_hue < 5.0 || mean_hue > 35.0) {
+        return {blob};
+    }
+
+    std::vector<LightBlob> split;
+    split.reserve(2);
+    const float left_width  = std::floor(blob.rect.width * 0.5f);
+    const float right_width = blob.rect.width - left_width;
+    if (left_width <= 1.0f || right_width <= 1.0f) {
+        return {blob};
+    }
+
+    for (int part = 0; part < 2; ++part) {
+        LightBlob half  = blob;
+        half.rect.x     = blob.rect.x + ((part == 0) ? 0.0f : left_width);
+        half.rect.width = (part == 0) ? left_width : right_width;
+        half.center_px  = cv::Point2f(
+            half.rect.x + half.rect.width * 0.5f, half.rect.y + half.rect.height * 0.5f);
+        half.area_px *= 0.5f;
+        half.aspect_ratio = half.rect.width / std::max(half.rect.height, 1.0f);
+        split.push_back(half);
+    }
+    return split;
+}
+
+[[nodiscard]] bool
+    has_narrow_yaw_pair_mate(const LightBlob& blob, const std::vector<LightBlob>& narrow_blobs) {
+    constexpr float kMaxMateDx = 10.0f;
+    constexpr float kMinMateDy = 20.0f;
+    constexpr float kMaxMateDy = 60.0f;
+
+    return std::any_of(narrow_blobs.begin(), narrow_blobs.end(), [&](const LightBlob& other) {
+        if (&other == &blob) {
+            return false;
+        }
+        const float dx = std::abs(other.center_px.x - blob.center_px.x);
+        const float dy = std::abs(other.center_px.y - blob.center_px.y);
+        return dx <= kMaxMateDx && dy >= kMinMateDy && dy <= kMaxMateDy;
+    });
+}
+
+[[nodiscard]] bool has_full_mesh_regular_context(
+    const LightBlob& blob, const std::vector<LightBlob>& regular_blobs) {
+    constexpr float kContextDx            = 80.0f;
+    constexpr float kContextDy            = 80.0f;
+    constexpr int kMinRegularContextBlobs = 6;
+
+    int nearby_count = 0;
+    for (const auto& regular_blob : regular_blobs) {
+        if (std::abs(regular_blob.center_px.x - blob.center_px.x) <= kContextDx
+            && std::abs(regular_blob.center_px.y - blob.center_px.y) <= kContextDy) {
+            ++nearby_count;
+        }
+    }
+    return nearby_count >= kMinRegularContextBlobs;
+}
+
 [[nodiscard]] std::vector<LightBlob> detect_light_blobs(
     const cv::Mat& image_bgr, const LdmDetectorConfig& config, ArmorColor color) {
     if (image_bgr.empty()) {
         return {};
     }
 
-    cv::Mat mask = threshold_target_color(image_bgr, color);
+    cv::Mat hsv;
+    cv::cvtColor(image_bgr, hsv, cv::COLOR_BGR2HSV);
+
+    cv::Mat mask      = threshold_target_color(image_bgr, color);
+    cv::Mat core_mask = threshold_target_color(image_bgr, color, 140);
     std::vector<std::vector<cv::Point>> contours;
     cv::findContours(mask, contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
 
     std::vector<LightBlob> blobs;
+    std::vector<LightBlob> narrow_yaw_blobs;
     blobs.reserve(contours.size());
+    narrow_yaw_blobs.reserve(contours.size());
     for (const auto& contour : contours) {
         const cv::Rect rect = cv::boundingRect(contour);
         if (rect.width <= 0 || rect.height <= 0) {
             continue;
         }
 
-        const float aspect_ratio =
-            static_cast<float>(rect.width) / static_cast<float>(std::max(rect.height, 1));
-        if (aspect_ratio < static_cast<float>(config.min_blob_aspect_ratio)
-            || aspect_ratio > static_cast<float>(config.max_blob_aspect_ratio)) {
+        std::vector<std::vector<cv::Point>> core_contours;
+        cv::Mat core_roi = core_mask(rect);
+        cv::findContours(core_roi, core_contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
+
+        std::vector<LightBlob> split_blobs;
+        split_blobs.reserve(core_contours.size());
+        for (const auto& core_contour : core_contours) {
+            auto blob = make_light_blob_from_contour(core_contour, core_mask, rect.tl(), config);
+            if (blob.has_value()) {
+                auto pieces = split_wide_small_blob(*blob, hsv, core_mask);
+                split_blobs.insert(split_blobs.end(), pieces.begin(), pieces.end());
+                continue;
+            }
+            auto narrow_blob =
+                make_narrow_yaw_blob_from_contour(core_contour, hsv, core_mask, rect.tl(), config);
+            if (narrow_blob.has_value()) {
+                narrow_yaw_blobs.push_back(*narrow_blob);
+            }
+        }
+        if (split_blobs.size() >= 2u) {
+            blobs.insert(blobs.end(), split_blobs.begin(), split_blobs.end());
             continue;
         }
 
-        const double contour_area   = cv::contourArea(contour);
-        const int pixel_count       = cv::countNonZero(mask(rect));
-        const double effective_area = (contour_area >= static_cast<double>(config.min_blob_area_px))
-                                        ? contour_area
-                                        : static_cast<double>(pixel_count);
-        if (effective_area < static_cast<double>(config.min_blob_area_px)) {
-            continue;
+        auto blob = make_light_blob_from_contour(contour, mask, {}, config);
+        if (blob.has_value()) {
+            auto pieces = split_wide_small_blob(*blob, hsv, mask);
+            blobs.insert(blobs.end(), pieces.begin(), pieces.end());
         }
+    }
 
-        const float rect_area = static_cast<float>(std::max(1, rect.width * rect.height));
-        // Geometric fill: how compact the contour is.  Low for loose outlines —
-        // this is used for noise gating because geometric compactness rejects
-        // stray noise patches that happen to have many thresholded pixels.
-        const float fill_ratio_geo = static_cast<float>(contour_area) / rect_area;
-        // Pixel fill: actual pixel density in the bounding rect.  More accurate
-        // for sparse sensor data where the contour is loose but pixels are real.
-        const float fill_ratio_px = static_cast<float>(pixel_count) / rect_area;
-        // Accept compact contours (high geometric fill) or blobs with enough
-        // raw pixels — sparse sensor data often produces loose outlines with
-        // plenty of detected pixels but low contourArea.
-        const bool passes_fill   = fill_ratio_geo >= static_cast<float>(config.min_blob_fill_ratio);
-        const bool passes_sparse = pixel_count >= config.min_sparse_blob_pixel_count;
-        if (!passes_fill && !passes_sparse) {
-            continue;
+    for (const auto& narrow_blob : narrow_yaw_blobs) {
+        if (has_narrow_yaw_pair_mate(narrow_blob, narrow_yaw_blobs)
+            && has_full_mesh_regular_context(narrow_blob, blobs)) {
+            blobs.push_back(narrow_blob);
         }
-
-        // Blobs that pass the geometric fill gate use geometric fill for scoring.
-        // Blobs that only entered via the sparse gate use pixel-based fill — their
-        // geometric fill is too low to be meaningful but they have enough real
-        // pixels to represent a valid sparse LED.
-        const bool used_sparse_gate = !passes_fill;
-        const float fill_ratio      = used_sparse_gate ? fill_ratio_px : fill_ratio_geo;
-
-        blobs.push_back(
-            LightBlob{
-                .rect         = rect2f_from_rect(rect),
-                .center_px    = rect_center(rect),
-                .area_px      = static_cast<float>(contour_area),
-                .aspect_ratio = aspect_ratio,
-                .fill_ratio   = fill_ratio});
     }
 
     std::sort(blobs.begin(), blobs.end(), [](const LightBlob& a, const LightBlob& b) {
@@ -177,12 +357,13 @@ namespace {
     return blobs;
 }
 
-constexpr float kClusterExpandXRatio    = 1.0f;
-constexpr float kClusterExpandYRatio    = 3.5f;
-constexpr size_t kPcaSeedBlobLimit      = 6;
-constexpr size_t kMaxClusterBlobCount   = 20;
-constexpr float kMaxPairOrderDeltaRatio = 1.5f;
-constexpr float kMinAxisBalance         = 0.4f;
+constexpr float kClusterExpandXRatio      = 1.0f;
+constexpr float kClusterExpandYRatio      = 3.5f;
+constexpr size_t kPcaSeedBlobLimit        = 6;
+constexpr size_t kMaxClusterBlobCount     = 20;
+constexpr float kMaxPairOrderDeltaRatio   = 1.5f;
+constexpr float kPairOrderScoreDeltaRatio = 2.5f;
+constexpr float kMinAxisBalance           = 0.4f;
 
 [[nodiscard]] float dot(const cv::Point2f& lhs, const cv::Point2f& rhs) {
     return lhs.x * rhs.x + lhs.y * rhs.y;
@@ -364,7 +545,9 @@ struct ProjectedMatching {
         return std::nullopt;
     }
 
-    const float order_score  = std::max(0.0f, 1.0f - order_delta / std::max(order_limit, 1.0f));
+    const float order_score_limit = kPairOrderScoreDeltaRatio * size_scale;
+    const float order_score =
+        std::max(0.0f, 1.0f - order_delta / std::max(order_score_limit, 1.0f));
     const float width_score  = std::max(0.0f, 1.0f - width_delta);
     const float height_score = std::max(0.0f, 1.0f - height_delta);
     const float fill_score   = 0.5f * (first.fill_ratio + second.fill_ratio);
@@ -1041,7 +1224,6 @@ struct PairCandidate {
     }
 
     LdmDetection detection;
-    detection.valid                  = true;
     detection.color                  = color;
     detection.blobs                  = std::move(selected_blobs);
     detection.pairs                  = std::move(selected_pairs);

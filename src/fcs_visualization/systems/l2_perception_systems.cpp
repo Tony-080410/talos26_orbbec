@@ -257,7 +257,7 @@ void register_l2_perception_systems(talos::scheduler::Scheduler& app) {
             }
 
             auto measurement = ldm_meas_in.read();
-            if (!measurement || !measurement->valid) {
+            if (!measurement) {
                 return;
             }
 

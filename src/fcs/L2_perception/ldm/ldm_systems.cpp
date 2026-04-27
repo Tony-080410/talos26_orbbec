@@ -61,7 +61,7 @@ void register_ldm_systems(
             auto tf_lookup = fast_tf::lookup_clamped<fast_tf::odom, fast_tf::camera_optical>(
                 *tf_system, frame->timestamp_ns);
 
-            if (detection.valid && tf_lookup) {
+            if (tf_lookup) {
                 auto meas_result = solver_ptr->solve(detection, *tf_lookup);
                 if (meas_result) {
                     detection.mesh_candidates        = meas_result->mesh_candidates;

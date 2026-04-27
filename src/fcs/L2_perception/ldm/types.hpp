@@ -80,7 +80,6 @@ struct LdmMeshCandidate {
 };
 
 struct LdmDetection {
-    bool valid{false};
     uint64_t timestamp_ns{0};
     uint64_t frame_id{0};
     cv::Rect2f rect{};
@@ -95,7 +94,6 @@ struct LdmDetection {
 };
 
 struct LdmMeasurement {
-    bool valid{false};
     uint64_t timestamp_ns{0};
     uint64_t frame_id{0};
     ArmorColor color{ArmorColor::Neutral};
