@@ -210,6 +210,15 @@ private:
             && candidate.pair_indices.size() == candidate.octagon_face_indices.size();
     }
 
+    [[nodiscard]] static Eigen::Vector3d face_outward_normal_model(int face_idx) {
+        const double angle = static_cast<double>(face_idx) * (std::numbers::pi_v<double> / 4.0);
+        return Eigen::Vector3d(std::sin(angle), 0.0, -std::cos(angle));
+    }
+
+    [[nodiscard]] Eigen::Vector3d face_center_model(int face_idx) const {
+        return octagon_face_center_radius_m(config_.geometry) * face_outward_normal_model(face_idx);
+    }
+
     void assign_visible_face_indices(
         LdmMeshCandidate& candidate, const std::vector<LightPair>& pairs) const {
         if (candidate.pair_indices.empty()) {
@@ -933,8 +942,8 @@ private:
         return refined;
     }
 
-    [[nodiscard]] std::optional<BoundedPoseSeed>
-        solve_constrained_pose_seed(const CandidateCorrespondences& correspondences) const {
+    [[nodiscard]] std::optional<BoundedPoseSeed> solve_constrained_pose_seed(
+        const LdmMeshCandidate& candidate, const CandidateCorrespondences& correspondences) const {
         const auto seeds = make_pose_seeds(correspondences);
         if (seeds.empty()) {
             return std::nullopt;
@@ -944,6 +953,12 @@ private:
         for (const auto& seed : seeds) {
             const auto refined = refine_pose_seed(correspondences, seed);
             if (!refined.has_value()) {
+                continue;
+            }
+            if (!visible_face_score(
+                     candidate, bounded_pose_rotation(refined->yaw, refined->pitch, refined->roll),
+                     refined->translation)
+                     .has_value()) {
                 continue;
             }
             if (!best_seed.has_value() || refined->normalized_rmse < best_seed->normalized_rmse) {
@@ -1007,7 +1022,17 @@ private:
             return std::nullopt;
         }
 
-        return refine_pose_seed(correspondences, seed);
+        auto refined = refine_pose_seed(correspondences, seed);
+        if (!refined.has_value()) {
+            return std::nullopt;
+        }
+        if (!visible_face_score(
+                 candidate, bounded_pose_rotation(refined->yaw, refined->pitch, refined->roll),
+                 refined->translation)
+                 .has_value()) {
+            return std::nullopt;
+        }
+        return refined;
     }
 
     [[nodiscard]] float pixel_reprojection_rmse(
@@ -1069,8 +1094,13 @@ private:
             solution.rvec, solution.tvec, camera_matrix_, dist_coeffs_,
             solution.projected_outline_image);
 
-        solution.vertical_axis_term   = projected_vertical_axis_score(solution.rvec, solution.tvec);
-        solution.face_visibility_term = visible_face_score(candidate, rotation_cam, center_cam);
+        const auto face_visibility_score = visible_face_score(candidate, rotation_cam, center_cam);
+        if (!face_visibility_score.has_value()) {
+            return std::nullopt;
+        }
+        solution.face_visibility_term = *face_visibility_score;
+
+        solution.vertical_axis_term = projected_vertical_axis_score(solution.rvec, solution.tvec);
         return solution;
     }
 
@@ -1142,7 +1172,7 @@ private:
 
         auto seed = solve_visible_pose_seed(candidate, pairs, *correspondences);
         if (!seed.has_value()) {
-            seed = solve_constrained_pose_seed(*correspondences);
+            seed = solve_constrained_pose_seed(candidate, *correspondences);
         }
         if (!seed.has_value()) {
             return std::nullopt;
@@ -1174,33 +1204,42 @@ private:
         return std::clamp(delta.y / norm, 0.0f, 1.0f);
     }
 
-    [[nodiscard]] float visible_face_score(
+    [[nodiscard]] std::optional<float> visible_face_score(
         const LdmMeshCandidate& candidate, const Eigen::Matrix3d& rotation_cam,
         const Eigen::Vector3d& center_cam) const {
         if (!has_face_assignment(candidate)) {
-            return 0.5f;
+            return std::nullopt;
         }
 
-        const double scale = std::max(1e-6, octagon_face_center_radius_m(config_.geometry));
-        float score_sum    = 0.0f;
-        int score_count    = 0;
+        constexpr double kMinVisibleFaceAlignment = 1e-6;
+        double score_sum                          = 0.0;
+        int score_count                           = 0;
         for (const int face_idx : candidate.octagon_face_indices) {
-            const auto model_pair = pair_model_points_for_face(config_.geometry, face_idx);
-            const Eigen::Vector3d face_center_model(
-                0.5 * static_cast<double>(model_pair[0].x + model_pair[1].x),
-                0.5 * static_cast<double>(model_pair[0].y + model_pair[1].y),
-                0.5 * static_cast<double>(model_pair[0].z + model_pair[1].z));
-            const Eigen::Vector3d face_center_cam = rotation_cam * face_center_model + center_cam;
-            const double front_delta              = center_cam.z() - face_center_cam.z();
-            score_sum +=
-                std::clamp(static_cast<float>(0.5 + 0.5 * (front_delta / scale)), 0.0f, 1.0f);
+            if (face_idx < 0 || face_idx >= 8) {
+                return std::nullopt;
+            }
+
+            const Eigen::Vector3d normal_cam = rotation_cam * face_outward_normal_model(face_idx);
+            const Eigen::Vector3d face_cam =
+                rotation_cam * face_center_model(face_idx) + center_cam;
+            const double face_range = face_cam.norm();
+            if (!std::isfinite(face_range) || face_range <= 1e-9 || face_cam.z() <= 1e-6) {
+                return std::nullopt;
+            }
+
+            const Eigen::Vector3d face_to_camera = -face_cam / face_range;
+            const double alignment               = normal_cam.dot(face_to_camera);
+            if (!std::isfinite(alignment) || alignment <= kMinVisibleFaceAlignment) {
+                return std::nullopt;
+            }
+            score_sum += std::clamp(alignment, 0.0, 1.0);
             ++score_count;
         }
 
         if (score_count <= 0) {
-            return 0.5f;
+            return std::nullopt;
         }
-        return score_sum / static_cast<float>(score_count);
+        return static_cast<float>(score_sum / static_cast<double>(score_count));
     }
 
     void evaluate_candidate(
@@ -1223,22 +1262,6 @@ private:
             candidate.reprojection_rmse_px = std::numeric_limits<float>::quiet_NaN();
             candidate.score                = 0.35f * candidate.preliminary_score;
             return;
-        }
-
-        bool center_behind_faces         = true;
-        constexpr double kMinBehindFaceM = 1e-3;
-        for (const int face_idx : candidate.octagon_face_indices) {
-            const auto mp = pair_model_points_for_face(config_.geometry, face_idx);
-            const Eigen::Vector3d face_center_model(
-                0.5 * static_cast<double>(mp[0].x + mp[1].x),
-                0.5 * static_cast<double>(mp[0].y + mp[1].y),
-                0.5 * static_cast<double>(mp[0].z + mp[1].z));
-            const Eigen::Vector3d face_center_cam =
-                solution->rotation_cam * face_center_model + solution->center_cam;
-            if (solution->center_cam.z() - face_center_cam.z() < kMinBehindFaceM) {
-                center_behind_faces = false;
-                break;
-            }
         }
 
         candidate.solved                    = true;
@@ -1268,12 +1291,10 @@ private:
         const float rmse_term = std::exp(
             -candidate.reprojection_rmse_px
             / static_cast<float>(std::max(1.0, config_.rmse_constrained_threshold_px)));
-        const float depth_bonus    = candidate.depth_valid ? 0.22f : -0.10f;
-        const float geometry_bonus = center_behind_faces ? 0.0f : -0.18f;
-        candidate.score            = std::clamp(
+        const float depth_bonus = candidate.depth_valid ? 0.22f : -0.10f;
+        candidate.score         = std::clamp(
             0.32f * candidate.preliminary_score + 0.20f * pair_term + 0.18f * rmse_term
-                + 0.15f * vertical_axis_term + 0.15f * face_visibility_term + depth_bonus
-                + geometry_bonus,
+                + 0.15f * vertical_axis_term + 0.15f * face_visibility_term + depth_bonus,
             0.0f, 1.2f);
     }
 

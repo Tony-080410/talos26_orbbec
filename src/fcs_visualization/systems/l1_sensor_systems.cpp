@@ -1,3 +1,4 @@
+#include "L2_perception/ldm/ldm_config.hpp"
 #include "L2_perception/ldm/types.hpp"
 #include "base.hpp"
 #include "core/runtime.hpp"
@@ -17,6 +18,7 @@
 #include <cstddef>
 #include <deque>
 #include <memory>
+#include <numbers>
 #include <opencv2/core/types.hpp>
 #include <opencv2/imgcodecs.hpp>
 #include <opencv2/imgproc.hpp>
@@ -55,18 +57,94 @@ struct QuantaPublisherState {
     return cv::boundingRect(projected_outline);
 }
 
+[[nodiscard]] inline Eigen::Vector3d ldm_face_outward_normal_model(size_t face_idx) {
+    const double angle = static_cast<double>(face_idx) * (std::numbers::pi_v<double> / 4.0);
+    return Eigen::Vector3d(std::sin(angle), 0.0, -std::cos(angle));
+}
+
+[[nodiscard]] inline bool ldm_face_visible_from_camera(
+    const L2::ldm::LdmMeshCandidate& candidate, const L2::ldm::LdmGeometryConfig& geometry,
+    size_t face_idx) {
+    if (!candidate.solved) {
+        return true;
+    }
+
+    const auto& pose               = candidate.pose.camera;
+    const Eigen::Vector3d normal   = ldm_face_outward_normal_model(face_idx);
+    const Eigen::Vector3d normal_c = pose.rotation() * normal;
+    const Eigen::Vector3d face_c   = pose.rotation()
+                                     * (geometry.octagon_circumradius_m
+                                        * std::cos(std::numbers::pi_v<double> / 8.0) * normal)
+                                 + pose.translation();
+    const double face_range = face_c.norm();
+    if (!std::isfinite(face_range) || face_range <= 1e-9 || face_c.z() <= 1e-6) {
+        return false;
+    }
+
+    return normal_c.dot(-face_c / face_range) > 1e-6;
+}
+
+[[nodiscard]] inline std::array<bool, 8> ldm_visible_faces_from_camera(
+    const L2::ldm::LdmMeshCandidate& candidate, const L2::ldm::LdmGeometryConfig& geometry) {
+    std::array<bool, 8> visible{};
+    for (size_t face_idx = 0; face_idx < visible.size(); ++face_idx) {
+        visible[face_idx] = ldm_face_visible_from_camera(candidate, geometry, face_idx);
+    }
+    return visible;
+}
+
+inline void draw_dashed_line(
+    cv::Mat& image, cv::Point2f start, cv::Point2f end, const cv::Scalar& color, int thickness) {
+    const double length = cv::norm(end - start);
+    if (!std::isfinite(length) || length <= 1.0) {
+        return;
+    }
+
+    constexpr double kDashPx    = 7.0;
+    constexpr double kGapPx     = 5.0;
+    constexpr double kStep      = kDashPx + kGapPx;
+    const cv::Point2f direction = (end - start) * static_cast<float>(1.0 / std::max(length, 1.0));
+    const int num_segments      = static_cast<int>(length / kStep) + 1;
+    for (int seg = 0; seg < num_segments; ++seg) {
+        const double offset   = static_cast<double>(seg) * kStep;
+        const double dash_end = std::min(length, offset + kDashPx);
+        cv::line(
+            image, start + direction * static_cast<float>(offset),
+            start + direction * static_cast<float>(dash_end), color, thickness, cv::LINE_AA);
+    }
+}
+
+inline void draw_visibility_line(
+    cv::Mat& image, cv::Point2f start, cv::Point2f end, const cv::Scalar& color, bool visible) {
+    if (visible) {
+        cv::line(image, start, end, color, 2, cv::LINE_AA);
+        return;
+    }
+
+    // Invisible (back-facing) edges: clearly visible dashed line so the user can distinguish
+    const cv::Scalar dashed_color(color[0] * 0.7, color[1] * 0.7, color[2] * 0.7, color[3]);
+    draw_dashed_line(image, start, end, dashed_color, 2);
+}
+
 inline void draw_ldm_projected_outline(
-    cv::Mat& image, const std::vector<cv::Point2f>& projected_outline, const cv::Scalar& color) {
+    cv::Mat& image, const L2::ldm::LdmMeshCandidate& candidate,
+    const L2::ldm::LdmGeometryConfig& geometry, const cv::Scalar& color) {
+    const auto& projected_outline = candidate.projected_outline_image;
     if (projected_outline.size() != 16) {
         return;
     }
 
+    const auto visible_faces = ldm_visible_faces_from_camera(candidate, geometry);
     for (size_t i = 0; i < 8; ++i) {
-        const size_t next = (i + 1) % 8;
-        cv::line(image, projected_outline[i], projected_outline[next], color, 2, cv::LINE_AA);
-        cv::line(
-            image, projected_outline[i + 8], projected_outline[next + 8], color, 2, cv::LINE_AA);
-        cv::line(image, projected_outline[i], projected_outline[i + 8], color, 2, cv::LINE_AA);
+        const size_t next       = (i + 1) % 8;
+        const bool side_visible = visible_faces[next];
+        draw_visibility_line(
+            image, projected_outline[i], projected_outline[next], color, side_visible);
+        draw_visibility_line(
+            image, projected_outline[i + 8], projected_outline[next + 8], color, side_visible);
+        draw_visibility_line(
+            image, projected_outline[i], projected_outline[i + 8], color,
+            visible_faces[i] || visible_faces[next]);
     }
 }
 
@@ -200,7 +278,8 @@ void register_l1_sensor_systems(talos::scheduler::Scheduler& app) {
             talos::spmc<L2::ldm::LdmMeasurement, LdmMeasurementChannelTopic> ldm_meas_in,
             talos::res<std::shared_ptr<FoxgloveServer>> server, talos::res<CameraConfig> cam,
             talos::res<FoxgloveConfig> foxglove_cfg, core::detecting_color detecting_color_,
-            talos::res<fast_tf::CoordinateSystem> tf_buffer) mutable {
+            talos::res<fast_tf::CoordinateSystem> tf_buffer,
+            talos::res<L2::ldm::LdmDetectorConfig> ldm_config) mutable {
             if (!foxglove_ready(*server, det_in)) {
                 return;
             }
@@ -305,7 +384,7 @@ void register_l1_sensor_systems(talos::scheduler::Scheduler& app) {
                             .mesh_candidates[static_cast<size_t>(*ldm_det.selected_candidate_idx)];
                     if (selected.projected_outline_image.size() == 16) {
                         detail::draw_ldm_projected_outline(
-                            img_bgr, selected.projected_outline_image, box_color);
+                            img_bgr, selected, ldm_config->geometry, box_color);
                         ldm_rect =
                             detail::projected_outline_bounds(selected.projected_outline_image);
                         drew_projected_box = true;
