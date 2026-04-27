@@ -63,22 +63,11 @@ public:
                 continue;
             }
 
-            if (has_face_assignment(base_candidate)) {
-                auto candidate = base_candidate;
+            auto candidate = base_candidate;
+            assign_visible_face_indices(candidate, detection.pairs);
+            if (has_face_assignment(candidate)) {
                 evaluate_candidate(candidate, detection.pairs, T_odom_camera);
                 evaluated_candidates.push_back(std::move(candidate));
-                continue;
-            }
-
-            for (int start_face = 0; start_face < 8; ++start_face) {
-                for (const bool reverse : {false, true}) {
-                    auto candidate = base_candidate;
-                    candidate.octagon_face_indices =
-                        make_face_assignment(start_face, candidate.pair_indices.size(), reverse);
-                    candidate.reverse_assignment = reverse;
-                    evaluate_candidate(candidate, detection.pairs, T_odom_camera);
-                    evaluated_candidates.push_back(std::move(candidate));
-                }
             }
         }
 
@@ -91,20 +80,19 @@ public:
         evaluated_candidates.insert(
             evaluated_candidates.end(), combined_candidates.begin(), combined_candidates.end());
 
-        std::optional<size_t> best_depth_idx;
+        std::optional<size_t> best_idx;
         for (size_t i = 0; i < evaluated_candidates.size(); ++i) {
             const auto& candidate = evaluated_candidates[i];
-            if (candidate.depth_valid
-                && (!best_depth_idx.has_value()
-                    || candidate.score > evaluated_candidates[*best_depth_idx].score)) {
-                best_depth_idx = i;
+            if (!best_idx.has_value()
+                || candidate_selection_better(candidate, evaluated_candidates[*best_idx])) {
+                best_idx = i;
             }
         }
-        if (!best_depth_idx.has_value()) {
+        if (!best_idx.has_value()) {
             return std::unexpected(PnPError::NoCandidate);
         }
 
-        const size_t selected_idx = *best_depth_idx;
+        const size_t selected_idx = *best_idx;
         const auto selected       = evaluated_candidates[selected_idx];
 
         LdmMeasurement measurement;
@@ -118,13 +106,23 @@ public:
         measurement.mesh_candidates = std::move(evaluated_candidates);
         measurement.selected_candidate_idx = static_cast<int>(selected_idx);
 
-        measurement.transform_cam  = selected.pose.camera;
-        measurement.transform_odom = selected.pose.odom;
-        measurement.depth_quality  = (selected.pair_indices.size() >= 3)
-                                       ? LdmDepthQuality::Stable
-                                       : LdmDepthQuality::Constrained;
+        if (selected.solved) {
+            measurement.transform_cam  = selected.pose.camera;
+            measurement.transform_odom = selected.pose.odom;
+        }
+        if (selected.solved && selected.depth_valid) {
+            measurement.depth_quality = (selected.pair_indices.size() >= 3)
+                                          ? LdmDepthQuality::Stable
+                                          : LdmDepthQuality::Constrained;
+        } else if (selected.solved) {
+            measurement.depth_quality = LdmDepthQuality::None;
+        } else {
+            measurement.depth_quality = LdmDepthQuality::BearingOnly;
+        }
 
-        measurement.confidence = confidence_for(selected);
+        measurement.confidence = selected.solved
+                                   ? confidence_for(selected)
+                                   : std::clamp(0.15f * selected.preliminary_score, 0.0f, 0.25f);
         return measurement;
     }
 
@@ -149,7 +147,7 @@ private:
         Eigen::Vector3d center_cam{0.0, 0.0, 1.0};
         cv::Mat rvec{};
         cv::Mat tvec{};
-        float reprojection_rmse_px{std::numeric_limits<float>::infinity()};
+        float reprojection_rmse_px{std::numeric_limits<float>::quiet_NaN()};
         float vertical_axis_term{0.0f};
         float face_visibility_term{0.0f};
         cv::Point2f projected_center_image{};
@@ -207,43 +205,130 @@ private:
         double observed_y{0.0};
     };
 
-    [[nodiscard]] std::vector<int>
-        make_face_assignment(int start_face, size_t pair_count, bool reverse) const {
-        std::vector<int> face_indices;
-        face_indices.reserve(pair_count);
-        for (size_t i = 0; i < pair_count; ++i) {
-            int face = 0;
-            if (reverse) {
-                face = (start_face - static_cast<int>(i)) % 8;
-            } else {
-                face = (start_face + static_cast<int>(i)) % 8;
-            }
-            if (face < 0) {
-                face += 8;
-            }
-            face_indices.push_back(face);
-        }
-        return face_indices;
-    }
-
     [[nodiscard]] bool has_face_assignment(const LdmMeshCandidate& candidate) const noexcept {
         return !candidate.pair_indices.empty()
             && candidate.pair_indices.size() == candidate.octagon_face_indices.size();
     }
 
-    [[nodiscard]] bool face_sequence_is_consistent(
-        const std::vector<int>& face_indices, bool reverse) const noexcept {
+    void assign_visible_face_indices(
+        LdmMeshCandidate& candidate, const std::vector<LightPair>& pairs) const {
+        if (candidate.pair_indices.empty()) {
+            return;
+        }
+
+        struct OrderedClusterPair {
+            int pair_idx;
+            float order_px;
+            float separation_px;
+        };
+
+        const int cluster_id = [&]() {
+            for (const int pair_idx : candidate.pair_indices) {
+                if (pair_idx < 0 || static_cast<size_t>(pair_idx) >= pairs.size()) {
+                    continue;
+                }
+                return pairs[static_cast<size_t>(pair_idx)].cluster_id;
+            }
+            return -1;
+        }();
+
+        std::vector<OrderedClusterPair> ordered_cluster;
+        ordered_cluster.reserve(pairs.size());
+        for (size_t pair_idx = 0; pair_idx < pairs.size(); ++pair_idx) {
+            if (cluster_id >= 0 && pairs[pair_idx].cluster_id != cluster_id) {
+                continue;
+            }
+            ordered_cluster.push_back(
+                OrderedClusterPair{
+                    .pair_idx      = static_cast<int>(pair_idx),
+                    .order_px      = pairs[pair_idx].local_order_px,
+                    .separation_px = pair_layer_separation_px(pairs[pair_idx]),
+                });
+        }
+        if (ordered_cluster.empty()) {
+            for (const int pair_idx : candidate.pair_indices) {
+                if (pair_idx < 0 || static_cast<size_t>(pair_idx) >= pairs.size()) {
+                    continue;
+                }
+                const auto& pair = pairs[static_cast<size_t>(pair_idx)];
+                ordered_cluster.push_back(
+                    OrderedClusterPair{
+                        .pair_idx      = pair_idx,
+                        .order_px      = pair.local_order_px,
+                        .separation_px = pair_layer_separation_px(pair),
+                    });
+            }
+        }
+
+        if (ordered_cluster.empty()) {
+            return;
+        }
+        std::sort(
+            ordered_cluster.begin(), ordered_cluster.end(),
+            [](const auto& lhs, const auto& rhs) { return lhs.order_px < rhs.order_px; });
+
+        size_t front_rank = 0;
+        for (size_t rank = 1; rank < ordered_cluster.size(); ++rank) {
+            if (ordered_cluster[rank].separation_px > ordered_cluster[front_rank].separation_px) {
+                front_rank = rank;
+            }
+        }
+
+        struct AssignedPair {
+            int pair_idx;
+            size_t rank;
+            int face;
+        };
+        std::vector<AssignedPair> assigned;
+        assigned.reserve(candidate.pair_indices.size());
+
+        for (size_t candidate_idx = 0; candidate_idx < candidate.pair_indices.size();
+             ++candidate_idx) {
+            const int pair_idx = candidate.pair_indices[candidate_idx];
+            if (pair_idx < 0 || static_cast<size_t>(pair_idx) >= pairs.size()) {
+                candidate.octagon_face_indices.clear();
+                return;
+            }
+            const auto rank_it = std::find_if(
+                ordered_cluster.begin(), ordered_cluster.end(),
+                [&](const OrderedClusterPair& ordered) { return ordered.pair_idx == pair_idx; });
+            if (rank_it == ordered_cluster.end()) {
+                candidate.octagon_face_indices.clear();
+                return;
+            }
+
+            const size_t rank =
+                static_cast<size_t>(std::distance(ordered_cluster.begin(), rank_it));
+            int face = static_cast<int>(rank) - static_cast<int>(front_rank);
+            face %= 8;
+            if (face < 0) {
+                face += 8;
+            }
+            assigned.push_back(AssignedPair{.pair_idx = pair_idx, .rank = rank, .face = face});
+        }
+
+        std::sort(assigned.begin(), assigned.end(), [](const auto& lhs, const auto& rhs) {
+            return lhs.rank < rhs.rank;
+        });
+
+        candidate.pair_indices.clear();
+        candidate.octagon_face_indices.clear();
+        candidate.pair_indices.reserve(assigned.size());
+        candidate.octagon_face_indices.reserve(assigned.size());
+        for (const auto& item : assigned) {
+            candidate.pair_indices.push_back(item.pair_idx);
+            candidate.octagon_face_indices.push_back(item.face);
+        }
+    }
+
+    [[nodiscard]] bool
+        face_sequence_is_consistent(const std::vector<int>& face_indices) const noexcept {
         if (face_indices.size() <= 1) {
             return true;
         }
 
         for (size_t i = 1; i < face_indices.size(); ++i) {
-            int step = 0;
-            if (reverse) {
-                step = (face_indices[i - 1] - face_indices[i]) % 8;
-            } else {
-                step = (face_indices[i] - face_indices[i - 1]) % 8;
-            }
+            int step = (face_indices[i] - face_indices[i - 1]) % 8;
             if (step < 0) {
                 step += 8;
             }
@@ -252,6 +337,35 @@ private:
             }
         }
         return true;
+    }
+
+    [[nodiscard]] static bool candidate_selection_better(
+        const LdmMeshCandidate& lhs, const LdmMeshCandidate& rhs) noexcept {
+        const auto tier = [](const LdmMeshCandidate& candidate) noexcept {
+            if (candidate.depth_valid) {
+                return 3;
+            }
+            if (candidate.solved && std::isfinite(candidate.reprojection_rmse_px)) {
+                return 2;
+            }
+            if (std::isfinite(candidate.reprojection_rmse_px)) {
+                return 1;
+            }
+            return 0;
+        };
+
+        const int lhs_tier = tier(lhs);
+        const int rhs_tier = tier(rhs);
+        if (lhs_tier != rhs_tier) {
+            return lhs_tier > rhs_tier;
+        }
+        if (lhs_tier >= 2 && lhs.reprojection_rmse_px != rhs.reprojection_rmse_px) {
+            return lhs.reprojection_rmse_px < rhs.reprojection_rmse_px;
+        }
+        if (lhs.pair_indices.size() != rhs.pair_indices.size()) {
+            return lhs.pair_indices.size() > rhs.pair_indices.size();
+        }
+        return lhs.score > rhs.score;
     }
 
     [[nodiscard]] bool center_estimates_are_compatible(
@@ -269,8 +383,7 @@ private:
 
     [[nodiscard]] bool
         same_assignment(const LdmMeshCandidate& lhs, const LdmMeshCandidate& rhs) const noexcept {
-        return lhs.cluster_id == rhs.cluster_id && lhs.reverse_assignment == rhs.reverse_assignment
-            && lhs.pair_indices == rhs.pair_indices
+        return lhs.cluster_id == rhs.cluster_id && lhs.pair_indices == rhs.pair_indices
             && lhs.octagon_face_indices == rhs.octagon_face_indices;
     }
 
@@ -281,9 +394,6 @@ private:
             return std::nullopt;
         }
         if (base.cluster_id >= 0 && extra.cluster_id >= 0 && base.cluster_id != extra.cluster_id) {
-            return std::nullopt;
-        }
-        if (base.reverse_assignment != extra.reverse_assignment) {
             return std::nullopt;
         }
         if (!center_estimates_are_compatible(base, extra)) {
@@ -326,8 +436,7 @@ private:
         }
 
         LdmMeshCandidate merged;
-        merged.cluster_id         = base.cluster_id;
-        merged.reverse_assignment = base.reverse_assignment;
+        merged.cluster_id = base.cluster_id;
         merged.pair_indices.reserve(pairs.size());
         merged.octagon_face_indices.reserve(pairs.size());
         for (size_t pair_idx = 0; pair_idx < pair_to_face.size(); ++pair_idx) {
@@ -341,7 +450,7 @@ private:
             <= std::max(base.pair_indices.size(), extra.pair_indices.size())) {
             return std::nullopt;
         }
-        if (!face_sequence_is_consistent(merged.octagon_face_indices, merged.reverse_assignment)) {
+        if (!face_sequence_is_consistent(merged.octagon_face_indices)) {
             return std::nullopt;
         }
 
@@ -510,12 +619,6 @@ private:
         return std::isfinite(angle) && std::abs(angle) <= max_angle + 1e-9;
     }
 
-    [[nodiscard]] static bool
-        pose_angles_within_limit(double yaw, double pitch, double roll, double max_angle) {
-        return angle_within_limit(yaw, max_angle) && angle_within_limit(pitch, max_angle)
-            && angle_within_limit(roll, max_angle);
-    }
-
     [[nodiscard]] static std::optional<std::array<double, 3>>
         decompose_rotation(const Eigen::Matrix3d& rotation) noexcept {
         const double pitch = std::asin(std::clamp(rotation(2, 1), -1.0, 1.0));
@@ -526,24 +629,6 @@ private:
         const double yaw  = std::atan2(-rotation(2, 0), rotation(2, 2));
         const double roll = std::atan2(-rotation(0, 1), rotation(1, 1));
         return std::array<double, 3>{yaw, pitch, roll};
-    }
-
-    [[nodiscard]] static std::optional<std::array<double, 3>>
-        decompose_bounded_pose_rotation(const Eigen::Matrix3d& rotation, double max_angle) {
-        const auto angles = decompose_rotation(rotation);
-        if (!angles.has_value()) {
-            return std::nullopt;
-        }
-        if (!pose_angles_within_limit((*angles)[0], (*angles)[1], (*angles)[2], max_angle)) {
-            return std::nullopt;
-        }
-        return angles;
-    }
-
-    [[nodiscard]] bool rotation_within_pose_limit(const Eigen::Matrix3d& rotation) const {
-        return decompose_bounded_pose_rotation(
-                   rotation, pose_angle_limit(config_.max_pose_angle_rad))
-            .has_value();
     }
 
     [[nodiscard]] std::optional<CandidateCorrespondences> build_candidate_correspondences(
@@ -667,17 +752,15 @@ private:
             return {};
         }
 
-        const std::array<int, 4> pnp_flags = {
-            cv::SOLVEPNP_ITERATIVE,
-            cv::SOLVEPNP_SQPNP,
-            cv::SOLVEPNP_EPNP,
-            cv::SOLVEPNP_IPPE,
-        };
-
         std::vector<BoundedPoseSeed> seeds;
-        seeds.reserve(pnp_flags.size());
 
-        for (const int flag : pnp_flags) {
+        // ITERATIVE with identity initial guess has no automatic fallback in
+        // OpenCV. If ITERATIVE doesn't converge (the initial translation at
+        // origin is 3-5m from the true depth), fall back to a bare EPNP
+        // solve.  EPNP is closed-form, needs no initial guess, and produces
+        // a seed that Ceres can refine.
+        {
+            constexpr int flag = cv::SOLVEPNP_ITERATIVE;
             cv::Mat rvec;
             cv::Mat tvec;
             bool solved = false;
@@ -686,17 +769,34 @@ private:
                     correspondences.obj_points_cv, correspondences.img_points_cv, camera_matrix_,
                     dist_coeffs_, rvec, tvec, false, flag);
             } catch (const cv::Exception&) {
-                continue;
+                // ITERATIVE threw; try EPNP as fallback.
+                try {
+                    solved = cv::solvePnP(
+                        correspondences.obj_points_cv, correspondences.img_points_cv,
+                        camera_matrix_, dist_coeffs_, rvec, tvec, false, cv::SOLVEPNP_EPNP);
+                } catch (const cv::Exception&) {
+                    return seeds;
+                }
             }
             if (!solved) {
-                continue;
+                // ITERATIVE didn't converge from identity; try EPNP.
+                try {
+                    solved = cv::solvePnP(
+                        correspondences.obj_points_cv, correspondences.img_points_cv,
+                        camera_matrix_, dist_coeffs_, rvec, tvec, false, cv::SOLVEPNP_EPNP);
+                } catch (const cv::Exception&) {
+                    return seeds;
+                }
+                if (!solved) {
+                    return seeds;
+                }
             }
 
             cv::Mat rotation_cv;
             try {
                 cv::Rodrigues(rvec, rotation_cv);
             } catch (const cv::Exception&) {
-                continue;
+                return seeds;
             }
 
             cv::Mat rotation_cv64;
@@ -704,14 +804,14 @@ private:
             rotation_cv.convertTo(rotation_cv64, CV_64F);
             tvec.convertTo(tvec64, CV_64F);
             if (rotation_cv64.rows != 3 || rotation_cv64.cols != 3 || tvec64.total() != 3u) {
-                continue;
+                return seeds;
             }
 
             Eigen::Matrix3d rotation_cam;
             cv::cv2eigen(rotation_cv64, rotation_cam);
             const auto angles = decompose_rotation(rotation_cam);
             if (!angles.has_value()) {
-                continue;
+                return seeds;
             }
 
             const cv::Mat tvec_col = tvec64.reshape(1, 3);
@@ -723,7 +823,7 @@ private:
                 tvec_col.at<double>(0, 0), tvec_col.at<double>(1, 0), tvec_col.at<double>(2, 0));
             if (!std::isfinite(seed.translation.x()) || !std::isfinite(seed.translation.y())
                 || !std::isfinite(seed.translation.z()) || seed.translation.z() <= 1e-3) {
-                continue;
+                return seeds;
             }
 
             seed.normalized_rmse = normalized_reprojection_rmse(correspondences, seed);
@@ -853,6 +953,63 @@ private:
         return best_seed;
     }
 
+    [[nodiscard]] std::optional<BoundedPoseSeed> solve_visible_pose_seed(
+        const LdmMeshCandidate& candidate, const std::vector<LightPair>& pairs,
+        const CandidateCorrespondences& correspondences) const {
+        if (!has_face_assignment(candidate)) {
+            return std::nullopt;
+        }
+
+        size_t front_candidate_idx = 0;
+        float max_separation_px    = -1.0f;
+        for (size_t i = 0; i < candidate.pair_indices.size(); ++i) {
+            const int pair_idx = candidate.pair_indices[i];
+            if (pair_idx < 0 || static_cast<size_t>(pair_idx) >= pairs.size()) {
+                return std::nullopt;
+            }
+            const float separation_px =
+                pair_layer_separation_px(pairs[static_cast<size_t>(pair_idx)]);
+            if (separation_px > max_separation_px) {
+                max_separation_px   = separation_px;
+                front_candidate_idx = i;
+            }
+        }
+
+        const int front_face = candidate.octagon_face_indices[front_candidate_idx];
+        if (front_face < 0 || front_face >= 8) {
+            return std::nullopt;
+        }
+
+        const Eigen::Vector3d bearing =
+            bearing_for_image_point(candidate.estimated_center_image_px);
+        const double bearing_xz_norm = std::hypot(bearing.x(), bearing.z());
+        if (!std::isfinite(bearing_xz_norm) || bearing_xz_norm <= 1e-9) {
+            return std::nullopt;
+        }
+
+        const double front_face_angle =
+            static_cast<double>(front_face) * (std::numbers::pi_v<double> / 4.0);
+        const double bearing_yaw = std::atan2(bearing.x(), bearing.z());
+
+        BoundedPoseSeed seed;
+        seed.yaw = std::remainder(front_face_angle + bearing_yaw, 2.0 * std::numbers::pi_v<double>);
+        seed.pitch = 0.0;
+        seed.roll  = 0.0;
+
+        const auto translation = solve_translation_for_rotation(
+            correspondences, bounded_pose_rotation(seed.yaw, 0.0, 0.0));
+        if (!translation.has_value()) {
+            return std::nullopt;
+        }
+        seed.translation     = *translation;
+        seed.normalized_rmse = normalized_reprojection_rmse(correspondences, seed);
+        if (!std::isfinite(seed.normalized_rmse)) {
+            return std::nullopt;
+        }
+
+        return refine_pose_seed(correspondences, seed);
+    }
+
     [[nodiscard]] float pixel_reprojection_rmse(
         const CandidateCorrespondences& correspondences, const cv::Mat& rvec,
         const cv::Mat& tvec) const {
@@ -947,8 +1104,15 @@ private:
         const double face_center_y = 0.5 * (top_norm.y() + bottom_norm.y()) * face_center_z;
         const Eigen::Vector3d face_center_cam(face_center_x, face_center_y, face_center_z);
 
+        const int pair_idx = candidate.pair_indices.front();
+        if (pair_idx < 0 || static_cast<size_t>(pair_idx) >= pairs.size()) {
+            return std::nullopt;
+        }
+        const Eigen::Vector3d bearing =
+            bearing_for_image_point(pairs[static_cast<size_t>(pair_idx)].midpoint_px);
         const double yaw = std::remainder(
-            static_cast<double>(face_idx) * (std::numbers::pi_v<double> / 4.0),
+            static_cast<double>(face_idx) * (std::numbers::pi_v<double> / 4.0)
+                + std::atan2(bearing.x(), bearing.z()),
             2.0 * std::numbers::pi_v<double>);
         const Eigen::Matrix3d rotation_cam = yaw_rotation_matrix(yaw);
 
@@ -976,7 +1140,10 @@ private:
             return std::nullopt;
         }
 
-        const auto seed = solve_constrained_pose_seed(*correspondences);
+        auto seed = solve_visible_pose_seed(candidate, pairs, *correspondences);
+        if (!seed.has_value()) {
+            seed = solve_constrained_pose_seed(*correspondences);
+        }
         if (!seed.has_value()) {
             return std::nullopt;
         }
@@ -1041,11 +1208,10 @@ private:
         const OdomCameraTransform& T_odom_camera) const {
         candidate.estimated_center_image_px =
             estimate_candidate_center_image(pairs, candidate.pair_indices);
-        if (!face_sequence_is_consistent(
-                candidate.octagon_face_indices, candidate.reverse_assignment)) {
+        if (!face_sequence_is_consistent(candidate.octagon_face_indices)) {
             candidate.solved               = false;
             candidate.depth_valid          = false;
-            candidate.reprojection_rmse_px = std::numeric_limits<float>::infinity();
+            candidate.reprojection_rmse_px = std::numeric_limits<float>::quiet_NaN();
             candidate.score                = 0.35f * candidate.preliminary_score;
             return;
         }
@@ -1054,33 +1220,24 @@ private:
         if (!solution.has_value()) {
             candidate.solved               = false;
             candidate.depth_valid          = false;
-            candidate.reprojection_rmse_px = std::numeric_limits<float>::infinity();
+            candidate.reprojection_rmse_px = std::numeric_limits<float>::quiet_NaN();
             candidate.score                = 0.35f * candidate.preliminary_score;
             return;
         }
 
-        // Hard geometric constraint: the octagon center MUST be behind every assigned face.
-        // If PnP/Ceres converged to a center on the near side of any face (between camera
-        // and the faces), the candidate is physically impossible — reject it immediately.
-        // This eliminates the "mirror" solution ambiguity for near-planar correspondences.
-        {
-            const double min_behind_m =
-                std::max(1e-3, octagon_face_center_radius_m(config_.geometry) * 0.5);
-            for (const int face_idx : candidate.octagon_face_indices) {
-                const auto mp = pair_model_points_for_face(config_.geometry, face_idx);
-                const Eigen::Vector3d face_center_model(
-                    0.5 * static_cast<double>(mp[0].x + mp[1].x),
-                    0.5 * static_cast<double>(mp[0].y + mp[1].y),
-                    0.5 * static_cast<double>(mp[0].z + mp[1].z));
-                const Eigen::Vector3d face_center_cam =
-                    solution->rotation_cam * face_center_model + solution->center_cam;
-                if (solution->center_cam.z() - face_center_cam.z() < min_behind_m) {
-                    candidate.solved               = false;
-                    candidate.depth_valid          = false;
-                    candidate.reprojection_rmse_px = std::numeric_limits<float>::infinity();
-                    candidate.score                = 0.35f * candidate.preliminary_score;
-                    return;
-                }
+        bool center_behind_faces         = true;
+        constexpr double kMinBehindFaceM = 1e-3;
+        for (const int face_idx : candidate.octagon_face_indices) {
+            const auto mp = pair_model_points_for_face(config_.geometry, face_idx);
+            const Eigen::Vector3d face_center_model(
+                0.5 * static_cast<double>(mp[0].x + mp[1].x),
+                0.5 * static_cast<double>(mp[0].y + mp[1].y),
+                0.5 * static_cast<double>(mp[0].z + mp[1].z));
+            const Eigen::Vector3d face_center_cam =
+                solution->rotation_cam * face_center_model + solution->center_cam;
+            if (solution->center_cam.z() - face_center_cam.z() < kMinBehindFaceM) {
+                center_behind_faces = false;
+                break;
             }
         }
 
@@ -1111,10 +1268,12 @@ private:
         const float rmse_term = std::exp(
             -candidate.reprojection_rmse_px
             / static_cast<float>(std::max(1.0, config_.rmse_constrained_threshold_px)));
-        const float depth_bonus = candidate.depth_valid ? 0.22f : -0.10f;
-        candidate.score         = std::clamp(
+        const float depth_bonus    = candidate.depth_valid ? 0.22f : -0.10f;
+        const float geometry_bonus = center_behind_faces ? 0.0f : -0.18f;
+        candidate.score            = std::clamp(
             0.32f * candidate.preliminary_score + 0.20f * pair_term + 0.18f * rmse_term
-                + 0.15f * vertical_axis_term + 0.15f * face_visibility_term + depth_bonus,
+                + 0.15f * vertical_axis_term + 0.15f * face_visibility_term + depth_bonus
+                + geometry_bonus,
             0.0f, 1.2f);
     }
 

@@ -234,9 +234,8 @@ fcs::L2::ldm::LdmDetection make_detection_from_pairs(
     return detection;
 }
 
-fcs::L2::ldm::LdmDetection make_detection_with_assigned_faces(
-    std::vector<fcs::L2::ldm::LightPair> pairs, std::vector<int> face_indices,
-    bool reverse_assignment) {
+fcs::L2::ldm::LdmDetection
+    make_detection_from_ordered_pairs(std::vector<fcs::L2::ldm::LightPair> pairs) {
     fcs::L2::ldm::LdmDetection detection;
     detection.color        = fcs::ArmorColor::Red;
     detection.timestamp_ns = 1234;
@@ -245,12 +244,10 @@ fcs::L2::ldm::LdmDetection make_detection_with_assigned_faces(
     detection.rect         = fcs::L2::ldm::bounding_rect_from_pairs(detection.pairs);
 
     fcs::L2::ldm::LdmMeshCandidate candidate;
-    candidate.cluster_id           = 0;
-    candidate.reverse_assignment   = reverse_assignment;
-    candidate.preliminary_score    = 1.0f;
-    candidate.octagon_face_indices = std::move(face_indices);
-    candidate.pair_indices.reserve(candidate.octagon_face_indices.size());
-    for (size_t i = 0; i < candidate.octagon_face_indices.size(); ++i) {
+    candidate.cluster_id        = 0;
+    candidate.preliminary_score = 1.0f;
+    candidate.pair_indices.reserve(detection.pairs.size());
+    for (size_t i = 0; i < detection.pairs.size(); ++i) {
         candidate.pair_indices.push_back(static_cast<int>(i));
         candidate.estimated_center_image_px += detection.pairs[i].midpoint_px;
     }
@@ -364,7 +361,7 @@ TEST(LdmDetector, DetectsAllTwoPairDatasetImages) {
         if (!result.has_value() || !result->has_value()) {
             continue;
         }
-        EXPECT_EQ(result->value().pair_count(), 2u) << image_path;
+        EXPECT_GE(result->value().pair_count(), 2u) << image_path;
 
         bool has_two_pair_candidate = false;
         for (const auto& candidate : result->value().mesh_candidates) {
@@ -568,7 +565,7 @@ TEST(LdmSolver, CombinesMultipleMeshInfosIntoStableCenter) {
     EXPECT_TRUE(has_combined_four_pair_candidate);
 }
 
-TEST(LdmSolver, NonAdjacentMeshAssignmentIsRejected) {
+TEST(LdmSolver, NonAdjacentMeshAssignmentFallsBackToBestEffortPose) {
     const auto camera_config = make_test_camera_config();
     const auto ldm_config    = make_ldm_config();
     fcs::L2::ldm::LdmSolver solver(camera_config, ldm_config);
@@ -587,8 +584,14 @@ TEST(LdmSolver, NonAdjacentMeshAssignmentIsRejected) {
     };
 
     const auto result = solver.solve(detection, aligned_odom_camera_transform());
-    ASSERT_FALSE(result.has_value());
-    EXPECT_EQ(result.error(), fcs::L2::ldm::PnPError::NoCandidate);
+    ASSERT_TRUE(result.has_value());
+    ASSERT_TRUE(result->selected_candidate_idx.has_value());
+    const auto& selected =
+        result->mesh_candidates[static_cast<size_t>(*result->selected_candidate_idx)];
+    EXPECT_TRUE(selected.solved);
+    EXPECT_TRUE(selected.depth_valid);
+    EXPECT_EQ(result->depth_quality, fcs::L2::ldm::LdmDepthQuality::Constrained);
+    EXPECT_TRUE(std::isfinite(selected.reprojection_rmse_px));
 }
 
 TEST(LdmSolver, ThreeAxisPoseNearLimitStaysInsideBoundedStateSpace) {
@@ -607,10 +610,8 @@ TEST(LdmSolver, ThreeAxisPoseNearLimitStaysInsideBoundedStateSpace) {
 
     const Eigen::Matrix3d rotation = bounded_pose_rotation(yaw, pitch, roll);
     const Eigen::Vector3d translation(0.12, -0.05, 4.6);
-    auto detection = make_detection_with_assigned_faces(
-        make_projected_pairs_preserving_model_order(
-            {7, 0, 1, 2}, rotation, translation, camera_config, ldm_config),
-        {7, 0, 1, 2}, false);
+    auto detection = make_detection_from_ordered_pairs(make_projected_pairs_preserving_model_order(
+        {7, 0, 1, 2}, rotation, translation, camera_config, ldm_config));
 
     const auto result = solver.solve(detection, aligned_odom_camera_transform());
     ASSERT_TRUE(result.has_value());
@@ -631,7 +632,7 @@ TEST(LdmSolver, ThreeAxisPoseNearLimitStaysInsideBoundedStateSpace) {
     EXPECT_LE(std::abs((*angles)[2]), ldm_config.max_pose_angle_rad + 1e-9);
 }
 
-TEST(LdmSolver, PoseOutsideBoundedStateSpaceIsRejected) {
+TEST(LdmSolver, PoseOutsideBoundedStateSpaceProducesBestEffortOnly) {
     const auto camera_config                 = make_test_camera_config();
     auto ldm_config                          = make_ldm_config();
     ldm_config.rmse_stable_threshold_px      = 0.25;
@@ -640,14 +641,18 @@ TEST(LdmSolver, PoseOutsideBoundedStateSpaceIsRejected) {
 
     const Eigen::Matrix3d rotation = bounded_pose_rotation(0.15, 1.35, 0.10);
     const Eigen::Vector3d translation(0.02, -0.03, 4.3);
-    auto detection = make_detection_with_assigned_faces(
-        make_projected_pairs_preserving_model_order(
-            {7, 0, 1, 2}, rotation, translation, camera_config, ldm_config),
-        {7, 0, 1, 2}, false);
+    auto detection = make_detection_from_ordered_pairs(make_projected_pairs_preserving_model_order(
+        {7, 0, 1, 2}, rotation, translation, camera_config, ldm_config));
 
     const auto result = solver.solve(detection, aligned_odom_camera_transform());
-    ASSERT_FALSE(result.has_value());
-    EXPECT_EQ(result.error(), fcs::L2::ldm::PnPError::NoCandidate);
+    ASSERT_TRUE(result.has_value());
+    ASSERT_TRUE(result->selected_candidate_idx.has_value());
+    const auto& selected =
+        result->mesh_candidates[static_cast<size_t>(*result->selected_candidate_idx)];
+    EXPECT_TRUE(selected.solved);
+    EXPECT_FALSE(selected.depth_valid);
+    EXPECT_EQ(result->depth_quality, fcs::L2::ldm::LdmDepthQuality::None);
+    EXPECT_TRUE(std::isfinite(selected.reprojection_rmse_px));
 }
 
 TEST(LdmSolver, DetectedDatasetTargetsHaveFiniteRmse) {
@@ -677,8 +682,11 @@ TEST(LdmSolver, DetectedDatasetTargetsHaveFiniteRmse) {
 
             const auto measurement =
                 solver.solve(detection_result->value(), aligned_odom_camera_transform());
-            ASSERT_TRUE(measurement.has_value())
-                << image_path << " error=" << static_cast<int>(measurement.error());
+            if (!measurement.has_value()) {
+                EXPECT_TRUE(false)
+                    << image_path << " error=" << static_cast<int>(measurement.error());
+                continue;
+            }
             ++solved_measurement_count;
 
             size_t solved_candidate_count = 0;

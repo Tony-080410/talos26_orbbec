@@ -32,7 +32,6 @@ struct LdmDetectorConfig {
     double min_preliminary_candidate_score_two_pair{0.87};
     double min_two_pair_mean_center_dy_px{12.0};
     int min_pairs_for_detection{2};
-    int max_pairs_per_candidate{4};
     double rmse_stable_threshold_px{8.0};
     double rmse_constrained_threshold_px{8.0};
     double max_pose_angle_rad{0.872664626};

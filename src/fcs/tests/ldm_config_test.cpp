@@ -33,7 +33,7 @@ TEST(LdmConfig, VisionBaseCarriesExpectedGeometryDefaults) {
     EXPECT_EQ(ldm.target_color, fcs::ArmorColor::Red);
     EXPECT_GE(ldm.min_blob_area_px, 1);
     EXPECT_GE(ldm.min_pairs_for_detection, 1);
-    EXPECT_EQ(ldm.max_pairs_per_candidate, 4);
+
     EXPECT_DOUBLE_EQ(ldm.rmse_stable_threshold_px, 8.0);
     EXPECT_DOUBLE_EQ(ldm.rmse_constrained_threshold_px, 8.0);
     EXPECT_DOUBLE_EQ(ldm.max_pose_angle_rad, 0.872664626);

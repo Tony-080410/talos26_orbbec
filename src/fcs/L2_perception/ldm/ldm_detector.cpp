@@ -29,7 +29,12 @@ namespace {
         return false;
     }
     if (candidate.preliminary_score < min_candidate_score(candidate, config)) {
-        return false;
+        // 3+ pairs: the 2D pair_group_score is unreliable for slanted-face
+        // projections (non-uniform gaps produce artificially low gap_consistency).
+        // Let the PnP solver judge, not a 2D heuristic.
+        if (candidate.pair_indices.size() < 3) {
+            return false;
+        }
     }
 
     if (candidate.pair_indices.size() <= 2) {
@@ -1140,6 +1145,97 @@ struct PairCandidate {
     return pairs;
 }
 
+/// Use the PCA-derived ordering and vertical-separation profile to assign faces
+/// relative to the visible face looking most directly at the camera.
+[[nodiscard]] bool assign_face_indices_for_candidate(
+    LdmMeshCandidate& candidate, const std::vector<LightPair>& pairs) {
+    if (candidate.pair_indices.size() < 2) {
+        return false;
+    }
+    if (candidate.pair_indices.size() != candidate.octagon_face_indices.size()) {
+        candidate.octagon_face_indices.resize(candidate.pair_indices.size());
+    }
+
+    struct Ordered {
+        int pair_idx;
+        float order;
+        float sep;
+    };
+    std::vector<Ordered> ordered;
+    ordered.reserve(pairs.size());
+
+    const int cluster_id = [&]() {
+        for (const int pidx : candidate.pair_indices) {
+            if (pidx < 0 || static_cast<size_t>(pidx) >= pairs.size()) {
+                continue;
+            }
+            return pairs[static_cast<size_t>(pidx)].cluster_id;
+        }
+        return -1;
+    }();
+
+    for (size_t pair_idx = 0; pair_idx < pairs.size(); ++pair_idx) {
+        if (cluster_id >= 0 && pairs[pair_idx].cluster_id != cluster_id) {
+            continue;
+        }
+        ordered.push_back(
+            {static_cast<int>(pair_idx), pairs[pair_idx].local_order_px,
+             pair_layer_separation_px(pairs[pair_idx])});
+    }
+    if (ordered.size() < 2) {
+        return false;
+    }
+    std::sort(ordered.begin(), ordered.end(), [](const Ordered& a, const Ordered& b) {
+        return a.order < b.order;
+    });
+
+    size_t front_idx = 0;
+    for (size_t i = 1; i < ordered.size(); ++i) {
+        if (ordered[i].sep > ordered[front_idx].sep) {
+            front_idx = i;
+        }
+    }
+
+    struct AssignedPair {
+        int pair_idx;
+        size_t rank;
+        int face;
+    };
+    std::vector<AssignedPair> assigned;
+    assigned.reserve(candidate.pair_indices.size());
+
+    for (size_t i = 0; i < candidate.pair_indices.size(); ++i) {
+        const auto rank_it = std::find_if(ordered.begin(), ordered.end(), [&](const Ordered& item) {
+            return item.pair_idx == candidate.pair_indices[i];
+        });
+        if (rank_it == ordered.end()) {
+            return false;
+        }
+        const size_t rank = static_cast<size_t>(std::distance(ordered.begin(), rank_it));
+        int face          = static_cast<int>(rank) - static_cast<int>(front_idx);
+        face %= 8;
+        if (face < 0) {
+            face += 8;
+        }
+        assigned.push_back(
+            AssignedPair{.pair_idx = candidate.pair_indices[i], .rank = rank, .face = face});
+    }
+
+    std::sort(assigned.begin(), assigned.end(), [](const auto& lhs, const auto& rhs) {
+        return lhs.rank < rhs.rank;
+    });
+
+    candidate.pair_indices.clear();
+    candidate.octagon_face_indices.clear();
+    candidate.pair_indices.reserve(assigned.size());
+    candidate.octagon_face_indices.reserve(assigned.size());
+    for (const auto& item : assigned) {
+        candidate.pair_indices.push_back(item.pair_idx);
+        candidate.octagon_face_indices.push_back(item.face);
+    }
+    return true;
+}
+
 [[nodiscard]] std::optional<LdmDetection>
     detect_laser_module(const cv::Mat& image, const LdmDetectorConfig& config, ArmorColor color) {
     auto blobs = detect_light_blobs(image, config, color);
@@ -1241,6 +1337,11 @@ struct PairCandidate {
         mesh_candidates.end());
     if (mesh_candidates.empty()) {
         return std::nullopt;
+    }
+
+    // Assign face indices relative to the visible face with the largest apparent height.
+    for (auto& candidate : mesh_candidates) {
+        (void)assign_face_indices_for_candidate(candidate, selected_pairs);
     }
 
     LdmDetection detection;

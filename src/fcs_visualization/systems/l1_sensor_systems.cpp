@@ -13,6 +13,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstddef>
 #include <deque>
 #include <memory>
@@ -374,10 +375,12 @@ void register_l1_sensor_systems(talos::scheduler::Scheduler& app) {
                         }
                         faces_text += std::to_string(selected.octagon_face_indices[i]);
                     }
+                    const std::string rmse_text =
+                        std::isfinite(selected.reprojection_rmse_px)
+                            ? fmt::format("{:.2f}", selected.reprojection_rmse_px)
+                            : "n/a";
                     cv::putText(
-                        img_bgr,
-                        fmt::format(
-                            "ldm faces={} rmse={:.2f}", faces_text, selected.reprojection_rmse_px),
+                        img_bgr, fmt::format("ldm faces={} rmse={}", faces_text, rmse_text),
                         cv::Point(
                             static_cast<int>(ldm_rect.x),
                             std::max(20, static_cast<int>(ldm_rect.y) - 28)),

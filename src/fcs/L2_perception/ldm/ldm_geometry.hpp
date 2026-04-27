@@ -113,10 +113,16 @@ namespace fcs::L2::ldm {
         const float std_gap = std::sqrt(sq_sum / static_cast<float>(gaps.size()));
         const float gap_cv  = std_gap / mean_gap;
         if (gap_cv > static_cast<float>(config.max_gap_cv)) {
-            return 0.0f;
+            if (length < 3) {
+                return 0.0f;
+            }
+            // 3+ pairs: non-uniform gaps are expected for slanted-face projections.
+            // Let the PnP solver judge instead of filtering here.
+            gap_consistency = 0.1f;
+        } else {
+            gap_consistency =
+                std::max(0.0f, 1.0f - 0.5f * gap_cv / static_cast<float>(config.max_gap_cv));
         }
-        gap_consistency =
-            std::max(0.0f, 1.0f - 0.5f * gap_cv / static_cast<float>(config.max_gap_cv));
     }
 
     if (mean_pair_layer > 1e-3f) {
@@ -156,7 +162,6 @@ namespace fcs::L2::ldm {
         }
     }
 
-    const size_t max_pairs = static_cast<size_t>(std::max(1, config.max_pairs_per_candidate));
     for (const int cluster_id : cluster_ids) {
         std::vector<int> ordered_pair_indices;
         ordered_pair_indices.reserve(pairs.size());
@@ -169,37 +174,28 @@ namespace fcs::L2::ldm {
             continue;
         }
 
+        // Sort by PCA-derived local_order_px; this is the physical sequence
+        // along the octagon arc. One cluster becomes one candidate using all pairs.
+        // Face indices are assigned later by assign_face_indices_for_candidate
+        // using the local_layer_sep_px cos profile; no sliding window needed.
         std::sort(ordered_pair_indices.begin(), ordered_pair_indices.end(), [&](int lhs, int rhs) {
             return pairs[static_cast<size_t>(lhs)].local_order_px
                  < pairs[static_cast<size_t>(rhs)].local_order_px;
         });
 
-        const size_t limit = std::min(ordered_pair_indices.size(), max_pairs);
-        for (size_t length = limit; length >= 1; --length) {
-            for (size_t start = 0; start + length <= ordered_pair_indices.size(); ++start) {
-                LdmMeshCandidate candidate;
-                candidate.cluster_id =
-                    pairs[static_cast<size_t>(ordered_pair_indices[start])].cluster_id;
-                candidate.preliminary_score =
-                    pair_group_score(pairs, ordered_pair_indices, start, length, config);
-                if (candidate.preliminary_score <= 0.0f) {
-                    continue;
-                }
-
-                candidate.pair_indices.reserve(length);
-                for (size_t i = 0; i < length; ++i) {
-                    const int pair_idx = ordered_pair_indices[start + i];
-                    const auto& pair   = pairs[static_cast<size_t>(pair_idx)];
-                    candidate.pair_indices.push_back(pair_idx);
-                    candidate.estimated_center_image_px += pair.midpoint_px;
-                }
-                candidate.estimated_center_image_px *= (1.0f / static_cast<float>(length));
-                candidates.push_back(std::move(candidate));
+        LdmMeshCandidate candidate;
+        candidate.cluster_id   = cluster_id;
+        candidate.pair_indices = ordered_pair_indices;
+        candidate.preliminary_score =
+            pair_group_score(pairs, ordered_pair_indices, 0, ordered_pair_indices.size(), config);
+        if (candidate.preliminary_score > 0.0f) {
+            cv::Point2f center(0.0f, 0.0f);
+            for (const int pidx : ordered_pair_indices) {
+                center += pairs[static_cast<size_t>(pidx)].midpoint_px;
             }
-
-            if (length == 1) {
-                break;
-            }
+            candidate.estimated_center_image_px =
+                center * (1.0f / static_cast<float>(ordered_pair_indices.size()));
+            candidates.push_back(std::move(candidate));
         }
     }
 

@@ -68,11 +68,10 @@ struct LdmMeshCandidate {
     std::vector<int> pair_indices{};
     std::vector<int> octagon_face_indices{};
     int cluster_id{-1};
-    bool reverse_assignment{false};
     bool solved{false};
     bool depth_valid{false};
     float preliminary_score{0.0f};
-    float reprojection_rmse_px{std::numeric_limits<float>::infinity()};
+    float reprojection_rmse_px{std::numeric_limits<float>::quiet_NaN()};
     float score{0.0f};
     cv::Point2f estimated_center_image_px{};
     LdmCandidatePose pose{};
