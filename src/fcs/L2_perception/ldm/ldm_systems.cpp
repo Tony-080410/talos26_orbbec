@@ -65,9 +65,6 @@ void register_ldm_systems(
             if (tf_lookup) {
                 auto meas_result = solver_ptr->solve(detection, *tf_lookup);
                 if (meas_result) {
-                    detection.mesh_candidates        = meas_result->mesh_candidates;
-                    detection.selected_candidate_idx = meas_result->selected_candidate_idx;
-                    detection.center_image_px        = meas_result->center_image_px;
                     measurement_out.write(std::move(*meas_result));
                 }
             }

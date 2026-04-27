@@ -47,14 +47,12 @@ public:
             return std::unexpected(PnPError::InvalidDetection);
         }
 
-        auto preliminary_candidates = detection.mesh_candidates;
-        if (preliminary_candidates.empty()) {
-            preliminary_candidates = build_preliminary_mesh_candidates(detection.pairs, config_);
-        }
+        auto preliminary_candidates = build_preliminary_mesh_candidates(detection.pairs, config_);
         if (preliminary_candidates.empty()) {
             return std::unexpected(PnPError::NoCandidate);
         }
 
+        // ── Phase 1: Evaluate all candidates ──
         std::vector<LdmMeshCandidate> evaluated_candidates;
         evaluated_candidates.reserve(preliminary_candidates.size() * 16);
 
@@ -75,11 +73,13 @@ public:
             return std::unexpected(PnPError::NoCandidate);
         }
 
+        // ── Phase 2: Build combined candidates ──
         auto combined_candidates =
             build_combined_candidates(evaluated_candidates, detection.pairs, T_odom_camera);
         evaluated_candidates.insert(
             evaluated_candidates.end(), combined_candidates.begin(), combined_candidates.end());
 
+        // ── Phase 3: Select best candidate ──
         std::optional<size_t> best_idx;
         for (size_t i = 0; i < evaluated_candidates.size(); ++i) {
             const auto& candidate = evaluated_candidates[i];
@@ -92,6 +92,7 @@ public:
             return std::unexpected(PnPError::NoCandidate);
         }
 
+        // ── Phase 4: Build output measurement ──
         const size_t selected_idx = *best_idx;
         const auto selected       = evaluated_candidates[selected_idx];
 
@@ -890,7 +891,8 @@ private:
     }
 
     [[nodiscard]] std::optional<BoundedPoseSeed> refine_pose_seed(
-        const CandidateCorrespondences& correspondences, const BoundedPoseSeed& seed) const {
+        const CandidateCorrespondences& correspondences, const BoundedPoseSeed& seed,
+        bool lock_yaw = false) const {
         const double max_angle = pose_angle_limit(config_.max_pose_angle_rad);
         double angles[3]       = {
             std::remainder(seed.yaw, 2.0 * std::numbers::pi_v<double>),
@@ -905,8 +907,16 @@ private:
                     correspondences.obj_points[i], correspondences.normalized_points[i]),
                 new ceres::HuberLoss(0.005), angles, translation);
         }
-        problem.SetParameterLowerBound(angles, 0, -std::numbers::pi_v<double>);
-        problem.SetParameterUpperBound(angles, 0, std::numbers::pi_v<double>);
+        if (lock_yaw) {
+            // Yaw is geometrically determined by face assignment — narrow band
+            // for noise smoothing without allowing visibility-breaking drift.
+            constexpr double kYawBand = 0.1;
+            problem.SetParameterLowerBound(angles, 0, seed.yaw - kYawBand);
+            problem.SetParameterUpperBound(angles, 0, seed.yaw + kYawBand);
+        } else {
+            problem.SetParameterLowerBound(angles, 0, -std::numbers::pi_v<double>);
+            problem.SetParameterUpperBound(angles, 0, std::numbers::pi_v<double>);
+        }
         problem.SetParameterLowerBound(angles, 1, -max_angle);
         problem.SetParameterUpperBound(angles, 1, max_angle);
         problem.SetParameterLowerBound(angles, 2, -max_angle);
@@ -1022,14 +1032,11 @@ private:
             return std::nullopt;
         }
 
-        auto refined = refine_pose_seed(correspondences, seed);
+        // Yaw is locked — only pitch/roll/translation are refined.  The yaw
+        // from face assignment (adjacent faces at 45° is ground truth) must
+        // not drift, otherwise observed faces become invisible.
+        auto refined = refine_pose_seed(correspondences, seed, true);
         if (!refined.has_value()) {
-            return std::nullopt;
-        }
-        if (!visible_face_score(
-                 candidate, bounded_pose_rotation(refined->yaw, refined->pitch, refined->roll),
-                 refined->translation)
-                 .has_value()) {
             return std::nullopt;
         }
         return refined;
@@ -1170,8 +1177,12 @@ private:
             return std::nullopt;
         }
 
-        auto seed = solve_visible_pose_seed(candidate, pairs, *correspondences);
-        if (!seed.has_value()) {
+        // 3+ pairs: use PnP with full yaw search (more stable across distance).
+        // < 3 pairs: use face-assignment yaw (locked to avoid visibility drift).
+        auto seed = candidate.pair_indices.size() >= 3u
+                      ? solve_constrained_pose_seed(candidate, *correspondences)
+                      : solve_visible_pose_seed(candidate, pairs, *correspondences);
+        if (!seed.has_value() && candidate.pair_indices.size() < 3u) {
             seed = solve_constrained_pose_seed(candidate, *correspondences);
         }
         if (!seed.has_value()) {

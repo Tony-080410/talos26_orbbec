@@ -12,7 +12,6 @@
 #include <Eigen/Geometry>
 #include <magic_enum.hpp>
 #include <nlohmann/json.hpp>
-#include <numbers>
 
 namespace fcs::visualization::foxglove::systems {
 
@@ -38,39 +37,30 @@ constexpr uint64_t kLdmSceneLifetimeNs = 5'000'000;
 }
 
 // ============================================================================
-// Face visibility from camera (same method as 2D overlay)
+// Face visibility from mesh candidate assignment
 // ============================================================================
 
-/// @brief Determine which of the 8 octagon faces are visible from the camera.
+/// @brief Determine which octagon faces are visible based on the selected
+///        mesh candidate's face assignment. Faces that the detector observed
+///        (listed in `octagon_face_indices`) are always visible. Unobserved
+///        faces are invisible (dashed in the 3D scene).
 ///
-/// Uses the same face-outward-normal-dot-product logic as the 2D projected
-/// overlay in l1_sensor_systems.cpp. `cam_to_ldm` is the camera‑to‑LDM
-/// transform (i.e. `transform_cam` from the measurement).
-template <typename Transform>
-[[nodiscard]] std::array<bool, 8> ldm_volume_visible_faces(
-    const Transform& cam_to_ldm, const fcs::L2::ldm::LdmGeometryConfig& geometry) noexcept {
-    // Camera position in LDM local frame
-    const Eigen::Vector3d cam_local =
-        cam_to_ldm.rotation().transpose() * (-cam_to_ldm.translation());
-
-    const double R                = geometry.octagon_circumradius_m;
-    constexpr double kAngleOffset = std::numbers::pi_v<double> / 8.0;
-    constexpr double kStep        = std::numbers::pi_v<double> / 4.0;
-    const double inradius         = R * std::cos(kAngleOffset);
-
+/// This is the correct "state space" for the 3D scene: the mesh candidate
+/// itself tells us which faces were actually seen — there is no need for a
+/// separate geometric visibility check from the camera.
+[[nodiscard]] std::array<bool, 8>
+    ldm_volume_assigned_faces(const fcs::L2::ldm::LdmMeasurement& measurement) noexcept {
     std::array<bool, 8> visible{};
-    for (size_t i = 0; i < 8; ++i) {
-        const double angle = kAngleOffset + static_cast<double>(i) * kStep;
-        const Eigen::Vector3d local_normal(std::sin(angle), 0.0, -std::cos(angle));
-        const Eigen::Vector3d local_face_center = inradius * local_normal;
-
-        const Eigen::Vector3d dir_to_cam = cam_local - local_face_center;
-        const double dist                = dir_to_cam.norm();
-        if (!std::isfinite(dist) || dist <= 1e-9) {
-            visible[i] = false;
-            continue;
+    if (measurement.selected_candidate_idx.has_value() && *measurement.selected_candidate_idx >= 0
+        && static_cast<size_t>(*measurement.selected_candidate_idx)
+               < measurement.mesh_candidates.size()) {
+        const auto& selected =
+            measurement.mesh_candidates[static_cast<size_t>(*measurement.selected_candidate_idx)];
+        for (const int face_idx : selected.octagon_face_indices) {
+            if (face_idx >= 0 && face_idx < 8) {
+                visible[static_cast<size_t>(face_idx)] = true;
+            }
         }
-        visible[i] = local_normal.dot(dir_to_cam / dist) > 1e-6;
     }
     return visible;
 }
@@ -173,11 +163,9 @@ inline void add_ldm_volume_edges(
     const auto color = ldm_scene_color(measurement);
     const auto& pose = *measurement.transform_odom;
 
-    // Determine face visibility from the camera-to-LDM transform
-    const auto visible_faces =
-        measurement.transform_cam.has_value()
-            ? ldm_volume_visible_faces(*measurement.transform_cam, config.geometry)
-            : std::array<bool, 8>{true, true, true, true, true, true, true, true};
+    // Face visibility is determined by the selected mesh candidate's
+    // observed face indices — no separate geometric check needed.
+    const auto visible_faces = ldm_volume_assigned_faces(measurement);
 
     auto builder = viz::EntityBuilder::create<fast_tf::odom>("l2", "ldm");
     builder.timestamp(measurement.timestamp_ns)
@@ -213,9 +201,8 @@ inline void add_ldm_volume_edges(
     const auto color = ldm_scene_color(measurement);
     const auto& pose = *measurement.transform_cam;
 
-    const auto visible_faces =
-        ldm_volume_visible_faces(*measurement.transform_cam, config.geometry);
-    auto builder = viz::EntityBuilder::create<fast_tf::camera_optical>("l2", "ldm_cam");
+    const auto visible_faces = ldm_volume_assigned_faces(measurement);
+    auto builder             = viz::EntityBuilder::create<fast_tf::camera_optical>("l2", "ldm_cam");
     builder.timestamp(measurement.timestamp_ns)
         .lifetime(kLdmSceneLifetimeNs)
         .position(pose.translation())

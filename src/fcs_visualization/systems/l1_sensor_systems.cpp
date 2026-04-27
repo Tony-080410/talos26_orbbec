@@ -123,7 +123,7 @@ inline void draw_visibility_line(
 
     // Invisible (back-facing) edges: clearly visible dashed line so the user can distinguish
     const cv::Scalar dashed_color(color[0] * 0.7, color[1] * 0.7, color[2] * 0.7, color[3]);
-    draw_dashed_line(image, start, end, dashed_color, 2);
+    // draw_dashed_line(image, start, end, dashed_color, 2);
 }
 
 inline void draw_ldm_projected_outline(
@@ -372,56 +372,14 @@ void register_l1_sensor_systems(talos::scheduler::Scheduler& app) {
                 const cv::Scalar blob_color(0, 255, 0);
                 const cv::Scalar pair_color(255, 0, 255);
                 const cv::Scalar center_color(0, 255, 255);
-                cv::Rect2f ldm_rect     = ldm_det.rect;
-                bool drew_projected_box = false;
+                cv::Rect2f ldm_rect = ldm_det.rect;
 
-                if (ldm_det.selected_candidate_idx.has_value()
-                    && *ldm_det.selected_candidate_idx >= 0
-                    && static_cast<size_t>(*ldm_det.selected_candidate_idx)
-                           < ldm_det.mesh_candidates.size()) {
-                    const auto& selected =
-                        ldm_det
-                            .mesh_candidates[static_cast<size_t>(*ldm_det.selected_candidate_idx)];
-                    if (selected.projected_outline_image.size() == 16) {
-                        detail::draw_ldm_projected_outline(
-                            img_bgr, selected, ldm_config->geometry, box_color);
-                        ldm_rect =
-                            detail::projected_outline_bounds(selected.projected_outline_image);
-                        drew_projected_box = true;
-                    } else {
-                        std::vector<cv::Point2f> candidate_points;
-                        candidate_points.reserve(selected.pair_indices.size() * 2);
-                        for (const int pair_idx : selected.pair_indices) {
-                            if (pair_idx < 0
-                                || static_cast<size_t>(pair_idx) >= ldm_det.pairs.size()) {
-                                continue;
-                            }
-                            const auto& pair = ldm_det.pairs[static_cast<size_t>(pair_idx)];
-                            candidate_points.push_back(pair.top_center_px);
-                            candidate_points.push_back(pair.bottom_center_px);
-                        }
-                        if (!candidate_points.empty()) {
-                            ldm_rect = cv::boundingRect(candidate_points);
-                        }
-                    }
-                }
-
-                if (ldm_rect.width > 0.0f && ldm_rect.height > 0.0f) {
-                    if (!drew_projected_box) {
-                        cv::rectangle(img_bgr, ldm_rect, box_color, 2, cv::LINE_AA);
-                    }
-                    cv::putText(
-                        img_bgr, fmt::format("LDM {}", ldm_det.pairs.size()),
-                        cv::Point(
-                            static_cast<int>(ldm_rect.x),
-                            std::max(20, static_cast<int>(ldm_rect.y) - 8)),
-                        cv::FONT_HERSHEY_SIMPLEX, 0.55, box_color, 2, cv::LINE_AA);
-                }
-
+                // Draw blobs
                 for (const auto& blob : ldm_det.blobs) {
                     cv::rectangle(img_bgr, blob.rect, blob_color, 1, cv::LINE_AA);
                 }
 
+                // Draw pairs
                 for (size_t i = 0; i < ldm_det.pairs.size(); ++i) {
                     const auto& pair = ldm_det.pairs[i];
                     cv::line(
@@ -435,35 +393,26 @@ void register_l1_sensor_systems(talos::scheduler::Scheduler& app) {
                         cv::FONT_HERSHEY_SIMPLEX, 0.45, center_color, 1, cv::LINE_AA);
                 }
 
-                if (ldm_det.center_image_px.has_value()) {
-                    cv::drawMarker(
-                        img_bgr, *ldm_det.center_image_px, center_color, cv::MARKER_CROSS, 18, 2);
+                // Compute rect from pairs
+                {
+                    std::vector<cv::Point2f> pair_pts;
+                    for (const auto& pair : ldm_det.pairs) {
+                        pair_pts.push_back(pair.top_center_px);
+                        pair_pts.push_back(pair.bottom_center_px);
+                    }
+                    if (!pair_pts.empty()) {
+                        ldm_rect = cv::boundingRect(pair_pts);
+                    }
                 }
 
-                if (ldm_det.selected_candidate_idx.has_value()
-                    && *ldm_det.selected_candidate_idx >= 0
-                    && static_cast<size_t>(*ldm_det.selected_candidate_idx)
-                           < ldm_det.mesh_candidates.size()) {
-                    const auto& selected =
-                        ldm_det
-                            .mesh_candidates[static_cast<size_t>(*ldm_det.selected_candidate_idx)];
-                    std::string faces_text;
-                    for (size_t i = 0; i < selected.octagon_face_indices.size(); ++i) {
-                        if (!faces_text.empty()) {
-                            faces_text += ",";
-                        }
-                        faces_text += std::to_string(selected.octagon_face_indices[i]);
-                    }
-                    const std::string rmse_text =
-                        std::isfinite(selected.reprojection_rmse_px)
-                            ? fmt::format("{:.2f}", selected.reprojection_rmse_px)
-                            : "n/a";
+                if (ldm_rect.width > 0.0f && ldm_rect.height > 0.0f) {
+                    cv::rectangle(img_bgr, ldm_rect, box_color, 2, cv::LINE_AA);
                     cv::putText(
-                        img_bgr, fmt::format("ldm faces={} rmse={}", faces_text, rmse_text),
+                        img_bgr, fmt::format("LDM {}", ldm_det.pairs.size()),
                         cv::Point(
                             static_cast<int>(ldm_rect.x),
-                            std::max(20, static_cast<int>(ldm_rect.y) - 28)),
-                        cv::FONT_HERSHEY_SIMPLEX, 0.45, center_color, 1, cv::LINE_AA);
+                            std::max(20, static_cast<int>(ldm_rect.y) - 8)),
+                        cv::FONT_HERSHEY_SIMPLEX, 0.55, box_color, 2, cv::LINE_AA);
                 }
             }
 
@@ -490,6 +439,45 @@ void register_l1_sensor_systems(talos::scheduler::Scheduler& app) {
                             "cam=[{:.2f},{:.2f},{:.2f}]m", center.x(), center.y(), center.z()),
                         cv::Point(30, 56), cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(0, 255, 255),
                         1, cv::LINE_AA);
+                }
+
+                // Draw mesh projected outline and info from measurement
+                const auto& selected_idx = ldm_meas.selected_candidate_idx;
+                if (selected_idx.has_value() && *selected_idx >= 0
+                    && static_cast<size_t>(*selected_idx) < ldm_meas.mesh_candidates.size()) {
+                    const auto& selected =
+                        ldm_meas.mesh_candidates[static_cast<size_t>(*selected_idx)];
+                    if (selected.projected_outline_image.size() == 16) {
+                        detail::draw_ldm_projected_outline(
+                            img_bgr, selected, ldm_config->geometry, box_color);
+                    }
+
+                    // Draw center marker
+                    cv::drawMarker(
+                        img_bgr, ldm_meas.center_image_px, cv::Scalar(0, 255, 255),
+                        cv::MARKER_CROSS, 18, 2);
+
+                    // Faces and RMSE text
+                    std::string faces_text;
+                    for (size_t i = 0; i < selected.octagon_face_indices.size(); ++i) {
+                        if (!faces_text.empty()) {
+                            faces_text += ",";
+                        }
+                        faces_text += std::to_string(selected.octagon_face_indices[i]);
+                    }
+                    const std::string rmse_text =
+                        std::isfinite(selected.reprojection_rmse_px)
+                            ? fmt::format("{:.2f}", selected.reprojection_rmse_px)
+                            : "n/a";
+
+                    const cv::Rect2f meas_rect =
+                        detail::projected_outline_bounds(selected.projected_outline_image);
+                    cv::putText(
+                        img_bgr, fmt::format("ldm faces={} rmse={}", faces_text, rmse_text),
+                        cv::Point(
+                            static_cast<int>(meas_rect.x),
+                            std::max(20, static_cast<int>(meas_rect.y) - 8)),
+                        cv::FONT_HERSHEY_SIMPLEX, 0.45, cv::Scalar(0, 255, 255), 1, cv::LINE_AA);
                 }
             }
 
