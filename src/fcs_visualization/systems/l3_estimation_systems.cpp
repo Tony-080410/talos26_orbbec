@@ -1,14 +1,18 @@
+#include "L3_estimation/tracker/types.hpp"
 #include "L3_estimation/tracker/vis_helpers.hpp"
 #include "base.hpp"
 #include "foxglove_types.hpp"
 #include "scene_builder.hpp"
 
+#include "L2_perception/ldm/types.hpp"
+#include "L3_estimation/ldm_naive/types.hpp"
 #include "L3_estimation/tracker/util.hpp"
 #include "core/channel_topics.hpp"
 #include "core/types.hpp"
 #include "frame.hpp"
 
 #include <Eigen/Core>
+#include <Eigen/Geometry>
 #include <cmath>
 #include <magic_enum.hpp>
 #include <nlohmann/json.hpp>
@@ -29,6 +33,72 @@ namespace fcs::visualization::foxglove::systems {
     return fmt::format(
         "{}/{} · {}", magic_enum::enum_name(output.target_color),
         magic_enum::enum_name(output.target_name), magic_enum::enum_name(output.status));
+}
+
+[[nodiscard]] inline bool timestamp_close(
+    uint64_t lhs_timestamp_ns, uint64_t rhs_timestamp_ns, uint64_t max_skew_ns) noexcept {
+    const uint64_t skew = lhs_timestamp_ns > rhs_timestamp_ns ? lhs_timestamp_ns - rhs_timestamp_ns
+                                                              : rhs_timestamp_ns - lhs_timestamp_ns;
+    return skew <= max_skew_ns;
+}
+
+[[nodiscard]] inline std::string ldm_tracker_label(const ::fcs::L3::ldm::LdmState& state) {
+    return fmt::format("LDM · {}", magic_enum::enum_name(state.status));
+}
+
+[[nodiscard]] inline ::foxglove::schemas::SceneEntity
+    make_ldm_axes_entity(const ::fcs::L3::ldm::LdmState& state) {
+    constexpr double kAxisLength = 0.18;
+    constexpr double kThickness  = 0.006;
+
+    auto builder = viz::EntityBuilder::create<fast_tf::odom>("l3", "ldm_axes");
+    builder.timestamp(state.timestamp_ns)
+        .position(state.position)
+        .orientation(Eigen::Quaterniond(state.R_world_body));
+
+    builder.line_strip(
+        {viz::make_point3(0.0, 0.0, 0.0), viz::make_point3(kAxisLength, 0.0, 0.0)},
+        viz::make_color(1.0, 0.20, 0.20, 0.85), kThickness);
+    builder.line_strip(
+        {viz::make_point3(0.0, 0.0, 0.0), viz::make_point3(0.0, kAxisLength, 0.0)},
+        viz::make_color(0.50, 1.00, 0.30, 0.85), kThickness);
+    builder.line_strip(
+        {viz::make_point3(0.0, 0.0, 0.0), viz::make_point3(0.0, 0.0, kAxisLength)},
+        viz::make_color(0.00, 0.95, 0.90, 0.85), kThickness);
+
+    return builder.build();
+}
+
+[[nodiscard]] inline ::foxglove::schemas::SceneEntity
+    make_ldm_state_entity(const ::fcs::L3::ldm::LdmState& state) {
+    return viz::EntityBuilder::create<fast_tf::odom>("l3", "ldm_tracker")
+        .timestamp(state.timestamp_ns)
+        .position(state.position)
+        .orientation(Eigen::Quaterniond(state.R_world_body))
+        .color(tac::tracker_status_color(static_cast<int>(state.status)))
+        .cube(0.08, 0.08, 0.08)
+        .text_with_offset(
+            ldm_tracker_label(state), 0.0, 0.0, tac::L3::LABEL_OFFSET_Z, tac::Text::SIZE_SMALL)
+        .metadata("status", std::string(magic_enum::enum_name(state.status)))
+        .metadata(
+            "last_observation_timestamp_ns", std::to_string(state.last_observation_timestamp_ns))
+        .build();
+}
+
+[[nodiscard]] inline ::foxglove::schemas::SceneEntity
+    make_ldm_measurement_entity(const ::fcs::L2::ldm::LdmMeasurement& measurement) {
+    const auto& pose = *measurement.transform_odom;
+
+    return viz::EntityBuilder::create<fast_tf::odom>("l3", "ldm_measurement")
+        .timestamp(measurement.timestamp_ns)
+        .position(pose.translation())
+        .orientation(pose.quaternion())
+        .color(tac::L2::MEASUREMENT_GHOST)
+        .cube(0.05, 0.05, 0.05)
+        .text_with_offset("LDM meas", 0.0, 0.0, 0.08, tac::Text::SIZE_SMALL)
+        .metadata("confidence", fmt::format("{:.3f}", measurement.confidence))
+        .metadata("depth_quality", std::string(magic_enum::enum_name(measurement.depth_quality)))
+        .build();
 }
 
 /// @brief Register L3 estimation layer systems (tracking, association)
@@ -123,6 +193,40 @@ void register_l3_estimation_systems(talos::scheduler::Scheduler& app) {
             }
 
             publish_scene_if_nonempty<TrackSceneMessage>(*server, std::move(entities));
+        });
+
+    app.add_system<talos::pool_compute>(
+        "foxglove_l3_ldm_tracker_scene",
+        [](talos::spmc<::fcs::L3::ldm::LdmState> ldm_in,
+           talos::spmc<::fcs::L2::ldm::LdmMeasurement, LdmMeasurementChannelTopic> ldm_meas_in,
+           talos::res<std::shared_ptr<FoxgloveServer>> server) {
+            if (!detail::foxglove_ready(*server, ldm_in)) {
+                return;
+            }
+
+            const auto state = ldm_in.read();
+            if (!state || !state->is_tracking()) {
+                SPDLOG_INFO("{}", state ? state->status : L3::TrackerStatus::Idle);
+                return;
+            }
+
+            std::vector<::foxglove::schemas::SceneEntity> entities;
+            entities.push_back(make_ldm_state_entity(*state));
+            entities.push_back(make_ldm_axes_entity(*state));
+            entities.push_back(
+                viz::patterns::velocity_arrows<fast_tf::odom>(
+                    state->position, state->velocity_world, 0.0, state->timestamp_ns,
+                    "ldm_velocity"));
+
+            constexpr uint64_t kMaxMeasurementSkewNs = 200'000'000;
+            const auto measurement                   = ldm_meas_in.read_current();
+            if (measurement && measurement->transform_odom.has_value()
+                && timestamp_close(
+                    measurement->timestamp_ns, state->timestamp_ns, kMaxMeasurementSkewNs)) {
+                entities.push_back(make_ldm_measurement_entity(*measurement));
+            }
+
+            publish_scene_if_nonempty<LdmTrackSceneMessage>(*server, std::move(entities));
         });
 
     // =========================================================================

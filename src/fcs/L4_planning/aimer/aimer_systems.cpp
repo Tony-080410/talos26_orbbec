@@ -560,7 +560,7 @@ void register_aimer_systems(talos::Scheduler& scheduler, L4Config&& config) {
                 }
                 // FIXME read_current or read?
                 const auto ldm_state = ldm_in.read();
-                if (ldm_state) {
+                if (ldm_state && ldm_state->is_tracking()) {
                     aim_result = aimer->aim(
                         ldm_state.value(), gimbal, muzzle, current_ns, bullet_speed, solver_ref);
                 }
