@@ -2,6 +2,8 @@
 #include "L3_estimation/ldm_naive/types.hpp"
 #include "core/math/normalize.hpp"
 
+#include <groups/SEn3.hpp>
+
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -432,15 +434,31 @@ std::expected<TargetPrediction, std::string> Aimer::aim(
     const L3::ldm::LdmState& target, const GimbalTransform& gimbal, const MuzzleTransform& muzzle,
     uint64_t current_ns, double bullet_speed,
     const core::trajectory::solver::TrajectorySolver& solver) const noexcept {
+    return aim(target, gimbal, muzzle, current_ns, 0.0, bullet_speed, solver);
+}
+
+std::expected<TargetPrediction, std::string> Aimer::aim(
+    const L3::ldm::LdmState& target, const GimbalTransform& gimbal, const MuzzleTransform& muzzle,
+    uint64_t current_ns, double extra_prediction_delay, double bullet_speed,
+    const core::trajectory::solver::TrajectorySolver& solver) const noexcept {
 
     TargetPrediction output;
     output.target_type     = get_target_type<L3::ldm::LdmState>();
     output.timestamp_ns    = current_ns;
-    output.target_velocity = Eigen::Vector3d::Zero();
+    output.target_velocity = target.velocity_world();
     output.target_v_yaw    = 0.0;
 
-    output.predicted_position  = target.position;
-    output.predicted_future_ns = target.timestamp_ns;
+    // Use pre-computed predicted position from tracker, re-predicting with extra delay.
+    const double age_s =
+        static_cast<double>(
+            static_cast<int64_t>(current_ns) - static_cast<int64_t>(target.timestamp_ns))
+        * 1e-9;
+    const double total_delay   = age_s + config_.delay + extra_prediction_delay;
+    const auto X_pred          = predict_state(target, std::max(0.0, total_delay));
+    output.predicted_position  = X_pred.p();
+    output.target_velocity     = X_pred.R() * X_pred.v();
+    output.predicted_future_ns = target.timestamp_ns + static_cast<uint64_t>(total_delay * 1.0e9);
+
     const auto solution =
         solver.solve(output.predicted_position - muzzle.translation(), bullet_speed);
     if (!solution.is_valid()) {
@@ -455,6 +473,22 @@ std::expected<TargetPrediction, std::string> Aimer::aim(
     output.distance  = (output.predicted_position - muzzle.translation()).norm();
 
     return output;
+}
+
+group::SEn3<double, 2>
+    Aimer::predict_state(const L3::ldm::LdmState& target, double dt) const noexcept {
+    // SE2(3) right-perturbation: X̂₊ = X̂ * exp(xi),  xi = (dθ=0, dv=0, dp=v_body*dt)
+    using Nominal = group::SEn3<double, 2>;
+    using Xi      = Nominal::VectorType;
+
+    if (dt <= 0.0) {
+        return target.X;
+    }
+
+    Xi xi                     = Xi::Zero();
+    xi.template segment<3>(6) = target.X.v() * dt;
+
+    return target.X * Nominal::exp(xi);
 }
 
 } // namespace fcs::L4

@@ -4,6 +4,8 @@
 #include <expected>
 #include <string>
 
+#include <groups/SEn3.hpp>
+
 #include "L3_estimation/energy_meter/types.hpp"
 #include "L3_estimation/ldm_naive/types.hpp"
 #include "L3_estimation/tracker/types.hpp"
@@ -76,10 +78,17 @@ public:
             const MuzzleTransform& muzzle, uint64_t current_ns, double bullet_speed,
             const core::trajectory::solver::TrajectorySolver& solver) const noexcept;
 
-    /// Compute aim point for rune target (EnergyMeterState)
+    /// Compute aim point for LDM target
     [[nodiscard]] std::expected<TargetPrediction, std::string>
         aim(const L3::ldm::LdmState& state, const GimbalTransform& gimbal,
             const MuzzleTransform& muzzle, uint64_t current_ns, double bullet_speed,
+            const core::trajectory::solver::TrajectorySolver& solver) const noexcept;
+
+    /// Compute aim point for LDM target with extra prediction delay.
+    [[nodiscard]] std::expected<TargetPrediction, std::string>
+        aim(const L3::ldm::LdmState& state, const GimbalTransform& gimbal,
+            const MuzzleTransform& muzzle, uint64_t current_ns, double extra_prediction_delay,
+            double bullet_speed,
             const core::trajectory::solver::TrajectorySolver& solver) const noexcept;
 
 private:
@@ -153,6 +162,10 @@ private:
     /// Predict outpost target position at future time dt
     [[nodiscard]] Eigen::Vector3d
         predict_position(const L3::OutpostTargetState& target, double dt) const noexcept;
+
+    /// Predict LDM target SE2(3) at future time dt via right-perturbation: X̂₊ = X̂ * exp(xi).
+    [[nodiscard]] group::SEn3<double, 2>
+        predict_state(const L3::ldm::LdmState& target, double dt) const noexcept;
 
     [[nodiscard]] PredictedAimPoint predict_aim_point(
         const L3::RobotTargetState& target, double dt, const ArmorAimContext& context,

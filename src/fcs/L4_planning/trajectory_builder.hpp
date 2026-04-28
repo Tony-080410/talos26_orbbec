@@ -1,5 +1,6 @@
 #pragma once
 
+#include "L3_estimation/ldm_naive/types.hpp"
 #include "L4_planning/aimer/aimer.hpp"
 #include "L4_planning/config.hpp"
 #include "L4_planning/gimbal_planner/types.hpp"
@@ -39,5 +40,22 @@ struct TrajectoryBuildContext {
     build_reference_trajectory(
         const PlannerSeed& seed, const Aimer& aimer, const ReferenceTrajectoryConfig& horizon_cfg,
         const TrajectoryBuildContext& ctx) noexcept;
+
+/// Build a reference trajectory from an LDM target state.
+///
+/// Uses the LDM constant-velocity prediction model to iterate over the
+/// horizon, calling `Aimer::aim(const LdmState&, ...)` at each step.
+/// Produces a `ReferenceTrajectory` compatible with L5 weapon control.
+///
+/// ## Preconditions
+/// - `state.is_tracking()` must be true
+/// - `ctx.trajectory_solver` must be non-null
+///
+/// ## Thread safety
+/// NOT thread-safe. Do not call concurrently on shared data.
+[[nodiscard]] std::expected<core::trajectory::ReferenceTrajectory, std::string>
+    build_ldm_reference_trajectory(
+        const L3::ldm::LdmState& state, const Aimer& aimer,
+        const ReferenceTrajectoryConfig& horizon_cfg, const TrajectoryBuildContext& ctx) noexcept;
 
 } // namespace fcs::L4

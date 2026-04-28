@@ -53,8 +53,8 @@ namespace fcs::visualization::foxglove::systems {
 
     auto builder = viz::EntityBuilder::create<fast_tf::odom>("l3", "ldm_axes");
     builder.timestamp(state.timestamp_ns)
-        .position(state.position)
-        .orientation(Eigen::Quaterniond(state.R_world_body));
+        .position(state.position())
+        .orientation(Eigen::Quaterniond(state.rotation()));
 
     builder.line_strip(
         {viz::make_point3(0.0, 0.0, 0.0), viz::make_point3(kAxisLength, 0.0, 0.0)},
@@ -73,8 +73,8 @@ namespace fcs::visualization::foxglove::systems {
     make_ldm_state_entity(const ::fcs::L3::ldm::LdmState& state) {
     return viz::EntityBuilder::create<fast_tf::odom>("l3", "ldm_tracker")
         .timestamp(state.timestamp_ns)
-        .position(state.position)
-        .orientation(Eigen::Quaterniond(state.R_world_body))
+        .position(state.position())
+        .orientation(Eigen::Quaterniond(state.rotation()))
         .color(tac::tracker_status_color(static_cast<int>(state.status)))
         .cube(0.08, 0.08, 0.08)
         .text_with_offset(
@@ -215,7 +215,7 @@ void register_l3_estimation_systems(talos::scheduler::Scheduler& app) {
             entities.push_back(make_ldm_axes_entity(*state));
             entities.push_back(
                 viz::patterns::velocity_arrows<fast_tf::odom>(
-                    state->position, state->velocity_world, 0.0, state->timestamp_ns,
+                    state->position(), state->velocity_world(), 0.0, state->timestamp_ns,
                     "ldm_velocity"));
 
             constexpr uint64_t kMaxMeasurementSkewNs = 200'000'000;

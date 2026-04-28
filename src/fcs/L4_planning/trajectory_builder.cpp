@@ -1,6 +1,7 @@
 #include "L4_planning/trajectory_builder.hpp"
 #include "core/math/normalize.hpp"
 
+#include <fmt/core.h>
 #include <vector>
 
 namespace fcs::L4 {
@@ -136,6 +137,63 @@ template <typename TargetState>
         trajectory.positions[k]                = sample->position;
         trajectory.selected_armor_ids[k]       = sample->selected_armor_id;
         trajectory.rough_selected_armor_ids[k] = sample->rough_selected_armor_id;
+    }
+
+    trajectory.yaw_origin = yaw_samples[horizon_back];
+
+    for (int k = 0; k < horizon; ++k) {
+        trajectory.state(0, k) = normalize_angle(yaw_samples[k] - trajectory.yaw_origin);
+        trajectory.state(1, k) = finite_difference_angle(yaw_samples, k, dt);
+        trajectory.state(2, k) = pitch_samples[k];
+        trajectory.state(3, k) = finite_difference(pitch_samples, k, dt);
+    }
+
+    return trajectory;
+}
+
+[[nodiscard]] std::expected<ReferenceTrajectory, std::string> build_ldm_reference_trajectory(
+    const L3::ldm::LdmState& state, const Aimer& aimer,
+    const ReferenceTrajectoryConfig& horizon_cfg, const TrajectoryBuildContext& ctx) noexcept {
+
+    if (!state.is_tracking()) {
+        return std::unexpected("LDM target is not tracking");
+    }
+
+    const int horizon      = horizon_cfg.horizon_ahead + horizon_cfg.horizon_back + 1;
+    const int horizon_back = horizon_cfg.horizon_back;
+    const double dt        = horizon_cfg.dt;
+
+    ReferenceTrajectory trajectory{
+        .state                    = StateMatrix(4, horizon),
+        .distances                = std::vector<double>(horizon, 0.0),
+        .time_of_flights          = std::vector<double>(horizon, 0.0),
+        .positions                = std::vector<Eigen::Vector3d>(horizon, Eigen::Vector3d::Zero()),
+        .selected_armor_ids       = std::vector<int>(horizon, 0),
+        .rough_selected_armor_ids = std::vector<int>(horizon, 0),
+        .armor_type               = ArmorType::Invalid,
+    };
+
+    std::vector<double> yaw_samples(horizon, 0.0);
+    std::vector<double> pitch_samples(horizon, 0.0);
+
+    for (int k = 0; k < horizon; ++k) {
+        const double sample_offset = (static_cast<double>(k) - horizon_back) * dt;
+
+        const auto prediction = aimer.aim(
+            state, ctx.gimbal, ctx.muzzle, ctx.current_ns, sample_offset, ctx.bullet_speed,
+            *ctx.trajectory_solver);
+        if (!prediction) {
+            return std::unexpected(
+                fmt::format("LDM reference trajectory step {} failed: {}", k, prediction.error()));
+        }
+
+        yaw_samples[k]                         = prediction->aim_yaw;
+        pitch_samples[k]                       = prediction->aim_pitch;
+        trajectory.distances[k]                = prediction->distance;
+        trajectory.time_of_flights[k]          = prediction->flying_time;
+        trajectory.positions[k]                = prediction->predicted_position;
+        trajectory.selected_armor_ids[k]       = prediction->selected_armor_id;
+        trajectory.rough_selected_armor_ids[k] = prediction->rough_selected_armor_id;
     }
 
     trajectory.yaw_origin = yaw_samples[horizon_back];

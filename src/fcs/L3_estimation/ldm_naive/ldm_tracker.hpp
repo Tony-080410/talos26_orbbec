@@ -135,18 +135,32 @@ public:
             return std::nullopt;
         }
 
-        const auto& X = target_.nominal();
-
         LdmState output;
         output.timestamp_ns                  = last_timestamp_ns_;
         output.last_observation_timestamp_ns = last_observation_timestamp_ns_;
         output.status                        = status_;
         output.accurate                      = status_ == TrackerStatus::Tracking;
-        output.position                      = X.p();
-        output.R_world_body                  = X.R();
-        output.velocity_body                 = X.v();
-        output.velocity_world                = X.R() * X.v();
+        output.X                             = target_.nominal();
+
+        // Pre-compute predicted position for L4 aimer.
+        // The LDM model uses constant velocity (world-frame) motion.
+        // We predict 0.5s ahead by default; L4 will re-predict with its own delay.
+        constexpr double kPredictionHorizon = 0.5;
+        output.predicted_position_odom      = predict_position(kPredictionHorizon);
+        output.predicted_future_ns =
+            last_timestamp_ns_ + static_cast<uint64_t>(kPredictionHorizon * 1.0e9);
         return output;
+    }
+
+    /// Predict world-frame position at a future time using SEn3 Lie algebra.
+    /// Constructs xi = (dθ=0, dv=0, dp=v*dt), right-perturbs X̂ with exp(xi).
+    /// @param dt Time to look ahead (seconds).
+    [[nodiscard]] Eigen::Vector3d predict_position(double dt) const noexcept {
+        if (!target_.active() || dt <= 0.0) {
+            return target_.active() ? target_.nominal().p() : Eigen::Vector3d::Zero();
+        }
+        const Nominal X_pred = Model::predict_state(target_.nominal(), dt);
+        return X_pred.p();
     }
 
 private:

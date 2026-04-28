@@ -376,7 +376,8 @@ void register_aimer_systems(talos::Scheduler& scheduler, L4Config&& config) {
         "l4_aimer",
         [phase_states =
              std::unordered_map<core::TargetKey, TargetPhaseState, core::TargetKeyHash>{},
-         selected_target_key = std::optional<core::TargetKey>{}](
+         selected_target_key = std::optional<core::TargetKey>{},
+         ldm_state_cache     = std::optional<L3::ldm::LdmState>{}](
             talos::res<L4Config> cfg, talos::res<Aimer> aimer,
             core::trajectory::trajectory_solver solver,
             core::trajectory::bullet_speed bullet_speed_,
@@ -561,8 +562,12 @@ void register_aimer_systems(talos::Scheduler& scheduler, L4Config&& config) {
                 // FIXME read_current or read?
                 const auto ldm_state = ldm_in.read();
                 if (ldm_state && ldm_state->is_tracking()) {
-                    aim_result = aimer->aim(
-                        ldm_state.value(), gimbal, muzzle, current_ns, bullet_speed, solver_ref);
+                    ldm_state_cache = *ldm_state;
+                    aim_result      = aimer->aim(
+                        *ldm_state, gimbal, muzzle, current_ns, bullet_speed, solver_ref);
+                } else if (!aim_result) {
+                    // No valid LDM state — invalidate cache so stale state doesn't linger
+                    ldm_state_cache.reset();
                 }
             }
 
@@ -614,6 +619,9 @@ void register_aimer_systems(talos::Scheduler& scheduler, L4Config&& config) {
                 plan.source                  = (aim_result->target_type == AimerTargetType::Rune)
                                                  ? GimbalPlanSource::Rune
                                                  : GimbalPlanSource::Armor;
+                const bool is_ldm_target     = aim_result->target_type == AimerTargetType::Ldm
+                                        && ldm_state_cache.has_value()
+                                        && ldm_state_cache->is_tracking();
                 if (selected_candidate && selected_candidate->tracker.is_tracking()) {
                     PlannerSeed seed;
                     seed.state_timestamp_ns    = selected_candidate->tracker.timestamp_ns;
@@ -647,6 +655,23 @@ void register_aimer_systems(talos::Scheduler& scheduler, L4Config&& config) {
                             SPDLOG_WARN(
                                 "Failed to build reference trajectory: {}", ref_traj.error());
                         }
+                    }
+                } else if (is_ldm_target) {
+                    // Build reference trajectory for LDM target
+                    const TrajectoryBuildContext build_ctx{
+                        .current_ns        = current_ns,
+                        .gimbal            = gimbal,
+                        .muzzle            = muzzle,
+                        .trajectory_solver = &solver_ref,
+                        .bullet_speed      = bullet_speed,
+                    };
+                    auto ref_traj = build_ldm_reference_trajectory(
+                        *ldm_state_cache, *aimer, cfg->reference_trajectory, build_ctx);
+                    if (ref_traj) {
+                        plan.reference_trajectory = std::move(*ref_traj);
+                    } else {
+                        SPDLOG_WARN(
+                            "Failed to build LDM reference trajectory: {}", ref_traj.error());
                     }
                 }
                 selected_target_out.write(std::move(selected_target));
