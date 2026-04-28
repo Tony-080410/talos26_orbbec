@@ -574,6 +574,61 @@ void register_l3_estimation_systems(talos::scheduler::Scheduler& app) {
                 reinterpret_cast<const std::byte*>(compressed.data() + compressed.size()));
             (*server)->enqueue_message(std::move(msg));
         });
+
+    // =========================================================================
+    // LDM TRACKER STATE JSON PUBLISHER
+    // =========================================================================
+
+    app.add_system<talos::pool_compute>(
+        "foxglove_l3_ldm_tracker_json", [](talos::spmc<::fcs::L3::ldm::LdmState> ldm_in,
+                                           talos::res<std::shared_ptr<FoxgloveServer>> server) {
+            if (!detail::foxglove_ready(*server, ldm_in)) {
+                return;
+            }
+
+            const auto state = ldm_in.read();
+            if (!state) {
+                return;
+            }
+
+            nlohmann::json j;
+            j["timestamp_ns"]                  = state->timestamp_ns;
+            j["last_observation_timestamp_ns"] = state->last_observation_timestamp_ns;
+            j["timestamp"]                     = nlohmann::json::object();
+            j["timestamp"]["sec"]              = state->timestamp_ns / 1000000000L;
+            j["timestamp"]["nsec"]             = state->timestamp_ns % 1000000000L;
+            j["status"]                        = std::string(magic_enum::enum_name(state->status));
+            j["accurate"]                      = state->accurate;
+
+            // Position (world frame)
+            j["position"] = {state->position().x(), state->position().y(), state->position().z()};
+
+            // Rotation matrix (flattened row-major)
+            const auto& R = state->rotation();
+            j["rotation"] = nlohmann::json::array();
+            for (int row = 0; row < 3; ++row) {
+                for (int col = 0; col < 3; ++col) {
+                    j["rotation"].push_back(R(row, col));
+                }
+            }
+
+            // Body-frame velocity
+            j["velocity_body"] = {
+                state->velocity_body().x(), state->velocity_body().y(), state->velocity_body().z()};
+
+            // World-frame velocity
+            j["velocity_world"] = {
+                state->velocity_world().x(), state->velocity_world().y(),
+                state->velocity_world().z()};
+
+            // Predicted position
+            j["predicted_position_odom"] = {
+                state->predicted_position_odom.x(), state->predicted_position_odom.y(),
+                state->predicted_position_odom.z()};
+            j["predicted_future_ns"] = state->predicted_future_ns;
+
+            detail::publish_json_message<LdmStateMessage>(*server, j);
+        });
 }
 
 } // namespace fcs::visualization::foxglove::systems

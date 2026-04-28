@@ -64,6 +64,9 @@ struct FoxgloveChannels {
     JsonCh pnp_solver_ch;
     JsonCh nn_confidence_ch;
     JsonCh energy_meter_ch;
+    JsonCh ldm_detection_ch;
+    JsonCh ldm_measurement_ch;
+    JsonCh ldm_state_ch;
 
     // Special
     TfCh tf_ch;
@@ -334,6 +337,33 @@ struct energy_meter_def {
     static constexpr std::string_view encoding = "json";
 };
 
+struct ldm_detection_def {
+    static constexpr std::string_view topic    = "/ldm/detection";
+    using channel_type                         = ::foxglove::RawChannel;
+    using payload_type                         = std::vector<uint8_t>;
+    static constexpr auto member               = &FoxgloveChannels::ldm_detection_ch;
+    static constexpr bool is_raw               = true;
+    static constexpr std::string_view encoding = "json";
+};
+
+struct ldm_measurement_def {
+    static constexpr std::string_view topic    = "/ldm/measurement";
+    using channel_type                         = ::foxglove::RawChannel;
+    using payload_type                         = std::vector<uint8_t>;
+    static constexpr auto member               = &FoxgloveChannels::ldm_measurement_ch;
+    static constexpr bool is_raw               = true;
+    static constexpr std::string_view encoding = "json";
+};
+
+struct ldm_state_def {
+    static constexpr std::string_view topic    = "/ldm/state";
+    using channel_type                         = ::foxglove::RawChannel;
+    using payload_type                         = std::vector<uint8_t>;
+    static constexpr auto member               = &FoxgloveChannels::ldm_state_ch;
+    static constexpr bool is_raw               = true;
+    static constexpr std::string_view encoding = "json";
+};
+
 // --- Special channels ---
 
 struct tf_def {
@@ -370,7 +400,8 @@ using ChannelRegistry = std::tuple<
     binary_img_def, pattern_img_def, rune_arrow_img_def, rune_target_img_def, rune_center_img_def,
     ekf_heatmap_def, debug_lights_def, debug_armors_def, measurement_def, target_def,
     target_selection_trace_def, cmd_gimbal_def, perf_stats_def, mpc_traj_def, rune_debug_def,
-    pnp_solver_def, nn_confidence_def, energy_meter_def, tf_def, calib_def, log_def>;
+    pnp_solver_def, nn_confidence_def, energy_meter_def, ldm_detection_def, ldm_measurement_def,
+    ldm_state_def, tf_def, calib_def, log_def>;
 
 // ============================================================================
 // FoxgloveMsg — unified message type
@@ -413,6 +444,9 @@ using RuneDebugMessage            = FoxgloveMsg<rune_debug_def>;
 using PnPSolverMessage            = FoxgloveMsg<pnp_solver_def>;
 using NNConfidenceMessage         = FoxgloveMsg<nn_confidence_def>;
 using EnergyMeterMessage          = FoxgloveMsg<energy_meter_def>;
+using LdmDetectionMessage         = FoxgloveMsg<ldm_detection_def>;
+using LdmMeasurementMessage       = FoxgloveMsg<ldm_measurement_def>;
+using LdmStateMessage             = FoxgloveMsg<ldm_state_def>;
 using TfMessage                   = FoxgloveMsg<tf_def>;
 using LogMessage                  = FoxgloveMsg<log_def>;
 

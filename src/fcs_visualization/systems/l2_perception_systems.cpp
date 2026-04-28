@@ -381,6 +381,128 @@ void register_l2_perception_systems(talos::scheduler::Scheduler& app) {
         });
 
     // =========================================================================
+    // LDM DETECTION JSON PUBLISHER
+    // =========================================================================
+
+    app.add_system<talos::pool_compute>(
+        "foxglove_l2_ldm_detection_json",
+        [](talos::spmc<fcs::L2::ldm::LdmDetection, LdmDetectionChannelTopic> det_in,
+           talos::res<std::shared_ptr<FoxgloveServer>> server) {
+            if (!detail::foxglove_ready(*server, det_in)) {
+                return;
+            }
+
+            auto det = det_in.read();
+            if (!det) {
+                return;
+            }
+
+            nlohmann::json j;
+            j["timestamp_ns"]      = det->timestamp_ns;
+            j["frame_id"]          = det->frame_id;
+            j["timestamp"]         = nlohmann::json::object();
+            j["timestamp"]["sec"]  = det->timestamp_ns / 1000000000L;
+            j["timestamp"]["nsec"] = det->timestamp_ns % 1000000000L;
+            j["color"]             = std::string(magic_enum::enum_name(det->color));
+            j["rect"]              = nlohmann::json::object();
+            j["rect"]["x"]         = det->rect.x;
+            j["rect"]["y"]         = det->rect.y;
+            j["rect"]["w"]         = det->rect.width;
+            j["rect"]["h"]         = det->rect.height;
+
+            if (det->center_image_px.has_value()) {
+                j["center_image_px"]      = nlohmann::json::object();
+                j["center_image_px"]["x"] = det->center_image_px->x;
+                j["center_image_px"]["y"] = det->center_image_px->y;
+            }
+
+            j["blob_count"]      = det->blobs.size();
+            j["pair_count"]      = det->pairs.size();
+            j["candidate_count"] = det->mesh_candidates.size();
+
+            j["candidates"] = nlohmann::json::array();
+            for (const auto& cand : det->mesh_candidates) {
+                nlohmann::json cj;
+                cj["cluster_id"]           = cand.cluster_id;
+                cj["solved"]               = cand.solved;
+                cj["depth_valid"]          = cand.depth_valid;
+                cj["preliminary_score"]    = cand.preliminary_score;
+                cj["reprojection_rmse_px"] = cand.reprojection_rmse_px;
+                cj["score"]                = cand.score;
+                cj["pair_count"]           = cand.pair_indices.size();
+                cj["face_indices"]         = nlohmann::json::array();
+                for (const int fi : cand.octagon_face_indices) {
+                    cj["face_indices"].push_back(fi);
+                }
+                j["candidates"].push_back(cj);
+            }
+
+            if (det->selected_candidate_idx.has_value()) {
+                j["selected_candidate_idx"] = *det->selected_candidate_idx;
+            }
+
+            detail::publish_json_message<LdmDetectionMessage>(*server, j);
+        });
+
+    // =========================================================================
+    // LDM MEASUREMENT JSON PUBLISHER
+    // =========================================================================
+
+    app.add_system<talos::pool_compute>(
+        "foxglove_l2_ldm_measurement_json",
+        [](talos::spmc<fcs::L2::ldm::LdmMeasurement, LdmMeasurementChannelTopic> meas_in,
+           talos::res<std::shared_ptr<FoxgloveServer>> server) {
+            if (!detail::foxglove_ready(*server, meas_in)) {
+                return;
+            }
+
+            auto meas = meas_in.read();
+            if (!meas) {
+                return;
+            }
+
+            nlohmann::json j;
+            j["timestamp_ns"]         = meas->timestamp_ns;
+            j["frame_id"]             = meas->frame_id;
+            j["timestamp"]            = nlohmann::json::object();
+            j["timestamp"]["sec"]     = meas->timestamp_ns / 1000000000L;
+            j["timestamp"]["nsec"]    = meas->timestamp_ns % 1000000000L;
+            j["color"]                = std::string(magic_enum::enum_name(meas->color));
+            j["pair_count_total"]     = meas->pair_count_total;
+            j["selected_pair_count"]  = meas->selected_pair_count;
+            j["center_image_px"]      = nlohmann::json::object();
+            j["center_image_px"]["x"] = meas->center_image_px.x;
+            j["center_image_px"]["y"] = meas->center_image_px.y;
+            j["bearing_cam"]          = {
+                meas->bearing_cam.x(), meas->bearing_cam.y(), meas->bearing_cam.z()};
+            j["depth_quality"]   = std::string(magic_enum::enum_name(meas->depth_quality));
+            j["confidence"]      = meas->confidence;
+            j["candidate_count"] = meas->mesh_candidates.size();
+
+            if (meas->selected_candidate_idx.has_value()) {
+                j["selected_candidate_idx"] = *meas->selected_candidate_idx;
+            }
+
+            if (meas->transform_cam.has_value()) {
+                const auto& t                     = meas->transform_cam->translation();
+                const auto& q                     = meas->transform_cam->quaternion();
+                j["transform_cam"]                = nlohmann::json::object();
+                j["transform_cam"]["position"]    = {t.x(), t.y(), t.z()};
+                j["transform_cam"]["orientation"] = {q.x(), q.y(), q.z(), q.w()};
+            }
+
+            if (meas->transform_odom.has_value()) {
+                const auto& t                      = meas->transform_odom->translation();
+                const auto& q                      = meas->transform_odom->quaternion();
+                j["transform_odom"]                = nlohmann::json::object();
+                j["transform_odom"]["position"]    = {t.x(), t.y(), t.z()};
+                j["transform_odom"]["orientation"] = {q.x(), q.y(), q.z(), q.w()};
+            }
+
+            detail::publish_json_message<LdmMeasurementMessage>(*server, j);
+        });
+
+    // =========================================================================
     // MEASUREMENT JSON PUBLISHER
     // =========================================================================
 
