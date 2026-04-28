@@ -113,7 +113,7 @@ class SO3
   [[nodiscard]] static const MatrixType wedge(const VectorType& u)
   {
     MatrixType U;
-    U << 0.0, -u(2), u(1), u(2), 0.0, -u(0), -u(1), u(0), 0.0;
+    U << Scalar(0.0), -u(2), u(1), u(2), Scalar(0.0), -u(0), -u(1), u(0), Scalar(0.0);
     return (U);
   }
 
@@ -234,7 +234,7 @@ class SO3
     QuaternionType q;
     if (ang < eps_)
     {
-      q.w() = 1.0;
+      q.w() = Scalar(1.0);
       q.vec() = 0.5 * u;
     }
     else
@@ -281,7 +281,7 @@ class SO3
     }
     else
     {
-      u = 2 * atan2(ang, qw) * (qv / ang);
+      u = 2.0 * atan2(ang, qw) * (qv / ang);
     }
     return u;
   }
@@ -456,7 +456,8 @@ class SO3
   MatrixType R_;      //!< Rotation matrix
   QuaternionType q_;  //!< Normalized quaternion
 
-  static constexpr FPType eps_ = std::is_same_v<FPType, float> ? 1.0e-6 : 1.0e-9;  //!< Epsilon
+  using EpsType = std::conditional_t<std::is_same_v<FPType, float> || std::is_same_v<FPType, double>, FPType, double>;
+  static constexpr EpsType eps_ = std::is_same_v<FPType, float> ? 1.0e-6f : 1.0e-9;  //!< Epsilon
 };
 
 using SO3d = SO3<double>;  //!< The SO3 group with double precision floating point
