@@ -1,11 +1,6 @@
-# Camera Intrinsic Calibration Result
-# RMS Error: 0.136355 pixels
-# Samples: 30
-
-# Date: 2026-03-07 15:12:09
 [camera]
-camera_matrix = [2333.06, 0, 657.19, 0, 2323.58, 592.108, 0, 0, 1]
-distort_coefficient = [-0.103011, 0.125266, 0.00137156, -0.00445701, 0.347987]
+camera_matrix = [1784.40785518, 0.000, 709.26908080, 0.000, 1784.39799730, 556.61031728, 0.000, 0.000, 1.000]
+distort_coefficient = [-0.05413741, 0.13077699, -0.00008913, 0.00029836, -0.05802791]
 width = 1440
 height = 1080
 
@@ -16,14 +11,19 @@ exposure_time_us = 5000  # 1.5ms in microseconds
 gain = 16.7
 # rotate_angle = "Clockwise270"
 
+# [calibration_info]
+# rms_error = 0.09106932
+# per_view_error = [0.006650, 0.007078, 0.006837, 0.006834, 0.007044, 0.007061, 0.007155, 0.007007, 0.007263, 0.007039, 0.006817, 0.006467, 0.006754, 0.006918, 0.007392, 0.006584, 0.006572, 0.006751, 0.006904, 0.007016, 0.006526, 0.006706, 0.006945, 0.006029, 0.007021, 0.006801, 0.007027]
+# calibrate_at = "2026-04-29T11:58:47.776152+00:00"
+
 # real value
 [extrinsic.gimbal_yaw.gimbal_pitch]
 translation = [-0.06492, 0, 0.164]
 
-camera_link.translation = [0.0804, 0.00, -0.0545]
+camera_link.translation = [0.2576, 0.00, -0.0545]
 camera_link.roll = 0.0
-camera_link.pitch = 0.0
-camera_link.yaw = 0.0
+camera_link.pitch = 0.8
+camera_link.yaw = -0.3
 
 muzzle_link.translation = [0.1772, 0.0, 0.0]
 
