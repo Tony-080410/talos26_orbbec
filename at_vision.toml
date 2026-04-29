@@ -9,7 +9,7 @@ vision = "daedalus_vision"
 # robot, vision, and optionally daedalus. If no match is found, falls back
 # to the explicit robot/vision/daedalus fields above.
 [preset]
-"ax650.local" = { daedalus = false, robot = "drone", vision = "drone_vision" }
+"ax650" = { daedalus = false, robot = "drone", vision = "drone_vision" }
 "blackjack.local" = { daedalus = true, robot = "infantry_4", vision = "daedalus_vision" }
 "hero.local" = { daedalus = false, robot = "hero", vision = "hero_vision" }
 "nuc" = { daedalus = false, mock_mcu = true, robot = "radar", vision = "radar" }

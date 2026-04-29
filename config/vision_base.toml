@@ -61,16 +61,16 @@ top_k = 128
 
 # Required if backend_type = "Axera" (AX650 NPU)
 [axera]
-model_path = "models/qat_u8u16.axmodel"  # Path to AX650 .axmodel file
+model_path = "models/the_most_expected_one.axmodel"  # Path to AX650 .axmodel file
 input_width = 768
 input_height = 576
 num_colors = 4
 num_kpts = 4
 num_pairs = 12
 strides = [8, 16, 32]
-confidence_threshold = 0.15
-nms_threshold = 0.70
-top_k = 128
+confidence_threshold = 0.6
+nms_threshold = 0.30
+top_k = 64
 
 [readback_roi]
 enabled = false
@@ -158,8 +158,8 @@ tracking_threshold = 4
 
 [tracker.outpost.model]
 sigma_q_xy = 10.0
-sigma_q_z = 2.0
-sigma_a_yaw = 4.0
+sigma_q_z = 1.0
+sigma_a_yaw = 1.0
 meas_dist_k = 0.43
 yaw_log_k = 0.005
 
@@ -242,8 +242,8 @@ rho = 1.225
 # Shared fire gate threshold for L5
 fire_thresh = 0.01744444
 # Physical window dimensions (meters)
-shooting_range_h = 0.135
-shooting_range_w_small = 0.135
+shooting_range_h = 0.12
+shooting_range_w_small = 0.12
 shooting_range_w_large = 0.24
 
 # L5-only MPC settings live under [mpc_weapon].
@@ -253,8 +253,13 @@ enable_debug = true
 reference_age_threshold_s = 0.5
 
 # Pitch limits (radians)
+<<<<<<< HEAD
 pitch_min = -0.69813169  # -40deg
 pitch_max = 0.69813169  # 40deg
+=======
+pitch_min = -1.69813169 # -40deg
+pitch_max = 1.69813169 # 40deg
+>>>>>>> 53ba291 (calibrate drone & upload new model weights)
 
 # MPC core parameters
 [mpc_weapon.mpc]
