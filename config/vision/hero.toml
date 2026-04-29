@@ -4,3 +4,12 @@ backend_type = "Axera"
 
 trajectory.diameter = 0.041
 trajectory.mass = 0.052
+
+[aimer]
+single_whole_up = 0.5
+single_whole_down = 1.0
+whole_pair_up = 1.5
+whole_pair_down = 2.5
+pair_center_up = 3.0
+pair_center_down = 6.0
+transfer_thresh = 20
