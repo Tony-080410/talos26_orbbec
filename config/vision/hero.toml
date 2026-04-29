@@ -1,5 +1,6 @@
 # Hero Vision Configuration
 # extend from vision_base.toml
+backend_type = "Axera"
 
 trajectory.diameter = 0.041
 trajectory.mass = 0.052

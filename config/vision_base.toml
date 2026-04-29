@@ -73,7 +73,7 @@ nms_threshold = 0.70
 top_k = 128
 
 [readback_roi]
-enabled = true
+enabled = false
 stale_timeout_s = 0.20
 margin_ratio_x = 0.20
 margin_ratio_y = 0.00
