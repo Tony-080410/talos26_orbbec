@@ -20,12 +20,12 @@ gain = 16.7
 [extrinsic.gimbal_yaw.gimbal_pitch]
 translation = [-0.06492, 0, 0.164]
 
-camera_link.translation = [0.2297, 0.00, -0.1286]
+camera_link.translation = [0.0804, 0.00, -0.0545]
 camera_link.roll = 0.0
 camera_link.pitch = 0.0
 camera_link.yaw = 0.0
 
-muzzle_link.translation = [0.1692, 0, -0.0527]
+muzzle_link.translation = [0.1772, 0.0, 0.0]
 
 [mcu]
 mcu_authoritative_self_color = true
