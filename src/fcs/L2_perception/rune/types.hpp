@@ -3,6 +3,9 @@
 #include <Eigen/Core>
 #include <Eigen/Geometry>
 
+#include "frame.hpp"
+#include "matrix.hpp"
+#include "rune_detector_types.hpp"
 #include <array>
 #include <cstdint>
 #include <vector>
@@ -47,10 +50,12 @@ struct RuneObservation {
 
     bool valid{false};
 
-    Eigen::Vector3d r_center_odom{Eigen::Vector3d::Zero()};
+    fast_tf::TransformMatrixd<fyt::rune::rune, fast_tf::odom> r_center_odom;
 
     std::vector<Eigen::Vector3d> target_positions_odom{};
     std::vector<Eigen::Quaterniond> target_quats_odom{};
+
+    double reproj_error{0.0};
 };
 
 } // namespace fcs::rune

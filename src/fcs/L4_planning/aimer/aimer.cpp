@@ -178,6 +178,72 @@ template <size_t N>
 // predict_position - compatibility helpers
 // ============================================================================
 
+Eigen::Vector3d Aimer::predict_position(
+    const energy_meter::EnergyMeterState& target, double predict_time) const noexcept {
+    const Eigen::Vector3d r_center = target.r_center_odom;
+
+    // 直接使用tracker计算的radius，避免从position推导引入数值误差
+    // 这对上下位置（roll≈±90°）的精度尤其重要
+    const double radius = target.radius;
+
+    // 当前 roll 来自 UKF
+    const double current_roll = target.roll + target.blade_id * 2 * M_PI / 5;
+    double delta_theta        = 0.0;
+    const int dir             = target.direction;
+
+    // 预测 roll 变化
+    if (target.model_valid) {
+        if (target.is_big_rune) {
+            // 使用 UKF 的 (A, W, PHI) 做正弦预测
+            // theta(t) = -(a/omega) * cos(omega * (t + phi)) + b*t + c
+            // delta = theta(t0 + t1) - theta(t0)
+            //       = -(a/omega) * (cos(omega*(t0+t1+phi)) - cos(omega*(t0+phi))) + b*t1
+            const double a     = target.sin_amplitude;
+            const double omega = target.sin_omega;
+            const double b     = target.sin_offset;
+            const double phi   = target.sin_phase;
+            const double t0    = target.relative_time;
+
+            delta_theta = dir
+                        * (-(a / omega)
+                               * (std::cos(omega * (t0 + predict_time + phi))
+                                  - std::cos(omega * (t0 + phi)))
+                           + b * predict_time);
+        } else {
+            delta_theta = dir * 1.04719 * predict_time;
+        }
+    } else {
+        delta_theta = target.v_roll * predict_time;
+    }
+
+    // 预测 roll
+    const double predicted_roll = current_roll + delta_theta;
+
+    // 基于 UKF 的 roll、pitch、yaw 计算预测位置
+    // 叶片在竖直平面 (Y-Z) 内绕水平轴 (X) 旋转 roll 角度
+    const double sr = std::sin(predicted_roll);
+    const double cr = std::cos(predicted_roll);
+    Eigen::Vector3d blade_local(0.0, -radius * sr, radius * cr);
+
+    // 应用 pitch 旋转 (绕 Y 轴)
+    const double sp = std::sin(target.pitch);
+    const double cp = std::cos(target.pitch);
+    blade_local     = Eigen::Vector3d(
+        blade_local.x() * cp + blade_local.z() * sp, blade_local.y(),
+        -blade_local.x() * sp + blade_local.z() * cp);
+
+    // 应用 yaw 旋转 (绕 Z 轴)，再平移到圆心
+    const double cy = std::cos(target.yaw);
+    const double sy = std::sin(target.yaw);
+    const Eigen::Vector3d blade_offset(
+        blade_local.x() * cy - blade_local.y() * sy, blade_local.x() * sy + blade_local.y() * cy,
+        blade_local.z());
+
+    Eigen::Vector3d predicted_position = r_center + blade_offset;
+    // predicted_position.z()             = predicted_position.z() - 0.1;
+    return predicted_position;
+}
+
 Eigen::Vector3d
     Aimer::predict_position(const L3::RobotTargetState& target, double dt) const noexcept {
     return predict_aim_point(target, dt, {}, Eigen::Vector3d::Zero()).position;
@@ -320,11 +386,11 @@ std::expected<TargetPrediction, std::string> Aimer::aim_generic(
 }
 
 // ============================================================================
-// aim_generic_no_prediction - Template method for targets without prediction
+// aim_generic_rune - Template method for targets rune
 // ============================================================================
 
 template <class TargetType>
-std::expected<TargetPrediction, std::string> Aimer::aim_generic_no_prediction(
+std::expected<TargetPrediction, std::string> Aimer::aim_generic_rune(
     const TargetType& target, const GimbalTransform& gimbal, const MuzzleTransform& muzzle,
     uint64_t current_ns, double bullet_speed,
     const core::trajectory::solver::TrajectorySolver& solver) const noexcept {
@@ -335,8 +401,23 @@ std::expected<TargetPrediction, std::string> Aimer::aim_generic_no_prediction(
     output.target_velocity = Eigen::Vector3d::Zero();
     output.target_v_yaw    = 0.0;
 
-    output.predicted_position  = target.predicted_position_odom;
-    output.predicted_future_ns = target.predicted_future_ns;
+    const Eigen::Vector3d origin_odom = muzzle.translation();
+
+    double image_delay       = static_cast<double>(current_ns - target.timestamp_ns) * 1e-9;
+    const double total_delay = image_delay + config_.delay; //
+
+    const auto refine_total_prediction_time = [&]() noexcept {
+        return refine_flying_time(
+            solver,
+            [&](double dt) -> Eigen::Vector3d {
+                return predict_position(target, dt) - origin_odom;
+            },
+            total_delay, bullet_speed);
+    };
+
+    double total_time          = refine_total_prediction_time();
+    output.predicted_position  = predict_position(target, total_time);
+    output.predicted_future_ns = offset_timestamp_ns(target.timestamp_ns, total_time);
     const auto solution =
         solver.solve(output.predicted_position - muzzle.translation(), bullet_speed);
     if (!solution.is_valid()) {
@@ -348,7 +429,32 @@ std::expected<TargetPrediction, std::string> Aimer::aim_generic_no_prediction(
 
     output.aim_yaw   = yaw;
     output.aim_pitch = pitch;
-    output.distance  = (output.predicted_position - muzzle.translation()).norm();
+    output.distance  = output.predicted_position.norm();
+
+    // 计算 predicted_roll 用于 Rune
+    if constexpr (std::is_same_v<TargetType, energy_meter::EnergyMeterState>) {
+        const double current_roll = target.roll + target.blade_id * 2 * M_PI / 5;
+        double delta_theta        = 0.0;
+        if (target.model_valid) {
+            const int dir = target.direction;
+            if (target.is_big_rune) {
+                const double a   = target.sin_amplitude;
+                const double w   = target.sin_omega;
+                const double b   = target.sin_offset;
+                const double phi = target.sin_phase;
+                const double t0  = target.relative_time;
+                delta_theta =
+                    dir
+                    * (-(a / w) * (std::cos(w * (t0 + total_time + phi)) - std::cos(w * (t0 + phi)))
+                       + b * total_time);
+            } else {
+                delta_theta = dir * 1.04719 * total_time;
+            }
+        } else {
+            delta_theta = target.v_roll * total_time;
+        }
+        output.predicted_roll = current_roll + delta_theta;
+    }
 
     return output;
 }
@@ -427,7 +533,7 @@ std::expected<TargetPrediction, std::string> Aimer::aim(
     const energy_meter::EnergyMeterState& state, const GimbalTransform& gimbal,
     const MuzzleTransform& muzzle, uint64_t current_ns, double bullet_speed,
     const core::trajectory::solver::TrajectorySolver& solver) const noexcept {
-    return aim_generic_no_prediction(state, gimbal, muzzle, current_ns, bullet_speed, solver);
+    return aim_generic_rune(state, gimbal, muzzle, current_ns, bullet_speed, solver);
 }
 
 std::expected<TargetPrediction, std::string> Aimer::aim(

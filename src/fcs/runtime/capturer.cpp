@@ -669,29 +669,33 @@ template <fast_tf::frame Frame>
     }
 
     return json{
-        {         "timestamp_ns",                observation.timestamp_ns},
-        {             "frame_id",                    observation.frame_id},
-        {                "valid",                       observation.valid},
-        {        "r_center_odom", to_json_vec3(observation.r_center_odom)},
-        {"target_positions_odom",                    std::move(positions)},
-        {    "target_quats_odom",                        std::move(quats)},
+        {         "timestamp_ns",                              observation.timestamp_ns},
+        {             "frame_id",                                  observation.frame_id},
+        {                "valid",                                     observation.valid},
+        {        "r_center_odom", to_json_vec3(observation.r_center_odom.translation())},
+        {"target_positions_odom",                                  std::move(positions)},
+        {    "target_quats_odom",                                      std::move(quats)},
     };
 }
 
 [[nodiscard]] auto to_json_energy_meter_state(const energy_meter::EnergyMeterState& state) -> json {
     return json{
-        {           "timestamp_ns",                          state.timestamp_ns},
-        {         "tracking_valid",                        state.tracking_valid},
-        {          "r_center_odom",           to_json_vec3(state.r_center_odom)},
-        {                 "radius",                                state.radius},
-        {                   "roll",                                  state.roll},
-        {                 "v_roll",                                state.v_roll},
-        {               "blade_id",                              state.blade_id},
-        {"predicted_position_odom", to_json_vec3(state.predicted_position_odom)},
-        {    "predicted_future_ns",                   state.predicted_future_ns},
-        {            "is_big_rune",                           state.is_big_rune},
-        {            "model_valid",                           state.model_valid},
-        {              "fit_error",                             state.fit_error},
+        {  "timestamp_ns",                state.timestamp_ns},
+        {"tracking_valid",              state.tracking_valid},
+        { "r_center_odom", to_json_vec3(state.r_center_odom)},
+        {        "radius",                      state.radius},
+        {          "roll",                        state.roll},
+        {        "v_roll",                      state.v_roll},
+        {      "blade_id",                    state.blade_id},
+        {      "position",      to_json_vec3(state.position)},
+        {   "is_big_rune",                 state.is_big_rune},
+        {   "model_valid",                 state.model_valid},
+        {     "fit_error",                   state.fit_error},
+        {             "a",               state.sin_amplitude},
+        {             "w",                   state.sin_omega},
+        {             "b",                  state.sin_offset},
+        {           "phi",                   state.sin_phase},
+        {             "c",              state.sin_const_term},
     };
 }
 

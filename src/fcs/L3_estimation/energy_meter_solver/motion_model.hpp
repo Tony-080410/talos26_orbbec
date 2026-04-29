@@ -19,9 +19,13 @@ struct EnergyMeter {
     using VecZ = Eigen::Matrix<Scalar, NZ, 1>;
 
     struct Params {
-        Scalar sigma_xy{10.0};
+        Scalar sigma_xy{1.0};
         Scalar sigma_z{1.0};
         Scalar sigma_roll{1.0};
+        Scalar sigma_yaw{1.0};
+        Scalar sigma_pitch{0.1}; // pitch process noise
+
+        Scalar R_scale{0.1};
 
         Scalar radius{0.7};
 
@@ -40,7 +44,7 @@ struct EnergyMeter {
 
     auto f(const VecX& x, Scalar dt) const -> VecX {
         VecX xn;
-        xn << x(XC), x(YC), x(ZC), x(ROLL) + x(V_ROLL) * dt, x(V_ROLL);
+        xn << x(XC), x(YC), x(ZC), x(YAW), x(PITCH), x(ROLL) + x(V_ROLL) * dt, x(V_ROLL);
         return xn;
     }
 
@@ -48,18 +52,12 @@ struct EnergyMeter {
 
     auto h(const VecX& x, int id) const -> VecZ {
         VecZ z;
-        assert(id >= 0 && id <= ARMORS_NUM - 1);
-
-        const Scalar angle_step = 2.0 * M_PI / static_cast<Scalar>(ARMORS_NUM);
-        const double tmp_roll   = x(ROLL) + id * angle_step;
-
-        z[3] = tmp_roll;
-
-        const Scalar radius = params.radius;
-
         z[0] = x(XC);
-        z[1] = x(YC) + radius * std::sin(tmp_roll);
-        z[2] = x(ZC) - radius * std::cos(tmp_roll);
+        z[1] = x(YC);
+        z[2] = x(ZC);
+        z[3] = x(YAW);
+        z[4] = x(PITCH);
+        z[5] = x(ROLL) + id * 2 * M_PI / 5;
 
         return z;
     }
@@ -71,18 +69,22 @@ struct EnergyMeter {
             return Q;
         }
 
-        const Scalar sigma_xy2   = params.sigma_xy * params.sigma_xy;
-        const Scalar sigma_z2    = params.sigma_z * params.sigma_z;
-        const Scalar sigma_roll2 = params.sigma_roll * params.sigma_roll;
+        const Scalar sigma_xy2    = params.sigma_xy * params.sigma_xy;
+        const Scalar sigma_z2     = params.sigma_z * params.sigma_z;
+        const Scalar sigma_roll2  = params.sigma_roll * params.sigma_roll;
+        const Scalar sigma_yaw2   = params.sigma_yaw * params.sigma_yaw;
+        const Scalar sigma_pitch2 = params.sigma_pitch * params.sigma_pitch;
 
         const Scalar dt2 = dt * dt;
         const Scalar dt3 = dt2 * dt;
         const Scalar dt4 = dt2 * dt2;
 
-        Q(XC, XC) = sigma_xy2 * dt2;
-        Q(YC, YC) = sigma_xy2 * dt2;
-        Q(ZC, ZC) = sigma_z2 * dt2;
+        Q(XC, XC) = sigma_xy2 * dt;
+        Q(YC, YC) = sigma_xy2 * dt;
+        Q(ZC, ZC) = sigma_z2 * dt;
 
+        Q(YAW, YAW)       = sigma_yaw2 * dt;
+        Q(PITCH, PITCH)   = sigma_pitch2 * dt;
         Q(ROLL, ROLL)     = sigma_roll2 * dt4 / 4.0;
         Q(ROLL, V_ROLL)   = sigma_roll2 * dt3 / 2.0;
         Q(V_ROLL, ROLL)   = Q(ROLL, V_ROLL);
@@ -100,8 +102,9 @@ struct EnergyMeter {
         const double weight = std::log(K * ypd[2] + 1.0);
 
         Eigen::Matrix<Scalar, NZ, NZ> Rs = Eigen::Matrix<Scalar, NZ, NZ>::Zero();
-        Rs.diagonal() << weight + std::abs(delta_yaw / 3 + 1), weight + std::abs(delta_yaw / 3 + 1),
-            weight, std::log(std::abs(ypd[2]) + 1) / 200 + 9e-2;
+        Rs.diagonal() << params.R_scale * (weight + std::abs(delta_yaw / 3 + 1)),
+            params.R_scale * (weight + std::abs(delta_yaw / 3 + 1)), params.R_scale * weight,
+            (std::log(std::abs(ypd[2]) + 1) / 200 + 9e-2), 0.05, 0.1;
         return Rs;
     }
 };

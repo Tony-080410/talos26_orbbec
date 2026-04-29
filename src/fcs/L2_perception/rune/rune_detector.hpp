@@ -8,11 +8,13 @@
 #include <functional>
 #include <future>
 #include <memory>
-#include <opencv2/core.hpp>
+#include <opencv2/opencv.hpp>
 #include <string>
 #include <tuple>
 #include <vector>
 
+#include "frame.hpp"
+#include "matrix.hpp"
 #include <expected>
 #include <string>
 
@@ -23,13 +25,14 @@ namespace fyt::rune {
 class RuneDetector {
 public:
     RuneDetector(
-        EnemyColor detect_color, int arrow_threshold, int target_threshold, int rcenter_threshold);
+        EnemyColor detect_color, int arrow_threshold, int target_threshold, int rcenter_threshold,
+        const RuneDetectorParams& params = {});
 
     bool detect(const cv::Mat& frame, int image_width, int image_height);
 
-    std::expected<Eigen::Matrix4d, std::string> solve(
+    std::expected<fast_tf::TransformMatrixd<rune, fast_tf::odom>, std::string> solve(
         const cv::Mat& cameraMatrix, const cv::Mat& distCoeffs, double timestamp_sec,
-        const Eigen::Matrix4d& odom_T_cam);
+        const fast_tf::TransformMatrixd<fast_tf::odom, fast_tf::camera_optical>& odom_T_cam);
 
     void setKeyPoints();
     void setLocalRoi();
@@ -60,14 +63,22 @@ private:
     int arrow_threshold_;
     int target_threshold_;
     int rcenter_threshold_;
+    RuneDetectorParams params_;
 
     int image_width_;
     int image_height_;
 
-    // 上一帧追踪的靶位置（用于目标连续性）
+    // 上一帧追踪的靶信息（用于目标连续性）
     cv::Point2f last_tracked_target_center_{0, 0};
+    double last_tracked_target_roll_{0.0};
     double last_timestamp_ = 0;
     bool has_last_target_{false};
+
+public:
+    // 重投影调试信息
+    std::vector<cv::Point2f> debug_detected_points_;
+    std::vector<cv::Point2f> debug_reprojected_points_;
+    double debug_reproj_error_{0.0};
 };
 } // namespace fyt::rune
 #endif // RUNE_DETECTOR_RUNE_DETECTOR_HPP_

@@ -1,15 +1,15 @@
 #include "L3_estimation/energy_meter_solver/energy_meter_tracker.hpp"
 
 #include "L3_estimation/energy_meter_solver/types.hpp"
+#include "euler.hpp"
 
-#include <algorithm>
 #include <cmath>
 #include <limits>
 
 namespace energy_meter {
 
 bool Tracker::update(
-    const std::vector<Eigen::Vector3d>& target_positions,
+    const Eigen::Vector3d& rcenter_position, const std::vector<Eigen::Vector3d>& target_positions,
     const std::vector<Eigen::Quaterniond>& target_quats) {
     measurement_.fill(0.0);
 
@@ -18,15 +18,38 @@ bool Tracker::update(
         return false;
     }
 
-    const auto& pos  = target_positions[0];
-    const auto& quat = target_quats[0];
+    // ── Target selection: pick the target closest to predicted roll ──
+    size_t selected_idx = 0;
+    if (target_quats.size() >= 2) {
+        const auto& x = energy_ukf->x();
+        const double predict_roll =
+            (confirmed_blade_id_ >= 0)
+                ? normalize_rad(
+                      x(ROLL) + static_cast<double>(confirmed_blade_id_) * 2.0 / 5.0 * M_PI)
+                : x(ROLL); // 初始状态直接用预测 roll 比较
+
+        double best_diff = std::numeric_limits<double>::max();
+        for (size_t i = 0; i < target_quats.size(); ++i) {
+            const auto [roll_i, pitch_i, yaw_i] = math_fuxk::rpy(target_quats[i]);
+            const double diff                   = std::abs(normalize_rad(predict_roll - roll_i));
+            if (diff < best_diff) {
+                best_diff    = diff;
+                selected_idx = i;
+            }
+        }
+    }
+
+    const auto& pos               = rcenter_position;
+    const auto [roll, pitch, yaw] = math_fuxk::rpy(target_quats[selected_idx]);
 
     using VecZ = EnergyMeter::VecZ;
     VecZ meas;
     meas[0] = pos.x();
     meas[1] = pos.y();
     meas[2] = pos.z();
-    meas[3] = orientation2roll(quat);
+    meas[3] = yaw;
+    meas[4] = pitch;
+    meas[5] = roll;
 
     const auto& x_pre        = energy_ukf->x();
     constexpr int armors_num = 5;
@@ -37,7 +60,7 @@ bool Tracker::update(
     for (int id = 0; id < armors_num; ++id) {
         VecZ z_pred = energy_model_.h(x_pre, id);
         VecZ nu     = meas - z_pred;
-        nu[3]       = normalize_rad(nu[3]);
+        nu[5]       = normalize_rad(nu[5]);
 
         // R is diagonal, so Rinv * nu = nu[i] / R[i,i]
         // d2 = nu' * Rinv * nu = sum(nu[i]^2 / R[i,i])
@@ -56,13 +79,46 @@ bool Tracker::update(
     }
 
     state_machine(true);
-    current_matched_blade_id_ = best_id;
+
+    // ── Blade ID debounce: confirm only after 2 consecutive frames ──
+    // 初始状态（confirmed == -1）立即确认第一个匹配的 blade_id
+    if (confirmed_blade_id_ < 0) {
+        confirmed_blade_id_ = best_id;
+        pending_blade_id_   = best_id;
+        // 1 个靶立即确认，2 个靶需要防抖验证
+        blade_id_confirmed_       = (target_positions.size() < 2);
+        consecutive_change_count_ = blade_id_confirmed_ ? 0 : 1;
+    } else if (best_id == confirmed_blade_id_) {
+        consecutive_change_count_ = 0;
+        blade_id_confirmed_       = true;
+    } else if (target_positions.size() == 2) {
+        blade_id_confirmed_ = false;
+        if (best_id == pending_blade_id_) {
+            consecutive_change_count_++;
+        } else {
+            pending_blade_id_         = best_id;
+            consecutive_change_count_ = 1;
+        }
+        if (consecutive_change_count_ >= 2) {
+            confirmed_blade_id_       = pending_blade_id_;
+            consecutive_change_count_ = 0;
+            blade_id_confirmed_       = true;
+        }
+    } else {
+        // 1 个靶时立即更新
+        confirmed_blade_id_ = best_id;
+        pending_blade_id_   = best_id;
+        blade_id_confirmed_ = true;
+    }
+    current_matched_blade_id_ = confirmed_blade_id_;
 
     EnergyUKF::VecZ z;
     z[0] = pos.x();
     z[1] = pos.y();
     z[2] = pos.z();
-    z[3] = unwrap_rad(x_pre[ROLL] + best_id * 2 * M_PI / 5, meas[3]);
+    z[3] = yaw;
+    z[4] = pitch;
+    z[5] = unwrap_rad(x_pre[ROLL] + best_id * 2 * M_PI / 5, meas[5]);
 
     energy_model_.armor_id = best_id;
     set_measurement(z);
@@ -72,10 +128,11 @@ bool Tracker::update(
 }
 
 void Tracker::step(
-    double dts, const std::vector<Eigen::Vector3d>& target_positions,
+    double dts, const Eigen::Vector3d& rcenter_position,
+    const std::vector<Eigen::Vector3d>& target_positions,
     const std::vector<Eigen::Quaterniond>& target_quats) {
     predict(dts);
-    update(target_positions, target_quats);
+    update(rcenter_position, target_positions, target_quats);
 }
 
 void Tracker::set_measurement(const EnergyUKF::VecZ& z) {
@@ -83,6 +140,8 @@ void Tracker::set_measurement(const EnergyUKF::VecZ& z) {
     measurement_[1] = z[1];
     measurement_[2] = z[2];
     measurement_[3] = z[3];
+    measurement_[4] = z[4];
+    measurement_[5] = z[5];
 }
 
 void Tracker::predict(double dts) {
@@ -94,7 +153,7 @@ void Tracker::predict(double dts) {
 bool Tracker::first_meet_u(
     const Eigen::Vector3d& r_center, const Eigen::Vector3d& target_pos,
     const Eigen::Quaterniond& target_quat) {
-    const double initial_roll = orientation2roll(target_quat);
+    const auto [roll, pitch, yaw] = math_fuxk::rpy(target_quat);
 
     const double xc = r_center.x();
     const double yc = r_center.y();
@@ -102,11 +161,10 @@ bool Tracker::first_meet_u(
     const double v0 = 0.0;
 
     const double observed_radius = (target_pos - r_center).norm();
-    if (observed_radius > 0.1) {
-        energy_model_.params.radius = observed_radius;
-    }
 
-    EnergyMeter::VecX xp0{xc, yc, zc, initial_roll, v0};
+    energy_model_.params.radius = observed_radius;
+
+    EnergyMeter::VecX xp0{xc, yc, zc, yaw, pitch, roll, v0};
     EnergyUKF::MatXX p0 = EnergyUKF::MatXX::Identity();
     energy_ukf.emplace(energy_model_, xp0, p0);
 

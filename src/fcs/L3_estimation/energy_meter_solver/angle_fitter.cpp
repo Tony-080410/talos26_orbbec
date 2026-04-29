@@ -40,9 +40,19 @@ bool AngleFitter::fitBigRune() {
 
     auto new_params = ransacFitting(convexity_);
 
+    // Compute RMSE on the original data
+    double sum_squared_error = 0.0;
+    for (const auto& pt : data_copy) {
+        const double predicted = getAngleBig(pt.first, new_params);
+        const double residual  = pt.second - predicted;
+        sum_squared_error += residual * residual;
+    }
+    const double rmse = std::sqrt(sum_squared_error / static_cast<double>(data_copy.size()));
+
     std::unique_lock mlock(model_mutex_);
     params_       = new_params;
     params_valid_ = true;
+    fit_error_    = rmse;
     return true;
 }
 
@@ -55,7 +65,6 @@ bool AngleFitter::fitSmallRune() {
 auto AngleFitter::getModel() const -> AngleModel {
     std::shared_lock mlock(model_mutex_);
     AngleModel m;
-    m.is_big_rune      = true; // caller decides via config
     m.a                = params_[0];
     m.omega            = params_[1];
     m.t0               = params_[2];
@@ -67,6 +76,9 @@ auto AngleFitter::getModel() const -> AngleModel {
         std::shared_lock dlock(data_mutex_);
         return static_cast<int>(fit_data_.size());
     }();
+    mlock.unlock();
+    // fit_error_ is read-only after fitting, safe to access without lock
+    m.fit_error = fit_error_;
     return m;
 }
 
@@ -92,15 +104,16 @@ void AngleFitter::reset() {
         params_       = config_.initial_params;
         params_valid_ = false;
         convexity_    = Convexity::UNKNOWN;
+        fit_error_    = 0.0;
     }
     direction_ = Direction::UNKNOWN;
     direction_data_.clear();
 }
 
-double AngleFitter::predictDeltaAngle(double current_time, double future_time) const {
-    std::shared_lock lock(model_mutex_);
-    return getAngleBig(future_time, params_) - getAngleBig(current_time, params_);
-}
+// double AngleFitter::predictDeltaAngle(double current_time, double future_time) const {
+//     std::shared_lock lock(model_mutex_);
+//     return getAngleBig(future_time, params_) - getAngleBig(current_time, params_);
+// }
 
 void AngleFitter::updateDirection(double continuous_angle) {
     if (direction_ != Direction::UNKNOWN && direction_ != Direction::STABLE) {
@@ -215,15 +228,21 @@ std::array<double, 5> AngleFitter::ransacFitting(Convexity convexity) {
 std::array<double, 5> AngleFitter::leastSquareEstimate(
     const std::vector<std::pair<double, double>>& points,
     const std::array<double, 5>& initial_params, Convexity convexity) {
-    std::array<double, 5> ret = initial_params;
+    // 使用硬约束: a + b = 2.090，即 b = 2.090 - a
+    // 参数从5个减少到4个: [a, w, t0, c]
+    std::array<double, 4> constrained_params;
+    constrained_params[0] = initial_params[0]; // a
+    constrained_params[1] = initial_params[1]; // w
+    constrained_params[2] = initial_params[2]; // t0
+    constrained_params[3] = initial_params[4]; // c
 
     ceres::Problem problem;
 
-    // Data residuals with SoftLOne robust loss
+    // Data residuals with SoftLOne robust loss (使用硬约束版本)
     for (const auto& pt : points) {
-        auto* cf = new CostFunctor2(pt.first, pt.second);
+        auto* cf = new CostFunctorConstrained(pt.first, pt.second, config_.amplitude_offset_sum);
         auto* lf = new ceres::SoftLOneLoss(0.1);
-        problem.AddResidualBlock(cf, lf, ret.data());
+        problem.AddResidualBlock(cf, lf, constrained_params.data());
     }
 
     // Regularisation weights depend on data size
@@ -231,30 +250,36 @@ std::array<double, 5> AngleFitter::leastSquareEstimate(
                                            ? config_.regularization_few
                                            : config_.regularization_many;
 
-    // Convexity-based bounds for small data
+    // Physical parameter bounds for a (b 由约束自动确定)
+    problem.SetParameterLowerBound(constrained_params.data(), 0, config_.amplitude_lower);
+    problem.SetParameterUpperBound(constrained_params.data(), 0, config_.amplitude_upper);
+    problem.SetParameterLowerBound(constrained_params.data(), 1, config_.omega_lower);
+    problem.SetParameterUpperBound(constrained_params.data(), 1, config_.omega_upper);
+
+    // Convexity-based bounds for phase (t0) on small data
     if (static_cast<int>(points.size()) < 100) {
         if (convexity == Convexity::CONCAVE) {
-            problem.SetParameterUpperBound(ret.data(), 2, config_.convex_concave_t0_upper);
-            problem.SetParameterLowerBound(ret.data(), 2, config_.convex_concave_t0_lower);
+            problem.SetParameterUpperBound(
+                constrained_params.data(), 2, config_.convex_concave_t0_upper);
+            problem.SetParameterLowerBound(
+                constrained_params.data(), 2, config_.convex_concave_t0_lower);
         } else if (convexity == Convexity::CONVEX) {
-            problem.SetParameterUpperBound(ret.data(), 2, config_.convex_convex_t0_upper);
-            problem.SetParameterLowerBound(ret.data(), 2, config_.convex_convex_t0_lower);
+            problem.SetParameterUpperBound(
+                constrained_params.data(), 2, config_.convex_convex_t0_upper);
+            problem.SetParameterLowerBound(
+                constrained_params.data(), 2, config_.convex_convex_t0_lower);
         }
     }
 
-    // Parameter regularisation (CostFunctor1 + scaled Huber loss)
+    // Parameter regularisation (只对 a 和 w 做 regularisation)
     problem.AddResidualBlock(
-        new CostFunctor1(ret[0], 0),
+        new CostFunctor1Constrained(constrained_params[0], 0),
         new ceres::ScaledLoss(new ceres::HuberLoss(0.1), omega[0], ceres::TAKE_OWNERSHIP),
-        ret.data());
+        constrained_params.data());
     problem.AddResidualBlock(
-        new CostFunctor1(ret[1], 1),
+        new CostFunctor1Constrained(constrained_params[1], 1),
         new ceres::ScaledLoss(new ceres::HuberLoss(0.1), omega[1], ceres::TAKE_OWNERSHIP),
-        ret.data());
-    problem.AddResidualBlock(
-        new CostFunctor1(ret[3], 3),
-        new ceres::ScaledLoss(new ceres::HuberLoss(0.1), omega[2], ceres::TAKE_OWNERSHIP),
-        ret.data());
+        constrained_params.data());
 
     ceres::Solver::Options options;
     options.linear_solver_type                = ceres::DENSE_QR;
@@ -265,6 +290,14 @@ std::array<double, 5> AngleFitter::leastSquareEstimate(
 
     ceres::Solver::Summary summary;
     ceres::Solve(options, &problem, &summary);
+
+    // 转换回5参数格式: [a, w, t0, b, c]
+    std::array<double, 5> ret;
+    ret[0] = constrained_params[0];                                // a
+    ret[1] = constrained_params[1];                                // w
+    ret[2] = constrained_params[2];                                // t0
+    ret[3] = config_.amplitude_offset_sum - constrained_params[0]; // b = 2.090 - a
+    ret[4] = constrained_params[3];                                // c
     return ret;
 }
 

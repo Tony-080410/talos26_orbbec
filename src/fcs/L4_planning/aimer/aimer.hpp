@@ -150,7 +150,7 @@ private:
 
     /// Generic aim implementation for targets without prediction (Rune)
     template <class TargetType>
-    [[nodiscard]] std::expected<TargetPrediction, std::string> aim_generic_no_prediction(
+    [[nodiscard]] std::expected<TargetPrediction, std::string> aim_generic_rune(
         const TargetType& target, const GimbalTransform& gimbal, const MuzzleTransform& muzzle,
         uint64_t current_ns, double bullet_speed,
         const core::trajectory::solver::TrajectorySolver& solver) const noexcept;
@@ -162,6 +162,10 @@ private:
     /// Predict outpost target position at future time dt
     [[nodiscard]] Eigen::Vector3d
         predict_position(const L3::OutpostTargetState& target, double dt) const noexcept;
+
+    /// Predict outpost target position at future time dt
+    [[nodiscard]] Eigen::Vector3d
+        predict_position(const energy_meter::EnergyMeterState& target, double dt) const noexcept;
 
     /// Predict LDM target SE2(3) at future time dt via right-perturbation: X̂₊ = X̂ * exp(xi).
     [[nodiscard]] group::SEn3<double, 2>

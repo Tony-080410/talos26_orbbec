@@ -373,6 +373,7 @@ inline void append_selection_trace_metadata(
 [[nodiscard]] inline nlohmann::json json_gimbal_plan(const ::fcs::L4::GimbalPlan& plan) {
     nlohmann::json plan_json = {
         {           "timestamp_ns",         plan.timestamp_ns                                   },
+        {         "predicted_roll",                                          plan.predicted_roll},
         {               "distance",                                                plan.distance},
         {    "predicted_future_ns",                                        plan.predicted_future},
         {                 "source",              std::string(magic_enum::enum_name(plan.source))},

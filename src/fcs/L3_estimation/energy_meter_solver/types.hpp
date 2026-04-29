@@ -12,16 +12,20 @@ enum EnergyState : uint8_t {
     XC,
     YC,
     ZC,
+    YAW,
+    PITCH,
     ROLL,
     V_ROLL,
     STATE_MAX,
 };
 
 enum Measure : uint8_t {
-    ARMOR_X,
-    ARMOR_Y,
-    ARMOR_Z,
-    ARMOR_YAW,
+    CENTER_X,
+    CENTER_Y,
+    CENTER_Z,
+    RUNE_YAW,
+    RUNE_PITCH,
+    ARMOR_ROLL,
     MEASURE_MAX,
 };
 
@@ -76,13 +80,12 @@ struct ObservedFrame {
 ///
 /// Small rune: constant rotation_speed (rad/s)
 struct AngleModel {
-    bool is_big_rune{false};
 
     // ── big rune 5-parameter model ──
-    double a{0.470};     // amplitude
+    double a{0.9125};    // amplitude
     double omega{1.942}; // angular frequency
     double t0{0.0};      // phase offset (internal)
-    double b{1.178};     // linear drift
+    double b{1.1775};    // linear drift
     double c{0.0};       // constant term
 
     // ── small rune ──

@@ -170,7 +170,7 @@ yaw_log_k = 0.005
 [aimer]
 # System delay compensation (seconds)
 # Includes: camera exposure, image processing, communication, gimbal response
-delay = 0.04
+delay = 0.0
 
 # Authoritative four-state auto-aim FSM thresholds
 single_whole_up = 1.5
@@ -277,52 +277,72 @@ r = 1.0
 max_acc = 100.0
 
 [rune_detector]
-enabled = false
+enabled = true
+draw = true
+debug_mode = false  # L2层调试模式，启用时输出详细错误信息
 detect_color = "Red"
 arrow_threshold = 170
 target_threshold = 130
 rcenter_threshold = 120
 
+# 流水灯参数
+min_roundness = 0.6
+max_roundness = 1.0
+min_arrow_light_num = 3
+max_arrow_light_num = 15
+min_arrow_aspect_ratio = 1.5
+max_arrow_aspect_ratio = 12
+max_arrow_area = 5000
+min_arrow_light_area = 10.0
+max_arrow_light_area = 250.0
+min_arrow_light_aspect_ratio = 1.5
+max_arrow_light_aspect_ratio = 5.0
+max_same_arrow_area_ratio = 5.0
+
+# ROI参数
+global_roi_length_ratio = 1.5
+local_roi_distance_ratio = 6.0
+local_roi_width = 150
+
+# R中心参数
+max_center_aspect_ratio = 3.0
+
+# 靶参数
+min_target_light_area = 400
+max_target_light_area = 30000
+min_target_light_contour_area = 300
+max_target_light_contour_area = 10000
+min_target_light_aspect_ratio = 0.5
+max_target_light_aspect_ratio = 1.5
+min_target_roi_area = 100.0
+
 [energy_meter]
-# Rune type: true for big rune (sinusoidal model), false for small rune (constant speed)
-is_big_rune = true
-# Prediction delay (seconds): image latency + system delay
-control_delay_s = 0.5
+min_fit_time = 0
 
 # Angle fitter configuration (Ceres+RANSAC model fitting, migrated from rm_power_rune)
 [energy_meter.fitter]
-# Minimum observations before fitting
 min_fit_data_size = 20
-# Maximum stored observations (excess trimmed)
 max_fit_data_size = 1200
 # Initial big-rune parameters [a, omega, t0, b, c]
 # Model: θ(t) = -a·cos(ω·(t+t0)) + b·t + c
-initial_params = [0.470, 1.942, 0.0, 1.178, 0.0]
-# Small rune rotation speed (rad/s, ~60°/s)
+initial_params = [0.912, 1.942, 0.0, 1.178, 0.0]
 small_rune_rotation_speed = 1.04719
-# Direction voting frames needed
-direction_threshold = 3
-# Direction angle-difference threshold (rad)
+direction_threshold = 5
 direction_angle_threshold = 0.015
 
-# ISRCKF tracker configuration for energy meter
 [energy_meter.tracker]
-# Lost frames before returning to IDLE from TEMP_LOST (seconds)
 lost_thres = 10
-# Consecutive frames required to transition DETECTING -> TRACKING
 tracking_thres = 3
 # Mahalanobis distance-squared gate for observation-to-track association
 matcher_gate = 25.0
 
-# Process noise covariance for ISRCKF tracker
 [energy_meter.tracker.energy_params]
-# XY position process noise std-dev (m)
-sigma_xy = 10.0
-# Z position process noise std-dev (m)
-sigma_z = 1.0
-# Roll angle process noise std-dev (rad)
+sigma_xy = 0.1
+sigma_z = 0.1
 sigma_roll = 1.0
+sigma_yaw=1.0
+sigma_pitch=0.0
 # Initial radius guess (m)
 radius = 0.7
-# Measurement distance scaling factor
 meas_dist_k = 0.43
+R_scale=0.01

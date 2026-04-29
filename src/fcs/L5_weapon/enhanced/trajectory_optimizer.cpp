@@ -150,9 +150,6 @@ std::expected<WeaponCommand, std::string> TinyMpcTrajectoryOptimizer::optimize(
     if (!ready_) {
         return std::unexpected("mpc solvers are not ready");
     }
-    if (plan.source != L4::GimbalPlanSource::Armor) {
-        return std::unexpected("only armor planner seeds are supported");
-    }
     if (!plan.reference_trajectory) {
         return std::unexpected("reference trajectory is missing");
     }

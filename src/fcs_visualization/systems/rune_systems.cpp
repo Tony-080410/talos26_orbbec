@@ -130,7 +130,7 @@ void register_rune_systems(talos::scheduler::Scheduler& app) {
 
             entities.push_back(
                 viz::EntityBuilder::create<fast_tf::odom>("rune", "r_center")
-                    .position(obs->r_center_odom)
+                    .position(obs->r_center_odom.translation())
                     .size(0.08)
                     .color(tac::L3::PREDICTION_AMBER)
                     .sphere()

@@ -257,7 +257,6 @@ TEST(ConfigParse, VisionBaseTomlMatchesExpectedSemanticsAndValues) {
     EXPECT_EQ(config.rune_detector.rcenter_threshold, 120);
 
     EXPECT_TRUE(config.energy_meter.is_big_rune);
-    EXPECT_DOUBLE_EQ(config.energy_meter.control_delay_s, 0.5);
     EXPECT_EQ(config.energy_meter.fitter.min_fit_data_size, 20);
     EXPECT_EQ(config.energy_meter.fitter.max_fit_data_size, 1200);
     EXPECT_DOUBLE_EQ(config.energy_meter.fitter.small_rune_rotation_speed, 1.04719);

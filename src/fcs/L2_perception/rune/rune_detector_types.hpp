@@ -6,7 +6,7 @@
 #include <vector>
 
 namespace fyt::rune {
-
+struct rune {};
 enum class Status {
     SUCCESS,
     ARROW_FAILURE,
@@ -21,32 +21,8 @@ enum class EnemyColor {
     WHITE = 2,
 };
 
-constexpr double MIN_ROUNDNESS                 = 0.6;   // 最小允许圆度
-constexpr double MAX_ROUNDNESS                 = 1.0;   // 最大允许圆度
-constexpr int MIN_ARROW_LIGHT_NUM              = 6;     // 流水灯小灯条最小数量
-constexpr int MAX_ARROW_LIGHT_NUM              = 15;    // 流水灯小灯条最大数量
-constexpr int MIN_ARROW_ASPECT_RATIO           = 2;     // 流水灯最小比例
-constexpr int MAX_ARROW_ASPECT_RATIO           = 12;    // 流水灯最大比例
-constexpr int MAX_ARROW_AREA                   = 5000;  // 流水灯最大面积
-constexpr double GLOBAL_ROI_LENGTH_RATIO       = 1.5;   // 全局裁剪能量机关比例
-constexpr double LOCAL_ROI_DISTANCE_RATIO      = 6.0;   // 局部裁剪能量机关比例
-constexpr int LOCAL_ROI_WIDTH                  = 150;   // 局部裁剪宽度
-constexpr double MAX_CENTER_ASPECT_RATIO       = 3;     // R中心最大比例
-constexpr int MIN_TARGET_LIGHT_AREA            = 400;   // 靶最小旋转矩形的最小面积
-constexpr int MAX_TARGET_LIGHT_AREA            = 30000; // 靶最小旋转矩形的最大面积
-constexpr int MIN_TARGET_LIGHT_CONTOUR_AREA    = 300;   // 靶轮廓最小面积
-constexpr int MAX_TARGET_LIGHT_CONTOUR_AREA    = 10000; // 靶轮廓最大面积
-constexpr double MIN_TARGET_LIGHT_ASPECT_RATIO = 0.5;   // 靶最小比例
-constexpr double MAX_TARGET_LIGHT_ASPECT_RATIO = 1.5;   // 靶最大比例
-constexpr double ARROW_WIDTH                   = 60;    // 流水灯的宽度
-constexpr int MIN_ARROW_LIGHT_AREA             = 10;    // 流水灯小灯条的最小面积
-constexpr int MAX_ARROW_LIGHT_AREA             = 250;   // 流水灯小灯条的最大面积
-constexpr double MIN_ARROW_LIGHT_ASPECT_RATIO  = 1.5;   // 流水灯小灯条最小比例
-constexpr double MAX_ARROW_LIGHT_ASPECT_RATIO  = 5;     // 流水灯小灯条最大比例
-constexpr double MAX_SAME_ARROW_AREA_RATIO     = 5;     // 最大箭头面积相似比例
-constexpr float MIN_TARGET_ROI_AREA            = 100.0f;
-constexpr double RUNE_PAN_REAL_DIS             = 0.15;
-constexpr double RUNE_R2PANCENTER              = 0.7;
+constexpr double RUNE_PAN_REAL_DIS = 0.15; // 靶的宽度
+constexpr double RUNE_R2PANCENTER  = 0.7;  // 中心到靶的距离
 
 struct Points {
     cv::Point2f center;
@@ -54,10 +30,10 @@ struct Points {
 };
 
 struct KeyPoint {
-    cv::Point2f lu = cv::Point2f(0, 0);                 // 左上
-    cv::Point2f ru = cv::Point2f(0, 0);                 // 右上
-    cv::Point2f rd = cv::Point2f(0, 0);                 // 右下
-    cv::Point2f ld = cv::Point2f(0, 0);                 // 左下
+    cv::Point2f lu = cv::Point2f(0, 0);    // 左上
+    cv::Point2f ru = cv::Point2f(0, 0);    // 右上
+    cv::Point2f rd = cv::Point2f(0, 0);    // 右下
+    cv::Point2f ld = cv::Point2f(0, 0);    // 左下
 };
 
 struct Light {
@@ -105,7 +81,9 @@ struct Target {
 
 struct Arrow {
     Arrow() = default;
-    bool set(const std::vector<Light>& points, const cv::Point2f& roi, const cv::Mat& image);
+    bool
+        set(const std::vector<Light>& points, const cv::Point2f& roi, const cv::Mat& image,
+            bool debug_mode = false);
     std::vector<cv::Point> contour;
     cv::Point2f center;
     cv::Size2f size;
@@ -114,6 +92,43 @@ struct Arrow {
     cv::RotatedRect rotated;
     double ratio;
     double fillratio;
+};
+
+// 能量机关检测参数
+struct RuneDetectorParams {
+    // 调试模式，启用时输出详细错误信息
+    bool debug_mode{false};
+
+    // 流水灯参数
+    double min_roundness{0.6};
+    double max_roundness{1.0};
+    int min_arrow_light_num{3};
+    int max_arrow_light_num{15};
+    double min_arrow_aspect_ratio{2.0};
+    double max_arrow_aspect_ratio{12.0};
+    double max_arrow_area{5000.0};
+    double min_arrow_light_area{10.0};
+    double max_arrow_light_area{250.0};
+    double min_arrow_light_aspect_ratio{1.5};
+    double max_arrow_light_aspect_ratio{5.0};
+    double max_same_arrow_area_ratio{5.0};
+
+    // ROI参数
+    double global_roi_length_ratio{1.5};
+    double local_roi_distance_ratio{6.0};
+    int local_roi_width{150};
+
+    // R中心参数
+    double max_center_aspect_ratio{3.0};
+
+    // 靶参数
+    int min_target_light_area{400};
+    int max_target_light_area{30000};
+    int min_target_light_contour_area{300};
+    int max_target_light_contour_area{10000};
+    double min_target_light_aspect_ratio{0.5};
+    double max_target_light_aspect_ratio{1.5};
+    float min_target_roi_area{100.0f};
 };
 
 } // namespace fyt::rune

@@ -24,6 +24,7 @@
 #include <algorithm>
 #include <cmath>
 #include <expected>
+#include <frame.hpp>
 #include <functional>
 #include <limits>
 #include <numbers>
@@ -376,8 +377,10 @@ void register_aimer_systems(talos::Scheduler& scheduler, L4Config&& config) {
         "l4_aimer",
         [phase_states =
              std::unordered_map<core::TargetKey, TargetPhaseState, core::TargetKeyHash>{},
-         selected_target_key = std::optional<core::TargetKey>{},
-         ldm_state_cache     = std::optional<L3::ldm::LdmState>{}](
+         selected_target_key     = std::optional<core::TargetKey>{},
+         ldm_state_cache         = std::optional<L3::ldm::LdmState>{},
+         rune_last_target_angles = std::optional<std::pair<double, double>>{}](
+
             talos::res<L4Config> cfg, talos::res<Aimer> aimer,
             core::trajectory::trajectory_solver solver,
             core::trajectory::bullet_speed bullet_speed_,
@@ -552,7 +555,7 @@ void register_aimer_systems(talos::Scheduler& scheduler, L4Config&& config) {
                 target_selection_trace.candidates.push_back(std::move(entry));
             }
 
-            // Try Rune (fallback)
+            // Try Rune (fallback) — skip re-aiming on stale data
             if (!aim_result) {
                 const auto rune_state = rune_in.read();
                 if (rune_state && rune_state->tracking_valid) {
@@ -605,6 +608,7 @@ void register_aimer_systems(talos::Scheduler& scheduler, L4Config&& config) {
 
                 GimbalPlan plan;
                 plan.timestamp_ns            = aim_result->timestamp_ns;
+                plan.predicted_roll          = aim_result->predicted_roll;
                 plan.yaw                     = aim_result->aim_yaw;
                 plan.pitch                   = aim_result->aim_pitch;
                 plan.aim_phase               = aim_result->aim_phase;
@@ -689,8 +693,11 @@ void register_aimer_systems(talos::Scheduler& scheduler, L4Config&& config) {
                     selected_target_key.reset();
                 }
                 GimbalPlan plan;
-                plan.timestamp_ns = output_timestamp_ns;
-                plan.distance     = -1;
+                plan.timestamp_ns                 = output_timestamp_ns;
+                plan.distance                     = -1;
+                const auto [last_yaw, last_pitch] = *rune_last_target_angles;
+                plan.yaw                          = last_yaw;
+                plan.pitch                        = last_pitch;
                 selected_target_out.write(std::move(selected_target));
                 target_selection_out.write(std::move(target_selection_trace));
                 aimer_out.write(std::move(plan));

@@ -66,6 +66,7 @@ struct TargetPrediction {
     // ========================================================================
     Eigen::Vector3d target_velocity; ///< Target velocity [vx, vy, vz] (m/s)
     double target_v_yaw{0.0};        ///< Target angular velocity (rad/s)
+    double predicted_roll{0.0};      ///< Predicted roll angle (radians, for Rune)
     ArmorAimPhase aim_phase{ArmorAimPhase::SingleArmor};
     int selected_armor_id{0};
     int rough_selected_armor_id{0};
