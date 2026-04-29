@@ -253,13 +253,8 @@ enable_debug = true
 reference_age_threshold_s = 0.5
 
 # Pitch limits (radians)
-<<<<<<< HEAD
 pitch_min = -0.69813169  # -40deg
 pitch_max = 0.69813169  # 40deg
-=======
-pitch_min = -1.69813169 # -40deg
-pitch_max = 1.69813169 # 40deg
->>>>>>> 53ba291 (calibrate drone & upload new model weights)
 
 # MPC core parameters
 [mpc_weapon.mpc]
