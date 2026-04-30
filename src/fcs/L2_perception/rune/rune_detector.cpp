@@ -1303,14 +1303,14 @@ std::expected<fast_tf::TransformMatrixd<rune, fast_tf::odom>, std::string> RuneD
     const fast_tf::TransformMatrixd<fast_tf::odom, fast_tf::camera_optical>& odom_T_cam) {
     if (targets.empty()) {
         // std::cerr << "[ERROR] solve: targets empty" << std::endl;
-        return std::unexpected("rune_detector_solve_failed");
+        return std::unexpected("rune_detector_solve_targets_empty");
     }
 
     if (targets.size() == 1 && !targets[0].initKey) {
         if (params_.debug_mode) {
             std::cerr << "[ERROR] solve: Single target but initKey=false" << std::endl;
         }
-        return std::unexpected("rune_detector_solve_failed");
+        return std::unexpected("Single target but initKey=false");
     }
 
     if (targets.size() == 2) {
@@ -1319,7 +1319,7 @@ std::expected<fast_tf::TransformMatrixd<rune, fast_tf::odom>, std::string> RuneD
             if (params_.debug_mode) {
                 std::cerr << "[ERROR] solve: Both targets have initKey=false" << std::endl;
             }
-            return std::unexpected("rune_detector_solve_failed");
+            return std::unexpected("solve: Both targets have initKey=false");
         }
         if (!targets[0].initKey) {
             std::swap(targets[0], targets[1]);
@@ -1352,7 +1352,7 @@ std::expected<fast_tf::TransformMatrixd<rune, fast_tf::odom>, std::string> RuneD
             if (params_.debug_mode) {
                 std::cerr << "3D point number not equals 2D point number" << std::endl;
             }
-            return std::unexpected("rune_detector_solve_failed");
+            return std::unexpected("3D point number not equals 2D point number");
         }
 
         // 2. 点数数量校验（至少4个点，满足solvePnP要求）
@@ -1360,7 +1360,7 @@ std::expected<fast_tf::TransformMatrixd<rune, fast_tf::odom>, std::string> RuneD
             if (params_.debug_mode) {
                 std::cerr << "pnp point number less 4" << std::endl;
             }
-            return std::unexpected("rune_detector_solve_failed");
+            return std::unexpected("pnp point number less 4");
         }
 
         bool success = cv::solvePnP(
@@ -1371,7 +1371,7 @@ std::expected<fast_tf::TransformMatrixd<rune, fast_tf::odom>, std::string> RuneD
             if (params_.debug_mode) {
                 std::cerr << "R点PnP解算失败" << std::endl;
             }
-            return std::unexpected("rune_detector_solve_failed");
+            return std::unexpected("R点PnP解算失败");
         }
 
     } else if (targets.size() == 2) {
@@ -1403,7 +1403,7 @@ std::expected<fast_tf::TransformMatrixd<rune, fast_tf::odom>, std::string> RuneD
                 std::cerr << "3D point number : " << object_points.size()
                           << " not equals 2D point number : " << image_points.size() << std::endl;
             }
-            return std::unexpected("rune_detector_solve_failed");
+            return std::unexpected("not equals 2D point number :");
         }
 
         // 2. 点数数量校验（至少4个点，满足solvePnP要求）
@@ -1411,17 +1411,17 @@ std::expected<fast_tf::TransformMatrixd<rune, fast_tf::odom>, std::string> RuneD
             if (params_.debug_mode) {
                 std::cerr << "pnp point number less 4: " << object_points.size() << std::endl;
             }
-            return std::unexpected("rune_detector_solve_failed");
+            return std::unexpected("pnp point number less 4:");
         }
 
         bool success = cv::solvePnP(
             object_points, image_points, cameraMatrix, distCoeffs, rvec, tvec, false,
-            cv::SOLVEPNP_SQPNP);
+            cv::SOLVEPNP_ITERATIVE);
         if (!success) {
             if (params_.debug_mode) {
                 std::cerr << "R点PnP解算失败" << std::endl;
             }
-            return std::unexpected("rune_detector_solve_failed");
+            return std::unexpected("R点PnP解算失败");
         }
     }
 
@@ -1443,7 +1443,7 @@ std::expected<fast_tf::TransformMatrixd<rune, fast_tf::odom>, std::string> RuneD
         if (params_.debug_mode) {
             std::cerr << "R点旋转矩阵转换失败: " << e.what() << std::endl;
         }
-        return std::unexpected("rune_detector_solve_failed");
+        return std::unexpected("R点旋转矩阵转换失败");
     }
 
     auto pose = fast_tf::TransformMatrixd<rune, fast_tf::camera_optical>::from_pnp(rvec, tvec);

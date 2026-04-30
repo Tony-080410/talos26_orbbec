@@ -298,7 +298,7 @@ void register_rune_detection_systems(talos::Scheduler& scheduler, RuneDetectorCo
             if (!pose_result) {
                 debug_out.write(std::move(dbg));
                 // obs_out.write(out);
-                std::cerr << "[rune_system] solve failed!!!!";
+                SPDLOG_ERROR("solve rune: {}", pose_result.error());
                 return;
             }
 

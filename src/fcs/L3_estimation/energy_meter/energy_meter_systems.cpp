@@ -42,13 +42,6 @@ void register_energy_meter_systems(talos::Scheduler& scheduler, EnergyMeterL3Con
             auto obs = obs_in.read();
             if (!obs || !obs->valid || obs->target_positions_odom.empty()
                 || obs->target_quats_odom.empty()) {
-                EnergyMeterState out;
-                out.timestamp_ns       = obs->timestamp_ns;
-                out.tracking_valid     = false;
-                out.model_valid        = false;
-                out.blade_id_confirmed = false;
-
-                state_out.write(out);
                 return;
             }
 
