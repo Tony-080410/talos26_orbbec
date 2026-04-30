@@ -20,6 +20,6 @@ namespace fcs::visualization {
 // Register all Foxglove publisher systems for the Talos scheduler.
 // Implemented in `src/fcs/visualization/foxglove_systems.cpp`.
 void register_foxglove_systems(
-    talos::Scheduler& scheduler, talos::Scheduler* scheduler_ptr = nullptr);
+    bool daedalus, talos::Scheduler& scheduler, talos::Scheduler* scheduler_ptr = nullptr);
 
 } // namespace fcs::visualization

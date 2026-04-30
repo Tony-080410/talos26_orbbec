@@ -76,14 +76,15 @@ void publish_control_snapshot(
 
 struct DaedalusImu {
     std::shared_ptr<ipc::ShmClient> ipc_device;
+    uint64_t last_gt_timestamp_ns{0};
 
     void system(
         talos::res_mut<fast_tf::CoordinateSystem> tf_buffer,
         [[maybe_unused]] core::trajectory::bullet_speed_mut bullet_speed,
         [[maybe_unused]] core::detecting_color_mut detecting_color,
         [[maybe_unused]] core::imu_state_mut imu_state,
-        talos::spmc_mut<core::ControlResourceSnapshot, RuntimeControlStateChannelTopic>
-            control_out) noexcept {
+        talos::spmc_mut<core::ControlResourceSnapshot, RuntimeControlStateChannelTopic> control_out,
+        talos::spmc_mut<ipc::GroundTruthBatch, GroundTruthBatchChannelTopic> gt_out) noexcept {
         bool control_updated           = false;
         uint64_t control_timestamp_ns  = 0;
         const auto note_control_update = [&](uint64_t timestamp_ns) {
@@ -144,6 +145,12 @@ struct DaedalusImu {
         if (const auto obs = ipc_device->recv_chassis_observation()) {
             // TODO
         }
+        if (const auto gt = ipc_device->recv_ground_truth()) {
+            if (gt->timestamp_ns != last_gt_timestamp_ns) {
+                last_gt_timestamp_ns = gt->timestamp_ns;
+                gt_out.write(*gt);
+            }
+        }
         if (control_updated) {
             publish_control_snapshot(
                 control_out, *tf_buffer, *imu_state, *detecting_color, bullet_speed->bullet_speed,
@@ -164,8 +171,9 @@ struct McuImu {
         talos::res_mut<fast_tf::CoordinateSystem> tf_buffer,
         core::trajectory::bullet_speed_mut bullet_speed, core::detecting_color_mut detecting_color,
         core::imu_state_mut imu_state,
-        talos::spmc_mut<core::ControlResourceSnapshot, RuntimeControlStateChannelTopic>
-            control_out) noexcept {
+        talos::spmc_mut<core::ControlResourceSnapshot, RuntimeControlStateChannelTopic> control_out,
+        [[maybe_unused]] talos::spmc_mut<ipc::GroundTruthBatch, GroundTruthBatchChannelTopic>
+            gt_out) noexcept {
         device->handle_events();
         if (imu_data->header.sof != talos_gimbal::HeaderFrame::SoF()
             || imu_data->eof != talos_gimbal::HeaderFrame::EoF()) [[unlikely]] {
@@ -219,11 +227,12 @@ struct Imu {
         talos::res_mut<fast_tf::CoordinateSystem> tf_buffer,
         core::trajectory::bullet_speed_mut bullet_speed, core::detecting_color_mut detecting_color,
         core::imu_state_mut imu_state,
-        talos::spmc_mut<core::ControlResourceSnapshot, RuntimeControlStateChannelTopic>
-            control_out) noexcept {
+        talos::spmc_mut<core::ControlResourceSnapshot, RuntimeControlStateChannelTopic> control_out,
+        talos::spmc_mut<ipc::GroundTruthBatch, GroundTruthBatchChannelTopic> gt_out) noexcept {
         std::visit(
             [&](auto& inner) {
-                inner.system(tf_buffer, bullet_speed, detecting_color, imu_state, control_out);
+                inner.system(
+                    tf_buffer, bullet_speed, detecting_color, imu_state, control_out, gt_out);
             },
             impl);
     }
@@ -326,15 +335,17 @@ std::expected<L1L2SetupResult, std::string> setup_l1(
 
     if (imu_ready) {
         // IMU: 1000Hz, silent update (no notify)
-        scheduler.add_system<talos::fixed_rate_silent<1000, 1>>(
+        scheduler.add_system<talos::fixed_rate<1000, 1>>(
             "imu_reader",
             [imu = std::move(imu)](
                 talos::res_mut<fast_tf::CoordinateSystem> tf_buffer,
                 core::trajectory::bullet_speed_mut bullet_speed,
                 core::detecting_color_mut detecting_color, core::imu_state_mut imu_state,
                 talos::spmc_mut<core::ControlResourceSnapshot, RuntimeControlStateChannelTopic>
-                    control_out) {
-                imu->system(tf_buffer, bullet_speed, detecting_color, imu_state, control_out);
+                    control_out,
+                talos::spmc_mut<ipc::GroundTruthBatch, GroundTruthBatchChannelTopic> gt_out) {
+                imu->system(
+                    tf_buffer, bullet_speed, detecting_color, imu_state, control_out, gt_out);
             });
     } else {
         SPDLOG_WARN("pretending mcu is connected, no mcu data will be available");

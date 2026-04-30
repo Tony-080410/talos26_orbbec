@@ -10,7 +10,7 @@ namespace ipc {
 
 static constexpr size_t CACHE_LINE_SIZE = 64;
 static constexpr uint32_t SHM_MAGIC     = 0x54414C05; // "TAL05"
-static constexpr uint32_t SHM_VERSION   = 1;
+static constexpr uint32_t SHM_VERSION   = 2;
 
 // 图像配置
 static constexpr uint32_t IMAGE_WIDTH    = 1440;
@@ -116,6 +116,68 @@ struct alignas(64) ChassisObservation {
 };
 static_assert(sizeof(ChassisObservation) == 128, "ChassisObservation must be 128 bytes");
 
+// ============ Ground Truth ============
+
+static constexpr size_t GROUND_TRUTH_MAX_TARGETS = 16;
+static constexpr size_t GROUND_TRUTH_MAX_RUNES   = 4;
+
+/**
+ * @brief Ground truth target (robot or outpost) - 64 bytes
+ */
+struct alignas(32) GroundTruthTarget {
+    uint64_t frame_seq;
+    uint64_t timestamp_ns;
+    uint8_t team;        // 0=Red, 1=Blue
+    uint8_t armor_label; // ArmorLabel discriminant
+    uint8_t is_outpost;  // 1 if outpost, 0 if robot
+    uint8_t _pad1;
+    float position[3];   // xyz in ROS odom frame
+    float vyaw;          // angular velocity (rad/s)
+    float yaw;           // current yaw angle (rad)
+    uint8_t _pad[24];
+};
+static_assert(sizeof(GroundTruthTarget) == 64, "GroundTruthTarget must be 64 bytes");
+
+/**
+ * @brief Ground truth rune state - 128 bytes
+ */
+struct alignas(64) GroundTruthRune {
+    uint64_t frame_seq;
+    uint64_t timestamp_ns;
+    uint8_t team;            // 0=Red, 1=Blue
+    uint8_t rune_mode;       // 0=Small, 1=Large
+    uint8_t mechanism_state; // 0=Inactive, 1=Activating, 2=Activated, 3=Failed
+    uint8_t _pad1;
+    float r_center_odom[3];  // rune center in ROS odom frame
+    float radius;
+    float current_angle;     // current rotation angle (rad)
+    float v_roll;            // current angular velocity (rad/s)
+    int32_t direction;       // +1=clockwise, -1=ccw
+    float sin_amplitude;     // a
+    float sin_omega;         // ω
+    float sin_phase;         // φ
+    float sin_offset;        // b = 2.090 - a
+    float relative_time;     // time since variable rotation started
+    int32_t blade_id;        // currently activating blade (-1 if none)
+    uint8_t target_activations[5];
+    uint8_t _pad[20];
+};
+static_assert(sizeof(GroundTruthRune) == 128, "GroundTruthRune must be 128 bytes");
+
+/**
+ * @brief Ground truth batch - published every frame
+ */
+struct alignas(64) GroundTruthBatch {
+    uint64_t frame_seq;
+    uint64_t timestamp_ns;
+    uint32_t target_count;
+    uint32_t rune_count;
+    GroundTruthTarget targets[GROUND_TRUTH_MAX_TARGETS];
+    GroundTruthRune runes[GROUND_TRUTH_MAX_RUNES];
+    uint8_t _pad[64];
+};
+static_assert(sizeof(GroundTruthBatch) == 1664, "GroundTruthBatch must be 1664 bytes");
+
 // ============ TripleBuffer 槽位 ============
 
 /**
@@ -197,9 +259,11 @@ static_assert(sizeof(ShmHeader) == 64, "ShmHeader must be 64 bytes");
  * ├─────────────────────────────────────┤
  * │ ChassisObservation (128 bytes)      │ offset 1856
  * ├─────────────────────────────────────┤
- * │ _pad (64 bytes)                     │ offset 1984
+ * │ GroundTruthBatch (1664 bytes)       │ offset 1984
+ * ├─────────────────────────────────────┤
+ * │ _pad (64 bytes)                     │ offset 3648
  * └─────────────────────────────────────┘
- * Total: 2048 bytes
+ * Total: 3712 bytes
  */
 struct ShmMetaRegion {
     ShmHeader header;
@@ -208,12 +272,14 @@ struct ShmMetaRegion {
     GimbalTripleBuffer gimbal_cmd;
     CameraInfo camera_info;
     ChassisObservation chassis_observation;
-    uint8_t _pad[64];          // 填充到 2048 字节
+    GroundTruthBatch ground_truth;
+    uint8_t _pad[64];
 };
-static_assert(sizeof(ShmMetaRegion) == 2048, "ShmMetaRegion must be 2048 bytes");
+static_assert(sizeof(ShmMetaRegion) == 3712, "ShmMetaRegion must be 3712 bytes");
 static_assert(offsetof(ShmMetaRegion, camera_info) == 1728, "camera_info offset mismatch");
 static_assert(
     offsetof(ShmMetaRegion, chassis_observation) == 1856, "chassis_observation offset mismatch");
+static_assert(offsetof(ShmMetaRegion, ground_truth) == 1984, "ground_truth offset mismatch");
 
 // Pose 索引
 enum PoseIndex : uint8_t {

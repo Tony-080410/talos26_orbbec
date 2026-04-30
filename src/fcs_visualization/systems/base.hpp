@@ -32,6 +32,9 @@ void register_l4_planning_systems(talos::scheduler::Scheduler& app);
 /// @brief Register rune-specific visualization systems
 void register_rune_systems(talos::scheduler::Scheduler& app);
 
+/// @brief Register ground truth visualization systems (daedalus mode)
+void register_ground_truth_systems(talos::scheduler::Scheduler& app);
+
 /// @brief Register debug visualization systems
 void register_debug_systems(talos::scheduler::Scheduler& app, talos::Scheduler* scheduler_ptr);
 

@@ -284,6 +284,7 @@ add_library(fcs_visualization SHARED
         src/fcs_visualization/systems/l3_estimation_systems.cpp
         src/fcs_visualization/systems/l4_planning_systems.cpp
         src/fcs_visualization/systems/rune_systems.cpp
+        src/fcs_visualization/systems/ground_truth_systems.cpp
 )
 
 target_include_directories(fcs_visualization PUBLIC

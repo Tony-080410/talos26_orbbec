@@ -25,7 +25,8 @@ std::shared_ptr<FoxgloveServer> try_create_foxglove_server(uint16_t port, std::s
         });
 }
 
-void register_foxglove_systems(talos::Scheduler& scheduler, talos::Scheduler* scheduler_ptr) {
+void register_foxglove_systems(
+    bool daedalus, talos::Scheduler& scheduler, talos::Scheduler* scheduler_ptr) {
     using namespace foxglove::systems;
 
     // Register all layered systems
@@ -34,6 +35,10 @@ void register_foxglove_systems(talos::Scheduler& scheduler, talos::Scheduler* sc
     register_l3_estimation_systems(scheduler);
     register_l4_planning_systems(scheduler);
     register_rune_systems(scheduler);
+    if (daedalus) {
+        SPDLOG_INFO("register ground truth system");
+        register_ground_truth_systems(scheduler);
+    }
     register_debug_systems(scheduler, scheduler_ptr);
 }
 

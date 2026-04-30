@@ -99,6 +99,7 @@ DECL(muzzle_link, gimbal_pitch);
 #undef DECL
 #undef DECL_WITH_ID
 
+using world          = world_fuxk_frame;
 using odom           = odom_fuxk_frame;
 using gimbal         = gimbal_yaw_fuxk_frame;
 using gimbal_pitch   = gimbal_pitch_fuxk_frame;

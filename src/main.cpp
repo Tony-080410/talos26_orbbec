@@ -47,7 +47,8 @@ int main() {
             std::shared_ptr<fcs::visualization::FoxgloveServer> server = std::move(*server_result);
             fcs::visualization::attach_foxglove_sink(*server);
             world.insert_resource(server);
-            fcs::visualization::register_foxglove_systems(scheduler, &scheduler);
+            fcs::visualization::register_foxglove_systems(
+                config->launch.daedalus, scheduler, &scheduler);
             if (foxglove_cfg.transport == fcs::FoxgloveTransport::WebSocket) {
                 SPDLOG_INFO(
                     "Foxglove WebSocket enabled on ws://{}:{}", foxglove_cfg.host,

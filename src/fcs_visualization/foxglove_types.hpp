@@ -39,6 +39,7 @@ struct FoxgloveChannels {
     SceneCh association_scene_ch;
     SceneCh mpc_prediction_scene_ch;
     SceneCh rune_scene_ch;
+    SceneCh ground_truth_scene_ch;
 
     // Image / Video
     ImageCh img_ch;
@@ -67,6 +68,7 @@ struct FoxgloveChannels {
     JsonCh ldm_detection_ch;
     JsonCh ldm_measurement_ch;
     JsonCh ldm_state_ch;
+    JsonCh ground_truth_ch;
 
     // Special
     TfCh tf_ch;
@@ -146,6 +148,14 @@ struct rune_scene_def {
     using channel_type                      = ::foxglove::schemas::SceneUpdateChannel;
     using payload_type                      = ::foxglove::schemas::SceneUpdate;
     static constexpr auto member            = &FoxgloveChannels::rune_scene_ch;
+    static constexpr bool is_raw            = false;
+};
+
+struct ground_truth_scene_def {
+    static constexpr std::string_view topic = "/ground_truth/scene";
+    using channel_type                      = ::foxglove::schemas::SceneUpdateChannel;
+    using payload_type                      = ::foxglove::schemas::SceneUpdate;
+    static constexpr auto member            = &FoxgloveChannels::ground_truth_scene_ch;
     static constexpr bool is_raw            = false;
 };
 
@@ -364,6 +374,15 @@ struct ldm_state_def {
     static constexpr std::string_view encoding = "json";
 };
 
+struct ground_truth_def {
+    static constexpr std::string_view topic    = "/ground_truth";
+    using channel_type                         = ::foxglove::RawChannel;
+    using payload_type                         = std::vector<uint8_t>;
+    static constexpr auto member               = &FoxgloveChannels::ground_truth_ch;
+    static constexpr bool is_raw               = true;
+    static constexpr std::string_view encoding = "json";
+};
+
 // --- Special channels ---
 
 struct tf_def {
@@ -396,12 +415,12 @@ struct log_def {
 
 using ChannelRegistry = std::tuple<
     scene_def, track_scene_def, ldm_track_scene_def, gimbal_scene_def, association_scene_def,
-    mpc_prediction_scene_def, rune_scene_def, img_def, video_def, calibration_img_def,
-    binary_img_def, pattern_img_def, rune_arrow_img_def, rune_target_img_def, rune_center_img_def,
-    ekf_heatmap_def, debug_lights_def, debug_armors_def, measurement_def, target_def,
-    target_selection_trace_def, cmd_gimbal_def, perf_stats_def, mpc_traj_def, rune_debug_def,
-    pnp_solver_def, nn_confidence_def, energy_meter_def, ldm_detection_def, ldm_measurement_def,
-    ldm_state_def, tf_def, calib_def, log_def>;
+    mpc_prediction_scene_def, rune_scene_def, ground_truth_scene_def, img_def, video_def,
+    calibration_img_def, binary_img_def, pattern_img_def, rune_arrow_img_def, rune_target_img_def,
+    rune_center_img_def, ekf_heatmap_def, debug_lights_def, debug_armors_def, measurement_def,
+    target_def, target_selection_trace_def, cmd_gimbal_def, perf_stats_def, mpc_traj_def,
+    rune_debug_def, pnp_solver_def, nn_confidence_def, energy_meter_def, ldm_detection_def,
+    ldm_measurement_def, ldm_state_def, ground_truth_def, tf_def, calib_def, log_def>;
 
 // ============================================================================
 // FoxgloveMsg — unified message type
@@ -423,6 +442,7 @@ using GimbalSceneMessage          = FoxgloveMsg<gimbal_scene_def>;
 using AssociationSceneMessage     = FoxgloveMsg<association_scene_def>;
 using MpcPredictionSceneMessage   = FoxgloveMsg<mpc_prediction_scene_def>;
 using RuneSceneMessage            = FoxgloveMsg<rune_scene_def>;
+using GroundTruthSceneMessage     = FoxgloveMsg<ground_truth_scene_def>;
 using ImageMessage                = FoxgloveMsg<img_def>;
 using VideoMessage                = FoxgloveMsg<video_def>;
 using CalibrationImageMessage     = FoxgloveMsg<calibration_img_def>;
@@ -447,6 +467,7 @@ using EnergyMeterMessage          = FoxgloveMsg<energy_meter_def>;
 using LdmDetectionMessage         = FoxgloveMsg<ldm_detection_def>;
 using LdmMeasurementMessage       = FoxgloveMsg<ldm_measurement_def>;
 using LdmStateMessage             = FoxgloveMsg<ldm_state_def>;
+using GroundTruthMessage          = FoxgloveMsg<ground_truth_def>;
 using TfMessage                   = FoxgloveMsg<tf_def>;
 using LogMessage                  = FoxgloveMsg<log_def>;
 

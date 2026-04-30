@@ -71,4 +71,13 @@ struct WeaponCommandChannelTopic {};
 /// Mode: SPMC (single producer, multiple consumers)
 struct RuntimeControlStateChannelTopic {};
 
+// ============================================================================
+// Ground Truth (Daedalus IPC → Visualization)
+// ============================================================================
+
+/// @brief Ground truth batch channel (Daedalus IPC reader → Visualization)
+/// Data type: ipc::GroundTruthBatch
+/// Mode: SPMC (single producer, multiple consumers)
+struct GroundTruthBatchChannelTopic {};
+
 } // namespace fcs

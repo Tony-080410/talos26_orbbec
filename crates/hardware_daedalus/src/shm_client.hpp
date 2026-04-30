@@ -227,6 +227,22 @@ public:
         return observation;
     }
 
+    // ============ Ground Truth ============
+
+    /**
+     * @brief 接收 ground truth 数据
+     *
+     * 数据来源为 ShmMetaRegion::ground_truth。
+     * 若 timestamp_ns=0，表示生产者尚未发布有效数据。
+     */
+    [[nodiscard]] std::optional<GroundTruthBatch> recv_ground_truth() const {
+        const auto& gt = meta_->ground_truth;
+        if (gt.timestamp_ns == 0) {
+            return std::nullopt;
+        }
+        return gt;
+    }
+
     // ============ 云台命令发布 ============
 
     /**
