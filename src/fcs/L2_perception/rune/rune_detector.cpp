@@ -1212,6 +1212,12 @@ RESTART:
         }
     }
 
+    for (size_t i = 0; i < targets.size(); i++) {
+        auto vec         = targets[i].center - rcenter.center;
+        double angle     = std::atan2(vec.y, vec.x);
+        targets[i].angle = angle;
+    }
+
     status = Status::SUCCESS;
 
     return true;
@@ -1284,8 +1290,8 @@ void addOther(
     points2d.push_back(other.keypnt.ld);
     points2d.push_back(other.center);
     // ---------- 计算 roll 差 ----------
-    double roll = -angle_diffs[id];
-    one.roll    = roll;
+    double droll = -angle_diffs[id];
+    one.droll    = droll;
 
     points3d.push_back(one.points3d[0]);
     points3d.push_back(one.points3d[1]);
@@ -1294,11 +1300,11 @@ void addOther(
     points3d.push_back(one.points3d[4]);
     points3d.push_back(one.points3d[5]);
     // ---------- 旋转后的 3D 点加入 ----------
-    points3d.push_back(rotateX(one.points3d[1], roll));
-    points3d.push_back(rotateX(one.points3d[2], roll));
-    points3d.push_back(rotateX(one.points3d[3], roll));
-    points3d.push_back(rotateX(one.points3d[4], roll));
-    points3d.push_back(rotateX(one.points3d[5], roll));
+    points3d.push_back(rotateX(one.points3d[1], droll));
+    points3d.push_back(rotateX(one.points3d[2], droll));
+    points3d.push_back(rotateX(one.points3d[3], droll));
+    points3d.push_back(rotateX(one.points3d[4], droll));
+    points3d.push_back(rotateX(one.points3d[5], droll));
 }
 
 std::expected<fast_tf::TransformMatrixd<rune, fast_tf::odom>, std::string> RuneDetector::solve(
@@ -1382,9 +1388,9 @@ std::expected<fast_tf::TransformMatrixd<rune, fast_tf::odom>, std::string> RuneD
         if (has_last_target_) {
             // 使用角度差（处理临界跳变）
             double diff0 = std::abs(
-                angles::shortest_angular_distance(last_tracked_target_roll_, targets[0].roll));
+                angles::shortest_angular_distance(last_tracked_target_angle_, targets[0].angle));
             double diff1 = std::abs(
-                angles::shortest_angular_distance(last_tracked_target_roll_, targets[1].roll));
+                angles::shortest_angular_distance(last_tracked_target_angle_, targets[1].angle));
             if (diff1 < diff0) {
                 std::swap(targets[0], targets[1]);
                 std::swap(arrows[0], arrows[1]);
@@ -1454,7 +1460,7 @@ std::expected<fast_tf::TransformMatrixd<rune, fast_tf::odom>, std::string> RuneD
     // 保存当前追踪的靶位置和 roll，供下一帧使用
     if (!targets.empty()) {
         last_tracked_target_center_ = targets[0].center;
-        last_tracked_target_roll_   = targets[0].roll;
+        last_tracked_target_angle_  = targets[0].angle;
         has_last_target_            = true;
         last_timestamp_             = timestamp_sec;
     }

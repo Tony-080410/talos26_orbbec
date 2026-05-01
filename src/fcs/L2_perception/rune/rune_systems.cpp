@@ -288,7 +288,7 @@ void register_rune_detection_systems(talos::Scheduler& scheduler, RuneDetectorCo
             // 叶片在竖直平面 (Y-Z) 内绕水平轴 (X) 旋转
             const double r2pancenter = fyt::rune::RUNE_R2PANCENTER;
             for (size_t i = 0; i < detector->targets.size(); ++i) {
-                const double dtheta = detector->targets[i].roll;
+                const double dtheta = detector->targets[i].droll;
                 const double sr     = std::sin(dtheta);
                 const double cr     = std::cos(dtheta);
                 const Eigen::Vector3d blade_center_rotated(

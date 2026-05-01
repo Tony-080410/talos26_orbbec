@@ -60,7 +60,7 @@ private:
 
     // 上一帧追踪的靶信息（用于目标连续性）
     cv::Point2f last_tracked_target_center_{0, 0};
-    double last_tracked_target_roll_{0.0};
+    double last_tracked_target_angle_{0.0};
     double last_timestamp_ = 0;
     bool has_last_target_{false};
 

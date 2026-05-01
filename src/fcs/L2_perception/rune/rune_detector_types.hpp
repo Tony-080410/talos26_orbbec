@@ -57,7 +57,8 @@ struct CenterR {
 
 struct Target {
     cv::Point2f center = cv::Point2f(0, 0);
-    double roll        = 0;
+    double droll       = 0;
+    double angle       = 0;
     std::vector<cv::Point> contour;
     void set(const Light& l);
     KeyPoint keypnt;

@@ -31,30 +31,8 @@ bool Tracker::update(
         return false;
     }
 
-    // ── Target selection: pick the target closest to predicted roll ──
-    size_t selected_idx = 0;
-    if (target_quats.size() >= 2) {
-        const auto& x = ekf_->X();
-        const double predict_roll =
-            (confirmed_blade_id_ >= 0)
-                ? normalize_rad(
-                      x(THETA) + static_cast<double>(confirmed_blade_id_) * 2.0 / 5.0 * M_PI)
-                : x(THETA);
-
-        double best_diff = std::numeric_limits<double>::max();
-        for (size_t i = 0; i < target_quats.size(); ++i) {
-            const auto euler                    = math_fuxk::rpy(target_quats[i]);
-            const auto [roll_i, pitch_i, yaw_i] = euler.rpy();
-            const double diff                   = std::abs(normalize_rad(predict_roll - roll_i));
-            if (diff < best_diff) {
-                best_diff    = diff;
-                selected_idx = i;
-            }
-        }
-    }
-
     const auto& pos               = rcenter_position;
-    const auto euler              = math_fuxk::rpy(target_quats[selected_idx]);
+    const auto euler              = math_fuxk::rpy(target_quats[0]);
     const auto [roll, pitch, yaw] = euler.rpy();
 
     using VecZ = Model::VecZ;
@@ -92,35 +70,6 @@ bool Tracker::update(
     }
 
     state_machine(true);
-
-    // ── Blade ID debounce ──
-    if (confirmed_blade_id_ < 0) {
-        confirmed_blade_id_       = best_id;
-        pending_blade_id_         = best_id;
-        blade_id_confirmed_       = (target_positions.size() < 2);
-        consecutive_change_count_ = blade_id_confirmed_ ? 0 : 1;
-    } else if (best_id == confirmed_blade_id_) {
-        consecutive_change_count_ = 0;
-        blade_id_confirmed_       = true;
-    } else if (target_positions.size() == 2) {
-        blade_id_confirmed_ = false;
-        if (best_id == pending_blade_id_) {
-            consecutive_change_count_++;
-        } else {
-            pending_blade_id_         = best_id;
-            consecutive_change_count_ = 1;
-        }
-        if (consecutive_change_count_ >= 2) {
-            confirmed_blade_id_       = pending_blade_id_;
-            consecutive_change_count_ = 0;
-            blade_id_confirmed_       = true;
-        }
-    } else {
-        confirmed_blade_id_ = best_id;
-        pending_blade_id_   = best_id;
-        blade_id_confirmed_ = true;
-    }
-    current_matched_blade_id_ = confirmed_blade_id_;
 
     // Build unwrapped measurement for EKF update
     VecZ z;

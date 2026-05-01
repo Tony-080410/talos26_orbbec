@@ -50,7 +50,6 @@ void register_energy_meter_systems(talos::Scheduler& scheduler, EnergyMeterL3Con
                 last_timestamp_ns = 0;
                 tracking_frames   = 0;
                 voter.reset();
-                (*tracker)->reset_blade_debounce();
                 SPDLOG_WARN("energy_meter: large gap {:.1f}s, resetting", dt);
                 return;
             }
@@ -141,24 +140,23 @@ void register_energy_meter_systems(talos::Scheduler& scheduler, EnergyMeterL3Con
                 std::cos(blade_roll / 2), std::sin(blade_roll / 2), 0.0, 0.0);
 
             EnergyMeterState out;
-            out.timestamp_ns       = obs->timestamp_ns;
-            out.tracking_valid     = is_tracking;
-            out.r_center_odom      = r_center;
-            out.radius             = radius;
-            out.yaw                = yaw;
-            out.pitch              = pitch;
-            out.roll               = roll;
-            out.t                  = t_val;
-            out.a                  = a_val;
-            out.omega              = w_val;
-            out.b                  = b_val;
-            out.blade_id           = (*tracker)->getCurrentBladeId();
-            out.blade_id_confirmed = (*tracker)->isBladeIdConfirmed();
-            out.direction          = dir;
-            out.model_valid        = is_tracking && tracking_frames > 5;
-            out.is_big_rune        = voter.is_big();
-            out.position           = r_center + blade_offset;
-            out.quat               = yaw_quat * pitch_quat * roll_quat;
+            out.timestamp_ns   = obs->timestamp_ns;
+            out.tracking_valid = is_tracking;
+            out.r_center_odom  = r_center;
+            out.radius         = radius;
+            out.yaw            = yaw;
+            out.pitch          = pitch;
+            out.roll           = roll;
+            out.t              = t_val;
+            out.a              = a_val;
+            out.omega          = w_val;
+            out.b              = b_val;
+            out.blade_id       = (*tracker)->getCurrentBladeId();
+            out.direction      = dir;
+            out.model_valid    = is_tracking && tracking_frames > 5;
+            out.is_big_rune    = voter.is_big();
+            out.position       = r_center + blade_offset;
+            out.quat           = yaw_quat * pitch_quat * roll_quat;
 
             state_out.write(out);
         });

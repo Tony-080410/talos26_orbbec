@@ -25,7 +25,6 @@ struct EnergyMeterState {
     double b{0.0};     // = 2.090 - a
 
     int blade_id{0};
-    bool blade_id_confirmed{false};
     int direction{0};  // +1 CW, -1 ACW, 0 unknown
 
     bool model_valid{false};

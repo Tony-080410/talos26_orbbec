@@ -78,9 +78,7 @@ struct Tracker {
 
     void setRadius(double radius) { model_.params.radius = radius; }
 
-    auto getCurrentBladeId() const -> int { return current_matched_blade_id_; }
-
-    auto isBladeIdConfirmed() const -> bool { return blade_id_confirmed_; }
+    auto getCurrentBladeId() const -> int { return armor_id_; }
 
     // ── Lifecycle ──
 
@@ -103,13 +101,6 @@ struct Tracker {
     /// Reset model parameters (T→0, re-init ALPHA/BETA) on big-rune activation.
     void reset_on_activate(double observed_roll);
 
-    void reset_blade_debounce() {
-        confirmed_blade_id_       = -1;
-        pending_blade_id_         = -1;
-        consecutive_change_count_ = 0;
-        blade_id_confirmed_       = false;
-    }
-
 private:
     void state_machine(bool found);
     void init_ekf(const Model::VecX& x0, const Model::MatXX& P0);
@@ -129,11 +120,6 @@ private:
     // Blade ID matching
     int detecting_count_{0};
     int lost_count_{0};
-    int current_matched_blade_id_{0};
-    int confirmed_blade_id_{-1};
-    int pending_blade_id_{-1};
-    int consecutive_change_count_{0};
-    bool blade_id_confirmed_{false};
 
     // EKF wrapper state
     double dt_{0.0};
