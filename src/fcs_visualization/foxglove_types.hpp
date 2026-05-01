@@ -39,6 +39,7 @@ struct FoxgloveChannels {
     SceneCh association_scene_ch;
     SceneCh mpc_prediction_scene_ch;
     SceneCh rune_scene_ch;
+    SceneCh rune_ekf_scene_ch;
     SceneCh ground_truth_scene_ch;
 
     // Image / Video
@@ -148,6 +149,14 @@ struct rune_scene_def {
     using channel_type                      = ::foxglove::schemas::SceneUpdateChannel;
     using payload_type                      = ::foxglove::schemas::SceneUpdate;
     static constexpr auto member            = &FoxgloveChannels::rune_scene_ch;
+    static constexpr bool is_raw            = false;
+};
+
+struct rune_ekf_scene_def {
+    static constexpr std::string_view topic = "/rune/ekf_scene";
+    using channel_type                      = ::foxglove::schemas::SceneUpdateChannel;
+    using payload_type                      = ::foxglove::schemas::SceneUpdate;
+    static constexpr auto member            = &FoxgloveChannels::rune_ekf_scene_ch;
     static constexpr bool is_raw            = false;
 };
 
@@ -415,12 +424,13 @@ struct log_def {
 
 using ChannelRegistry = std::tuple<
     scene_def, track_scene_def, ldm_track_scene_def, gimbal_scene_def, association_scene_def,
-    mpc_prediction_scene_def, rune_scene_def, ground_truth_scene_def, img_def, video_def,
-    calibration_img_def, binary_img_def, pattern_img_def, rune_arrow_img_def, rune_target_img_def,
-    rune_center_img_def, ekf_heatmap_def, debug_lights_def, debug_armors_def, measurement_def,
-    target_def, target_selection_trace_def, cmd_gimbal_def, perf_stats_def, mpc_traj_def,
-    rune_debug_def, pnp_solver_def, nn_confidence_def, energy_meter_def, ldm_detection_def,
-    ldm_measurement_def, ldm_state_def, ground_truth_def, tf_def, calib_def, log_def>;
+    mpc_prediction_scene_def, rune_scene_def, rune_ekf_scene_def, ground_truth_scene_def, img_def,
+    video_def, calibration_img_def, binary_img_def, pattern_img_def, rune_arrow_img_def,
+    rune_target_img_def, rune_center_img_def, ekf_heatmap_def, debug_lights_def, debug_armors_def,
+    measurement_def, target_def, target_selection_trace_def, cmd_gimbal_def, perf_stats_def,
+    mpc_traj_def, rune_debug_def, pnp_solver_def, nn_confidence_def, energy_meter_def,
+    ldm_detection_def, ldm_measurement_def, ldm_state_def, ground_truth_def, tf_def, calib_def,
+    log_def>;
 
 // ============================================================================
 // FoxgloveMsg — unified message type
@@ -442,6 +452,7 @@ using GimbalSceneMessage          = FoxgloveMsg<gimbal_scene_def>;
 using AssociationSceneMessage     = FoxgloveMsg<association_scene_def>;
 using MpcPredictionSceneMessage   = FoxgloveMsg<mpc_prediction_scene_def>;
 using RuneSceneMessage            = FoxgloveMsg<rune_scene_def>;
+using RuneEkfSceneMessage         = FoxgloveMsg<rune_ekf_scene_def>;
 using GroundTruthSceneMessage     = FoxgloveMsg<ground_truth_scene_def>;
 using ImageMessage                = FoxgloveMsg<img_def>;
 using VideoMessage                = FoxgloveMsg<video_def>;
