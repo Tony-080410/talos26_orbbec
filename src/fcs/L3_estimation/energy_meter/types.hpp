@@ -8,36 +8,31 @@ namespace fcs::energy_meter {
 
 struct EnergyMeterState {
     uint64_t timestamp_ns{};
-
     bool tracking_valid{false};
 
     Eigen::Vector3d r_center_odom{Eigen::Vector3d::Zero()};
-    double radius{};
+    double radius{0.7};
 
-    double yaw{};
-    double pitch{};
-    double roll{};
-    double v_roll{};
-    int blade_id{-1};
+    // ISRCKF state outputs
+    double yaw{0.0};
+    double pitch{0.0};
+    double roll{0.0}; // signed continuous angle (= THETA for selected blade)
+    double t{0.0};    // time since activation
+
+    // Model parameters (from sigmoid-mapped state)
+    double a{0.0};     // amplitude
+    double omega{0.0}; // angular frequency
+    double b{0.0};     // = 2.090 - a
+
+    int blade_id{0};
     bool blade_id_confirmed{false};
+    int direction{0};  // +1 CW, -1 ACW, 0 unknown
+
+    bool model_valid{false};
+    bool is_big_rune{true};
 
     Eigen::Vector3d position{Eigen::Vector3d::Zero()};
-
-    Eigen::Quaterniond quat{Eigen::Quaterniond::Identity()}; // 预测姿态
-
-    bool is_big_rune{false};
-    bool model_valid{false};
-    double fit_error{};
-
-    int direction{0};
-
-    double sin_amplitude{0};                                 // a: 振幅 [0.780, 1.045]
-    double sin_omega{0};                                     // ω: 角频率（rad/s）[1.884, 2.000]
-    double sin_phase{0};                                     // φ: 速度模型相位（rad）
-    double sin_offset{0};                                    // b: 速度偏移 = 2.090 - a
-    double sin_const_term{0};                                // c: 常数项（rad）
-
-    double relative_time{0.0};                               // 从开始到现在的累计时间（秒）
+    Eigen::Quaterniond quat{Eigen::Quaterniond::Identity()};
 };
 
 } // namespace fcs::energy_meter

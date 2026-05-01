@@ -1,25 +1,31 @@
 #pragma once
 
-#include "L3_estimation/energy_meter_solver/isrckf.hpp"
 #include "L3_estimation/energy_meter_solver/motion_model.hpp"
+
+#include "L3_estimation/tracker/extended_kalman_filter.hpp"
 
 #include <Eigen/Core>
 #include <Eigen/Geometry>
-#include <expected>
 
-#include <array>
-#include <map>
+#include <cmath>
 #include <optional>
 #include <vector>
 
 namespace energy_meter {
 
 struct Tracker {
+    using Model = EnergyMeterModel;
+    using JetX  = ceres::Jet<double, Model::NX>;
+
+    using PredictFunc = std::function<void(const JetX*, JetX*)>;
+    using MeasureFunc = std::function<void(const JetX*, JetX*)>;
+    using EKF         = ExtendedKalmanFilter<Model::NX, Model::NZ, PredictFunc, MeasureFunc>;
+
     struct Params {
         int lost_thres{10};
         int tracking_thres{3};
         double matcher_gate{25.0};
-        EnergyMeter::Params energy_params{};
+        Model::Params model_params{};
     } params;
 
     enum State : uint8_t {
@@ -31,49 +37,71 @@ struct Tracker {
 
     Tracker() = default;
 
-    explicit Tracker(const Params& param) { set_params(param); }
+    explicit Tracker(const Params& p) { set_params(p); }
 
     void set_params(const Params& p) {
-        params               = p;
-        energy_model_.params = params.energy_params;
+        params        = p;
+        model_.params = params.model_params;
     }
 
-    using EnergyUKF = srukf::ISRCKF<EnergyMeter, EnergyMeter::NX, EnergyMeter::NZ>;
+    // ── EKF access ──
 
-    std::optional<EnergyUKF> energy_ukf;
+    bool has_ekf() const { return ekf_.has_value(); }
 
-    auto get_measurement() const noexcept -> const auto& { return measurement_; }
+    void reset_ekf() { ekf_.reset(); }
 
-    auto get_state() const -> const EnergyUKF::VecX& {
-        static EnergyUKF::VecX zero = EnergyUKF::VecX::Zero();
-        return energy_ukf.has_value() ? energy_ukf->x() : zero;
+    auto get_state() const -> const Model::VecX& {
+        static Model::VecX zero = Model::VecX::Zero();
+        return ekf_ ? ekf_->X() : zero;
     }
+
+    auto get_a() const -> double {
+        const auto& x = get_state();
+        return to_a(x(ALPHA));
+    }
+
+    auto get_w() const -> double {
+        const auto& x = get_state();
+        return to_w(x(BETA));
+    }
+
+    auto get_b() const -> double { return 2.090 - get_a(); }
+
+    auto get_t() const -> double {
+        const auto& x = get_state();
+        return x(TAU);
+    }
+
+    auto get_dir() const -> int { return dir_; }
+
+    auto getRadius() const -> double { return model_.params.radius; }
+
+    void setRadius(double radius) { model_.params.radius = radius; }
 
     auto getCurrentBladeId() const -> int { return current_matched_blade_id_; }
 
-    auto isBladeIdConfirmed() const -> bool {
-        return blade_id_confirmed_;  // 只有防抖通过后才为 true
-    }
+    auto isBladeIdConfirmed() const -> bool { return blade_id_confirmed_; }
 
-    auto getRadius() const -> double { return energy_model_.params.radius; }
-
-    void setRadius(double radius) { energy_model_.params.radius = radius; }
+    // ── Lifecycle ──
 
     bool first_meet_u(
         const Eigen::Vector3d& r_center, const Eigen::Vector3d& target_pos,
         const Eigen::Quaterniond& target_quat);
 
-    void step(
-        double dts, const Eigen::Vector3d& rcenter_position,
-        const std::vector<Eigen::Vector3d>& target_positions,
-        const std::vector<Eigen::Quaterniond>& target_quats);
-
-    void predict(double dts);
+    void predict(double dt);
 
     bool update(
         const Eigen::Vector3d& rcenter_position,
         const std::vector<Eigen::Vector3d>& target_positions,
         const std::vector<Eigen::Quaterniond>& target_quats);
+
+    void step(
+        double dt, const Eigen::Vector3d& rcenter_position,
+        const std::vector<Eigen::Vector3d>& target_positions,
+        const std::vector<Eigen::Quaterniond>& target_quats);
+
+    /// Reset model parameters (T→0, re-init ALPHA/BETA) on big-rune activation.
+    void reset_on_activate(double observed_roll);
 
     void reset_blade_debounce() {
         confirmed_blade_id_       = -1;
@@ -84,19 +112,32 @@ struct Tracker {
 
 private:
     void state_machine(bool found);
-    void set_measurement(const EnergyUKF::VecZ& z);
+    void init_ekf(const Model::VecX& x0, const Model::MatXX& P0);
 
-    std::array<double, EnergyMeter::NZ> measurement_{};
-    EnergyMeter energy_model_{};
+    Model model_{};
+    std::optional<EKF> ekf_;
 
+    // Direction: +1 CW, -1 ACW. Detected from raw observations, fixed per match.
+    int dir_{1};
+    double prev_observed_roll_{0.0};
+    int dir_votes_pos_{0};
+    int dir_votes_neg_{0};
+    int dir_detect_count_{0};
+    bool dir_locked_{false};
+    static constexpr int DIR_DETECT_FRAMES = 20;
+
+    // Blade ID matching
     int detecting_count_{0};
-    std::map<int, std::string> voter_{};
     int lost_count_{0};
     int current_matched_blade_id_{0};
     int confirmed_blade_id_{-1};
     int pending_blade_id_{-1};
     int consecutive_change_count_{0};
-    bool blade_id_confirmed_{false}; // 只有防抖通过后才为 true
+    bool blade_id_confirmed_{false};
+
+    // EKF wrapper state
+    double dt_{0.0};
+    int armor_id_{0};
 };
 
 } // namespace energy_meter

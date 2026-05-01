@@ -8,12 +8,25 @@
 
 namespace energy_meter {
 
+void Tracker::init_ekf(const Model::VecX& x0, const Model::MatXX& P0) {
+    auto f = [this](const JetX* x, JetX* xp) {
+        Model::template predict_state<JetX>(x, JetX(dt_), dir_, xp);
+    };
+    auto h = [this](const JetX* x, JetX* z) {
+        Model::template measure_state<JetX>(x, armor_id_, z);
+    };
+    auto q = [this]() -> Model::MatXX { return model_.Q(dt_); };
+    auto r = [this](const Model::VecZ& z) -> Model::MatZZ { return model_.R(z); };
+
+    ekf_.emplace(f, h, q, r, P0);
+    ekf_->setState(x0);
+}
+
 bool Tracker::update(
     const Eigen::Vector3d& rcenter_position, const std::vector<Eigen::Vector3d>& target_positions,
     const std::vector<Eigen::Quaterniond>& target_quats) {
-    measurement_.fill(0.0);
 
-    if (!energy_ukf.has_value() || target_positions.empty()) {
+    if (!ekf_ || target_positions.empty()) {
         state_machine(false);
         return false;
     }
@@ -21,16 +34,17 @@ bool Tracker::update(
     // ── Target selection: pick the target closest to predicted roll ──
     size_t selected_idx = 0;
     if (target_quats.size() >= 2) {
-        const auto& x = energy_ukf->x();
+        const auto& x = ekf_->X();
         const double predict_roll =
             (confirmed_blade_id_ >= 0)
                 ? normalize_rad(
-                      x(ROLL) + static_cast<double>(confirmed_blade_id_) * 2.0 / 5.0 * M_PI)
-                : x(ROLL); // 初始状态直接用预测 roll 比较
+                      x(THETA) + static_cast<double>(confirmed_blade_id_) * 2.0 / 5.0 * M_PI)
+                : x(THETA);
 
         double best_diff = std::numeric_limits<double>::max();
         for (size_t i = 0; i < target_quats.size(); ++i) {
-            const auto [roll_i, pitch_i, yaw_i] = math_fuxk::rpy(target_quats[i]);
+            const auto euler                    = math_fuxk::rpy(target_quats[i]);
+            const auto [roll_i, pitch_i, yaw_i] = euler.rpy();
             const double diff                   = std::abs(normalize_rad(predict_roll - roll_i));
             if (diff < best_diff) {
                 best_diff    = diff;
@@ -40,32 +54,31 @@ bool Tracker::update(
     }
 
     const auto& pos               = rcenter_position;
-    const auto [roll, pitch, yaw] = math_fuxk::rpy(target_quats[selected_idx]);
+    const auto euler              = math_fuxk::rpy(target_quats[selected_idx]);
+    const auto [roll, pitch, yaw] = euler.rpy();
 
-    using VecZ = EnergyMeter::VecZ;
+    using VecZ = Model::VecZ;
     VecZ meas;
-    meas[0] = pos.x();
-    meas[1] = pos.y();
-    meas[2] = pos.z();
-    meas[3] = yaw;
-    meas[4] = pitch;
-    meas[5] = roll;
+    meas[CENTER_X]   = pos.x();
+    meas[CENTER_Y]   = pos.y();
+    meas[CENTER_Z]   = pos.z();
+    meas[RUNE_YAW]   = yaw;
+    meas[RUNE_PITCH] = pitch;
+    meas[ARMOR_ROLL] = roll;
 
-    const auto& x_pre        = energy_ukf->x();
-    constexpr int armors_num = 5;
+    const auto& x_pre        = ekf_->X();
+    constexpr int armors_num = Model::ARMORS_NUM;
 
     double best_cost = std::numeric_limits<double>::max();
     int best_id      = -1;
 
     for (int id = 0; id < armors_num; ++id) {
-        VecZ z_pred = energy_model_.h(x_pre, id);
-        VecZ nu     = meas - z_pred;
-        nu[5]       = normalize_rad(nu[5]);
+        VecZ z_pred    = model_.h(x_pre, id);
+        VecZ nu        = meas - z_pred;
+        nu[ARMOR_ROLL] = normalize_rad(nu[ARMOR_ROLL]);
 
-        // R is diagonal, so Rinv * nu = nu[i] / R[i,i]
-        // d2 = nu' * Rinv * nu = sum(nu[i]^2 / R[i,i])
-        const auto R    = energy_model_.R_sqrt(z_pred);
-        const double d2 = (nu.array().square() / R.diagonal().array()).sum();
+        const auto R_diag = model_.R_diag(z_pred);
+        const double d2   = (nu.array().square() / R_diag.array()).sum();
 
         if (std::isfinite(d2) && d2 < params.matcher_gate && d2 < best_cost) {
             best_cost = d2;
@@ -80,12 +93,10 @@ bool Tracker::update(
 
     state_machine(true);
 
-    // ── Blade ID debounce: confirm only after 2 consecutive frames ──
-    // 初始状态（confirmed == -1）立即确认第一个匹配的 blade_id
+    // ── Blade ID debounce ──
     if (confirmed_blade_id_ < 0) {
-        confirmed_blade_id_ = best_id;
-        pending_blade_id_   = best_id;
-        // 1 个靶立即确认，2 个靶需要防抖验证
+        confirmed_blade_id_       = best_id;
+        pending_blade_id_         = best_id;
         blade_id_confirmed_       = (target_positions.size() < 2);
         consecutive_change_count_ = blade_id_confirmed_ ? 0 : 1;
     } else if (best_id == confirmed_blade_id_) {
@@ -105,71 +116,143 @@ bool Tracker::update(
             blade_id_confirmed_       = true;
         }
     } else {
-        // 1 个靶时立即更新
         confirmed_blade_id_ = best_id;
         pending_blade_id_   = best_id;
         blade_id_confirmed_ = true;
     }
     current_matched_blade_id_ = confirmed_blade_id_;
 
-    EnergyUKF::VecZ z;
-    z[0] = pos.x();
-    z[1] = pos.y();
-    z[2] = pos.z();
-    z[3] = yaw;
-    z[4] = pitch;
-    z[5] = unwrap_rad(x_pre[ROLL] + best_id * 2 * M_PI / 5, meas[5]);
+    // Build unwrapped measurement for EKF update
+    VecZ z;
+    z[CENTER_X]   = pos.x();
+    z[CENTER_Y]   = pos.y();
+    z[CENTER_Z]   = pos.z();
+    z[RUNE_YAW]   = yaw;
+    z[RUNE_PITCH] = pitch;
+    z[ARMOR_ROLL] = unwrap_rad(x_pre[THETA] + best_id * 2 * M_PI / 5, meas[ARMOR_ROLL]);
 
-    energy_model_.armor_id = best_id;
-    set_measurement(z);
-    energy_ukf->update(z);
+    armor_id_ = best_id;
+    ekf_->update(z);
+
+    // ── Direction detection from raw observations ──
+    // Use the raw observed roll (not EKF state) to avoid feedback bias.
+    // The EKF prediction uses dir_ which defaults to +1, contaminating
+    // the EKF state's Δθ. Voting over many frames gives robust detection.
+    if (!dir_locked_) {
+        if (dir_detect_count_ > 0) {
+            const double droll         = normalize_rad(meas[ARMOR_ROLL] - prev_observed_roll_);
+            constexpr double kMinDelta = 0.005; // ~0.3° minimum to avoid noise
+            if (droll > kMinDelta) {
+                dir_votes_pos_++;
+            } else if (droll < -kMinDelta) {
+                dir_votes_neg_++;
+            }
+        }
+        prev_observed_roll_ = meas[ARMOR_ROLL];
+        dir_detect_count_++;
+
+        if (dir_detect_count_ >= DIR_DETECT_FRAMES) {
+            dir_        = (dir_votes_pos_ >= dir_votes_neg_) ? 1 : -1;
+            dir_locked_ = true;
+            SPDLOG_INFO(
+                "energy_meter: direction locked: dir={}, votes +{}/-{}", dir_, dir_votes_pos_,
+                dir_votes_neg_);
+        }
+    }
 
     return true;
 }
 
+void Tracker::predict(double dt) {
+    if (!ekf_) {
+        return;
+    }
+    dt_ = std::max(0.0, dt);
+    ekf_->predict();
+}
+
 void Tracker::step(
-    double dts, const Eigen::Vector3d& rcenter_position,
+    double dt, const Eigen::Vector3d& rcenter_position,
     const std::vector<Eigen::Vector3d>& target_positions,
     const std::vector<Eigen::Quaterniond>& target_quats) {
-    predict(dts);
+    predict(dt);
     update(rcenter_position, target_positions, target_quats);
-}
-
-void Tracker::set_measurement(const EnergyUKF::VecZ& z) {
-    measurement_[0] = z[0];
-    measurement_[1] = z[1];
-    measurement_[2] = z[2];
-    measurement_[3] = z[3];
-    measurement_[4] = z[4];
-    measurement_[5] = z[5];
-}
-
-void Tracker::predict(double dts) {
-    if (energy_ukf.has_value()) {
-        energy_ukf->predict(dts);
-    }
 }
 
 bool Tracker::first_meet_u(
     const Eigen::Vector3d& r_center, const Eigen::Vector3d& target_pos,
     const Eigen::Quaterniond& target_quat) {
-    const auto [roll, pitch, yaw] = math_fuxk::rpy(target_quat);
 
-    const double xc = r_center.x();
-    const double yc = r_center.y();
-    const double zc = r_center.z();
-    const double v0 = 0.0;
+    const auto euler              = math_fuxk::rpy(target_quat);
+    const auto [roll, pitch, yaw] = euler.rpy();
 
     const double observed_radius = (target_pos - r_center).norm();
+    model_.params.radius         = observed_radius;
 
-    energy_model_.params.radius = observed_radius;
+    // State: [xc, yc, zc, yaw, pitch, θ, τ, α, β]
+    // Initialize: θ = observed roll, τ = 0, α = 0 (→ a ≈ 0.9125), β = 0 (→ ω ≈ 1.942)
+    Model::VecX x0 = Model::VecX::Zero();
+    x0(XC)         = r_center.x();
+    x0(YC)         = r_center.y();
+    x0(ZC)         = r_center.z();
+    x0(YAW)        = yaw;
+    x0(PITCH)      = pitch;
+    x0(THETA)      = roll;
+    x0(TAU)        = 0.0;
+    x0(ALPHA)      = 0.0; // sigmoid(0) = 0.5 → a = 0.9125
+    x0(BETA)       = 0.0; // sigmoid(0) = 0.5 → ω = 1.942
 
-    EnergyMeter::VecX xp0{xc, yc, zc, yaw, pitch, roll, v0};
-    EnergyUKF::MatXX p0 = EnergyUKF::MatXX::Identity();
-    energy_ukf.emplace(energy_model_, xp0, p0);
+    Model::MatXX P0 = Model::MatXX::Identity() * 0.1;
+    // Large uncertainty on model parameters
+    P0(ALPHA, ALPHA) = 2.0;
+    P0(BETA, BETA)   = 2.0;
+    // Time is known exactly
+    P0(TAU, TAU) = 0.0;
+
+    init_ekf(x0, P0);
+
+    // Reset direction detection
+    dir_                = 1;
+    prev_observed_roll_ = roll;
+    dir_detect_count_   = 0;
+    dir_votes_pos_      = 0;
+    dir_votes_neg_      = 0;
+    dir_locked_         = false;
 
     state_machine(true);
     return true;
+}
+
+void Tracker::reset_on_activate(double observed_roll) {
+    if (!ekf_) {
+        return;
+    }
+
+    const auto& x_old = ekf_->X();
+
+    Model::VecX x0 = x_old;
+    x0(THETA)      = observed_roll;
+    x0(TAU)        = 0.0;
+    x0(ALPHA)      = 0.0;
+    x0(BETA)       = 0.0;
+
+    Model::MatXX P0 = Model::MatXX::Identity() * 0.1;
+    // Keep position/yaw/pitch covariance from previous state
+    for (int i = 0; i <= PITCH; ++i) {
+        P0(i, i) = ekf_->P()(i, i);
+    }
+    P0(ALPHA, ALPHA) = 2.0;
+    P0(BETA, BETA)   = 2.0;
+    P0(TAU, TAU)     = 0.0;
+
+    init_ekf(x0, P0);
+
+    // Reset direction detection
+    dir_detect_count_   = 0;
+    dir_votes_pos_      = 0;
+    dir_votes_neg_      = 0;
+    dir_locked_         = false;
+    prev_observed_roll_ = observed_roll;
 }
 
 void Tracker::state_machine(bool found) {
@@ -181,7 +264,7 @@ void Tracker::state_machine(bool found) {
                 state = DETECTING;
             }
         } else {
-            energy_ukf.reset();
+            ekf_.reset();
             detecting_count_ = 0;
         }
         break;
@@ -195,7 +278,7 @@ void Tracker::state_machine(bool found) {
             }
         } else {
             detecting_count_ = 0;
-            energy_ukf.reset();
+            ekf_.reset();
             state = IDLE;
         }
         break;
@@ -216,7 +299,7 @@ void Tracker::state_machine(bool found) {
             if (lost_count_ > params.lost_thres) {
                 lost_count_      = 0;
                 detecting_count_ = 0;
-                energy_ukf.reset();
+                ekf_.reset();
                 state = IDLE;
             }
         }
