@@ -1,7 +1,7 @@
 #pragma once
 
 #include <Eigen/Core>
-
+#include <Eigen/Geometry>
 #include <cstdint>
 
 namespace fcs::energy_meter {

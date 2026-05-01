@@ -16,28 +16,6 @@ auto format_parse_error(const toml::parse_error& e) -> std::string {
         "{} at {}:{}:{}", e.description(), src.path->data(), src.begin.line, src.begin.column);
 }
 
-auto validate_foxglove_config(const FoxgloveConfig& config) -> std::optional<std::string> {
-    if (config.transport == FoxgloveTransport::Mcap && config.mcap_path.empty()) {
-        return "entry config: foxglove.mcap_path is required when foxglove.transport=\"Mcap\"";
-    }
-    if (config.quanta.target_bitrate <= 0) {
-        return "entry config: foxglove.quanta.target_bitrate must be positive";
-    }
-    if (config.quanta.max_width <= 0 || config.quanta.max_height <= 0) {
-        return "entry config: foxglove.quanta.max_width and max_height must be positive";
-    }
-    if (config.quanta.gop_size <= 0) {
-        return "entry config: foxglove.quanta.gop_size must be positive";
-    }
-    if (config.quanta.framerate <= 0) {
-        return "entry config: foxglove.quanta.framerate must be positive";
-    }
-    if (config.quanta.lookahead < 0) {
-        return "entry config: foxglove.quanta.lookahead must be non-negative";
-    }
-    return std::nullopt;
-}
-
 /// Apply hostname-based preset override to a fully-parsed LaunchConfig.
 /// When [preset] exists and hostname matches, the matched entry overrides
 /// robot, vision, and daedalus. Otherwise the explicit fields are used as-is.
@@ -94,9 +72,6 @@ auto apply_preset(LaunchConfig& launch) -> std::expected<void, std::string> {
     if (launch.capturer.enabled && launch.capturer.output_dir.empty()) {
         return std::unexpected(
             "entry config: capturer.output_dir is required when capturer.enabled=true");
-    }
-    if (auto error = validate_foxglove_config(launch.foxglove)) {
-        return std::unexpected(std::move(*error));
     }
 
     std::string vision_override_path = fmt::format("config/vision/{}.toml", launch.vision);
