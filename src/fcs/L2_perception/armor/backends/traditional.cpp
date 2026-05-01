@@ -45,7 +45,8 @@ TraditionalBackend::TraditionalBackend(Config config) noexcept
 // Detection Entry Point
 // ============================================================================
 
-TraditionalBackend::DetectionResult TraditionalBackend::detect_impl(const cv::Mat& input) noexcept {
+TraditionalBackend::DetectionResult
+    TraditionalBackend::detect_impl(const cv::Mat& input, ArmorColor color) noexcept {
     if (input.empty()) {
         return std::unexpected("Empty image passed to traditional backend");
     }

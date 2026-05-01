@@ -10,6 +10,7 @@
 #include "L4_planning/planning_systems.hpp"
 #include "L5_weapon/enhanced/weapon_systems.hpp"
 #include "chiral/chiral_collector_system.hpp"
+#include "core/armor_types.hpp"
 #include "core/trajectory/resource.hpp"
 #include "frame.hpp"
 #include "runtime/capturer.hpp"
@@ -17,6 +18,7 @@
 #include "scheduler/error_formatter.hpp"
 
 #include <fmt/core.h>
+#include <fmt/ranges.h>
 #include <numbers>
 #include <spdlog/spdlog.h>
 
@@ -81,9 +83,13 @@ void init_coordinate_system(fast_tf::CoordinateSystem& system, const RobotExtrin
     const double bullet_speed = config.hardware->mcu->bullet_speed_default;
 
     world.insert_resource(core::trajectory::bullet_speed_data{.bullet_speed = bullet_speed});
-    world.insert_resource(config.vision.at_legacy->default_detect_color);
-    world.insert_resource(config.vision.at_legacy->readback_roi);
+    world.insert_resource(config.vision.detect_color);
+    world.insert_resource(*config.vision.capabilities);
+    world.insert_resource(config.vision.armor->readback_roi);
     world.insert_resource(L2::TrackerReadbackCache{});
+
+    SPDLOG_INFO("color: {}", config.vision.detect_color);
+    SPDLOG_INFO("capabilities: [{}]", fmt::join(*config.vision.capabilities, ", "));
 
     // Setup L1 sensor systems
     auto setup_result = runtime::setup_l1(
@@ -94,15 +100,13 @@ void init_coordinate_system(fast_tf::CoordinateSystem& system, const RobotExtrin
     }
 
     // Create detector backend
-    auto backend_handle_result = L2::create_detector_backend_handle(config.vision.at_legacy.get());
+    auto backend_handle_result = L2::create_detector_backend_handle(config.vision.armor.get());
     if (!backend_handle_result) {
         return std::unexpected(
             fmt::format("create detector backend: {}", backend_handle_result.error()));
     }
 
-    SPDLOG_INFO(
-        "detector backend: {} (color={})", backend_handle_result->name,
-        config.vision.at_legacy->default_detect_color);
+    SPDLOG_INFO("armor backend: {}", backend_handle_result->name);
 
     world.insert_resource(setup_result.value().camera_config);
     world.insert_resource(std::move(backend_handle_result->backend));

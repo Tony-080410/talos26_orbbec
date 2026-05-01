@@ -1,6 +1,7 @@
 #pragma once
 
 #include "L2_perception/armor/readback_roi.hpp"
+#include "core/armor_types.hpp"
 #include "core/types.hpp"
 
 #include <expected>
@@ -108,10 +109,7 @@ public:
 #endif
 
     /// Detect armors in image (dispatches to active backend) — noexcept boundary
-    [[nodiscard]] DetectionResult detect(const cv::Mat& image) noexcept;
-
-    /// Set detection color for all backends
-    void set_detect_color(ArmorColor color) noexcept;
+    [[nodiscard]] DetectionResult detect(const cv::Mat& image, ArmorColor color) noexcept;
 
     /// Input resolution used to derive ROI aspect ratio and minimum crop size.
     [[nodiscard]] BackendInputResolution input_resolution() const noexcept;

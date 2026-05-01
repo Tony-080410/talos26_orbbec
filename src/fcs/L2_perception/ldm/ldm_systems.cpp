@@ -30,18 +30,16 @@ void register_ldm_systems(
             talos::spmc_mut<LdmDetection, LdmDetectionChannelTopic> detection_out,
             talos::spmc_mut<LdmMeasurement, LdmMeasurementChannelTopic> measurement_out,
             talos::res<LdmDetectorConfig> cfg_, core::detecting_color detecting_color_,
-            talos::res<fast_tf::CoordinateSystem> tf_system) mutable {
-            if (!cfg_->enabled) {
+            core::capabilities cap, talos::res<fast_tf::CoordinateSystem> tf_system) mutable {
+            if (!core::capable(*cap, core::Capability::Ldm)) {
                 return;
             }
             auto frame = image_in.read();
             if (!frame) {
                 return;
             }
-            // Re-apply detect color before each detection and enforce color before PnP.
-            detector->set_target_color(*detecting_color_);
 
-            auto det_result = detector->detect(frame->image);
+            auto det_result = detector->detect(frame->image, *detecting_color_);
             if (!det_result) {
                 SPDLOG_ERROR("ldm detect failed: {}", magic_enum::enum_name(det_result.error()));
                 return;

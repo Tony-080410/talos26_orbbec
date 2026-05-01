@@ -48,9 +48,7 @@ public:
     TrtBackend(const TrtBackend&)            = delete;
     TrtBackend& operator=(const TrtBackend&) = delete;
 
-    void set_detect_color(fcs::ArmorColor color) noexcept;
-
-    DetectionResult detect_impl(const cv::Mat& image) noexcept;
+    DetectionResult detect_impl(const cv::Mat& image, ArmorColor color) noexcept;
 
 private:
     /// Private constructor — use create() factory
@@ -60,7 +58,6 @@ private:
     std::unique_ptr<Impl> impl_;
 
     Config config_;
-    int detect_color_ = 0;
 };
 
 } // namespace fcs::L2

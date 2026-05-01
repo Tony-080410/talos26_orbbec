@@ -18,15 +18,11 @@ public:
     explicit LdmDetector(LdmDetectorConfig config) noexcept;
     ~LdmDetector() = default;
 
-    void set_target_color(ArmorColor color) noexcept;
-    ArmorColor get_target_color() const noexcept;
-
     std::expected<std::optional<LdmDetection>, DetectorError>
-        detect(const cv::Mat& image) const noexcept;
+        detect(const cv::Mat& image, ArmorColor color) const noexcept;
 
 private:
     LdmDetectorConfig config_;
-    ArmorColor target_color_;
 };
 
 } // namespace fcs::L2::ldm

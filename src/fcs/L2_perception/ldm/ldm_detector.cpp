@@ -1,6 +1,7 @@
 #include "L2_perception/ldm/ldm_detector.hpp"
 
 #include "L2_perception/ldm/ldm_geometry.hpp"
+#include "core/armor_types.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -1358,17 +1359,13 @@ struct PairCandidate {
 } // namespace
 
 LdmDetector::LdmDetector(LdmDetectorConfig config) noexcept
-    : config_(config)
-    , target_color_(config.target_color) {}
-
-void LdmDetector::set_target_color(ArmorColor color) noexcept { target_color_ = color; }
-ArmorColor LdmDetector::get_target_color() const noexcept { return target_color_; }
+    : config_(config) {}
 
 std::expected<std::optional<LdmDetection>, DetectorError>
-    LdmDetector::detect(const cv::Mat& image) const noexcept {
+    LdmDetector::detect(const cv::Mat& image, ArmorColor color) const noexcept {
     if (image.empty()) {
         return std::unexpected(DetectorError::InvalidImage);
     }
-    return detect_laser_module(image, config_, target_color_);
+    return detect_laser_module(image, config_, color);
 }
 } // namespace fcs::L2::ldm

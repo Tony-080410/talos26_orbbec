@@ -1,5 +1,6 @@
 backend_type = "Traditional"  # Options: "Traditional", "OpenVINO", "OpenVINOTup", "TensorRT", "Axera"
-default_detect_color = "Blue"
+detect_color = "Blue"
+capabilities = ["Ldm", "Armor"]
 
 # Required if backend_type = "traditional"
 [traditional]
@@ -80,8 +81,6 @@ margin_ratio_y = 0.00
 box_size_m = [0.6, 0.6, 0.6]
 
 [ldm]
-enabled = false
-target_color = "Red"
 min_blob_area_px = 4
 min_blob_fill_ratio = 0.35
 min_blob_aspect_ratio = 0.35
@@ -277,10 +276,8 @@ r = 1.0
 max_acc = 100.0
 
 [rune_detector]
-enabled = true
 draw = true
 debug_mode = false  # L2层调试模式，启用时输出详细错误信息
-detect_color = "Red"
 arrow_threshold = 170
 target_threshold = 130
 rcenter_threshold = 120

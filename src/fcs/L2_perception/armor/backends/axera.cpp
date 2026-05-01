@@ -285,7 +285,6 @@ AxeraBackend::AxeraBackend(AxeraBackend&& other) noexcept
     , nms_removed_buf_(std::move(other.nms_removed_buf_))
     , nms_tile_bins_buf_(std::move(other.nms_tile_bins_buf_))
     , config_(std::move(other.config_))
-    , detect_color_(other.detect_color_)
     , initialized_(other.initialized_)
     , warned_non_four_three_input_(other.warned_non_four_three_input_)
     , handle_(other.handle_)
@@ -299,7 +298,6 @@ AxeraBackend::AxeraBackend(AxeraBackend&& other) noexcept
     , ivps_max_src_width_(other.ivps_max_src_width_)
     , ivps_max_src_height_(other.ivps_max_src_height_)
     , ivps_aspect_ratio_(other.ivps_aspect_ratio_) {
-    other.detect_color_                = ArmorColor::Blue;
     other.initialized_                 = false;
     other.warned_non_four_three_input_ = false;
     other.handle_                      = nullptr;
@@ -333,7 +331,6 @@ AxeraBackend& AxeraBackend::operator=(AxeraBackend&& other) noexcept {
     nms_removed_buf_             = std::move(other.nms_removed_buf_);
     nms_tile_bins_buf_           = std::move(other.nms_tile_bins_buf_);
     config_                      = std::move(other.config_);
-    detect_color_                = other.detect_color_;
     initialized_                 = other.initialized_;
     warned_non_four_three_input_ = other.warned_non_four_three_input_;
     handle_                      = other.handle_;
@@ -348,7 +345,6 @@ AxeraBackend& AxeraBackend::operator=(AxeraBackend&& other) noexcept {
     ivps_max_src_height_         = other.ivps_max_src_height_;
     ivps_aspect_ratio_           = other.ivps_aspect_ratio_;
 
-    other.detect_color_                = ArmorColor::Blue;
     other.initialized_                 = false;
     other.warned_non_four_three_input_ = false;
     other.handle_                      = nullptr;
@@ -871,7 +867,7 @@ std::vector<ArmorDetection>
         }
 
         // Early-out: skip detections whose color doesn't match the target
-        if (static_cast<ArmorColor>(best_color_id) != detect_color_) {
+        if (static_cast<ArmorColor>(best_color_id) != ctx.detect_color) {
             continue;
         }
 
@@ -1010,10 +1006,12 @@ std::vector<ArmorDetection> AxeraBackend::nms(
     return std::move(nms_result_buf_);
 }
 
-AxeraBackend::DetectionResult AxeraBackend::detect_impl(const cv::Mat& image) noexcept {
+AxeraBackend::DetectionResult
+    AxeraBackend::detect_impl(const cv::Mat& image, ArmorColor color) noexcept {
     const auto total_start = std::chrono::high_resolution_clock::now();
 
-    const auto ctx = preprocess(image);
+    const auto ctx   = preprocess(image);
+    ctx.detect_color = color;
     if (!ctx.is_four_three && !warned_non_four_three_input_) {
         SPDLOG_WARN(
             "[AxeraBackend] Input {}x{} is not 4:3; direct resize to {}x{} will be used "
@@ -1056,9 +1054,9 @@ AxeraBackend::DetectionResult AxeraBackend::detect_impl(const cv::Mat& image) no
         std::chrono::duration_cast<std::chrono::microseconds>(total_end - total_start).count();
 
     // SPDLOG_INFO(
-    //     "[AxeraBackend] Timing: preproc={:.2f}ms, infer={:.2f}ms, postproc={:.2f}ms, "
-    //     "total={:.2f}ms",
-    //     preproc_us / 1000.0, infer_us / 1000.0, postproc_us / 1000.0, total_us / 1000.0);
+    //     "[AxeraBackend], ArmorColor color Timing: preproc={:.2f}ms, infer={:.2f}ms,
+    //     postproc={:.2f}ms, " "total={:.2f}ms", preproc_us / 1000.0, infer_us / 1000.0,
+    //     postproc_us / 1000.0, total_us / 1000.0);
 
     return detections;
 }

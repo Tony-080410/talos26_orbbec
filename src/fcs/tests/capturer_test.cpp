@@ -152,7 +152,6 @@ void register_test_producer(talos::Scheduler& scheduler, ProducerMode mode) {
             fcs::rune::RuneDebugFrame rune_debug;
             rune_debug.timestamp_ns = now_ns;
             rune_debug.frame_id     = camera_frame;
-            rune_debug.enabled      = true;
             rune_debug_out.write(rune_debug);
 
             fcs::energy_meter::EnergyMeterState energy_meter;

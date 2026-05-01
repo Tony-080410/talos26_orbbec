@@ -1,5 +1,6 @@
 #include "L2_perception/armor/backends/traditional.hpp"
 #include "L2_perception/armor/config.hpp"
+#include "core/armor_types.hpp"
 #if TALOS_HAS_OPENVINO
 # include "L2_perception/armor/backends/openvino.hpp"
 # include "L2_perception/armor/backends/openvino_tup.hpp"
@@ -46,13 +47,14 @@ DetectorBackend::DetectorBackend(std::unique_ptr<AxeraBackend> backend)
     : backend_(std::move(backend)) {}
 #endif
 
-DetectorBackend::DetectionResult DetectorBackend::detect(const cv::Mat& image) noexcept {
+DetectorBackend::DetectionResult
+    DetectorBackend::detect(const cv::Mat& image, ArmorColor color) noexcept {
     return std::visit(
-        [&image](auto& backend) -> DetectionResult {
+        [&image, color](auto& backend) -> DetectionResult {
             if (!backend) {
                 return std::unexpected("No detector backend is active");
             }
-            return backend->detect(image);
+            return backend->detect(image, color);
         },
         backend_);
 }
@@ -82,16 +84,6 @@ void DetectorBackend::set_backend(std::unique_ptr<AxeraBackend> backend) {
     backend_ = std::move(backend);
 }
 #endif
-
-void DetectorBackend::set_detect_color(ArmorColor color) noexcept {
-    std::visit(
-        [color](auto& backend) {
-            if (backend) {
-                backend->set_detect_color(color);
-            }
-        },
-        backend_);
-}
 
 BackendInputResolution DetectorBackend::input_resolution() const noexcept {
     return std::visit(
@@ -128,7 +120,6 @@ BackendInputResolution DetectorBackend::input_resolution() const noexcept {
         if (!result) {
             return std::unexpected(result.error());
         }
-        result->set_detect_color(config.default_detect_color);
         return DetectorBackend(std::make_unique<TraditionalBackend>(std::move(*result)));
     }
 #if TALOS_HAS_OPENVINO
@@ -137,7 +128,6 @@ BackendInputResolution DetectorBackend::input_resolution() const noexcept {
         if (!result) {
             return std::unexpected(result.error());
         }
-        result->set_detect_color(config.default_detect_color);
         return DetectorBackend(std::make_unique<NNBackend>(std::move(*result)));
     }
     case ArmorBackendType::OpenVINOTup: {
@@ -145,7 +135,6 @@ BackendInputResolution DetectorBackend::input_resolution() const noexcept {
         if (!result) {
             return std::unexpected(result.error());
         }
-        result->set_detect_color(config.default_detect_color);
         return DetectorBackend(std::make_unique<NNTupBackend>(std::move(*result)));
     }
 #endif
@@ -155,7 +144,6 @@ BackendInputResolution DetectorBackend::input_resolution() const noexcept {
         if (!result) {
             return std::unexpected(result.error());
         }
-        result->set_detect_color(config.default_detect_color);
         return DetectorBackend(std::make_unique<TrtBackend>(std::move(*result)));
     }
 #endif
@@ -165,7 +153,6 @@ BackendInputResolution DetectorBackend::input_resolution() const noexcept {
         if (!result) {
             return std::unexpected(result.error());
         }
-        result->set_detect_color(config.default_detect_color);
         return DetectorBackend(std::make_unique<AxeraBackend>(std::move(*result)));
     }
 #endif

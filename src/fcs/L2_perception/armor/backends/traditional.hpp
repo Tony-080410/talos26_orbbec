@@ -35,10 +35,7 @@ public:
     TraditionalBackend& operator=(const TraditionalBackend&)     = delete;
 
     /// Detect armors in image
-    [[nodiscard]] DetectionResult detect_impl(const cv::Mat& input) noexcept;
-
-    void set_detect_color(ArmorColor color) noexcept { detect_color_ = color; }
-    [[nodiscard]] ArmorColor detect_color() const noexcept { return detect_color_; }
+    [[nodiscard]] DetectionResult detect_impl(const cv::Mat& input, ArmorColor color) noexcept;
 
     /// Get current config
     [[nodiscard]] const Config& get_config() const noexcept { return config_; }
@@ -47,7 +44,6 @@ private:
     /// Private constructor — use create() factory
     explicit TraditionalBackend(Config config) noexcept;
     Config config_;
-    ArmorColor detect_color_ = ArmorColor::Neutral;
     std::unique_ptr<TraditionalClassifier> classifier_;
 
     /// Preprocess image to binary

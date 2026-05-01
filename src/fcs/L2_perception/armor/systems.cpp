@@ -5,6 +5,7 @@
 #include "L2_perception/armor/readback_roi.hpp"
 #include "L2_perception/armor/solver.hpp"
 #include "core/runtime.hpp"
+#include "core/types.hpp"
 #include "frame.hpp"
 #include "scheduler/scheduler.hpp"
 #include <optional>
@@ -203,16 +204,19 @@ void register_detection_systems(talos::Scheduler& scheduler) noexcept {
            talos::res_mut<std::shared_ptr<DetectorBackend>> backend,
            talos::res<fast_tf::CoordinateSystem> tf_system, talos::res<CameraConfig> camera_config,
            talos::res<ArmorReadbackRoiConfig> readback_roi_config,
-           talos::res<TrackerReadbackCache> readback_cache,
+           talos::res<TrackerReadbackCache> readback_cache, core::capabilities cap,
            core::detecting_color detecting_color_) mutable {
             auto frame = image_in.read();
             if (!frame) {
                 return;
             }
+            if (!core::capable(*cap, core::Capability::Armor)) {
+                detection_out.write(
+                    ArmorDetectionBatch({}, frame->image, frame->timestamp_ns, frame->frame_id));
+                return;
+            }
 
             ArmorColor detect_color = *detecting_color_;
-            // Re-apply detect color before each detection and enforce color before PnP.
-            backend->get()->set_detect_color(detect_color);
 
             cv::Rect detector_roi(0, 0, frame->image.cols, frame->image.rows);
             cv::Mat detector_input = frame->image;
@@ -247,7 +251,7 @@ void register_detection_systems(talos::Scheduler& scheduler) noexcept {
             }
             const bool has_detector_roi = is_sub_frame_roi(detector_roi, frame->image.size());
 
-            auto result = backend->get()->detect(detector_input);
+            auto result = backend->get()->detect(detector_input, detect_color);
             if (!result) {
                 detection_out.write(
                     ArmorDetectionBatch{
@@ -282,8 +286,11 @@ void register_detection_systems(talos::Scheduler& scheduler) noexcept {
            talos::spmc_mut<ArmorMeasurementBatch, MeasurementChannelTopic> measurement_out,
            talos::res<std::shared_ptr<PnPSolver>> solver_ptr,
            talos::res<fast_tf::CoordinateSystem> tf_system, talos::res<CameraConfig> camera_config,
-           talos::res<ArmorReadbackRoiConfig> readback_roi_config,
+           talos::res<ArmorReadbackRoiConfig> readback_roi_config, core::capabilities cap,
            talos::res<TrackerReadbackCache> readback_cache) mutable {
+            if (!core::capable(*cap, core::Capability::Armor)) {
+                return;
+            }
             auto detections = detection_in.read();
             if (!detections) {
                 return;

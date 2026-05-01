@@ -15,12 +15,6 @@ enum class Status {
     FAILURE
 }; // 成功，箭头检测失败，装甲板检测失败，中心R检测失败
 
-enum class EnemyColor {
-    RED   = 0,
-    BLUE  = 1,
-    WHITE = 2,
-};
-
 constexpr double RUNE_PAN_REAL_DIS = 0.15; // 靶的宽度
 constexpr double RUNE_R2PANCENTER  = 0.7;  // 中心到靶的距离
 
@@ -92,43 +86,6 @@ struct Arrow {
     cv::RotatedRect rotated;
     double ratio;
     double fillratio;
-};
-
-// 能量机关检测参数
-struct RuneDetectorParams {
-    // 调试模式，启用时输出详细错误信息
-    bool debug_mode{false};
-
-    // 流水灯参数
-    double min_roundness{0.6};
-    double max_roundness{1.0};
-    int min_arrow_light_num{3};
-    int max_arrow_light_num{15};
-    double min_arrow_aspect_ratio{2.0};
-    double max_arrow_aspect_ratio{12.0};
-    double max_arrow_area{5000.0};
-    double min_arrow_light_area{10.0};
-    double max_arrow_light_area{250.0};
-    double min_arrow_light_aspect_ratio{1.5};
-    double max_arrow_light_aspect_ratio{5.0};
-    double max_same_arrow_area_ratio{5.0};
-
-    // ROI参数
-    double global_roi_length_ratio{1.5};
-    double local_roi_distance_ratio{6.0};
-    int local_roi_width{150};
-
-    // R中心参数
-    double max_center_aspect_ratio{3.0};
-
-    // 靶参数
-    int min_target_light_area{400};
-    int max_target_light_area{30000};
-    int min_target_light_contour_area{300};
-    int max_target_light_contour_area{10000};
-    double min_target_light_aspect_ratio{0.5};
-    double max_target_light_aspect_ratio{1.5};
-    float min_target_roi_area{100.0f};
 };
 
 } // namespace fyt::rune

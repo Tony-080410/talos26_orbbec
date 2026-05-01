@@ -2,6 +2,7 @@
 
 #include "../backend.hpp"
 #include "../config.hpp"
+#include "core/armor_types.hpp"
 #include "core/types.hpp"
 
 #include <memory>
@@ -48,10 +49,7 @@ public:
     NNBackend& operator=(const NNBackend&) = delete;
 
     /// Detect armors in image (synchronous)
-    [[nodiscard]] DetectionResult detect_impl(const cv::Mat& image) noexcept;
-
-    void set_detect_color(ArmorColor color) noexcept { detect_color_ = color; }
-    [[nodiscard]] ArmorColor detect_color() const noexcept { return detect_color_; }
+    [[nodiscard]] DetectionResult detect_impl(const cv::Mat& image, ArmorColor color) noexcept;
 
     /// Get execution devices
     [[nodiscard]] std::vector<std::string> execution_devices() const noexcept;
@@ -94,7 +92,6 @@ private:
 
 private:
     Config config_;
-    ArmorColor detect_color_ = ArmorColor::Blue;
 
     // OpenVINO resources (PIMPL to avoid header pollution)
     struct Impl;

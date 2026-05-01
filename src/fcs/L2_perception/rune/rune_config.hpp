@@ -1,15 +1,10 @@
 #pragma once
 
-#include "core/armor_types.hpp"
-
 namespace fcs::rune {
 
 struct RuneDetectorConfig {
-    bool enabled{false};
     bool draw{false};
     bool debug_mode{false}; // L2层调试模式，启用时输出详细错误信息
-    ArmorColor detect_color{ArmorColor::Red};
-
     int arrow_threshold{170};
     int target_threshold{130};
     int rcenter_threshold{120};

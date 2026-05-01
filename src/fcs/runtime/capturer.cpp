@@ -892,7 +892,6 @@ public:
             if (rune_debug.value) {
                 rune_debug_json["timestamp_ns"]      = rune_debug.value->timestamp_ns;
                 rune_debug_json["frame_id"]          = rune_debug.value->frame_id;
-                rune_debug_json["enabled"]           = rune_debug.value->enabled;
                 rune_debug_json["detect_reversed"]   = rune_debug.value->detect_reversed;
                 rune_debug_json["tf_ok"]             = rune_debug.value->tf_ok;
                 rune_debug_json["solve_ok"]          = rune_debug.value->solve_ok;

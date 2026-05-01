@@ -2,8 +2,10 @@
 #include "core/armor_types.hpp"
 #include "scheduler/system/components.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cstdint>
+#include <fmt/base.h>
 
 namespace fcs::core {
 
@@ -43,4 +45,26 @@ using imu_state_mut = res_mut<ImuState>;
 using detecting_color     = res<ArmorColor>;
 using detecting_color_mut = res_mut<ArmorColor>;
 
+enum Capability {
+    Armor = 0,
+    Rune  = 1,
+    Ldm   = 2,
+};
+
+using capabilities     = res<std::vector<Capability>>;
+using capabilities_mut = res_mut<std::vector<Capability>>;
+
+inline bool capable(std::vector<Capability> ls, Capability cap) {
+    return std::ranges::any_of(ls, [cap](auto x) { return x == cap; });
+}
+
 } // namespace fcs::core
+
+namespace fmt {
+template <>
+struct formatter<fcs::core::Capability> : formatter<std::string_view> {
+    auto format(const fcs::core::Capability c, format_context& ctx) const {
+        return formatter<std::string_view>::format(magic_enum::enum_name(c), ctx);
+    }
+};
+} // namespace fmt

@@ -37,14 +37,12 @@ NNTupBackend::~NNTupBackend() = default;
 
 NNTupBackend::NNTupBackend(NNTupBackend&& other) noexcept
     : config_{std::move(other.config_)}
-    , detect_color_(other.detect_color_)
     , impl_(std::move(other.impl_)) {}
 
 NNTupBackend& NNTupBackend::operator=(NNTupBackend&& other) noexcept {
     if (this != &other) {
-        config_       = std::move(other.config_);
-        detect_color_ = other.detect_color_;
-        impl_         = std::move(other.impl_);
+        config_ = std::move(other.config_);
+        impl_   = std::move(other.impl_);
     }
     return *this;
 }
@@ -402,7 +400,8 @@ std::vector<ArmorDetection> NNTupBackend::nms(
 // Detection Entry Point
 // ============================================================================
 
-NNTupBackend::DetectionResult NNTupBackend::detect_impl(const cv::Mat& image) noexcept {
+NNTupBackend::DetectionResult
+    NNTupBackend::detect_impl(const cv::Mat& image, ArmorColor color) noexcept {
     const auto& cfg = get_config();
 
     // Preprocess

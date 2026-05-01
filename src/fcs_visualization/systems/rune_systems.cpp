@@ -77,17 +77,17 @@ void register_rune_systems(talos::scheduler::Scheduler& app) {
             fmt::memory_buffer buf;
             fmt::format_to(
                 std::back_inserter(buf),
-                "{{\"timestamp_ns\":{},\"frame_id\":{},\"enabled\":{},\"detect_ok\":{},\"tf_ok\":{}"
+                "{{\"timestamp_ns\":{},\"frame_id\":{},\"detect_ok\":{},\"tf_ok\":{}"
                 ",\"solve_ok\":{},\"observation_valid\":{},\"status_code\":{},\"arrows\":{},"
                 "\"targets\":{},\"global_roi\":{{\"x\":{:.3f},\"y\":{:.3f},\"w\":{:.3f},\"h\":{:."
                 "3f}}},\"center_roi\":{{\"x\":{:.3f},\"y\":{:.3f},\"w\":{:.3f},\"h\":{:.3f}}},"
                 "\"target_rois\":[",
-                dbg->timestamp_ns, dbg->frame_id, dbg->enabled ? "true" : "false",
-                dbg->detect_reversed ? "true" : "false", dbg->tf_ok ? "true" : "false",
-                dbg->solve_ok ? "true" : "false", dbg->observation_valid ? "true" : "false",
-                dbg->status_code, dbg->arrows_count, dbg->targets_count, dbg->global_roi.x,
-                dbg->global_roi.y, dbg->global_roi.w, dbg->global_roi.h, dbg->center_roi.x,
-                dbg->center_roi.y, dbg->center_roi.w, dbg->center_roi.h);
+                dbg->timestamp_ns, dbg->frame_id, dbg->detect_reversed ? "true" : "false",
+                dbg->tf_ok ? "true" : "false", dbg->solve_ok ? "true" : "false",
+                dbg->observation_valid ? "true" : "false", dbg->status_code, dbg->arrows_count,
+                dbg->targets_count, dbg->global_roi.x, dbg->global_roi.y, dbg->global_roi.w,
+                dbg->global_roi.h, dbg->center_roi.x, dbg->center_roi.y, dbg->center_roi.w,
+                dbg->center_roi.h);
 
             for (size_t i = 0; i < dbg->target_rois.size(); ++i) {
                 const auto& r = dbg->target_rois[i];

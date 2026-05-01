@@ -4,15 +4,12 @@
 
 // std
 #include <Eigen/Core>
-#include <filesystem>
-#include <functional>
-#include <future>
-#include <memory>
 #include <opencv2/opencv.hpp>
 #include <string>
-#include <tuple>
 #include <vector>
 
+#include "L2_perception/rune/rune_config.hpp"
+#include "core/armor_types.hpp"
 #include "frame.hpp"
 #include "matrix.hpp"
 #include <expected>
@@ -24,11 +21,9 @@ namespace fyt::rune {
 
 class RuneDetector {
 public:
-    RuneDetector(
-        EnemyColor detect_color, int arrow_threshold, int target_threshold, int rcenter_threshold,
-        const RuneDetectorParams& params = {});
+    explicit RuneDetector(const fcs::rune::RuneDetectorConfig& params = {});
 
-    bool detect(const cv::Mat& frame, int image_width, int image_height);
+    bool detect(const cv::Mat& frame, fcs::ArmorColor color);
 
     std::expected<fast_tf::TransformMatrixd<rune, fast_tf::odom>, std::string> solve(
         const cv::Mat& cameraMatrix, const cv::Mat& distCoeffs, double timestamp_sec,
@@ -52,21 +47,16 @@ public:
     double timestamp_sec{0.0};
 
 private:
-    cv::Mat processPictures(const cv::Mat& src);
+    std::expected<cv::Mat, std::string> processPictures(const cv::Mat& src, fcs::ArmorColor color);
     bool isArrowRoiMatched(const Arrow& arrow, const cv::Rect2f& roi, const cv::Rect2f& globalRoi);
 
-    bool detectCenterR();
-    bool detectAllArrows();
-    bool detectAllTargets();
-
-    EnemyColor detect_color_;
-    int arrow_threshold_;
-    int target_threshold_;
-    int rcenter_threshold_;
-    RuneDetectorParams params_;
+    bool detectCenterR(fcs::ArmorColor color);
+    bool detectAllArrows(fcs::ArmorColor color);
+    bool detectAllTargets(fcs::ArmorColor color);
 
     int image_width_;
     int image_height_;
+    fcs::rune::RuneDetectorConfig params_;
 
     // 上一帧追踪的靶信息（用于目标连续性）
     cv::Point2f last_tracked_target_center_{0, 0};

@@ -15,6 +15,8 @@
 #include "L4_planning/config.hpp"
 #include "L5_weapon/config.hpp"
 #include "camera_config.hpp"
+#include "core/armor_types.hpp"
+#include "core/runtime.hpp"
 #include "core/trajectory/config.hpp"
 #include "euler.hpp"
 #include <magic_enum.hpp>
@@ -81,8 +83,10 @@ struct HardwareConfig {
 };
 
 struct VisionConfig {
+    ArmorColor detect_color;
+    toml_helper::required<std::vector<core::Capability>> capabilities;
     core::trajectory::TrajectoryConfig trajectory{};
-    toml_helper::flatten<L2::ArmorDetectorConfig> at_legacy{};
+    toml_helper::flatten<L2::ArmorDetectorConfig> armor{};
     rune::RuneDetectorConfig rune_detector{};
     L2::ldm::LdmDetectorConfig ldm{};
 

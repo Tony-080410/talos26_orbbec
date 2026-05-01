@@ -23,8 +23,6 @@ struct RuneDebugFrame {
     uint64_t timestamp_ns{};
     uint64_t frame_id{};
 
-    bool enabled{false};
-
     bool detect_reversed{false};
     bool tf_ok{false};
     bool solve_ok{false};

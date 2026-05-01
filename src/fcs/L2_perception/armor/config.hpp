@@ -138,7 +138,6 @@ struct ArmorAxeraConfig {
 
 struct ArmorDetectorConfig {
     ArmorBackendType backend_type;
-    ArmorColor default_detect_color; // 0=BLUE, 1=RED
     ArmorTraditionalConfig traditional;
     ArmorOpenVinoConfig openvino;
     ArmorOpenVinoTupConfig openvino_tup;

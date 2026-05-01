@@ -38,14 +38,12 @@ NNBackend::~NNBackend() = default;
 
 NNBackend::NNBackend(NNBackend&& other) noexcept
     : config_{std::move(other.config_)}
-    , detect_color_(other.detect_color_)
     , impl_(std::move(other.impl_)) {}
 
 NNBackend& NNBackend::operator=(NNBackend&& other) noexcept {
     if (this != &other) {
-        config_       = std::move(other.config_);
-        detect_color_ = other.detect_color_;
-        impl_         = std::move(other.impl_);
+        config_ = std::move(other.config_);
+        impl_   = std::move(other.impl_);
     }
     return *this;
 }
@@ -456,7 +454,7 @@ std::vector<ArmorDetection> NNBackend::nms(
 // Detection Entry Point
 // ============================================================================
 
-NNBackend::DetectionResult NNBackend::detect_impl(const cv::Mat& image) noexcept {
+NNBackend::DetectionResult NNBackend::detect_impl(const cv::Mat& image, ArmorColor color) noexcept {
     if (image.empty()) {
         return std::unexpected("Empty image passed to NN backend");
     }

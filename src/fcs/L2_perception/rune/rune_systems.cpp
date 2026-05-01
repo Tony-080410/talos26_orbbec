@@ -5,6 +5,7 @@
 #include "L2_perception/rune/types.hpp"
 #include "camera_config.hpp"
 #include "core/channel_topics.hpp"
+#include "core/runtime.hpp"
 #include "core/types.hpp"
 #include "frame.hpp"
 #include "scheduler/scheduler.hpp"
@@ -38,13 +39,6 @@ namespace {
     return encoded;
 }
 
-[[nodiscard]] auto to_enemy_color(ArmorColor color) -> ::fyt::rune::EnemyColor {
-    if (color == ArmorColor::Red) {
-        return ::fyt::rune::EnemyColor::RED;
-    }
-    return ::fyt::rune::EnemyColor::BLUE;
-}
-
 [[nodiscard]] auto ns_to_sec(uint64_t ns) -> double { return static_cast<double>(ns) * 1e-9; }
 
 } // namespace
@@ -52,51 +46,24 @@ namespace {
 void register_rune_detection_systems(talos::Scheduler& scheduler, RuneDetectorConfig&& config) {
     scheduler.world().insert_resource(config);
 
-    // 从fcs::rune::RuneDetectorConfig创建fyt::rune::RuneDetectorParams
-    ::fyt::rune::RuneDetectorParams params;
-    params.debug_mode                    = config.debug_mode;
-    params.min_roundness                 = config.min_roundness;
-    params.max_roundness                 = config.max_roundness;
-    params.min_arrow_light_num           = config.min_arrow_light_num;
-    params.max_arrow_light_num           = config.max_arrow_light_num;
-    params.min_arrow_aspect_ratio        = config.min_arrow_aspect_ratio;
-    params.max_arrow_aspect_ratio        = config.max_arrow_aspect_ratio;
-    params.max_arrow_area                = config.max_arrow_area;
-    params.min_arrow_light_area          = config.min_arrow_light_area;
-    params.max_arrow_light_area          = config.max_arrow_light_area;
-    params.min_arrow_light_aspect_ratio  = config.min_arrow_light_aspect_ratio;
-    params.max_arrow_light_aspect_ratio  = config.max_arrow_light_aspect_ratio;
-    params.max_same_arrow_area_ratio     = config.max_same_arrow_area_ratio;
-    params.global_roi_length_ratio       = config.global_roi_length_ratio;
-    params.local_roi_distance_ratio      = config.local_roi_distance_ratio;
-    params.local_roi_width               = config.local_roi_width;
-    params.max_center_aspect_ratio       = config.max_center_aspect_ratio;
-    params.min_target_light_area         = config.min_target_light_area;
-    params.max_target_light_area         = config.max_target_light_area;
-    params.min_target_light_contour_area = config.min_target_light_contour_area;
-    params.max_target_light_contour_area = config.max_target_light_contour_area;
-    params.min_target_light_aspect_ratio = config.min_target_light_aspect_ratio;
-    params.max_target_light_aspect_ratio = config.max_target_light_aspect_ratio;
-    params.min_target_roi_area           = config.min_target_roi_area;
-
     scheduler.add_system<talos::pool_compute>(
         "l2_rune_detector",
-        [detector = std::make_shared<::fyt::rune::RuneDetector>(
-             to_enemy_color(config.detect_color), config.arrow_threshold, config.target_threshold,
-             config.rcenter_threshold, params)](
+        [detector = std::make_shared<::fyt::rune::RuneDetector>(config)](
             talos::spmc<ImageFrame, ImageChannelTopic> image_in,
             talos::spmc_mut<RuneObservation, RuneObservationChannelTopic> obs_out,
             talos::spmc_mut<RuneDebugFrame, RuneDebugFrameChannelTopic> debug_out,
             talos::res<RuneDetectorConfig> cfg, talos::res<CameraConfig> cam_cfg,
+            core::capabilities cap, core::detecting_color color,
             talos::res<fast_tf::CoordinateSystem> tf_system) mutable {
-            if (!image_in.has_new()) {
+            if (!core::capable(*cap, core::Capability::Rune)) {
                 return;
             }
-
             auto frame = image_in.read();
             if (!frame) {
                 return;
             }
+
+            auto detect_color = *color;
 
             RuneObservation out;
             out.timestamp_ns = frame->timestamp_ns;
@@ -106,15 +73,8 @@ void register_rune_detection_systems(talos::Scheduler& scheduler, RuneDetectorCo
             RuneDebugFrame dbg;
             dbg.timestamp_ns = frame->timestamp_ns;
             dbg.frame_id     = frame->frame_id;
-            dbg.enabled      = cfg->enabled;
 
-            if (!cfg->enabled) {
-                return;
-            }
-
-            const auto reversed =
-                detector->detect(frame->image, frame->image.cols, frame->image.rows);
-            ;
+            const auto reversed = detector->detect(frame->image, detect_color);
 
             if (!detector->targets.empty() && detector->rcenter.center != cv::Point2f(0, 0)) {
                 detector->setKeyPoints();

@@ -24,7 +24,7 @@ namespace fcs {
 // Invariants enforced by concept:
 //   - detect_impl()  noexcept — handles all errors internally via std::expected
 //   - create()       noexcept — factory handles all errors via std::expected
-//   - set_detect_color() / detect_color() / get_config() — noexcept
+//   - get_config() — noexcept
 //
 // Design rule: exceptions are system boundary concerns only.
 // Internal code MUST NOT throw. All errors propagate via std::expected
@@ -37,12 +37,7 @@ concept DetectorBackend = requires(T& t, const T& ct, const cv::Mat& image, Armo
     typename T::Config;
 
     // Core detection — noexcept, errors via std::expected with full context
-    { t.detect_impl(image) } noexcept -> std::same_as<typename T::DetectionResult>;
-
-    // Color control — noexcept guaranteed
-    { t.set_detect_color(color) } noexcept;
-    { t.detect_color() } noexcept -> std::same_as<ArmorColor>;
-    { ct.detect_color() } noexcept -> std::same_as<ArmorColor>;
+    { t.detect_impl(image, color) } noexcept -> std::same_as<typename T::DetectionResult>;
 
     // Config access — noexcept guaranteed
     { t.get_config() } noexcept -> std::same_as<const typename T::Config&>;
@@ -68,8 +63,8 @@ public:
     using DetectionResult = std::expected<std::vector<ArmorDetection>, std::string>;
 
     /// Detect armors in image — pure noexcept forwarding.
-    [[nodiscard]] DetectionResult detect(const cv::Mat& image) noexcept {
-        return static_cast<Derived*>(this)->detect_impl(image);
+    [[nodiscard]] DetectionResult detect(const cv::Mat& image, ArmorColor color) noexcept {
+        return static_cast<Derived*>(this)->detect_impl(image, color);
     }
 
 protected:

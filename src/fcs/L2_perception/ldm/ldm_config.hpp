@@ -1,7 +1,5 @@
 #pragma once
 
-#include "core/armor_types.hpp"
-
 #include <array>
 
 namespace fcs::L2::ldm {
@@ -17,8 +15,6 @@ struct LdmGeometryConfig {
 };
 
 struct LdmDetectorConfig {
-    bool enabled{true};
-    ArmorColor target_color{ArmorColor::Red};
     int min_blob_area_px{5};
     int min_sparse_blob_pixel_count{8};
     double min_blob_fill_ratio{0.35};

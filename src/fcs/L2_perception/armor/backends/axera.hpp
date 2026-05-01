@@ -47,10 +47,7 @@ public:
     AxeraBackend& operator=(const AxeraBackend&) = delete;
 
     /// Detect armors in image (synchronous)
-    [[nodiscard]] DetectionResult detect_impl(const cv::Mat& image) noexcept;
-
-    void set_detect_color(ArmorColor color) noexcept { detect_color_ = color; }
-    [[nodiscard]] ArmorColor detect_color() const noexcept { return detect_color_; }
+    [[nodiscard]] DetectionResult detect_impl(const cv::Mat& image, ArmorColor color) noexcept;
 
     /// Get current config
     [[nodiscard]] const Config& get_config() const noexcept { return config_; }
@@ -62,6 +59,7 @@ private:
 
     /// Direct-resize preprocessing context.
     struct PreprocContext {
+        ArmorColor detect_color;
         float scale_x      = 1.0f;
         float scale_y      = 1.0f;
         int orig_w         = 0;
@@ -124,7 +122,6 @@ private:
 
 private:
     Config config_;
-    ArmorColor detect_color_          = ArmorColor::Blue;
     bool initialized_                 = false;
     bool warned_non_four_three_input_ = false;
 

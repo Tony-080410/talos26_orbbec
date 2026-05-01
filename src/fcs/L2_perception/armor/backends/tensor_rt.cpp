@@ -535,15 +535,12 @@ std::expected<TrtBackend, std::string> TrtBackend::create(Config config) noexcep
     return backend;
 }
 
-void TrtBackend::set_detect_color(fcs::ArmorColor color) noexcept {
-    detect_color_ = static_cast<int>(color);
-}
-
 // ============================================================================
 // Detection
 // ============================================================================
 
-TrtBackend::DetectionResult TrtBackend::detect_impl(const cv::Mat& image) noexcept {
+TrtBackend::DetectionResult
+    TrtBackend::detect_impl(const cv::Mat& image, ArmorColor color) noexcept {
     if (!impl_) {
         return std::unexpected("TensorRT backend not initialized");
     }
