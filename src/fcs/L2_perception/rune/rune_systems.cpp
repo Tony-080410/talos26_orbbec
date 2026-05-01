@@ -262,33 +262,45 @@ void register_rune_detection_systems(talos::Scheduler& scheduler, RuneDetectorCo
                 return;
             }
 
-            const auto odom_T_rcenter = *pose_result;
+            const auto odom_T_center = *pose_result;
+            out.valid                = true;
+            out.r_center_odom        = odom_T_center;
 
-            out.valid         = true;
-            out.r_center_odom = odom_T_rcenter;
-            out.reproj_error  = detector->debug_reproj_error_;
+            if (detector->targets.size() == 1) {
+                out.r_center_odom = odom_T_center;
+
+            } else if (detector->targets.size() == 2) {
+
+                const Eigen::Vector3d offset =
+                    odom_T_center.rotation() * Eigen::Vector3d(0.18, 0, 0);
+
+                Eigen::Vector3d t = odom_T_center.translation();
+                t -= offset;
+
+                auto odom_T_rcenter =
+                    fast_tf::TransformMatrixd<fyt::rune::rune, fast_tf::odom>::from_rt(
+                        odom_T_center.rotation(), t);
+
+                out.r_center_odom = odom_T_rcenter;
+            }
 
             // 传递所有检测到的靶（大符 2 个，小符 1 个），L3 靶数投票依赖 .size()
             // 叶片在竖直平面 (Y-Z) 内绕水平轴 (X) 旋转
             const double r2pancenter = fyt::rune::RUNE_R2PANCENTER;
             for (size_t i = 0; i < detector->targets.size(); ++i) {
-                const double roll = detector->targets[i].roll;
-                // 绕 X 轴旋转 roll 后的叶片中心位置
-                // 原始位置: (0, 0, r2pancenter)
-                // 旋转后: (0, -r*sin(roll), r*cos(roll))
-                const double sr = std::sin(roll);
-                const double cr = std::cos(roll);
+                const double dtheta = detector->targets[i].roll;
+                const double sr     = std::sin(dtheta);
+                const double cr     = std::cos(dtheta);
                 const Eigen::Vector3d blade_center_rotated(
                     0.0, -r2pancenter * sr, r2pancenter * cr);
 
                 out.target_positions_odom.emplace_back(
-                    odom_T_rcenter.rotation() * blade_center_rotated
+                    odom_T_center.rotation() * blade_center_rotated
                     + out.r_center_odom.translation());
 
-                // 叶片姿态 = 能量机关整体姿态 * 绕 X 轴 roll 旋转
                 const Eigen::Quaterniond roll_quat(
-                    std::cos(roll / 2), std::sin(roll / 2), 0.0, 0.0);
-                out.target_quats_odom.emplace_back(odom_T_rcenter.quaternion() * roll_quat);
+                    std::cos(dtheta / 2), std::sin(dtheta / 2), 0.0, 0.0);
+                out.target_quats_odom.emplace_back(odom_T_center.quaternion() * roll_quat);
             }
 
             dbg.observation_valid = true;

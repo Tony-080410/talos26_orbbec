@@ -1348,7 +1348,7 @@ std::expected<fast_tf::TransformMatrixd<rune, fast_tf::odom>, std::string> RuneD
         image_points.emplace_back(targets[0].keypnt.rd); // 右下
         image_points.emplace_back(targets[0].keypnt.ld); // 左下
         image_points.emplace_back(targets[0].center);
-        object_points = targets[0].points3d;
+        object_points = targets[0].small_points3d;
 
         // 校验数量匹配
         if (object_points.size() != image_points.size()) {
@@ -1419,7 +1419,7 @@ std::expected<fast_tf::TransformMatrixd<rune, fast_tf::odom>, std::string> RuneD
 
         bool success = cv::solvePnP(
             object_points, image_points, cameraMatrix, distCoeffs, rvec, tvec, false,
-            cv::SOLVEPNP_ITERATIVE);
+            cv::SOLVEPNP_SQPNP);
         if (!success) {
             if (params_.debug_mode) {
                 std::cerr << "R点PnP解算失败" << std::endl;

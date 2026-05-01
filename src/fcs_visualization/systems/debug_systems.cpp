@@ -116,17 +116,15 @@ void register_debug_systems(talos::scheduler::Scheduler& app, talos::Scheduler* 
                 state->r_center_odom.x(), state->r_center_odom.y(), state->r_center_odom.z()};
             em_json["radius"]   = state->radius;
             em_json["roll"]     = state->roll;
-            em_json["v_roll"]   = state->v_roll;
+            em_json["t"]        = state->t;
             em_json["blade_id"] = state->blade_id;
             em_json["position"] = {state->position.x(), state->position.y(), state->position.z()};
             em_json["is_big_rune"] = state->is_big_rune;
             em_json["model_valid"] = state->model_valid;
-            em_json["fit_error"]   = state->fit_error;
-            em_json["a"]           = state->sin_amplitude;
-            em_json["w"]           = state->sin_omega;
-            em_json["b"]           = state->sin_offset;
-            em_json["c"]           = state->sin_const_term;
-            em_json["phi"]         = state->sin_phase;
+            em_json["direction"]   = state->direction;
+            em_json["a"]           = state->a;
+            em_json["omega"]       = state->omega;
+            em_json["b"]           = state->b;
             em_json["r"]           = state->radius;
 
             detail::publish_json_message<EnergyMeterMessage>(*server, em_json);

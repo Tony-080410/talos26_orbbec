@@ -62,14 +62,22 @@ struct Target {
     void set(const Light& l);
     KeyPoint keypnt;
     bool initKey;
-
-    std::vector<cv::Point3f> points3d = {
+    std::vector<cv::Point3f> small_points3d = {
         {0.0f,                      0.0f,                                        0.0f}, // P0
         {0.0f,  RUNE_PAN_REAL_DIS / 2.0f, RUNE_R2PANCENTER + RUNE_PAN_REAL_DIS / 2.0f}, // P1
         {0.0f,  RUNE_PAN_REAL_DIS / 2.0f, RUNE_R2PANCENTER - RUNE_PAN_REAL_DIS / 2.0f}, // P2
         {0.0f, -RUNE_PAN_REAL_DIS / 2.0f, RUNE_R2PANCENTER - RUNE_PAN_REAL_DIS / 2.0f}, // P3
         {0.0f, -RUNE_PAN_REAL_DIS / 2.0f, RUNE_R2PANCENTER + RUNE_PAN_REAL_DIS / 2.0f}, // P4
         {0.0f,                      0.0f,                            RUNE_R2PANCENTER}  // P5
+    };
+
+    std::vector<cv::Point3f> points3d = {
+        {-0.18f,                      0.0f,                                        0.0f}, // P0
+        {  0.0f,  RUNE_PAN_REAL_DIS / 2.0f, RUNE_R2PANCENTER + RUNE_PAN_REAL_DIS / 2.0f}, // P1
+        {  0.0f,  RUNE_PAN_REAL_DIS / 2.0f, RUNE_R2PANCENTER - RUNE_PAN_REAL_DIS / 2.0f}, // P2
+        {  0.0f, -RUNE_PAN_REAL_DIS / 2.0f, RUNE_R2PANCENTER - RUNE_PAN_REAL_DIS / 2.0f}, // P3
+        {  0.0f, -RUNE_PAN_REAL_DIS / 2.0f, RUNE_R2PANCENTER + RUNE_PAN_REAL_DIS / 2.0f}, // P4
+        {  0.0f,                      0.0f,                            RUNE_R2PANCENTER}  // P5
     };
 };
 

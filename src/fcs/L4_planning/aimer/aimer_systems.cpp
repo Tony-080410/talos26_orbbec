@@ -377,9 +377,10 @@ void register_aimer_systems(talos::Scheduler& scheduler, L4Config&& config) {
         "l4_aimer",
         [phase_states =
              std::unordered_map<core::TargetKey, TargetPhaseState, core::TargetKeyHash>{},
-         selected_target_key     = std::optional<core::TargetKey>{},
-         ldm_state_cache         = std::optional<L3::ldm::LdmState>{},
-         rune_last_target_angles = std::optional<std::pair<double, double>>{}](
+         selected_target_key  = std::optional<core::TargetKey>{},
+         ldm_state_cache      = std::optional<L3::ldm::LdmState>{},
+         rune_state_cache     = std::optional<energy_meter::EnergyMeterState>{},
+         rune_last_aim_angles = std::optional<std::pair<double, double>>{}](
 
             talos::res<L4Config> cfg, talos::res<Aimer> aimer,
             core::trajectory::trajectory_solver solver,
@@ -533,7 +534,8 @@ void register_aimer_systems(talos::Scheduler& scheduler, L4Config&& config) {
                 }
 
                 selected_candidate = candidates[selected_index];
-                aim_result         = selected_candidate->prediction;
+                // todo
+                // aim_result         = selected_candidate->prediction;
 
                 target_selection_trace.kept_current_target = kept_current_target;
 
@@ -555,26 +557,42 @@ void register_aimer_systems(talos::Scheduler& scheduler, L4Config&& config) {
                 target_selection_trace.candidates.push_back(std::move(entry));
             }
 
-            // Try Rune (fallback) — skip re-aiming on stale data
+            // Try Rune (cached state persists through brief tracking dropouts)
             if (!aim_result) {
-                const auto rune_state = rune_in.read();
+                const auto rune_state = rune_in.read_current();
                 if (rune_state && rune_state->tracking_valid) {
-                    aim_result = aimer->aim(
-                        *rune_state, gimbal, muzzle, current_ns, bullet_speed, solver_ref);
+                    rune_state_cache = *rune_state;
                 }
-                // FIXME read_current or read?
+
+                if (rune_state_cache) {
+                    const double staleness =
+                        elapsed_seconds(rune_state_cache->timestamp_ns, current_ns);
+                    if (staleness < 0.5) {
+                        aim_result = aimer->aim(
+                            *rune_state_cache, gimbal, muzzle, current_ns, bullet_speed,
+                            solver_ref);
+                    } else {
+                        rune_state_cache.reset();
+                    }
+                }
+
+                // LDM (overrides rune if available)
                 const auto ldm_state = ldm_in.read();
                 if (ldm_state && ldm_state->is_tracking()) {
                     ldm_state_cache = *ldm_state;
                     aim_result      = aimer->aim(
                         *ldm_state, gimbal, muzzle, current_ns, bullet_speed, solver_ref);
                 } else if (!aim_result) {
-                    // No valid LDM state — invalidate cache so stale state doesn't linger
                     ldm_state_cache.reset();
                 }
             }
 
             if (aim_result) {
+                // Cache rune aim angles for the no-target fallback path
+                if (aim_result->target_type == AimerTargetType::Rune
+                    || aim_result->target_type == AimerTargetType::Ldm) {
+                    rune_last_aim_angles = {aim_result->aim_yaw, aim_result->aim_pitch};
+                }
                 if (selected_candidate) {
                     aim_result->armor_type =
                         cls_to_armor_type(selected_candidate->tracker.target_name);
@@ -693,11 +711,15 @@ void register_aimer_systems(talos::Scheduler& scheduler, L4Config&& config) {
                     selected_target_key.reset();
                 }
                 GimbalPlan plan;
-                plan.timestamp_ns                 = output_timestamp_ns;
-                plan.distance                     = -1;
-                const auto [last_yaw, last_pitch] = *rune_last_target_angles;
-                plan.yaw                          = last_yaw;
-                plan.pitch                        = last_pitch;
+                plan.timestamp_ns = output_timestamp_ns;
+                plan.distance     = -1;
+                if (rune_last_aim_angles) {
+                    plan.yaw   = rune_last_aim_angles->first;
+                    plan.pitch = rune_last_aim_angles->second;
+                } else {
+                    plan.yaw   = cur_yaw;
+                    plan.pitch = cur_pitch;
+                }
                 selected_target_out.write(std::move(selected_target));
                 target_selection_out.write(std::move(target_selection_trace));
                 aimer_out.write(std::move(plan));

@@ -680,22 +680,21 @@ template <fast_tf::frame Frame>
 
 [[nodiscard]] auto to_json_energy_meter_state(const energy_meter::EnergyMeterState& state) -> json {
     return json{
-        {  "timestamp_ns",                state.timestamp_ns},
-        {"tracking_valid",              state.tracking_valid},
-        { "r_center_odom", to_json_vec3(state.r_center_odom)},
-        {        "radius",                      state.radius},
-        {          "roll",                        state.roll},
-        {        "v_roll",                      state.v_roll},
-        {      "blade_id",                    state.blade_id},
-        {      "position",      to_json_vec3(state.position)},
-        {   "is_big_rune",                 state.is_big_rune},
-        {   "model_valid",                 state.model_valid},
-        {     "fit_error",                   state.fit_error},
-        {             "a",               state.sin_amplitude},
-        {             "w",                   state.sin_omega},
-        {             "b",                  state.sin_offset},
-        {           "phi",                   state.sin_phase},
-        {             "c",              state.sin_const_term},
+        {      "timestamp_ns",                state.timestamp_ns},
+        {    "tracking_valid",              state.tracking_valid},
+        {     "r_center_odom", to_json_vec3(state.r_center_odom)},
+        {            "radius",                      state.radius},
+        {              "roll",                        state.roll},
+        {                 "t",                           state.t},
+        {          "blade_id",                    state.blade_id},
+        {"blade_id_confirmed",          state.blade_id_confirmed},
+        {         "direction",                   state.direction},
+        {          "position",      to_json_vec3(state.position)},
+        {       "is_big_rune",                 state.is_big_rune},
+        {       "model_valid",                 state.model_valid},
+        {                 "a",                           state.a},
+        {             "omega",                       state.omega},
+        {                 "b",                           state.b},
     };
 }
 

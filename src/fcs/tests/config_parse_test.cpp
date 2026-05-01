@@ -256,19 +256,13 @@ TEST(ConfigParse, VisionBaseTomlMatchesExpectedSemanticsAndValues) {
     EXPECT_EQ(config.rune_detector.target_threshold, 130);
     EXPECT_EQ(config.rune_detector.rcenter_threshold, 120);
 
-    EXPECT_TRUE(config.energy_meter.is_big_rune);
-    EXPECT_EQ(config.energy_meter.fitter.min_fit_data_size, 20);
-    EXPECT_EQ(config.energy_meter.fitter.max_fit_data_size, 1200);
-    EXPECT_DOUBLE_EQ(config.energy_meter.fitter.small_rune_rotation_speed, 1.04719);
-    EXPECT_EQ(config.energy_meter.fitter.direction_threshold, 3);
     EXPECT_EQ(config.energy_meter.tracker.lost_thres, 10);
     EXPECT_EQ(config.energy_meter.tracker.tracking_thres, 3);
     EXPECT_DOUBLE_EQ(config.energy_meter.tracker.matcher_gate, 25.0);
-    EXPECT_DOUBLE_EQ(config.energy_meter.tracker.energy_params.sigma_xy, 10.0);
-    EXPECT_DOUBLE_EQ(config.energy_meter.tracker.energy_params.sigma_z, 1.0);
-    EXPECT_DOUBLE_EQ(config.energy_meter.tracker.energy_params.sigma_roll, 1.0);
-    EXPECT_DOUBLE_EQ(config.energy_meter.tracker.energy_params.radius, 0.7);
-    EXPECT_DOUBLE_EQ(config.energy_meter.tracker.energy_params.meas_dist_k, 0.43);
+    EXPECT_DOUBLE_EQ(config.energy_meter.tracker.model_params.sigma_xy, 10.0);
+    EXPECT_DOUBLE_EQ(config.energy_meter.tracker.model_params.sigma_z, 1.0);
+    EXPECT_DOUBLE_EQ(config.energy_meter.tracker.model_params.radius, 0.7);
+    EXPECT_DOUBLE_EQ(config.energy_meter.tracker.model_params.meas_dist_k, 0.43);
 }
 
 TEST(ConfigParse, InlineHelpersAndFormattersBehaveAsExpected) {

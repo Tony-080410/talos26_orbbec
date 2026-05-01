@@ -194,26 +194,22 @@ Eigen::Vector3d Aimer::predict_position(
     // 预测 roll 变化
     if (target.model_valid) {
         if (target.is_big_rune) {
-            // 使用 UKF 的 (A, W, PHI) 做正弦预测
-            // theta(t) = -(a/omega) * cos(omega * (t + phi)) + b*t + c
-            // delta = theta(t0 + t1) - theta(t0)
-            //       = -(a/omega) * (cos(omega*(t0+t1+phi)) - cos(omega*(t0+phi))) + b*t1
-            const double a     = target.sin_amplitude;
-            const double omega = target.sin_omega;
-            const double b     = target.sin_offset;
-            const double phi   = target.sin_phase;
-            const double t0    = target.relative_time;
+            // Δθ = dir · [(a/ω)·(cos(ω·t) - cos(ω·(t+dt))) + b·dt]
+            const double a     = target.a;
+            const double omega = target.omega;
+            const double b     = target.b;
+            const double t0    = target.t;
 
-            delta_theta = dir
-                        * (-(a / omega)
-                               * (std::cos(omega * (t0 + predict_time + phi))
-                                  - std::cos(omega * (t0 + phi)))
-                           + b * predict_time);
+            delta_theta =
+                dir
+                * ((a / omega) * (std::cos(omega * t0) - std::cos(omega * (t0 + predict_time)))
+                   + b * predict_time);
         } else {
             delta_theta = dir * 1.04719 * predict_time;
         }
     } else {
-        delta_theta = target.v_roll * predict_time;
+        // Fallback: constant speed estimate
+        delta_theta = dir * 1.04719 * predict_time;
     }
 
     // 预测 roll
@@ -429,7 +425,7 @@ std::expected<TargetPrediction, std::string> Aimer::aim_generic_rune(
 
     output.aim_yaw   = yaw;
     output.aim_pitch = pitch;
-    output.distance  = output.predicted_position.norm();
+    output.distance  = (output.predicted_position - muzzle.translation()).norm();
 
     // 计算 predicted_roll 用于 Rune
     if constexpr (std::is_same_v<TargetType, energy_meter::EnergyMeterState>) {
@@ -438,20 +434,18 @@ std::expected<TargetPrediction, std::string> Aimer::aim_generic_rune(
         if (target.model_valid) {
             const int dir = target.direction;
             if (target.is_big_rune) {
-                const double a   = target.sin_amplitude;
-                const double w   = target.sin_omega;
-                const double b   = target.sin_offset;
-                const double phi = target.sin_phase;
-                const double t0  = target.relative_time;
-                delta_theta =
-                    dir
-                    * (-(a / w) * (std::cos(w * (t0 + total_time + phi)) - std::cos(w * (t0 + phi)))
-                       + b * total_time);
+                const double a  = target.a;
+                const double w  = target.omega;
+                const double b  = target.b;
+                const double t0 = target.t;
+                delta_theta     = dir
+                            * ((a / w) * (std::cos(w * t0) - std::cos(w * (t0 + total_time)))
+                               + b * total_time);
             } else {
                 delta_theta = dir * 1.04719 * total_time;
             }
         } else {
-            delta_theta = target.v_roll * total_time;
+            delta_theta = target.direction * 1.04719 * total_time;
         }
         output.predicted_roll = current_roll + delta_theta;
     }
