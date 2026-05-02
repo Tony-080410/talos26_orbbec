@@ -6,8 +6,13 @@
 namespace fcs::energy_meter {
 
 struct EnergyMeterL3Config {
-    /// EKF tracker configuration
-    ::energy_meter::Tracker::Params tracker{};
+    ::energy_meter::BigRuneModel::Params big_model{};
+    ::energy_meter::SmallRuneModel::Params small_model{};
+
+    int lost_thres{10};
+    int tracking_thres{3};
+    double matcher_gate{25.0};
+    int blade_unlock_frames{10};
 };
 
 /// Register energy meter L3 estimation systems with the talos scheduler.

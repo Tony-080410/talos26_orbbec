@@ -1346,47 +1346,18 @@ std::expected<fast_tf::TransformMatrixd<rune, fast_tf::odom>, std::string> RuneD
     std::vector<cv::Point2f> image_points;
     std::vector<cv::Point3f> object_points;
 
+    // ── Build 2D-3D correspondences ──
     if (targets.size() == 1) {
-
         image_points.emplace_back(rcenter.center);
-        image_points.emplace_back(targets[0].keypnt.lu); // 左上
-        image_points.emplace_back(targets[0].keypnt.ru); // 右上
-        image_points.emplace_back(targets[0].keypnt.rd); // 右下
-        image_points.emplace_back(targets[0].keypnt.ld); // 左下
+        image_points.emplace_back(targets[0].keypnt.lu);
+        image_points.emplace_back(targets[0].keypnt.ru);
+        image_points.emplace_back(targets[0].keypnt.rd);
+        image_points.emplace_back(targets[0].keypnt.ld);
         image_points.emplace_back(targets[0].center);
         object_points = targets[0].small_points3d;
-
-        // 校验数量匹配
-        if (object_points.size() != image_points.size()) {
-            if (params_.debug_mode) {
-                std::cerr << "3D point number not equals 2D point number" << std::endl;
-            }
-            return std::unexpected("3D point number not equals 2D point number");
-        }
-
-        // 2. 点数数量校验（至少4个点，满足solvePnP要求）
-        if (object_points.size() < 4) {
-            if (params_.debug_mode) {
-                std::cerr << "pnp point number less 4" << std::endl;
-            }
-            return std::unexpected("pnp point number less 4");
-        }
-
-        bool success = cv::solvePnP(
-            object_points, image_points, cameraMatrix, distCoeffs, rvec, tvec, false,
-            cv::SOLVEPNP_ITERATIVE);
-
-        if (!success) {
-            if (params_.debug_mode) {
-                std::cerr << "R点PnP解算失败" << std::endl;
-            }
-            return std::unexpected("R点PnP解算失败");
-        }
-
     } else if (targets.size() == 2) {
         // 选择 roll 最接近上一帧的靶作为主目标，保证追踪连续性
         if (has_last_target_) {
-            // 使用角度差（处理临界跳变）
             double diff0 = std::abs(
                 angles::shortest_angular_distance(last_tracked_target_angle_, targets[0].angle));
             double diff1 = std::abs(
@@ -1396,7 +1367,6 @@ std::expected<fast_tf::TransformMatrixd<rune, fast_tf::odom>, std::string> RuneD
                 std::swap(arrows[0], arrows[1]);
             }
         } else {
-            // 第一帧没有历史，选择 y 坐标更大的（图像下方）
             if (targets[0].center.y < targets[1].center.y) {
                 std::swap(targets[0], targets[1]);
                 std::swap(arrows[0], arrows[1]);
@@ -1405,36 +1375,122 @@ std::expected<fast_tf::TransformMatrixd<rune, fast_tf::odom>, std::string> RuneD
         addOther(
             rcenter.center, targets[0], targets[1], image_points, object_points,
             params_.debug_mode);
+    }
 
-        // 校验数量匹配
-        if (object_points.size() != image_points.size()) {
-            if (params_.debug_mode) {
-                std::cerr << "3D point number : " << object_points.size()
-                          << " not equals 2D point number : " << image_points.size() << std::endl;
-            }
-            return std::unexpected("not equals 2D point number :");
-        }
+    if (object_points.size() != image_points.size() || object_points.size() < 4) {
+        return std::unexpected("pnp point number invalid");
+    }
 
-        // 2. 点数数量校验（至少4个点，满足solvePnP要求）
-        if (object_points.size() < 4) {
-            if (params_.debug_mode) {
-                std::cerr << "pnp point number less 4: " << object_points.size() << std::endl;
-            }
-            return std::unexpected("pnp point number less 4:");
-        }
+    // ── Step 1: Undistort to normalized image plane ──
+    std::vector<cv::Point2f> norm_points;
+    cv::undistortPoints(image_points, norm_points, cameraMatrix, distCoeffs);
 
-        bool success = cv::solvePnP(
-            object_points, image_points, cameraMatrix, distCoeffs, rvec, tvec, false,
-            cv::SOLVEPNP_SQPNP);
-        if (!success) {
-            if (params_.debug_mode) {
-                std::cerr << "R点PnP解算失败" << std::endl;
-            }
-            return std::unexpected("R点PnP解算失败");
+    // ── Step 2: Initial PnP (prior-seeded, then fallback) ──
+    static const cv::Mat kIdentityK = cv::Mat::eye(3, 3, CV_64F);
+    bool pnp_ok                     = false;
+
+    // Try prior-based iterative solve (valid if < 0.5s old)
+    if (pose_prior_.timestamp > 0 && (timestamp_sec - pose_prior_.timestamp) < 0.5) {
+        rvec   = pose_prior_.rvec.clone();
+        tvec   = pose_prior_.tvec.clone();
+        pnp_ok = cv::solvePnP(
+            object_points, norm_points, kIdentityK, cv::Mat(), rvec, tvec, true,
+            cv::SOLVEPNP_ITERATIVE);
+    }
+
+    // Fallback: standard method
+    if (!pnp_ok) {
+        if (targets.size() == 1) {
+            pnp_ok = cv::solvePnP(
+                object_points, norm_points, kIdentityK, cv::Mat(), rvec, tvec, false,
+                cv::SOLVEPNP_IPPE);
+        } else {
+            pnp_ok = cv::solvePnP(
+                object_points, norm_points, kIdentityK, cv::Mat(), rvec, tvec, false,
+                cv::SOLVEPNP_SQPNP);
         }
     }
 
-    // 计算重投影误差
+    if (!pnp_ok) {
+        return std::unexpected("R点PnP解算失败");
+    }
+
+    // Reject degenerate PnP (NaN / Inf)
+    {
+        const double* rd = rvec.ptr<double>();
+        const double* td = tvec.ptr<double>();
+        for (int i = 0; i < 3; ++i) {
+            if (!std::isfinite(rd[i]) || !std::isfinite(td[i])) {
+                return std::unexpected("R点PnP解算失败 (degenerate)");
+            }
+        }
+    }
+
+    // ── Step 3: Constrained Ceres refinement (roll + yaw + translation, pitch = 0) ──
+    // R_cam_rune = R_cam_imu * R_z(yaw) * R_x(roll)  — no pitch
+    {
+        cv::Mat R_cv;
+        cv::Rodrigues(rvec, R_cv);
+        Eigen::Matrix3d R_cam_rune;
+        cv::cv2eigen(R_cv, R_cam_rune);
+        Eigen::Vector3d t_cam_rune(tvec.at<double>(0), tvec.at<double>(1), tvec.at<double>(2));
+
+        const Eigen::Matrix3d R_imu_cam  = odom_T_cam.rotation();
+        const Eigen::Matrix3d R_cam_imu  = R_imu_cam.transpose();
+        const Eigen::Matrix3d R_imu_rune = R_imu_cam * R_cam_rune;
+
+        // Extract roll and yaw from R_imu_rune = R_z(yaw) * R_x(roll)
+        double roll           = std::atan2(R_imu_rune(2, 1), R_imu_rune(2, 2));
+        double yaw            = std::atan2(R_imu_rune(1, 0), R_imu_rune(0, 0));
+        double translation[3] = {t_cam_rune.x(), t_cam_rune.y(), t_cam_rune.z()};
+
+        // Build Eigen point vectors
+        std::vector<Eigen::Vector3d> obj_pts;
+        obj_pts.reserve(object_points.size());
+        for (const auto& p : object_points) {
+            obj_pts.emplace_back(p.x, p.y, p.z);
+        }
+        std::vector<Eigen::Vector2d> img_pts;
+        img_pts.reserve(norm_points.size());
+        for (const auto& p : norm_points) {
+            img_pts.emplace_back(p.x, p.y);
+        }
+
+        // Ceres problem — ownership transferred to Problem via AddResidualBlock
+        ceres::Problem problem;
+        auto* loss_function = new ceres::HuberLoss(1.0);
+
+        for (size_t i = 0; i < obj_pts.size(); ++i) {
+            ceres::CostFunction* cost =
+                RuneConstrainedReprojError::Create(obj_pts[i], img_pts[i], R_cam_imu);
+            problem.AddResidualBlock(cost, loss_function, &roll, &yaw, translation);
+        }
+
+        problem.SetParameterLowerBound(&yaw, 0, -M_PI);
+        problem.SetParameterUpperBound(&yaw, 0, M_PI);
+        problem.SetParameterLowerBound(translation, 2, 1e-3);
+
+        ceres::Solver::Options options;
+        options.linear_solver_type           = ceres::DENSE_QR;
+        options.max_num_iterations           = 20;
+        options.minimizer_progress_to_stdout = false;
+
+        ceres::Solver::Summary summary;
+        ceres::Solve(options, &problem, &summary);
+
+        const bool t_finite = std::isfinite(translation[0]) && std::isfinite(translation[1])
+                           && std::isfinite(translation[2]) && translation[2] > 1e-3;
+        if (summary.IsSolutionUsable() && std::isfinite(roll) && std::isfinite(yaw) && t_finite) {
+            const Eigen::Matrix3d R_refined =
+                R_cam_imu * rune_yaw_rotation(yaw) * rune_roll_rotation(roll);
+            cv::Mat R_refined_cv;
+            cv::eigen2cv(R_refined, R_refined_cv);
+            cv::Rodrigues(R_refined_cv, rvec);
+            tvec = (cv::Mat_<double>(3, 1) << translation[0], translation[1], translation[2]);
+        }
+    }
+
+    // ── Reprojection error (pixel space for debug) ──
     debug_detected_points_ = image_points;
     cv::projectPoints(
         object_points, rvec, tvec, cameraMatrix, distCoeffs, debug_reprojected_points_);
@@ -1445,19 +1501,14 @@ std::expected<fast_tf::TransformMatrixd<rune, fast_tf::odom>, std::string> RuneD
     }
     debug_reproj_error_ = total_error / static_cast<double>(image_points.size());
 
-    cv::Mat rmat;
-    try {
-        cv::Rodrigues(rvec, rmat);
-    } catch (const cv::Exception& e) {
-        if (params_.debug_mode) {
-            std::cerr << "R点旋转矩阵转换失败: " << e.what() << std::endl;
-        }
-        return std::unexpected(fmt::format("R点旋转矩阵转换失败: {}", e.what()));
-    }
-
     auto pose = fast_tf::TransformMatrixd<rune, fast_tf::camera_optical>::from_pnp(rvec, tvec);
 
-    // 保存当前追踪的靶位置和 roll，供下一帧使用
+    // Save PnP prior for next frame
+    pose_prior_.rvec      = rvec.clone();
+    pose_prior_.tvec      = tvec.clone();
+    pose_prior_.timestamp = timestamp_sec;
+
+    // Save tracking state
     if (!targets.empty()) {
         last_tracked_target_center_ = targets[0].center;
         last_tracked_target_angle_  = targets[0].angle;

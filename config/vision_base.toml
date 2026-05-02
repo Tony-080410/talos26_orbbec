@@ -314,9 +314,35 @@ max_target_light_aspect_ratio = 1.5
 min_target_roi_area = 100.0
 
 
-[energy_meter.tracker]
+[energy_meter]
 lost_thres = 10
 tracking_thres = 3
 # Mahalanobis distance-squared gate for observation-to-track association
 matcher_gate = 25.0
+# Frames a locked blade must be lost before unlocking and re-selecting
+blade_unlock_frames = 10
+
+[energy_meter.big_model]
+sigma_xy = 2.0
+sigma_z = 1.5
+sigma_yaw = 1e-4
+sigma_theta = 0.1
+sigma_alpha = 0.1
+sigma_beta = 0.1
+radius = 0.7
+
+[energy_meter.big_model.meas]
+R_scale = 0.1
+meas_dist_k = 0.43
+
+[energy_meter.small_model]
+sigma_xy = 0.01
+sigma_z = 0.01
+sigma_yaw = 1e-4
+sigma_theta = 0.001
+radius = 0.7
+
+[energy_meter.small_model.meas]
+R_scale = 0.1
+meas_dist_k = 0.43
 

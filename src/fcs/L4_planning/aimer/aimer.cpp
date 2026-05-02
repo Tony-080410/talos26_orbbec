@@ -16,6 +16,8 @@ namespace {
 
 using fcs::core::math::normalize_angle;
 
+inline constexpr double kFixedRuneSpeed = std::numbers::pi / 3.0;
+
 [[nodiscard]] uint64_t offset_timestamp_ns(uint64_t base_ns, double offset_s) noexcept {
     if (!std::isfinite(offset_s)) {
         return base_ns;
@@ -205,11 +207,8 @@ Eigen::Vector3d Aimer::predict_position(
                 * ((a / omega) * (std::cos(omega * t0) - std::cos(omega * (t0 + predict_time)))
                    + b * predict_time);
         } else {
-            delta_theta = dir * 1.04719 * predict_time;
+            delta_theta = dir * kFixedRuneSpeed * predict_time;
         }
-    } else {
-        // Fallback: constant speed estimate
-        delta_theta = dir * 1.04719 * predict_time;
     }
 
     // 预测 roll
@@ -442,10 +441,10 @@ std::expected<TargetPrediction, std::string> Aimer::aim_generic_rune(
                             * ((a / w) * (std::cos(w * t0) - std::cos(w * (t0 + total_time)))
                                + b * total_time);
             } else {
-                delta_theta = dir * 1.04719 * total_time;
+                delta_theta = dir * kFixedRuneSpeed * total_time;
             }
         } else {
-            delta_theta = target.direction * 1.04719 * total_time;
+            delta_theta = target.direction * kFixedRuneSpeed * total_time;
         }
         output.predicted_roll = current_roll + delta_theta;
     }

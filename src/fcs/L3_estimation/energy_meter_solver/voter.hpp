@@ -19,9 +19,6 @@ public:
 
     [[nodiscard]] auto determined() const -> bool { return determined_; }
     [[nodiscard]] auto is_big() const -> bool { return is_big_; }
-    [[nodiscard]] auto big_votes() const -> int { return big_votes_; }
-    [[nodiscard]] auto small_votes() const -> int { return small_votes_; }
-    [[nodiscard]] auto frames() const -> int { return frames_; }
 
 private:
     [[nodiscard]] auto decision() const -> Decision;
