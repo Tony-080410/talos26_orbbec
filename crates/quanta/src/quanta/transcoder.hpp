@@ -23,7 +23,7 @@ namespace quanta {
 struct FilterParams {
     bool enable = true;
     // Saturation: applied after scale, before denoise. 1.0=full, 0.75=75%.
-    double saturation = 1.0;
+    double saturation = 0.4;
     // hqdn3d — extreme spatial denoise: annihilate ALL texture, leave only structure.
     // Zero temporal: robot camera is mostly static between frames, temporal denoise adds latency.
     double denoise_luma   = 0.0;
@@ -43,18 +43,18 @@ struct FilterParams {
 // Encode parameters for ultra-low bitrate transmission
 // ---------------------------------------------------------------------------
 struct EncodeParams {
-    int target_bitrate = 50'500; // bps
-    int max_width      = 480;    // auto-downscale if wider
-    int max_height     = 360;    // auto-downscale if taller
-    int gop_size       = 120;    // keyframe interval (short GOP = more I-frames = less drift)
+    int target_bitrate = 40'500; // bps
+    int max_width      = 200;    // auto-downscale if wider
+    int max_height     = 200;    // auto-downscale if taller
+    int gop_size       = 5;      // short recovery period; avoid long P-frame corruption chains
     int framerate      = 30;     // target output framerate
     std::string preset = "fast"; // keep the original rate allocation baseline
-    std::string tune   = "stillimage";
-    bool intra_refresh = true; // rolling refresh; disable for decoders that require true keyframes
+    std::string tune   = "ssim";
+    bool intra_refresh = false;  // periodic IDR lets a lossy stream recover without feedback
 
     // CRF + VBV rate control (original working approach)
     int crf              = 52;  // quality target; VBV caps actual bitrate
-    int lookahead        = 40;  // rc-lookahead
+    int lookahead        = 0;   // realtime transport must emit immediately
     int chroma_qp_offset = 0;   // base chroma penalty; encoder internally protects Cr over Cb
     double aq_strength   = 0.4; // max AQ — pump bits into edge macroblocks
     double psy_rd        = 0.0; // extreme: dynamic→outlines only, discard all texture

@@ -21,6 +21,7 @@
 
 extern "C" {
 #include <libavcodec/avcodec.h>
+#include <libavutil/frame.h>
 #include <libswscale/swscale.h>
 }
 
@@ -244,10 +245,11 @@ public:
             return std::unexpected(ready.error());
 
         if (chunk_queue_.empty())
-            return std::optional<TransportChunk>{};
+            return poll_repair_chunk();
 
         auto chunk = std::move(chunk_queue_.front());
         chunk_queue_.pop_front();
+        record_chunk_emitted(chunk);
         if (auto ready = maybe_encode_pending(now_ns); !ready)
             return std::unexpected(ready.error());
         return std::optional<TransportChunk>{std::move(chunk)};
@@ -255,7 +257,7 @@ public:
 
     [[nodiscard]] StreamSenderStats stats() const {
         auto copy              = stats_;
-        copy.queued_chunks     = chunk_queue_.size();
+        copy.queued_chunks     = chunk_queue_.size() + repair_queue_.size();
         copy.has_pending_frame = !pending_frames_.empty();
         return copy;
     }
@@ -366,13 +368,33 @@ private:
             std::memcpy(chunk.data.data() + header_size, bytes.data() + offset, payload_size);
             offset += payload_size;
 
-            stats_.chunks_emitted++;
-            stats_.bytes_emitted += chunk.data.size();
+            if (fragment_count == 1)
+                enqueue_repair_chunk(chunk);
             chunk_queue_.push_back(std::move(chunk));
         }
 
         next_frame_seq_++;
         return {};
+    }
+
+    void enqueue_repair_chunk(const TransportChunk& chunk) {
+        repair_queue_.clear();
+        repair_queue_.push_back(chunk);
+    }
+
+    std::optional<TransportChunk> poll_repair_chunk() {
+        if (repair_queue_.empty())
+            return std::optional<TransportChunk>{};
+
+        auto chunk = std::move(repair_queue_.back());
+        repair_queue_.clear();
+        record_chunk_emitted(chunk);
+        return std::optional<TransportChunk>{std::move(chunk)};
+    }
+
+    void record_chunk_emitted(const TransportChunk& chunk) {
+        stats_.chunks_emitted++;
+        stats_.bytes_emitted += chunk.data.size();
     }
 
     EncodeParams encode_params_;
@@ -381,6 +403,7 @@ private:
     StreamSenderStats stats_{};
     std::deque<PendingFrame> pending_frames_;
     std::deque<TransportChunk> chunk_queue_;
+    std::deque<TransportChunk> repair_queue_;
     int src_width_                    = 0;
     int src_height_                   = 0;
     uint64_t min_frame_interval_ns_   = 0;
@@ -439,6 +462,8 @@ public:
 
         const bool start = flag_set(header.flags, kFlagStart);
         const bool end   = flag_set(header.flags, kFlagEnd);
+        const uint64_t receive_ns =
+            receive_timestamp_ns != 0 ? receive_timestamp_ns : transport_config_.now_ns();
 
         if (is_duplicate_or_stale_completed_frame(header.frame_seq)) {
             record_duplicate_or_stale_chunk(header.frame_seq);
@@ -452,6 +477,7 @@ public:
                 stats_.assembly_resets++;
                 return {};
             }
+            queue_missing_frame_substitutes_before(header.frame_seq, receive_ns);
             start_assembly_from_header(header);
         } else if (header.frame_seq != assembly_.frame_seq) {
             if (sequence_less(header.frame_seq, assembly_.frame_seq)) {
@@ -459,22 +485,19 @@ public:
                 return {};
             }
 
-            stats_.frames_dropped++;
-            stats_.assembly_resets++;
-            reset_assembly();
+            drop_active_assembly_with_substitute(receive_ns);
 
             if (!start) {
                 stats_.out_of_order_chunks++;
                 return {};
             }
 
+            queue_missing_frame_substitutes_before(header.frame_seq, receive_ns);
             start_assembly_from_header(header);
         } else {
             if (header.fragment_count != assembly_.expected_fragment_count) {
                 stats_.out_of_order_chunks++;
-                stats_.frames_dropped++;
-                stats_.assembly_resets++;
-                reset_assembly();
+                drop_active_assembly_with_substitute(receive_ns);
                 return {};
             }
 
@@ -485,9 +508,7 @@ public:
 
             if (header.fragment_index > assembly_.next_fragment_index) {
                 stats_.out_of_order_chunks++;
-                stats_.frames_dropped++;
-                stats_.assembly_resets++;
-                reset_assembly();
+                drop_active_assembly_with_substitute(receive_ns);
                 return {};
             }
         }
@@ -500,12 +521,22 @@ public:
             return {};
 
         stats_.frames_reassembled++;
-        const uint64_t receive_ns =
-            receive_timestamp_ns != 0 ? receive_timestamp_ns : transport_config_.now_ns();
-        auto decode_result = decode_current_frame(receive_ns);
+        const size_t queued_frames_before_decode = frame_queue_.size();
+        auto decode_result                       = decode_current_frame(receive_ns);
         if (!decode_result) {
+            // 解码失败(丢包): 保留 DPB 历史不 flush, 用上一帧替补显示。
+            // 后续周期 IDR 或刷新帧会重新收敛。
+            queue_last_good_substitute(
+                assembly_.frame_seq, assembly_.pts, assembly_.capture_timestamp_ns, receive_ns);
+            has_completed_frame_seq_  = true;
+            last_completed_frame_seq_ = assembly_.frame_seq;
             reset_assembly();
-            return decode_result;
+            return {};
+        }
+        if (frame_queue_.size() == queued_frames_before_decode) {
+            stats_.frames_dropped++;
+            queue_last_good_substitute(
+                assembly_.frame_seq, assembly_.pts, assembly_.capture_timestamp_ns, receive_ns);
         }
         has_completed_frame_seq_  = true;
         last_completed_frame_seq_ = assembly_.frame_seq;
@@ -572,6 +603,60 @@ private:
         assembly_.bytes.clear();
     }
 
+    void queue_last_good_substitute(
+        uint32_t frame_seq, int64_t pts, uint64_t capture_timestamp_ns,
+        uint64_t decode_timestamp_ns) {
+        if (last_good_frame_.data.empty())
+            return;
+
+        DecodedFrame substitute          = last_good_frame_;
+        substitute.frame_seq             = frame_seq;
+        substitute.pts                   = pts;
+        substitute.capture_timestamp_ns  = capture_timestamp_ns;
+        substitute.decode_timestamp_ns   = decode_timestamp_ns;
+        substitute.end_to_end_latency_ns = decode_timestamp_ns >= capture_timestamp_ns
+                                             ? decode_timestamp_ns - capture_timestamp_ns
+                                             : 0;
+        frame_queue_.push_back(std::move(substitute));
+    }
+
+    void mark_completed_frame_seq(uint32_t frame_seq) {
+        has_completed_frame_seq_  = true;
+        last_completed_frame_seq_ = frame_seq;
+    }
+
+    void drop_active_assembly_with_substitute(uint64_t receive_timestamp_ns) {
+        if (!assembly_.active)
+            return;
+
+        stats_.frames_dropped++;
+        stats_.assembly_resets++;
+        queue_last_good_substitute(
+            assembly_.frame_seq, assembly_.pts, assembly_.capture_timestamp_ns,
+            receive_timestamp_ns);
+        mark_completed_frame_seq(assembly_.frame_seq);
+        reset_assembly();
+    }
+
+    void queue_missing_frame_substitutes_before(uint32_t frame_seq, uint64_t receive_timestamp_ns) {
+        if (!has_completed_frame_seq_ || last_good_frame_.data.empty())
+            return;
+
+        uint32_t missing_seq                    = last_completed_frame_seq_ + 1;
+        size_t synthetic_frames                 = 0;
+        constexpr size_t kMaxSyntheticGapFrames = 4;
+        while (missing_seq != frame_seq && sequence_less(missing_seq, frame_seq)
+               && synthetic_frames < kMaxSyntheticGapFrames) {
+            stats_.frames_dropped++;
+            queue_last_good_substitute(
+                missing_seq, last_good_frame_.pts + static_cast<int64_t>(synthetic_frames + 1),
+                receive_timestamp_ns, receive_timestamp_ns);
+            mark_completed_frame_seq(missing_seq);
+            missing_seq++;
+            synthetic_frames++;
+        }
+    }
+
     std::expected<void, std::string> ensure_decoder() {
         if (dec_ctx_ && dec_frame_)
             return {};
@@ -586,7 +671,8 @@ private:
             return std::unexpected("Cannot allocate decoder context/frame");
 
         dec_ctx_->pkt_timebase = AVRational{1, transport_config_.max_stream_fps};
-        int ret                = avcodec_open2(dec_ctx_.get(), decoder, nullptr);
+        // 不主动输出损坏帧；丢包期间由上层沿用上一张好帧，等后续关键帧恢复。
+        int ret = avcodec_open2(dec_ctx_.get(), decoder, nullptr);
         if (ret < 0)
             return std::unexpected("Cannot open HEVC decoder: " + ffmpeg_error(ret));
         return {};
@@ -630,6 +716,7 @@ private:
         ret = avcodec_send_packet(dec_ctx_.get(), packet.get());
         if (ret < 0) {
             stats_.decode_errors++;
+            // 不 flush: 保留 DPB 历史, 等后续关键帧或刷新帧恢复。
             return std::unexpected("Decode send failed: " + ffmpeg_error(ret));
         }
 
@@ -639,7 +726,20 @@ private:
                 break;
             if (ret < 0) {
                 stats_.decode_errors++;
+                // 不 flush: 保留 DPB 历史, 等后续关键帧或刷新帧恢复。
                 return std::unexpected("Decode receive failed: " + ffmpeg_error(ret));
+            }
+
+            if ((dec_frame_->flags & AV_FRAME_FLAG_CORRUPT) != 0) {
+                stats_.decode_errors++;
+                stats_.frames_dropped++;
+                const uint64_t decode_finished_ns = transport_config_.now_ns();
+                queue_last_good_substitute(
+                    assembly_.frame_seq, assembly_.pts, assembly_.capture_timestamp_ns,
+                    decode_finished_ns);
+                av_frame_unref(dec_frame_.get());
+                decode_stage_started_ns = decode_finished_ns;
+                continue;
             }
 
             if (auto sws_ready = ensure_bgr_converter(dec_frame_.get()); !sws_ready)
@@ -681,6 +781,7 @@ private:
             decode_samples_ns_.push_back(decode_elapsed_ns);
             stats_.p75_decode_ms = percentile_ms(decode_samples_ns_, 0.75);
 
+            last_good_frame_ = frame;
             frame_queue_.push_back(std::move(frame));
             av_frame_unref(dec_frame_.get());
             decode_stage_started_ns = decode_finished_ns;
@@ -703,6 +804,7 @@ private:
     std::deque<DecodedFrame> frame_queue_;
     bool has_completed_frame_seq_      = false;
     uint32_t last_completed_frame_seq_ = 0;
+    DecodedFrame last_good_frame_; // 最近一次成功解码帧, 丢包时作为替补
 };
 
 StreamSender::StreamSender(std::unique_ptr<Impl> impl)

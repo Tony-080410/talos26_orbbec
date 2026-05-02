@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <random>
 #include <vector>
 
 namespace {
@@ -71,6 +72,9 @@ int main(int argc, char* argv[]) {
     int input_frames = 150;
     if (argc >= 2)
         input_frames = std::atoi(argv[1]);
+    double packet_loss_rate = 0.0;
+    if (argc >= 3)
+        packet_loss_rate = std::clamp(std::atof(argv[2]), 0.0, 1.0);
 
     constexpr int kSrcWidth         = 640;
     constexpr int kSrcHeight        = 480;
@@ -80,13 +84,13 @@ int main(int argc, char* argv[]) {
     uint64_t virtual_now_ns = real_now_ns();
     auto clock_fn           = [&virtual_now_ns] { return virtual_now_ns; };
 
+    quanta::EncodeParams encode_params;
     quanta::StreamTransportConfig transport_config{
         .mtu_bytes      = 300,
         .transport_hz   = 50,
-        .max_stream_fps = 30,
+        .max_stream_fps = encode_params.framerate,
         .now_ns         = clock_fn,
     };
-    quanta::EncodeParams encode_params;
     auto sender_result =
         quanta::StreamSender::create(encode_params, transport_config, kSrcWidth, kSrcHeight);
     if (!sender_result) {
@@ -114,6 +118,9 @@ int main(int argc, char* argv[]) {
     double total_submit_ms      = 0.0;
     double total_poll_ms        = 0.0;
     double total_receive_ms     = 0.0;
+    int dropped_chunks          = 0;
+    std::mt19937 rng{0x51525354u};
+    std::uniform_real_distribution<double> loss_dist{0.0, 1.0};
 
     while (frames_generated < input_frames || sender.stats().queued_chunks > 0
            || sender.stats().has_pending_frame || receiver.stats().queued_frames > 0) {
@@ -156,16 +163,20 @@ int main(int argc, char* argv[]) {
         }
 
         if (chunk_result->has_value()) {
-            const auto receive_elapsed_ns = run_and_measure_ns([&] {
-                auto recv = receiver.push_chunk((*chunk_result)->bytes(), virtual_now_ns);
-                if (!recv) {
-                    std::fprintf(
-                        stderr, "[loopback] receiver push failed: %s\n", recv.error().c_str());
-                    std::exit(1);
-                }
-            });
-            total_receive_ms += static_cast<double>(receive_elapsed_ns) / 1'000'000.0;
-            virtual_now_ns += receive_elapsed_ns;
+            if (loss_dist(rng) < packet_loss_rate) {
+                dropped_chunks++;
+            } else {
+                const auto receive_elapsed_ns = run_and_measure_ns([&] {
+                    auto recv = receiver.push_chunk((*chunk_result)->bytes(), virtual_now_ns);
+                    if (!recv) {
+                        std::fprintf(
+                            stderr, "[loopback] receiver push failed: %s\n", recv.error().c_str());
+                        std::exit(1);
+                    }
+                });
+                total_receive_ms += static_cast<double>(receive_elapsed_ns) / 1'000'000.0;
+                virtual_now_ns += receive_elapsed_ns;
+            }
         }
 
         while (auto frame = receiver.poll_frame()) {
@@ -198,6 +209,9 @@ int main(int argc, char* argv[]) {
             ? static_cast<double>(sender_stats.chunks_emitted) / sender_stats.frames_encoded
             : 0.0,
         link_kbps);
+    std::fprintf(
+        stderr, "[loopback] Dropped chunks: %d / %llu (%.1f%% simulated)\n", dropped_chunks,
+        static_cast<unsigned long long>(sender_stats.chunks_emitted), packet_loss_rate * 100.0);
     std::fprintf(
         stderr, "[loopback] Avg generate %.2f ms | submit %.2f ms | receive %.2f ms\n",
         frames_generated > 0 ? total_generate_ms / frames_generated : 0.0,

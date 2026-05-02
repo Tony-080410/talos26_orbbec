@@ -23,7 +23,7 @@ struct StreamTransportConfig {
     int max_stream_fps = 30;
     StreamClockFn now_ns{};
     size_t max_pending_frames = 1;
-    size_t max_queued_chunks  = 50;
+    size_t max_queued_chunks  = 4;
 };
 
 struct TransportChunk {

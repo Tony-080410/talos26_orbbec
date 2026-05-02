@@ -16,6 +16,7 @@
 #include <deque>
 #include <format>
 #include <mutex>
+#include <random>
 #include <string>
 #include <thread>
 #include <vector>
@@ -29,6 +30,9 @@ constexpr int kHeaderH     = 88;
 constexpr int kTextStep    = 24;
 constexpr int kTransportHz = 50;
 
+// 随机丢包仿真参数 (0.0 = 无丢包, 1.0 = 全丢)
+constexpr double kPacketLossRate = 0.3;
+
 struct DemoState {
     std::mutex mutex;
     cv::Mat latest_source;
@@ -37,6 +41,7 @@ struct DemoState {
     quanta::StreamReceiverStats receiver_stats{};
     int generated_frames   = 0;
     int decoded_frames     = 0;
+    int dropped_chunks     = 0;
     bool sender_finished   = false;
     bool receiver_finished = false;
     std::string error;
@@ -49,6 +54,7 @@ struct DemoSnapshot {
     quanta::StreamReceiverStats receiver_stats{};
     int generated_frames   = 0;
     int decoded_frames     = 0;
+    int dropped_chunks     = 0;
     bool sender_finished   = false;
     bool receiver_finished = false;
     std::string error;
@@ -130,6 +136,7 @@ DemoSnapshot snapshot_state(DemoState& state) {
     snapshot.receiver_stats    = state.receiver_stats;
     snapshot.generated_frames  = state.generated_frames;
     snapshot.decoded_frames    = state.decoded_frames;
+    snapshot.dropped_chunks    = state.dropped_chunks;
     snapshot.sender_finished   = state.sender_finished;
     snapshot.receiver_finished = state.receiver_finished;
     snapshot.error             = state.error;
@@ -175,7 +182,8 @@ cv::Mat build_canvas(
     const cv::Mat& source_bgr, const cv::Mat& decoded_bgr,
     const quanta::StreamTransportConfig& config, const quanta::StreamSenderStats& sender_stats,
     const quanta::StreamReceiverStats& receiver_stats, uint64_t started_ns, int generated_frames,
-    int decoded_frames, double source_fps, double stream_fps, cv::Size encoded_size) {
+    int decoded_frames, int dropped_chunks, double source_fps, double stream_fps,
+    cv::Size encoded_size) {
     cv::Mat source_panel;
     if (source_bgr.empty()) {
         source_panel = make_placeholder_panel(encoded_size, "Waiting For Source");
@@ -226,6 +234,12 @@ cv::Mat build_canvas(
             : 0.0;
     const double displayed_fps =
         elapsed_sec > 0.0 ? static_cast<double>(decoded_frames) / elapsed_sec : 0.0;
+    const uint64_t delivered_chunks = receiver_stats.chunks_received;
+    const uint64_t simulated_chunks = delivered_chunks + static_cast<uint64_t>(dropped_chunks);
+    const double simulated_loss_pct =
+        simulated_chunks > 0
+            ? static_cast<double>(dropped_chunks) * 100.0 / static_cast<double>(simulated_chunks)
+            : 0.0;
 
     draw_lines(
         canvas,
@@ -235,12 +249,15 @@ cv::Mat build_canvas(
                 sender_stats.frames_dropped),
             std::format("queue={} link={:.1f}kbps", sender_stats.queued_chunks, link_kbps),
             std::format(
-                "lst={:.1f}ms p75={:.1f}ms", receiver_stats.last_latency_ns / 1'000'000.0,
+                "lst={:.1f}ms p75={:.1f}ms", receiver_stats.last_latency_ns / 1000000.0,
                 receiver_stats.p75_latency_ms),
             std::format(
                 "max={:.1f}ms d75={:.1f}ms rst={} err={}",
-                receiver_stats.max_latency_ns / 1'000'000.0, receiver_stats.p75_decode_ms,
+                receiver_stats.max_latency_ns / 1000000.0, receiver_stats.p75_decode_ms,
                 receiver_stats.assembly_resets, receiver_stats.decode_errors),
+            std::format(
+                "loss={} ({:.0f}%)  rate={:.0f}%", dropped_chunks, simulated_loss_pct,
+                kPacketLossRate * 100.0),
         },
         {kCanvasPad, 32}, 0.5);
 
@@ -285,18 +302,26 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    const double source_fps = sanitize_fps(probe_capture.get(cv::CAP_PROP_FPS));
-    const double stream_fps = std::min(source_fps, static_cast<double>(kTransportHz));
+    quanta::EncodeParams encode_params;
+    const double source_fps  = sanitize_fps(probe_capture.get(cv::CAP_PROP_FPS));
+    const int stream_fps_int = std::max(
+        1, static_cast<int>(std::llround(
+               std::min(
+                   {source_fps, static_cast<double>(kTransportHz),
+                    static_cast<double>(std::max(1, encode_params.framerate))}))));
+    const double stream_fps = static_cast<double>(stream_fps_int);
+    encode_params.framerate = stream_fps_int;
     probe_capture.release();
 
     quanta::StreamTransportConfig transport_config{
-        .mtu_bytes      = 300,
-        .transport_hz   = kTransportHz,
-        .max_stream_fps = std::max(1, static_cast<int>(std::llround(stream_fps))),
-        .now_ns         = [] { return now_ns(); },
+        .mtu_bytes          = 300,
+        .transport_hz       = kTransportHz,
+        .max_stream_fps     = stream_fps_int,
+        .now_ns             = [] { return now_ns(); },
+        .max_pending_frames = 1,
+        .max_queued_chunks  = 4,
     };
 
-    quanta::EncodeParams encode_params;
     auto sender_result = quanta::StreamSender::create(
         encode_params, transport_config, first_frame.cols, first_frame.rows);
     if (!sender_result) {
@@ -312,6 +337,10 @@ int main(int argc, char* argv[]) {
         period_from_rate(static_cast<double>(transport_config.transport_hz));
     const auto capture_period = period_from_rate(stream_fps);
     const uint64_t started_ns = now_ns();
+    std::fprintf(
+        stderr, "[demo] source %.2ffps -> stream %dfps, %zuB@%dHz, target %d bps, loss %.0f%%\n",
+        source_fps, stream_fps_int, transport_config.mtu_bytes, transport_config.transport_hz,
+        encode_params.target_bitrate, kPacketLossRate * 100.0);
 
     DemoState state;
     state.latest_source = first_frame.clone();
@@ -431,6 +460,8 @@ int main(int argc, char* argv[]) {
 
     std::thread receiver_thread([&, receiver = std::move(receiver)]() mutable {
         int decoded_frames = 0;
+        std::mt19937 rng{std::random_device{}()};
+        std::uniform_real_distribution<double> loss_dist{0.0, 1.0};
 
         auto publish_decoded_frames = [&]() {
             bool emitted = false;
@@ -472,6 +503,15 @@ int main(int argc, char* argv[]) {
                 pipe.chunks.pop_front();
             }
 
+            // 随机丢包仿真 (按照 kPacketLossRate 概率丢弃数据包)
+            if (loss_dist(rng) < kPacketLossRate) {
+                {
+                    std::lock_guard<std::mutex> lock(state.mutex);
+                    state.dropped_chunks++;
+                }
+                continue;
+            }
+
             auto pushed = receiver.push_chunk(chunk_bytes, now_ns());
             if (!pushed) {
                 store_error(
@@ -496,7 +536,7 @@ int main(int argc, char* argv[]) {
         cv::Mat canvas      = build_canvas(
             snapshot.latest_source, snapshot.latest_decoded, transport_config,
             snapshot.sender_stats, snapshot.receiver_stats, started_ns, snapshot.generated_frames,
-            snapshot.decoded_frames, source_fps, stream_fps, encoded_size);
+            snapshot.decoded_frames, snapshot.dropped_chunks, source_fps, stream_fps, encoded_size);
         cv::imshow("quanta-stream-demo", canvas);
 
         const int key = cv::waitKey(1);

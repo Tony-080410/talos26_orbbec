@@ -221,8 +221,8 @@ inline std::expected<CodecCtxPtr, std::string> create_encoder_context(
 
     const auto min_keyint   = std::max(1, params.gop_size / 2);
     const int frame_threads = realtime_stream ? 1 : 0;
-    const int ref_count     = 10;
-    const int limit_refs    = 3;
+    const int ref_count     = realtime_stream ? 1 : 10;
+    const int limit_refs    = realtime_stream ? 0 : 3;
     const char* me_mode     = "star";
     const int subme_level   = 7;
     const int rd_level      = 5;
@@ -235,9 +235,9 @@ inline std::expected<CodecCtxPtr, std::string> create_encoder_context(
     std::string x265_opts;
     if (realtime_stream) {
         // Realtime stream path: hold wire rate close to target instead of letting CRF overshoot.
-        // Use periodic intra refresh so the reference picture is refreshed progressively instead
-        // of spending the whole GOP budget on a single hard IDR.
-        const int lookahead = params.lookahead;
+        // Keep GOP recovery bounded; callers can opt into intra-refresh, but the default hard IDR
+        // cadence recovers from lost bootstrap/key chunks without a feedback channel.
+        const int lookahead = std::clamp(params.lookahead, 0, 4);
         x265_opts           = std::format(
             "bitrate={}:vbv-maxrate={}:vbv-bufsize={}:vbv-init=0.9:strict-cbr=1:"
                       "keyint={}:min-keyint={}:scenecut=0:open-gop=0:intra-refresh={}:"
