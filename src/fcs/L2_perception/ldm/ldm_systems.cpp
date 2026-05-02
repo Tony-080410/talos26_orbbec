@@ -64,6 +64,8 @@ void register_ldm_systems(
                 auto meas_result = solver_ptr->solve(detection, *tf_lookup);
                 if (meas_result) {
                     measurement_out.write(std::move(*meas_result));
+                } else {
+                    SPDLOG_TRACE("ldm solve failed: {}", meas_result.error());
                 }
             }
 

@@ -9,6 +9,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <expected>
 #include <functional>
 #include <optional>
 #include <spdlog/spdlog.h>
@@ -130,9 +131,12 @@ public:
         return status_ == TrackerStatus::Tracking || status_ == TrackerStatus::TempLost;
     }
 
-    [[nodiscard]] std::optional<LdmState> get_output() const noexcept {
-        if (!target_.active() || status_ == TrackerStatus::Idle) {
-            return std::nullopt;
+    [[nodiscard]] std::expected<LdmState, std::string> get_output() const noexcept {
+        if (!target_.active()) {
+            return std::unexpected(std::string("tracker not initialized: target inactive"));
+        }
+        if (status_ == TrackerStatus::Idle) {
+            return std::unexpected(std::string("tracker is idle: status=Idle"));
         }
 
         LdmState output;

@@ -25,11 +25,6 @@
 
 namespace fcs::L2::ldm {
 
-enum class PnPError {
-    InvalidDetection,
-    NoCandidate,
-};
-
 class LdmSolver {
 public:
     using OdomCameraTransform = fast_tf::FrameTransform<fast_tf::odom, fast_tf::camera_optical>;
@@ -41,15 +36,16 @@ public:
         cv::eigen2cv(config.distort_coefficient, dist_coeffs_);
     }
 
-    [[nodiscard]] std::expected<LdmMeasurement, PnPError>
+    [[nodiscard]] std::expected<LdmMeasurement, std::string>
         solve(const LdmDetection& detection, const OdomCameraTransform& T_odom_camera) const {
         if (detection.pairs.empty()) {
-            return std::unexpected(PnPError::InvalidDetection);
+            return std::unexpected(std::string("solve: detection has no pairs (InvalidDetection)"));
         }
 
         auto preliminary_candidates = build_preliminary_mesh_candidates(detection.pairs, config_);
         if (preliminary_candidates.empty()) {
-            return std::unexpected(PnPError::NoCandidate);
+            return std::unexpected(
+                std::string("solve: no preliminary mesh candidates (NoCandidate)"));
         }
 
         // ── Phase 1: Evaluate all candidates ──
@@ -70,7 +66,8 @@ public:
         }
 
         if (evaluated_candidates.empty()) {
-            return std::unexpected(PnPError::NoCandidate);
+            return std::unexpected(
+                std::string("solve: no evaluated candidates after face assignment (NoCandidate)"));
         }
 
         // ── Phase 2: Build combined candidates ──
@@ -89,7 +86,7 @@ public:
             }
         }
         if (!best_idx.has_value()) {
-            return std::unexpected(PnPError::NoCandidate);
+            return std::unexpected(std::string("solve: no best candidate selected (NoCandidate)"));
         }
 
         // ── Phase 4: Build output measurement ──
@@ -582,13 +579,14 @@ private:
         return center;
     }
 
-    [[nodiscard]] std::optional<Eigen::Vector2d>
+    [[nodiscard]] std::expected<Eigen::Vector2d, std::string>
         normalized_image_point(const cv::Point2f& point_px) const {
         std::vector<cv::Point2f> undistorted;
         cv::undistortPoints(
             std::vector<cv::Point2f>{point_px}, undistorted, camera_matrix_, dist_coeffs_);
         if (undistorted.size() != 1u) {
-            return std::nullopt;
+            return std::unexpected(
+                std::string("normalized_image_point: cv::undistortPoints returned no result"));
         }
         return Eigen::Vector2d(
             static_cast<double>(undistorted.front().x), static_cast<double>(undistorted.front().y));
@@ -629,11 +627,12 @@ private:
         return std::isfinite(angle) && std::abs(angle) <= max_angle + 1e-9;
     }
 
-    [[nodiscard]] static std::optional<std::array<double, 3>>
+    [[nodiscard]] static std::expected<std::array<double, 3>, std::string>
         decompose_rotation(const Eigen::Matrix3d& rotation) noexcept {
         const double pitch = std::asin(std::clamp(rotation(2, 1), -1.0, 1.0));
         if (std::abs(std::cos(pitch)) <= 1e-6) {
-            return std::nullopt;
+            return std::unexpected(
+                std::string("decompose_rotation: cos(pitch) too close to zero (gimbal lock)"));
         }
 
         const double yaw  = std::atan2(-rotation(2, 0), rotation(2, 2));
@@ -641,10 +640,12 @@ private:
         return std::array<double, 3>{yaw, pitch, roll};
     }
 
-    [[nodiscard]] std::optional<CandidateCorrespondences> build_candidate_correspondences(
-        const LdmMeshCandidate& candidate, const std::vector<LightPair>& pairs) const {
+    [[nodiscard]] std::expected<CandidateCorrespondences, std::string>
+        build_candidate_correspondences(
+            const LdmMeshCandidate& candidate, const std::vector<LightPair>& pairs) const {
         if (!has_face_assignment(candidate)) {
-            return std::nullopt;
+            return std::unexpected(
+                std::string("build_candidate_correspondences: candidate has no face assignment"));
         }
 
         CandidateCorrespondences correspondences;
@@ -657,10 +658,12 @@ private:
             const int pair_idx = candidate.pair_indices[i];
             const int face_idx = candidate.octagon_face_indices[i];
             if (pair_idx < 0 || static_cast<size_t>(pair_idx) >= pairs.size()) {
-                return std::nullopt;
+                return std::unexpected(
+                    std::string("build_candidate_correspondences: pair_idx out of range"));
             }
             if (face_idx < 0 || face_idx >= 8) {
-                return std::nullopt;
+                return std::unexpected(
+                    std::string("build_candidate_correspondences: face_idx out of range"));
             }
 
             const auto model_pair_points = pair_model_points_for_face(config_.geometry, face_idx);
@@ -672,7 +675,9 @@ private:
             for (size_t point_idx = 0; point_idx < 2u; ++point_idx) {
                 const auto normalized_point = normalized_image_point(image_points[point_idx]);
                 if (!normalized_point.has_value()) {
-                    return std::nullopt;
+                    return std::unexpected(
+                        std::string(
+                            "build_candidate_correspondences: normalized_image_point failed"));
                 }
 
                 const auto& model_point = model_pair_points[point_idx];
@@ -686,12 +691,13 @@ private:
         }
 
         if (correspondences.obj_points.size() < 2u) {
-            return std::nullopt;
+            return std::unexpected(
+                std::string("build_candidate_correspondences: fewer than 2 correspondences built"));
         }
         return correspondences;
     }
 
-    [[nodiscard]] static std::optional<Eigen::Vector3d> solve_translation_for_rotation(
+    [[nodiscard]] static std::expected<Eigen::Vector3d, std::string> solve_translation_for_rotation(
         const CandidateCorrespondences& correspondences, const Eigen::Matrix3d& rotation) {
         Eigen::MatrixXd lhs(static_cast<Eigen::Index>(correspondences.obj_points.size() * 2u), 3);
         Eigen::VectorXd rhs(static_cast<Eigen::Index>(correspondences.obj_points.size() * 2u));
@@ -718,7 +724,10 @@ private:
         const Eigen::Vector3d translation = lhs.colPivHouseholderQr().solve(rhs);
         if (!std::isfinite(translation.x()) || !std::isfinite(translation.y())
             || !std::isfinite(translation.z()) || translation.z() <= 1e-3) {
-            return std::nullopt;
+            return std::unexpected(
+                std::string(
+                    "solve_translation_for_rotation: invalid/non-finite translation or depth <= "
+                    "1e-3"));
         }
         return translation;
     }
@@ -862,7 +871,7 @@ private:
                 for (const double roll_ratio : kPitchRollRatios) {
                     const double roll              = roll_ratio * max_angle;
                     const Eigen::Matrix3d rotation = bounded_pose_rotation(yaw, pitch, roll);
-                    std::optional<Eigen::Vector3d> translation =
+                    std::expected<Eigen::Vector3d, std::string> translation =
                         solve_translation_for_rotation(correspondences, rotation);
                     if (!translation.has_value()) {
                         continue;
@@ -890,7 +899,7 @@ private:
         return seeds;
     }
 
-    [[nodiscard]] std::optional<BoundedPoseSeed> refine_pose_seed(
+    [[nodiscard]] std::expected<BoundedPoseSeed, std::string> refine_pose_seed(
         const CandidateCorrespondences& correspondences, const BoundedPoseSeed& seed,
         bool lock_yaw = false) const {
         const double max_angle = pose_angle_limit(config_.max_pose_angle_rad);
@@ -942,21 +951,23 @@ private:
             || !angle_within_limit(refined.roll, max_angle)
             || !std::isfinite(refined.translation.x()) || !std::isfinite(refined.translation.y())
             || !std::isfinite(refined.translation.z()) || refined.translation.z() <= 1e-3) {
-            return std::nullopt;
+            return std::unexpected(
+                std::string("refine_pose_seed: solution not usable or angles/translation invalid"));
         }
 
         refined.normalized_rmse = normalized_reprojection_rmse(correspondences, refined);
         if (!std::isfinite(refined.normalized_rmse)) {
-            return std::nullopt;
+            return std::unexpected(std::string("refine_pose_seed: normalized RMSE is not finite"));
         }
         return refined;
     }
 
-    [[nodiscard]] std::optional<BoundedPoseSeed> solve_constrained_pose_seed(
+    [[nodiscard]] std::expected<BoundedPoseSeed, std::string> solve_constrained_pose_seed(
         const LdmMeshCandidate& candidate, const CandidateCorrespondences& correspondences) const {
         const auto seeds = make_pose_seeds(correspondences);
         if (seeds.empty()) {
-            return std::nullopt;
+            return std::unexpected(
+                std::string("solve_constrained_pose_seed: no pose seeds generated"));
         }
 
         std::optional<BoundedPoseSeed> best_seed;
@@ -975,14 +986,21 @@ private:
                 best_seed = *refined;
             }
         }
-        return best_seed;
+        if (!best_seed.has_value()) {
+            return std::unexpected(
+                std::string(
+                    "solve_constrained_pose_seed: no valid seed after refinement and visibility "
+                    "check"));
+        }
+        return *best_seed;
     }
 
-    [[nodiscard]] std::optional<BoundedPoseSeed> solve_visible_pose_seed(
+    [[nodiscard]] std::expected<BoundedPoseSeed, std::string> solve_visible_pose_seed(
         const LdmMeshCandidate& candidate, const std::vector<LightPair>& pairs,
         const CandidateCorrespondences& correspondences) const {
         if (!has_face_assignment(candidate)) {
-            return std::nullopt;
+            return std::unexpected(
+                std::string("solve_visible_pose_seed: candidate has no face assignment"));
         }
 
         size_t front_candidate_idx = 0;
@@ -990,7 +1008,8 @@ private:
         for (size_t i = 0; i < candidate.pair_indices.size(); ++i) {
             const int pair_idx = candidate.pair_indices[i];
             if (pair_idx < 0 || static_cast<size_t>(pair_idx) >= pairs.size()) {
-                return std::nullopt;
+                return std::unexpected(
+                    std::string("solve_visible_pose_seed: pair_idx out of range in loop"));
             }
             const float separation_px =
                 pair_layer_separation_px(pairs[static_cast<size_t>(pair_idx)]);
@@ -1002,14 +1021,16 @@ private:
 
         const int front_face = candidate.octagon_face_indices[front_candidate_idx];
         if (front_face < 0 || front_face >= 8) {
-            return std::nullopt;
+            return std::unexpected(
+                std::string("solve_visible_pose_seed: front face index out of range"));
         }
 
         const Eigen::Vector3d bearing =
             bearing_for_image_point(candidate.estimated_center_image_px);
         const double bearing_xz_norm = std::hypot(bearing.x(), bearing.z());
         if (!std::isfinite(bearing_xz_norm) || bearing_xz_norm <= 1e-9) {
-            return std::nullopt;
+            return std::unexpected(
+                std::string("solve_visible_pose_seed: bearing norm is not finite or too small"));
         }
 
         const double front_face_angle =
@@ -1024,12 +1045,14 @@ private:
         const auto translation = solve_translation_for_rotation(
             correspondences, bounded_pose_rotation(seed.yaw, 0.0, 0.0));
         if (!translation.has_value()) {
-            return std::nullopt;
+            return std::unexpected(
+                std::string("solve_visible_pose_seed: solve_translation_for_rotation failed"));
         }
         seed.translation     = *translation;
         seed.normalized_rmse = normalized_reprojection_rmse(correspondences, seed);
         if (!std::isfinite(seed.normalized_rmse)) {
-            return std::nullopt;
+            return std::unexpected(
+                std::string("solve_visible_pose_seed: seed normalized RMSE is not finite"));
         }
 
         // Yaw is locked — only pitch/roll/translation are refined.  The yaw
@@ -1037,9 +1060,9 @@ private:
         // not drift, otherwise observed faces become invisible.
         auto refined = refine_pose_seed(correspondences, seed, true);
         if (!refined.has_value()) {
-            return std::nullopt;
+            return std::unexpected(std::string("solve_visible_pose_seed: refine_pose_seed failed"));
         }
-        return refined;
+        return std::move(*refined);
     }
 
     [[nodiscard]] float pixel_reprojection_rmse(
@@ -1062,12 +1085,13 @@ private:
             sq_error_sum / static_cast<double>(std::max<size_t>(1, reproj_points.size()))));
     }
 
-    [[nodiscard]] std::optional<ConstrainedPoseSolution> build_pose_solution(
+    [[nodiscard]] std::expected<ConstrainedPoseSolution, std::string> build_pose_solution(
         const LdmMeshCandidate& candidate, const CandidateCorrespondences& correspondences,
         const Eigen::Matrix3d& rotation_cam, const Eigen::Vector3d& center_cam) const {
         if (!std::isfinite(center_cam.x()) || !std::isfinite(center_cam.y())
             || !std::isfinite(center_cam.z()) || center_cam.z() <= 1e-3) {
-            return std::nullopt;
+            return std::unexpected(
+                std::string("build_pose_solution: center_cam is not finite or depth <= 1e-3"));
         }
 
         ConstrainedPoseSolution solution;
@@ -1084,7 +1108,8 @@ private:
         solution.reprojection_rmse_px =
             pixel_reprojection_rmse(correspondences, solution.rvec, solution.tvec);
         if (!std::isfinite(solution.reprojection_rmse_px)) {
-            return std::nullopt;
+            return std::unexpected(
+                std::string("build_pose_solution: reprojection RMSE is not finite"));
         }
 
         std::vector<cv::Point2f> projected_center;
@@ -1103,7 +1128,8 @@ private:
 
         const auto face_visibility_score = visible_face_score(candidate, rotation_cam, center_cam);
         if (!face_visibility_score.has_value()) {
-            return std::nullopt;
+            return std::unexpected(
+                std::string("build_pose_solution: visible_face_score returned no value"));
         }
         solution.face_visibility_term = *face_visibility_score;
 
@@ -1111,20 +1137,28 @@ private:
         return solution;
     }
 
-    [[nodiscard]] std::optional<ConstrainedPoseSolution> solve_single_face_candidate_pose(
-        const LdmMeshCandidate& candidate, const std::vector<LightPair>& pairs) const {
+    [[nodiscard]] std::expected<ConstrainedPoseSolution, std::string>
+        solve_single_face_candidate_pose(
+            const LdmMeshCandidate& candidate, const std::vector<LightPair>& pairs) const {
         if (!has_face_assignment(candidate) || candidate.pair_indices.size() != 1u) {
-            return std::nullopt;
+            return std::unexpected(
+                std::string(
+                    "solve_single_face_candidate_pose: candidate has no face assignment or has "
+                    "!= 1 pair"));
         }
 
         const auto correspondences = build_candidate_correspondences(candidate, pairs);
         if (!correspondences.has_value() || correspondences->normalized_points.size() != 2u) {
-            return std::nullopt;
+            return std::unexpected(
+                std::string(
+                    "solve_single_face_candidate_pose: correspondences invalid or != 2 normalized "
+                    "points"));
         }
 
         const int face_idx = candidate.octagon_face_indices.front();
         if (face_idx < 0 || face_idx >= 8) {
-            return std::nullopt;
+            return std::unexpected(
+                std::string("solve_single_face_candidate_pose: face index out of range"));
         }
 
         const Eigen::Vector2d top_norm    = correspondences->normalized_points[0];
@@ -1133,7 +1167,10 @@ private:
         const double model_height         = config_.geometry.pair_center_separation_m;
         if (!std::isfinite(normalized_height) || normalized_height <= 1e-6
             || model_height <= 1e-6) {
-            return std::nullopt;
+            return std::unexpected(
+                std::string(
+                    "solve_single_face_candidate_pose: normalized_height or model_height "
+                    "invalid"));
         }
 
         const double face_center_z = model_height / normalized_height;
@@ -1143,7 +1180,8 @@ private:
 
         const int pair_idx = candidate.pair_indices.front();
         if (pair_idx < 0 || static_cast<size_t>(pair_idx) >= pairs.size()) {
-            return std::nullopt;
+            return std::unexpected(
+                std::string("solve_single_face_candidate_pose: pair_idx out of range"));
         }
         const Eigen::Vector3d bearing =
             bearing_for_image_point(pairs[static_cast<size_t>(pair_idx)].midpoint_px);
@@ -1163,18 +1201,22 @@ private:
         return build_pose_solution(candidate, *correspondences, rotation_cam, center_cam);
     }
 
-    [[nodiscard]] std::optional<ConstrainedPoseSolution> solve_constrained_candidate_pose(
-        const LdmMeshCandidate& candidate, const std::vector<LightPair>& pairs) const {
+    [[nodiscard]] std::expected<ConstrainedPoseSolution, std::string>
+        solve_constrained_candidate_pose(
+            const LdmMeshCandidate& candidate, const std::vector<LightPair>& pairs) const {
         if (candidate.pair_indices.size() == 1u) {
             return solve_single_face_candidate_pose(candidate, pairs);
         }
 
         const auto correspondences = build_candidate_correspondences(candidate, pairs);
         if (!correspondences.has_value()) {
-            return std::nullopt;
+            return std::unexpected(
+                std::string(
+                    "solve_constrained_candidate_pose: build_candidate_correspondences failed"));
         }
         if (correspondences->obj_points.size() < 4u) {
-            return std::nullopt;
+            return std::unexpected(
+                std::string("solve_constrained_candidate_pose: fewer than 4 object points"));
         }
 
         // 3+ pairs: use PnP with full yaw search (more stable across distance).
@@ -1186,7 +1228,8 @@ private:
             seed = solve_constrained_pose_seed(candidate, *correspondences);
         }
         if (!seed.has_value()) {
-            return std::nullopt;
+            return std::unexpected(
+                std::string("solve_constrained_candidate_pose: no valid seed after pose solving"));
         }
 
         return build_pose_solution(
@@ -1215,11 +1258,12 @@ private:
         return std::clamp(delta.y / norm, 0.0f, 1.0f);
     }
 
-    [[nodiscard]] std::optional<float> visible_face_score(
+    [[nodiscard]] std::expected<float, std::string> visible_face_score(
         const LdmMeshCandidate& candidate, const Eigen::Matrix3d& rotation_cam,
         const Eigen::Vector3d& center_cam) const {
         if (!has_face_assignment(candidate)) {
-            return std::nullopt;
+            return std::unexpected(
+                std::string("visible_face_score: candidate has no face assignment"));
         }
 
         constexpr double kMinVisibleFaceAlignment = 1e-6;
@@ -1227,7 +1271,7 @@ private:
         int score_count                           = 0;
         for (const int face_idx : candidate.octagon_face_indices) {
             if (face_idx < 0 || face_idx >= 8) {
-                return std::nullopt;
+                return std::unexpected(std::string("visible_face_score: face index out of range"));
             }
 
             const Eigen::Vector3d normal_cam = rotation_cam * face_outward_normal_model(face_idx);
@@ -1235,20 +1279,23 @@ private:
                 rotation_cam * face_center_model(face_idx) + center_cam;
             const double face_range = face_cam.norm();
             if (!std::isfinite(face_range) || face_range <= 1e-9 || face_cam.z() <= 1e-6) {
-                return std::nullopt;
+                return std::unexpected(
+                    std::string("visible_face_score: face range or z not finite/valid"));
             }
 
             const Eigen::Vector3d face_to_camera = -face_cam / face_range;
             const double alignment               = normal_cam.dot(face_to_camera);
             if (!std::isfinite(alignment) || alignment <= kMinVisibleFaceAlignment) {
-                return std::nullopt;
+                return std::unexpected(
+                    std::string(
+                        "visible_face_score: face-to-camera alignment not finite or too small"));
             }
             score_sum += std::clamp(alignment, 0.0, 1.0);
             ++score_count;
         }
 
         if (score_count <= 0) {
-            return std::nullopt;
+            return std::unexpected(std::string("visible_face_score: no valid scored faces"));
         }
         return static_cast<float>(score_sum / static_cast<double>(score_count));
     }

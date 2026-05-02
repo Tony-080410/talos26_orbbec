@@ -7,6 +7,7 @@
 #include <cmath>
 #include <cstdint>
 #include <groups/SEn3.hpp>
+#include <numbers>
 
 namespace fcs::L3::ldm {
 
@@ -86,9 +87,39 @@ struct LdmKinematic {
         using SO3 = typename Nominal::SO3Type;
 
         Innovation nu = Innovation::Zero();
-        const SO3 dR(predicted.R().transpose() * observed.R_world_body);
+
+        // ── Phase-unwrap observed rotation ──
+        // The LDM octagon has 8-fold symmetry around the body Y axis (yaw).
+        // PnP face assignment is arbitrary → R_obs can jump by n*45° between
+        // frames.  Try all 8 offsets and keep the one closest to the predicted
+        // rotation, so innovation stays continuous and the EKF doesn't see a
+        // spurious 45° jump.
+        //
+        // Pitch and roll have no symmetry ambiguity — only yaw is unwrapped.
+        constexpr double kPi4        = std::numbers::pi_v<double> / 4.0;
+        const Eigen::Matrix3d R_pred = predicted.R();
+        Eigen::Matrix3d R_obs_best   = observed.R_world_body;
+        double min_sq_norm           = std::numeric_limits<double>::infinity();
+        for (int n = 0; n < 8; ++n) {
+            // R_off = R_obs * Ry(n*45°) — tries all 8 face assignments
+            const Eigen::Matrix3d R_off =
+                observed.R_world_body
+                * Eigen::AngleAxisd(static_cast<double>(n) * kPi4, Eigen::Vector3d::UnitY())
+                      .toRotationMatrix();
+            const Eigen::Matrix3d err_R = R_pred.transpose() * R_off;
+            const Eigen::Vector3d err   = SO3::log(err_R);
+            const double sq             = err.squaredNorm();
+            if (sq < min_sq_norm) {
+                min_sq_norm = sq;
+                R_obs_best  = R_off;
+            }
+        }
+
+        const Eigen::Matrix3d dR_mat = R_pred.transpose() * R_obs_best;
+        const SO3 dR(dR_mat);
         nu.template segment<3>(0) = SO3::log(dR);
 
+        // ── Bearing innovation (unchanged) ──
         const Eigen::Vector3d predicted_ypd = fcs::L3::xyz2ypd(predicted.p());
         const Eigen::Vector3d observed_ypd  = fcs::L3::xyz2ypd(observed.p_world_body);
         nu[BEARING_YAW]      = fcs::L3::shortest_rad(predicted_ypd.x(), observed_ypd.x());
