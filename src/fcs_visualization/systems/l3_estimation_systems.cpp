@@ -206,7 +206,6 @@ void register_l3_estimation_systems(talos::scheduler::Scheduler& app) {
 
             const auto state = ldm_in.read();
             if (!state || !state->is_tracking()) {
-                SPDLOG_INFO("{}", state ? state->status : L3::TrackerStatus::Idle);
                 return;
             }
 

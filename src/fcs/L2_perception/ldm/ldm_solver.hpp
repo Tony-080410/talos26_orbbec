@@ -39,7 +39,9 @@ public:
     [[nodiscard]] std::expected<LdmMeasurement, std::string>
         solve(const LdmDetection& detection, const OdomCameraTransform& T_odom_camera) const {
         if (detection.pairs.empty()) {
-            return std::unexpected(std::string("solve: detection has no pairs (InvalidDetection)"));
+            // return std::unexpected(std::string("solve: detection has no pairs (NoPairs)"));
+            return LdmMeasurement{
+                .timestamp_ns = detection.timestamp_ns, .frame_id = detection.frame_id};
         }
 
         auto preliminary_candidates = build_preliminary_mesh_candidates(detection.pairs, config_);

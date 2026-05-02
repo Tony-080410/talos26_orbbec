@@ -65,7 +65,8 @@ void register_ldm_systems(
                 if (meas_result) {
                     measurement_out.write(std::move(*meas_result));
                 } else {
-                    SPDLOG_TRACE("ldm solve failed: {}", meas_result.error());
+                    SPDLOG_ERROR("ldm solve failed: {}", meas_result.error());
+                    measurement_out.write(LdmMeasurement{.timestamp_ns = detection.timestamp_ns});
                 }
             }
 

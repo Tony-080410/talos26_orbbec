@@ -25,7 +25,6 @@ void register_tracker_systems(talos::Scheduler& scheduler, TrackerConfig&& confi
 
             auto batch = meas_in.read();
             if (!batch) {
-                batch = ArmorMeasurementBatch{};
                 return;
             }
 

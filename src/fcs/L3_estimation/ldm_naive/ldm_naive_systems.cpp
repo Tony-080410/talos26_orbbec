@@ -40,17 +40,14 @@ void register_naive_ldm_systems(talos::Scheduler& scheduler, const NaiveLdmConfi
                         .p_world_body = pose.translation(),
                     };
                 } else {
-                    SPDLOG_ERROR(
-                        "LdmMeasurement(t={}, frame={}, depth_quality={}) has no transform_odom: "
-                        "PnP pose estimation failed or bearing-only mode",
-                        meas->timestamp_ns, meas->frame_id, meas->depth_quality);
+                    // SPDLOG_ERROR(
+                    //     "LdmMeasurement(t={}, frame={}, depth_quality={}) has no transform_odom:
+                    //     " "PnP pose estimation failed or bearing-only mode", meas->timestamp_ns,
+                    //     meas->frame_id, meas->depth_quality);
                     // Allow predict-only step when pose is unavailable.
                 }
-            } else {
-                return;
+                tracker->update(update_ns, pose_measurement);
             }
-
-            tracker->update(update_ns, pose_measurement);
 
             const auto state = tracker->get_output();
             if (state.has_value()) {
