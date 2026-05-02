@@ -13,8 +13,8 @@ namespace fcs::L4 {
 
 /// Full diagnostics for a single choose-optimal candidate.
 ///
-/// This lives on a dedicated diagnostic channel instead of inside `GimbalPlan`
-/// so visualization/recording can evolve without changing the execution path.
+/// This lives on a dedicated diagnostic channel instead of inside the control
+/// intent so visualization/recording can evolve without changing the execution path.
 struct TargetSelectionTraceEntry {
     ArmorName target_name{ArmorName::Invalid};
     ArmorColor target_color{ArmorColor::Neutral};

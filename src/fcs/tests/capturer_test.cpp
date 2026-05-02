@@ -103,7 +103,8 @@ void register_test_producer(talos::Scheduler& scheduler, ProducerMode mode) {
                 selected_target_out,
             talos::spmc_mut<fcs::L4::TargetSelectionTrace, fcs::TargetSelectionTraceChannelTopic>
                 target_selection_trace_out,
-            talos::spmc_mut<fcs::L4::GimbalPlan, fcs::GimbalPlanChannelTopic> gimbal_plan_out,
+            talos::spmc_mut<fcs::L4::ControlIntent, fcs::ControlIntentChannelTopic>
+                control_intent_out,
             talos::spmc_mut<fcs::L5::WeaponCommand, fcs::WeaponCommandChannelTopic> weapon_out,
             talos::spmc_mut<
                 fcs::core::ControlResourceSnapshot, fcs::RuntimeControlStateChannelTopic>
@@ -172,9 +173,8 @@ void register_test_producer(talos::Scheduler& scheduler, ProducerMode mode) {
             target_selection_trace.timestamp_ns = now_ns;
             target_selection_trace_out.write(target_selection_trace);
 
-            fcs::L4::GimbalPlan gimbal_plan;
-            gimbal_plan.timestamp_ns = now_ns;
-            gimbal_plan_out.write(gimbal_plan);
+            fcs::L4::ControlIntent control_intent = fcs::L4::HoldCommand{.timestamp_ns = now_ns};
+            control_intent_out.write(control_intent);
 
             fcs::L5::WeaponCommand weapon_command;
             weapon_command.timestamp_ns = now_ns;

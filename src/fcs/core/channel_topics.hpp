@@ -42,10 +42,10 @@ struct EnergyMeterStateChannelTopic {};
 // L4 Planning Pipeline Channel Topics
 // ============================================================================
 
-/// @brief Final gimbal plan channel (PlanMux → Weapon System)
-/// Data type: fcs::L4::GimbalPlan
+/// @brief L4 → L5 control intent channel (L4 Planner → L5 Weapon System)
+/// Data type: fcs::L4::ControlIntent (std::variant<TrackCommand, ShotCommand, HoldCommand>)
 /// Mode: SPMC (single producer, multiple consumers)
-struct GimbalPlanChannelTopic {};
+struct ControlIntentChannelTopic {};
 
 /// @brief L4-selected target snapshot channel (Aimer -> Viz/Chiral/Capturer)
 /// Data type: fcs::L4::SelectedTargetSnapshot

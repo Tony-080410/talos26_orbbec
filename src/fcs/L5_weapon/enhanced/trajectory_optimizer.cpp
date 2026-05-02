@@ -81,15 +81,11 @@ template <typename YawSolver, typename PitchSolver>
                 .pitch    = trajectory.state(2, ref_k),
                 .distance = trajectory.distances[ref_k],
                 .tof      = trajectory.time_of_flights[ref_k],
-                .selected_armor_id       = trajectory.selected_armor_ids[ref_k],
-                .rough_selected_armor_id = trajectory.rough_selected_armor_ids[ref_k],
-                .world_position          = trajectory.positions[ref_k],
+                .selected_armor_id       = 0,
+                .rough_selected_armor_id = 0,
+                .world_position          = Eigen::Vector3d::Zero(),
             });
 
-        const Eigen::Vector3d reconstructed_reference = spherical_to_cartesian(
-            trajectory.distances[ref_k], debug.reference_plan.back().yaw,
-            debug.reference_plan.back().pitch);
-        const Eigen::Vector3d world_bias = trajectory.positions[ref_k] - reconstructed_reference;
         const double optimized_yaw =
             normalize_angle(static_cast<double>(yaw_solver.state(0, k)) + trajectory.yaw_origin);
         const double optimized_pitch = static_cast<double>(pitch_solver.state(0, k));
@@ -101,9 +97,9 @@ template <typename YawSolver, typename PitchSolver>
                 .pitch                   = optimized_pitch,
                 .distance                = trajectory.distances[ref_k],
                 .tof                     = trajectory.time_of_flights[ref_k],
-                .selected_armor_id       = trajectory.selected_armor_ids[ref_k],
-                .rough_selected_armor_id = trajectory.rough_selected_armor_ids[ref_k],
-                .world_position          = reconstructed_optimized + world_bias,
+                .selected_armor_id       = 0,
+                .rough_selected_armor_id = 0,
+                .world_position          = reconstructed_optimized,
             });
     }
 
@@ -123,41 +119,37 @@ TinyMpcTrajectoryOptimizer::TinyMpcTrajectoryOptimizer(
 }
 
 WeaponCommand TinyMpcTrajectoryOptimizer::passthrough(
-    const L4::GimbalPlan& plan, uint64_t command_timestamp_ns) const noexcept {
+    const L4::ShotCommand& shot, uint64_t command_timestamp_ns) const noexcept {
     WeaponCommand cmd;
     cmd.timestamp_ns      = command_timestamp_ns;
-    cmd.plan_timestamp_ns = plan.timestamp_ns;
-    cmd.plan_yaw          = plan.yaw;
-    cmd.plan_pitch        = plan.pitch;
-    cmd.plan_distance     = plan.distance;
-    cmd.yaw               = plan.yaw;
-    cmd.pitch             = plan.pitch;
-    cmd.yaw_vel           = plan.yaw_vel;
-    cmd.pitch_vel         = plan.pitch_vel;
-    cmd.yaw_accel         = plan.yaw_acc;
-    cmd.pitch_accel       = plan.pitch_acc;
-    cmd.fire              = plan.fire_advice;
-    cmd.distance          = plan.distance;
+    cmd.plan_timestamp_ns = shot.timestamp_ns;
+    cmd.plan_yaw          = shot.yaw;
+    cmd.plan_pitch        = shot.pitch;
+    cmd.plan_distance     = shot.distance;
+    cmd.yaw               = shot.yaw;
+    cmd.pitch             = shot.pitch;
+    cmd.distance          = shot.distance;
+    // Shot mode: no velocity/acceleration feedforward.
+    cmd.yaw_vel     = 0.0;
+    cmd.pitch_vel   = 0.0;
+    cmd.yaw_accel   = 0.0;
+    cmd.pitch_accel = 0.0;
     return cmd;
 }
 
 std::expected<WeaponCommand, std::string> TinyMpcTrajectoryOptimizer::optimize(
-    const L4::GimbalPlan& plan, const FireDecisionConfig& fire_decision,
-    uint64_t command_timestamp_ns) noexcept {
+    const L4::TrackCommand& track, uint64_t command_timestamp_ns) noexcept {
     if (!config_.enabled) {
         return std::unexpected("mpc_weapon disabled");
     }
     if (!ready_) {
         return std::unexpected("mpc solvers are not ready");
     }
-    if (!plan.reference_trajectory) {
-        return std::unexpected("reference trajectory is missing");
-    }
 
     // Reject stale reference trajectories to avoid solving on outdated data.
     const double reference_age_s =
         static_cast<double>(
-            static_cast<int64_t>(command_timestamp_ns) - static_cast<int64_t>(plan.timestamp_ns))
+            static_cast<int64_t>(command_timestamp_ns) - static_cast<int64_t>(track.timestamp_ns))
         * 1e-9;
     if (reference_age_s > config_.reference_age_threshold_s) {
         return std::unexpected(
@@ -165,7 +157,7 @@ std::expected<WeaponCommand, std::string> TinyMpcTrajectoryOptimizer::optimize(
             + std::to_string(config_.reference_age_threshold_s) + "s)");
     }
 
-    const ReferenceTrajectory& reference = *plan.reference_trajectory;
+    const ReferenceTrajectory& reference = track.trajectory;
 
     // Age the reference window forward so the sampled "current" command stays aligned with now.
     const int solver_horizon    = batched_solver_.horizon();
@@ -211,12 +203,17 @@ std::expected<WeaponCommand, std::string> TinyMpcTrajectoryOptimizer::optimize(
     const int control_index = std::clamp(center_index, 0, effective_horizon - 2);
     const int reference_center_index = reference_start_index + center_index;
 
+    // Extract the aim point from the trajectory's center step (originally L4's aim).
+    const double plan_yaw      = normalize_angle(reference.yaw_origin);
+    const double plan_pitch    = reference.state(2, reference_start_index + center_index);
+    const double plan_distance = reference.distances[reference_center_index];
+
     WeaponCommand cmd;
     cmd.timestamp_ns      = command_timestamp_ns;
-    cmd.plan_timestamp_ns = plan.timestamp_ns;
-    cmd.plan_yaw          = plan.yaw;
-    cmd.plan_pitch        = plan.pitch;
-    cmd.plan_distance     = plan.distance;
+    cmd.plan_timestamp_ns = track.timestamp_ns;
+    cmd.plan_yaw          = plan_yaw;
+    cmd.plan_pitch        = plan_pitch;
+    cmd.plan_distance     = plan_distance;
     cmd.yaw               = normalize_angle(
         static_cast<double>(yaw_solver.state(0, center_index)) + reference.yaw_origin);
     cmd.pitch = std::clamp(

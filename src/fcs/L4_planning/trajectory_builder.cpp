@@ -17,9 +17,7 @@ struct ReferenceSample {
     double pitch{0.0};
     double distance{0.0};
     double time_of_flight{0.0};
-    Eigen::Vector3d position{Eigen::Vector3d::Zero()};
     int selected_armor_id{0};
-    int rough_selected_armor_id{0};
 };
 
 [[nodiscard]] double
@@ -66,13 +64,11 @@ template <typename TargetState>
     }
 
     return ReferenceSample{
-        .yaw                     = prediction->aim_yaw,
-        .pitch                   = prediction->aim_pitch,
-        .distance                = prediction->distance,
-        .time_of_flight          = prediction->flying_time,
-        .position                = prediction->predicted_position,
-        .selected_armor_id       = prediction->selected_armor_id,
-        .rough_selected_armor_id = prediction->rough_selected_armor_id,
+        .yaw               = prediction->aim_yaw,
+        .pitch             = prediction->aim_pitch,
+        .distance          = prediction->distance,
+        .time_of_flight    = prediction->flying_time,
+        .selected_armor_id = prediction->selected_armor_id,
     };
 }
 
@@ -87,13 +83,9 @@ template <typename TargetState>
     const double dt        = horizon_cfg.dt;
 
     ReferenceTrajectory trajectory{
-        .state                    = StateMatrix(4, horizon),
-        .distances                = std::vector<double>(horizon, 0.0),
-        .time_of_flights          = std::vector<double>(horizon, 0.0),
-        .positions                = std::vector<Eigen::Vector3d>(horizon, Eigen::Vector3d::Zero()),
-        .selected_armor_ids       = std::vector<int>(horizon, 0),
-        .rough_selected_armor_ids = std::vector<int>(horizon, 0),
-        .armor_type               = seed.armor_type,
+        .state           = StateMatrix(4, horizon),
+        .distances       = std::vector<double>(horizon, 0.0),
+        .time_of_flights = std::vector<double>(horizon, 0.0),
     };
 
     std::vector<double> yaw_samples(horizon, 0.0);
@@ -130,13 +122,10 @@ template <typename TargetState>
 
         context.preferred_armor_id = sample->selected_armor_id;
 
-        yaw_samples[k]                         = sample->yaw;
-        pitch_samples[k]                       = sample->pitch;
-        trajectory.distances[k]                = sample->distance;
-        trajectory.time_of_flights[k]          = sample->time_of_flight;
-        trajectory.positions[k]                = sample->position;
-        trajectory.selected_armor_ids[k]       = sample->selected_armor_id;
-        trajectory.rough_selected_armor_ids[k] = sample->rough_selected_armor_id;
+        yaw_samples[k]                = sample->yaw;
+        pitch_samples[k]              = sample->pitch;
+        trajectory.distances[k]       = sample->distance;
+        trajectory.time_of_flights[k] = sample->time_of_flight;
     }
 
     trajectory.yaw_origin = yaw_samples[horizon_back];
@@ -164,13 +153,9 @@ template <typename TargetState>
     const double dt        = horizon_cfg.dt;
 
     ReferenceTrajectory trajectory{
-        .state                    = StateMatrix(4, horizon),
-        .distances                = std::vector<double>(horizon, 0.0),
-        .time_of_flights          = std::vector<double>(horizon, 0.0),
-        .positions                = std::vector<Eigen::Vector3d>(horizon, Eigen::Vector3d::Zero()),
-        .selected_armor_ids       = std::vector<int>(horizon, 0),
-        .rough_selected_armor_ids = std::vector<int>(horizon, 0),
-        .armor_type               = ArmorType::Invalid,
+        .state           = StateMatrix(4, horizon),
+        .distances       = std::vector<double>(horizon, 0.0),
+        .time_of_flights = std::vector<double>(horizon, 0.0),
     };
 
     std::vector<double> yaw_samples(horizon, 0.0);
@@ -187,13 +172,10 @@ template <typename TargetState>
                 fmt::format("LDM reference trajectory step {} failed: {}", k, prediction.error()));
         }
 
-        yaw_samples[k]                         = prediction->aim_yaw;
-        pitch_samples[k]                       = prediction->aim_pitch;
-        trajectory.distances[k]                = prediction->distance;
-        trajectory.time_of_flights[k]          = prediction->flying_time;
-        trajectory.positions[k]                = prediction->predicted_position;
-        trajectory.selected_armor_ids[k]       = prediction->selected_armor_id;
-        trajectory.rough_selected_armor_ids[k] = prediction->rough_selected_armor_id;
+        yaw_samples[k]                = prediction->aim_yaw;
+        pitch_samples[k]              = prediction->aim_pitch;
+        trajectory.distances[k]       = prediction->distance;
+        trajectory.time_of_flights[k] = prediction->flying_time;
     }
 
     trajectory.yaw_origin = yaw_samples[horizon_back];

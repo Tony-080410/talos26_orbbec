@@ -7,7 +7,7 @@
 #include "foxglove_types.hpp"
 #include "scene_builder.hpp"
 
-#include "L4_planning/gimbal_planner/types.hpp"
+#include "L4_planning/control_intent.hpp"
 #include "core/channel_topics.hpp"
 #include "frame.hpp"
 
@@ -51,13 +51,6 @@ struct FutureArmorSnapshot {
 
 [[nodiscard]] inline std::string format_image_center_px(double value) {
     return std::isfinite(value) ? fmt::format("{:.1f}", value) : "n/a";
-}
-
-[[nodiscard]] inline std::string planner_seed_tracker_last_text(const ::fcs::L4::GimbalPlan& plan) {
-    if (!plan.planner_seed || !plan.planner_seed->tracker_last_armor_id.has_value()) {
-        return "none";
-    }
-    return std::to_string(*plan.planner_seed->tracker_last_armor_id);
 }
 
 [[nodiscard]] inline std::string
@@ -129,59 +122,6 @@ inline void append_selection_trace_metadata(
                 "{:.3f}, {:.3f}, {:.3f}", entry.target_center->x(), entry.target_center->y(),
                 entry.target_center->z()));
     }
-}
-
-[[nodiscard]] inline double prediction_dt_s(const ::fcs::L4::GimbalPlan& plan) noexcept {
-    if (!plan.planner_seed || plan.predicted_future <= plan.planner_seed->state_timestamp_ns) {
-        return 0.0;
-    }
-    return static_cast<double>(plan.predicted_future - plan.planner_seed->state_timestamp_ns)
-         * 1e-9;
-}
-
-[[nodiscard]] inline std::optional<FutureArmorSnapshot>
-    future_armor_snapshot(const ::fcs::L4::GimbalPlan& plan) {
-    if (!plan.planner_seed) {
-        return std::nullopt;
-    }
-
-    const double dt = prediction_dt_s(plan);
-
-    if (const auto* robot = plan.planner_seed->robot_state()) {
-        ::fcs::L3::RobotTargetState predicted = *robot;
-        predicted.position += predicted.velocity * dt;
-        predicted.yaw += predicted.v_yaw * dt;
-
-        FutureArmorSnapshot snapshot;
-        snapshot.center           = predicted.position;
-        snapshot.linear_velocity  = predicted.velocity;
-        snapshot.angular_velocity = predicted.v_yaw;
-
-        const auto armors = predicted.armor_poses();
-        snapshot.armors.assign(armors.begin(), armors.end());
-        return snapshot;
-    }
-
-    if (const auto* outpost = plan.planner_seed->outpost_state()) {
-        ::fcs::L3::OutpostTargetState predicted = *outpost;
-        predicted.position += predicted.velocity.head<2>() * dt;
-        predicted.yaw += predicted.v_yaw * dt;
-
-        FutureArmorSnapshot snapshot;
-        snapshot.center = Eigen::Vector3d{
-            predicted.position.x(),
-            predicted.position.y(),
-            (predicted.z[0] + predicted.z[1] + predicted.z[2]) / 3.0,
-        };
-        snapshot.linear_velocity  = predicted.velocity;
-        snapshot.angular_velocity = predicted.v_yaw;
-
-        const auto armors = predicted.armor_poses();
-        snapshot.armors.assign(armors.begin(), armors.end());
-        return snapshot;
-    }
-
-    return std::nullopt;
 }
 
 [[nodiscard]] inline std::string armor_id_label(int armor_id) {
@@ -348,56 +288,26 @@ inline void append_selection_trace_metadata(
     };
 }
 
-[[nodiscard]] inline nlohmann::json json_planner_seed(const ::fcs::L4::PlannerSeed& seed) {
-    nlohmann::json seed_json = {
-        {   "state_timestamp_ns",                                        seed.state_timestamp_ns},
-        {        "target_jumped",                                             seed.target_jumped},
-        {"tracker_last_armor_id", seed.tracker_last_armor_id
- ? nlohmann::json(*seed.tracker_last_armor_id)
- : nlohmann::json(nullptr)                                     },
-        {            "aim_phase",             std::string(magic_enum::enum_name(seed.aim_phase))},
-        {      "aim_phase_value",                               static_cast<int>(seed.aim_phase)},
-        {    "selected_armor_id",                                         seed.selected_armor_id},
-        {                "state",                                                        nullptr},
-    };
-
-    if (const auto* robot = seed.robot_state()) {
-        seed_json["state"] = json_robot_state(*robot);
-    } else if (const auto* outpost = seed.outpost_state()) {
-        seed_json["state"] = json_outpost_state(*outpost);
-    }
-
-    return seed_json;
-}
-
-[[nodiscard]] inline nlohmann::json json_gimbal_plan(const ::fcs::L4::GimbalPlan& plan) {
-    nlohmann::json plan_json = {
-        {           "timestamp_ns",         plan.timestamp_ns                                   },
-        {         "predicted_roll",                                          plan.predicted_roll},
-        {               "distance",                                                plan.distance},
-        {    "predicted_future_ns",                                        plan.predicted_future},
-        {                 "source",              std::string(magic_enum::enum_name(plan.source))},
-        {           "source_value",                                static_cast<int>(plan.source)},
-        {                    "yaw",                                                     plan.yaw},
-        {                  "pitch",                                                   plan.pitch},
-        {              "aim_phase",           std::string(magic_enum::enum_name(plan.aim_phase))},
-        {        "aim_phase_value",                             static_cast<int>(plan.aim_phase)},
-        {      "selected_armor_id",                                       plan.selected_armor_id},
-        {"rough_selected_armor_id",                                 plan.rough_selected_armor_id},
-        {                "yaw_vel",                                                 plan.yaw_vel},
-        {              "pitch_vel",                                               plan.pitch_vel},
-        {                "yaw_acc",                                                 plan.yaw_acc},
-        {              "pitch_acc",                                               plan.pitch_acc},
-        {            "fire_advice",                                             plan.fire_advice},
-        {                "aim_yaw",                                                 plan.aim_yaw},
-        {              "aim_pitch",                                               plan.aim_pitch},
-        {     "predicted_position",
-         plan.predicted_position ? json_vec3(*plan.predicted_position) : nlohmann::json(nullptr)},
-        {           "planner_seed",
-         plan.planner_seed ? json_planner_seed(*plan.planner_seed) : nlohmann::json(nullptr)    },
-    };
-
-    return plan_json;
+[[nodiscard]] inline nlohmann::json json_control_intent(const ::fcs::L4::ControlIntent& intent) {
+    nlohmann::json result;
+    std::visit(
+        [&](const auto& cmd) {
+            using T                = std::decay_t<decltype(cmd)>;
+            result["timestamp_ns"] = cmd.timestamp_ns;
+            if constexpr (std::is_same_v<T, ::fcs::L4::TrackCommand>) {
+                result["mode"]    = "Track";
+                result["horizon"] = cmd.trajectory.horizon();
+            } else if constexpr (std::is_same_v<T, ::fcs::L4::ShotCommand>) {
+                result["mode"]     = "Shot";
+                result["yaw"]      = cmd.yaw;
+                result["pitch"]    = cmd.pitch;
+                result["distance"] = cmd.distance;
+            } else if constexpr (std::is_same_v<T, ::fcs::L4::HoldCommand>) {
+                result["mode"] = "Hold";
+            }
+        },
+        intent);
+    return result;
 }
 
 [[nodiscard]] inline nlohmann::json
@@ -433,22 +343,23 @@ inline void append_selected_target_metadata(
 }
 
 inline void append_plan_metadata(
-    viz::EntityBuilder& builder, const ::fcs::L4::GimbalPlan& plan,
+    viz::EntityBuilder& builder, const ::fcs::L4::ControlIntent& intent,
     const ::fcs::L4::SelectedTargetSnapshot* selected_target = nullptr) {
-    builder.metadata("source", std::string(magic_enum::enum_name(plan.source)))
-        .metadata("aim_phase", std::string(magic_enum::enum_name(plan.aim_phase)))
-        .metadata("selected_armor_id", std::to_string(plan.selected_armor_id))
-        .metadata("rough_selected_armor_id", std::to_string(plan.rough_selected_armor_id))
-        .metadata("fire_advice", yes_no(plan.fire_advice))
-        .metadata("predicted_future_ns", std::to_string(plan.predicted_future));
+    builder.metadata(
+        "mode", std::visit(
+                    [](const auto& cmd) -> std::string {
+                        using T = std::decay_t<decltype(cmd)>;
+                        if constexpr (std::is_same_v<T, ::fcs::L4::TrackCommand>)
+                            return "Track";
+                        if constexpr (std::is_same_v<T, ::fcs::L4::ShotCommand>)
+                            return "Shot";
+                        if constexpr (std::is_same_v<T, ::fcs::L4::HoldCommand>)
+                            return "Hold";
+                    },
+                    intent));
 
     if (selected_target) {
         append_selected_target_metadata(builder, *selected_target);
-    }
-
-    if (plan.planner_seed) {
-        builder.metadata("planner_seed.target_jumped", yes_no(plan.planner_seed->target_jumped))
-            .metadata("planner_seed.tracker_last_armor_id", planner_seed_tracker_last_text(plan));
     }
 }
 
@@ -506,7 +417,7 @@ void register_l4_planning_systems(talos::scheduler::Scheduler& app) {
     app.add_system<talos::pool_compute>(
         "foxglove_l4_gimbal_cmd_pub",
         [](talos::spmc<::fcs::L5::WeaponCommand, WeaponCommandChannelTopic> cmd_in,
-           talos::spmc<::fcs::L4::GimbalPlan, GimbalPlanChannelTopic> plan_in,
+           talos::spmc<::fcs::L4::ControlIntent, ControlIntentChannelTopic> plan_in,
            talos::res<std::shared_ptr<FoxgloveServer>> server) {
             if (!detail::foxglove_ready(*server, cmd_in)) {
                 return;
@@ -518,7 +429,9 @@ void register_l4_planning_systems(talos::scheduler::Scheduler& app) {
             }
             const auto plan_snapshot = plan_in.read_current();
             const auto* plan =
-                (plan_snapshot && plan_snapshot->timestamp_ns == cmd->plan_timestamp_ns)
+                (plan_snapshot
+                 && std::visit([](const auto& c) { return c.timestamp_ns; }, *plan_snapshot)
+                        == cmd->plan_timestamp_ns)
                     ? std::addressof(*plan_snapshot)
                     : nullptr;
 
@@ -562,7 +475,7 @@ void register_l4_planning_systems(talos::scheduler::Scheduler& app) {
                 };
             }
             if (plan) {
-                cmd_json["l4_plan"] = l4_detail::json_gimbal_plan(*plan);
+                cmd_json["l4_plan"] = l4_detail::json_control_intent(*plan);
             }
 
             detail::publish_json_message<GimbalCmdMessage>(*server, cmd_json);
@@ -571,7 +484,7 @@ void register_l4_planning_systems(talos::scheduler::Scheduler& app) {
     app.add_system<talos::pool_compute>(
         "foxglove_l4_mpc_trajectory_pub",
         [](talos::spmc<::fcs::L5::WeaponCommand, WeaponCommandChannelTopic> cmd_in,
-           talos::spmc<::fcs::L4::GimbalPlan, GimbalPlanChannelTopic> plan_in,
+           talos::spmc<::fcs::L4::ControlIntent, ControlIntentChannelTopic> plan_in,
            talos::res<std::shared_ptr<FoxgloveServer>> server) {
             if (!detail::foxglove_ready(*server, cmd_in)) {
                 return;
@@ -583,7 +496,9 @@ void register_l4_planning_systems(talos::scheduler::Scheduler& app) {
             }
             const auto plan_snapshot = plan_in.read_current();
             const auto* plan =
-                (plan_snapshot && plan_snapshot->timestamp_ns == cmd->plan_timestamp_ns)
+                (plan_snapshot
+                 && std::visit([](const auto& c) { return c.timestamp_ns; }, *plan_snapshot)
+                        == cmd->plan_timestamp_ns)
                     ? std::addressof(*plan_snapshot)
                     : nullptr;
 
@@ -594,9 +509,6 @@ void register_l4_planning_systems(talos::scheduler::Scheduler& app) {
             traj_json["lookahead_index"]   = cmd->viz_debug->lookahead_index;
             traj_json["reference"]         = nlohmann::json::array();
             traj_json["optimized"]         = nlohmann::json::array();
-            if (plan) {
-                traj_json["l4_plan"] = l4_detail::json_gimbal_plan(*plan);
-            }
 
             for (int i = 0; i < static_cast<int>(cmd->viz_debug->reference_plan.size()); ++i) {
                 const auto& reference = cmd->viz_debug->reference_plan[i];
@@ -638,6 +550,10 @@ void register_l4_planning_systems(talos::scheduler::Scheduler& app) {
                 });
             }
 
+            if (plan) {
+                traj_json["l4_plan"] = l4_detail::json_control_intent(*plan);
+            }
+
             detail::publish_json_message<MpcTrajectoryMessage>(*server, traj_json);
         });
 
@@ -647,27 +563,28 @@ void register_l4_planning_systems(talos::scheduler::Scheduler& app) {
 
     app.add_system<talos::pool_compute>(
         "foxglove_l4_gimbal_scene",
-        [](talos::spmc<::fcs::L4::GimbalPlan, GimbalPlanChannelTopic> plan_in,
+        [](talos::spmc<::fcs::L4::ControlIntent, ControlIntentChannelTopic> plan_in,
            talos::spmc<::fcs::L4::SelectedTargetSnapshot, SelectedTargetSnapshotChannelTopic>
                selected_target_in,
            talos::spmc<::fcs::L4::TargetSelectionTrace, TargetSelectionTraceChannelTopic> trace_in,
            talos::res<std::shared_ptr<FoxgloveServer>> server) {
             if (!detail::foxglove_ready(*server, plan_in))
                 return;
-            auto plan = plan_in.read();
-            if (!plan || plan->distance <= 0)
+            auto intent = plan_in.read();
+            if (!intent || std::holds_alternative<::fcs::L4::HoldCommand>(*intent))
                 return;
+            // Extract timestamp from variant for matching with other channels.
+            const uint64_t plan_ts =
+                std::visit([](const auto& cmd) -> uint64_t { return cmd.timestamp_ns; }, *intent);
             const auto selected_target_snapshot = selected_target_in.read_current();
             const auto* selected_target =
-                (selected_target_snapshot
-                 && selected_target_snapshot->timestamp_ns == plan->timestamp_ns)
+                (selected_target_snapshot && selected_target_snapshot->timestamp_ns == plan_ts)
                     ? std::addressof(*selected_target_snapshot)
                     : nullptr;
             const auto trace_snapshot = trace_in.read_current();
-            const auto* trace =
-                (trace_snapshot && trace_snapshot->timestamp_ns == plan->timestamp_ns)
-                    ? std::addressof(*trace_snapshot)
-                    : nullptr;
+            const auto* trace         = (trace_snapshot && trace_snapshot->timestamp_ns == plan_ts)
+                                          ? std::addressof(*trace_snapshot)
+                                          : nullptr;
 
             std::vector<::foxglove::schemas::SceneEntity> entities;
 
@@ -772,28 +689,8 @@ void register_l4_planning_systems(talos::scheduler::Scheduler& app) {
             //     }
             // }
 
-            // Predicted position marker (at bullet impact time for verification)
-            if (plan->predicted_position) {
-                const auto aim_color =
-                    plan->fire_advice ? tac::L4::GIMBAL_AIM_FIRE : tac::L4::GIMBAL_AIM_HOLD;
-
-                auto builder = viz::EntityBuilder::create<fast_tf::odom>("l4", "predicted")
-                                   .timestamp(plan->predicted_future)
-                                   .position(*plan->predicted_position)
-                                   .size(tac::L4::PREDICTION_SIZE)
-                                   .color(aim_color)
-                                   .sphere();
-
-                l4_detail::append_plan_metadata(builder, *plan, selected_target);
-
-                // builder.color(tac::Text::PRIMARY)
-                //     .text_with_offset(
-                //         plan->fire_advice ? "● FIRE" : "○ HOLD", 0.0, 0.0,
-                //         tac::L3::LABEL_OFFSET_Z + tac::L4::PREDICTION_SIZE,
-                //         tac::Text::SIZE_SMALL);
-
-                entities.push_back(builder.build());
-            }
+            // Predicted position and fire_advice no longer available from ControlIntent;
+            // they belonged to L4 internal state.
 
             // ── Selection trace — visual hierarchy ─────────────────────────
             if (trace) {
@@ -812,11 +709,9 @@ void register_l4_planning_systems(talos::scheduler::Scheduler& app) {
                     const double alpha_val  = is_selected ? 0.95 : is_runner_up ? 0.75 : 0.25;
 
                     // Color by tier
-                    const auto tier_color = is_selected
-                                              ? (plan->fire_advice ? tac::L4::GIMBAL_AIM_FIRE
-                                                                   : tac::L4::GIMBAL_AIM_HOLD)
-                                          : is_runner_up ? tac::L4::CANDIDATE_RUNNER_UP
-                                                         : tac::L4::CANDIDATE_ELIMINATED;
+                    const auto& tier_color = is_selected  ? (tac::L4::GIMBAL_AIM_FIRE)
+                                           : is_runner_up ? tac::L4::CANDIDATE_RUNNER_UP
+                                                          : tac::L4::CANDIDATE_ELIMINATED;
 
                     auto builder = viz::EntityBuilder::create<fast_tf::odom>(
                                        "l4", l4_detail::selection_trace_entity_id(candidate))

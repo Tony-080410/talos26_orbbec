@@ -1,7 +1,7 @@
 #pragma once
 
 #include "L4_planning/config.hpp"
-#include "L4_planning/gimbal_planner/types.hpp"
+#include "L4_planning/control_intent.hpp"
 #include "L5_weapon/config.hpp"
 #include "L5_weapon/fire_control.hpp"
 #include "dual_small_mpc_solver.hpp"
@@ -30,12 +30,13 @@ public:
 
     [[nodiscard]] bool enabled() const noexcept { return config_.enabled; }
 
+    /// Build a pass-through command from a Shot intent (no MPC).
     [[nodiscard]] WeaponCommand
-        passthrough(const L4::GimbalPlan& plan, uint64_t command_timestamp_ns) const noexcept;
+        passthrough(const L4::ShotCommand& shot, uint64_t command_timestamp_ns) const noexcept;
 
-    [[nodiscard]] std::expected<WeaponCommand, std::string> optimize(
-        const L4::GimbalPlan& plan, const FireDecisionConfig& fire_decision,
-        uint64_t command_timestamp_ns) noexcept;
+    /// Run MPC optimization on a Track intent's reference trajectory.
+    [[nodiscard]] std::expected<WeaponCommand, std::string>
+        optimize(const L4::TrackCommand& track, uint64_t command_timestamp_ns) noexcept;
 
 private:
     WeaponControllerConfig config_;

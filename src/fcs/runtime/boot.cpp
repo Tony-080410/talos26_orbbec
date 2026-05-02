@@ -130,7 +130,7 @@ void init_coordinate_system(fast_tf::CoordinateSystem& system, const RobotExtrin
     // Register L4 Planning pipeline (Aimer + Armor Plan Adapter)
     L4::register_l4_planning_systems(scheduler, std::move(config.vision.l4.get()));
 
-    // Register L5 MPC Weapon system (consumes GimbalPlan from L4)
+    // Register L5 MPC Weapon system (consumes ControlIntent from L4)
     L5::register_enhanced_weapon_system(scheduler, std::move(config.vision.l5.get()));
 
     // Register Chiral data collection system (publishes TrackerOutput to shared memory)

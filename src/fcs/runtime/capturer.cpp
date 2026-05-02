@@ -3,7 +3,7 @@
 #include "L2_perception/rune/types.hpp"
 #include "L3_estimation/energy_meter/types.hpp"
 #include "L3_estimation/tracker/types.hpp"
-#include "L4_planning/gimbal_planner/types.hpp"
+#include "L4_planning/control_intent.hpp"
 #include "L4_planning/selected_target_snapshot.hpp"
 #include "L4_planning/target_selection_trace.hpp"
 #include "L5_weapon/fire_control.hpp"
@@ -36,6 +36,17 @@
 #include <vector>
 
 namespace fcs::runtime {
+namespace {
+
+/// std::visit helper for variant exhaustiveness.
+template <typename... Ts>
+struct overloaded : Ts... {
+    using Ts::operator()...;
+};
+template <typename... Ts>
+overloaded(Ts...) -> overloaded<Ts...>;
+
+} // namespace
 namespace {
 
 namespace fs = std::filesystem;
@@ -478,53 +489,25 @@ struct ConfigSnapshotSource {
     };
 }
 
-[[nodiscard]] auto to_json_planner_seed(const L4::PlannerSeed& seed) -> json {
-    json result{
-        {   "state_timestamp_ns",seed.state_timestamp_ns                                 },
-        {        "target_jumped",                                    seed.target_jumped},
-        {"tracker_last_armor_id",
-         seed.tracker_last_armor_id ? json(*seed.tracker_last_armor_id) : json(nullptr)},
-        {            "aim_phase",                 magic_enum::enum_name(seed.aim_phase)},
-        {    "selected_armor_id",                                seed.selected_armor_id},
-        {           "state_kind",                                               "empty"},
-    };
-
-    if (const auto* robot = seed.robot_state()) {
-        result["state_kind"] = "robot";
-        result["state"]      = to_json_robot_state(*robot);
-    } else if (const auto* outpost = seed.outpost_state()) {
-        result["state_kind"] = "outpost";
-        result["state"]      = to_json_outpost_state(*outpost);
-    } else {
-        result["state"] = json::object();
-    }
-
-    return result;
-}
-
-[[nodiscard]] auto to_json_gimbal_plan(const L4::GimbalPlan& plan) -> json {
-    json result{
-        {           "timestamp_ns",        plan.timestamp_ns                                   },
-        {               "distance",                                               plan.distance},
-        {     "predicted_position",
-         plan.predicted_position ? json(to_json_vec3(*plan.predicted_position)) : json(nullptr)},
-        {       "predicted_future",                                       plan.predicted_future},
-        {                 "source",                          magic_enum::enum_name(plan.source)},
-        {                    "yaw",                                                    plan.yaw},
-        {                  "pitch",                                                  plan.pitch},
-        {              "aim_phase",                       magic_enum::enum_name(plan.aim_phase)},
-        {      "selected_armor_id",                                      plan.selected_armor_id},
-        {"rough_selected_armor_id",                                plan.rough_selected_armor_id},
-        {                "yaw_vel",                                                plan.yaw_vel},
-        {              "pitch_vel",                                              plan.pitch_vel},
-        {                "yaw_acc",                                                plan.yaw_acc},
-        {              "pitch_acc",                                              plan.pitch_acc},
-        {            "fire_advice",                                            plan.fire_advice},
-        {                "aim_yaw",                                                plan.aim_yaw},
-        {              "aim_pitch",                                              plan.aim_pitch},
-        {           "planner_seed",
-         plan.planner_seed ? json(to_json_planner_seed(*plan.planner_seed)) : json(nullptr)    },
-    };
+[[nodiscard]] auto to_json_control_intent(const L4::ControlIntent& intent) -> json {
+    json result;
+    std::visit(
+        [&](const auto& cmd) {
+            using T                = std::decay_t<decltype(cmd)>;
+            result["timestamp_ns"] = cmd.timestamp_ns;
+            if constexpr (std::is_same_v<T, L4::TrackCommand>) {
+                result["mode"]    = "Track";
+                result["horizon"] = cmd.trajectory.horizon();
+            } else if constexpr (std::is_same_v<T, L4::ShotCommand>) {
+                result["mode"]     = "Shot";
+                result["yaw"]      = cmd.yaw;
+                result["pitch"]    = cmd.pitch;
+                result["distance"] = cmd.distance;
+            } else if constexpr (std::is_same_v<T, L4::HoldCommand>) {
+                result["mode"] = "Hold";
+            }
+        },
+        intent);
     return result;
 }
 
@@ -822,7 +805,7 @@ public:
         const ChannelSnapshot<energy_meter::EnergyMeterState>& energy_meter,
         const ChannelSnapshot<L4::SelectedTargetSnapshot>& selected_target,
         const ChannelSnapshot<L4::TargetSelectionTrace>& target_selection_trace,
-        const ChannelSnapshot<L4::GimbalPlan>& gimbal_plan,
+        const ChannelSnapshot<L4::ControlIntent>& control_intent,
         const ChannelSnapshot<L5::WeaponCommand>& weapon_command,
         const ChannelSnapshot<core::ControlResourceSnapshot>& control_state) noexcept {
         try {
@@ -949,9 +932,9 @@ public:
             streams["target_selection"] = std::move(target_selection_json);
 
             json gimbal_json =
-                make_channel_meta(gimbal_plan.present(), gimbal_plan.updated_this_tick);
-            if (gimbal_plan.value) {
-                gimbal_json.update(to_json_gimbal_plan(*gimbal_plan.value));
+                make_channel_meta(control_intent.present(), control_intent.updated_this_tick);
+            if (control_intent.value) {
+                gimbal_json.update(to_json_control_intent(*control_intent.value));
             }
             streams["gimbal_plan"] = std::move(gimbal_json);
 
@@ -1035,7 +1018,7 @@ public:
     }
 
     void record_control_sample(
-        uint64_t sample_timestamp_ns, const ChannelSnapshot<L4::GimbalPlan>& gimbal_plan,
+        uint64_t sample_timestamp_ns, const ChannelSnapshot<L4::ControlIntent>& control_intent,
         const ChannelSnapshot<L5::WeaponCommand>& weapon_command,
         const ChannelSnapshot<core::ControlResourceSnapshot>& control_state) noexcept {
         ControlSampleRecord sample;
@@ -1063,20 +1046,40 @@ public:
             sample.odom_to_muzzle = to_control_transform(control_state.value->odom_to_muzzle);
         }
 
-        if (gimbal_plan.value) {
-            sample.plan_present           = 1;
-            sample.plan_timestamp_ns      = gimbal_plan.value->timestamp_ns;
-            sample.plan_distance          = static_cast<float>(gimbal_plan.value->distance);
-            sample.plan_yaw               = static_cast<float>(gimbal_plan.value->yaw);
-            sample.plan_pitch             = static_cast<float>(gimbal_plan.value->pitch);
-            sample.plan_yaw_vel           = static_cast<float>(gimbal_plan.value->yaw_vel);
-            sample.plan_pitch_vel         = static_cast<float>(gimbal_plan.value->pitch_vel);
-            sample.plan_yaw_acc           = static_cast<float>(gimbal_plan.value->yaw_acc);
-            sample.plan_pitch_acc         = static_cast<float>(gimbal_plan.value->pitch_acc);
-            sample.plan_source            = static_cast<uint8_t>(gimbal_plan.value->source);
-            sample.plan_aim_phase         = static_cast<uint8_t>(gimbal_plan.value->aim_phase);
-            sample.plan_selected_armor_id = gimbal_plan.value->selected_armor_id;
-            sample.plan_rough_selected_armor_id = gimbal_plan.value->rough_selected_armor_id;
+        if (control_intent.value) {
+            sample.plan_present      = 1;
+            sample.plan_timestamp_ns = [&]() -> uint64_t {
+                return std::visit(
+                    [](const auto& cmd) -> uint64_t { return cmd.timestamp_ns; },
+                    *control_intent.value);
+            }();
+            // Map variant to plan_source for compat recording.
+            sample.plan_source = std::visit(
+                overloaded{
+                    [](const L4::TrackCommand&) -> uint8_t { return 1; },
+                    [](const L4::ShotCommand&) -> uint8_t { return 2; },
+                    [](const L4::HoldCommand&) -> uint8_t { return 0; },
+                },
+                *control_intent.value);
+
+            std::visit(
+                overloaded{
+                    [&](const L4::TrackCommand& cmd) {
+                        const auto aim       = cmd.trajectory.center_aim_point();
+                        sample.plan_yaw      = static_cast<float>(aim.yaw);
+                        sample.plan_pitch    = static_cast<float>(aim.pitch);
+                        sample.plan_distance = static_cast<float>(aim.distance);
+                    },
+                    [&](const L4::ShotCommand& cmd) {
+                        sample.plan_yaw      = static_cast<float>(cmd.yaw);
+                        sample.plan_pitch    = static_cast<float>(cmd.pitch);
+                        sample.plan_distance = static_cast<float>(cmd.distance);
+                    },
+                    [&](const L4::HoldCommand&) {
+                        // No plan data.
+                    },
+                },
+                *control_intent.value);
         }
 
         if (weapon_command.value) {
@@ -1430,12 +1433,12 @@ void register_runtime_capturer_system(
     scheduler.add_system<talos::fixed_rate_silent<250>>(
         "runtime_control_recorder",
         [capturer = *capturer_result](
-            talos::spmc<L4::GimbalPlan, GimbalPlanChannelTopic> gimbal_plan_in,
+            talos::spmc<L4::ControlIntent, ControlIntentChannelTopic> control_intent_in,
             talos::spmc<L5::WeaponCommand, WeaponCommandChannelTopic> weapon_command_in,
             talos::spmc<core::ControlResourceSnapshot, RuntimeControlStateChannelTopic>
                 control_state_in) mutable {
             capturer->record_control_sample(
-                fcs::clock::now_ns(), sample_channel(gimbal_plan_in),
+                fcs::clock::now_ns(), sample_channel(control_intent_in),
                 sample_channel(weapon_command_in), sample_channel(control_state_in));
         });
     scheduler.add_system<talos::fixed_rate_silent<4>>(
@@ -1453,7 +1456,7 @@ void register_runtime_capturer_system(
                 selected_target_in,
             talos::spmc<L4::TargetSelectionTrace, TargetSelectionTraceChannelTopic>
                 target_selection_trace_in,
-            talos::spmc<L4::GimbalPlan, GimbalPlanChannelTopic> gimbal_plan_in,
+            talos::spmc<L4::ControlIntent, ControlIntentChannelTopic> control_intent_in,
             talos::spmc<L5::WeaponCommand, WeaponCommandChannelTopic> weapon_command_in,
             talos::spmc<core::ControlResourceSnapshot, RuntimeControlStateChannelTopic>
                 control_state_in) mutable {
@@ -1463,7 +1466,7 @@ void register_runtime_capturer_system(
                 sample_channel(measurement_in), sample_channel(tracker_in),
                 sample_channel(rune_observation_in), sample_channel(rune_debug_in),
                 sample_channel(energy_meter_in), sample_channel(selected_target_in),
-                sample_channel(target_selection_trace_in), sample_channel(gimbal_plan_in),
+                sample_channel(target_selection_trace_in), sample_channel(control_intent_in),
                 sample_channel(weapon_command_in), sample_channel(control_state_in));
         });
 }

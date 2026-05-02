@@ -1,7 +1,5 @@
 #pragma once
 
-#include "core/armor_types.hpp"
-
 #include <Eigen/Core>
 
 #include <vector>
@@ -11,7 +9,10 @@ namespace fcs::core::trajectory {
 /// Reference trajectory for weapon control.
 ///
 /// Contains the state matrix [yaw, yaw_rate, pitch, pitch_rate] × horizon,
-/// plus metadata needed for fire gate computation and debug visualization.
+/// distances, time-of-flight values, and the yaw origin.
+///
+/// The center step (where relative yaw ≈ 0) is the current aim point
+/// that L4 originally computed.
 ///
 /// Built by L4 planning layer, consumed by L5 weapon layer.
 struct ReferenceTrajectory {
@@ -30,23 +31,34 @@ struct ReferenceTrajectory {
     /// Projectile time-of-flight at each step (seconds).
     std::vector<double> time_of_flights;
 
-    /// Predicted world-frame positions at each step (odom frame).
-    std::vector<Eigen::Vector3d> positions;
-
-    /// Selected armor ID at each horizon step.
-    std::vector<int> selected_armor_ids;
-
-    /// Rough (pre-refinement) selected armor ID at each step.
-    std::vector<int> rough_selected_armor_ids;
-
-    /// Target armor type for fire-window shaping.
-    ArmorType armor_type{ArmorType::Invalid};
-
     /// Yaw angle origin for normalization (yaw at center horizon step).
     double yaw_origin{0.0};
 
     /// Total horizon length.
     [[nodiscard]] int horizon() const noexcept { return static_cast<int>(state.cols()); }
+
+    /// The aim point at the trajectory center (current L4 target).
+    /// Returns yaw, pitch, distance for the step closest to the origin.
+    struct AimPoint {
+        double yaw{0.0};
+        double pitch{0.0};
+        double distance{0.0};
+    };
+
+    [[nodiscard]] AimPoint center_aim_point() const noexcept {
+        const int n = horizon();
+        if (n <= 0)
+            return {};
+        int center = 0;
+        for (int k = 1; k < n; ++k)
+            if (std::abs(state(0, k)) < std::abs(state(0, center)))
+                center = k;
+        return AimPoint{
+            .yaw      = yaw_origin,
+            .pitch    = state(2, center),
+            .distance = distances[center],
+        };
+    }
 };
 
 } // namespace fcs::core::trajectory

@@ -241,7 +241,7 @@ public:
         scheduler_.add_system<talos::fixed_rate<200>>(
             "aimer_system_test_plan_consumer",
             [plan_state = plan_state_](
-                talos::spmc<fcs::L4::GimbalPlan, fcs::GimbalPlanChannelTopic> plan_in) {
+                talos::spmc<fcs::L4::ControlIntent, fcs::ControlIntentChannelTopic> plan_in) {
                 const auto plan = plan_in.read_current();
                 if (!plan) {
                     return;
@@ -323,7 +323,7 @@ public:
         }
     }
 
-    std::optional<fcs::L4::GimbalPlan>
+    std::optional<fcs::L4::ControlIntent>
         wait_for_plan(std::chrono::milliseconds timeout = 500ms) const {
         const auto deadline = std::chrono::steady_clock::now() + timeout;
         while (std::chrono::steady_clock::now() < deadline) {
@@ -376,17 +376,27 @@ public:
         return last_snapshot;
     }
 
-    std::optional<fcs::L4::GimbalPlan> wait_for_armor_plan_after(
+    std::optional<fcs::L4::ControlIntent> wait_for_armor_plan_after(
         uint64_t min_timestamp_ns, std::chrono::milliseconds timeout = 750ms) const {
         const auto deadline = std::chrono::steady_clock::now() + timeout;
-        std::optional<fcs::L4::GimbalPlan> last_plan;
+        std::optional<fcs::L4::ControlIntent> last_plan;
         while (std::chrono::steady_clock::now() < deadline) {
             {
                 std::scoped_lock lock(plan_state_->mutex);
-                if (plan_state_->plan.has_value()
-                    && plan_state_->plan->timestamp_ns > min_timestamp_ns) {
-                    if (plan_state_->plan->source == fcs::L4::GimbalPlanSource::Armor
-                        && plan_state_->plan->distance >= 0.0) {
+                if (plan_state_->plan.has_value()) {
+                    // Check timestamp and that we have a Track or Shot (not Hold).
+                    const bool is_armor = std::visit(
+                        [](const auto& cmd) {
+                            using T = std::decay_t<decltype(cmd)>;
+                            if constexpr (std::is_same_v<T, fcs::L4::TrackCommand>)
+                                return cmd.timestamp_ns > min_timestamp_ns;
+                            if constexpr (std::is_same_v<T, fcs::L4::ShotCommand>)
+                                return cmd.timestamp_ns > min_timestamp_ns;
+                            if constexpr (std::is_same_v<T, fcs::L4::HoldCommand>)
+                                return false;
+                        },
+                        *plan_state_->plan);
+                    if (is_armor) {
                         last_plan = plan_state_->plan;
                     }
                 }
@@ -438,7 +448,7 @@ private:
 
     struct PlanState {
         mutable std::mutex mutex;
-        std::optional<fcs::L4::GimbalPlan> plan;
+        std::optional<fcs::L4::ControlIntent> plan;
     };
 
     struct SelectedTargetState {

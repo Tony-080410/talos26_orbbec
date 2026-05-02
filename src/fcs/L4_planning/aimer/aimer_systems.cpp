@@ -9,7 +9,8 @@
 #include "L4_planning/aimer/types.hpp"
 #include "L4_planning/common/transform_utils.hpp"
 #include "L4_planning/config.hpp"
-#include "L4_planning/gimbal_planner/types.hpp"
+#include "L4_planning/control_intent.hpp"
+#include "L4_planning/plan_source.hpp"
 #include "L4_planning/selected_target_snapshot.hpp"
 #include "L4_planning/target_selection_trace.hpp"
 #include "L4_planning/trajectory_builder.hpp"
@@ -381,7 +382,6 @@ void register_aimer_systems(talos::Scheduler& scheduler, L4Config&& config) {
          ldm_state_cache      = std::optional<L3::ldm::LdmState>{},
          rune_state_cache     = std::optional<energy_meter::EnergyMeterState>{},
          rune_last_aim_angles = std::optional<std::pair<double, double>>{}](
-
             talos::res<L4Config> cfg, talos::res<Aimer> aimer,
             core::trajectory::trajectory_solver solver,
             core::trajectory::bullet_speed bullet_speed_,
@@ -392,7 +392,7 @@ void register_aimer_systems(talos::Scheduler& scheduler, L4Config&& config) {
                 selected_target_out,
             talos::spmc_mut<TargetSelectionTrace, TargetSelectionTraceChannelTopic>
                 target_selection_out,
-            talos::spmc_mut<GimbalPlan, GimbalPlanChannelTopic> aimer_out) mutable {
+            talos::spmc_mut<ControlIntent, ControlIntentChannelTopic> control_out) mutable {
             std::expected<TargetPrediction, std::string> aim_result = std::unexpected("none");
 
             const uint64_t current_ns = fcs::clock::now_ns();
@@ -623,44 +623,45 @@ void register_aimer_systems(talos::Scheduler& scheduler, L4Config&& config) {
                     selected_target.tracker = selected_candidate->tracker;
                 }
 
-                GimbalPlan plan;
-                plan.timestamp_ns            = aim_result->timestamp_ns;
-                plan.predicted_roll          = aim_result->predicted_roll;
-                plan.yaw                     = aim_result->aim_yaw;
-                plan.pitch                   = aim_result->aim_pitch;
-                plan.aim_phase               = aim_result->aim_phase;
-                plan.selected_armor_id       = aim_result->selected_armor_id;
-                plan.rough_selected_armor_id = aim_result->rough_selected_armor_id;
-                plan.armor_type              = aim_result->armor_type;
-                plan.aim_yaw                 = aim_result->aim_yaw;
-                plan.aim_pitch               = aim_result->aim_pitch;
-                plan.distance                = aim_result->distance;
-                plan.predicted_future        = aim_result->predicted_future_ns;
-                plan.predicted_position      = aim_result->predicted_position;
-                plan.source                  = (aim_result->target_type == AimerTargetType::Rune)
-                                                 ? GimbalPlanSource::Rune
-                                                 : GimbalPlanSource::Armor;
-                const bool is_ldm_target     = aim_result->target_type == AimerTargetType::Ldm
+                const bool is_ldm_target = aim_result->target_type == AimerTargetType::Ldm
                                         && ldm_state_cache.has_value()
                                         && ldm_state_cache->is_tracking();
-                if (selected_candidate && selected_candidate->tracker.is_tracking()) {
-                    PlannerSeed seed;
-                    seed.state_timestamp_ns    = selected_candidate->tracker.timestamp_ns;
-                    seed.target_jumped         = selected_candidate->tracker.target_jumped;
-                    seed.tracker_last_armor_id = selected_candidate->tracker.last_armor_id;
-                    seed.aim_phase             = aim_result->aim_phase;
-                    seed.selected_armor_id     = aim_result->selected_armor_id;
-                    seed.armor_type            = aim_result->armor_type;
-                    if (const auto* robot_state = selected_candidate->tracker.robot_state()) {
-                        seed.state = *robot_state;
-                    } else if (
-                        const auto* outpost_state = selected_candidate->tracker.outpost_state()) {
-                        seed.state = *outpost_state;
-                    }
-                    if (!std::holds_alternative<std::monostate>(seed.state)) {
-                        plan.planner_seed = std::move(seed);
 
-                        // Build reference trajectory for L5 consumption
+                // Build ControlIntent: Track if trajectory built, Shot otherwise.
+                ControlIntent intent = [&]() -> ControlIntent {
+                    if (selected_candidate && selected_candidate->tracker.is_tracking()) {
+                        PlannerSeed seed;
+                        seed.state_timestamp_ns    = selected_candidate->tracker.timestamp_ns;
+                        seed.target_jumped         = selected_candidate->tracker.target_jumped;
+                        seed.tracker_last_armor_id = selected_candidate->tracker.last_armor_id;
+                        seed.aim_phase             = aim_result->aim_phase;
+                        seed.selected_armor_id     = aim_result->selected_armor_id;
+                        seed.armor_type            = aim_result->armor_type;
+                        if (const auto* rs = selected_candidate->tracker.robot_state()) {
+                            seed.state = *rs;
+                        } else if (const auto* os = selected_candidate->tracker.outpost_state()) {
+                            seed.state = *os;
+                        }
+                        if (!std::holds_alternative<std::monostate>(seed.state)) {
+                            const TrajectoryBuildContext build_ctx{
+                                .current_ns        = current_ns,
+                                .gimbal            = gimbal,
+                                .muzzle            = muzzle,
+                                .trajectory_solver = &solver_ref,
+                                .bullet_speed      = bullet_speed,
+                            };
+                            auto ref_traj = build_reference_trajectory(
+                                seed, *aimer, cfg->reference_trajectory, build_ctx);
+                            if (ref_traj) {
+                                return TrackCommand{
+                                    .timestamp_ns = aim_result->timestamp_ns,
+                                    .trajectory   = std::move(*ref_traj),
+                                };
+                            }
+                            SPDLOG_WARN(
+                                "Failed to build reference trajectory: {}", ref_traj.error());
+                        }
+                    } else if (is_ldm_target) {
                         const TrajectoryBuildContext build_ctx{
                             .current_ns        = current_ns,
                             .gimbal            = gimbal,
@@ -668,36 +669,29 @@ void register_aimer_systems(talos::Scheduler& scheduler, L4Config&& config) {
                             .trajectory_solver = &solver_ref,
                             .bullet_speed      = bullet_speed,
                         };
-                        auto ref_traj = build_reference_trajectory(
-                            *plan.planner_seed, *aimer, cfg->reference_trajectory, build_ctx);
+                        auto ref_traj = build_ldm_reference_trajectory(
+                            *ldm_state_cache, *aimer, cfg->reference_trajectory, build_ctx);
                         if (ref_traj) {
-                            plan.reference_trajectory = std::move(*ref_traj);
-                        } else {
-                            SPDLOG_WARN(
-                                "Failed to build reference trajectory: {}", ref_traj.error());
+                            return TrackCommand{
+                                .timestamp_ns = aim_result->timestamp_ns,
+                                .trajectory   = std::move(*ref_traj),
+                            };
                         }
-                    }
-                } else if (is_ldm_target) {
-                    // Build reference trajectory for LDM target
-                    const TrajectoryBuildContext build_ctx{
-                        .current_ns        = current_ns,
-                        .gimbal            = gimbal,
-                        .muzzle            = muzzle,
-                        .trajectory_solver = &solver_ref,
-                        .bullet_speed      = bullet_speed,
-                    };
-                    auto ref_traj = build_ldm_reference_trajectory(
-                        *ldm_state_cache, *aimer, cfg->reference_trajectory, build_ctx);
-                    if (ref_traj) {
-                        plan.reference_trajectory = std::move(*ref_traj);
-                    } else {
                         SPDLOG_WARN(
                             "Failed to build LDM reference trajectory: {}", ref_traj.error());
                     }
-                }
+                    // Have aim angles but no trajectory: direct shot.
+                    return ShotCommand{
+                        .timestamp_ns = aim_result->timestamp_ns,
+                        .yaw          = aim_result->aim_yaw,
+                        .pitch        = aim_result->aim_pitch,
+                        .distance     = aim_result->distance,
+                    };
+                }();
+
                 selected_target_out.write(std::move(selected_target));
                 target_selection_out.write(std::move(target_selection_trace));
-                aimer_out.write(std::move(plan));
+                control_out.write(std::move(intent));
             } else {
                 const uint64_t output_timestamp_ns = fcs::clock::now_ns();
                 SelectedTargetSnapshot selected_target;
@@ -709,19 +703,9 @@ void register_aimer_systems(talos::Scheduler& scheduler, L4Config&& config) {
                 } else {
                     selected_target_key.reset();
                 }
-                GimbalPlan plan;
-                plan.timestamp_ns = output_timestamp_ns;
-                plan.distance     = -1;
-                if (rune_last_aim_angles) {
-                    plan.yaw   = rune_last_aim_angles->first;
-                    plan.pitch = rune_last_aim_angles->second;
-                } else {
-                    plan.yaw   = cur_yaw;
-                    plan.pitch = cur_pitch;
-                }
                 selected_target_out.write(std::move(selected_target));
                 target_selection_out.write(std::move(target_selection_trace));
-                aimer_out.write(std::move(plan));
+                control_out.write(HoldCommand{.timestamp_ns = output_timestamp_ns});
             }
         });
 
