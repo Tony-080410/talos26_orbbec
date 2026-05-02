@@ -1,6 +1,6 @@
 backend_type = "Traditional"  # Options: "Traditional", "OpenVINO", "OpenVINOTup", "TensorRT", "Axera"
 detect_color = "Blue"
-capabilities = ["Ldm", "Armor"]
+capabilities = ["rune"]
 
 # Required if backend_type = "traditional"
 [traditional]
