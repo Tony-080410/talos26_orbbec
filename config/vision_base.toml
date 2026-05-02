@@ -313,19 +313,6 @@ min_target_light_aspect_ratio = 0.5
 max_target_light_aspect_ratio = 1.5
 min_target_roi_area = 100.0
 
-[energy_meter]
-min_fit_time = 0
-
-# Angle fitter configuration (Ceres+RANSAC model fitting, migrated from rm_power_rune)
-[energy_meter.fitter]
-min_fit_data_size = 20
-max_fit_data_size = 1200
-# Initial big-rune parameters [a, omega, t0, b, c]
-# Model: θ(t) = -a·cos(ω·(t+t0)) + b·t + c
-initial_params = [0.912, 1.942, 0.0, 1.178, 0.0]
-small_rune_rotation_speed = 1.04719
-direction_threshold = 5
-direction_angle_threshold = 0.015
 
 [energy_meter.tracker]
 lost_thres = 10
@@ -333,13 +320,3 @@ tracking_thres = 3
 # Mahalanobis distance-squared gate for observation-to-track association
 matcher_gate = 25.0
 
-[energy_meter.tracker.energy_params]
-sigma_xy = 0.1
-sigma_z = 0.1
-sigma_roll = 1.0
-sigma_yaw=1.0
-sigma_pitch=0.0
-# Initial radius guess (m)
-radius = 0.7
-meas_dist_k = 0.43
-R_scale=0.01

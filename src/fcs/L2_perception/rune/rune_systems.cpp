@@ -266,24 +266,6 @@ void register_rune_detection_systems(talos::Scheduler& scheduler, RuneDetectorCo
             out.valid                = true;
             out.r_center_odom        = odom_T_center;
 
-            if (detector->targets.size() == 1) {
-                out.r_center_odom = odom_T_center;
-
-            } else if (detector->targets.size() == 2) {
-
-                const Eigen::Vector3d offset =
-                    odom_T_center.rotation() * Eigen::Vector3d(0.18, 0, 0);
-
-                Eigen::Vector3d t = odom_T_center.translation();
-                t -= offset;
-
-                auto odom_T_rcenter =
-                    fast_tf::TransformMatrixd<fyt::rune::rune, fast_tf::odom>::from_rt(
-                        odom_T_center.rotation(), t);
-
-                out.r_center_odom = odom_T_rcenter;
-            }
-
             // 传递所有检测到的靶（大符 2 个，小符 1 个），L3 靶数投票依赖 .size()
             // 叶片在竖直平面 (Y-Z) 内绕水平轴 (X) 旋转
             const double r2pancenter = fyt::rune::RUNE_R2PANCENTER;
