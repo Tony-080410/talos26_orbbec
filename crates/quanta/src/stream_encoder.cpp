@@ -88,7 +88,8 @@ public:
 
         // Pull filtered frames and encode
         while (av_buffersink_get_frame(chain_.sink_ctx, filt_frame_.get()) >= 0) {
-            auto r = encode_filtered_frame(filt_frame_.get());
+            const bool force_keyframe = std::exchange(force_keyframe_requested_, false);
+            auto r                    = encode_filtered_frame(filt_frame_.get(), force_keyframe);
             if (!r)
                 return r;
             av_frame_unref(filt_frame_.get());
@@ -96,6 +97,8 @@ public:
 
         return {};
     }
+
+    void request_keyframe() { force_keyframe_requested_ = true; }
 
     std::optional<EncodedPacket> poll_packet() {
         if (packet_queue_.empty())
@@ -129,10 +132,15 @@ public:
     [[nodiscard]] std::pair<int, int> dimensions() const { return {out_width_, out_height_}; }
 
 private:
-    std::expected<void, std::string> encode_filtered_frame(AVFrame* frame) {
-        frame->flags &= ~AV_FRAME_FLAG_KEY;
-        frame->pict_type = AV_PICTURE_TYPE_NONE;
-        int ret          = avcodec_send_frame(enc_ctx_.get(), frame);
+    std::expected<void, std::string> encode_filtered_frame(AVFrame* frame, bool force_keyframe) {
+        if (force_keyframe) {
+            frame->flags |= AV_FRAME_FLAG_KEY;
+            frame->pict_type = AV_PICTURE_TYPE_I;
+        } else {
+            frame->flags &= ~AV_FRAME_FLAG_KEY;
+            frame->pict_type = AV_PICTURE_TYPE_NONE;
+        }
+        int ret = avcodec_send_frame(enc_ctx_.get(), frame);
         if (ret < 0)
             return std::unexpected("Encode send: " + averr(ret));
 
@@ -233,8 +241,9 @@ private:
     FramePtr filt_frame_;
     PacketPtr enc_pkt_;
     std::deque<EncodedPacket> packet_queue_;
-    int input_row_bytes_   = 0;
-    size_t next_bgr_frame_ = 0;
+    int input_row_bytes_           = 0;
+    size_t next_bgr_frame_         = 0;
+    bool force_keyframe_requested_ = false;
 };
 
 // ===========================================================================
@@ -261,6 +270,8 @@ std::expected<void, std::string>
     StreamEncoder::push_frame(const uint8_t* data, int linesize, int64_t pts) noexcept {
     return impl_->push_frame(data, linesize, pts);
 }
+
+void StreamEncoder::request_keyframe() noexcept { impl_->request_keyframe(); }
 
 std::optional<EncodedPacket> StreamEncoder::poll_packet() { return impl_->poll_packet(); }
 

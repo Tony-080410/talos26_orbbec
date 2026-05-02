@@ -23,7 +23,7 @@ namespace quanta {
 struct FilterParams {
     bool enable = true;
     // Saturation: applied after scale, before denoise. 1.0=full, 0.75=75%.
-    double saturation = 0.4;
+    double saturation = 0.9;
     // hqdn3d — extreme spatial denoise: annihilate ALL texture, leave only structure.
     // Zero temporal: robot camera is mostly static between frames, temporal denoise adds latency.
     double denoise_luma   = 0.0;

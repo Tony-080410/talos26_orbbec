@@ -51,6 +51,8 @@ public:
     std::expected<void, std::string>
         push_frame(const uint8_t* data, int linesize, int64_t pts) noexcept;
 
+    void request_keyframe() noexcept;
+
     std::optional<EncodedPacket> poll_packet();
 
     std::expected<void, std::string> flush() noexcept;

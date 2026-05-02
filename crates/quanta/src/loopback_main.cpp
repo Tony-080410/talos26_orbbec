@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <deque>
 #include <random>
 #include <vector>
 
@@ -59,6 +60,26 @@ uint64_t real_now_ns() {
         std::chrono::duration_cast<std::chrono::nanoseconds>(now.time_since_epoch()).count());
 }
 
+uint64_t ms_to_ns(uint64_t ms) { return ms * 1'000'000ULL; }
+
+void print_stream_config(const quanta::StreamTransportConfig& config) {
+    std::fprintf(
+        stderr,
+        "[loopback] stream config: deadline=%llums/%llums/%llums clean_threshold=%llu "
+        "cooldown=%llums max_req=%llu/%llums motion_hold=%lluf/%dpx prefilter=%lluf "
+        "temporal=1/%d\n",
+        static_cast<unsigned long long>(config.soft_deadline_ms),
+        static_cast<unsigned long long>(config.hard_deadline_ms),
+        static_cast<unsigned long long>(config.display_deadline_ms),
+        static_cast<unsigned long long>(config.clean_request_freeze_threshold),
+        static_cast<unsigned long long>(config.clean_request_cooldown_ms),
+        static_cast<unsigned long long>(config.max_clean_requests_per_window),
+        static_cast<unsigned long long>(config.clean_request_window_ms),
+        static_cast<unsigned long long>(config.motion_hold_max_frames), config.motion_hold_max_px,
+        static_cast<unsigned long long>(config.prefilter_window_frames),
+        1 << config.prefilter_temporal_shift);
+}
+
 template <class Fn>
 uint64_t run_and_measure_ns(Fn&& fn) {
     const uint64_t start = real_now_ns();
@@ -91,6 +112,7 @@ int main(int argc, char* argv[]) {
         .max_stream_fps = encode_params.framerate,
         .now_ns         = clock_fn,
     };
+    print_stream_config(transport_config);
     auto sender_result =
         quanta::StreamSender::create(encode_params, transport_config, kSrcWidth, kSrcHeight);
     if (!sender_result) {
@@ -109,18 +131,71 @@ int main(int argc, char* argv[]) {
     std::vector<uint8_t> frame_buf(static_cast<size_t>(linesize * kSrcHeight));
     std::vector<double> latencies_ms;
 
-    uint64_t next_capture_ns    = virtual_now_ns;
-    uint64_t next_transport_ns  = virtual_now_ns;
-    const uint64_t sim_start_ns = virtual_now_ns;
-    int frames_generated        = 0;
-    int frames_decoded          = 0;
-    double total_generate_ms    = 0.0;
-    double total_submit_ms      = 0.0;
-    double total_poll_ms        = 0.0;
-    double total_receive_ms     = 0.0;
-    int dropped_chunks          = 0;
+    uint64_t next_capture_ns           = virtual_now_ns;
+    uint64_t next_transport_ns         = virtual_now_ns;
+    const uint64_t sim_start_ns        = virtual_now_ns;
+    int frames_generated               = 0;
+    int frames_decoded                 = 0;
+    double total_generate_ms           = 0.0;
+    double total_submit_ms             = 0.0;
+    double total_poll_ms               = 0.0;
+    double total_receive_ms            = 0.0;
+    int dropped_chunks                 = 0;
+    uint64_t last_bad_link_substituted = 0;
+    uint64_t last_bad_link_bad_p       = 0;
+    uint64_t last_clean_request_ns     = 0;
+    uint64_t waiting_clean_baseline    = 0;
+    bool waiting_clean                 = false;
+    std::deque<uint64_t> clean_request_times_ns;
     std::mt19937 rng{0x51525354u};
     std::uniform_real_distribution<double> loss_dist{0.0, 1.0};
+
+    auto maybe_notify_bad_link = [&] {
+        const auto receiver_stats = receiver.stats();
+        if (receiver_stats.substituted_frames != last_bad_link_substituted
+            || receiver_stats.bad_p_frames != last_bad_link_bad_p) {
+            sender.notify_bad_link();
+            last_bad_link_substituted = receiver_stats.substituted_frames;
+            last_bad_link_bad_p       = receiver_stats.bad_p_frames;
+        }
+    };
+
+    auto maybe_request_clean_frame = [&] {
+        const auto receiver_stats = receiver.stats();
+        if (waiting_clean && receiver_stats.clean_frames > waiting_clean_baseline) {
+            waiting_clean = false;
+        } else if (
+            waiting_clean && last_clean_request_ns != 0
+            && virtual_now_ns - last_clean_request_ns
+                   >= ms_to_ns(transport_config.clean_request_cooldown_ms)) {
+            waiting_clean = false;
+        }
+        if (receiver_stats.freeze_run_length == 0)
+            return;
+        if (waiting_clean)
+            return;
+        if (receiver_stats.freeze_run_length < transport_config.clean_request_freeze_threshold)
+            return;
+        if (last_clean_request_ns != 0
+            && virtual_now_ns - last_clean_request_ns
+                   < ms_to_ns(transport_config.clean_request_cooldown_ms)) {
+            return;
+        }
+
+        const uint64_t request_window_ns = ms_to_ns(transport_config.clean_request_window_ms);
+        while (!clean_request_times_ns.empty()
+               && virtual_now_ns - clean_request_times_ns.front() > request_window_ns) {
+            clean_request_times_ns.pop_front();
+        }
+        if (clean_request_times_ns.size() >= transport_config.max_clean_requests_per_window)
+            return;
+
+        sender.request_clean_frame();
+        last_clean_request_ns  = virtual_now_ns;
+        waiting_clean          = true;
+        waiting_clean_baseline = receiver_stats.clean_frames;
+        clean_request_times_ns.push_back(virtual_now_ns);
+    };
 
     while (frames_generated < input_frames || sender.stats().queued_chunks > 0
            || sender.stats().has_pending_frame || receiver.stats().queued_frames > 0) {
@@ -183,6 +258,8 @@ int main(int argc, char* argv[]) {
             frames_decoded++;
             latencies_ms.push_back(static_cast<double>(frame->end_to_end_latency_ns) / 1'000'000.0);
         }
+        maybe_notify_bad_link();
+        maybe_request_clean_frame();
 
         next_transport_ns += transport_period_ns;
     }
@@ -205,10 +282,21 @@ int main(int argc, char* argv[]) {
         static_cast<unsigned long long>(sender_stats.frames_dropped));
     std::fprintf(
         stderr, "[loopback] Chunks/frame: %.2f | link usage: %.1f kbps\n",
-        sender_stats.frames_encoded > 0
-            ? static_cast<double>(sender_stats.chunks_emitted) / sender_stats.frames_encoded
-            : 0.0,
-        link_kbps);
+        sender_stats.chunks_per_frame, link_kbps);
+    std::fprintf(
+        stderr,
+        "[loopback] Transport: emitted=%llu repair=%llu maxq=%zu send_age_p99=%.1f ms "
+        "tail_drop=%llu expired_chunks=%llu expired_frames=%llu force_idr=%llu/%llu "
+        "sched_idr=%llu\n",
+        static_cast<unsigned long long>(sender_stats.chunks_emitted),
+        static_cast<unsigned long long>(sender_stats.repair_chunks_emitted),
+        sender_stats.max_queued_chunks_seen, sender_stats.p99_send_age_ms,
+        static_cast<unsigned long long>(sender_stats.old_frame_tail_dropped),
+        static_cast<unsigned long long>(sender_stats.expired_chunks_dropped),
+        static_cast<unsigned long long>(sender_stats.expired_frames_dropped),
+        static_cast<unsigned long long>(sender_stats.force_idr_count),
+        static_cast<unsigned long long>(sender_stats.force_idr_requests),
+        static_cast<unsigned long long>(sender_stats.scheduled_idr_count));
     std::fprintf(
         stderr, "[loopback] Dropped chunks: %d / %llu (%.1f%% simulated)\n", dropped_chunks,
         static_cast<unsigned long long>(sender_stats.chunks_emitted), packet_loss_rate * 100.0);
@@ -225,10 +313,36 @@ int main(int argc, char* argv[]) {
             : 0.0);
     std::fprintf(
         stderr,
-        "[loopback] Latency p50=%.1f ms p75=%.1f ms p95=%.1f ms max=%.1f ms dec_p75=%.1f ms\n",
+        "[loopback] Latency p50=%.1f ms p75=%.1f ms p95=%.1f ms p99=%.1f ms max=%.1f ms "
+        "dec_p75=%.1f ms\n",
         percentile_ms(latencies_ms, 0.50), receiver_stats.p75_latency_ms,
-        percentile_ms(latencies_ms, 0.95), receiver_stats.max_latency_ns / 1'000'000.0,
-        receiver_stats.p75_decode_ms);
+        receiver_stats.p95_latency_ms, receiver_stats.p99_latency_ms,
+        receiver_stats.max_latency_ns / 1'000'000.0, receiver_stats.p75_decode_ms);
+    std::fprintf(
+        stderr,
+        "[loopback] Frame health: displayed=%llu good=%llu substituted=%llu bad=%llu bad_p=%llu "
+        "idr=%llu freeze=%llu max_freeze=%llu recovery_p95=%.1ff/%.1fms gap_p99=%.1f ms "
+        "display_deadline_drop=%llu\n",
+        static_cast<unsigned long long>(receiver_stats.frames_displayed),
+        static_cast<unsigned long long>(receiver_stats.good_frames),
+        static_cast<unsigned long long>(receiver_stats.substituted_frames),
+        static_cast<unsigned long long>(receiver_stats.bad_frames),
+        static_cast<unsigned long long>(receiver_stats.bad_p_frames),
+        static_cast<unsigned long long>(receiver_stats.idr_frames),
+        static_cast<unsigned long long>(receiver_stats.freeze_run_length),
+        static_cast<unsigned long long>(receiver_stats.max_freeze_run_length),
+        receiver_stats.recovery_frames_p95, receiver_stats.recovery_ms_p95,
+        receiver_stats.p99_frame_gap_ms,
+        static_cast<unsigned long long>(receiver_stats.display_deadline_drops));
+    std::fprintf(
+        stderr,
+        "[loopback] Substitute reason: missing=%llu decode=%llu deadline=%llu dependency=%llu "
+        "recovery_runs=%llu\n",
+        static_cast<unsigned long long>(receiver_stats.substitute_missing_chunk),
+        static_cast<unsigned long long>(receiver_stats.substitute_decode_error),
+        static_cast<unsigned long long>(receiver_stats.substitute_display_deadline),
+        static_cast<unsigned long long>(receiver_stats.substitute_dependency_dirty),
+        static_cast<unsigned long long>(receiver_stats.recovery_run_count));
 
     return frames_decoded > 0 ? 0 : 1;
 }

@@ -64,6 +64,8 @@ struct TransportPipe {
     std::mutex mutex;
     std::condition_variable cv;
     std::deque<std::vector<uint8_t>> chunks;
+    std::atomic<uint64_t> bad_link_events{0};
+    std::atomic<uint64_t> clean_frame_requests{0};
     bool sender_finished = false;
 };
 
@@ -71,6 +73,26 @@ uint64_t now_ns() {
     const auto now = SteadyClock::now();
     return static_cast<uint64_t>(
         std::chrono::duration_cast<std::chrono::nanoseconds>(now.time_since_epoch()).count());
+}
+
+uint64_t ms_to_ns(uint64_t ms) { return ms * 1'000'000ULL; }
+
+void print_stream_config(const quanta::StreamTransportConfig& config) {
+    std::fprintf(
+        stderr,
+        "[demo] stream config: deadline=%llums/%llums/%llums clean_threshold=%llu "
+        "cooldown=%llums max_req=%llu/%llums motion_hold=%lluf/%dpx prefilter=%lluf "
+        "temporal=1/%d\n",
+        static_cast<unsigned long long>(config.soft_deadline_ms),
+        static_cast<unsigned long long>(config.hard_deadline_ms),
+        static_cast<unsigned long long>(config.display_deadline_ms),
+        static_cast<unsigned long long>(config.clean_request_freeze_threshold),
+        static_cast<unsigned long long>(config.clean_request_cooldown_ms),
+        static_cast<unsigned long long>(config.max_clean_requests_per_window),
+        static_cast<unsigned long long>(config.clean_request_window_ms),
+        static_cast<unsigned long long>(config.motion_hold_max_frames), config.motion_hold_max_px,
+        static_cast<unsigned long long>(config.prefilter_window_frames),
+        1 << config.prefilter_temporal_shift);
 }
 
 double sanitize_fps(double fps) { return std::isfinite(fps) && fps > 0.0 ? fps : 30.0; }
@@ -245,16 +267,20 @@ cv::Mat build_canvas(
         canvas,
         {
             std::format(
-                "gen={} dec={} drp={}", generated_frames, decoded_frames,
-                sender_stats.frames_dropped),
-            std::format("queue={} link={:.1f}kbps", sender_stats.queued_chunks, link_kbps),
+                "gen={} disp={} sub={} bad={}", generated_frames, decoded_frames,
+                receiver_stats.substituted_frames, receiver_stats.bad_frames),
             std::format(
-                "lst={:.1f}ms p75={:.1f}ms", receiver_stats.last_latency_ns / 1000000.0,
-                receiver_stats.p75_latency_ms),
+                "queue={} maxq={} link={:.1f}kbps age99={:.0f}ms", sender_stats.queued_chunks,
+                sender_stats.max_queued_chunks_seen, link_kbps, sender_stats.p99_send_age_ms),
             std::format(
-                "max={:.1f}ms d75={:.1f}ms rst={} err={}",
-                receiver_stats.max_latency_ns / 1000000.0, receiver_stats.p75_decode_ms,
-                receiver_stats.assembly_resets, receiver_stats.decode_errors),
+                "lat p75={:.0f} p95={:.0f} p99={:.0f} max={:.0f}ms", receiver_stats.p75_latency_ms,
+                receiver_stats.p95_latency_ms, receiver_stats.p99_latency_ms,
+                receiver_stats.max_latency_ns / 1000000.0),
+            std::format(
+                "freeze={} max={} rec95={:.0f}f/{:.0f}ms gap99={:.0f}ms",
+                receiver_stats.freeze_run_length, receiver_stats.max_freeze_run_length,
+                receiver_stats.recovery_frames_p95, receiver_stats.recovery_ms_p95,
+                receiver_stats.p99_frame_gap_ms),
             std::format(
                 "loss={} ({:.0f}%)  rate={:.0f}%", dropped_chunks, simulated_loss_pct,
                 kPacketLossRate * 100.0),
@@ -268,8 +294,16 @@ cv::Mat build_canvas(
                 "{}B@{}Hz {}x{}", config.mtu_bytes, config.transport_hz, encoded_size.width,
                 encoded_size.height),
             std::format(
-                "emit={} asm={} dec={:.1f}", sender_stats.chunks_emitted,
-                receiver_stats.frames_reassembled, displayed_fps),
+                "emit={} repair={} cpf={:.2f}", sender_stats.chunks_emitted,
+                sender_stats.repair_chunks_emitted, sender_stats.chunks_per_frame),
+            std::format(
+                "idr={} force={}/{} sched={} disp={:.1f}", receiver_stats.idr_frames,
+                sender_stats.force_idr_count, sender_stats.force_idr_requests,
+                sender_stats.scheduled_idr_count, displayed_fps),
+            std::format(
+                "miss={} dec={} dep={} tail={}", receiver_stats.substitute_missing_chunk,
+                receiver_stats.substitute_decode_error, receiver_stats.substitute_dependency_dirty,
+                sender_stats.old_frame_tail_dropped),
             std::format("src={:.2f} push={:.2f} ctrl: q / esc", source_fps, stream_fps),
         },
         {canvas.cols / 2 + 24, 32}, 0.5);
@@ -341,6 +375,7 @@ int main(int argc, char* argv[]) {
         stderr, "[demo] source %.2ffps -> stream %dfps, %zuB@%dHz, target %d bps, loss %.0f%%\n",
         source_fps, stream_fps_int, transport_config.mtu_bytes, transport_config.transport_hz,
         encode_params.target_bitrate, kPacketLossRate * 100.0);
+    print_stream_config(transport_config);
 
     DemoState state;
     state.latest_source = first_frame.clone();
@@ -367,14 +402,34 @@ int main(int argc, char* argv[]) {
             return;
         }
 
-        auto next_capture_tp   = SteadyClock::now();
-        auto next_transport_tp = next_capture_tp;
-        bool input_drained     = false;
-        int generated_frames   = 0;
+        auto next_capture_tp          = SteadyClock::now();
+        auto next_transport_tp        = next_capture_tp;
+        bool input_drained            = false;
+        int generated_frames          = 0;
+        uint64_t bad_link_events_seen = 0;
+        uint64_t clean_requests_seen  = 0;
+
+        auto consume_bad_link_events = [&] {
+            const uint64_t events = pipe.bad_link_events.load(std::memory_order_relaxed);
+            while (bad_link_events_seen < events) {
+                sender.notify_bad_link();
+                bad_link_events_seen++;
+            }
+        };
+
+        auto consume_clean_frame_requests = [&] {
+            const uint64_t requests = pipe.clean_frame_requests.load(std::memory_order_relaxed);
+            while (clean_requests_seen < requests) {
+                sender.request_clean_frame();
+                clean_requests_seen++;
+            }
+        };
 
         while (!stop_requested.load()) {
             bool did_work      = false;
             const auto current = SteadyClock::now();
+            consume_bad_link_events();
+            consume_clean_frame_requests();
 
             if (!input_drained && (frame_limit == 0 || generated_frames < frame_limit)
                 && current >= next_capture_tp) {
@@ -459,9 +514,63 @@ int main(int argc, char* argv[]) {
     });
 
     std::thread receiver_thread([&, receiver = std::move(receiver)]() mutable {
-        int decoded_frames = 0;
+        int decoded_frames                 = 0;
+        uint64_t last_bad_link_substituted = 0;
+        uint64_t last_bad_link_bad_p       = 0;
+        uint64_t last_clean_request_ns     = 0;
+        uint64_t waiting_clean_baseline    = 0;
+        bool waiting_clean                 = false;
+        std::deque<uint64_t> clean_request_times_ns;
         std::mt19937 rng{std::random_device{}()};
         std::uniform_real_distribution<double> loss_dist{0.0, 1.0};
+
+        auto maybe_notify_bad_link = [&] {
+            const auto receiver_stats = receiver.stats();
+            if (receiver_stats.substituted_frames != last_bad_link_substituted
+                || receiver_stats.bad_p_frames != last_bad_link_bad_p) {
+                pipe.bad_link_events.fetch_add(1, std::memory_order_relaxed);
+                last_bad_link_substituted = receiver_stats.substituted_frames;
+                last_bad_link_bad_p       = receiver_stats.bad_p_frames;
+            }
+        };
+
+        auto maybe_request_clean_frame = [&] {
+            const auto receiver_stats = receiver.stats();
+            const uint64_t current_ns = now_ns();
+            if (waiting_clean && receiver_stats.clean_frames > waiting_clean_baseline) {
+                waiting_clean = false;
+            } else if (
+                waiting_clean && last_clean_request_ns != 0
+                && current_ns - last_clean_request_ns
+                       >= ms_to_ns(transport_config.clean_request_cooldown_ms)) {
+                waiting_clean = false;
+            }
+            if (receiver_stats.freeze_run_length == 0)
+                return;
+            if (waiting_clean)
+                return;
+            if (receiver_stats.freeze_run_length < transport_config.clean_request_freeze_threshold)
+                return;
+            if (last_clean_request_ns != 0
+                && current_ns - last_clean_request_ns
+                       < ms_to_ns(transport_config.clean_request_cooldown_ms)) {
+                return;
+            }
+
+            const uint64_t request_window_ns = ms_to_ns(transport_config.clean_request_window_ms);
+            while (!clean_request_times_ns.empty()
+                   && current_ns - clean_request_times_ns.front() > request_window_ns) {
+                clean_request_times_ns.pop_front();
+            }
+            if (clean_request_times_ns.size() >= transport_config.max_clean_requests_per_window)
+                return;
+
+            pipe.clean_frame_requests.fetch_add(1, std::memory_order_relaxed);
+            last_clean_request_ns  = current_ns;
+            waiting_clean          = true;
+            waiting_clean_baseline = receiver_stats.clean_frames;
+            clean_request_times_ns.push_back(current_ns);
+        };
 
         auto publish_decoded_frames = [&]() {
             bool emitted = false;
@@ -484,6 +593,8 @@ int main(int argc, char* argv[]) {
                 state.receiver_stats = receiver.stats();
                 state.decoded_frames = decoded_frames;
             }
+            maybe_notify_bad_link();
+            maybe_request_clean_frame();
         };
 
         while (true) {
