@@ -32,9 +32,7 @@ struct KeyPoint {
 
 struct Light {
     Light() = default;
-    Light(
-        const std::vector<cv::Point>& cnt, const cv::Rect2f& globalRoi, const cv::Rect2f& localRoi,
-        const cv::Mat& image);
+    Light(const std::vector<cv::Point>& cnt, const cv::Rect2f& localRoi, const cv::Mat& image);
 
     double roundness;
     std::vector<cv::Point> contour;
@@ -84,9 +82,7 @@ struct Target {
 
 struct Arrow {
     Arrow() = default;
-    bool
-        set(const std::vector<Light>& points, const cv::Point2f& roi, const cv::Mat& image,
-            bool debug_mode = false);
+    bool set(const std::vector<Light>& points, bool debug_mode = false);
     std::vector<cv::Point> contour;
     cv::Point2f center;
     cv::Size2f size;

@@ -215,7 +215,6 @@ void register_rune_detection_systems(talos::Scheduler& scheduler, RuneDetectorCo
             dbg.status_code     = static_cast<uint32_t>(detector->status);
             dbg.arrows_count    = static_cast<uint32_t>(detector->arrows.size());
             dbg.targets_count   = static_cast<uint32_t>(detector->targets.size());
-            dbg.global_roi      = to_rectf(detector->globalRoi);
             dbg.center_roi      = to_rectf(detector->centerRoi);
             dbg.target_rois.reserve(detector->targetROIs.size());
             for (const auto& r : detector->targetROIs) {

@@ -40,7 +40,7 @@ std::expected<cv::Mat, std::string>
     cv::split(src, ch);               // B,G,R
     cv::Mat img;
 
-    cv::Mat blue{ch[0](globalRoi)}, red{ch[2](globalRoi)};
+    cv::Mat blue{ch[0]}, red{ch[2]};
     if (color == fcs::ArmorColor::Red) {
         cv::subtract(red, blue, img); // R - B
     } else if (color == fcs::ArmorColor::Blue) {
@@ -54,23 +54,6 @@ std::expected<cv::Mat, std::string>
     cv::threshold(img, rCenterImg, params_.rcenter_threshold, 255, cv::THRESH_BINARY);
 
     return img;
-}
-
-/*裁剪*/
-void resetRoi(cv::Rect2f& rect, int rows, int cols) {
-    // 调整左上角点的坐标
-    rect.x = rect.x < 0 ? 0 : rect.x >= cols ? cols - 1 : rect.x;
-    rect.y = rect.y < 0 ? 0 : rect.y >= rows ? rows - 1 : rect.y;
-    // 调整长宽
-    rect.width  = rect.x + rect.width >= cols ? cols - rect.x - 1 : rect.width;
-    rect.height = rect.y + rect.height >= rows ? rows - rect.y - 1 : rect.height;
-    // 此时可能出现 width 或 height 小于 0 的情况，因此需要将其置为 0
-    if (rect.width < 0) {
-        rect.width = 0;
-    }
-    if (rect.height < 0) {
-        rect.height = 0;
-    }
 }
 
 /*求点到两个点拟合出直线的距离*/
@@ -93,9 +76,7 @@ inline float pointLineDistance(const cv::Point2f& point, const cv::Vec4f& line) 
 }
 
 /*设置流水灯的参数*/
-bool Arrow::set(
-    const std::vector<Light>& lights, const cv::Point2f& roi, const cv::Mat& image,
-    bool debug_mode) {
+bool Arrow::set(const std::vector<Light>& lights, bool debug_mode) {
     std::vector<cv::Point2f> arrowPoints;
     double fillArea        = 0.0;
     double pointLineThresh = 0.0;
@@ -133,7 +114,7 @@ bool Arrow::set(
         return false;
     }
 
-    center = rotated.center + roi;
+    center = rotated.center;
     // 较长的一边为height，较短的一边为width
     size.height = rotated.size.height;
     size.width  = rotated.size.width;
@@ -169,7 +150,7 @@ void Target::set(const Light& l) {
 }
 
 Light::Light(
-    const std::vector<cv::Point>& cnt, const cv::Rect2f& globalRoi, const cv::Rect2f& localRoi,
+    const std::vector<cv::Point>& cnt, const cv::Rect2f& localRoi,
     [[maybe_unused]] const cv::Mat& image)
     : contour(cnt)
     , contourArea(cv::contourArea(cnt))
@@ -187,50 +168,7 @@ Light::Light(
     float len = cv::arcLength(contour, true);
     roundness = (4 * CV_PI * contourArea) / (len * len);
 
-    center += localRoi.tl() + globalRoi.tl();
-}
-
-void RuneDetector::setGlobalRoi() {
-    double widths[2];
-    for (std::size_t i = 0; i < targets.size(); i++) {
-        widths[i] =
-            params_.global_roi_length_ratio * 2 * cv::norm(targets[i].center - rcenter.center);
-    }
-    double width;
-    if (widths[1] == 0) {
-        width = widths[0];
-    } else {
-        width = (widths[0] + widths[1]) / 2;
-    }
-
-    globalRoi =
-        cv::Rect2f(rcenter.center.x - 0.5 * width, rcenter.center.y - 0.5 * width, width, width);
-
-    if (status != Status::SUCCESS) {
-        globalRoi = {0, 0, static_cast<float>(image_width_), static_cast<float>(image_height_)};
-    }
-    resetRoi(globalRoi, image_height_, image_width_);
-}
-
-// 计算两个角度的最小差值（-180~180 → 0~180）
-float calcMinAngleDiff(float angle1, float angle2) {
-    float diff = fabs(angle1 - angle2);
-    return diff > 180.0f ? 360.0f - diff : diff;
-}
-
-void maskRegion(
-    cv::Mat& mask, const cv::Rect2f& roi, const cv::Rect2f& globalRoi, const Arrow& arrow) {
-    // 1. 掩盖targetROI区域（全局坐标）
-    cv::Rect2f roiGlobal(roi.x + globalRoi.x, roi.y + globalRoi.y, roi.width, roi.height);
-    rectangle(mask, roiGlobal, cv::Scalar(0), cv::FILLED);
-    // 2. 掩盖arrow对应的旋转矩形区域
-    cv::RotatedRect arrowRect = arrow.rotated;
-    cv::Point2f arrowPts[4];
-    arrowRect.points(arrowPts);
-    std::vector<cv::Point> arrowContour;
-    for (auto& p : arrowPts)
-        arrowContour.push_back(p);
-    fillConvexPoly(mask, arrowContour, cv::Scalar(0));
+    center += localRoi.tl();
 }
 
 void RuneDetector::setLocalRoi() {
@@ -249,8 +187,8 @@ void RuneDetector::setLocalRoi() {
         float x = distance * std::cos(arrow.angle * CV_PI / 180.0f);
         float y = distance * std::sin(arrow.angle * CV_PI / 180.0f);
 
-        cv::Point2f centerUp{arrow.center.x - globalRoi.x + x, arrow.center.y - globalRoi.y + y};
-        cv::Point2f centerDown{arrow.center.x - x - globalRoi.x, arrow.center.y - globalRoi.y - y};
+        cv::Point2f centerUp{arrow.center.x + x, arrow.center.y + y};
+        cv::Point2f centerDown{arrow.center.x - x, arrow.center.y - y};
 
         cv::RotatedRect rectUp{centerUp, cv::Size(width, width), (float)arrow.angle};
         cv::RotatedRect rectDown{centerDown, cv::Size(width, width), (float)arrow.angle};
@@ -258,13 +196,6 @@ void RuneDetector::setLocalRoi() {
         std::array<std::array<cv::Point2f, 4>, 2> roiPoints;
         rectUp.points(roiPoints.at(0).begin());
         rectDown.points(roiPoints.at(1).begin());
-
-        for (auto& pts : roiPoints) {
-            for (auto& p : pts) {
-                p.x = std::clamp(p.x, 0.f, globalRoi.width);
-                p.y = std::clamp(p.y, 0.f, globalRoi.height);
-            }
-        }
 
         for (const auto& pts : roiPoints) {
             std::vector<cv::Point> ip;
@@ -277,9 +208,6 @@ void RuneDetector::setLocalRoi() {
         cv::Rect2f rcenterRoi(
             centerDown.x - width * 0.5f, centerDown.y - width * 0.5f, width, width);
 
-        resetRoi(targetRoi, globalRoi.height, globalRoi.width);
-        resetRoi(rcenterRoi, globalRoi.height, globalRoi.width);
-
         rawUpROIs.emplace_back(targetRoi);
         rawDownROIs.emplace_back(rcenterRoi);
     }
@@ -290,8 +218,7 @@ void RuneDetector::setLocalRoi() {
         cv::Rect2f upROI   = rawUpROIs[0];
         cv::Rect2f downROI = rawDownROIs[0];
 
-        cv::Rect2f downGlobal(
-            downROI.x + globalRoi.x, downROI.y + globalRoi.y, downROI.width, downROI.height);
+        cv::Rect2f downGlobal(downROI.x, downROI.y, downROI.width, downROI.height);
 
         if (inRect(rcenter.center, downGlobal)) {
             centerRoi  = downROI;
@@ -363,7 +290,6 @@ void RuneDetector::setLocalRoi() {
 
         // 生成正方形 ROI
         centerRoi = cv::Rect2f(center.x - side / 2, center.y - side / 2, side, side);
-        resetRoi(centerRoi, globalRoi.height, globalRoi.width);
 
         std::vector<cv::Rect2f> all = {A, B, C, D};
 
@@ -395,8 +321,7 @@ bool sameArrow(const Light& l1, const Light& l2, const fcs::rune::RuneDetectorCo
 }
 
 bool findArrow(
-    Arrow& arrow, const std::vector<Light>& lights, cv::Rect2f& roi, const cv::Mat& image,
-    const fcs::rune::RuneDetectorConfig& params) {
+    Arrow& arrow, const std::vector<Light>& lights, const fcs::rune::RuneDetectorConfig& params) {
     // 利用 cv::partition 匹配箭头
     std::vector<int> labels;
     cv::partition(lights, labels, [&params](const Light& l1, const Light& l2) {
@@ -455,7 +380,7 @@ bool findArrow(
         return false;
     }
 
-    if (!arrow.set(arrowLights, roi.tl(), image, params.debug_mode)) {
+    if (!arrow.set(arrowLights, params.debug_mode)) {
         if (params.debug_mode) {
             std::cerr << "[ERROR] findArrow: arrow.set() failed" << std::endl;
         }
@@ -485,13 +410,16 @@ bool findArrow(
 }
 
 void findArrowLights(
-    const cv::Mat& binary, std::vector<Light>& lights, const cv::Rect2f& roi,
+    const cv::Mat& binary, std::vector<Light>& lights,
     const fcs::rune::RuneDetectorConfig& params) {
+
+    cv::Rect2f roi = {0, 0, static_cast<float>(binary.cols), static_cast<float>(binary.rows)};
+
     // 寻找轮廓 - 只获取最外层轮廓
     std::vector<std::vector<cv::Point>> contours;
     cv::findContours(binary, contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
     for (const auto& contour : contours) {
-        Light light(contour, roi, roi, binary);
+        Light light(contour, roi, binary);
 
         if ((light.area >= params.min_arrow_light_area && light.area <= params.max_arrow_light_area)
             == false) {
@@ -509,16 +437,16 @@ void findArrowLights(
     }
 }
 
-bool RuneDetector::detectAllArrows(fcs::ArmorColor color) {
+bool RuneDetector::detectAllArrows() {
     cv::Mat binImg = arrowImg.clone(); // 二值图
     arrows.clear();
 
     while (true) {
         std::vector<Light> lights;
-        findArrowLights(binImg, lights, globalRoi, params_);
+        findArrowLights(binImg, lights, params_);
 
         Arrow found;
-        if (!findArrow(found, lights, globalRoi, binImg, params_))
+        if (!findArrow(found, lights, params_))
             break;                     // 找不到新箭头，退出循环
 
         arrows.push_back(found);
@@ -591,8 +519,8 @@ static std::vector<cv::Point> normalizeContour(const std::vector<cv::Point>& cnt
 }
 
 bool findCenterLights(
-    const cv::Mat& image, std::vector<Light>& lights, const cv::Rect2f& globalRoi,
-    const cv::Rect2f& localRoi, const fcs::rune::RuneDetectorConfig& params) {
+    const cv::Mat& image, std::vector<Light>& lights, const cv::Rect2f& localRoi,
+    const fcs::rune::RuneDetectorConfig& params) {
     lights.clear();
 
     cv::Mat R_mat;
@@ -635,7 +563,7 @@ bool findCenterLights(
     }
 
     if (!best_cnt.empty() && best_score < 0.3) {
-        Light light(best_cnt, globalRoi, localRoi, image);
+        Light light(best_cnt, localRoi, image);
         // 判断长宽比
         if (light.ratio > params.max_center_aspect_ratio) {
             if (params.debug_mode) {
@@ -664,11 +592,11 @@ bool findCenterLights(
 }
 
 /*寻找R中心*/
-bool RuneDetector::detectCenterR(fcs::ArmorColor color) {
+bool RuneDetector::detectCenterR() {
     cv::Mat imageCenter = (rCenterImg & localMask)(centerRoi);
     // 寻找中心灯条，可能是多个
     std::vector<Light> lights;
-    if (findCenterLights(imageCenter, lights, globalRoi, centerRoi, params_) == false) {
+    if (findCenterLights(imageCenter, lights, centerRoi, params_) == false) {
         if (params_.debug_mode) {
             std::cerr << "[ERROR] detectCenterR: findCenterLights failed" << std::endl;
         }
@@ -959,7 +887,7 @@ void RuneDetector::setKeyPoints() {
 
         std::vector<cv::Point> arrow_contour;
         for (auto cnt_pt : arrows[i].contour) {
-            cv::Point pt = cnt_pt - cv::Point(globalRoi.tl()) - cv::Point(targetROIs[i].tl());
+            cv::Point pt = cnt_pt - cv::Point(targetROIs[i].tl());
             arrow_contour.emplace_back(pt);
         }
         if (arrow_contour.size() < 3 || contours.empty()) {
@@ -980,8 +908,8 @@ void RuneDetector::setKeyPoints() {
             continue;
         }
 
-        cv::Point2f target_center = targets[i].center - globalRoi.tl() - targetROIs[i].tl();
-        cv::Point2f r_center      = rcenter.center - globalRoi.tl() - targetROIs[i].tl();
+        cv::Point2f target_center = targets[i].center - targetROIs[i].tl();
+        cv::Point2f r_center      = rcenter.center - targetROIs[i].tl();
         Target rune_target;
         bool ok = markRuneTarget(
             arrow_contour, r_center, target_center, contours, hierarchy, rune_target,
@@ -991,10 +919,10 @@ void RuneDetector::setKeyPoints() {
             targets[i].initKey = false;
             continue;
         }
-        targets[i].keypnt.lu = rune_target.keypnt.lu + globalRoi.tl() + targetROIs[i].tl();
-        targets[i].keypnt.ru = rune_target.keypnt.ru + globalRoi.tl() + targetROIs[i].tl();
-        targets[i].keypnt.rd = rune_target.keypnt.rd + globalRoi.tl() + targetROIs[i].tl();
-        targets[i].keypnt.ld = rune_target.keypnt.ld + globalRoi.tl() + targetROIs[i].tl();
+        targets[i].keypnt.lu = rune_target.keypnt.lu + targetROIs[i].tl();
+        targets[i].keypnt.ru = rune_target.keypnt.ru + targetROIs[i].tl();
+        targets[i].keypnt.rd = rune_target.keypnt.rd + targetROIs[i].tl();
+        targets[i].keypnt.ld = rune_target.keypnt.ld + targetROIs[i].tl();
 
         targets[i].initKey = true;
     }
@@ -1002,8 +930,8 @@ void RuneDetector::setKeyPoints() {
 
 /*通过面积，轮廓面积，长宽比，判断目标是否符合*/
 bool findTargetLights(
-    const cv::Mat& image, std::vector<Light>& lights, const cv::Rect2f& globalRoi,
-    const cv::Rect2f& localRoi, const fcs::rune::RuneDetectorConfig& params) {
+    const cv::Mat& image, std::vector<Light>& lights, const cv::Rect2f& localRoi,
+    const fcs::rune::RuneDetectorConfig& params) {
     lights.clear();
     // 寻找轮廓
     std::vector<std::vector<cv::Point>> contours;
@@ -1024,7 +952,7 @@ bool findTargetLights(
             continue;
         }
 
-        Light light(contours[i], globalRoi, localRoi, image);
+        Light light(contours[i], localRoi, image);
 
         if (light.ratio < params.min_target_light_aspect_ratio
             || light.ratio > params.max_target_light_aspect_ratio) {
@@ -1084,7 +1012,7 @@ bool findTarget(
     return true;
 }
 
-bool RuneDetector::detectAllTargets(fcs::ArmorColor color) {
+bool RuneDetector::detectAllTargets() {
     std::vector<Light> lights;
     targets.clear();
     bool reverse   = false;
@@ -1094,7 +1022,7 @@ bool RuneDetector::detectAllTargets(fcs::ArmorColor color) {
         cv::Mat detect       = (targetImg & localMask)(targetRoi);
 
     RESTART:
-        if (!findTargetLights(detect, lights, globalRoi, targetRoi, params_)) {
+        if (!findTargetLights(detect, lights, targetRoi, params_)) {
             if (!reverse) {
                 std::swap(detect, backup);
                 std::swap(targetRoi, centerRoi);
@@ -1123,7 +1051,7 @@ bool RuneDetector::detectAllTargets(fcs::ArmorColor color) {
             lights.clear();
             cv::Mat detect = (targetImg & localMask)(targetRoi);
 
-            if (findTargetLights(detect, lights, globalRoi, targetRoi, params_) == false) {
+            if (findTargetLights(detect, lights, targetRoi, params_) == false) {
                 continue;
             }
             Target t;
@@ -1147,7 +1075,6 @@ bool RuneDetector::detect(const cv::Mat& frame, fcs::ArmorColor color) {
     image_width_  = frame.cols;
     image_height_ = frame.rows;
 
-    globalRoi = {0, 0, static_cast<float>(image_width_), static_cast<float>(image_height_)};
     localMask = cv::Mat::zeros(image_height_, image_width_, CV_8U);
 
     bool reverse = false;
@@ -1156,7 +1083,7 @@ bool RuneDetector::detect(const cv::Mat& frame, fcs::ArmorColor color) {
         SPDLOG_ERROR("process_pictures: {}", result.error());
     }
 
-    if (detectAllArrows(color) == false) {
+    if (detectAllArrows() == false) {
         arrows.clear();
         targets.clear();
         rcenter.center = cv::Point2f(0, 0);
@@ -1177,7 +1104,7 @@ bool RuneDetector::detect(const cv::Mat& frame, fcs::ArmorColor color) {
 
 RESTART:
 
-    if (detectAllTargets(color) == false) {
+    if (detectAllTargets() == false) {
         targets.clear();
         status = Status::ARMOR_FAILURE;
         if (params_.debug_mode) {
@@ -1187,7 +1114,7 @@ RESTART:
     }
 
     if (targetROIs.size() == 1) {
-        if (detectCenterR(color) == false) {
+        if (detectCenterR() == false) {
             status         = Status::CENTER_FAILURE;
             rcenter.center = cv::Point2f(0, 0);
             if (params_.debug_mode) {
@@ -1202,7 +1129,7 @@ RESTART:
             }
         }
     } else {
-        if (detectCenterR(color) == false) {
+        if (detectCenterR() == false) {
             status         = Status::CENTER_FAILURE;
             rcenter.center = cv::Point2f(0, 0);
             if (params_.debug_mode) {

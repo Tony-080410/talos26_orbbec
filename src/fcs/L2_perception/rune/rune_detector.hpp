@@ -128,10 +128,8 @@ public:
 
     void setKeyPoints();
     void setLocalRoi();
-    void setGlobalRoi();
 
     cv::Mat localMask;
-    cv::Rect2f globalRoi;
     std::vector<cv::Rect2f> targetROIs;
     cv::Rect2f centerRoi;
     cv::Mat arrowImg;
@@ -145,11 +143,11 @@ public:
 
 private:
     std::expected<cv::Mat, std::string> processPictures(const cv::Mat& src, fcs::ArmorColor color);
-    bool isArrowRoiMatched(const Arrow& arrow, const cv::Rect2f& roi, const cv::Rect2f& globalRoi);
+    bool isArrowRoiMatched(const Arrow& arrow, const cv::Rect2f& roi);
 
-    bool detectCenterR(fcs::ArmorColor color);
-    bool detectAllArrows(fcs::ArmorColor color);
-    bool detectAllTargets(fcs::ArmorColor color);
+    bool detectCenterR();
+    bool detectAllArrows();
+    bool detectAllTargets();
 
     int image_width_;
     int image_height_;
