@@ -114,7 +114,7 @@ initial_sigma_velocity_body = 5.0
 initial_sigma_position = 0.20
 
 [naive_ldm.model]
-sigma_inert_omega = 10.0
+sigma_inert_omega = 50.0
 sigma_inert_accel = 50.0
 sigma_rot_x = 0.5
 sigma_rot_y = 1.5

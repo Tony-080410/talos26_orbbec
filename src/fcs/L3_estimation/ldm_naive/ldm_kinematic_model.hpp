@@ -4,6 +4,7 @@
 
 #include <Eigen/Core>
 
+#include <array>
 #include <cmath>
 #include <cstdint>
 #include <groups/SEn3.hpp>
@@ -34,9 +35,128 @@ struct LdmKinematic {
     using CovInnovation      = Eigen::Matrix<Scalar, NZ, NZ>;
     using InnovationJacobian = Eigen::Matrix<Scalar, NZ, NX>;
 
+    /// The symmetry group of the LDM octagonal prism.
+    ///
+    /// The LDM is a regular octagonal prism. Its pose observation has a C₈
+    /// face-index ambiguity: rotating the body frame by n·45° about body Y
+    /// gives an equivalent face assignment.
+    ///
+    /// Therefore the visual measurement is not a single R in SO(3), but an
+    /// equivalence class:
+    ///
+    ///     [R_obs] = { R_obs * Ry(n·π/4) | n = 0..7 }  ⊂  SO(3)/C₈
+    ///
+    /// The full prism cross-section has D₈ symmetry (8 rotations + 8
+    /// reflections), but reflections are improper (det=-1), not in SO(3).
+    /// Only the rotation subgroup C₈ ⊂ SO(3) is relevant for pose filtering.
+    ///
+    /// ## Why not D₈ or the octahedral group O?
+    ///
+    ///   • D₈ reflections are improper (det=-1) — not representable in SO(3).
+    ///   • The prism has one distinguished central axis (body Y).  The other
+    ///     two axes are defined by the face normal and the face-tangent
+    ///     direction, which are C₈-degenerate.  This is different from an
+    ///     octahedron (no distinguished axis, 24 chiral symmetries).
+    ///
+    /// ## Physical interpretation
+    ///
+    /// The camera can see which way the prism's central axis points, but
+    /// "which face is face 0" is ambiguous by n·45°.  Equivalently:
+    ///
+    ///     R  ≈  (central_axis_direction, roll_around_axis)
+    ///     roll_around_axis ～  roll_around_axis + n·π/4
+    static constexpr int kSymmetryCount = 8;
+
+    static const std::array<Eigen::Matrix3d, kSymmetryCount>& symmetry_rotations() noexcept {
+        constexpr double kPi4  = std::numbers::pi_v<double> / 4.0;
+        static const auto kSym = [] {
+            std::array<Eigen::Matrix3d, kSymmetryCount> sym{};
+            for (int n = 0; n < kSymmetryCount; ++n) {
+                sym[static_cast<size_t>(n)] =
+                    Eigen::AngleAxisd(static_cast<double>(n) * kPi4, Eigen::Vector3d::UnitY())
+                        .toRotationMatrix();
+            }
+            return sym;
+        }();
+        return kSym;
+    }
+
+    /// Nearest-lift: lift [R_obs] ∈ SO(3)/C₈ back to a continuous
+    /// trajectory in SO(3) by picking the C₈ representative closest to the
+    /// reference rotation `R_ref` (the filter's predicted rotation).
+    ///
+    /// ## Motivation
+    ///
+    /// The 8 faces of the octagonal prism are identical → PnP face assignment
+    /// is arbitrary and R_obs can jump by n·45° between frames.  Instead of
+    /// maintaining 8 EKF branches, we *lift* R_obs to the one representative
+    /// closest to R_ref.  This is valid when the angular displacement per
+    /// frame is much smaller than 45°/2 = 22.5° (the C₈ branch safety
+    /// radius), which holds for typical non-tumbling drone motion.
+    ///
+    /// Mathematically:
+    ///
+    ///     R_canon = R_obs · S*
+    ///     S* = argmin_{S ∈ C₈}  ||log(R_refᵀ · R_obs · S)||
+    ///
+    /// This is NOT recovering an absolute face index.  It is a local lift
+    /// from the quotient SO(3)/C₈ back to SO(3), using temporal continuity
+    /// to pick the representative whose face labels extend from the previous
+    /// frame.
+    ///
+    /// ## Returns
+    ///
+    ///   {R_canon, branch_confidence}
+    ///
+    ///   branch_confidence = geodesic distance to the *second-best*
+    ///                       symmetry representative minus the best.
+    ///   Large (> a few degrees) → unambiguous lift.
+    ///   Small → R_obs sits near the C₈ branch boundary; the filter should
+    ///           inflate rotation noise (see R()).
+    struct LiftResult {
+        Eigen::Matrix3d R_canon;
+        double branch_confidence;
+    };
+
+    [[nodiscard]] static LiftResult
+        nearest_lift(const Eigen::Matrix3d& R_obs, const Eigen::Matrix3d& R_ref) noexcept {
+        using SO3 = typename Nominal::SO3Type;
+
+        const auto& sym = symmetry_rotations();
+
+        Eigen::Matrix3d R_best = R_obs;
+        double best_d          = std::numeric_limits<double>::infinity();
+        double second_d        = std::numeric_limits<double>::infinity();
+
+        for (const auto& S : sym) {
+            const Eigen::Matrix3d R_candidate = R_obs * S;
+            const Eigen::Matrix3d R_err       = R_ref.transpose() * R_candidate;
+            const Eigen::Vector3d err         = SO3::log(R_err);
+            const double d                    = err.norm();
+
+            if (d < best_d) {
+                second_d = best_d;
+                best_d   = d;
+                R_best   = R_candidate;
+            } else if (d < second_d) {
+                second_d = d;
+            }
+        }
+
+        const double confidence = (second_d < std::numeric_limits<double>::infinity())
+                                    ? (second_d - best_d)
+                                    : std::numeric_limits<double>::infinity();
+
+        return {R_best, confidence};
+    }
+
     struct PoseMeasurement {
         Eigen::Matrix3d R_world_body{Eigen::Matrix3d::Identity()};
         Eigen::Vector3d p_world_body{Eigen::Vector3d::Zero()};
+
+        /// Branch ambiguity from the last nearest-lift, populated by the
+        /// tracker before calling pose_innovation.  Large → unambiguous.
+        double branch_confidence{std::numeric_limits<double>::infinity()};
     };
 
     struct Params {
@@ -88,34 +208,10 @@ struct LdmKinematic {
 
         Innovation nu = Innovation::Zero();
 
-        // ── Phase-unwrap observed rotation ──
-        // The LDM octagon has 8-fold symmetry around the body Y axis (yaw).
-        // PnP face assignment is arbitrary → R_obs can jump by n*45° between
-        // frames.  Try all 8 offsets and keep the one closest to the predicted
-        // rotation, so innovation stays continuous and the EKF doesn't see a
-        // spurious 45° jump.
-        //
-        // Pitch and roll have no symmetry ambiguity — only yaw is unwrapped.
-        constexpr double kPi4        = std::numbers::pi_v<double> / 4.0;
+        // R_obs has already been lifted to the nearest symmetry representative
+        // by LdmInEkfTracker::update() via nearest_lift().
         const Eigen::Matrix3d R_pred = predicted.R();
-        Eigen::Matrix3d R_obs_best   = observed.R_world_body;
-        double min_sq_norm           = std::numeric_limits<double>::infinity();
-        for (int n = 0; n < 8; ++n) {
-            // R_off = R_obs * Ry(n*45°) — tries all 8 face assignments
-            const Eigen::Matrix3d R_off =
-                observed.R_world_body
-                * Eigen::AngleAxisd(static_cast<double>(n) * kPi4, Eigen::Vector3d::UnitY())
-                      .toRotationMatrix();
-            const Eigen::Matrix3d err_R = R_pred.transpose() * R_off;
-            const Eigen::Vector3d err   = SO3::log(err_R);
-            const double sq             = err.squaredNorm();
-            if (sq < min_sq_norm) {
-                min_sq_norm = sq;
-                R_obs_best  = R_off;
-            }
-        }
-
-        const Eigen::Matrix3d dR_mat = R_pred.transpose() * R_obs_best;
+        const Eigen::Matrix3d dR_mat = R_pred.transpose() * observed.R_world_body;
         const SO3 dR(dR_mat);
         nu.template segment<3>(0) = SO3::log(dR);
 
@@ -220,6 +316,21 @@ struct LdmKinematic {
         diag[BEARING_PITCH] = params.sigma_r_bearing_pitch * params.sigma_r_bearing_pitch;
 
         diag[BEARING_DISTANCE] = sigma_distance * sigma_distance;
+
+        // Inflate rotation noise when the nearest-lift is ambiguous
+        // (branch_confidence small → symmetry boundary is near).
+        if (z.branch_confidence < std::numbers::pi_v<double> / 12.0) { // < 15°
+            // Linearly scale noise from baseline (confidence=15°) → 10× (confidence=0)
+            const double factor =
+                1.0
+                + 9.0
+                      * std::clamp(
+                          1.0 - z.branch_confidence / (std::numbers::pi_v<double> / 12.0), 0.0,
+                          1.0);
+            diag[ROT_X] *= factor;
+            diag[ROT_Y] *= factor;
+            diag[ROT_Z] *= factor;
+        }
 
         CovInnovation R = CovInnovation::Zero();
         R.diagonal()    = diag;

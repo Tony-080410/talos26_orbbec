@@ -60,8 +60,20 @@ public:
         if (!active_) {
             return;
         }
+
+        // Nearest-lift: pick the D₈ symmetry representative closest to the
+        // predicted rotation.  This keeps the R innovation continuous even
+        // when PnP face assignment jumps by n·45°.
+        const Eigen::Matrix3d R_pred = ekf_.X().R();
+        const auto lift              = Model::nearest_lift(z.R_world_body, R_pred);
+
+        PoseMeasurement z_lifted   = z;
+        z_lifted.R_world_body      = lift.R_canon;
+        z_lifted.branch_confidence = lift.branch_confidence;
+
         ekf_.update(
-            Model::pose_innovation(ekf_.X(), z), Model::pose_update_H(ekf_.X()), model_.R(z));
+            Model::pose_innovation(ekf_.X(), z_lifted), Model::pose_update_H(ekf_.X()),
+            model_.R(z_lifted));
     }
 
     [[nodiscard]] bool active() const noexcept { return active_; }
