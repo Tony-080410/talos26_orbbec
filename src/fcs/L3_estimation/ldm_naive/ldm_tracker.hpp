@@ -61,8 +61,8 @@ public:
             return;
         }
 
-        // Nearest-lift: pick the D₈ symmetry representative closest to the
-        // predicted rotation.  This keeps the R innovation continuous even
+        // Nearest-lift: pick the C₈ symmetry representative closest to the
+        // predicted rotation.  This keeps the ROT_X/Z innovation clean even
         // when PnP face assignment jumps by n·45°.
         const Eigen::Matrix3d R_pred = ekf_.X().R();
         const auto lift              = Model::nearest_lift(z.R_world_body, R_pred);

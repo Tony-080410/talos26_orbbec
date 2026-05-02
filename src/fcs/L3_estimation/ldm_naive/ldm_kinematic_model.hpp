@@ -4,10 +4,12 @@
 
 #include <Eigen/Core>
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstdint>
 #include <groups/SEn3.hpp>
+#include <limits>
 #include <numbers>
 
 namespace fcs::L3::ldm {
@@ -208,12 +210,34 @@ struct LdmKinematic {
 
         Innovation nu = Innovation::Zero();
 
-        // R_obs has already been lifted to the nearest symmetry representative
-        // by LdmInEkfTracker::update() via nearest_lift().
-        const Eigen::Matrix3d R_pred = predicted.R();
-        const Eigen::Matrix3d dR_mat = R_pred.transpose() * observed.R_world_body;
-        const SO3 dR(dR_mat);
-        nu.template segment<3>(0) = SO3::log(dR);
+        // SO(3) residual in body frame.
+        const Eigen::Matrix3d R_pred  = predicted.R();
+        const Eigen::Matrix3d dR_mat  = R_pred.transpose() * observed.R_world_body;
+        const Eigen::Vector3d rot_err = SO3::log(SO3(dR_mat));
+
+        // ROT_X and ROT_Z (pitch/roll, observable directions) — raw SO(3) residual.
+        // The prism's central axis is body Y; pitch/roll around X/Z are determined
+        // by the camera view of the axis direction and have no C₈ ambiguity.
+        // This component-wise split of the SO(3) log into ROT_X, ROT_Y, ROT_Z
+        // is a local approximation near the predicted attitude.  It is valid
+        // when axis alignment is close (|Δφ| << 22.5°), which holds under the
+        // same safety condition as nearest_lift.
+        nu[ROT_X] = rot_err.x();
+        nu[ROT_Z] = rot_err.z();
+
+        // ROT_Y (roll around the prism's central axis) — C₈ latent residual.
+        //
+        // The 8 faces are identical → the raw yaw error Δφ has an n·45° ambiguity.
+        // Instead of picking a face label (discrete branch), we project through
+        // the 8-fold phase, which is C₈-invariant and continuous:
+        //
+        //     δφ = (1/8) · atan2(sin(8·Δφ), cos(8·Δφ))
+        //
+        // This naturally lands in [-22.5°, 22.5°] with no branch boundary.
+        // The R_pred vs R_obs axis alignment must already be close (|Δφ| << 22.5°)
+        // for the EKF linearization to hold — this is the same safety condition as
+        // the nearest-lift approach, but without the explicit face label selection.
+        nu[ROT_Y] = std::atan2(std::sin(8.0 * rot_err.y()), std::cos(8.0 * rot_err.y())) / 8.0;
 
         // ── Bearing innovation (unchanged) ──
         const Eigen::Vector3d predicted_ypd = fcs::L3::xyz2ypd(predicted.p());
@@ -317,7 +341,7 @@ struct LdmKinematic {
 
         diag[BEARING_DISTANCE] = sigma_distance * sigma_distance;
 
-        // Inflate rotation noise when the nearest-lift is ambiguous
+        // Inflate rotation noise when near the C₈ branch boundary.
         // (branch_confidence small → symmetry boundary is near).
         if (z.branch_confidence < std::numbers::pi_v<double> / 12.0) { // < 15°
             // Linearly scale noise from baseline (confidence=15°) → 10× (confidence=0)
