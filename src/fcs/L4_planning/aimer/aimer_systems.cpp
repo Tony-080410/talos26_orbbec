@@ -534,8 +534,7 @@ void register_aimer_systems(talos::Scheduler& scheduler, L4Config&& config) {
                 }
 
                 selected_candidate = candidates[selected_index];
-                // todo
-                // aim_result         = selected_candidate->prediction;
+                aim_result         = selected_candidate->prediction;
 
                 target_selection_trace.kept_current_target = kept_current_target;
 
