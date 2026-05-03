@@ -118,25 +118,74 @@ public:
         return x_pri;
     }
 
-    // Update the estimated state based on measurement
-    MatrixX1 update(const MatrixZ1& z) noexcept {
-        ceres::Jet<double, N_X> x_p_jet[N_X];
-        for (int i = 0; i < N_X; i++) {
-            x_p_jet[i].a    = x_pri[i];
-            x_p_jet[i].v[i] = 1;
-        }
-        ceres::Jet<double, N_X> z_p_jet[N_Z];
-        h(x_p_jet, z_p_jet);
+    // Update the estimated state based on measurement (Iterated EKF)
+    //
+    // IEKF re-linearises h(x) at each iteration's current state estimate
+    // instead of only at x_pri.  This converges the linearisation point to
+    // the true posterior, giving the same accuracy improvement as a 2nd-order
+    // filter at ~2-5× the per-update cost of a standard EKF — negligible in
+    // practice because h(·) and its Jet evaluation are cheap.
+    //
+    // max_iterations = 1 recovers the classic single-shot EKF.
+    MatrixX1 update(const MatrixZ1& z, int max_iterations = 5) noexcept {
+        MatrixX1 x_iter    = x_pri;
+        MatrixX1 x_safe    = x_pri; // fallback: standard EKF (first iteration)
+        bool safe_captured = false;
 
-        MatrixZ1 z_pri;
-        for (int i = 0; i < N_Z; i++) {
-            z_pri[i]              = z_p_jet[i].a;
-            H.block(i, 0, 1, N_X) = z_p_jet[i].v.transpose();
+        for (int iter = 0; iter < max_iterations; ++iter) {
+            // Linearise h at the current iterate
+            ceres::Jet<double, N_X> x_p_jet[N_X];
+            for (int i = 0; i < N_X; i++) {
+                x_p_jet[i].a    = x_iter[i];
+                x_p_jet[i].v[i] = 1;
+            }
+            ceres::Jet<double, N_X> z_p_jet[N_Z];
+            h(x_p_jet, z_p_jet);
+
+            MatrixZ1 z_pred;
+            for (int i = 0; i < N_Z; i++) {
+                z_pred[i]             = z_p_jet[i].a;
+                H.block(i, 0, 1, N_X) = z_p_jet[i].v.transpose();
+            }
+
+            R = update_R(z);
+            {
+                MatrixZZ S = H * P_pri * H.transpose() + R;
+                S.diagonal().array() += 1e-9; // regularisation (matching DataAssociator)
+                K_ = P_pri * H.transpose() * S.inverse();
+            }
+
+            // IEKF update:  xₖ₊₁ = x_pri + Kₖ (z - h(xₖ) - Hₖ (x_pri - xₖ))
+            const MatrixX1 x_new = x_pri + K_ * (z - z_pred - H * (x_pri - x_iter));
+
+            // Guard: NaN / Inf anywhere in the new state → bail to safe fallback
+            {
+                bool finite = true;
+                for (int i = 0; i < N_X; ++i)
+                    if (!std::isfinite(x_new[i])) {
+                        finite = false;
+                        break;
+                    }
+                if (!finite) {
+                    x_iter = x_safe;
+                    break;
+                }
+            }
+
+            // Capture the standard-EKF result on the first iteration as the fallback
+            if (!safe_captured) {
+                x_safe        = x_new;
+                safe_captured = true;
+            }
+
+            if ((x_new - x_iter).template lpNorm<Eigen::Infinity>() <= 1e-6) {
+                x_iter = x_new;
+                break;
+            }
+            x_iter = x_new;
         }
 
-        R      = update_R(z);
-        K_     = P_pri * H.transpose() * (H * P_pri * H.transpose() + R).inverse();
-        x_post = x_post + K_ * (z - z_pri);
+        x_post = x_iter;
         // Joseph form: guarantees P_post stays symmetric positive-definite
         const MatrixXX IKH = MatrixXX::Identity() - K_ * H;
         P_post             = IKH * P_pri * IKH.transpose() + K_ * R * K_.transpose();
