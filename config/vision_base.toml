@@ -305,9 +305,9 @@ local_roi_width = 150
 max_center_aspect_ratio = 3.0
 
 # 靶参数
-min_target_light_area = 400
+min_target_light_area = 50
 max_target_light_area = 30000
-min_target_light_contour_area = 300
+min_target_light_contour_area = 75
 max_target_light_contour_area = 10000
 min_target_light_aspect_ratio = 0.5
 max_target_light_aspect_ratio = 1.5

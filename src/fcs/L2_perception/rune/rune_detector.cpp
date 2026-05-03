@@ -328,6 +328,7 @@ bool sameArrow(const Light& l1, const Light& l2, const fcs::rune::RuneDetectorCo
     if ((areaRatio >= 1 / params.max_same_arrow_area_ratio
          && areaRatio <= params.max_same_arrow_area_ratio)
         == false) {
+        // std::cerr << "[ERROR] sameArrow: areaRatio = " << areaRatio << std::endl;
         return false;
     }
 
@@ -335,6 +336,7 @@ bool sameArrow(const Light& l1, const Light& l2, const fcs::rune::RuneDetectorCo
     double distance{cv::norm(l1.rotated.center - l2.rotated.center)};
     double maxDistance{1.5 * (l1.size.width + l2.size.width)};
     if (distance > maxDistance) {
+        // std::cerr << "[ERROR] sameArrow: distance = " << distance << std::endl;
         return false;
     }
 
@@ -675,14 +677,21 @@ bool sameTarget(const std::vector<cv::Point>& contour1, const std::vector<cv::Po
     }
 
     // 判断轮廓旋转矩形的长宽
-    if (rotated1.size.width - rotated2.size.width > 4
-        || rotated1.size.height - rotated2.size.height > 4) {
-        // std::cerr << "[ERROR] sameTarget: Size difference too large. width diff="
-        //           << (rotated1.size.width - rotated2.size.width)
-        //           << ", height diff=" << (rotated1.size.height - rotated2.size.height) <<
-        //           std::endl;
+    float w1 = rotated1.size.width;
+    float w2 = rotated2.size.width;
+    float h1 = rotated1.size.height;
+    float h2 = rotated2.size.height;
+
+    float w_ratio = std::max(w1, w2) / std::min(w1, w2);
+    float h_ratio = std::max(h1, h2) / std::min(h1, h2);
+
+    if (w_ratio > 1.25f || h_ratio > 1.25f) {
+        // std::cerr << "[ERROR] sameTarget: Size difference too large. w_ratio ="
+        //           <<w_ratio
+        //           << ", h_ratio =" << h_ratio << std::endl;
         return false;
     }
+
     return true;
 }
 
@@ -799,7 +808,8 @@ inline bool markRuneTarget(
 
     std::vector<std::vector<cv::Point>> c;
     for (size_t k = 0; k < contours.size(); k++) {
-        if (hierarchy[k][3] == -1 || (hierarchy[k][0] == -1 && hierarchy[k][1] == -1)) {
+        if (hierarchy[k][3] == -1 || ((hierarchy[k][0] == -1 && hierarchy[k][1] == -1))
+            || hierarchy[k][2] != -1) {
             continue;
         }
         cv::RotatedRect rotate = cv::minAreaRect(contours[k]);
@@ -977,16 +987,20 @@ bool findTargetLights(
 
         if (light.ratio < params.min_target_light_aspect_ratio
             || light.ratio > params.max_target_light_aspect_ratio) {
+            // std::cerr << "[ERROR] findTargetLights: light.ratio = " << light.ratio << std::endl;
             continue;
         }
 
         if (light.area < params.min_target_light_area
             || light.area > params.max_target_light_area) {
+            // std::cerr << "[ERROR] findTargetLights: light.area = " << light.area << std::endl;
             continue;
         }
 
         if (light.contourArea < params.min_target_light_contour_area
             || light.contourArea > params.max_target_light_contour_area) {
+            // std::cerr << "[ERROR] findTargetLights: light.contourArea = " << light.contourArea
+            //           << std::endl;
             continue;
         }
 
