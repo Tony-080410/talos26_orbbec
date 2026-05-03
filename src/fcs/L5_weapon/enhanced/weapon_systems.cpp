@@ -80,18 +80,22 @@ void register_enhanced_weapon_system(talos::Scheduler& scheduler, L5Config&& con
                     [&](const L4::TrackCommand& cmd) {
                         auto opt         = optimizer->optimize(cmd, now);
                         WeaponCommand wc = opt ? *opt : track_fallback(cmd, now);
-                        auto tf          = L4::lookup_gimbal_transform(*tf_buffer, now);
+                        if (!opt) {
+                            wc.degradation_reason = opt.error();
+                            SPDLOG_WARN("MPC optimization failed: {}", opt.error());
+                        }
+                        auto tf = L4::lookup_gimbal_transform(*tf_buffer, now);
                         if (tf) {
                             auto [r, p, y] = tf->euler_rot().rpy();
                             wc             = fire_gate(wc, fire_cfg, y, p);
                         }
                         weapon_out.write(wc);
-                        if (!opt) {
-                            SPDLOG_WARN("MPC optimization failed: {}", opt.error());
-                        }
                     },
                     [&](const L4::ShotCommand& cmd) {
                         auto wc = optimizer->passthrough(cmd, now);
+                        if (cmd.degradation_reason) {
+                            wc.degradation_reason = *cmd.degradation_reason;
+                        }
                         auto tf = L4::lookup_gimbal_transform(*tf_buffer, now);
                         if (tf) {
                             auto [r, p, y] = tf->euler_rot().rpy();

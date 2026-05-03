@@ -629,6 +629,7 @@ void register_aimer_systems(talos::Scheduler& scheduler, L4Config&& config) {
 
                 // Build ControlIntent: Track if trajectory built, Shot otherwise.
                 ControlIntent intent = [&]() -> ControlIntent {
+                    std::optional<std::string> degradation;
                     if (selected_candidate && selected_candidate->tracker.is_tracking()) {
                         PlannerSeed seed;
                         seed.state_timestamp_ns    = selected_candidate->tracker.timestamp_ns;
@@ -658,6 +659,7 @@ void register_aimer_systems(talos::Scheduler& scheduler, L4Config&& config) {
                                     .trajectory   = std::move(*ref_traj),
                                 };
                             }
+                            degradation = ref_traj.error();
                             SPDLOG_WARN(
                                 "Failed to build reference trajectory: {}", ref_traj.error());
                         }
@@ -677,15 +679,19 @@ void register_aimer_systems(talos::Scheduler& scheduler, L4Config&& config) {
                                 .trajectory   = std::move(*ref_traj),
                             };
                         }
+                        degradation = ref_traj.error();
                         SPDLOG_WARN(
                             "Failed to build LDM reference trajectory: {}", ref_traj.error());
                     }
                     // Have aim angles but no trajectory: direct shot.
+                    // degradation carries the trajectory-build error when this is a
+                    // fallback; nullopt means this is an intentional direct-shot.
                     return ShotCommand{
-                        .timestamp_ns = aim_result->timestamp_ns,
-                        .yaw          = aim_result->aim_yaw,
-                        .pitch        = aim_result->aim_pitch,
-                        .distance     = aim_result->distance,
+                        .timestamp_ns       = aim_result->timestamp_ns,
+                        .yaw                = aim_result->aim_yaw,
+                        .pitch              = aim_result->aim_pitch,
+                        .distance           = aim_result->distance,
+                        .degradation_reason = std::move(degradation),
                     };
                 }();
 

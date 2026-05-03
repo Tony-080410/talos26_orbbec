@@ -302,6 +302,9 @@ inline void append_selection_trace_metadata(
                 result["yaw"]      = cmd.yaw;
                 result["pitch"]    = cmd.pitch;
                 result["distance"] = cmd.distance;
+                if (cmd.degradation_reason) {
+                    result["degradation_reason"] = *cmd.degradation_reason;
+                }
             } else if constexpr (std::is_same_v<T, ::fcs::L4::HoldCommand>) {
                 result["mode"] = "Hold";
             }
@@ -357,6 +360,18 @@ inline void append_plan_metadata(
                             return "Hold";
                     },
                     intent));
+
+    // Surface degradation in scene metadata if present.
+    std::visit(
+        [&](const auto& cmd) {
+            using T = std::decay_t<decltype(cmd)>;
+            if constexpr (std::is_same_v<T, ::fcs::L4::ShotCommand>) {
+                if (cmd.degradation_reason) {
+                    builder.metadata("degradation_reason", *cmd.degradation_reason);
+                }
+            }
+        },
+        intent);
 
     if (selected_target) {
         append_selected_target_metadata(builder, *selected_target);
@@ -466,6 +481,9 @@ void register_l4_planning_systems(talos::scheduler::Scheduler& app) {
             cmd_json["shooting_range_pitch"] = cmd->shooting_range_pitch;
             cmd_json["ref_yaw"]              = cmd->ref_yaw;
             cmd_json["ref_pitch"]            = cmd->ref_pitch;
+            if (cmd->degradation_reason) {
+                cmd_json["degradation_reason"] = *cmd->degradation_reason;
+            }
             if (cmd->viz_debug) {
                 cmd_json["mpc"] = {
                     {   "center_index",          cmd->viz_debug->center_index},

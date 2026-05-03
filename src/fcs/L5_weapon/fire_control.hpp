@@ -3,6 +3,7 @@
 #include <Eigen/Core>
 #include <cstdint>
 #include <optional>
+#include <string>
 #include <vector>
 
 namespace fcs::L5 {
@@ -63,5 +64,12 @@ struct WeaponCommand {
 
     // 可视化调试数据
     std::optional<WeaponVisualizationDebugData> viz_debug;
+
+    /// Set when L5 could not run full MPC optimization and fell back to a
+    /// degraded output (passthrough / center-aim-point fallback).
+    /// Carries the error from TinyMpcTrajectoryOptimizer::optimize() or
+    /// propagated from L4's ShotCommand::degradation_reason.
+    /// nullopt = nominal output (MPC succeeded or intentional passthrough).
+    std::optional<std::string> degradation_reason{};
 };
 } // namespace fcs::L5
