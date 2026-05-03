@@ -56,7 +56,9 @@ bool Tracker<ModelT>::update(
             const auto R_diag = model_.R_diag(z_pred);
             const double d2   = (nu.array().square() / R_diag.array()).sum();
 
-            if (std::isfinite(d2) && d2 < params.matcher_gate && d2 < best_cost) {
+            constexpr double kMaxRollResidual = M_PI / static_cast<double>(ARMORS_NUM);
+            if (std::isfinite(d2) && d2 < params.matcher_gate && d2 < best_cost
+                && std::abs(nu[ARMOR_ROLL]) < kMaxRollResidual) {
                 best_cost = d2;
                 best_id   = id;
                 best_meas = meas;
