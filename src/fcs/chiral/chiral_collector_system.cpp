@@ -5,6 +5,7 @@
 #include "chiral/talos_triple_buffer_shm.hpp"
 #include "core/channel_topics.hpp"
 #include "frame.hpp"
+#include "matrix.hpp"
 #include "scheduler/scheduler.hpp"
 
 #include <magic_enum.hpp>
@@ -90,50 +91,15 @@ void register_chiral_collector_system(talos::Scheduler& scheduler) {
             talos_data.state.color  = talos::chrial::ArmorColor::Neutral;
             talos_data.state.name   = talos::chrial::ArmorName::Invalid;
 
-            const bool has_valid_armor_target =
-                selected_target->has_target() && selected_target->tracker.is_tracking();
-            const L3::TrackerOutput* tracker_output =
-                has_valid_armor_target ? std::addressof(selected_target->tracker) : nullptr;
-
-            if (tracker_output) {
-                talos_data.state.status = to_chiral_tracker_status(tracker_output->status);
-                talos_data.state.color  = to_chrial_armor_color(tracker_output->target_color);
-                talos_data.state.name   = to_chrial_armor_name(tracker_output->target_name);
-            }
-
-            if (tracker_output && tracker_output->is_robot()) {
-                talos_data.state_kind   = talos::chrial::TargetStateKind::Robot;
-                const auto* robot_state = tracker_output->robot_state();
-                if (robot_state) {
-                    talos_data.state.robot.position =
-                        to_chiral_vector3d<talos::chrial::odom>(robot_state->position);
-                    talos_data.state.robot.velocity =
-                        to_chiral_vector3d<talos::chrial::odom>(robot_state->velocity);
-                    talos_data.state.robot.yaw     = robot_state->yaw;
-                    talos_data.state.robot.v_yaw   = robot_state->v_yaw;
-                    talos_data.state.robot.radius0 = robot_state->radius0;
-                    talos_data.state.robot.radius1 = robot_state->radius1;
-                    talos_data.state.robot.z1      = robot_state->z1;
-                    talos_data.state.robot.armor_num =
-                        static_cast<uint32_t>(robot_state->armors_num);
-                }
-            } else if (tracker_output && tracker_output->is_outpost()) {
-                talos_data.state_kind     = talos::chrial::TargetStateKind::Outpost;
-                const auto* outpost_state = tracker_output->outpost_state();
-                if (outpost_state) {
-                    talos_data.state.outpost.position.x = outpost_state->position.x();
-                    talos_data.state.outpost.position.y = outpost_state->position.y();
-                    talos_data.state.outpost.position.z = 0.0; // 2D position
-                    talos_data.state.outpost.velocity =
-                        to_chiral_vector3d<talos::chrial::odom>(outpost_state->velocity);
-                    talos_data.state.outpost.yaw   = outpost_state->yaw;
-                    talos_data.state.outpost.v_yaw = outpost_state->v_yaw;
-                    talos_data.state.outpost.z     = outpost_state->z;
-                }
-            }
-
             const uint64_t current_ns = selected_target->timestamp_ns;
             using namespace fast_tf;
+            auto gimbal_yaw_tf =
+                lookup_clamped<odom, fast_tf::gimbal_yaw_fuxk_frame>(*tf_buffer, current_ns);
+            if (!gimbal_yaw_tf) {
+                SPDLOG_WARN("Failed to lookup gimbal_yaw transform: {}", gimbal_yaw_tf.error());
+                return;
+            }
+            auto gimbal_yaw_fix = gimbal_yaw_tf->inverse();
 
             // Lookup gimbal transform (odom -> gimbal)
             auto gimbal_tf = lookup_clamped<odom, gimbal_pitch>(*tf_buffer, current_ns);
@@ -149,12 +115,12 @@ void register_chiral_collector_system(talos::Scheduler& scheduler) {
                 talos_data.gimbal_link.rotation.w    = rotation.w();
             } else {
                 SPDLOG_WARN("Failed to lookup gimbal transform: {}", gimbal_tf.error());
+                return;
             }
 
             // Lookup camera transform (gimbal -> camera)
             auto camera_tf = lookup_clamped<gimbal, camera>(*tf_buffer, current_ns);
             if (camera_tf) {
-
                 auto translation                     = camera_tf.value().translation();
                 auto rotation                        = camera_tf.value().quaternion();
                 talos_data.camera_link.translation.x = translation.x();
@@ -166,6 +132,7 @@ void register_chiral_collector_system(talos::Scheduler& scheduler) {
                 talos_data.camera_link.rotation.w    = rotation.w();
             } else {
                 SPDLOG_WARN("Failed to lookup camera transform: {}", camera_tf.error());
+                return;
             }
 
             // Lookup muzzle transform (odom -> muzzle)
@@ -182,8 +149,76 @@ void register_chiral_collector_system(talos::Scheduler& scheduler) {
                 talos_data.muzzle_link.rotation.w    = rotation.w();
             } else {
                 SPDLOG_WARN("Failed to lookup muzzle transform: {}", muzzle_tf.error());
+                return;
             }
 
+            const bool has_valid_armor_target =
+                selected_target->has_target() && selected_target->tracker.is_tracking();
+            const L3::TrackerOutput* tracker_output =
+                has_valid_armor_target ? std::addressof(selected_target->tracker) : nullptr;
+
+            if (tracker_output) {
+                talos_data.state.status = to_chiral_tracker_status(tracker_output->status);
+                talos_data.state.color  = to_chrial_armor_color(tracker_output->target_color);
+                talos_data.state.name   = to_chrial_armor_name(tracker_output->target_name);
+            }
+
+            if (tracker_output && tracker_output->is_robot()) {
+                talos_data.state_kind   = talos::chrial::TargetStateKind::Robot;
+                const auto* robot_state = tracker_output->robot_state();
+                if (robot_state) {
+                    auto pos      = robot_state->position;
+                    auto vel      = robot_state->velocity;
+                    auto pose_fix = gimbal_yaw_fix
+                                  * TransformMatrixd<odom, void>::from_rpy(
+                                        0.0, 0.0, robot_state->yaw, pos.x(), pos.y(), pos.z());
+                    auto vel_fix = gimbal_yaw_fix
+                                 * TransformMatrixd<odom, void>::from_rpy(
+                                       0.0, 0.0, robot_state->v_yaw, vel.x(), vel.y(), vel.z());
+
+                    talos_data.state.robot.position =
+                        to_chiral_vector3d<talos::chrial::gimbal_yaw>(pose_fix.translation());
+                    talos_data.state.robot.velocity =
+                        to_chiral_vector3d<talos::chrial::gimbal_yaw>(vel_fix.translation());
+                    talos_data.state.robot.yaw     = pose_fix.euler_rot().yaw;
+                    talos_data.state.robot.v_yaw   = vel_fix.euler_rot().yaw;
+                    talos_data.state.robot.radius0 = robot_state->radius0;
+                    talos_data.state.robot.radius1 = robot_state->radius1;
+                    talos_data.state.robot.z1      = robot_state->z1;
+                    talos_data.state.robot.armor_num =
+                        static_cast<uint32_t>(robot_state->armors_num);
+                }
+            } else if (tracker_output && tracker_output->is_outpost()) {
+                talos_data.state_kind     = talos::chrial::TargetStateKind::Outpost;
+                const auto* outpost_state = tracker_output->outpost_state();
+                if (outpost_state) {
+                    auto pos = outpost_state->position;
+                    auto vel = outpost_state->velocity;
+                    auto z   = outpost_state->z;
+                    for (auto& i : z) {
+                        i = (gimbal_yaw_fix
+                             * TransformMatrixd<odom, void>::from_rpy(
+                                 0.0, 0.0, outpost_state->yaw, pos.x(), pos.y(), i))
+                                .translation()
+                                .z();
+                    }
+                    auto vel_fix = gimbal_yaw_fix
+                                 * TransformMatrixd<odom, void>::from_rpy(
+                                       0.0, 0.0, outpost_state->v_yaw, vel.x(), vel.y(), vel.z());
+                    auto pos_fix =
+                        (gimbal_yaw_fix
+                         * TransformMatrixd<odom, void>::from_rpy(
+                             0.0, 0.0, outpost_state->yaw, pos.x(), pos.y(), 0.0));
+                    talos_data.state.outpost.position.x = pos_fix.translation().x();
+                    talos_data.state.outpost.position.y = pos_fix.translation().y();
+                    talos_data.state.outpost.position.z = 0.0; // 2D position
+                    talos_data.state.outpost.velocity =
+                        to_chiral_vector3d<talos::chrial::gimbal_yaw>(vel_fix.translation());
+                    talos_data.state.outpost.yaw   = pos_fix.euler_rot().yaw;
+                    talos_data.state.outpost.v_yaw = vel_fix.euler_rot().yaw;
+                    talos_data.state.outpost.z     = z;
+                }
+            }
             writer_storage->write(talos_data);
         });
 }

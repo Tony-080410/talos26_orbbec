@@ -16,7 +16,8 @@ using RadianPerSec = double;
 using Meter        = double;
 
 struct odom {};
-struct gimbal {};
+struct gimbal_yaw {};
+struct gimbal_pitch {};
 struct camera {};
 struct muzzle {};
 struct untyped {};
@@ -77,8 +78,8 @@ enum class ArmorName : uint8_t {
 };
 
 struct OutpostState {
-    Vector3d<odom> position;
-    Vector3d<odom> velocity;
+    Vector3d<gimbal_yaw> position;
+    Vector3d<gimbal_yaw> velocity;
     Radian yaw;
     RadianPerSec v_yaw;
     // odom z0, z1, z2
@@ -86,8 +87,8 @@ struct OutpostState {
 };
 
 struct RobotState {
-    Vector3d<odom> position;
-    Vector3d<odom> velocity;
+    Vector3d<gimbal_yaw> position;
+    Vector3d<gimbal_yaw> velocity;
     Radian yaw;
     RadianPerSec v_yaw;
     Meter radius0; // Armor 0,2 radius
@@ -108,9 +109,9 @@ struct TalosData {
     TargetStateKind state_kind;
     TargetState state;
 
-    Transform<odom, gimbal> gimbal_link;
-    Transform<gimbal, muzzle> muzzle_link;
-    Transform<gimbal, camera> camera_link;
+    Transform<odom, gimbal_yaw> gimbal_link;
+    Transform<gimbal_yaw, muzzle> muzzle_link;
+    Transform<gimbal_yaw, camera> camera_link;
 };
 
 } // namespace talos::chrial
