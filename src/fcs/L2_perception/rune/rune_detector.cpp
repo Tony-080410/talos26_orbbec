@@ -32,6 +32,22 @@ bool inRect(const cv::Point2f& p, const cv::Rect2f& rect) {
         && p.y <= rect.y + rect.height);
 }
 
+void resetRoi(cv::Rect2f& rect, int rows, int cols) {
+    // 调整左上角点的坐标
+    rect.x = rect.x < 0 ? 0 : rect.x >= cols ? cols - 1 : rect.x;
+    rect.y = rect.y < 0 ? 0 : rect.y >= rows ? rows - 1 : rect.y;
+    // 调整长宽
+    rect.width  = rect.x + rect.width >= cols ? cols - rect.x - 1 : rect.width;
+    rect.height = rect.y + rect.height >= rows ? rows - rect.y - 1 : rect.height;
+    // 此时可能出现 width 或 height 小于 0 的情况，因此需要将其置为 0
+    if (rect.width < 0) {
+        rect.width = 0;
+    }
+    if (rect.height < 0) {
+        rect.height = 0;
+    }
+}
+
 /*处理图片*/
 std::expected<cv::Mat, std::string>
     RuneDetector::processPictures(const cv::Mat& src, fcs::ArmorColor color) {
@@ -208,6 +224,9 @@ void RuneDetector::setLocalRoi() {
         cv::Rect2f rcenterRoi(
             centerDown.x - width * 0.5f, centerDown.y - width * 0.5f, width, width);
 
+        resetRoi(targetRoi, image_height_, image_width_);
+        resetRoi(rcenterRoi, image_height_, image_width_);
+
         rawUpROIs.emplace_back(targetRoi);
         rawDownROIs.emplace_back(rcenterRoi);
     }
@@ -290,6 +309,8 @@ void RuneDetector::setLocalRoi() {
 
         // 生成正方形 ROI
         centerRoi = cv::Rect2f(center.x - side / 2, center.y - side / 2, side, side);
+
+        resetRoi(centerRoi, image_height_, image_width_);
 
         std::vector<cv::Rect2f> all = {A, B, C, D};
 
