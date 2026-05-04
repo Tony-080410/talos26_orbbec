@@ -135,9 +135,9 @@ tracking_threshold = 5  # Aligned with at_vision rm_bringup config
 sigma_a_xy = 10.0  # Aligned with at_vision
 sigma_a_z = 0.1  # Aligned with at_vision (was 1.0)
 sigma_a_yaw = 20.0  # Aligned with at_vision
-sigma_r0 = 1.0
-sigma_r1 = 1.0
-sigma_h = 0.8  # Aligned with at_vision (was 0.5)
+sigma_r0 = 1e-5
+sigma_r1 = 1e-5
+sigma_h = 1e-2  # Aligned with at_vision (was 0.5)
 meas_yaw_var_floor = 4e-3
 meas_pitch_var_floor = 4e-3
 meas_dist_var_floor = 0.3
@@ -239,7 +239,7 @@ rho = 1.225
 [fire_decision]
 # Minimum shooting threshold (radians), used for long distances
 # Shared fire gate threshold for L5
-fire_thresh = 0.01744444
+fire_thresh = 0.08444444
 # Physical window dimensions (meters)
 shooting_range_h = 0.12
 shooting_range_w_small = 0.12
@@ -345,4 +345,3 @@ radius = 0.7
 [energy_meter.small_model.meas]
 R_scale = 0.1
 meas_dist_k = 0.43
-
