@@ -327,8 +327,8 @@ sigma_xy = 2.0
 sigma_z = 1.5
 sigma_yaw = 1e-4
 sigma_theta = 0.1
-sigma_alpha = 0.1
-sigma_beta = 0.1
+sigma_a = 0.1
+sigma_w = 0.1
 radius = 0.7
 
 [energy_meter.big_model.meas]
