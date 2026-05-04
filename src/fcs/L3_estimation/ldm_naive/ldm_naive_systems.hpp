@@ -1,7 +1,7 @@
 #pragma once
 
-#include "ldm_tracker.hpp"
-#include "scheduler/scheduler.hpp"
+#include "ldm_naive_config.hpp"
+#include "scheduler/thin.hpp"
 
 namespace fcs::L3::ldm {
 

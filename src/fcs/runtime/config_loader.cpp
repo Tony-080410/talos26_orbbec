@@ -1,6 +1,7 @@
 #include "runtime/config_loader.hpp"
 
 #include "toml_helper.hpp"
+#include "toml_helper_eigen.hpp"
 
 #include <fmt/core.h>
 #include <primitive/system_info.hpp>

@@ -1,6 +1,6 @@
 #pragma once
 
-#include "scheduler/scheduler.hpp"
+#include "scheduler/thin.hpp"
 
 namespace fcs::chiral {
 

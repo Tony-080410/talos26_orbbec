@@ -28,6 +28,7 @@
 #include "runtime/l1_l2_setup.hpp"
 #include "scheduler/scheduler.hpp"
 #include "toml_helper.hpp"
+#include "toml_helper_eigen.hpp"
 
 #include "scheduler/error_formatter.hpp"
 #include <atomic>

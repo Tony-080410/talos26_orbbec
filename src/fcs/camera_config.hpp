@@ -9,7 +9,6 @@
 
 // hikcamera types
 #include "hik_camera.hpp"
-#include "toml_helper_eigen.hpp"
 
 namespace fcs {
 

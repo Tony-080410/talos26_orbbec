@@ -4,7 +4,7 @@
 #include <string>
 
 #include "core/trajectory/model/config.hpp"
-#include "toml_helper.hpp"
+#include "toml/type_wrappers.hpp"
 
 namespace toml::inline v3 {
 class table;

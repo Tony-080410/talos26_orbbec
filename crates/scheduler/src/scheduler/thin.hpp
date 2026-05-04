@@ -5,6 +5,7 @@
 namespace talos {
 namespace scheduler {
 class Scheduler;
+class World;
 
 struct SchedulerConfig {
     /**

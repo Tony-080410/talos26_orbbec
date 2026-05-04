@@ -3,7 +3,7 @@
 #include "config.hpp"
 #include "foxglove_config.hpp"
 #include "runtime/capturer.hpp"
-#include "scheduler/scheduler.hpp"
+#include "scheduler/thin.hpp"
 
 #include <expected>
 #include <map>

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "L3_estimation/tracker/util.hpp"
+#include "ldm_kinematic_params.hpp"
 
 #include <Eigen/Core>
 
@@ -36,6 +37,9 @@ struct LdmKinematic {
     using Innovation         = Eigen::Matrix<Scalar, NZ, 1>;
     using CovInnovation      = Eigen::Matrix<Scalar, NZ, NZ>;
     using InnovationJacobian = Eigen::Matrix<Scalar, NZ, NX>;
+
+    /// Re-exported from ldm_kinematic_params.hpp for backward compatibility.
+    using Params = LdmKinematicParams;
 
     /// The symmetry group of the LDM octagonal prism.
     ///
@@ -161,27 +165,6 @@ struct LdmKinematic {
         double branch_confidence{std::numeric_limits<double>::infinity()};
     };
 
-    struct Params {
-        Scalar sigma_inert_omega = Scalar(50.0); // rad/s
-        Scalar sigma_inert_accel = Scalar(50.0); // m/s^2
-
-        // SO(3) log residual noise, rad.
-        Scalar sigma_rot_x = Scalar(0.5);
-        Scalar sigma_rot_y = Scalar(0.5);
-        Scalar sigma_rot_z = Scalar(1.0);
-
-        // Bearing measurement noise, rad.
-        Scalar sigma_r_bearing_yaw   = Scalar(5e-1);
-        Scalar sigma_r_bearing_pitch = Scalar(2e-1);
-
-        // Distance measurement noise:
-        // sigma_d = sigma_distance_min
-        //         + k_distance_depth * abs(depth)
-        //         + k_distance_planar * planar_offset
-        Scalar sigma_distance_min = Scalar(0.01); // m
-        Scalar k_distance_depth   = Scalar(0.5);  // m / m
-        Scalar k_distance_planar  = Scalar(0.5);  // m / m
-    };
     Params params{};
 
     static Nominal predict_state(const Nominal& X, Scalar dt) noexcept {
