@@ -28,7 +28,7 @@ enum Measure : uint8_t {
 // Shared distance-dependent measurement noise
 struct MeasurementNoiseParams {
     double R_scale{0.1};
-    double meas_dist_k{0.43};
+    double meas_dist_k{0.28};
 };
 
 [[nodiscard]] inline Eigen::Matrix<double, MEASURE_MAX, MEASURE_MAX> measurement_R(
@@ -60,7 +60,7 @@ struct MeasurementNoiseParams {
 
 // ============================================================================
 // BigRuneModel — sinusoidal rotation: θ' = dir · [(a/ω)(cos(ωτ)-cos(ω(τ+dt))) + b·dt]
-// State: [XC, YC, ZC, YAW, THETA, TAU, ALPHA, BETA] (8D)
+// State: [XC, YC, ZC, YAW, THETA, TAU, A, W] (8D)
 // ============================================================================
 
 struct BigRuneModel {
@@ -74,9 +74,9 @@ struct BigRuneModel {
         ZC,    // 2
         YAW,   // 3
         THETA, // 4
-        TAU,   // 5
-        ALPHA, // 6 — sigmoid-mapped amplitude parameter
-        BETA,  // 7 — sigmoid-mapped angular frequency parameter
+        TAU,   // 5 — accumulated time since activation
+        A,     // 6 — amplitude a ∈ [0.780, 1.045]
+        W,     // 7 — angular frequency ω ∈ [1.884, 2.000]
     };
 
     using VecX  = Eigen::Matrix<Scalar, NX, 1>;
@@ -85,13 +85,12 @@ struct BigRuneModel {
     using MatZZ = Eigen::Matrix<Scalar, NZ, NZ>;
 
     struct Params {
-        // Process noise (borrowed/adjusted from auto_buff reference)
-        Scalar sigma_xy{2.0};    // position noise — higher for big rune (auto_buff v1=0.9)
-        Scalar sigma_z{1.5};     // depth noise
-        Scalar sigma_yaw{1e-4};  // yaw barely changes
-        Scalar sigma_theta{0.1}; // roll noise (auto_buff: 0.09)
-        Scalar sigma_alpha{0.1}; // amplitude adaptation rate (auto_buff: Q.spd=0.5 → faster)
-        Scalar sigma_beta{0.1};  // frequency adaptation rate (auto_buff: Q.fi=1.0 → faster)
+        Scalar sigma_xy{2.0};
+        Scalar sigma_z{1.5};
+        Scalar sigma_yaw{1e-4};
+        Scalar sigma_theta{0.2};
+        Scalar sigma_a{0.05};
+        Scalar sigma_w{0.02};
 
         Scalar radius{0.7};
         MeasurementNoiseParams meas{};
@@ -102,22 +101,19 @@ struct BigRuneModel {
     static constexpr double AMPLITUDE_SUM = 2.090;
     static constexpr double A_LOWER       = 0.780;
     static constexpr double A_UPPER       = 1.045;
-    static constexpr double A_RANGE       = A_UPPER - A_LOWER;
     static constexpr double W_LOWER       = 1.884;
     static constexpr double W_UPPER       = 2.000;
-    static constexpr double W_RANGE       = W_UPPER - W_LOWER;
 
     template <typename S>
     static void predict_state(const S* x, const S& dt, int dir, S* xp) noexcept {
         using std::cos;
-        using std::exp;
 
         for (int i = 0; i < NX; ++i) {
             xp[i] = x[i];
         }
 
-        const S a = S(A_LOWER) + S(A_RANGE) / (S(1.0) + exp(-x[ALPHA]));
-        const S w = S(W_LOWER) + S(W_RANGE) / (S(1.0) + exp(-x[BETA]));
+        const S a = x[A];
+        const S w = x[W];
         const S b = S(AMPLITUDE_SUM) - a;
 
         const S t_new = x[TAU] + dt;
@@ -157,8 +153,8 @@ struct BigRuneModel {
         q(YAW, YAW)     = params.sigma_yaw * params.sigma_yaw * dt;
         q(THETA, THETA) = params.sigma_theta * params.sigma_theta * dt;
         q(TAU, TAU)     = 0.0;
-        q(ALPHA, ALPHA) = params.sigma_alpha * params.sigma_alpha * dt;
-        q(BETA, BETA)   = params.sigma_beta * params.sigma_beta * dt;
+        q(A, A)         = params.sigma_a * params.sigma_a * dt;
+        q(W, W)         = params.sigma_w * params.sigma_w * dt;
 
         return q;
     }
@@ -254,13 +250,7 @@ struct SmallRuneModel {
     }
 };
 
-// Sigmoid helpers (used by Tracker and build_state)
-inline double to_a(double alpha) {
-    return BigRuneModel::A_LOWER + BigRuneModel::A_RANGE / (1.0 + std::exp(-alpha));
-}
-inline double to_w(double beta) {
-    return BigRuneModel::W_LOWER + BigRuneModel::W_RANGE / (1.0 + std::exp(-beta));
-}
+// b = 2.090 - a (constant sum constraint from rules)
 inline double to_b(double a) { return BigRuneModel::AMPLITUDE_SUM - a; }
 
 } // namespace energy_meter

@@ -70,8 +70,8 @@ EnergyMeterState build_state_from_tracker(
 
     if constexpr (std::is_same_v<ModelT, ::energy_meter::BigRuneModel>) {
         out.t           = x(ModelT::TAU);
-        out.a           = ::energy_meter::to_a(x(ModelT::ALPHA));
-        out.omega       = ::energy_meter::to_w(x(ModelT::BETA));
+        out.a           = x(ModelT::A);
+        out.omega       = x(ModelT::W);
         out.b           = ::energy_meter::to_b(out.a);
         out.model_valid = is_tracking && tracking_frames > 5;
     } else {

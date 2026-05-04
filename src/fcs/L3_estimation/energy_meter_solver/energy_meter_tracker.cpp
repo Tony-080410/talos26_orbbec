@@ -3,8 +3,10 @@
 #include "L3_estimation/energy_meter_solver/types.hpp"
 #include "euler.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <limits>
+#include <type_traits>
 
 namespace energy_meter {
 
@@ -140,6 +142,14 @@ bool Tracker<ModelT>::update(
     armor_id_ = best_id;
     ekf_->update(z);
 
+    // Clamp physical parameters to valid range (no sigmoid guard)
+    if constexpr (std::is_same_v<ModelT, BigRuneModel>) {
+        auto x      = ekf_->X();
+        x(Model::A) = std::clamp(x(Model::A), BigRuneModel::A_LOWER, BigRuneModel::A_UPPER);
+        x(Model::W) = std::clamp(x(Model::W), BigRuneModel::W_LOWER, BigRuneModel::W_UPPER);
+        ekf_->setState(x);
+    }
+
     // Direction detection from raw observations
     if (!dir_locked_) {
         if (dir_detect_count_ > 0) {
@@ -188,7 +198,7 @@ void Tracker<ModelT>::step(
 }
 
 // ============================================================================
-// first_meet_u — BigRuneModel specialization (8D state with TAU, ALPHA, BETA)
+// first_meet_u — BigRuneModel specialization (8D state with TAU, A, W)
 // ============================================================================
 
 template <>
@@ -208,15 +218,21 @@ bool Tracker<BigRuneModel>::first_meet_u(
     x0(BigRuneModel::ZC)    = r_center.z();
     x0(BigRuneModel::YAW)   = yaw;
     x0(BigRuneModel::THETA) = roll;
-    x0(BigRuneModel::TAU)   = 0.0;
-    x0(BigRuneModel::ALPHA) = 0.0; // sigmoid(0) = 0.5 → a ≈ 0.9125
-    x0(BigRuneModel::BETA)  = 0.0; // sigmoid(0) = 0.5 → ω ≈ 1.942
+    if (last_state_) {
+        x0(BigRuneModel::TAU) = (*last_state_)(BigRuneModel::TAU);
+        x0(BigRuneModel::A)   = (*last_state_)(BigRuneModel::A);
+        x0(BigRuneModel::W)   = (*last_state_)(BigRuneModel::W);
+        last_state_.reset();
+    } else {
+        x0(BigRuneModel::TAU) = 0.0;
+        x0(BigRuneModel::A)   = 0.9125; // midpoint of [0.780, 1.045]
+        x0(BigRuneModel::W)   = 1.942;  // midpoint of [1.884, 2.000]
+    }
 
-    BigRuneModel::MatXX P0 = BigRuneModel::MatXX::Identity() * 0.1;
-    // Large initial uncertainty on model parameters (borrowed from auto_buff: P0.a=10, P0.w=10)
-    P0(BigRuneModel::ALPHA, BigRuneModel::ALPHA) = 10.0;
-    P0(BigRuneModel::BETA, BigRuneModel::BETA)   = 10.0;
-    P0(BigRuneModel::TAU, BigRuneModel::TAU)     = 0.0;
+    BigRuneModel::MatXX P0                   = BigRuneModel::MatXX::Identity() * 0.1;
+    P0(BigRuneModel::A, BigRuneModel::A)     = 0.05;
+    P0(BigRuneModel::W, BigRuneModel::W)     = 0.01;
+    P0(BigRuneModel::TAU, BigRuneModel::TAU) = 4.0;
 
     init_ekf(x0, P0);
 
@@ -282,6 +298,8 @@ void Tracker<ModelT>::state_machine(bool found) {
             ++detecting_count_;
             state = DETECTING;
         } else {
+            if (ekf_)
+                last_state_.emplace(ekf_->X());
             ekf_.reset();
             detecting_count_ = 0;
         }
@@ -296,6 +314,8 @@ void Tracker<ModelT>::state_machine(bool found) {
             }
         } else {
             detecting_count_ = 0;
+            if (ekf_)
+                last_state_.emplace(ekf_->X());
             ekf_.reset();
             state = IDLE;
         }
@@ -317,6 +337,8 @@ void Tracker<ModelT>::state_machine(bool found) {
             if (lost_count_ > params.lost_thres) {
                 lost_count_      = 0;
                 detecting_count_ = 0;
+                if (ekf_)
+                    last_state_.emplace(ekf_->X());
                 ekf_.reset();
                 reset_blade_lock();
                 state = IDLE;

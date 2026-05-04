@@ -117,6 +117,7 @@ private:
 
     double dt_{0.0};
     int armor_id_{0};
+    std::optional<typename Model::VecX> last_state_{};
 };
 
 // ============================================================================
