@@ -1,6 +1,7 @@
 #include "L2_perception/armor/backends/axera.hpp"
 
 #include "L2_perception/armor/config.hpp"
+#include "core/armor_types.hpp"
 #include "core/types.hpp"
 
 #include <algorithm>
@@ -509,13 +510,15 @@ std::expected<void, std::string> AxeraBackend::init() noexcept {
     return {};
 }
 
-AxeraBackend::PreprocContext AxeraBackend::preprocess(const cv::Mat& image) const noexcept {
+AxeraBackend::PreprocContext
+    AxeraBackend::preprocess(const cv::Mat& image, ArmorColor color) const noexcept {
     PreprocContext ctx;
     ctx.orig_w        = image.cols;
     ctx.orig_h        = image.rows;
     ctx.scale_x       = static_cast<float>(image.cols) / static_cast<float>(config_.input_width);
     ctx.scale_y       = static_cast<float>(image.rows) / static_cast<float>(config_.input_height);
     ctx.is_four_three = is_four_three(image.cols, image.rows);
+    ctx.detect_color  = color;
     return ctx;
 }
 
@@ -1010,8 +1013,7 @@ AxeraBackend::DetectionResult
     AxeraBackend::detect_impl(const cv::Mat& image, ArmorColor color) noexcept {
     const auto total_start = std::chrono::high_resolution_clock::now();
 
-    const auto ctx   = preprocess(image);
-    ctx.detect_color = color;
+    const auto ctx = preprocess(image, color);
     if (!ctx.is_four_three && !warned_non_four_three_input_) {
         SPDLOG_WARN(
             "[AxeraBackend] Input {}x{} is not 4:3; direct resize to {}x{} will be used "

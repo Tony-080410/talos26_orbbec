@@ -68,7 +68,7 @@ private:
     };
 
     /// Build direct-resize transform for current frame.
-    [[nodiscard]] PreprocContext preprocess(const cv::Mat& image) const noexcept;
+    [[nodiscard]] PreprocContext preprocess(const cv::Mat& image, ArmorColor color) const noexcept;
 
     /// Preprocess image into NPU buffer (resize + BGR2RGB + cache flush).
     void preprocess_image(const cv::Mat& image) noexcept;
