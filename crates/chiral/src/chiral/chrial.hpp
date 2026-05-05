@@ -114,4 +114,10 @@ struct TalosData {
     Transform<gimbal_yaw, camera> camera_link;
 };
 
+// ============ Incoming data (External → Talos) ============
+
+struct IncomingData {
+    uint64_t timestamp_ns = 0;
+};
+
 } // namespace talos::chrial

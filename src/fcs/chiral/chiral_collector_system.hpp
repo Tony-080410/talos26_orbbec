@@ -9,7 +9,8 @@ namespace fcs::chiral {
 /// Pipeline:
 ///   SelectedTargetSnapshot [SPMC] -> ChiralCollectorSystem [pool_compute]
 ///                                      ↓
-///                               Shared Memory (TalosData)
+///                               Shared Memory (TalosData) → External
+///                               Shared Memory (IncomingData) ← External
 ///
 /// ## Parameters
 ///

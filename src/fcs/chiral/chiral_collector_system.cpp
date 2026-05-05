@@ -1,8 +1,8 @@
 #include "chiral/chiral_collector_system.hpp"
 #include "L3_estimation/tracker/types.hpp"
 #include "L4_planning/selected_target_snapshot.hpp"
+#include "chiral/chiral_endpoint.hpp"
 #include "chiral/chrial.hpp"
-#include "chiral/talos_triple_buffer_shm.hpp"
 #include "core/channel_topics.hpp"
 #include "frame.hpp"
 #include "matrix.hpp"
@@ -60,19 +60,18 @@ talos::chrial::ArmorName to_chrial_armor_name(ArmorName name) noexcept {
 } // namespace
 
 void register_chiral_collector_system(talos::Scheduler& scheduler) {
-    // Create shared memory writer on initialization
-    auto writer = talos::chiral::ipc::TalosDataWriter::create();
-    if (!writer) {
+    // Create bidirectional endpoint: Talos writes TalosData, reads IncomingData
+    auto endpoint = talos::chiral::ipc::TalosSide::create();
+    if (!endpoint) {
         SPDLOG_ERROR(
-            "Failed to create TalosData shared memory writer: {}",
-            magic_enum::enum_name(writer.error()));
+            "Failed to create ChiralEndpoint (TalosSide): {}",
+            magic_enum::enum_name(endpoint.error()));
         return;
     }
 
     scheduler.add_system<talos::pool_compute>(
         "chiral_collector",
-        [writer_storage =
-             std::make_shared<talos::chiral::ipc::TalosDataWriter>(std::move(*writer))](
+        [ep_storage = std::make_shared<talos::chiral::ipc::TalosSide>(std::move(*endpoint))](
             talos::spmc<L4::SelectedTargetSnapshot, SelectedTargetSnapshotChannelTopic>
                 selected_target_in,
             talos::res<fast_tf::CoordinateSystem> tf_buffer) mutable {
@@ -219,7 +218,7 @@ void register_chiral_collector_system(talos::Scheduler& scheduler) {
                     talos_data.state.outpost.z     = z;
                 }
             }
-            writer_storage->write(talos_data);
+            ep_storage->write(talos_data);
         });
 }
 
