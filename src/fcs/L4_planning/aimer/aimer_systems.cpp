@@ -346,7 +346,7 @@ struct ReadbackRoiTimestamps {
 
 [[nodiscard]] TargetSelectionTraceEntry build_rejected_trace_entry(
     const L3::TrackerOutput& tracker, uint64_t current_ns, std::string reason,
-    bool was_previously_selected) {
+    bool was_previously_selected) noexcept {
     TargetSelectionTraceEntry entry;
     entry.target_name              = tracker.target_name;
     entry.target_color             = tracker.target_color;
@@ -377,10 +377,48 @@ struct AimContext {
     const Aimer& aimer;
 };
 
-// 从 TargetPrediction 构建 ControlIntent
+// 从 TargetPrediction 构造 SelectedTargetSnapshot（三个 try_* 共享）。
+[[nodiscard]] SelectedTargetSnapshot make_snapshot(
+    const TargetPrediction& pred, GimbalPlanSource source,
+    L3::TrackerOutput tracker = {}) noexcept {
+    return SelectedTargetSnapshot{
+        .timestamp_ns            = pred.timestamp_ns,
+        .source                  = source,
+        .distance                = pred.distance,
+        .predicted_future_ns     = pred.predicted_future_ns,
+        .aim_phase               = pred.aim_phase,
+        .selected_armor_id       = pred.selected_armor_id,
+        .rough_selected_armor_id = pred.rough_selected_armor_id,
+        .tracker                 = std::move(tracker),
+    };
+}
+
+// 从 TrackerOutput + TargetPrediction 构造 PlannerSeed（仅 try_armor 使用）。
+[[nodiscard]] std::optional<PlannerSeed>
+    make_planner_seed(const L3::TrackerOutput& tracker, const TargetPrediction& pred) noexcept {
+    PlannerSeed s;
+    s.state_timestamp_ns    = tracker.timestamp_ns;
+    s.target_jumped         = tracker.target_jumped;
+    s.tracker_last_armor_id = tracker.last_armor_id;
+    s.aim_phase             = pred.aim_phase;
+    s.selected_armor_id     = pred.selected_armor_id;
+    s.armor_type            = pred.armor_type;
+    if (const auto* rs = tracker.robot_state()) {
+        s.state = *rs;
+        return s;
+    }
+    if (const auto* os = tracker.outpost_state()) {
+        s.state = *os;
+        return s;
+    }
+    return std::nullopt;
+}
+
+// 从 TargetPrediction + 轨迹构建原料构建 ControlIntent。
+// 轨迹构建成功 → TrackCommand；失败 → ShotCommand（带 degradation 标记）。
 [[nodiscard]] ControlIntent build_control_intent(
     const TargetPrediction& pred, const AimContext& ctx,
-    const ReferenceTrajectoryConfig* ref_traj_cfg, const std::optional<PlannerSeed>& seed,
+    const ReferenceTrajectoryConfig& ref_traj_cfg, const std::optional<PlannerSeed>& seed,
     const std::optional<L3::ldm::LdmState>& ldm_for_track) noexcept {
     const TrajectoryBuildContext build_ctx{
         .current_ns        = ctx.current_ns,
@@ -392,8 +430,8 @@ struct AimContext {
 
     std::optional<std::string> degradation;
 
-    if (seed.has_value() && ref_traj_cfg) {
-        auto traj = build_reference_trajectory(*seed, ctx.aimer, *ref_traj_cfg, build_ctx);
+    if (seed.has_value()) {
+        auto traj = build_reference_trajectory(*seed, ctx.aimer, ref_traj_cfg, build_ctx);
         if (traj) {
             return TrackCommand{
                 .timestamp_ns = pred.timestamp_ns,
@@ -402,9 +440,9 @@ struct AimContext {
         }
         degradation = traj.error();
         SPDLOG_WARN("Failed to build reference trajectory: {}", *degradation);
-    } else if (ldm_for_track.has_value() && ldm_for_track->is_tracking() && ref_traj_cfg) {
+    } else if (ldm_for_track.has_value() && ldm_for_track->is_tracking()) {
         auto traj =
-            build_ldm_reference_trajectory(*ldm_for_track, ctx.aimer, *ref_traj_cfg, build_ctx);
+            build_ldm_reference_trajectory(*ldm_for_track, ctx.aimer, ref_traj_cfg, build_ctx);
         if (traj) {
             return TrackCommand{
                 .timestamp_ns = pred.timestamp_ns,
@@ -540,8 +578,8 @@ struct AimContext {
     // Build trace
     TargetSelectionTrace trace{
         .timestamp_ns        = ctx.current_ns,
-        .switch_margin       = sel_cfg.switch_margin,
         .kept_current_target = kept,
+        .switch_margin       = sel_cfg.switch_margin,
     };
     if (prev_key.has_value()) {
         trace.had_previous_target   = true;
@@ -572,80 +610,39 @@ struct AimContext {
     }
     selected_key = sel.key;
 
-    // Build PlannerSeed for trajectory
-    std::optional<PlannerSeed> seed;
-    if (sel.tracker.is_tracking()) {
-        PlannerSeed s;
-        s.state_timestamp_ns    = sel.tracker.timestamp_ns;
-        s.target_jumped         = sel.tracker.target_jumped;
-        s.tracker_last_armor_id = sel.tracker.last_armor_id;
-        s.aim_phase             = sel.prediction.aim_phase;
-        s.selected_armor_id     = sel.prediction.selected_armor_id;
-        s.armor_type            = sel.prediction.armor_type;
-        if (const auto* rs = sel.tracker.robot_state()) {
-            s.state = *rs;
-        } else if (const auto* os = sel.tracker.outpost_state()) {
-            s.state = *os;
-        } else {
-            s.state = std::monostate{};
-        }
-        if (!std::holds_alternative<std::monostate>(s.state)) {
-            seed = std::move(s);
-        }
-    }
+    auto seed = make_planner_seed(sel.tracker, sel.prediction);
 
-    SelectedTargetSnapshot snap;
-    snap.timestamp_ns            = sel.prediction.timestamp_ns;
-    snap.source                  = GimbalPlanSource::Armor;
-    snap.distance                = sel.prediction.distance;
-    snap.predicted_future_ns     = sel.prediction.predicted_future_ns;
-    snap.aim_phase               = sel.prediction.aim_phase;
-    snap.selected_armor_id       = sel.prediction.selected_armor_id;
-    snap.rough_selected_armor_id = sel.prediction.rough_selected_armor_id;
-    snap.tracker                 = sel.tracker;
+    auto snap = make_snapshot(sel.prediction, GimbalPlanSource::Armor, sel.tracker);
 
     return AimDecision{
-        .intent   = build_control_intent(sel.prediction, ctx, &ref_traj_cfg, seed, std::nullopt),
+        .intent   = build_control_intent(sel.prediction, ctx, ref_traj_cfg, seed, std::nullopt),
         .snapshot = std::move(snap),
         .trace    = std::move(trace),
     };
 }
 
-// try_rune — EnergyMeterState → 直接射击
-[[nodiscard]] std::optional<AimDecision> try_rune(
-    const std::optional<energy_meter::EnergyMeterState>& rune_in, const AimContext& ctx,
-    std::optional<energy_meter::EnergyMeterState>& state_cache,
-    std::optional<std::pair<double, double>>& last_aim_angles) {
-    if (rune_in && rune_in->tracking_valid) {
-        state_cache = *rune_in;
-    }
-    if (!state_cache)
-        return std::nullopt;
-
-    if (elapsed_seconds(state_cache->timestamp_ns, ctx.current_ns) >= 0.5) {
-        state_cache.reset();
+// try_rune — EnergyMeterState → 直接射击（不构建轨迹）
+[[nodiscard]] std::optional<AimDecision>
+    try_rune(const std::optional<energy_meter::EnergyMeterState>& rune_in, const AimContext& ctx) {
+    if (!rune_in) {
         return std::nullopt;
     }
 
     auto pred = ctx.aimer.aim(
-        *state_cache, ctx.gimbal, ctx.muzzle, ctx.current_ns, ctx.bullet_speed, ctx.solver);
+        rune_in.value(), ctx.gimbal, ctx.muzzle, ctx.current_ns, ctx.bullet_speed, ctx.solver);
     if (!pred)
         return std::nullopt;
 
-    last_aim_angles = {pred->aim_yaw, pred->aim_pitch};
-
-    SelectedTargetSnapshot snap;
-    snap.timestamp_ns            = pred->timestamp_ns;
-    snap.source                  = GimbalPlanSource::Rune;
-    snap.distance                = pred->distance;
-    snap.predicted_future_ns     = pred->predicted_future_ns;
-    snap.aim_phase               = pred->aim_phase;
-    snap.selected_armor_id       = pred->selected_armor_id;
-    snap.rough_selected_armor_id = pred->rough_selected_armor_id;
+    auto snap = make_snapshot(*pred, GimbalPlanSource::Rune);
 
     return AimDecision{
         .intent =
-            build_control_intent(*pred, ctx, /*ref_traj_cfg=*/nullptr, std::nullopt, std::nullopt),
+            ShotCommand{
+                        .timestamp_ns = pred->timestamp_ns,
+                        .yaw          = pred->aim_yaw,
+                        .pitch        = pred->aim_pitch,
+                        .distance     = pred->distance,
+                        },
         .snapshot = std::move(snap),
         .trace    = TargetSelectionTrace{.timestamp_ns = ctx.current_ns},
     };
@@ -654,31 +651,21 @@ struct AimContext {
 // try_ldm — LdmState → 弹道或直接射击
 [[nodiscard]] std::optional<AimDecision> try_ldm(
     const std::optional<L3::ldm::LdmState>& ldm_in, const AimContext& ctx,
-    const ReferenceTrajectoryConfig& ref_traj_cfg, std::optional<L3::ldm::LdmState>& state_cache) {
-    if (ldm_in && ldm_in->is_tracking()) {
-        state_cache = *ldm_in;
-    }
-    if (!state_cache || !state_cache->is_tracking()) {
+    const ReferenceTrajectoryConfig& ref_traj_cfg) {
+    if (!ldm_in) {
         // Router handles cache lifecycle — don't clear here
         return std::nullopt;
     }
 
     auto pred = ctx.aimer.aim(
-        *state_cache, ctx.gimbal, ctx.muzzle, ctx.current_ns, ctx.bullet_speed, ctx.solver);
+        ldm_in.value(), ctx.gimbal, ctx.muzzle, ctx.current_ns, ctx.bullet_speed, ctx.solver);
     if (!pred)
         return std::nullopt;
 
-    SelectedTargetSnapshot snap;
-    snap.timestamp_ns            = pred->timestamp_ns;
-    snap.source                  = GimbalPlanSource::Armor;
-    snap.distance                = pred->distance;
-    snap.predicted_future_ns     = pred->predicted_future_ns;
-    snap.aim_phase               = pred->aim_phase;
-    snap.selected_armor_id       = pred->selected_armor_id;
-    snap.rough_selected_armor_id = pred->rough_selected_armor_id;
+    auto snap = make_snapshot(*pred, GimbalPlanSource::Armor);
 
     return AimDecision{
-        .intent   = build_control_intent(*pred, ctx, &ref_traj_cfg, std::nullopt, *state_cache),
+        .intent   = build_control_intent(*pred, ctx, ref_traj_cfg, std::nullopt, ldm_in),
         .snapshot = std::move(snap),
         .trace    = TargetSelectionTrace{.timestamp_ns = ctx.current_ns},
     };
@@ -702,10 +689,7 @@ void register_aimer_systems(talos::Scheduler& scheduler, L4Config&& config) {
         "l4_aimer",
         [phase_states =
              std::unordered_map<core::TargetKey, TargetPhaseState, core::TargetKeyHash>{},
-         selected_key = std::optional<core::TargetKey>{},
-         rune_cache   = std::optional<energy_meter::EnergyMeterState>{},
-         rune_angles  = std::optional<std::pair<double, double>>{},
-         ldm_cache    = std::optional<L3::ldm::LdmState>{}](
+         selected_key = std::optional<core::TargetKey>{}](
             talos::res<L4Config> cfg, talos::res<Aimer> aimer,
             core::trajectory::trajectory_solver solver,
             core::trajectory::bullet_speed bullet_speed_,
@@ -740,16 +724,11 @@ void register_aimer_systems(talos::Scheduler& scheduler, L4Config&& config) {
                 cfg->reference_trajectory, phase_states, selected_key);
 
             if (!decision) {
-                decision = try_rune(rune_in.read_current(), ctx, rune_cache, rune_angles);
-                if (auto ldm_d =
-                        try_ldm(ldm_in.read(), ctx, cfg->reference_trajectory, ldm_cache)) {
+                decision = try_rune(rune_in.read_current(), ctx);
+                if (auto ldm_d = try_ldm(ldm_in.read_current(), ctx, cfg->reference_trajectory)) {
                     decision = std::move(ldm_d);
-                } else if (!decision) {
-                    // Neither Rune nor LDM succeeded: clear LDM cache
-                    ldm_cache.reset();
-                }
-                if (decision) {
-                    // Non-armor target won: clear armor selection state
+                    // LDM doesn't use armor-tracker-key tracking — reset to avoid
+                    // stale key influencing the next armor-selection cycle.
                     selected_key.reset();
                 }
             }
