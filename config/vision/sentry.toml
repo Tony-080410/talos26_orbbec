@@ -4,4 +4,4 @@
 trajectory.diameter = 0.017
 trajectory.mass = 0.00312
 
-aimer.delay = 0.02
+aimer.delay = 0.043

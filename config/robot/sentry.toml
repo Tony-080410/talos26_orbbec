@@ -22,14 +22,17 @@ translation = [0, 0, 0.0791]
 
 camera_link.translation = [0.0273, 0, 0.0544]
 camera_link.roll = 0.0
-camera_link.pitch = 0.15
-camera_link.yaw = -1.45
+# 偏高就+n 偏低就-n
+# 压低 +n 抬高 -n
+camera_link.pitch = 0.5
+# 掰左 +n 掰右 -n
+camera_link.yaw = 0.5
 
 muzzle_link.translation = [0.06, 0.0, 0.0]
 
 [mcu]
 mcu_authoritative_self_color = true
 mcu_authoritative_bullet_speed = true
-bullet_speed_default = 21.0
+bullet_speed_default = 24.0
 bullet_speed_min = 20
 bullet_speed_max = 25
