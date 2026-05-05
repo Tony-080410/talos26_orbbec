@@ -360,6 +360,330 @@ struct ReadbackRoiTimestamps {
     return entry;
 }
 
+// Decision — 三种目标源输出的统一类型
+struct AimDecision {
+    ControlIntent intent;
+    SelectedTargetSnapshot snapshot;
+    TargetSelectionTrace trace;
+};
+
+// AimContext — 三个决策函数共享的只读上下文
+struct AimContext {
+    const Aimer::GimbalTransform& gimbal;
+    const Aimer::MuzzleTransform& muzzle;
+    uint64_t current_ns;
+    double bullet_speed;
+    const core::trajectory::solver::TrajectorySolver& solver;
+    const Aimer& aimer;
+};
+
+// 从 TargetPrediction 构建 ControlIntent
+[[nodiscard]] ControlIntent build_control_intent(
+    const TargetPrediction& pred, const AimContext& ctx,
+    const ReferenceTrajectoryConfig* ref_traj_cfg, const std::optional<PlannerSeed>& seed,
+    const std::optional<L3::ldm::LdmState>& ldm_for_track) noexcept {
+    const TrajectoryBuildContext build_ctx{
+        .current_ns        = ctx.current_ns,
+        .gimbal            = ctx.gimbal,
+        .muzzle            = ctx.muzzle,
+        .trajectory_solver = &ctx.solver,
+        .bullet_speed      = ctx.bullet_speed,
+    };
+
+    std::optional<std::string> degradation;
+
+    if (seed.has_value() && ref_traj_cfg) {
+        auto traj = build_reference_trajectory(*seed, ctx.aimer, *ref_traj_cfg, build_ctx);
+        if (traj) {
+            return TrackCommand{
+                .timestamp_ns = pred.timestamp_ns,
+                .trajectory   = std::move(*traj),
+            };
+        }
+        degradation = traj.error();
+        SPDLOG_WARN("Failed to build reference trajectory: {}", *degradation);
+    } else if (ldm_for_track.has_value() && ldm_for_track->is_tracking() && ref_traj_cfg) {
+        auto traj =
+            build_ldm_reference_trajectory(*ldm_for_track, ctx.aimer, *ref_traj_cfg, build_ctx);
+        if (traj) {
+            return TrackCommand{
+                .timestamp_ns = pred.timestamp_ns,
+                .trajectory   = std::move(*traj),
+            };
+        }
+        degradation = traj.error();
+        SPDLOG_WARN("Failed to build LDM reference trajectory: {}", *degradation);
+    }
+
+    return ShotCommand{
+        .timestamp_ns       = pred.timestamp_ns,
+        .yaw                = pred.aim_yaw,
+        .pitch              = pred.aim_pitch,
+        .distance           = pred.distance,
+        .degradation_reason = std::move(degradation),
+    };
+}
+
+// try_armor — 多目标 tracker → 评分 → 选优 → 弹道
+[[nodiscard]] std::optional<AimDecision> try_armor(
+    const std::optional<L3::TrackerOutputs>& trackers, const AimContext& ctx,
+    const AimerConfig& aimer_cfg, const TargetSelectionConfig& sel_cfg,
+    const ReferenceTrajectoryConfig& ref_traj_cfg,
+    std::unordered_map<core::TargetKey, TargetPhaseState, core::TargetKeyHash>& phase_states,
+    std::optional<core::TargetKey>& selected_key) {
+    const auto prev_key    = selected_key;
+    const auto cur_euler   = ctx.gimbal.euler_rot();
+    const double cur_yaw   = cur_euler.yaw;
+    const double cur_pitch = cur_euler.pitch;
+
+    std::vector<core::TargetKey> active_keys;
+    std::vector<CandidateEvaluation> candidates;
+    std::vector<TargetSelectionTraceEntry> rejected;
+
+    const size_t reserve_n = trackers ? trackers->size() : 0U;
+    active_keys.reserve(reserve_n);
+    candidates.reserve(reserve_n);
+    rejected.reserve(reserve_n);
+
+    if (trackers) {
+        for (const auto& t : *trackers) {
+            if (!t.is_tracking())
+                continue;
+
+            const auto key = make_target_key(t);
+            active_keys.push_back(key);
+            const bool was_prev = prev_key.has_value() && key == *prev_key;
+
+            auto& ps = phase_states[key];
+            advance_armor_aim_phase(
+                aimer_cfg, target_abs_v_yaw(t), t.target_jumped, ps.phase, ps.overflow_count);
+
+            ArmorAimContext aim_ctx;
+            aim_ctx.target_jumped      = t.target_jumped;
+            aim_ctx.phase              = ps.phase;
+            aim_ctx.preferred_armor_id = t.last_armor_id;
+            if (t.target_jumped && ps.jumped_selected_armor_id.has_value()) {
+                aim_ctx.preferred_armor_id = ps.jumped_selected_armor_id;
+            }
+
+            auto pred = aim_tracker_target(
+                ctx.aimer, t, aim_ctx, ctx.gimbal, ctx.muzzle, ctx.current_ns, ctx.bullet_speed,
+                ctx.solver);
+            if (!pred) {
+                rejected.push_back(
+                    build_rejected_trace_entry(t, ctx.current_ns, pred.error(), was_prev));
+                continue;
+            }
+
+            CandidateEvaluation c;
+            c.key         = key;
+            c.tracker     = t;
+            c.prediction  = *pred;
+            c.scores      = score_candidate(sel_cfg, t, *pred, cur_yaw, cur_pitch, ctx.current_ns);
+            c.trace_entry = build_scored_trace_entry(
+                sel_cfg, t, *pred, c.scores, cur_yaw, cur_pitch, ctx.current_ns, was_prev);
+            candidates.push_back(std::move(c));
+        }
+    }
+
+    // Cleanup stale phase states
+    if (active_keys.empty()) {
+        phase_states.clear();
+        selected_key.reset();
+    } else {
+        std::erase_if(phase_states, [&](const auto& kv) {
+            return !contains_target_key(active_keys, kv.first);
+        });
+    }
+
+    if (candidates.empty())
+        return std::nullopt;
+
+    // Sort by score descending
+    std::ranges::sort(candidates, std::greater<>{}, [](const CandidateEvaluation& c) noexcept {
+        return c.scores.total;
+    });
+
+    // Switch-margin selection
+    size_t selected_idx = 0;
+    bool kept           = false;
+    std::optional<size_t> current_idx;
+    if (selected_key.has_value()) {
+        for (size_t i = 0; i < candidates.size(); ++i) {
+            if (candidates[i].key == *selected_key) {
+                current_idx = i;
+                break;
+            }
+        }
+    }
+    if (current_idx.has_value() && *current_idx != 0
+        && candidates[0].scores.total
+               <= candidates[*current_idx].scores.total + sel_cfg.switch_margin) {
+        selected_idx = *current_idx;
+        kept         = true;
+    }
+
+    std::optional<size_t> runner_up;
+    if (kept) {
+        runner_up = 0;
+    } else {
+        for (size_t i = 0; i < candidates.size(); ++i) {
+            if (i != selected_idx) {
+                runner_up = i;
+                break;
+            }
+        }
+    }
+
+    auto& sel = candidates[selected_idx];
+
+    // Build trace
+    TargetSelectionTrace trace{
+        .timestamp_ns        = ctx.current_ns,
+        .switch_margin       = sel_cfg.switch_margin,
+        .kept_current_target = kept,
+    };
+    if (prev_key.has_value()) {
+        trace.had_previous_target   = true;
+        trace.previous_target_name  = prev_key->name;
+        trace.previous_target_color = prev_key->color;
+    }
+    trace.candidates.reserve(candidates.size() + rejected.size());
+    for (size_t i = 0; i < candidates.size(); ++i) {
+        auto e      = candidates[i].trace_entry;
+        e.rank      = static_cast<int>(i + 1);
+        e.selected  = i == selected_idx;
+        e.runner_up = runner_up.has_value() && i == *runner_up;
+        trace.candidates.push_back(std::move(e));
+    }
+    for (auto& e : rejected) {
+        e.rank = static_cast<int>(trace.candidates.size() + 1);
+        trace.candidates.push_back(std::move(e));
+    }
+
+    // Update persistent state
+    sel.prediction.armor_type = cls_to_armor_type(sel.tracker.target_name);
+    auto& ps                  = phase_states[sel.key];
+    const bool jump_active    = sel.tracker.is_tracking() && sel.tracker.target_jumped;
+    if (sel.prediction.aim_phase == ArmorAimPhase::SingleArmor && !jump_active) {
+        ps.jumped_selected_armor_id.reset();
+    } else {
+        ps.jumped_selected_armor_id = sel.prediction.selected_armor_id;
+    }
+    selected_key = sel.key;
+
+    // Build PlannerSeed for trajectory
+    std::optional<PlannerSeed> seed;
+    if (sel.tracker.is_tracking()) {
+        PlannerSeed s;
+        s.state_timestamp_ns    = sel.tracker.timestamp_ns;
+        s.target_jumped         = sel.tracker.target_jumped;
+        s.tracker_last_armor_id = sel.tracker.last_armor_id;
+        s.aim_phase             = sel.prediction.aim_phase;
+        s.selected_armor_id     = sel.prediction.selected_armor_id;
+        s.armor_type            = sel.prediction.armor_type;
+        if (const auto* rs = sel.tracker.robot_state()) {
+            s.state = *rs;
+        } else if (const auto* os = sel.tracker.outpost_state()) {
+            s.state = *os;
+        } else {
+            s.state = std::monostate{};
+        }
+        if (!std::holds_alternative<std::monostate>(s.state)) {
+            seed = std::move(s);
+        }
+    }
+
+    SelectedTargetSnapshot snap;
+    snap.timestamp_ns            = sel.prediction.timestamp_ns;
+    snap.source                  = GimbalPlanSource::Armor;
+    snap.distance                = sel.prediction.distance;
+    snap.predicted_future_ns     = sel.prediction.predicted_future_ns;
+    snap.aim_phase               = sel.prediction.aim_phase;
+    snap.selected_armor_id       = sel.prediction.selected_armor_id;
+    snap.rough_selected_armor_id = sel.prediction.rough_selected_armor_id;
+    snap.tracker                 = sel.tracker;
+
+    return AimDecision{
+        .intent   = build_control_intent(sel.prediction, ctx, &ref_traj_cfg, seed, std::nullopt),
+        .snapshot = std::move(snap),
+        .trace    = std::move(trace),
+    };
+}
+
+// try_rune — EnergyMeterState → 直接射击
+[[nodiscard]] std::optional<AimDecision> try_rune(
+    const std::optional<energy_meter::EnergyMeterState>& rune_in, const AimContext& ctx,
+    std::optional<energy_meter::EnergyMeterState>& state_cache,
+    std::optional<std::pair<double, double>>& last_aim_angles) {
+    if (rune_in && rune_in->tracking_valid) {
+        state_cache = *rune_in;
+    }
+    if (!state_cache)
+        return std::nullopt;
+
+    if (elapsed_seconds(state_cache->timestamp_ns, ctx.current_ns) >= 0.5) {
+        state_cache.reset();
+        return std::nullopt;
+    }
+
+    auto pred = ctx.aimer.aim(
+        *state_cache, ctx.gimbal, ctx.muzzle, ctx.current_ns, ctx.bullet_speed, ctx.solver);
+    if (!pred)
+        return std::nullopt;
+
+    last_aim_angles = {pred->aim_yaw, pred->aim_pitch};
+
+    SelectedTargetSnapshot snap;
+    snap.timestamp_ns            = pred->timestamp_ns;
+    snap.source                  = GimbalPlanSource::Rune;
+    snap.distance                = pred->distance;
+    snap.predicted_future_ns     = pred->predicted_future_ns;
+    snap.aim_phase               = pred->aim_phase;
+    snap.selected_armor_id       = pred->selected_armor_id;
+    snap.rough_selected_armor_id = pred->rough_selected_armor_id;
+
+    return AimDecision{
+        .intent =
+            build_control_intent(*pred, ctx, /*ref_traj_cfg=*/nullptr, std::nullopt, std::nullopt),
+        .snapshot = std::move(snap),
+        .trace    = TargetSelectionTrace{.timestamp_ns = ctx.current_ns},
+    };
+}
+
+// try_ldm — LdmState → 弹道或直接射击
+[[nodiscard]] std::optional<AimDecision> try_ldm(
+    const std::optional<L3::ldm::LdmState>& ldm_in, const AimContext& ctx,
+    const ReferenceTrajectoryConfig& ref_traj_cfg, std::optional<L3::ldm::LdmState>& state_cache) {
+    if (ldm_in && ldm_in->is_tracking()) {
+        state_cache = *ldm_in;
+    }
+    if (!state_cache || !state_cache->is_tracking()) {
+        // Router handles cache lifecycle — don't clear here
+        return std::nullopt;
+    }
+
+    auto pred = ctx.aimer.aim(
+        *state_cache, ctx.gimbal, ctx.muzzle, ctx.current_ns, ctx.bullet_speed, ctx.solver);
+    if (!pred)
+        return std::nullopt;
+
+    SelectedTargetSnapshot snap;
+    snap.timestamp_ns            = pred->timestamp_ns;
+    snap.source                  = GimbalPlanSource::Armor;
+    snap.distance                = pred->distance;
+    snap.predicted_future_ns     = pred->predicted_future_ns;
+    snap.aim_phase               = pred->aim_phase;
+    snap.selected_armor_id       = pred->selected_armor_id;
+    snap.rough_selected_armor_id = pred->rough_selected_armor_id;
+
+    return AimDecision{
+        .intent   = build_control_intent(*pred, ctx, &ref_traj_cfg, std::nullopt, *state_cache),
+        .snapshot = std::move(snap),
+        .trace    = TargetSelectionTrace{.timestamp_ns = ctx.current_ns},
+    };
+}
+
 } // namespace
 
 void register_aimer_systems(talos::Scheduler& scheduler, L4Config&& config) {
@@ -378,340 +702,75 @@ void register_aimer_systems(talos::Scheduler& scheduler, L4Config&& config) {
         "l4_aimer",
         [phase_states =
              std::unordered_map<core::TargetKey, TargetPhaseState, core::TargetKeyHash>{},
-         selected_target_key  = std::optional<core::TargetKey>{},
-         ldm_state_cache      = std::optional<L3::ldm::LdmState>{},
-         rune_state_cache     = std::optional<energy_meter::EnergyMeterState>{},
-         rune_last_aim_angles = std::optional<std::pair<double, double>>{}](
+         selected_key = std::optional<core::TargetKey>{},
+         rune_cache   = std::optional<energy_meter::EnergyMeterState>{},
+         rune_angles  = std::optional<std::pair<double, double>>{},
+         ldm_cache    = std::optional<L3::ldm::LdmState>{}](
             talos::res<L4Config> cfg, talos::res<Aimer> aimer,
             core::trajectory::trajectory_solver solver,
             core::trajectory::bullet_speed bullet_speed_,
             talos::spmc<L3::TrackerOutputs, TrackerOutputChannelTopic> tracker_in,
             talos::spmc<energy_meter::EnergyMeterState, EnergyMeterStateChannelTopic> rune_in,
             talos::spmc<L3::ldm::LdmState> ldm_in, talos::res<fast_tf::CoordinateSystem> tf_buffer,
-            talos::spmc_mut<SelectedTargetSnapshot, SelectedTargetSnapshotChannelTopic>
-                selected_target_out,
-            talos::spmc_mut<TargetSelectionTrace, TargetSelectionTraceChannelTopic>
-                target_selection_out,
-            talos::spmc_mut<ControlIntent, ControlIntentChannelTopic> control_out) mutable {
-            std::expected<TargetPrediction, std::string> aim_result = std::unexpected("none");
-
-            const uint64_t current_ns = fcs::clock::now_ns();
-
-            auto transforms = lookup_gimbal_muzzle_transforms(*tf_buffer, current_ns);
-            if (!transforms) [[unlikely]] {
-                SPDLOG_WARN("tf lookup failed: {}", transforms.error());
+            talos::spmc_mut<SelectedTargetSnapshot, SelectedTargetSnapshotChannelTopic> out_snap,
+            talos::spmc_mut<TargetSelectionTrace, TargetSelectionTraceChannelTopic> out_trace,
+            talos::spmc_mut<ControlIntent, ControlIntentChannelTopic> out_ctrl) mutable {
+            const uint64_t now_ns = fcs::clock::now_ns();
+            const auto xf         = lookup_gimbal_muzzle_transforms(*tf_buffer, now_ns);
+            if (!xf) [[unlikely]] {
+                SPDLOG_WARN("tf lookup failed: {}", xf.error());
                 return;
             }
-            const auto& [gimbal, muzzle, timestamp_ns] = *transforms;
+            const auto& [gimbal, muzzle, ts_ns] = *xf;
 
-            const auto& solver_ref           = **solver;
-            const double bullet_speed        = bullet_speed_->bullet_speed;
-            const auto current_gimbal        = gimbal.euler_rot();
-            const double cur_pitch           = current_gimbal.pitch;
-            const double cur_yaw             = current_gimbal.yaw;
-            const auto previous_selected_key = selected_target_key;
+            const AimContext ctx{
+                .gimbal       = gimbal,
+                .muzzle       = muzzle,
+                .current_ns   = now_ns,
+                .bullet_speed = bullet_speed_->bullet_speed,
+                .solver       = **solver,
+                .aimer        = *aimer,
+            };
 
-            // Try Robot/Outpost from tracker (multi-target)
             const auto tracker_vec = tracker_in.read_current();
-            const auto fallback_readback_tracker =
-                pick_readback_tracker_fallback(tracker_vec, previous_selected_key);
-            std::vector<core::TargetKey> active_target_keys;
-            std::vector<CandidateEvaluation> candidates;
-            std::vector<TargetSelectionTraceEntry> rejected_candidates;
-            active_target_keys.reserve(tracker_vec ? tracker_vec->size() : 0U);
-            candidates.reserve(tracker_vec ? tracker_vec->size() : 0U);
-            rejected_candidates.reserve(tracker_vec ? tracker_vec->size() : 0U);
+            const auto fallback    = pick_readback_tracker_fallback(tracker_vec, selected_key);
 
-            if (tracker_vec) {
-                for (const auto& tracker_output : *tracker_vec) {
-                    if (!tracker_output.is_tracking()) {
-                        continue;
-                    }
+            auto decision = try_armor(
+                tracker_vec, ctx, cfg->aimer, cfg->aimer.target_selection,
+                cfg->reference_trajectory, phase_states, selected_key);
 
-                    const auto key = make_target_key(tracker_output);
-                    active_target_keys.push_back(key);
-                    const bool was_previously_selected =
-                        previous_selected_key.has_value() && key == *previous_selected_key;
-
-                    auto& phase_state = phase_states[key];
-                    advance_armor_aim_phase(
-                        cfg->aimer, target_abs_v_yaw(tracker_output), tracker_output.target_jumped,
-                        phase_state.phase, phase_state.overflow_count);
-
-                    ArmorAimContext aim_context;
-                    aim_context.target_jumped      = tracker_output.target_jumped;
-                    aim_context.phase              = phase_state.phase;
-                    aim_context.preferred_armor_id = tracker_output.last_armor_id;
-                    if (tracker_output.target_jumped
-                        && phase_state.jumped_selected_armor_id.has_value()) {
-                        aim_context.preferred_armor_id = phase_state.jumped_selected_armor_id;
-                    }
-
-                    auto prediction = aim_tracker_target(
-                        *aimer, tracker_output, aim_context, gimbal, muzzle, current_ns,
-                        bullet_speed, solver_ref);
-                    if (!prediction) {
-                        rejected_candidates.push_back(build_rejected_trace_entry(
-                            tracker_output, current_ns, prediction.error(),
-                            was_previously_selected));
-                        continue;
-                    }
-
-                    CandidateEvaluation candidate;
-                    candidate.key        = key;
-                    candidate.tracker    = tracker_output;
-                    candidate.prediction = *prediction;
-                    candidate.scores     = score_candidate(
-                        cfg->aimer.target_selection, tracker_output, *prediction, cur_yaw,
-                        cur_pitch, current_ns);
-                    candidate.trace_entry = build_scored_trace_entry(
-                        cfg->aimer.target_selection, tracker_output, *prediction, candidate.scores,
-                        cur_yaw, cur_pitch, current_ns, was_previously_selected);
-                    candidates.push_back(std::move(candidate));
+            if (!decision) {
+                decision = try_rune(rune_in.read_current(), ctx, rune_cache, rune_angles);
+                if (auto ldm_d =
+                        try_ldm(ldm_in.read(), ctx, cfg->reference_trajectory, ldm_cache)) {
+                    decision = std::move(ldm_d);
+                } else if (!decision) {
+                    // Neither Rune nor LDM succeeded: clear LDM cache
+                    ldm_cache.reset();
+                }
+                if (decision) {
+                    // Non-armor target won: clear armor selection state
+                    selected_key.reset();
                 }
             }
 
-            if (active_target_keys.empty()) {
-                phase_states.clear();
-                selected_target_key.reset();
+            if (decision) {
+                out_snap.write(std::move(decision->snapshot));
+                out_trace.write(std::move(decision->trace));
+                out_ctrl.write(std::move(decision->intent));
             } else {
-                for (auto it = phase_states.begin(); it != phase_states.end();) {
-                    if (!contains_target_key(active_target_keys, it->first)) {
-                        it = phase_states.erase(it);
-                    } else {
-                        ++it;
-                    }
-                }
-            }
-
-            std::optional<CandidateEvaluation> selected_candidate;
-            TargetSelectionTrace target_selection_trace;
-            target_selection_trace.timestamp_ns  = current_ns;
-            target_selection_trace.switch_margin = cfg->aimer.target_selection.switch_margin;
-            if (previous_selected_key.has_value()) {
-                target_selection_trace.had_previous_target   = true;
-                target_selection_trace.previous_target_name  = previous_selected_key->name;
-                target_selection_trace.previous_target_color = previous_selected_key->color;
-            }
-
-            if (!candidates.empty()) {
-                std::ranges::sort(
-                    candidates, [](const CandidateEvaluation& lhs, const CandidateEvaluation& rhs) {
-                        return lhs.scores.total > rhs.scores.total;
-                    });
-
-                const size_t best_index = 0;
-                std::optional<size_t> current_index;
-                if (selected_target_key.has_value()) {
-                    for (size_t i = 0; i < candidates.size(); ++i) {
-                        if (candidates[i].key == *selected_target_key) {
-                            current_index = i;
-                            break;
-                        }
-                    }
-                }
-
-                size_t selected_index    = best_index;
-                bool kept_current_target = false;
-                if (current_index.has_value() && *current_index != best_index
-                    && candidates[best_index].scores.total
-                           <= candidates[*current_index].scores.total
-                                  + cfg->aimer.target_selection.switch_margin) {
-                    selected_index      = *current_index;
-                    kept_current_target = true;
-                }
-
-                std::optional<size_t> runner_up_index;
-                if (kept_current_target) {
-                    runner_up_index = best_index;
+                const uint64_t out_ns = fcs::clock::now_ns();
+                SelectedTargetSnapshot snap{.timestamp_ns = out_ns};
+                if (fallback.has_value()) {
+                    snap.source  = GimbalPlanSource::Armor;
+                    snap.tracker = *fallback;
+                    selected_key = make_target_key(*fallback);
                 } else {
-                    for (size_t i = 0; i < candidates.size(); ++i) {
-                        if (i != selected_index) {
-                            runner_up_index = i;
-                            break;
-                        }
-                    }
+                    selected_key.reset();
                 }
-
-                selected_candidate = candidates[selected_index];
-                aim_result         = selected_candidate->prediction;
-
-                target_selection_trace.kept_current_target = kept_current_target;
-
-                target_selection_trace.candidates.reserve(
-                    candidates.size() + rejected_candidates.size());
-                for (size_t i = 0; i < candidates.size(); ++i) {
-                    auto entry      = candidates[i].trace_entry;
-                    entry.rank      = static_cast<int>(i + 1);
-                    entry.selected  = i == selected_index;
-                    entry.runner_up = runner_up_index.has_value() && i == *runner_up_index;
-                    target_selection_trace.candidates.push_back(std::move(entry));
-                }
-            } else if (!fallback_readback_tracker.has_value()) {
-                selected_target_key.reset();
-            }
-
-            for (auto& entry : rejected_candidates) {
-                entry.rank = static_cast<int>(target_selection_trace.candidates.size() + 1);
-                target_selection_trace.candidates.push_back(std::move(entry));
-            }
-
-            // Try Rune (cached state persists through brief tracking dropouts)
-            if (!aim_result) {
-                const auto rune_state = rune_in.read_current();
-                if (rune_state && rune_state->tracking_valid) {
-                    rune_state_cache = *rune_state;
-                }
-
-                if (rune_state_cache) {
-                    const double staleness =
-                        elapsed_seconds(rune_state_cache->timestamp_ns, current_ns);
-                    if (staleness < 0.5) {
-                        aim_result = aimer->aim(
-                            *rune_state_cache, gimbal, muzzle, current_ns, bullet_speed,
-                            solver_ref);
-                    } else {
-                        rune_state_cache.reset();
-                    }
-                }
-
-                // LDM (overrides rune if available)
-                const auto ldm_state = ldm_in.read();
-                if (ldm_state && ldm_state->is_tracking()) {
-                    ldm_state_cache = *ldm_state;
-                    aim_result      = aimer->aim(
-                        *ldm_state, gimbal, muzzle, current_ns, bullet_speed, solver_ref);
-                } else if (!aim_result) {
-                    ldm_state_cache.reset();
-                }
-            }
-
-            if (aim_result) {
-                // Cache rune aim angles for the no-target fallback path
-                if (aim_result->target_type == AimerTargetType::Rune
-                    || aim_result->target_type == AimerTargetType::Ldm) {
-                    rune_last_aim_angles = {aim_result->aim_yaw, aim_result->aim_pitch};
-                }
-                if (selected_candidate) {
-                    aim_result->armor_type =
-                        cls_to_armor_type(selected_candidate->tracker.target_name);
-                    auto& phase_state              = phase_states[selected_candidate->key];
-                    const bool tracker_jump_active = selected_candidate->tracker.is_tracking()
-                                                  && selected_candidate->tracker.target_jumped;
-                    if (aim_result->aim_phase == ArmorAimPhase::SingleArmor
-                        && !tracker_jump_active) {
-                        phase_state.jumped_selected_armor_id.reset();
-                    } else {
-                        phase_state.jumped_selected_armor_id = aim_result->selected_armor_id;
-                    }
-                    selected_target_key = selected_candidate->key;
-                } else {
-                    selected_target_key.reset();
-                }
-
-                SelectedTargetSnapshot selected_target;
-                selected_target.timestamp_ns = aim_result->timestamp_ns;
-                selected_target.source       = (aim_result->target_type == AimerTargetType::Rune)
-                                                 ? GimbalPlanSource::Rune
-                                                 : GimbalPlanSource::Armor;
-                selected_target.distance     = aim_result->distance;
-                selected_target.predicted_future_ns     = aim_result->predicted_future_ns;
-                selected_target.aim_phase               = aim_result->aim_phase;
-                selected_target.selected_armor_id       = aim_result->selected_armor_id;
-                selected_target.rough_selected_armor_id = aim_result->rough_selected_armor_id;
-                if (selected_candidate) {
-                    selected_target.tracker = selected_candidate->tracker;
-                }
-
-                const bool is_ldm_target = aim_result->target_type == AimerTargetType::Ldm
-                                        && ldm_state_cache.has_value()
-                                        && ldm_state_cache->is_tracking();
-
-                // Build ControlIntent: Track if trajectory built, Shot otherwise.
-                ControlIntent intent = [&]() -> ControlIntent {
-                    std::optional<std::string> degradation;
-                    if (selected_candidate && selected_candidate->tracker.is_tracking()) {
-                        PlannerSeed seed;
-                        seed.state_timestamp_ns    = selected_candidate->tracker.timestamp_ns;
-                        seed.target_jumped         = selected_candidate->tracker.target_jumped;
-                        seed.tracker_last_armor_id = selected_candidate->tracker.last_armor_id;
-                        seed.aim_phase             = aim_result->aim_phase;
-                        seed.selected_armor_id     = aim_result->selected_armor_id;
-                        seed.armor_type            = aim_result->armor_type;
-                        if (const auto* rs = selected_candidate->tracker.robot_state()) {
-                            seed.state = *rs;
-                        } else if (const auto* os = selected_candidate->tracker.outpost_state()) {
-                            seed.state = *os;
-                        }
-                        if (!std::holds_alternative<std::monostate>(seed.state)) {
-                            const TrajectoryBuildContext build_ctx{
-                                .current_ns        = current_ns,
-                                .gimbal            = gimbal,
-                                .muzzle            = muzzle,
-                                .trajectory_solver = &solver_ref,
-                                .bullet_speed      = bullet_speed,
-                            };
-                            auto ref_traj = build_reference_trajectory(
-                                seed, *aimer, cfg->reference_trajectory, build_ctx);
-                            if (ref_traj) {
-                                return TrackCommand{
-                                    .timestamp_ns = aim_result->timestamp_ns,
-                                    .trajectory   = std::move(*ref_traj),
-                                };
-                            }
-                            degradation = ref_traj.error();
-                            SPDLOG_WARN(
-                                "Failed to build reference trajectory: {}", ref_traj.error());
-                        }
-                    } else if (is_ldm_target) {
-                        const TrajectoryBuildContext build_ctx{
-                            .current_ns        = current_ns,
-                            .gimbal            = gimbal,
-                            .muzzle            = muzzle,
-                            .trajectory_solver = &solver_ref,
-                            .bullet_speed      = bullet_speed,
-                        };
-                        auto ref_traj = build_ldm_reference_trajectory(
-                            *ldm_state_cache, *aimer, cfg->reference_trajectory, build_ctx);
-                        if (ref_traj) {
-                            return TrackCommand{
-                                .timestamp_ns = aim_result->timestamp_ns,
-                                .trajectory   = std::move(*ref_traj),
-                            };
-                        }
-                        degradation = ref_traj.error();
-                        SPDLOG_WARN(
-                            "Failed to build LDM reference trajectory: {}", ref_traj.error());
-                    }
-                    // Have aim angles but no trajectory: direct shot.
-                    // degradation carries the trajectory-build error when this is a
-                    // fallback; nullopt means this is an intentional direct-shot.
-                    return ShotCommand{
-                        .timestamp_ns       = aim_result->timestamp_ns,
-                        .yaw                = aim_result->aim_yaw,
-                        .pitch              = aim_result->aim_pitch,
-                        .distance           = aim_result->distance,
-                        .degradation_reason = std::move(degradation),
-                    };
-                }();
-
-                selected_target_out.write(std::move(selected_target));
-                target_selection_out.write(std::move(target_selection_trace));
-                control_out.write(std::move(intent));
-            } else {
-                const uint64_t output_timestamp_ns = fcs::clock::now_ns();
-                SelectedTargetSnapshot selected_target;
-                selected_target.timestamp_ns = output_timestamp_ns;
-                if (fallback_readback_tracker.has_value()) {
-                    selected_target.source  = GimbalPlanSource::Armor;
-                    selected_target.tracker = *fallback_readback_tracker;
-                    selected_target_key     = make_target_key(*fallback_readback_tracker);
-                } else {
-                    selected_target_key.reset();
-                }
-                selected_target_out.write(std::move(selected_target));
-                target_selection_out.write(std::move(target_selection_trace));
-                control_out.write(HoldCommand{.timestamp_ns = output_timestamp_ns});
+                out_snap.write(std::move(snap));
+                out_trace.write(TargetSelectionTrace{.timestamp_ns = out_ns});
+                out_ctrl.write(HoldCommand{.timestamp_ns = out_ns});
             }
         });
 
