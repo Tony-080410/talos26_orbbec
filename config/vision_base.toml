@@ -1,6 +1,6 @@
 backend_type = "Traditional"  # Options: "Traditional", "OpenVINO", "OpenVINOTup", "TensorRT", "Axera"
 detect_color = "Blue"
-capabilities = ["rune"]
+capabilities = ["Armor"]
 
 # Required if backend_type = "traditional"
 [traditional]
@@ -239,7 +239,7 @@ rho = 1.225
 [fire_decision]
 # Minimum shooting threshold (radians), used for long distances
 # Shared fire gate threshold for L5
-fire_thresh = 0.08444444
+fire_thresh = 0.008444444
 # Physical window dimensions (meters)
 shooting_range_h = 0.12
 shooting_range_w_small = 0.12
