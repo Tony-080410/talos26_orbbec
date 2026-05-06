@@ -624,7 +624,7 @@ struct AimContext {
 // try_rune — EnergyMeterState → 直接射击（不构建轨迹）
 [[nodiscard]] std::optional<AimDecision>
     try_rune(const std::optional<energy_meter::EnergyMeterState>& rune_in, const AimContext& ctx) {
-    if (!rune_in) {
+    if (!rune_in || !rune_in->model_valid) {
         return std::nullopt;
     }
 
@@ -725,8 +725,15 @@ void register_aimer_systems(talos::Scheduler& scheduler, L4Config&& config) {
 
             if (!decision) {
                 decision = try_rune(rune_in.read_current(), ctx);
-                if (auto ldm_d = try_ldm(ldm_in.read_current(), ctx, cfg->reference_trajectory)) {
-                    decision = std::move(ldm_d);
+                if (decision) {
+                    // Rune doesn't use armor-tracker-key tracking — reset to avoid
+                    // stale key influencing the next armor-selection cycle.
+                    selected_key.reset();
+                }
+            }
+            if (!decision) {
+                decision = try_ldm(ldm_in.read_current(), ctx, cfg->reference_trajectory);
+                if (decision) {
                     // LDM doesn't use armor-tracker-key tracking — reset to avoid
                     // stale key influencing the next armor-selection cycle.
                     selected_key.reset();
