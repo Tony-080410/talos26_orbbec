@@ -3,6 +3,7 @@
 #include <array>
 #include <atomic>
 #include <latch>
+#include <optional>
 #include <string>
 #include <thread>
 #include <vector>
@@ -187,6 +188,49 @@ TEST(SpmcTest, MultipleWrites) {
     EXPECT_EQ(*val, 3);
 
     // No more new data
+    EXPECT_FALSE(r.read().has_value());
+}
+
+TEST(SpmcTest, BacklogDrainsUnreadWritesAfterReaderCaughtUp) {
+    auto [w, r] = SpmcTripleBuffer<int>::create();
+
+    w.write(1);
+    ASSERT_EQ(r.read(), std::optional<int>(1));
+
+    w.write(2);
+    w.write(3);
+    w.write(4);
+
+    EXPECT_EQ(r.read(), std::optional<int>(2));
+    EXPECT_EQ(r.read(), std::optional<int>(3));
+    EXPECT_EQ(r.read(), std::optional<int>(4));
+    EXPECT_FALSE(r.read().has_value());
+}
+
+TEST(SpmcTest, BacklogOverflowDropsOldestRetainedWrites) {
+    auto [w, r] = SpmcTripleBuffer<int>::create();
+
+    w.write(0);
+    ASSERT_EQ(r.read(), std::optional<int>(0));
+
+    constexpr auto kExtraWrites = SpmcTripleBuffer<int>::backlog_capacity + 4;
+    for (std::size_t i = 1; i <= kExtraWrites; ++i) {
+        w.write(static_cast<int>(i));
+    }
+
+    EXPECT_EQ(r.read(), std::optional<int>(5));
+}
+
+TEST(SpmcTest, ReadCurrentSkipsBacklogAndMarksLatestSeen) {
+    auto [w, r] = SpmcTripleBuffer<int>::create();
+
+    w.write(1);
+    ASSERT_EQ(r.read(), std::optional<int>(1));
+
+    w.write(2);
+    w.write(3);
+
+    EXPECT_EQ(r.read_current(), std::optional<int>(3));
     EXPECT_FALSE(r.read().has_value());
 }
 

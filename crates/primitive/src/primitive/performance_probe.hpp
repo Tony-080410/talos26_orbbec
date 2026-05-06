@@ -56,7 +56,7 @@ private:
  */
 class LatencyHistogram {
 public:
-    static constexpr std::size_t SAMPLE_WINDOW = 8192;
+    static constexpr std::size_t SAMPLE_WINDOW = 1024;
 
     LatencyHistogram() noexcept = default;
 
