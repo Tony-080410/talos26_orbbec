@@ -26,22 +26,34 @@ add_compile_options(-fPIC)
 # can either be rejected outright or silently tune code for the build host
 # instead of the target SoC.
 if (CMAKE_CROSSCOMPILING)
-    add_compile_options(-funroll-loops)
-else ()
+  # Target: ARM Cortex-A55 (aarch64, ARMv8.2-A)
+  #   8× in-order cores, 2-wide decode, NEON + LSE atomics + dotprod
+  if (CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|arm64|ARM64")
     add_compile_options(
+        -mcpu=cortex-a55
+        -mno-outline-atomics
+        -ffp-contract=fast
+    )
+    add_link_options(-Wl,--gc-sections)
+  endif ()
+else ()
+  add_compile_options(
         -march=native
         -mtune=native
-        -funroll-loops
-    )
+  )
 endif ()
 
-# Clang-specific optimization options
-if (CMAKE_CXX_COMPILER_ID MATCHES "Clang")
-    add_compile_options(
-        -fvectorize
-        -fslp-vectorize
-    )
-endif()
+add_compile_options(
+    -funroll-loops
+    -fvectorize
+    -fslp-vectorize
+    -fno-math-errno
+    -fno-omit-frame-pointer
+    -fno-plt
+
+    -fdata-sections
+    -ffunction-sections
+)
 
 # Common warning options (work for both GCC and Clang)
 add_compile_options(
@@ -64,7 +76,8 @@ add_compile_options(
     -Werror=vla
     -Werror=alloca
     -Werror=pointer-arith
-    -Werror=format=2
+    -Wformat=2
+    -Werror=format
     -Werror=format-security
     -Werror=cast-align
     -Werror=cast-qual
