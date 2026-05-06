@@ -3,6 +3,8 @@
 #include "L2_perception/armor/config.hpp"
 #include "core/types.hpp"
 
+#include <NvInfer.h>
+#include <NvOnnxParser.h>
 #include <algorithm>
 #include <chrono>
 #include <cstring>
@@ -11,12 +13,10 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <ranges>
 #include <thread>
 #include <unordered_map>
 #include <vector>
-
-#include <NvInfer.h>
-#include <NvOnnxParser.h>
 
 #include <cuda_runtime.h>
 
@@ -732,8 +732,8 @@ TrtBackend::DetectionResult
     if (!boxes.empty()) {
         // Sort by confidence
         std::vector<int> indices(boxes.size());
-        std::iota(indices.begin(), indices.end(), 0);
-        std::sort(indices.begin(), indices.end(), [&confidences](int a, int b) {
+        std::ranges::iota(indices.begin(), indices.end(), 0);
+        std::ranges::sort(indices.begin(), indices.end(), [&confidences](int a, int b) {
             return confidences[a] > confidences[b];
         });
 

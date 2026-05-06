@@ -18,6 +18,7 @@ vision = "daedalus_vision"
 "sentry" = { daedalus = false, robot = "sentry", vision = "sentry" }
 "ax650-hero" = { daedalus = false, robot = "hero", vision = "hero" }
 "ax650-doggy" = { daedalus = false, robot = "doggy", vision = "doggy" }
+"tegra-ubuntu" = { daedalus = false, robot = "infantry_nx", vision = "nx" }
 
 [foxglove]
 enabled = true
