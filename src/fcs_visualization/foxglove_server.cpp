@@ -1,7 +1,9 @@
 #include "foxglove_server.hpp"
 
+#include <error.hpp>
 #include <server.hpp>
 #include <spdlog/spdlog.h>
+#include <system_info.hpp>
 
 namespace fcs::visualization {
 
@@ -67,10 +69,12 @@ namespace detail {
 
 FoxgloveServer::FoxgloveServer(
     ConstructorToken, ::foxglove::Context context, FoxgloveChannels channels,
+    std::optional<::foxglove::SystemInfoPublisher> publisher,
     std::optional<::foxglove::WebSocketServer> websocket_server,
     std::optional<::foxglove::McapWriter> mcap_writer)
     : context_(std::move(context))
     , channels_(std::move(channels))
+    , publisher_(std::move(publisher))
     , websocket_server_(std::move(websocket_server))
     , mcap_writer_(std::move(mcap_writer)) {
     ::foxglove::setLogLevel(::foxglove::LogLevel::Info);
@@ -89,7 +93,9 @@ FoxgloveServer::~FoxgloveServer() {
 
     sink_alive_->store(false, std::memory_order_release);
     should_stop_.store(true, std::memory_order_release);
-
+    if (publisher_) {
+        publisher_->stop();
+    }
     if (sender_thread_.joinable())
         sender_thread_.join();
 
@@ -206,10 +212,15 @@ void FoxgloveServer::message_sender_thread() {
         !r) {
         return std::unexpected(std::move(r.error()));
     }
-
+    auto options    = foxglove::SystemInfoOptions{};
+    options.context = context;
+    auto publisher  = foxglove::SystemInfoPublisher::create(std::move(options));
+    if (!publisher) {
+        return std::unexpected(std::string(foxglove::strerror(publisher.error())));
+    }
     return std::make_unique<FoxgloveServer>(
         FoxgloveServer::ConstructorToken{}, std::move(context), std::move(channels),
-        std::move(websocket_server), std::move(mcap_writer));
+        std::move(publisher.value()), std::move(websocket_server), std::move(mcap_writer));
 }
 
 [[nodiscard]] std::expected<std::unique_ptr<FoxgloveServer>, std::string>

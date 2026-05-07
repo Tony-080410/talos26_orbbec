@@ -245,7 +245,7 @@ endif ()
 
 message(STATUS "Foxglove platform: ${FOXGLOVE_PLATFORM}")
 
-set(FOXGLOVE_VERSION "v0.22.0")
+set(FOXGLOVE_VERSION "v0.23.0")
 
 # Fetch foxglove (custom URL + ZIP_NAME)
 fetch_dependency(NAME foxglove
@@ -273,6 +273,7 @@ set(FOXGLOVE_SOURCES
     "${foxglove_SOURCE_DIR}/src/parameter.cpp"
     "${foxglove_SOURCE_DIR}/src/service.cpp"
     "${foxglove_SOURCE_DIR}/src/websocket.cpp"
+    "${foxglove_SOURCE_DIR}/src/system_info.cpp"
 )
 
 function(silence_target_warnings tgt)

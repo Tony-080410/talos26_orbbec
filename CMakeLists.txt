@@ -117,6 +117,7 @@ target_include_directories(foxglove_cpp SYSTEM PUBLIC
 
 target_link_libraries(foxglove_cpp PUBLIC
         ${foxglove_SOURCE_DIR}/lib/libfoxglove.a
+        "$<$<PLATFORM_ID:Darwin>:-framework IOKit>"
         "$<$<PLATFORM_ID:Darwin>:-framework Security>"
         "$<$<PLATFORM_ID:Darwin>:-framework CoreFoundation>"
         "$<$<PLATFORM_ID:Darwin>:-framework SystemConfiguration>"

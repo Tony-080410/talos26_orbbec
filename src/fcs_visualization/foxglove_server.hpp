@@ -9,6 +9,7 @@
 #include <expected>
 #include <memory>
 #include <string>
+#include <system_info.hpp>
 #include <thread>
 
 #include <fmt/format.h>
@@ -137,6 +138,7 @@ private:
 public:
     explicit FoxgloveServer(
         ConstructorToken, ::foxglove::Context context, FoxgloveChannels channels,
+        std::optional<::foxglove::SystemInfoPublisher> publisher,
         std::optional<::foxglove::WebSocketServer> websocket_server,
         std::optional<::foxglove::McapWriter> mcap_writer);
 
@@ -183,6 +185,7 @@ private:
     std::shared_ptr<std::atomic<bool>> sink_alive_{std::make_shared<std::atomic<bool>>(true)};
     ::foxglove::Context context_{};
     FoxgloveChannels channels_;
+    std::optional<::foxglove::SystemInfoPublisher> publisher_;
     std::optional<::foxglove::WebSocketServer> websocket_server_;
     std::optional<::foxglove::McapWriter> mcap_writer_;
     std::optional<fast_tf::FoxgloveExporter> tf_exporter_;
