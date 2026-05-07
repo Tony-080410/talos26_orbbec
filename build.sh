@@ -408,7 +408,7 @@ parse_args() {
                 ENABLE_CALIBRATION="ON"
                 shift
                 ;;
-            -cx|--cross)
+            -x|-cx|--cross)
                 CMAKE_EXTRA_ARGS+=(
                     "-DCMAKE_TOOLCHAIN_FILE=cmake/toolchains/aarch64-linux-gnu-clang.cmake"
                         "-DTALOS_TARGET_TRIPLE=aarch64-unknown-linux-gnu"

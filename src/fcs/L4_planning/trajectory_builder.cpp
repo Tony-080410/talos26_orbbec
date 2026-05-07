@@ -72,12 +72,13 @@ template <typename TargetState>
     };
 }
 
-} // namespace
+[[nodiscard]] ArmorAimPhase fire_aim_phase(ArmorAimPhase phase) noexcept {
+    return phase == ArmorAimPhase::WholeCarCenter ? ArmorAimPhase::WholeCarArmor : phase;
+}
 
-[[nodiscard]] std::expected<ReferenceTrajectory, std::string> build_reference_trajectory(
+[[nodiscard]] std::expected<ReferenceTrajectory, std::string> build_reference_trajectory_with_phase(
     const PlannerSeed& seed, const Aimer& aimer, const ReferenceTrajectoryConfig& horizon_cfg,
-    const TrajectoryBuildContext& ctx) noexcept {
-
+    const TrajectoryBuildContext& ctx, ArmorAimPhase phase) noexcept {
     const int horizon      = horizon_cfg.horizon_ahead + horizon_cfg.horizon_back + 1;
     const int horizon_back = horizon_cfg.horizon_back;
     const double dt        = horizon_cfg.dt;
@@ -93,7 +94,7 @@ template <typename TargetState>
 
     ArmorAimContext context;
     context.target_jumped      = seed.target_jumped;
-    context.phase              = seed.aim_phase;
+    context.phase              = phase;
     context.preferred_armor_id = seed.selected_armor_id;
 
     // Resolve the target variant once before the loop.
@@ -138,6 +139,21 @@ template <typename TargetState>
     }
 
     return trajectory;
+}
+
+} // namespace
+
+[[nodiscard]] std::expected<ReferenceTrajectory, std::string> build_reference_trajectory(
+    const PlannerSeed& seed, const Aimer& aimer, const ReferenceTrajectoryConfig& horizon_cfg,
+    const TrajectoryBuildContext& ctx) noexcept {
+    return build_reference_trajectory_with_phase(seed, aimer, horizon_cfg, ctx, seed.aim_phase);
+}
+
+[[nodiscard]] std::expected<ReferenceTrajectory, std::string> build_fire_reference_trajectory(
+    const PlannerSeed& seed, const Aimer& aimer, const ReferenceTrajectoryConfig& horizon_cfg,
+    const TrajectoryBuildContext& ctx) noexcept {
+    return build_reference_trajectory_with_phase(
+        seed, aimer, horizon_cfg, ctx, fire_aim_phase(seed.aim_phase));
 }
 
 [[nodiscard]] std::expected<ReferenceTrajectory, std::string> build_ldm_reference_trajectory(

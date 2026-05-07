@@ -431,25 +431,34 @@ struct AimContext {
     std::optional<std::string> degradation;
 
     if (seed.has_value()) {
-        auto traj = build_reference_trajectory(*seed, ctx.aimer, ref_traj_cfg, build_ctx);
-        if (traj) {
+        auto control_traj = build_reference_trajectory(*seed, ctx.aimer, ref_traj_cfg, build_ctx);
+        if (control_traj) {
+            auto fire_traj =
+                build_fire_reference_trajectory(*seed, ctx.aimer, ref_traj_cfg, build_ctx);
+            if (!fire_traj) {
+                SPDLOG_WARN("Failed to build fire reference trajectory: {}", fire_traj.error());
+            }
             return TrackCommand{
-                .timestamp_ns = pred.timestamp_ns,
-                .trajectory   = std::move(*traj),
+                .timestamp_ns       = pred.timestamp_ns,
+                .control_trajectory = std::move(*control_traj),
+                .fire_trajectory =
+                    fire_traj ? std::move(*fire_traj) : core::trajectory::ReferenceTrajectory{},
             };
         }
-        degradation = traj.error();
+        degradation = control_traj.error();
         SPDLOG_WARN("Failed to build reference trajectory: {}", *degradation);
     } else if (ldm_for_track.has_value() && ldm_for_track->is_tracking()) {
-        auto traj =
+        auto control_traj =
             build_ldm_reference_trajectory(*ldm_for_track, ctx.aimer, ref_traj_cfg, build_ctx);
-        if (traj) {
+        if (control_traj) {
+            auto fire_traj = *control_traj;
             return TrackCommand{
-                .timestamp_ns = pred.timestamp_ns,
-                .trajectory   = std::move(*traj),
+                .timestamp_ns       = pred.timestamp_ns,
+                .control_trajectory = std::move(*control_traj),
+                .fire_trajectory    = std::move(fire_traj),
             };
         }
-        degradation = traj.error();
+        degradation = control_traj.error();
         SPDLOG_WARN("Failed to build LDM reference trajectory: {}", *degradation);
     }
 

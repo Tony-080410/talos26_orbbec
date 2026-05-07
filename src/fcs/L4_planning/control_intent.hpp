@@ -29,7 +29,8 @@ namespace fcs::L4 {
 /// Track: full reference trajectory for MPC optimization.
 struct TrackCommand {
     uint64_t timestamp_ns{0};
-    core::trajectory::ReferenceTrajectory trajectory;
+    core::trajectory::ReferenceTrajectory control_trajectory;
+    core::trajectory::ReferenceTrajectory fire_trajectory;
 };
 
 /// Shot: direct aim without trajectory optimization.

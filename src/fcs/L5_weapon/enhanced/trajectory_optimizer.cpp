@@ -157,7 +157,7 @@ std::expected<WeaponCommand, std::string> TinyMpcTrajectoryOptimizer::optimize(
             + std::to_string(config_.reference_age_threshold_s) + "s)");
     }
 
-    const ReferenceTrajectory& reference = track.trajectory;
+    const ReferenceTrajectory& reference = track.control_trajectory;
 
     // Age the reference window forward so the sampled "current" command stays aligned with now.
     const int solver_horizon    = batched_solver_.horizon();

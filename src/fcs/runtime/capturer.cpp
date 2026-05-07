@@ -496,8 +496,9 @@ struct ConfigSnapshotSource {
             using T                = std::decay_t<decltype(cmd)>;
             result["timestamp_ns"] = cmd.timestamp_ns;
             if constexpr (std::is_same_v<T, L4::TrackCommand>) {
-                result["mode"]    = "Track";
-                result["horizon"] = cmd.trajectory.horizon();
+                result["mode"]            = "Track";
+                result["control_horizon"] = cmd.control_trajectory.horizon();
+                result["fire_horizon"]    = cmd.fire_trajectory.horizon();
             } else if constexpr (std::is_same_v<T, L4::ShotCommand>) {
                 result["mode"]     = "Shot";
                 result["yaw"]      = cmd.yaw;
@@ -1065,7 +1066,7 @@ public:
             std::visit(
                 overloaded{
                     [&](const L4::TrackCommand& cmd) {
-                        const auto aim       = cmd.trajectory.center_aim_point();
+                        const auto aim       = cmd.control_trajectory.center_aim_point();
                         sample.plan_yaw      = static_cast<float>(aim.yaw);
                         sample.plan_pitch    = static_cast<float>(aim.pitch);
                         sample.plan_distance = static_cast<float>(aim.distance);

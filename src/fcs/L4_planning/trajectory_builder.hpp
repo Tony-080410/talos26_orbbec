@@ -41,6 +41,16 @@ struct TrajectoryBuildContext {
         const PlannerSeed& seed, const Aimer& aimer, const ReferenceTrajectoryConfig& horizon_cfg,
         const TrajectoryBuildContext& ctx) noexcept;
 
+/// Build the real armor trajectory used by the L5 fire gate.
+///
+/// Unlike the control trajectory, this never uses WholeCarCenter's center proxy;
+/// in that phase it falls back to real armor aiming so fire is judged against
+/// an actual hittable target.
+[[nodiscard]] std::expected<core::trajectory::ReferenceTrajectory, std::string>
+    build_fire_reference_trajectory(
+        const PlannerSeed& seed, const Aimer& aimer, const ReferenceTrajectoryConfig& horizon_cfg,
+        const TrajectoryBuildContext& ctx) noexcept;
+
 /// Build a reference trajectory from an LDM target state.
 ///
 /// Uses the LDM constant-velocity prediction model to iterate over the

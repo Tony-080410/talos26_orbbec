@@ -295,8 +295,9 @@ inline void append_selection_trace_metadata(
             using T                = std::decay_t<decltype(cmd)>;
             result["timestamp_ns"] = cmd.timestamp_ns;
             if constexpr (std::is_same_v<T, ::fcs::L4::TrackCommand>) {
-                result["mode"]    = "Track";
-                result["horizon"] = cmd.trajectory.horizon();
+                result["mode"]            = "Track";
+                result["control_horizon"] = cmd.control_trajectory.horizon();
+                result["fire_horizon"]    = cmd.fire_trajectory.horizon();
             } else if constexpr (std::is_same_v<T, ::fcs::L4::ShotCommand>) {
                 result["mode"]     = "Shot";
                 result["yaw"]      = cmd.yaw;
@@ -595,7 +596,7 @@ void register_l4_planning_systems(talos::scheduler::Scheduler& app) {
             const uint64_t plan_ts =
                 std::visit([](const auto& cmd) -> uint64_t { return cmd.timestamp_ns; }, *intent);
             const auto selected_target_snapshot = selected_target_in.read_current();
-            const auto* selected_target =
+            [[maybe_unused]] const auto* selected_target =
                 (selected_target_snapshot && selected_target_snapshot->timestamp_ns == plan_ts)
                     ? std::addressof(*selected_target_snapshot)
                     : nullptr;
