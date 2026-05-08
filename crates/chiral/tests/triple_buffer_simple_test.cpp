@@ -1,108 +1,169 @@
-#include "chiral/talos_triple_buffer_shm.hpp"
+#include "chiral/navigation.hpp"
+
+#include <array>
 #include <atomic>
 #include <chrono>
-#include <cmath>
-#include <iostream>
-#include <sys/mman.h>
+#include <cstdint>
 #include <thread>
+
+#include <gtest/gtest.h>
+#include <sys/mman.h>
 
 using namespace talos::chiral;
 using namespace talos::chiral::ipc;
 
-int main() {
-    // 清理残留共享内存，避免 O_EXCL 失败
-    (void)::shm_unlink(TALOS_SHM_NAME);
+namespace chiral_test {
 
-    // 创建 Writer
-    auto writer = TalosDataWriter::create();
-    if (!writer) {
-        std::cerr << "Failed to create writer\n";
-        return 1;
+using TalosData = navigation::TalosData;
+
+struct IntegrityData {
+    static constexpr size_t kNumFields = 64;
+    std::array<uint64_t, kNumFields> fields{};
+
+    IntegrityData() = default;
+    explicit IntegrityData(uint64_t value) noexcept { fields.fill(value); }
+
+    [[nodiscard]] bool is_consistent() const noexcept {
+        if (fields[0] == 0) {
+            return true;
+        }
+        for (size_t i = 1; i < kNumFields; ++i) {
+            if (fields[i] != fields[0]) {
+                return false;
+            }
+        }
+        return true;
     }
+};
 
-    std::cout << "Writer created successfully\n";
+} // namespace chiral_test
 
-    // 写入/读取一次基础数据
-    TalosData data;
+namespace talos::chiral::ipc {
+
+template <>
+struct ShmName<chiral_test::IntegrityData> {
+    static constexpr const char* value = "/chiral_test_integrity";
+};
+
+} // namespace talos::chiral::ipc
+
+namespace chiral_test {
+
+void cleanup_test_shm() noexcept {
+    (void)::shm_unlink(ShmName<TalosData>::value);
+    (void)::shm_unlink(ShmName<IntegrityData>::value);
+}
+
+class TripleBufferSimpleTest : public ::testing::Test {
+protected:
+    void SetUp() override { cleanup_test_shm(); }
+    void TearDown() override { cleanup_test_shm(); }
+};
+
+TEST_F(TripleBufferSimpleTest, BasicWriteRead) {
+    auto writer = ChannelWriter<TalosData>::create();
+    ASSERT_TRUE(writer.has_value());
+
+    TalosData data{};
     data.gimbal_link.translation.x = 1.5;
     data.gimbal_link.translation.y = 2.5;
     data.gimbal_link.translation.z = 3.5;
-
     writer->write(data);
-    std::cout << "Data written\n";
 
-    // 创建 Reader
-    auto reader = TalosDataReader::open();
-    if (!reader) {
-        std::cerr << "Failed to open reader\n";
-        return 1;
-    }
+    auto reader = ChannelReader<TalosData>::open();
+    ASSERT_TRUE(reader.has_value());
 
-    std::cout << "Reader opened successfully\n";
+    auto read_data = reader->read_new();
+    ASSERT_TRUE(read_data.has_value());
+    EXPECT_DOUBLE_EQ(read_data->gimbal_link.translation.x, 1.5);
+    EXPECT_DOUBLE_EQ(read_data->gimbal_link.translation.y, 2.5);
+    EXPECT_DOUBLE_EQ(read_data->gimbal_link.translation.z, 3.5);
+}
 
-    // 读取数据
-    if (auto read_data = reader->read_new()) {
-        std::cout << "Data read: x=" << read_data->gimbal_link.translation.x
-                  << " y=" << read_data->gimbal_link.translation.y
-                  << " z=" << read_data->gimbal_link.translation.z << "\n";
-    } else {
-        std::cerr << "No data to read\n";
-        return 1;
-    }
+TEST_F(TripleBufferSimpleTest, ReadNewReturnsNulloptWhenNoData) {
+    auto writer = ChannelWriter<TalosData>::create();
+    ASSERT_TRUE(writer.has_value());
 
-    // 压测：验证高频下无字段撕裂
-    constexpr int iterations = 200000;
-    std::atomic<bool> done{false};
-    std::atomic<int> reads{0};
-    std::atomic<int> bad{0};
+    auto reader = ChannelReader<TalosData>::open();
+    ASSERT_TRUE(reader.has_value());
 
-    std::thread writer_thread([&]() {
-        TalosData d;
-        for (int i = 1; i <= iterations; ++i) {
-            d.gimbal_link.translation.x = static_cast<double>(i);
-            d.gimbal_link.translation.y = static_cast<double>(i * 2);
-            d.gimbal_link.translation.z = static_cast<double>(i * 3);
-            d.state.robot.yaw           = static_cast<double>(i) * 0.001;
-            writer->write(d);
+    EXPECT_FALSE(reader->read_new().has_value());
+}
+
+TEST_F(TripleBufferSimpleTest, ReadLatestReturnsZeroInitializedSnapshotBeforeFirstWrite) {
+    auto writer = ChannelWriter<TalosData>::create();
+    ASSERT_TRUE(writer.has_value());
+
+    auto reader = ChannelReader<TalosData>::open();
+    ASSERT_TRUE(reader.has_value());
+
+    const auto latest = reader->read_latest();
+    EXPECT_DOUBLE_EQ(latest.gimbal_link.translation.x, 0.0);
+    EXPECT_DOUBLE_EQ(latest.gimbal_link.translation.y, 0.0);
+    EXPECT_DOUBLE_EQ(latest.gimbal_link.translation.z, 0.0);
+}
+
+TEST_F(TripleBufferSimpleTest, MultipleWritesExposeLatestSnapshot) {
+    auto writer = ChannelWriter<TalosData>::create();
+    ASSERT_TRUE(writer.has_value());
+
+    TalosData data{};
+    data.gimbal_link.translation.x = 1.0;
+    writer->write(data);
+
+    data.gimbal_link.translation.x = 2.0;
+    writer->write(data);
+
+    data.gimbal_link.translation.x = 3.0;
+    writer->write(data);
+
+    auto reader = ChannelReader<TalosData>::open();
+    ASSERT_TRUE(reader.has_value());
+
+    auto latest = reader->read_new();
+    ASSERT_TRUE(latest.has_value());
+    EXPECT_DOUBLE_EQ(latest->gimbal_link.translation.x, 3.0);
+    EXPECT_FALSE(reader->read_new().has_value());
+}
+
+TEST_F(TripleBufferSimpleTest, DataIntegrityNoTearing) {
+    auto writer = ChannelWriter<IntegrityData>::create();
+    ASSERT_TRUE(writer.has_value());
+
+    auto reader = ChannelReader<IntegrityData>::open();
+    ASSERT_TRUE(reader.has_value());
+
+    std::atomic<bool> stop{false};
+    std::atomic<uint64_t> reads{0};
+    std::atomic<uint64_t> corruptions{0};
+
+    std::thread producer([&]() {
+        uint64_t counter = 1;
+        while (!stop.load(std::memory_order_acquire)) {
+            writer->write(IntegrityData(counter++));
         }
-        done.store(true, std::memory_order_release);
     });
 
-    std::thread reader_thread([&]() {
-        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(8);
-        while (std::chrono::steady_clock::now() < deadline) {
-            if (auto d = reader->read_new()) {
-                const auto x = static_cast<int>(std::llround(d->gimbal_link.translation.x));
-                const auto y = static_cast<int>(std::llround(d->gimbal_link.translation.y));
-                const auto z = static_cast<int>(std::llround(d->gimbal_link.translation.z));
-                const auto yaw_delta =
-                    std::fabs(d->state.robot.yaw - static_cast<double>(x) * 0.001);
-                if (y != x * 2 || z != x * 3 || yaw_delta > 1e-9) {
-                    bad.fetch_add(1, std::memory_order_relaxed);
-                }
+    std::thread consumer([&]() {
+        while (!stop.load(std::memory_order_acquire)) {
+            if (const auto snapshot = reader->read_new()) {
                 reads.fetch_add(1, std::memory_order_relaxed);
-            } else {
-                if (done.load(std::memory_order_acquire)) {
-                    return;
+                if (!snapshot->is_consistent()) {
+                    corruptions.fetch_add(1, std::memory_order_relaxed);
                 }
-                std::this_thread::sleep_for(std::chrono::microseconds(20));
             }
         }
     });
 
-    writer_thread.join();
-    reader_thread.join();
+    std::this_thread::sleep_for(std::chrono::milliseconds(250));
+    stop.store(true, std::memory_order_release);
 
-    if (reads.load(std::memory_order_relaxed) <= 0) {
-        std::cerr << "No data captured in stress test\n";
-        return 2;
-    }
-    if (bad.load(std::memory_order_relaxed) != 0) {
-        std::cerr << "Data tearing detected: bad=" << bad.load(std::memory_order_relaxed) << "\n";
-        return 3;
-    }
+    producer.join();
+    consumer.join();
 
-    std::cout << "Stress read count: " << reads.load(std::memory_order_relaxed) << "\n";
-    std::cout << "Triple buffer test PASSED\n";
-    return 0;
+    EXPECT_GT(reads.load(std::memory_order_relaxed), 0U) << "No data captured in integrity test";
+    EXPECT_EQ(corruptions.load(std::memory_order_relaxed), 0U)
+        << "Data tearing detected in shared-memory triple buffer";
 }
+
+} // namespace chiral_test

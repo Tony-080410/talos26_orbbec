@@ -28,9 +28,9 @@ constexpr uint8_t INDEX_MASK = 0x03; // Bits 0-1: 槽位索引 (0-2)
  */
 template <typename T>
 struct TripleBufferLayout {
-    std::atomic<uint8_t> state{0}; // 状态字
+    std::atomic<uint8_t> state{1}; // ready 槽位初始为 1，三槽位彼此分离
     uint8_t write_idx{0};          // 生产者写入槽位
-    uint8_t read_idx{0};           // 消费者读取槽位
+    uint8_t read_idx{2};           // 消费者读取槽位
     uint8_t _pad[5];               // 填充到 12 字节
 
     // 槽位序列锁：偶数稳定，奇数写入中
