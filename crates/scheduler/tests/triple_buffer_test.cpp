@@ -254,6 +254,25 @@ TEST(SpmcTest, ReadHandleCopyable) {
     EXPECT_EQ(*v2, 42);
     EXPECT_EQ(*v3, 42);
 }
+TEST(SpmcTest, MoveInCopyOutAndReadersAdvanceIndependently) {
+    auto [w, r] = SpmcTripleBuffer<std::string>::create();
+
+    auto r2 = r.clone();
+
+    std::string payload = "hello world";
+    w.write(std::move(payload));
+
+    const auto v1 = r.read();
+    const auto v2 = r2.read();
+
+    ASSERT_TRUE(v1.has_value());
+    ASSERT_TRUE(v2.has_value());
+    EXPECT_EQ(*v1, "hello world");
+    EXPECT_EQ(*v2, "hello world");
+
+    EXPECT_FALSE(r.has_new());
+    EXPECT_FALSE(r2.has_new());
+}
 
 TEST(SpmcTest, IndependentGeneration) {
     auto [w, r] = SpmcTripleBuffer<int>::create();
