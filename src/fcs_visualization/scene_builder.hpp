@@ -427,7 +427,7 @@ inline ::foxglove::schemas::SceneEntity
 /// @brief Create MPC trajectory point with temporal fade
 template <fast_tf::frame Frame>
 inline ::foxglove::schemas::SceneEntity mpc_trajectory_point(
-    const Eigen::Vector3d& pos, int temporal_distance, bool is_reference,
+    ::foxglove::schemas::Vector3&& pos, int temporal_distance, bool is_reference,
     uint64_t timestamp_ns) noexcept {
     using namespace tactical;
 

@@ -14,6 +14,7 @@
 #include <fmt/format.h>
 #include <magic_enum.hpp>
 #include <nlohmann/json.hpp>
+#include <system_helpers.hpp>
 #include <tactical_palette.hpp>
 
 #include <algorithm>
@@ -135,10 +136,7 @@ inline void append_selection_trace_metadata(
 
 [[nodiscard]] inline std::string
     key_point_label(const std::string& name, const ::fcs::L5::TrajectoryPlanSample& sample) {
-    return fmt::format(
-        "{}\nSelected {}\nRough {}", name,
-        sample.selected_armor_id ? std::to_string(*sample.selected_armor_id) : "-",
-        sample.rough_selected_armor_id ? std::to_string(*sample.rough_selected_armor_id) : "-");
+    return fmt::format("{} {:.3f}", name, sample.distance);
 }
 
 [[nodiscard]] inline nlohmann::json json_vec3(const Eigen::Vector3d& value) {
@@ -532,40 +530,24 @@ void register_l4_planning_systems(talos::scheduler::Scheduler& app) {
             for (int i = 0; i < static_cast<int>(cmd->viz_debug->reference_plan.size()); ++i) {
                 const auto& reference = cmd->viz_debug->reference_plan[i];
                 traj_json["reference"].push_back({
-                    {                  "index",                       i                                               },
-                    {        "temporal_offset",                                       i - cmd->viz_debug->center_index},
-                    {                    "yaw",                                                          reference.yaw},
-                    {                  "pitch",                                                        reference.pitch},
-                    {               "distance",                                                     reference.distance},
-                    {                    "tof",                                                          reference.tof},
-                    {      "selected_armor_id", reference.selected_armor_id
- ? nlohmann::json(*reference.selected_armor_id)
- : nlohmann::json(nullptr)                                             },
-                    {"rough_selected_armor_id",
-                     reference.rough_selected_armor_id
-                     ? nlohmann::json(*reference.rough_selected_armor_id)
-                     : nlohmann::json(nullptr)                                                                        },
-                    {         "world_position",                         l4_detail::json_vec3(reference.world_position)},
+                    {          "index",                                i},
+                    {"temporal_offset", i - cmd->viz_debug->center_index},
+                    {            "yaw",                    reference.yaw},
+                    {          "pitch",                  reference.pitch},
+                    {       "distance",               reference.distance},
+                    {            "tof",                    reference.tof},
                 });
             }
 
             for (int i = 0; i < static_cast<int>(cmd->viz_debug->optimized_plan.size()); ++i) {
                 const auto& optimized = cmd->viz_debug->optimized_plan[i];
                 traj_json["optimized"].push_back({
-                    {                  "index",                       i                                               },
-                    {        "temporal_offset",                                       i - cmd->viz_debug->center_index},
-                    {                    "yaw",                                                          optimized.yaw},
-                    {                  "pitch",                                                        optimized.pitch},
-                    {               "distance",                                                     optimized.distance},
-                    {                    "tof",                                                          optimized.tof},
-                    {      "selected_armor_id", optimized.selected_armor_id
- ? nlohmann::json(*optimized.selected_armor_id)
- : nlohmann::json(nullptr)                                             },
-                    {"rough_selected_armor_id",
-                     optimized.rough_selected_armor_id
-                     ? nlohmann::json(*optimized.rough_selected_armor_id)
-                     : nlohmann::json(nullptr)                                                                        },
-                    {         "world_position",                         l4_detail::json_vec3(optimized.world_position)},
+                    {          "index",                                i},
+                    {"temporal_offset", i - cmd->viz_debug->center_index},
+                    {            "yaw",                    optimized.yaw},
+                    {          "pitch",                  optimized.pitch},
+                    {       "distance",               optimized.distance},
+                    {            "tof",                    optimized.tof},
                 });
             }
 
@@ -771,31 +753,16 @@ void register_l4_planning_systems(talos::scheduler::Scheduler& app) {
             std::vector<::foxglove::schemas::SceneEntity> entities;
             auto cmd = cmd_in.read();
             if (cmd && cmd->viz_debug) {
-                entities.reserve(
-                    cmd->viz_debug->reference_plan.size() + cmd->viz_debug->optimized_plan.size());
-
-                for (int i = 0; i < static_cast<int>(cmd->viz_debug->reference_plan.size()); ++i) {
-                    const auto& reference = cmd->viz_debug->reference_plan[i];
-                    entities.push_back(
-                        viz::patterns::mpc_trajectory_point<fast_tf::odom>(
-                            reference.world_position, i - cmd->viz_debug->center_index, true,
-                            cmd->timestamp_ns));
-                }
-
-                for (int i = 0; i < static_cast<int>(cmd->viz_debug->optimized_plan.size()); ++i) {
-                    const auto& optimized = cmd->viz_debug->optimized_plan[i];
-                    entities.push_back(
-                        viz::patterns::mpc_trajectory_point<fast_tf::odom>(
-                            optimized.world_position, i - cmd->viz_debug->center_index, false,
-                            cmd->timestamp_ns));
-                }
+                entities.reserve(2);
 
                 // ── Reference trajectory connecting line ─────────────────────
                 if (cmd->viz_debug->reference_plan.size() >= 2) {
                     std::vector<::foxglove::schemas::Point3> ref_line_points;
                     ref_line_points.reserve(cmd->viz_debug->reference_plan.size());
-                    for (const auto& sample : cmd->viz_debug->reference_plan) {
-                        ref_line_points.push_back(viz::make_point3(sample.world_position));
+                    for (const auto& reference : cmd->viz_debug->reference_plan) {
+                        ref_line_points.push_back(
+                            detail::spherical_to_cartesian_point3(
+                                reference.distance, reference.yaw, reference.pitch));
                     }
                     entities.push_back(
                         viz::EntityBuilder::create<fast_tf::odom>("l4", "mpc_ref_line")
@@ -810,8 +777,10 @@ void register_l4_planning_systems(talos::scheduler::Scheduler& app) {
                 if (cmd->viz_debug->optimized_plan.size() >= 2) {
                     std::vector<::foxglove::schemas::Point3> opt_line_points;
                     opt_line_points.reserve(cmd->viz_debug->optimized_plan.size());
-                    for (const auto& sample : cmd->viz_debug->optimized_plan) {
-                        opt_line_points.push_back(viz::make_point3(sample.world_position));
+                    for (const auto& optimized : cmd->viz_debug->optimized_plan) {
+                        opt_line_points.push_back(
+                            detail::spherical_to_cartesian_point3(
+                                optimized.distance, optimized.yaw, optimized.pitch));
                     }
                     entities.push_back(
                         viz::EntityBuilder::create<fast_tf::odom>("l4", "mpc_opt_line")
@@ -833,7 +802,9 @@ void register_l4_planning_systems(talos::scheduler::Scheduler& app) {
                         entities.push_back(
                             viz::EntityBuilder::create<fast_tf::odom>("l4", entity_id)
                                 .timestamp(cmd->timestamp_ns)
-                                .position(sample.world_position)
+                                .position(
+                                    detail::spherical_to_cartesian(
+                                        sample.distance, sample.yaw, sample.pitch))
                                 .size(size)
                                 .color(color)
                                 .sphere()

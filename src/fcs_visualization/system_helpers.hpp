@@ -3,6 +3,7 @@
 #include "foxglove_server.hpp"
 
 #include <cmath>
+#include <messages.hpp>
 #include <utility.hpp>
 
 namespace fcs::visualization::detail {
@@ -40,14 +41,28 @@ inline void publish_json_message(
     return v;
 }
 
-/// @brief Publish scene entities if non-empty
+/// @brief Convert spherical coordinates to Cartesian Vector3
+[[nodiscard]] inline ::foxglove::schemas::Point3
+    spherical_to_cartesian_point3(double distance, double yaw, double pitch) noexcept {
+    ::foxglove::schemas::Point3 v;
+    v.x = distance * ::cos(pitch) * ::cos(yaw);
+    v.y = distance * ::cos(pitch) * ::sin(yaw);
+    v.z = distance * ::sin(pitch);
+    return v;
+}
+
+/// @brief Publish scene entities if non-empty, with optional deletions
+/// @param deletions  Entities to delete before adding new ones.
+///                   Use SceneEntityDeletion::ALL to clear the entire channel.
 template <typename SceneMessageType>
 inline void publish_scene_if_nonempty(
     const std::shared_ptr<FoxgloveServer>& server,
-    std::vector<::foxglove::schemas::SceneEntity> entities) noexcept {
-    if (!entities.empty()) {
+    std::vector<::foxglove::schemas::SceneEntity> entities,
+    std::vector<::foxglove::schemas::SceneEntityDeletion> deletions = {}) noexcept {
+    if (!entities.empty() || !deletions.empty()) {
         SceneMessageType msg;
-        msg.payload.entities = std::move(entities);
+        msg.payload.deletions = std::move(deletions);
+        msg.payload.entities  = std::move(entities);
         server->enqueue_message(std::move(msg));
     }
 }

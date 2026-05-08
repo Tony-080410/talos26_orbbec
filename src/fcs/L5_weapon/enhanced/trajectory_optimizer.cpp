@@ -81,25 +81,18 @@ template <typename YawSolver, typename PitchSolver>
                 .pitch    = trajectory.state(2, ref_k),
                 .distance = trajectory.distances[ref_k],
                 .tof      = trajectory.time_of_flights[ref_k],
-                .selected_armor_id       = 0,
-                .rough_selected_armor_id = 0,
-                .world_position          = Eigen::Vector3d::Zero(),
             });
 
         const double optimized_yaw =
             normalize_angle(static_cast<double>(yaw_solver.state(0, k)) + trajectory.yaw_origin);
-        const double optimized_pitch = static_cast<double>(pitch_solver.state(0, k));
-        const Eigen::Vector3d reconstructed_optimized =
-            spherical_to_cartesian(trajectory.distances[ref_k], optimized_yaw, optimized_pitch);
+        const double optimized_pitch =
+            normalize_angle(static_cast<double>(pitch_solver.state(0, k)));
         debug.optimized_plan.push_back(
             TrajectoryPlanSample{
-                .yaw                     = optimized_yaw,
-                .pitch                   = optimized_pitch,
-                .distance                = trajectory.distances[ref_k],
-                .tof                     = trajectory.time_of_flights[ref_k],
-                .selected_armor_id       = 0,
-                .rough_selected_armor_id = 0,
-                .world_position          = reconstructed_optimized,
+                .yaw      = optimized_yaw,
+                .pitch    = optimized_pitch,
+                .distance = trajectory.distances[ref_k],
+                .tof      = trajectory.time_of_flights[ref_k],
             });
     }
 

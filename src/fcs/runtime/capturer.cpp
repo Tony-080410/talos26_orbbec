@@ -530,15 +530,10 @@ struct ConfigSnapshotSource {
 
 [[nodiscard]] auto to_json_trajectory_plan_sample(const L5::TrajectoryPlanSample& sample) -> json {
     return json{
-        {                    "yaw",               sample.yaw                                   },
-        {                  "pitch",                                                sample.pitch},
-        {               "distance",                                             sample.distance},
-        {                    "tof",                                                  sample.tof},
-        {      "selected_armor_id",
-         sample.selected_armor_id ? json(*sample.selected_armor_id) : json(nullptr)            },
-        {"rough_selected_armor_id",
-         sample.rough_selected_armor_id ? json(*sample.rough_selected_armor_id) : json(nullptr)},
-        {         "world_position",                         to_json_vec3(sample.world_position)},
+        {     "yaw",      sample.yaw},
+        {   "pitch",    sample.pitch},
+        {"distance", sample.distance},
+        {     "tof",      sample.tof},
     };
 }
 

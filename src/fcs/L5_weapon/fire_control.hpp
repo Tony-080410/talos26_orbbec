@@ -17,9 +17,6 @@ struct TrajectoryPlanSample {
     double pitch{0.0};
     double distance{0.0};
     double tof{0.0};
-    std::optional<int> selected_armor_id{};
-    std::optional<int> rough_selected_armor_id{};
-    Eigen::Vector3d world_position{Eigen::Vector3d::Zero()};
 };
 
 struct WeaponVisualizationDebugData {
