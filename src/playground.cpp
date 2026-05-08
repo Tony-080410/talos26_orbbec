@@ -1,5 +1,4 @@
-#include "chiral/client.hpp"
-#include "chiral/packet.hpp"
+#include "chiral/gimbal.hpp"
 #include "spdlog_hook.hpp"
 #include <atomic>
 #include <chrono>
@@ -24,7 +23,7 @@ int main() {
     const auto start = std::chrono::system_clock::now();
 
     SPDLOG_INFO("creating shared memory regions...");
-    auto client_result = talos::chiral::gimbal::RadarSide::create();
+    auto client_result = talos::chiral::gimbal::GimbalEndpoint::create();
     if (!client_result) {
         SPDLOG_CRITICAL(
             "failed to create shared memory: {}", static_cast<int>(client_result.error()));

@@ -1,6 +1,5 @@
 #pragma once
 
-#include "chiral.hpp"
 #include "shm_layout.hpp"
 #include "shm_triple_buffer.hpp"
 #include <atomic>
@@ -37,16 +36,6 @@ inline constexpr uint32_t TALOS_SHM_VERSION = 2;          // v2: triple buffer
 
 template <typename T>
 struct ShmName;
-
-template <>
-struct ShmName<chiral::TalosData> {
-    static constexpr const char* value = "/chiral_talos_out";
-};
-
-template <>
-struct ShmName<chiral::IncomingData> {
-    static constexpr const char* value = "/chiral_talos_in";
-};
 
 // ============ SHM 布局 ============
 
@@ -480,10 +469,5 @@ private:
     ChannelWriter<Outgoing> writer_;
     mutable std::optional<ChannelReader<Incoming>> reader_;
 };
-
-// ============ 强类型别名 ============
-
-using TalosSide  = ChiralEndpoint<chiral::TalosData, chiral::IncomingData>;
-using RemoteSide = ChiralEndpoint<chiral::IncomingData, chiral::TalosData>;
 
 } // namespace talos::chiral::ipc

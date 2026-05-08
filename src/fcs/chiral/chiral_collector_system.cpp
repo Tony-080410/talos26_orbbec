@@ -1,8 +1,8 @@
 #include "chiral/chiral_collector_system.hpp"
 #include "L3_estimation/tracker/types.hpp"
 #include "L4_planning/selected_target_snapshot.hpp"
-#include "chiral/chiral.hpp"
 #include "chiral/chiral_endpoint.hpp"
+#include "chiral/navigation.hpp"
 #include "core/channel_topics.hpp"
 #include "frame.hpp"
 #include "matrix.hpp"
@@ -13,47 +13,47 @@
 #include <vector>
 
 namespace fcs::chiral {
-
+using namespace talos::chiral;
 namespace {
 // Convert Eigen Vector3d to chiral::Vector3d
-template <talos::chiral::tag From, talos::chiral::tag To = talos::chiral::untyped>
-talos::chiral::Vector3d<From, To> to_chiral_vector3d(const Eigen::Vector3d& v) noexcept {
+template <navigation::tag From, navigation::tag To = navigation::untyped>
+navigation::Vector3d<From, To> to_chiral_vector3d(const Eigen::Vector3d& v) noexcept {
     return {v.x(), v.y(), v.z()};
 }
 
 // Convert FCS TrackerStatus to chiral::TrackerStatus
-talos::chiral::TrackerStatus to_chiral_tracker_status(L3::TrackerStatus status) noexcept {
+navigation::TrackerStatus to_chiral_tracker_status(L3::TrackerStatus status) noexcept {
     switch (status) {
-    case L3::TrackerStatus::Idle: return talos::chiral::TrackerStatus::Idle;
-    case L3::TrackerStatus::Detecting: return talos::chiral::TrackerStatus::Detecting;
-    case L3::TrackerStatus::Tracking: return talos::chiral::TrackerStatus::Tracking;
-    case L3::TrackerStatus::TempLost: return talos::chiral::TrackerStatus::TempLost;
+    case L3::TrackerStatus::Idle: return navigation::TrackerStatus::Idle;
+    case L3::TrackerStatus::Detecting: return navigation::TrackerStatus::Detecting;
+    case L3::TrackerStatus::Tracking: return navigation::TrackerStatus::Tracking;
+    case L3::TrackerStatus::TempLost: return navigation::TrackerStatus::TempLost;
     }
 }
 
 // Convert FCS ArmorName to chiral::ArmorName
-talos::chiral::ArmorName to_chiral_armor_name(ArmorName name) noexcept {
+navigation::ArmorName to_chiral_armor_name(ArmorName name) noexcept {
     switch (name) {
-    case ArmorName::Sentry: return talos::chiral::ArmorName::Sentry;
-    case ArmorName::One: return talos::chiral::ArmorName::One;
-    case ArmorName::Two: return talos::chiral::ArmorName::Two;
-    case ArmorName::Three: return talos::chiral::ArmorName::Three;
-    case ArmorName::Four: return talos::chiral::ArmorName::Four;
-    case ArmorName::Five: return talos::chiral::ArmorName::Five;
-    case ArmorName::Outpost: return talos::chiral::ArmorName::Outpost;
-    case ArmorName::Base: return talos::chiral::ArmorName::Base;
-    case ArmorName::BaseLarge: return talos::chiral::ArmorName::Invalid;
-    case ArmorName::Invalid: return talos::chiral::ArmorName::Invalid;
+    case ArmorName::Sentry: return navigation::ArmorName::Sentry;
+    case ArmorName::One: return navigation::ArmorName::One;
+    case ArmorName::Two: return navigation::ArmorName::Two;
+    case ArmorName::Three: return navigation::ArmorName::Three;
+    case ArmorName::Four: return navigation::ArmorName::Four;
+    case ArmorName::Five: return navigation::ArmorName::Five;
+    case ArmorName::Outpost: return navigation::ArmorName::Outpost;
+    case ArmorName::Base: return navigation::ArmorName::Base;
+    case ArmorName::BaseLarge: return navigation::ArmorName::Invalid;
+    case ArmorName::Invalid: return navigation::ArmorName::Invalid;
     }
 }
 
 // Convert FCS ArmorColor to chiral::ArmorColor
-[[maybe_unused]] talos::chiral::ArmorColor to_chiral_armor_color(ArmorColor color) noexcept {
+[[maybe_unused]] navigation::ArmorColor to_chiral_armor_color(ArmorColor color) noexcept {
     switch (color) {
-    case ArmorColor::Blue: return talos::chiral::ArmorColor::Blue;
-    case ArmorColor::Red: return talos::chiral::ArmorColor::Red;
-    case ArmorColor::Neutral: return talos::chiral::ArmorColor::Neutral;
-    case ArmorColor::Purple: return talos::chiral::ArmorColor::Purple;
+    case ArmorColor::Blue: return navigation::ArmorColor::Blue;
+    case ArmorColor::Red: return navigation::ArmorColor::Red;
+    case ArmorColor::Neutral: return navigation::ArmorColor::Neutral;
+    case ArmorColor::Purple: return navigation::ArmorColor::Purple;
     }
 }
 
@@ -61,7 +61,7 @@ talos::chiral::ArmorName to_chiral_armor_name(ArmorName name) noexcept {
 
 void register_chiral_collector_system(talos::Scheduler& scheduler) {
     // Create bidirectional endpoint: Talos writes TalosData, reads IncomingData
-    auto endpoint = talos::chiral::ipc::TalosSide::create();
+    auto endpoint = navigation::TalosEndpoint::create();
     if (!endpoint) {
         SPDLOG_ERROR(
             "Failed to create ChiralEndpoint (TalosSide): {}",
@@ -84,11 +84,11 @@ void register_chiral_collector_system(talos::Scheduler& scheduler) {
                 return;
             }
 
-            talos::chiral::TalosData talos_data{};
-            talos_data.state_kind   = talos::chiral::TargetStateKind::Robot;
-            talos_data.state.status = talos::chiral::TrackerStatus::Idle;
-            talos_data.state.color  = talos::chiral::ArmorColor::Neutral;
-            talos_data.state.name   = talos::chiral::ArmorName::Invalid;
+            navigation::TalosData talos_data{};
+            talos_data.state_kind   = navigation::TargetStateKind::Robot;
+            talos_data.state.status = navigation::TrackerStatus::Idle;
+            talos_data.state.color  = navigation::ArmorColor::Neutral;
+            talos_data.state.name   = navigation::ArmorName::Invalid;
 
             const uint64_t current_ns = selected_target->timestamp_ns;
             using namespace fast_tf;
@@ -163,7 +163,7 @@ void register_chiral_collector_system(talos::Scheduler& scheduler) {
             }
 
             if (tracker_output && tracker_output->is_robot()) {
-                talos_data.state_kind   = talos::chiral::TargetStateKind::Robot;
+                talos_data.state_kind   = navigation::TargetStateKind::Robot;
                 const auto* robot_state = tracker_output->robot_state();
                 if (robot_state) {
                     auto pos      = robot_state->position;
@@ -176,9 +176,9 @@ void register_chiral_collector_system(talos::Scheduler& scheduler) {
                                        0.0, 0.0, robot_state->v_yaw, vel.x(), vel.y(), vel.z());
 
                     talos_data.state.robot.position =
-                        to_chiral_vector3d<talos::chiral::gimbal_yaw>(pose_fix.translation());
+                        to_chiral_vector3d<navigation::gimbal_yaw>(pose_fix.translation());
                     talos_data.state.robot.velocity =
-                        to_chiral_vector3d<talos::chiral::gimbal_yaw>(vel_fix.translation());
+                        to_chiral_vector3d<navigation::gimbal_yaw>(vel_fix.translation());
                     talos_data.state.robot.yaw     = pose_fix.euler_rot().yaw;
                     talos_data.state.robot.v_yaw   = vel_fix.euler_rot().yaw;
                     talos_data.state.robot.radius0 = robot_state->radius0;
@@ -188,7 +188,7 @@ void register_chiral_collector_system(talos::Scheduler& scheduler) {
                         static_cast<uint32_t>(robot_state->armors_num);
                 }
             } else if (tracker_output && tracker_output->is_outpost()) {
-                talos_data.state_kind     = talos::chiral::TargetStateKind::Outpost;
+                talos_data.state_kind     = navigation::TargetStateKind::Outpost;
                 const auto* outpost_state = tracker_output->outpost_state();
                 if (outpost_state) {
                     auto pos = outpost_state->position;
@@ -212,7 +212,7 @@ void register_chiral_collector_system(talos::Scheduler& scheduler) {
                     talos_data.state.outpost.position.y = pos_fix.translation().y();
                     talos_data.state.outpost.position.z = 0.0; // 2D position
                     talos_data.state.outpost.velocity =
-                        to_chiral_vector3d<talos::chiral::gimbal_yaw>(vel_fix.translation());
+                        to_chiral_vector3d<navigation::gimbal_yaw>(vel_fix.translation());
                     talos_data.state.outpost.yaw   = pos_fix.euler_rot().yaw;
                     talos_data.state.outpost.v_yaw = vel_fix.euler_rot().yaw;
                     talos_data.state.outpost.z     = z;

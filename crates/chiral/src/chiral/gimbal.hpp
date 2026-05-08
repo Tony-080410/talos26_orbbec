@@ -5,6 +5,7 @@
 #include <fmt/format.h>
 #include <string_view>
 
+#include "chiral/chiral_endpoint.hpp"
 #include "magic_enum.hpp"
 
 namespace talos::chiral::gimbal {
@@ -71,3 +72,23 @@ struct formatter<talos::chiral::gimbal::Color> : formatter<std::string_view> {
 };
 
 } // namespace fmt
+
+namespace talos::chiral::gimbal {
+
+using TalosEndpoint  = ipc::ChiralEndpoint<McuRequest, McuData>;
+using GimbalEndpoint = ipc::ChiralEndpoint<McuData, McuRequest>;
+
+} // namespace talos::chiral::gimbal
+
+namespace talos::chiral::ipc {
+
+template <>
+struct ShmName<gimbal::McuRequest> {
+    static constexpr const char* value = "/chiral_gimbal_request";
+};
+
+template <>
+struct ShmName<gimbal::McuData> {
+    static constexpr const char* value = "/chiral_gimbal_data";
+};
+}; // namespace talos::chiral::ipc

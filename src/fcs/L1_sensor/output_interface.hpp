@@ -1,7 +1,7 @@
 #pragma once
 
 #include "L5_weapon/fire_control.hpp"
-#include "chiral/client.hpp"
+#include "chiral/gimbal.hpp"
 #include "shm_client.hpp"
 #include "talos_gimbal/mcu_device.hpp"
 
@@ -46,12 +46,12 @@ private:
 
 class ChiralOutput {
 public:
-    explicit ChiralOutput(std::shared_ptr<talos::chiral::gimbal::TalosSide> device) noexcept;
+    explicit ChiralOutput(std::shared_ptr<talos::chiral::gimbal::TalosEndpoint> device) noexcept;
 
     void send(const L5::WeaponCommand& cmd) const noexcept;
 
 private:
-    std::shared_ptr<talos::chiral::gimbal::TalosSide> device_;
+    std::shared_ptr<talos::chiral::gimbal::TalosEndpoint> device_;
 };
 
 // ============================================================================
@@ -85,7 +85,7 @@ public:
         create_ipc(std::shared_ptr<ipc::ShmClient> client) noexcept;
 
     [[nodiscard]] static std::expected<OutputInterface, std::string>
-        create_chiral(std::shared_ptr<talos::chiral::gimbal::TalosSide> client) noexcept;
+        create_chiral(std::shared_ptr<talos::chiral::gimbal::TalosEndpoint> client) noexcept;
 
     [[nodiscard]] static std::expected<OutputInterface, std::string> create_usb(
         uint16_t vendor_id = talos_gimbal::Stm32Impl<talos_gimbal::Stm32Parser>::VID,

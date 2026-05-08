@@ -150,7 +150,6 @@ add_subdirectory(crates/chiral)
 add_subdirectory(crates/hardware/at_gimbal)
 add_subdirectory(crates/hardware/hik_camera_driver)
 add_subdirectory(crates/hardware_daedalus)
-add_subdirectory(crates/hardware_chiral)
 
 # ============================================================================
 # FCS library (Fire Control System)
@@ -265,7 +264,6 @@ target_link_libraries(fcs PUBLIC
         hikcamera
         ipc
         chiral
-        hardware_chiral
         ${OpenCV_LIBS}
         $<$<TARGET_EXISTS:openvino::runtime>:openvino::runtime>
         $<$<TARGET_EXISTS:TensorRT::TensorRT>:TensorRT::TensorRT>
@@ -362,7 +360,6 @@ target_link_libraries(talos-playground PRIVATE
         ipc
         talos_log
         chiral
-        hardware_chiral
         spdlog::spdlog
         ${OpenCV_LIBS}
 )

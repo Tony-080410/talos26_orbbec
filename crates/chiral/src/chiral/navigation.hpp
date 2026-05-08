@@ -1,11 +1,11 @@
 #pragma once
 
-// chiral: bridge between talos and ROS2
-
+#include "chiral/chiral_endpoint.hpp"
 #include <array>
+#include <concepts>
 #include <cstdint>
 
-namespace talos::chiral {
+namespace talos::chiral::navigation {
 
 // 编译期 Tag, 用于标注类型, 0运行时开销
 template <typename T>
@@ -114,10 +114,23 @@ struct TalosData {
     Transform<gimbal_yaw, camera> camera_link;
 };
 
-// ============ Incoming data (External → Talos) ============
-
-struct IncomingData {
+struct NavigationData {
     uint64_t timestamp_ns = 0;
 };
 
-} // namespace talos::chiral
+using TalosEndpoint      = ipc::ChiralEndpoint<TalosData, NavigationData>;
+using NavigationEndpoint = ipc::ChiralEndpoint<NavigationData, TalosData>;
+
+}; // namespace talos::chiral::navigation
+namespace talos::chiral::ipc {
+
+template <>
+struct ShmName<navigation::TalosData> {
+    static constexpr const char* value = "/chiral_nav_talos";
+};
+
+template <>
+struct ShmName<navigation::NavigationData> {
+    static constexpr const char* value = "/chiral_nav_navigation";
+};
+} // namespace talos::chiral::ipc

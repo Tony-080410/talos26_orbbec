@@ -1,6 +1,5 @@
 #pragma once
 
-#include "chiral.hpp"
 #include <atomic>
 #include <cstdint>
 
@@ -41,20 +40,5 @@ struct TripleBufferLayout {
 };
 
 static_assert(sizeof(std::atomic<uint8_t>) == 1, "atomic<uint8_t> must be 1 byte");
-
-// ============ TalosData 三重缓冲 ============
-
-struct TalosTripleBuffer {
-    std::atomic<uint8_t> state{0};
-    uint8_t write_idx{0};
-    uint8_t read_idx{0};
-    uint8_t _pad[5];
-    std::atomic<uint64_t> slot_seq[3]{{0}, {0}, {0}};
-
-    chiral::TalosData slots[3]; // 自然对齐
-};
-
-// 验证大小
-static_assert(sizeof(TalosTripleBuffer) >= sizeof(chiral::TalosData) * 3 + 32);
 
 } // namespace talos::chiral::ipc

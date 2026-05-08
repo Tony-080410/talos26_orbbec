@@ -1,5 +1,5 @@
 #include "L1_sensor/output_interface.hpp"
-#include "chiral/packet.hpp"
+#include "chiral/gimbal.hpp"
 #include "shm_client.hpp"
 #include "talos_gimbal/mcu_device.hpp"
 #include "talos_gimbal/packet.hpp"
@@ -82,7 +82,7 @@ void McuOutput::send(const L5::WeaponCommand& cmd) const noexcept {
         device_->send_sync(reinterpret_cast<uint8_t*>(&packet), sizeof(packet));
     }
 }
-ChiralOutput::ChiralOutput(std::shared_ptr<talos::chiral::gimbal::TalosSide> device) noexcept
+ChiralOutput::ChiralOutput(std::shared_ptr<talos::chiral::gimbal::TalosEndpoint> device) noexcept
     : device_(std::move(device)) {}
 
 void ChiralOutput::send(const L5::WeaponCommand& cmd) const noexcept {
@@ -114,7 +114,7 @@ std::expected<OutputInterface, std::string>
 }
 
 [[nodiscard]] static std::expected<OutputInterface, std::string>
-    create_chiral(std::shared_ptr<talos::chiral::gimbal::TalosSide> client) noexcept {
+    create_chiral(std::shared_ptr<talos::chiral::gimbal::TalosEndpoint> client) noexcept {
     return OutputInterface(ChiralOutput(std::move(client)));
 }
 

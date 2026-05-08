@@ -3,9 +3,7 @@
 #include "L1_sensor/camera_interface.hpp"
 #include "L1_sensor/output_interface.hpp"
 #include "L5_weapon/fire_control.hpp"
-#include "chiral/chiral_endpoint.hpp"
-#include "chiral/client.hpp"
-#include "chiral/packet.hpp"
+#include "chiral/gimbal.hpp"
 #include "config.hpp"
 #include "core/channel_topics.hpp"
 #include "core/runtime.hpp"
@@ -81,7 +79,7 @@ void publish_control_snapshot(
 
 struct ChiralImu {
     McuConfig config;
-    std::shared_ptr<talos::chiral::gimbal::TalosSide> device;
+    std::shared_ptr<talos::chiral::gimbal::TalosEndpoint> device;
 
     void system(
         talos::res_mut<fast_tf::CoordinateSystem> tf_buffer,
@@ -377,7 +375,7 @@ std::expected<L1L2SetupResult, std::string> setup_l1(
                         imu_ready = true;
                     } else {
                         SPDLOG_INFO("initializing chiral mcu...");
-                        auto chiral_result = talos::chiral::gimbal::TalosSide::create();
+                        auto chiral_result = talos::chiral::gimbal::TalosEndpoint::create();
                         if (!chiral_result) {
                             SPDLOG_INFO(
                                 "failed to create chiral mcu: {}",
@@ -385,7 +383,7 @@ std::expected<L1L2SetupResult, std::string> setup_l1(
                             return std::unexpected(
                                 std::string(magic_enum::enum_name(chiral_result.error())));
                         }
-                        std::shared_ptr<talos::chiral::gimbal::TalosSide> chiral =
+                        std::shared_ptr<talos::chiral::gimbal::TalosEndpoint> chiral =
                             std::move(chiral_result.value());
 
                         output = std::make_shared<fcs::L1::OutputInterface>(
