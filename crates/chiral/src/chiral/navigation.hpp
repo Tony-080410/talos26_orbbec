@@ -74,7 +74,8 @@ enum class ArmorName : uint8_t {
     Outpost,
     Base,
     BaseLarge,
-    Invalid
+    Invalid,
+    MaxNum
 };
 
 struct OutpostState {
@@ -115,7 +116,31 @@ struct TalosData {
 };
 
 struct NavigationData {
-    uint64_t timestamp_ns = 0;
+    int64_t timestamp_ns = 0;
+    uint64_t duration_ns = 1000000000ULL;
+    bool invincible[static_cast<size_t>(ArmorName::MaxNum)];
+
+    void set_invincible(ArmorName name, bool invincible_) noexcept {
+        invincible[static_cast<size_t>(name)] = invincible_;
+    }
+
+    bool is_invincible(ArmorName name) const noexcept {
+        return invincible[static_cast<size_t>(name)];
+    }
+
+    void emplace_invincible(
+        std::initializer_list<ArmorName> names, bool invincible_ = true) noexcept {
+        for (auto name : names) {
+            set_invincible(name, invincible_);
+        }
+    }
+
+    static NavigationData create(uint64_t duration_ns_ = 1000000000ULL) noexcept {
+        const auto now = std::chrono::system_clock::now();
+        auto t =
+            std::chrono::duration_cast<std::chrono::nanoseconds>(now.time_since_epoch()).count();
+        return {.timestamp_ns = t, .duration_ns = duration_ns_, .invincible = {}};
+    }
 };
 
 using TalosEndpoint      = ipc::ChiralEndpoint<TalosData, NavigationData>;
