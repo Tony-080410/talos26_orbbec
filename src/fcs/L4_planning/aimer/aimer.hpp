@@ -173,12 +173,12 @@ private:
 
     [[nodiscard]] PredictedAimPoint predict_aim_point(
         const L3::RobotTargetState& target, double dt, const ArmorAimContext& context,
-        const Eigen::Vector3d& muzzle_pos,
+        const MuzzleTransform& muzzle,
         std::optional<int> forced_armor_id = std::nullopt) const noexcept;
 
     [[nodiscard]] PredictedAimPoint predict_aim_point(
         const L3::OutpostTargetState& target, double dt, const ArmorAimContext& context,
-        const Eigen::Vector3d& muzzle_pos,
+        const MuzzleTransform& muzzle,
         std::optional<int> forced_armor_id = std::nullopt) const noexcept;
 
     AimerConfig config_;

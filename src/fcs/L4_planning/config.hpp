@@ -78,6 +78,9 @@ struct AimerConfig {
     /// Front-window limit for single-armor locking (degrees).
     double front_window_deg{60.0};
 
+    double min_coming_vel{1e-2};
+    double min_coming_vel_horizon{0.5};
+
     /// Weighted multi-target selection configuration.
     TargetSelectionConfig target_selection{};
 };
