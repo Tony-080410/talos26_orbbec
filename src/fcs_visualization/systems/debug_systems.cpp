@@ -1,4 +1,7 @@
 #include "base.hpp"
+#include "core/runtime.hpp"
+#include "core/time.hpp"
+#include "core/trajectory/resource.hpp"
 #include "foxglove_types.hpp"
 
 #include "L3_estimation/energy_meter/types.hpp"
@@ -8,6 +11,8 @@
 
 #include <magic_enum.hpp>
 #include <nlohmann/json.hpp>
+#include <system_helpers.hpp>
+#include <utility.hpp>
 
 namespace fcs::visualization::foxglove::systems {
 
@@ -23,6 +28,25 @@ void register_debug_systems(talos::scheduler::Scheduler& app, talos::Scheduler* 
     // =========================================================================
     // L2 DEBUG: PnP Solver Metrics
     // =========================================================================
+
+    app.add_system<talos::fixed_rate_silent<1>>(
+        "foxglove_res_pub",
+        [](talos::res<std::shared_ptr<FoxgloveServer>> server,
+           core::trajectory::bullet_speed bullet_speed, core::detecting_color color) {
+            auto& server_ptr = *server; // 引用绑定
+            if (!server_ptr->is_initialized()) {
+                return;
+            }
+
+            nlohmann::json j;
+            auto now               = clock::now_ns();
+            j["timestamp"]["sec"]  = now / 1000000000L;
+            j["timestamp"]["nsec"] = now % 1000000000L;
+            j["bullet_speed"]      = bullet_speed->bullet_speed;
+            j["color"]             = magic_enum::enum_name(*color);
+
+            detail::publish_json_message<ResourceMessage>(*server, j);
+        });
 
     app.add_system<talos::pool_compute>(
         "foxglove_debug_l2_pnp_pub",

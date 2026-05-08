@@ -260,7 +260,9 @@ EntityBuilder& EntityBuilder::timestamp(uint64_t ns) {
 }
 
 EntityBuilder& EntityBuilder::lifetime(uint64_t ns) {
-    entity_.lifetime = ::foxglove::schemas::Duration{static_cast<int32_t>(ns)};
+    entity_.lifetime = ::foxglove::schemas::Duration{
+        .sec  = static_cast<int32_t>(ns / 1000000000),
+        .nsec = static_cast<uint32_t>(ns % 1000000000)};
     return *this;
 }
 
@@ -294,8 +296,11 @@ EntityBuilder& EntityBuilder::retain() noexcept {
         entity_.timestamp = timestamp_from_ns(0);
     }
     if (!entity_.lifetime.has_value()) {
-        entity_.lifetime =
-            ::foxglove::schemas::Duration{.nsec = tactical::Temporal::ENTITY_LIFETIME_NS};
+        const auto ns = tactical::Temporal::ENTITY_LIFETIME_NS;
+
+        entity_.lifetime = ::foxglove::schemas::Duration{
+            .sec  = static_cast<int32_t>(ns / 1000000000),
+            .nsec = static_cast<uint32_t>(ns % 1000000000)};
     }
     return std::move(entity_);
 }
@@ -306,8 +311,11 @@ EntityBuilder& EntityBuilder::retain() noexcept {
         result.timestamp = timestamp_from_ns(0);
     }
     if (!result.lifetime.has_value()) {
-        result.lifetime =
-            ::foxglove::schemas::Duration{.nsec = tactical::Temporal::ENTITY_LIFETIME_NS};
+        const auto ns = tactical::Temporal::ENTITY_LIFETIME_NS;
+
+        result.lifetime = ::foxglove::schemas::Duration{
+            .sec  = static_cast<int32_t>(ns / 1000000000),
+            .nsec = static_cast<uint32_t>(ns % 1000000000)};
     }
     return result;
 }

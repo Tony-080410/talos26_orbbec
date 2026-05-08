@@ -60,6 +60,7 @@ struct FoxgloveChannels {
     JsonCh target_ch;
     JsonCh target_selection_trace_ch;
     JsonCh cmd_gimbal_ch;
+    JsonCh resource_ch;
     JsonCh perf_stats_ch;
     JsonCh mpc_traj_ch;
     JsonCh rune_debug_ch;
@@ -302,6 +303,15 @@ struct cmd_gimbal_def {
     static constexpr std::string_view encoding = "json";
 };
 
+struct resources_def {
+    static constexpr std::string_view topic    = "/resources";
+    using channel_type                         = ::foxglove::RawChannel;
+    using payload_type                         = std::vector<uint8_t>;
+    static constexpr auto member               = &FoxgloveChannels::resource_ch;
+    static constexpr bool is_raw               = true;
+    static constexpr std::string_view encoding = "json";
+};
+
 struct perf_stats_def {
     static constexpr std::string_view topic    = "/perf_stats";
     using channel_type                         = ::foxglove::RawChannel;
@@ -428,9 +438,9 @@ using ChannelRegistry = std::tuple<
     video_def, calibration_img_def, binary_img_def, pattern_img_def, rune_arrow_img_def,
     rune_target_img_def, rune_center_img_def, ekf_heatmap_def, debug_lights_def, debug_armors_def,
     measurement_def, target_def, target_selection_trace_def, cmd_gimbal_def, perf_stats_def,
-    mpc_traj_def, rune_debug_def, pnp_solver_def, nn_confidence_def, energy_meter_def,
-    ldm_detection_def, ldm_measurement_def, ldm_state_def, ground_truth_def, tf_def, calib_def,
-    log_def>;
+    resources_def, mpc_traj_def, rune_debug_def, pnp_solver_def, nn_confidence_def,
+    energy_meter_def, ldm_detection_def, ldm_measurement_def, ldm_state_def, ground_truth_def,
+    tf_def, calib_def, log_def>;
 
 // ============================================================================
 // FoxgloveMsg — unified message type
@@ -470,6 +480,7 @@ using TargetMessage               = FoxgloveMsg<target_def>;
 using TargetSelectionTraceMessage = FoxgloveMsg<target_selection_trace_def>;
 using GimbalCmdMessage            = FoxgloveMsg<cmd_gimbal_def>;
 using PerfStatsMessage            = FoxgloveMsg<perf_stats_def>;
+using ResourceMessage             = FoxgloveMsg<resources_def>;
 using MpcTrajectoryMessage        = FoxgloveMsg<mpc_traj_def>;
 using RuneDebugMessage            = FoxgloveMsg<rune_debug_def>;
 using PnPSolverMessage            = FoxgloveMsg<pnp_solver_def>;
