@@ -23,6 +23,8 @@
 
 namespace fcs {
 
+enum HardwareBackend { Direct, Daedalus, Chiral, CameraOnly };
+
 struct CapturerConfig {
     bool enabled{false};
     std::string output_dir{};
@@ -117,6 +119,13 @@ namespace fmt {
 template <>
 struct formatter<fcs::McuBackend> : formatter<std::string_view> {
     auto format(fcs::McuBackend b, format_context& ctx) const {
+        return formatter<std::string_view>::format(magic_enum::enum_name(b), ctx);
+    }
+};
+
+template <>
+struct formatter<fcs::HardwareBackend> : formatter<std::string_view> {
+    auto format(fcs::HardwareBackend b, format_context& ctx) const {
         return formatter<std::string_view>::format(magic_enum::enum_name(b), ctx);
     }
 };

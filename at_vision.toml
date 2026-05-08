@@ -1,6 +1,4 @@
-daedalus = true
-mock_mcu = false
-
+backend = "Direct"
 robot = "infantry_4"  # any of: 'infantry', 'hero', 'sentry'
 vision = "daedalus_vision"
 
@@ -9,16 +7,16 @@ vision = "daedalus_vision"
 # robot, vision, and optionally daedalus. If no match is found, falls back
 # to the explicit robot/vision/daedalus fields above.
 [preset]
-"ax650" = { daedalus = false, robot = "drone", vision = "drone" }
-"blackjack.local" = { daedalus = true, robot = "infantry_4", vision = "daedalus_vision" }
-"hero.local" = { daedalus = false, robot = "hero", vision = "hero_vision" }
-"nuc" = { daedalus = false, mock_mcu = true, robot = "radar", vision = "radar" }
-"ax650-2.local" = { daedalus = false, robot = "omni", vision = "omni" }
-"ax650-1.local" = { daedalus = false, robot = "infantry_ax_1", vision = "std" }
-"sentry" = { daedalus = false, robot = "sentry", vision = "sentry" }
-"ax650-hero" = { daedalus = false, robot = "hero", vision = "hero" }
-"ax650-doggy" = { daedalus = false, robot = "doggy", vision = "doggy" }
-"tegra-ubuntu" = { daedalus = false, robot = "infantry_nx", vision = "nx" }
+"ax650" = { robot = "drone", vision = "drone" }
+"blackjack.local" = { backend = "Daedalus", robot = "infantry_4", vision = "daedalus_vision" }
+"hero.local" = { robot = "hero", vision = "hero_vision" }
+"nuc" = { backend = "CameraOnly", robot = "radar", vision = "radar" }
+"ax650-2.local" = { robot = "omni", vision = "omni" }
+"ax650-1.local" = { robot = "infantry_ax_1", vision = "std" }
+"sentry" = { robot = "sentry", vision = "sentry" }
+"ax650-hero" = { robot = "hero", vision = "hero" }
+"ax650-doggy" = { robot = "doggy", vision = "doggy" }
+"tegra-ubuntu" = { robot = "infantry_nx", vision = "nx" }
 
 [foxglove]
 enabled = true

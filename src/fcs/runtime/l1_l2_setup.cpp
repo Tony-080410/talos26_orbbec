@@ -11,15 +11,16 @@
 #include "core/types.hpp"
 #include "euler.hpp"
 #include "frame.hpp"
+#include "runtime/config_loader.hpp"
 #include "scheduler/scheduler.hpp"
 #include "talos_gimbal/mcu_device.hpp"
 #include "talos_gimbal/packet.hpp"
-
 #include <algorithm>
 #include <atomic>
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <primitive/overloaded.hpp>
 #include <utility>
 
 #include <fmt/format.h>
@@ -241,93 +242,96 @@ struct Imu {
 } // namespace
 
 std::expected<L1L2SetupResult, std::string> setup_l1(
-    talos::World& world, talos::Scheduler& scheduler, bool mock_mcu, bool daedalus,
-    const HardwareConfig* hardware) {
+    talos::World& world, talos::Scheduler& scheduler, hardware::HardwareBackendConfig cfg) {
     std::shared_ptr<fcs::L1::CameraInterface> camera;
     std::shared_ptr<fcs::L1::OutputInterface> output;
     auto imu       = std::make_shared<Imu>();
     bool imu_ready = false;
     world.insert_resource(core::ImuState{});
-    if (daedalus) {
-        SPDLOG_INFO("connecting to daedalus ipc...");
-        auto ipc_ = ipc::ShmClient::connect();
-        if (!ipc_) {
-            return std::unexpected(fmt::format("connect ipc: {}", ipc_.error()));
-        }
-        auto ipc_device = std::make_shared<ipc::ShmClient>(std::move(*ipc_));
-
-        SPDLOG_INFO("initializing daedalus input interface...");
-        auto input_result = fcs::L1::CameraInterface::create_ipc(ipc_device);
-        if (!input_result) {
-            return std::unexpected(fmt::format("init daedalus input: {}", input_result.error()));
-        }
-
-        SPDLOG_INFO("initializing daedalus output interface...");
-        auto out_result = fcs::L1::OutputInterface::create_ipc(ipc_device);
-        if (!out_result) {
-            return std::unexpected(fmt::format("init daedalus output: {}", out_result.error()));
-        }
-
-        camera    = std::make_shared<fcs::L1::CameraInterface>(std::move(*input_result));
-        output    = std::make_shared<fcs::L1::OutputInterface>(std::move(*out_result));
-        imu->impl = DaedalusImu{ipc_device};
-        imu_ready = true;
-    } else {
-        if (hardware == nullptr) {
-            return std::unexpected("hardware config is required when daedalus=false");
-        }
-
-        talos_gimbal::Stm32Parser::latest_imu = &g_imu_data;
-
-        const auto& config = *hardware;
-        auto mcu_config    = config.mcu;
-        if (!mock_mcu) {
-            std::shared_ptr<McuHandle> mcu_device;
-            if (hardware->mcu->mcu_authoritative_self_color) {
-                SPDLOG_INFO("MCU authoritative self color enabled");
-            } else {
-                SPDLOG_INFO("MCU authoritative self color disabled");
-            }
-            if (hardware->mcu->mcu_authoritative_bullet_speed) {
-                SPDLOG_INFO("MCU authoritative bullet speed enabled");
-            } else {
-                SPDLOG_INFO("MCU authoritative bullet speed disabled");
-            }
-            if (mcu_config->mcu_backend == fcs::McuBackend::Serial) {
-                SPDLOG_INFO(
-                    "connecting to mcu via serial with {} @ {} baud", mcu_config->serial_device,
-                    mcu_config->serial_baud_rate);
-                mcu_device = McuHandle::create_serial(
-                    mcu_config->serial_device, mcu_config->serial_baud_rate);
-            } else {
-                if (mcu_config->mcu_product_id) {
-                    SPDLOG_INFO(
-                        "connecting to mcu via USB with {:#x}:{:#x}", mcu_config->mcu_vendor_id,
-                        mcu_config->mcu_product_id);
-                } else {
-                    SPDLOG_INFO(
-                        "connecting to mcu via USB with {:#x} (product_id unspecified)",
-                        mcu_config->mcu_vendor_id);
+    std::expected<void, std::string> result = std::visit(
+        overloaded{
+            [&camera, &output, &imu,
+             &imu_ready](hardware::DaedalusConfig) -> std::expected<void, std::string> {
+                SPDLOG_INFO("connecting to daedalus ipc...");
+                auto ipc_ = ipc::ShmClient::connect();
+                if (!ipc_) {
+                    return std::unexpected(fmt::format("connect ipc: {}", ipc_.error()));
                 }
-                mcu_device =
-                    McuHandle::create_usb(mcu_config->mcu_vendor_id, mcu_config->mcu_product_id);
-            }
-            if (!mcu_device) {
-                return std::unexpected(
-                    fmt::format("failed connecting to mcu via {}", mcu_config->mcu_backend));
-            }
-            SPDLOG_INFO("connected to mcu via {}", mcu_config->mcu_backend);
-            output    = std::make_shared<fcs::L1::OutputInterface>(fcs::L1::McuOutput(mcu_device));
-            imu->impl = McuImu{mcu_config, mcu_device, &g_imu_data};
-            imu_ready = true;
-        }
-        SPDLOG_INFO("initializing hikrobot camera...");
-        auto input_result = fcs::L1::CameraInterface::create_hik(config.camera);
-        if (!input_result) {
-            return std::unexpected(fmt::format("init hikrobot camera: {}", input_result.error()));
-        }
+                auto ipc_device = std::make_shared<ipc::ShmClient>(std::move(*ipc_));
 
-        camera = std::make_shared<fcs::L1::CameraInterface>(std::move(*input_result));
+                SPDLOG_INFO("initializing daedalus input interface...");
+                auto input_result = fcs::L1::CameraInterface::create_ipc(ipc_device);
+                if (!input_result) {
+                    return std::unexpected(
+                        fmt::format("init daedalus input: {}", input_result.error()));
+                }
+
+                SPDLOG_INFO("initializing daedalus output interface...");
+                auto out_result = fcs::L1::OutputInterface::create_ipc(ipc_device);
+                if (!out_result) {
+                    return std::unexpected(
+                        fmt::format("init daedalus output: {}", out_result.error()));
+                }
+
+                camera    = std::make_shared<fcs::L1::CameraInterface>(std::move(*input_result));
+                output    = std::make_shared<fcs::L1::OutputInterface>(std::move(*out_result));
+                imu->impl = DaedalusImu{ipc_device};
+                imu_ready = true;
+                return {};
+            },
+            [&camera, &output, &imu,
+             &imu_ready](hardware::DirectConfig cfg) -> std::expected<void, std::string> {
+                talos_gimbal::Stm32Parser::latest_imu = &g_imu_data;
+
+                auto mcu_config = cfg.hardware.mcu;
+                if (!cfg.camera_only) {
+                    std::shared_ptr<McuHandle> mcu_device;
+                    SPDLOG_INFO(
+                        "MCU authoritative self_color={} bullet_speed={}",
+                        mcu_config->mcu_authoritative_self_color,
+                        mcu_config->mcu_authoritative_bullet_speed);
+                    if (mcu_config->mcu_backend == fcs::McuBackend::Serial) {
+                        SPDLOG_INFO(
+                            "connecting to mcu via serial with {} @ {} baud",
+                            mcu_config->serial_device, mcu_config->serial_baud_rate);
+                        mcu_device = McuHandle::create_serial(
+                            mcu_config->serial_device, mcu_config->serial_baud_rate);
+                    } else {
+                        if (mcu_config->mcu_product_id) {
+                            SPDLOG_INFO(
+                                "connecting to mcu via USB with {:#x}:{:#x}",
+                                mcu_config->mcu_vendor_id, mcu_config->mcu_product_id);
+                        } else {
+                            SPDLOG_INFO(
+                                "connecting to mcu via USB with {:#x} (product_id unspecified)",
+                                mcu_config->mcu_vendor_id);
+                        }
+                        mcu_device = McuHandle::create_usb(
+                            mcu_config->mcu_vendor_id, mcu_config->mcu_product_id);
+                    }
+                    if (!mcu_device) {
+                        return std::unexpected(
+                            fmt::format(
+                                "failed connecting to mcu via {}", mcu_config->mcu_backend));
+                    }
+                    SPDLOG_INFO("connected to mcu via {}", mcu_config->mcu_backend);
+                    output =
+                        std::make_shared<fcs::L1::OutputInterface>(fcs::L1::McuOutput(mcu_device));
+                    imu->impl = McuImu{mcu_config, mcu_device, &g_imu_data};
+                    imu_ready = true;
+                }
+                SPDLOG_INFO("initializing hikrobot camera...");
+                auto input_result = fcs::L1::CameraInterface::create_hik(cfg.hardware.camera);
+                if (!input_result) {
+                    return std::unexpected(
+                        fmt::format("init hikrobot camera: {}", input_result.error()));
+                }
+                camera = std::make_shared<fcs::L1::CameraInterface>(std::move(*input_result));
+                return {};
+            }},
+        cfg);
+    if (!result) {
+        return std::unexpected(result.error());
     }
 
     const auto& cam_info = camera->camera_info();

@@ -14,12 +14,13 @@
 #include "core/trajectory/resource.hpp"
 #include "frame.hpp"
 #include "runtime/capturer.hpp"
+#include "runtime/config_loader.hpp"
 #include "runtime/l1_l2_setup.hpp"
 #include "scheduler/error_formatter.hpp"
-
 #include <fmt/core.h>
 #include <fmt/ranges.h>
 #include <numbers>
+#include <primitive/overloaded.hpp>
 #include <spdlog/spdlog.h>
 
 namespace fcs {
@@ -68,23 +69,31 @@ void init_coordinate_system(fast_tf::CoordinateSystem& system, const RobotExtrin
 
 [[nodiscard]] std::expected<void, std::string>
     boot(talos::World& world, talos::Scheduler& scheduler, RuntimeConfig&& config) {
-    if (!config.hardware) {
-        return std::unexpected("runtime config missing hardware section");
-    }
-
-    // Build the TF buffer in place to avoid moving the large tuple of buffers during startup.
-    auto& coordinate_system = world.emplace_resource<fast_tf::CoordinateSystem>();
-    init_coordinate_system(coordinate_system, config.hardware->extrinsic);
 
     // Insert config as shared resource (for foxglove and other systems)
     world.insert_resource(config.foxglove);
 
-    // Save config values for logging before move
-    const double bullet_speed = config.hardware->mcu->bullet_speed_default;
+    bool chiral = false;
+    // Build the TF buffer in place to avoid moving the large tuple of buffers during startup.
+    auto& coordinate_system = world.emplace_resource<fast_tf::CoordinateSystem>();
+    std::visit(
+        overloaded{
+            [&coordinate_system, &world, &chiral](hardware::DirectConfig cfg) {
+                init_coordinate_system(coordinate_system, cfg.hardware.extrinsic);
+                world.insert_resource(
+                    core::trajectory::bullet_speed_data{
+                        .bullet_speed = cfg.hardware.mcu->bullet_speed_default});
+                chiral = cfg.hardware.chiral;
+            },
+            [&coordinate_system, &world](hardware::DaedalusConfig cfg) {
+                init_coordinate_system(coordinate_system, {});
+                world.insert_resource(
+                    core::trajectory::bullet_speed_data{.bullet_speed = cfg.bullet_speed});
+            }},
+        config.backend);
 
-    world.insert_resource(core::trajectory::bullet_speed_data{.bullet_speed = bullet_speed});
     world.insert_resource(config.vision.detect_color);
-    world.insert_resource(*config.vision.capabilities);
+    world.insert_resource(config.vision.capabilities.get());
     world.insert_resource(config.vision.armor->readback_roi);
     world.insert_resource(L2::TrackerReadbackCache{});
 
@@ -92,9 +101,7 @@ void init_coordinate_system(fast_tf::CoordinateSystem& system, const RobotExtrin
     SPDLOG_INFO("capabilities: [{}]", fmt::join(*config.vision.capabilities, ", "));
 
     // Setup L1 sensor systems
-    auto setup_result = runtime::setup_l1(
-        world, scheduler, config.launch.mock_mcu, config.launch.daedalus,
-        config.hardware ? &*config.hardware : nullptr);
+    auto setup_result = runtime::setup_l1(world, scheduler, config.backend);
     if (!setup_result) {
         return std::unexpected(fmt::format("setup l1: {}", setup_result.error()));
     }
@@ -114,7 +121,9 @@ void init_coordinate_system(fast_tf::CoordinateSystem& system, const RobotExtrin
 
     // Register trajectory solver resource (used by L4/L5)
     core::trajectory::register_resource(scheduler, std::move(config.vision.trajectory));
-    SPDLOG_INFO("Trajectory resources configured (bullet_speed={:.1f}m/s)", bullet_speed);
+    SPDLOG_INFO(
+        "bullet_speed={:.3f}m/s",
+        world.get_res<core::trajectory::bullet_speed_data>()->bullet_speed);
 
     // Register AT Legacy detection pipeline systems
     L2::register_detection_systems(scheduler);
@@ -134,13 +143,12 @@ void init_coordinate_system(fast_tf::CoordinateSystem& system, const RobotExtrin
     L5::register_enhanced_weapon_system(scheduler, std::move(config.vision.l5.get()));
 
     // Register Chiral data collection system (publishes TrackerOutput to shared memory)
-    if (config.hardware->chiral) {
+    if (chiral) {
         chiral::register_chiral_collector_system(scheduler);
         SPDLOG_INFO("chiral system registered");
     }
 
-    runtime::register_runtime_capturer_system(
-        scheduler, config.capturer, config.launch, setup_result.value().camera_config);
+    runtime::register_runtime_capturer_system(scheduler, config.capturer, config.launch);
 
     // Build scheduler (freezes resource structure)
     if (auto build_result = scheduler.build(); !build_result) {

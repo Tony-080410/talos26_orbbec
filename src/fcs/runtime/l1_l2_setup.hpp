@@ -4,6 +4,7 @@
 #include <string>
 
 #include "camera_config.hpp"
+#include "runtime/config_loader.hpp"
 #include "scheduler/thin.hpp"
 
 namespace fcs {
@@ -24,8 +25,7 @@ struct L1L2SetupResult {
 // - CameraConfig resource
 //
 // `hardware` must be non-null when `daedalus == false`.
-[[nodiscard]] std::expected<L1L2SetupResult, std::string> setup_l1(
-    talos::World& world, talos::Scheduler& scheduler, bool mock_mcu, bool daedalus,
-    const HardwareConfig* hardware);
+[[nodiscard]] std::expected<L1L2SetupResult, std::string>
+    setup_l1(talos::World& world, talos::Scheduler& scheduler, hardware::HardwareBackendConfig cfg);
 
 } // namespace fcs::runtime

@@ -312,36 +312,6 @@ auto serialize_control_chunk(
     return json::array({point.x, point.y});
 }
 
-[[nodiscard]] auto to_json_camera_profile(const CameraProfileConfig& profile) -> json {
-    return json{
-        {    "trigger_mode",                        profile.trigger_mode},
-        {    "invert_image",                        profile.invert_image},
-        {"exposure_time_us",                    profile.exposure_time_us},
-        {            "gain",                                profile.gain},
-        {    "rotate_angle", magic_enum::enum_name(profile.rotate_angle)},
-    };
-}
-
-[[nodiscard]] auto to_json_camera_config(const CameraConfig& config) -> json {
-    json camera_matrix = json::array();
-    for (Eigen::Index i = 0; i < config.camera_matrix.size(); ++i) {
-        camera_matrix.push_back(config.camera_matrix(i));
-    }
-
-    json distortion = json::array();
-    for (Eigen::Index i = 0; i < config.distort_coefficient.size(); ++i) {
-        distortion.push_back(config.distort_coefficient(i));
-    }
-
-    return json{
-        {      "camera_matrix",               std::move(camera_matrix)},
-        {"distort_coefficient",                  std::move(distortion)},
-        {              "width",                           config.width},
-        {             "height",                          config.height},
-        {            "profile", to_json_camera_profile(config.profile)},
-    };
-}
-
 [[nodiscard]] auto to_json_capturer_config(const CapturerConfig& config) -> json {
     return json{
         {            "enabled",             config.enabled},
@@ -718,9 +688,7 @@ template <fast_tf::frame Frame>
 
 class RuntimeCapturer {
 public:
-    static auto create(
-        const CapturerConfig& config, const CapturerLaunchContext& launch,
-        const CameraConfig& camera_config)
+    static auto create(const CapturerConfig& config, const CapturerLaunchContext& launch)
         -> std::expected<std::shared_ptr<RuntimeCapturer>, std::string> {
         std::error_code ec;
         fs::path base_dir(config.output_dir);
@@ -761,17 +729,15 @@ public:
 
         json run_json{
             {     "created_ns",fcs::clock::now_ns()                               },
-            {        "run_dir",                     run_dir.string()},
-            {  "camera_config", to_json_camera_config(camera_config)},
-            {       "capturer",      to_json_capturer_config(config)},
-            {"config_snapshot",                     *config_snapshot},
+            {        "run_dir",                run_dir.string()},
+            {       "capturer", to_json_capturer_config(config)},
+            {"config_snapshot",                *config_snapshot},
             {         "launch",
              json{
-             {"daedalus", launch.daedalus},
-             {"mock_mcu", launch.mock_mcu},
+             {"backend", magic_enum::enum_name(launch.backend)},
              {"robot", launch.robot},
              {"vision", launch.vision},
-             }                                                      },
+             }                                                 },
             {        "control",
              json{
              {"dir", capturer->relative_path_or_null(capturer->control_dir_)},
@@ -780,7 +746,7 @@ public:
              {"sample_size", kControlSampleWireSize},
              {"chunk_header_size", kControlChunkHeaderWireSize},
              {"encoding", "little_endian_explicit"},
-             }                                                      },
+             }                                                 },
         };
 
         if (!capturer->write_file(run_dir / "run.json", run_json.dump(2))) {
@@ -1413,13 +1379,13 @@ private:
 } // namespace
 
 void register_runtime_capturer_system(
-    talos::Scheduler& scheduler, const CapturerConfig& config, const CapturerLaunchContext& launch,
-    const CameraConfig& camera_config) {
+    talos::Scheduler& scheduler, const CapturerConfig& config,
+    const CapturerLaunchContext& launch) {
     if (!config.enabled) {
         return;
     }
 
-    auto capturer_result = RuntimeCapturer::create(config, launch, camera_config);
+    auto capturer_result = RuntimeCapturer::create(config, launch);
     if (!capturer_result) {
         SPDLOG_ERROR("runtime capturer disabled: {}", capturer_result.error());
         return;

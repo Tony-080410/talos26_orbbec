@@ -1,6 +1,7 @@
 #include "fcs/runtime/boot.hpp"
 #include "fcs_visualization/foxglove_sink.hpp"
 #include "fcs_visualization/foxglove_systems.hpp"
+#include "runtime/config_loader.hpp"
 #include "scheduler/error_formatter.hpp"
 #include "scheduler/scheduler.hpp"
 #include "spdlog_hook.hpp"
@@ -9,6 +10,7 @@
 #include <chrono>
 #include <csignal>
 #include <thread>
+#include <variant>
 
 namespace {
 
@@ -48,7 +50,8 @@ int main() {
             fcs::visualization::attach_foxglove_sink(*server);
             world.insert_resource(server);
             fcs::visualization::register_foxglove_systems(
-                config->launch.daedalus, scheduler, &scheduler);
+                std::holds_alternative<fcs::hardware::DaedalusConfig>(config->backend), scheduler,
+                &scheduler);
             if (foxglove_cfg.transport == fcs::FoxgloveTransport::WebSocket) {
                 SPDLOG_INFO(
                     "Foxglove WebSocket enabled on ws://{}:{}", foxglove_cfg.host,

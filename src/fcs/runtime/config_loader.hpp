@@ -13,21 +13,36 @@
 
 namespace fcs {
 
+namespace hardware {
+
+enum Transport { Direct, Chiral };
+
+struct DaedalusConfig {
+    double bullet_speed{25.0};
+};
+
+struct DirectConfig {
+    bool camera_only;
+    Transport transport;
+    HardwareConfig hardware;
+};
+
+using HardwareBackendConfig = std::variant<DaedalusConfig, DirectConfig>;
+
+}; // namespace hardware
+
 /// Per-hostname preset entry in [preset] table.
 struct PresetEntry {
-    bool daedalus{true};
-    bool mock_mcu{false};
+    HardwareBackend backend{HardwareBackend::Direct};
     toml_helper::required<std::string> robot;
     toml_helper::required<std::string> vision;
 };
 
 // Entry-point configuration parsed from at_vision.toml
 struct LaunchConfig {
-    bool daedalus{false};
-    bool mock_mcu{false};
-    toml_helper::required<std::string> robot;
-    toml_helper::required<std::string> vision;
+    toml_helper::flatten<PresetEntry> fallback_preset;
     std::map<std::string, PresetEntry> preset;
+    hardware::DaedalusConfig daedalus;
     FoxgloveConfig foxglove;
     CapturerConfig capturer;
     talos::scheduler::SchedulerConfig scheduler;
@@ -35,8 +50,7 @@ struct LaunchConfig {
 
 // Fully-resolved runtime configuration after merging base + override TOML
 struct RuntimeConfig {
-    bool mock_mcu{false};
-    std::optional<HardwareConfig> hardware;
+    hardware::HardwareBackendConfig backend;
     FoxgloveConfig foxglove;
     CapturerConfig capturer;
     VisionConfig vision;
