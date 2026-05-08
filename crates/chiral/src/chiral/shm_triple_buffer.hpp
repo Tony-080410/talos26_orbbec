@@ -99,6 +99,6 @@ private:
 };
 
 // TalosData 三重缓冲操作的便捷别名
-using TalosTripleBufferOps = TripleBufferOps<TalosTripleBuffer, chrial::TalosData>;
+using TalosTripleBufferOps = TripleBufferOps<TalosTripleBuffer, chiral::TalosData>;
 
 } // namespace talos::chiral::ipc

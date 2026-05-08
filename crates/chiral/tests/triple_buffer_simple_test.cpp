@@ -6,7 +6,7 @@
 #include <sys/mman.h>
 #include <thread>
 
-using namespace talos::chrial;
+using namespace talos::chiral;
 using namespace talos::chiral::ipc;
 
 int main() {

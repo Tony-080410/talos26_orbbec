@@ -1,6 +1,6 @@
 #pragma once
 
-#include "chrial.hpp"
+#include "chiral.hpp"
 #include "shm_layout.hpp"
 #include "shm_triple_buffer.hpp"
 #include <atomic>
@@ -39,12 +39,12 @@ template <typename T>
 struct ShmName;
 
 template <>
-struct ShmName<chrial::TalosData> {
+struct ShmName<chiral::TalosData> {
     static constexpr const char* value = "/chiral_talos_out";
 };
 
 template <>
-struct ShmName<chrial::IncomingData> {
+struct ShmName<chiral::IncomingData> {
     static constexpr const char* value = "/chiral_talos_in";
 };
 
@@ -483,7 +483,7 @@ private:
 
 // ============ 强类型别名 ============
 
-using TalosSide  = ChiralEndpoint<chrial::TalosData, chrial::IncomingData>;
-using RemoteSide = ChiralEndpoint<chrial::IncomingData, chrial::TalosData>;
+using TalosSide  = ChiralEndpoint<chiral::TalosData, chiral::IncomingData>;
+using RemoteSide = ChiralEndpoint<chiral::IncomingData, chiral::TalosData>;
 
 } // namespace talos::chiral::ipc

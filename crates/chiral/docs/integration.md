@@ -7,7 +7,7 @@
 - 唯一头文件：`chiral/talos_triple_buffer_shm.hpp`
 - 共享内存对象名：`/talos_data_triple`
 - 协议版本：`TALOS_SHM_VERSION = 2`
-- 数据结构：`talos::chrial::TalosData`（定义在 `chiral/chrial.hpp`）
+- 数据结构：`talos::chiral::TalosData`（定义在 `chiral/chiral.hpp`）
 
 Talos 发布侧入口：
 

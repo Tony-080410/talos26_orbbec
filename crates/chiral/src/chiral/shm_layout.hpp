@@ -1,6 +1,6 @@
 #pragma once
 
-#include "chrial.hpp"
+#include "chiral.hpp"
 #include <atomic>
 #include <cstdint>
 
@@ -51,10 +51,10 @@ struct TalosTripleBuffer {
     uint8_t _pad[5];
     std::atomic<uint64_t> slot_seq[3]{{0}, {0}, {0}};
 
-    chrial::TalosData slots[3]; // 自然对齐
+    chiral::TalosData slots[3]; // 自然对齐
 };
 
 // 验证大小
-static_assert(sizeof(TalosTripleBuffer) >= sizeof(chrial::TalosData) * 3 + 32);
+static_assert(sizeof(TalosTripleBuffer) >= sizeof(chiral::TalosData) * 3 + 32);
 
 } // namespace talos::chiral::ipc

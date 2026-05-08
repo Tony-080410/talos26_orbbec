@@ -8,7 +8,7 @@
 #include <gtest/gtest.h>
 #include <sys/mman.h>
 
-using namespace talos::chrial;
+using namespace talos::chiral;
 using namespace talos::chiral::ipc;
 
 // ============================================================================

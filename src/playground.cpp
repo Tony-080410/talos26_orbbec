@@ -1,11 +1,9 @@
 #include "chiral/client.hpp"
 #include "chiral/packet.hpp"
-#include "shm_client.hpp"
 #include "spdlog_hook.hpp"
 #include <atomic>
 #include <chrono>
 #include <csignal>
-#include <opencv2/opencv.hpp>
 #include <thread>
 
 using namespace std::chrono_literals;
@@ -21,11 +19,10 @@ int main() {
     std::signal(SIGTERM, signal_handler);
 
     init_logger();
-    SPDLOG_INFO("=== Talos Daedalus IPC Playground ===");
+    SPDLOG_INFO("=== Talos Playground ===");
     SPDLOG_INFO("Press Ctrl+C to quit");
     const auto start = std::chrono::system_clock::now();
 
-    // 创建共享内存 (生产者模式，用于测试)
     SPDLOG_INFO("creating shared memory regions...");
     auto client_result = talos::chiral::gimbal::RadarSide::create();
     if (!client_result) {
@@ -35,7 +32,6 @@ int main() {
     }
 
     auto& client = *client_result;
-    SPDLOG_INFO("shared memory created successfully ({}x{})", ipc::IMAGE_WIDTH, ipc::IMAGE_HEIGHT);
 
     uint64_t frame_count = 0;
 
@@ -43,14 +39,14 @@ int main() {
     SPDLOG_INFO("starting main loop...");
     float roll, pitch, yaw;
     while (g_running) {
-        // 测试 2: 接收图像
+        // 测试 2: 接收指令
         if (auto frame = client->read_new()) {
             yaw   = frame->target_yaw;
             pitch = frame->target_pitch;
             SPDLOG_INFO("{} {} {}", frame->fire_advice, yaw, pitch);
         }
 
-        // 测试 3: 定期发送云台命令
+        // 测试 3: 定期发送云台数据
         if (frame_count % 10 == 0) {
             client->write(
                 talos::chiral::gimbal::McuData(

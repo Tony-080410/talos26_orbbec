@@ -1,11 +1,11 @@
 #pragma once
 
-// CHRIAL: bridge between talos and ROS2
+// chiral: bridge between talos and ROS2
 
 #include <array>
 #include <cstdint>
 
-namespace talos::chrial {
+namespace talos::chiral {
 
 // 编译期 Tag, 用于标注类型, 0运行时开销
 template <typename T>
@@ -120,4 +120,4 @@ struct IncomingData {
     uint64_t timestamp_ns = 0;
 };
 
-} // namespace talos::chrial
+} // namespace talos::chiral
