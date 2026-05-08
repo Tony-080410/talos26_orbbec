@@ -6,9 +6,7 @@
  *
  * This module provides a lock-free SPMC (Single Producer Multiple Consumers)
  * triple buffer implementation optimized for low-latency data transfer
- * between threads. It also keeps a bounded backlog of recent writes so active
- * readers can catch up on short bursts instead of immediately jumping to the
- * latest generation.
+ * between threads.
  *
  * ## Design
  *
@@ -29,10 +27,7 @@
  */
 
 #include "spin.hpp"
-#include <algorithm>
-#include <array>
 #include <atomic>
-#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <new>
@@ -46,9 +41,7 @@ namespace talos::primitive {
  *
  * A triple buffer provides thread-safe data transfer from one writer
  * to multiple readers. Each reader operates independently and sees
- * a consistent view of the data. Active readers can drain a small backlog
- * of retained generations; readers that fall farther behind skip to the
- * oldest retained generation.
+ * a consistent view of the data.
  *
  * ## Memory model
  *
@@ -79,15 +72,11 @@ namespace talos::primitive {
  * ## Performance
  *
  * - Write: O(1) atomic operations
- * - Read: O(backlog_capacity) bounded scan
- * - Memory: backlog_capacity * sizeof(shared_ptr) + atomic overhead
+ * - Read: O(1) atomic operations
+ * - Memory: 3 * sizeof(shared_ptr) + atomic overhead
  */
 template <typename T>
 requires(std::movable<T> && std::copyable<T>) class SpmcTripleBuffer {
-public:
-    static constexpr std::size_t backlog_capacity = 64;
-
-private:
     /**
      * @brief Reader-writer spinlock optimized for many readers
      *
@@ -159,27 +148,10 @@ private:
     };
 
     struct State {
-        struct Slot {
-            std::shared_ptr<const T> value{nullptr};
-            std::uint64_t generation{0};
-        };
-
         alignas(std::hardware_destructive_interference_size) RWSpinLock lock{};
         std::shared_ptr<const T> current{nullptr};
-        std::array<Slot, backlog_capacity> backlog{};
-        std::size_t write_index{0};
         alignas(std::hardware_destructive_interference_size) std::atomic<std::uint64_t> generation{
             0};
-
-        [[nodiscard]] static std::uint64_t
-            oldest_retained_generation(const std::uint64_t latest_generation) noexcept {
-            if (latest_generation == 0) {
-                return 0;
-            }
-
-            const auto retained = std::min<std::uint64_t>(latest_generation, backlog_capacity);
-            return latest_generation - retained + 1;
-        }
     };
 
 public:
@@ -224,13 +196,8 @@ public:
             auto ptr = std::make_shared<const U>(std::move(data));
 
             state_->lock.write_lock();
-            const auto next_generation = state_->generation.load(std::memory_order_relaxed) + 1;
-            auto& slot                 = state_->backlog[state_->write_index];
-            slot.value                 = ptr;
-            slot.generation            = next_generation;
-            state_->current            = std::move(ptr);
-            state_->write_index        = (state_->write_index + 1) % backlog_capacity;
-            state_->generation.store(next_generation, std::memory_order_release);
+            state_->current = std::move(ptr);
+            state_->generation.fetch_add(1, std::memory_order_release);
             state_->lock.write_unlock();
         }
 
@@ -293,13 +260,13 @@ public:
         /**
          * @brief Read new data if available
          *
-         * Returns new data if it hasn't been seen by this reader,
+         * Returns the latest data if it hasn't been seen by this reader,
          * otherwise returns `std::nullopt`.
          *
          * ## Algorithm
          *
          * 1. Fast path: check generation counter without locking
-         * 2. Slow path: acquire read lock and find the next retained generation
+         * 2. Slow path: acquire read lock and check again
          * 3. Copy data out if new
          *
          * ## Thread safety
@@ -321,25 +288,8 @@ public:
             // Acquire read lock (doesn't block other readers)
             state_->lock.read_lock();
 
-            const std::uint64_t locked_gen = state_->generation.load(std::memory_order_acquire);
-            std::uint64_t target_gen       = locked_gen;
-
-            if (last_gen_ != 0 && locked_gen > last_gen_) {
-                const auto oldest_gen = State::oldest_retained_generation(locked_gen);
-                target_gen            = std::max(last_gen_ + 1, oldest_gen);
-            }
-
-            std::shared_ptr<const U> ptr{nullptr};
-            for (const auto& slot : state_->backlog) {
-                if (slot.generation == target_gen) {
-                    ptr = slot.value;
-                    break;
-                }
-            }
-            if (!ptr) [[unlikely]] {
-                ptr        = state_->current;
-                target_gen = locked_gen;
-            }
+            std::shared_ptr<const U> ptr = state_->current;
+            std::uint64_t locked_gen     = state_->generation.load(std::memory_order_acquire);
 
             state_->lock.read_unlock();
 
@@ -348,11 +298,11 @@ public:
             }
 
             // Check generation again (might have been stale in fast path)
-            if (target_gen <= last_gen_) {
+            if (locked_gen <= last_gen_) {
                 return std::nullopt;
             }
 
-            last_gen_ = target_gen;
+            last_gen_ = locked_gen;
             return *ptr; // copy out
         }
 
