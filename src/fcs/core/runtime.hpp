@@ -17,8 +17,6 @@ struct ImuState {
     double yaw_vel{0.0};
     double pitch_vel{0.0};
     double roll_vel{0.0};
-    bool attitude_valid{false};
-    bool angular_velocity_valid{false};
 };
 
 struct ControlTransformSnapshot {

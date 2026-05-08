@@ -1,6 +1,7 @@
 #pragma once
 
 #include "L5_weapon/fire_control.hpp"
+#include "chiral/client.hpp"
 #include "shm_client.hpp"
 #include "talos_gimbal/mcu_device.hpp"
 
@@ -43,13 +44,23 @@ private:
     std::shared_ptr<talos_gimbal::McuDeviceHandle> device_;
 };
 
+class ChiralOutput {
+public:
+    explicit ChiralOutput(std::shared_ptr<talos::chiral::gimbal::TalosSide> device) noexcept;
+
+    void send(const L5::WeaponCommand& cmd) const noexcept;
+
+private:
+    std::shared_ptr<talos::chiral::gimbal::TalosSide> device_;
+};
+
 // ============================================================================
 // OutputInterface - 输出接口 (静态多态)
 // ============================================================================
 
 class OutputInterface {
 public:
-    using OutputMode = std::variant<std::monostate, IpcOutput, McuOutput>;
+    using OutputMode = std::variant<std::monostate, IpcOutput, McuOutput, ChiralOutput>;
 
     OutputInterface() = default;
 
@@ -72,6 +83,9 @@ public:
 
     [[nodiscard]] static std::expected<OutputInterface, std::string>
         create_ipc(std::shared_ptr<ipc::ShmClient> client) noexcept;
+
+    [[nodiscard]] static std::expected<OutputInterface, std::string>
+        create_chiral(std::shared_ptr<talos::chiral::gimbal::TalosSide> client) noexcept;
 
     [[nodiscard]] static std::expected<OutputInterface, std::string> create_usb(
         uint16_t vendor_id = talos_gimbal::Stm32Impl<talos_gimbal::Stm32Parser>::VID,

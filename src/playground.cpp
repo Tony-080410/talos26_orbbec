@@ -1,3 +1,5 @@
+#include "chiral/client.hpp"
+#include "chiral/packet.hpp"
 #include "shm_client.hpp"
 #include "spdlog_hook.hpp"
 #include <atomic>
@@ -25,7 +27,7 @@ int main() {
 
     // 创建共享内存 (生产者模式，用于测试)
     SPDLOG_INFO("creating shared memory regions...");
-    auto client_result = ipc::ShmClient::create();
+    auto client_result = talos::chiral::gimbal::RadarSide::create();
     if (!client_result) {
         SPDLOG_CRITICAL(
             "failed to create shared memory: {}", static_cast<int>(client_result.error()));
@@ -39,22 +41,20 @@ int main() {
 
     // Main loop
     SPDLOG_INFO("starting main loop...");
+    float roll, pitch, yaw;
     while (g_running) {
-
-        client.update_heartbeat();
-
         // 测试 2: 接收图像
-        if (auto frame = client.recv_image()) {
-            if (frame_count % 30 == 0) { // Log every 30 frames
-                SPDLOG_INFO(
-                    "frame={}, seq={}, size={}x{}, channels={}", frame_count, frame->seq,
-                    frame->image.cols, frame->image.rows, frame->image.channels());
-            }
+        if (auto frame = client->read_new()) {
+            yaw   = frame->target_yaw;
+            pitch = frame->target_pitch;
+            SPDLOG_INFO("{} {} {}", frame->fire_advice, yaw, pitch);
         }
 
         // 测试 3: 定期发送云台命令
         if (frame_count % 10 == 0) {
-            client.send_gimbal_cmd(15.0f, -8.0f, 5.2f, frame_count % 30 == 0);
+            client->write(
+                talos::chiral::gimbal::McuData(
+                    talos::chiral::gimbal::Color::Red, yaw, pitch, 0.0, 0.0, 0.0, 0.0));
         }
 
         frame_count++;
@@ -67,15 +67,6 @@ int main() {
         std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::system_clock::now() - start)
             .count());
-
-    // Final header info
-    const auto& header = client.header();
-    SPDLOG_INFO(
-        "magic={:#x}, version={}, producer_alive={}", header.magic, header.version,
-        client.is_producer_alive());
-
-    const auto& cam_info = client.camera_info();
-    SPDLOG_INFO("fx={}, fy={}, cx={}, cy={}", cam_info.fx, cam_info.fy, cam_info.cx, cam_info.cy);
 
     return 0;
 }

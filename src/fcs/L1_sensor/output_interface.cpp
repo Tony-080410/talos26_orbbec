@@ -1,4 +1,5 @@
 #include "L1_sensor/output_interface.hpp"
+#include "chiral/packet.hpp"
 #include "shm_client.hpp"
 #include "talos_gimbal/mcu_device.hpp"
 #include "talos_gimbal/packet.hpp"
@@ -13,7 +14,7 @@ IpcOutput::IpcOutput(std::shared_ptr<ipc::ShmClient> client) noexcept
     : client_(std::move(client)) {}
 
 void IpcOutput::send(const L5::WeaponCommand& cmd) const noexcept {
-    if (!client_) {
+    if (!client_) [[unlikely]] {
         return;
     }
 
@@ -33,11 +34,11 @@ McuOutput::McuOutput(std::shared_ptr<talos_gimbal::McuDeviceHandle> device) noex
     : device_(std::move(device)) {}
 
 void McuOutput::send(const L5::WeaponCommand& cmd) const noexcept {
-    if (!device_) {
+    if (!device_) [[unlikely]] {
         return;
     }
 
-    if (!device_->is_connected()) {
+    if (!device_->is_connected()) [[unlikely]] {
         return;
     }
 
@@ -81,6 +82,27 @@ void McuOutput::send(const L5::WeaponCommand& cmd) const noexcept {
         device_->send_sync(reinterpret_cast<uint8_t*>(&packet), sizeof(packet));
     }
 }
+ChiralOutput::ChiralOutput(std::shared_ptr<talos::chiral::gimbal::TalosSide> device) noexcept
+    : device_(std::move(device)) {}
+
+void ChiralOutput::send(const L5::WeaponCommand& cmd) const noexcept {
+    if (!device_) [[unlikely]] {
+        return;
+    }
+
+    device_->write(
+        talos::chiral::gimbal::McuRequest{
+            .timestamp_ns_system_clock = static_cast<int64_t>(cmd.timestamp_ns),
+            .fire_advice               = cmd.fire,
+            .target_yaw                = static_cast<float>(cmd.yaw * detail::RAD_TO_DEG),
+            .target_pitch              = -static_cast<float>(cmd.pitch * detail::RAD_TO_DEG),
+            .ref_yaw_v                 = static_cast<float>(cmd.yaw_vel * detail::RAD_TO_DEG),
+            .ref_pitch_v               = -static_cast<float>(cmd.pitch_vel * detail::RAD_TO_DEG),
+            .ref_yaw_a                 = static_cast<float>(cmd.yaw_accel * detail::RAD_TO_DEG),
+            .ref_pitch_a               = -static_cast<float>(cmd.pitch_accel * detail::RAD_TO_DEG),
+            .distance                  = static_cast<float>(cmd.distance),
+        });
+}
 
 // ============================================================================
 // OutputInterface 工厂方法
@@ -89,6 +111,11 @@ void McuOutput::send(const L5::WeaponCommand& cmd) const noexcept {
 std::expected<OutputInterface, std::string>
     OutputInterface::create_ipc(std::shared_ptr<ipc::ShmClient> client) noexcept {
     return OutputInterface(IpcOutput(std::move(client)));
+}
+
+[[nodiscard]] static std::expected<OutputInterface, std::string>
+    create_chiral(std::shared_ptr<talos::chiral::gimbal::TalosSide> client) noexcept {
+    return OutputInterface(ChiralOutput(std::move(client)));
 }
 
 std::expected<OutputInterface, std::string> OutputInterface::create_usb(

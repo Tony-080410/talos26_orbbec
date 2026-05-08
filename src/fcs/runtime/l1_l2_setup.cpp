@@ -3,6 +3,9 @@
 #include "L1_sensor/camera_interface.hpp"
 #include "L1_sensor/output_interface.hpp"
 #include "L5_weapon/fire_control.hpp"
+#include "chiral/chiral_endpoint.hpp"
+#include "chiral/client.hpp"
+#include "chiral/packet.hpp"
 #include "config.hpp"
 #include "core/channel_topics.hpp"
 #include "core/runtime.hpp"
@@ -11,6 +14,7 @@
 #include "core/types.hpp"
 #include "euler.hpp"
 #include "frame.hpp"
+#include "magic_enum.hpp"
 #include "runtime/config_loader.hpp"
 #include "scheduler/scheduler.hpp"
 #include "talos_gimbal/mcu_device.hpp"
@@ -75,6 +79,61 @@ void publish_control_snapshot(
         });
 }
 
+struct ChiralImu {
+    McuConfig config;
+    std::shared_ptr<talos::chiral::gimbal::TalosSide> device;
+
+    void system(
+        talos::res_mut<fast_tf::CoordinateSystem> tf_buffer,
+        core::trajectory::bullet_speed_mut bullet_speed, core::detecting_color_mut detecting_color,
+        core::imu_state_mut imu_state,
+        talos::spmc_mut<core::ControlResourceSnapshot, RuntimeControlStateChannelTopic> control_out,
+        [[maybe_unused]] talos::spmc_mut<ipc::GroundTruthBatch, GroundTruthBatchChannelTopic>
+            gt_out) noexcept {
+        auto imu_data_result = device->read_new();
+        if (!imu_data_result.has_value()) [[unlikely]] {
+            return;
+        }
+        auto imu_data = imu_data_result.value();
+
+        const uint64_t timestamp_ns = fcs::clock::now_ns();
+        fast_tf::update_rotate_only<fast_tf::gimbal_yaw_fuxk_frame>(
+            *tf_buffer, math_fuxk::rpy<double>(imu_data.roll, 0.0, imu_data.yaw), timestamp_ns);
+        fast_tf::update_rotate_only<fast_tf::gimbal_pitch_fuxk_frame>(
+            *tf_buffer, math_fuxk::rpy<double>(0.0, imu_data.pitch, 0.0), timestamp_ns);
+        if (config.mcu_authoritative_bullet_speed && imu_data.bullet_speed > 0) {
+            double new_speed = std::clamp(
+                static_cast<double>(imu_data.bullet_speed), config.bullet_speed_min,
+                config.bullet_speed_max);
+            if (new_speed != bullet_speed->bullet_speed) {
+                SPDLOG_INFO(
+                    "bullet speed changed: {} -> {}", bullet_speed->bullet_speed, new_speed);
+                bullet_speed->bullet_speed = new_speed;
+            }
+        }
+        if (config.mcu_authoritative_self_color) {
+            auto new_detecting_color = imu_data.self_color == talos::chiral::gimbal::Color::Blue
+                                         ? ArmorColor::Red
+                                         : ArmorColor::Blue;
+            if (new_detecting_color != *detecting_color) [[unlikely]] {
+                SPDLOG_INFO(
+                    "detecting color changed: {} -> {}", *detecting_color, new_detecting_color);
+                *detecting_color = new_detecting_color;
+            }
+        }
+        imu_state->timestamp_ns = timestamp_ns;
+        imu_state->yaw          = imu_data.yaw;
+        imu_state->pitch        = imu_data.pitch;
+        imu_state->roll         = imu_data.roll;
+        imu_state->yaw_vel      = imu_data.yaw_vel;
+        imu_state->pitch_vel    = imu_data.pitch_vel;
+        imu_state->roll_vel     = imu_data.roll_vel;
+        publish_control_snapshot(
+            control_out, *tf_buffer, *imu_state, *detecting_color, imu_data.bullet_speed,
+            bullet_speed->bullet_speed, timestamp_ns);
+    }
+};
+
 struct DaedalusImu {
     std::shared_ptr<ipc::ShmClient> ipc_device;
     uint64_t last_gt_timestamp_ns{0};
@@ -107,15 +166,13 @@ struct DaedalusImu {
                 *tf_buffer,
                 fast_tf::EdgeTransform<fast_tf::gimbal_pitch_fuxk_frame>::from_rpy(0, 0, 0),
                 pose->timestamp_ns);
-            imu_state->timestamp_ns           = pose->timestamp_ns;
-            imu_state->yaw                    = yaw;
-            imu_state->pitch                  = pitch;
-            imu_state->roll                   = roll;
-            imu_state->yaw_vel                = 0.0;
-            imu_state->pitch_vel              = 0.0;
-            imu_state->roll_vel               = 0.0;
-            imu_state->attitude_valid         = true;
-            imu_state->angular_velocity_valid = false;
+            imu_state->timestamp_ns = pose->timestamp_ns;
+            imu_state->yaw          = yaw;
+            imu_state->pitch        = pitch;
+            imu_state->roll         = roll;
+            imu_state->yaw_vel      = 0.0;
+            imu_state->pitch_vel    = 0.0;
+            imu_state->roll_vel     = 0.0;
             note_control_update(pose->timestamp_ns);
         }
         if (const auto pose = ipc_device->recv_pose(ipc::POSE_ODOM)) {
@@ -206,15 +263,13 @@ struct McuImu {
                 *detecting_color = new_detecting_color;
             }
         }
-        imu_state->timestamp_ns           = timestamp_ns;
-        imu_state->yaw                    = imu_data->data.yaw;
-        imu_state->pitch                  = imu_data->data.pitch;
-        imu_state->roll                   = imu_data->data.roll;
-        imu_state->yaw_vel                = imu_data->data.yaw_vel;
-        imu_state->pitch_vel              = imu_data->data.pitch_vel;
-        imu_state->roll_vel               = imu_data->data.roll_vel;
-        imu_state->attitude_valid         = true;
-        imu_state->angular_velocity_valid = true;
+        imu_state->timestamp_ns = timestamp_ns;
+        imu_state->yaw          = imu_data->data.yaw;
+        imu_state->pitch        = imu_data->data.pitch;
+        imu_state->roll         = imu_data->data.roll;
+        imu_state->yaw_vel      = imu_data->data.yaw_vel;
+        imu_state->pitch_vel    = imu_data->data.pitch_vel;
+        imu_state->roll_vel     = imu_data->data.roll_vel;
         publish_control_snapshot(
             control_out, *tf_buffer, *imu_state, *detecting_color, imu_data->data.bullet_speed,
             bullet_speed->bullet_speed, timestamp_ns);
@@ -222,7 +277,7 @@ struct McuImu {
 };
 
 struct Imu {
-    std::variant<DaedalusImu, McuImu> impl;
+    std::variant<DaedalusImu, McuImu, ChiralImu> impl;
 
     void system(
         talos::res_mut<fast_tf::CoordinateSystem> tf_buffer,
@@ -290,35 +345,57 @@ std::expected<L1L2SetupResult, std::string> setup_l1(
                         "MCU authoritative self_color={} bullet_speed={}",
                         mcu_config->mcu_authoritative_self_color,
                         mcu_config->mcu_authoritative_bullet_speed);
-                    if (mcu_config->mcu_backend == fcs::McuBackend::Serial) {
-                        SPDLOG_INFO(
-                            "connecting to mcu via serial with {} @ {} baud",
-                            mcu_config->serial_device, mcu_config->serial_baud_rate);
-                        mcu_device = McuHandle::create_serial(
-                            mcu_config->serial_device, mcu_config->serial_baud_rate);
-                    } else {
-                        if (mcu_config->mcu_product_id) {
+                    if (cfg.transport == hardware::Transport::Direct) {
+                        if (mcu_config->mcu_backend == fcs::McuBackend::Serial) {
                             SPDLOG_INFO(
-                                "connecting to mcu via USB with {:#x}:{:#x}",
-                                mcu_config->mcu_vendor_id, mcu_config->mcu_product_id);
+                                "connecting to mcu via serial with {} @ {} baud",
+                                mcu_config->serial_device, mcu_config->serial_baud_rate);
+                            mcu_device = McuHandle::create_serial(
+                                mcu_config->serial_device, mcu_config->serial_baud_rate);
                         } else {
-                            SPDLOG_INFO(
-                                "connecting to mcu via USB with {:#x} (product_id unspecified)",
-                                mcu_config->mcu_vendor_id);
+                            if (mcu_config->mcu_product_id) {
+                                SPDLOG_INFO(
+                                    "connecting to mcu via USB with {:#x}:{:#x}",
+                                    mcu_config->mcu_vendor_id, mcu_config->mcu_product_id);
+                            } else {
+                                SPDLOG_INFO(
+                                    "connecting to mcu via USB with {:#x} (product_id unspecified)",
+                                    mcu_config->mcu_vendor_id);
+                            }
+                            mcu_device = McuHandle::create_usb(
+                                mcu_config->mcu_vendor_id, mcu_config->mcu_product_id);
                         }
-                        mcu_device = McuHandle::create_usb(
-                            mcu_config->mcu_vendor_id, mcu_config->mcu_product_id);
+                        if (!mcu_device) {
+                            return std::unexpected(
+                                fmt::format(
+                                    "failed connecting to mcu via {}", mcu_config->mcu_backend));
+                        }
+                        SPDLOG_INFO("connected to mcu via {}", mcu_config->mcu_backend);
+                        output = std::make_shared<fcs::L1::OutputInterface>(
+                            fcs::L1::McuOutput(mcu_device));
+                        imu->impl = McuImu{mcu_config, mcu_device, &g_imu_data};
+                        imu_ready = true;
+                    } else {
+                        SPDLOG_INFO("initializing chiral mcu...");
+                        auto chiral_result = talos::chiral::gimbal::TalosSide::create();
+                        if (!chiral_result) {
+                            SPDLOG_INFO(
+                                "failed to create chiral mcu: {}",
+                                magic_enum::enum_name(chiral_result.error()));
+                            return std::unexpected(
+                                std::string(magic_enum::enum_name(chiral_result.error())));
+                        }
+                        std::shared_ptr<talos::chiral::gimbal::TalosSide> chiral =
+                            std::move(chiral_result.value());
+
+                        output = std::make_shared<fcs::L1::OutputInterface>(
+                            fcs::L1::ChiralOutput(chiral));
+                        imu->impl = ChiralImu{
+                            mcu_config,
+                            chiral,
+                        };
+                        imu_ready = true;
                     }
-                    if (!mcu_device) {
-                        return std::unexpected(
-                            fmt::format(
-                                "failed connecting to mcu via {}", mcu_config->mcu_backend));
-                    }
-                    SPDLOG_INFO("connected to mcu via {}", mcu_config->mcu_backend);
-                    output =
-                        std::make_shared<fcs::L1::OutputInterface>(fcs::L1::McuOutput(mcu_device));
-                    imu->impl = McuImu{mcu_config, mcu_device, &g_imu_data};
-                    imu_ready = true;
                 }
                 SPDLOG_INFO("initializing hikrobot camera...");
                 auto input_result = fcs::L1::CameraInterface::create_hik(cfg.hardware.camera);

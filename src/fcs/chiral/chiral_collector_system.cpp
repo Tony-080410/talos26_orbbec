@@ -71,7 +71,7 @@ void register_chiral_collector_system(talos::Scheduler& scheduler) {
 
     scheduler.add_system<talos::pool_compute>(
         "chiral_collector",
-        [ep_storage = std::make_shared<talos::chiral::ipc::TalosSide>(std::move(*endpoint))](
+        [ep_storage = std::move(endpoint.value())](
             talos::spmc<L4::SelectedTargetSnapshot, SelectedTargetSnapshotChannelTopic>
                 selected_target_in,
             talos::res<fast_tf::CoordinateSystem> tf_buffer) mutable {
