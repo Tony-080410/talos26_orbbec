@@ -35,7 +35,7 @@ auto parse_preset(LaunchConfig& launch) -> std::expected<PresetEntry, std::strin
     if (it == launch.preset.end()) {
         // Hostname not in preset — fall through to explicit fields
         SPDLOG_INFO("hostname '{}' not in [preset], using explicit robot/vision fields", hostname);
-        return {};
+        return launch.fallback_preset;
     }
 
     const auto& entry = it->second;
@@ -64,7 +64,7 @@ auto parse_preset(LaunchConfig& launch) -> std::expected<PresetEntry, std::strin
 
     // Apply hostname-based preset override
     auto preset_result = parse_preset(launch);
-    if (!preset_result) {
+    if (!preset_result.has_value()) {
         return std::unexpected(preset_result.error());
     }
     auto preset = preset_result.value();
@@ -74,7 +74,7 @@ auto parse_preset(LaunchConfig& launch) -> std::expected<PresetEntry, std::strin
             "entry config: capturer.output_dir is required when capturer.enabled=true");
     }
 
-    auto vision_override_path = fmt::format("config/vision/{}.toml", preset.vision);
+    auto vision_override_path = fmt::format("config/vision/{}.toml", preset.vision.get());
     // Parse base and override configs
     auto base_tbl = toml::parse_file("config/vision_base.toml");
     if (base_tbl.failed()) {
