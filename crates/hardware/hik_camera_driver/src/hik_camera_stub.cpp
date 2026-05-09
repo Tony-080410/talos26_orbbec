@@ -6,53 +6,58 @@
 namespace hikcamera {
 
 // SDK 全局初始化/清理（stub 版本）
-std::expected<void, CameraError> initialize_sdk() {
+std::expected<void, CameraError> initialize_sdk() noexcept {
     return std::unexpected(CameraError{"HIK SDK not available (stub build)", 0});
 }
 
-void finalize_sdk() {
+void finalize_sdk() noexcept {
     // Stub 版本无需清理
 }
 
 class ImageCapturer::Impl {};
 
-ImageCapturer::ImageCapturer()
+ImageCapturer::ImageCapturer() noexcept
     : impl_(nullptr) {}
 
 ImageCapturer::~ImageCapturer() = default;
 
 std::expected<std::unique_ptr<ImageCapturer>, CameraError> ImageCapturer::create(
     const CameraProfile& /*profile*/, const char* /*user_defined_name*/,
-    const SyncMode& /*sync_mode*/) {
+    const SyncMode& /*sync_mode*/) noexcept {
     return std::unexpected(
         CameraError{.message = "HIK SDK not available (stub build)", .error_code = 0});
 }
 
 std::expected<void, CameraError> ImageCapturer::init(
     const CameraProfile& /*profile*/, const char* /*user_defined_name*/,
-    const SyncMode& /*sync_mode*/) {
+    const SyncMode& /*sync_mode*/) noexcept {
     return std::unexpected(
         CameraError{.message = "HIK SDK not available (stub build)", .error_code = 0});
 }
 
 std::expected<cv::Mat, CameraError>
-    ImageCapturer::read(std::chrono::duration<unsigned int, std::milli> /*timeout*/) {
+    ImageCapturer::read(std::chrono::duration<unsigned int, std::milli> /*timeout*/) noexcept {
     return std::unexpected(
         CameraError{.message = "HIK SDK not available (stub build)", .error_code = 0});
 }
 
-std::expected<std::tuple<int, int>, CameraError> ImageCapturer::get_width_height() const {
+std::expected<std::tuple<int, int>, CameraError> ImageCapturer::get_width_height() const noexcept {
     return std::unexpected(
         CameraError{.message = "HIK SDK not available (stub build)", .error_code = 0});
 }
 
-std::expected<void, CameraError> ImageCapturer::software_trigger_on() {
+std::expected<void, CameraError> ImageCapturer::software_trigger_on() noexcept {
     return std::unexpected(
         CameraError{.message = "HIK SDK not available (stub build)", .error_code = 0});
 }
 
 std::expected<void, CameraError>
-    ImageCapturer::set_frame_rate_inner_trigger_mode(float /*frame_rate*/) {
+    ImageCapturer::set_frame_rate_inner_trigger_mode(float /*frame_rate*/) noexcept {
+    return std::unexpected(
+        CameraError{.message = "HIK SDK not available (stub build)", .error_code = 0});
+}
+
+std::expected<void, CameraError> ImageCapturer::stop_grabbing() noexcept {
     return std::unexpected(
         CameraError{.message = "HIK SDK not available (stub build)", .error_code = 0});
 }

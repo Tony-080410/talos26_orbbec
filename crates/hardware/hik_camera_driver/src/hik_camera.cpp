@@ -3,7 +3,6 @@
 #include "MvErrorDefine.h"
 
 #include <cstring>
-#include <exception>
 #include <memory>
 #include <mutex>
 
@@ -41,6 +40,19 @@ std::string error_code_to_message(unsigned int code) {
         return "Abnormal image, maybe incomplete image because of lost packet";
     case MV_E_LOAD_LIBRARY: return "Load library failed";
     case MV_E_NOOUTBUF: return "No available buffer";
+    case MV_E_ENCRYPT: return "Encryption error";
+    case MV_E_OPENFILE: return "Open file error";
+    case MV_E_BUF_IN_USE: return "Buffer already in use";
+    case MV_E_BUF_INVALID: return "Buffer address invalid";
+    case MV_E_NOALIGN_BUF: return "Buffer alignment error";
+    case MV_E_NOENOUGH_BUF_NUM: return "Insufficient cache count";
+    case MV_E_PORT_IN_USE: return "Port is in use";
+    case MV_E_IMAGE_DECODEC: return "Decoding error (SDK verification image exception)";
+    case MV_E_UINT32_LIMIT: return "Image size exceeds unsigned int return limit";
+    case MV_E_IMAGE_HEIGHT: return "Image height anomaly (discard incomplete image)";
+    case MV_E_NOENOUGH_DDR: return "Insufficient DDR cache";
+    case MV_E_NOENOUGH_STREAM: return "Insufficient stream channel";
+    case MV_E_NORESPONSE: return "No response from device";
     case MV_E_UNKNOW: return "Unknown error";
 
     // GenICam errors
@@ -63,6 +75,8 @@ std::string error_code_to_message(unsigned int code) {
     case MV_E_BUSY: return "Device is busy, or network disconnected";
     case MV_E_PACKET: return "Network data packet error";
     case MV_E_NETER: return "Network error";
+    case MV_E_SUPPORT_MODIFY_DEVICE_IP: return "Current mode not support modify IP";
+    case MV_E_KEY_VERIFICATION: return "Switch key verification error";
     case MV_E_IP_CONFLICT: return "Device IP conflict";
 
     // USB errors
@@ -90,12 +104,12 @@ std::string error_code_to_message(unsigned int code) {
 namespace {
 class SDKInitializer {
 public:
-    static SDKInitializer& instance() {
+    static SDKInitializer& instance() noexcept {
         static SDKInitializer init;
         return init;
     }
 
-    std::expected<void, CameraError> initialize() {
+    std::expected<void, CameraError> initialize() noexcept {
         std::lock_guard<std::mutex> lock(mutex_);
         if (initialized_) {
             return {}; // 已经初始化，直接返回成功
@@ -111,7 +125,7 @@ public:
         return {};
     }
 
-    void finalize() {
+    void finalize() noexcept {
         std::lock_guard<std::mutex> lock(mutex_);
         if (initialized_) {
             MV_CC_Finalize();
@@ -120,63 +134,57 @@ public:
     }
 
 private:
-    SDKInitializer() = default;
-    ~SDKInitializer() { finalize(); }
+    SDKInitializer() noexcept = default;
+    ~SDKInitializer() noexcept { finalize(); }
 
     std::mutex mutex_;
     bool initialized_ = false;
 };
 } // namespace
 
-std::expected<void, CameraError> initialize_sdk() {
+std::expected<void, CameraError> initialize_sdk() noexcept {
     return SDKInitializer::instance().initialize();
 }
 
-void finalize_sdk() { SDKInitializer::instance().finalize(); }
+void finalize_sdk() noexcept { SDKInitializer::instance().finalize(); }
 
 class ImageCapturer::Impl {
 public:
     std::expected<void, CameraError> init(
-        const CameraProfile& profile, const char* user_defined_name, const SyncMode& sync_mode) {
+        const CameraProfile& profile, const char* user_defined_name,
+        const SyncMode& sync_mode) noexcept {
         SPDLOG_INFO("[HIK] Starting camera init...");
         auto device_info = search_camera(user_defined_name);
         if (!device_info) {
-            SPDLOG_ERROR("[HIK] Failed to search camera");
-            return std::unexpected(CameraError{"Failed to search camera", 0});
+            SPDLOG_ERROR("[HIK] Failed to search camera: {}", device_info.error().message);
+            return std::unexpected(device_info.error());
         }
         SPDLOG_INFO("[HIK] Camera found, initializing...");
 
-        auto init_result = init_camera(*device_info, profile, sync_mode);
+        auto init_result = init_camera(**device_info, profile, sync_mode);
         if (!init_result) {
             SPDLOG_ERROR("[HIK] Camera init failed: {}", init_result.error().message);
             return init_result;
         }
-        SPDLOG_INFO("[HIK] Camera init OK, draining old frames...");
+        SPDLOG_INFO("[HIK] Camera init OK, clearing stale buffers...");
 
-        // 先榨干缓冲区里的脏数据（处理程序异常退出后的残留帧）
-        try {
-            using namespace std::chrono_literals;
-            auto read_result = read(1000ms);
-            if (!read_result) {
-                uninit_camera();
-                return std::unexpected(read_result.error());
-            }
-        } catch (const std::exception& e) {
-            SPDLOG_ERROR("[HIK] Failed to read initial frame: {}", e.what());
-            uninit_camera();
-            return std::unexpected(
-                CameraError{std::string("Read initial frame failed: ") + e.what(), 0});
+        // 清除缓冲区中的残留帧（处理程序异常退出后的脏数据）
+        // 相比 read() 等待超时，ClearImageBuffer 更直接且不会阻塞
+        unsigned int clear_ret = MV_CC_ClearImageBuffer(camera_handle_);
+        if (clear_ret != MV_OK) {
+            SPDLOG_WARN("[HIK] Failed to clear image buffer: {}", error_code_to_message(clear_ret));
+            // 非致命错误，继续
         }
 
         return {};
     }
 
-    ~Impl() { uninit_camera(); }
+    ~Impl() noexcept { uninit_camera(); }
 
-    std::tuple<int, int> get_image_size() const { return {image_width_, image_height_}; }
+    std::tuple<int, int> get_image_size() const noexcept { return {image_width_, image_height_}; }
 
     std::expected<cv::Mat, CameraError>
-        read(std::chrono::duration<unsigned int, std::milli> timeout) {
+        read(std::chrono::duration<unsigned int, std::milli> timeout) noexcept {
         MV_FRAME_OUT stImageInfo;
 
         // MV_CC_GetImageBuffer timeout 单位是毫秒（nMsec）
@@ -184,8 +192,10 @@ public:
         unsigned int ret =
             MV_CC_GetImageBuffer(camera_handle_, &stImageInfo, timeout.count() * 100000);
         if (ret != MV_OK) {
-            logger_->error("Image getting timeout. nRet [{}]", ret);
-            return std::unexpected(CameraError{"Image getting timeout", ret});
+            logger_->error(
+                "Failed to get image buffer: {} [code=0x{:08X}]", error_code_to_message(ret), ret);
+            return std::unexpected(
+                CameraError{"Failed to get image buffer: " + error_code_to_message(ret), ret});
         }
 
         // RAII 包装器确保 MV_CC_FreeImageBuffer 被调用一次
@@ -194,13 +204,13 @@ public:
             MV_FRAME_OUT* frame;
             bool released = false;
 
-            ~ImageBufferGuard() {
+            ~ImageBufferGuard() noexcept {
                 if (!released && frame != nullptr && handle != nullptr) {
                     MV_CC_FreeImageBuffer(handle, frame);
                 }
             }
 
-            void release() { released = true; }
+            void release() noexcept { released = true; }
         };
 
         ImageBufferGuard buffer_guard{camera_handle_, &stImageInfo};
@@ -251,7 +261,7 @@ public:
         return img;
     }
 
-    std::expected<void, CameraError> software_trigger_on() {
+    std::expected<void, CameraError> software_trigger_on() noexcept {
         auto ret = MV_CC_SetCommandValue(camera_handle_, "TriggerSoftware");
         if (MV_OK != ret) {
             logger_->error("Failed To send software trigger nRet [{}]", ret);
@@ -261,7 +271,12 @@ public:
         return {};
     }
 
-    std::expected<void, CameraError> set_frame_rate_inner_trigger_mode(float frame_rate) {
+    std::expected<void, CameraError> set_frame_rate_inner_trigger_mode(float frame_rate) noexcept {
+        // 在触发模式下，帧率由触发信号控制，AcquisitionFrameRate 设置无效
+        if (trigger_mode_) {
+            return std::unexpected(CameraError{"Cannot set frame rate in trigger mode", 0});
+        }
+
         auto ret = MV_CC_SetBoolValue(camera_handle_, "AcquisitionFrameRateEnable", true);
         if (MV_OK != ret) {
             logger_->error("Failed To set frame rate control enable nRet [{}]", ret);
@@ -278,6 +293,19 @@ public:
         return {};
     }
 
+    std::expected<void, CameraError> stop_grabbing() noexcept {
+        if (camera_handle_ == nullptr) {
+            return {};
+        }
+        unsigned int ret = MV_CC_StopGrabbing(camera_handle_);
+        if (ret != MV_OK) {
+            logger_->error("Failed to stop grabbing: {}", error_code_to_message(ret));
+            return std::unexpected(
+                CameraError{"Failed to stop grabbing: " + error_code_to_message(ret), ret});
+        }
+        return {};
+    }
+
 private:
     RotateType rotate_type_ = RotateType::None;
 
@@ -285,7 +313,10 @@ private:
     int image_width_  = 0;
     int image_height_ = 0;
 
-#define SDK_RET_ASSERT(ret, message, error_code)                                          \
+    // 记录当前是否处于触发模式（在 init_camera 时确定）
+    bool trigger_mode_ = false;
+
+#define SDK_RET_ASSERT(ret, message)                                                      \
     do {                                                                                  \
         if ((ret) != MV_OK) {                                                             \
             logger_->error(message " nRet [{}]", ret);                                    \
@@ -293,7 +324,7 @@ private:
         }                                                                                 \
     } while (false)
 
-    bool is_same_device_name(MV_CC_DEVICE_INFO* pstMVDevInfo, const char* targetName) {
+    bool is_same_device_name(MV_CC_DEVICE_INFO* pstMVDevInfo, const char* targetName) noexcept {
         if (nullptr == pstMVDevInfo) {
             logger_->error("The Pointer of pstMVDevInfo is NULL!");
             return false;
@@ -310,7 +341,7 @@ private:
         return strcmp(reinterpret_cast<const char*>(deviceName), targetName) == 0;
     }
 
-    bool print_device_info(MV_CC_DEVICE_INFO* pstMVDevInfo) {
+    bool print_device_info(MV_CC_DEVICE_INFO* pstMVDevInfo) noexcept {
         if (nullptr == pstMVDevInfo) {
             logger_->error("The Pointer of pstMVDevInfo is NULL!");
             return false;
@@ -341,25 +372,27 @@ private:
         return true;
     }
 
-    MV_CC_DEVICE_INFO* search_camera(const char* user_defined_name) {
+    std::expected<MV_CC_DEVICE_INFO*, CameraError>
+        search_camera(const char* user_defined_name) noexcept {
         MV_CC_DEVICE_INFO_LIST device_list;
         memset(&device_list, 0, sizeof(MV_CC_DEVICE_INFO_LIST));
         unsigned int ret = MV_CC_EnumDevices(MV_GIGE_DEVICE | MV_USB_DEVICE, &device_list);
         if (ret != MV_OK) {
-            logger_->error("Failed to enum Devices. nRet [{}]", ret);
-            return nullptr;
+            return std::unexpected(
+                CameraError{"Failed to enum Devices: " + error_code_to_message(ret), ret});
         }
         if (device_list.nDeviceNum == 0) {
-            logger_->error("Find No Devices.");
-            return nullptr;
+            return std::unexpected(CameraError{"Find No Devices.", 0});
         }
 
         if (user_defined_name == nullptr) {
             if (device_list.nDeviceNum > 1) {
-                logger_->error(
-                    "Must pass in the device name because {} devices were found.",
-                    device_list.nDeviceNum);
-                return nullptr;
+                return std::unexpected(
+                    CameraError{
+                        fmt::format(
+                            "Must pass in the device name because {} devices were found.",
+                            device_list.nDeviceNum),
+                        0});
             }
             return device_list.pDeviceInfo[0];
         } else {
@@ -367,15 +400,18 @@ private:
                 if (is_same_device_name(device_list.pDeviceInfo[i], user_defined_name))
                     return device_list.pDeviceInfo[i];
             }
-            logger_->error(
-                "{} devices was found, but no device matches the name passed in: {}",
-                device_list.nDeviceNum, user_defined_name);
-            return nullptr;
+            return std::unexpected(
+                CameraError{
+                    fmt::format(
+                        "{} devices was found, but no device matches the name passed in: {}",
+                        device_list.nDeviceNum, user_defined_name),
+                    0});
         }
     }
 
     std::expected<void, CameraError> init_camera(
-        MV_CC_DEVICE_INFO& device_info, const CameraProfile& profile, const SyncMode& sync_mode) {
+        MV_CC_DEVICE_INFO& device_info, const CameraProfile& profile,
+        const SyncMode& sync_mode) noexcept {
         auto pDeviceInfo = &device_info;
         rotate_type_     = profile.rotate_type;
 
@@ -384,11 +420,11 @@ private:
         // 使用 MV_CC_CreateHandle 而非已废弃的 MV_CC_CreateHandleWithoutLog
         // 参考文档：Deprecated camera initialization related APIs: MV_CC_CreateHandleWithoutLog()
         ret = MV_CC_CreateHandle(&camera_handle_, pDeviceInfo);
-        SDK_RET_ASSERT(ret, "Failed to create handle.", ret);
+        SDK_RET_ASSERT(ret, "Failed to create handle.");
         FinalAction destroy_handle{[this]() { MV_CC_DestroyHandle(camera_handle_); }};
 
         ret = MV_CC_OpenDevice(camera_handle_);
-        SDK_RET_ASSERT(ret, "Failed to open device.", ret);
+        SDK_RET_ASSERT(ret, "Failed to open device.");
         FinalAction close_device{[this]() { MV_CC_CloseDevice(camera_handle_); }};
 
         if (pDeviceInfo->nTLayerType == MV_GIGE_DEVICE) {
@@ -400,52 +436,77 @@ private:
 
             // 使用 MV_CC_SetIntValueEx 而非 MV_CC_SetIntValue（与官方示例保持一致）
             ret = MV_CC_SetIntValueEx(camera_handle_, "GevSCPSPacketSize", nPacketSize);
-            SDK_RET_ASSERT(ret, "Failed to set packet Size.", ret);
+            SDK_RET_ASSERT(ret, "Failed to set packet Size.");
         }
 
         // Set pixel format to 8-bit BayerRG for ADC depth
         ret = MV_CC_SetEnumValue(camera_handle_, "PixelFormat", PixelType_Gvsp_BayerRG8);
-        SDK_RET_ASSERT(ret, "Failed to set pixel format to BayerRG8.", ret);
+        SDK_RET_ASSERT(ret, "Failed to set pixel format to BayerRG8.");
 
         // 根据 profile 和 sync_mode 统一设置 TriggerMode，避免重复设置
         bool trigger_on = profile.trigger_mode || (sync_mode == SyncMode::SOFTWARE);
+        trigger_mode_   = trigger_on;
         ret             = MV_CC_SetEnumValue(
             camera_handle_, "TriggerMode", trigger_on ? MV_TRIGGER_MODE_ON : MV_TRIGGER_MODE_OFF);
-        SDK_RET_ASSERT(ret, "Failed to set trigger Mode.", ret);
+        SDK_RET_ASSERT(ret, "Failed to set trigger Mode.");
 
         ret = MV_CC_SetBoolValue(camera_handle_, "ReverseX", profile.invert_image);
-        SDK_RET_ASSERT(ret, "Failed to set reverse x.", ret);
+        SDK_RET_ASSERT(ret, "Failed to set reverse x.");
         ret = MV_CC_SetBoolValue(camera_handle_, "ReverseY", profile.invert_image);
-        SDK_RET_ASSERT(ret, "Failed to set reverse y.", ret);
+        SDK_RET_ASSERT(ret, "Failed to set reverse y.");
 
         ret = MV_CC_SetEnumValue(camera_handle_, "ExposureAuto", MV_EXPOSURE_AUTO_MODE_OFF);
-        SDK_RET_ASSERT(ret, "Failed to set auto exposure.", ret);
+        SDK_RET_ASSERT(ret, "Failed to set auto exposure.");
 
         ret = MV_CC_SetFloatValue(camera_handle_, "ExposureTime", profile.exposure_time.count());
-        SDK_RET_ASSERT(ret, "Failed to set exposure time.", ret);
+        SDK_RET_ASSERT(ret, "Failed to set exposure time.");
 
         ret = MV_CC_SetFloatValue(camera_handle_, "Gain", profile.gain);
-        SDK_RET_ASSERT(ret, "Failed to set gain.", ret);
+        SDK_RET_ASSERT(ret, "Failed to set gain.");
 
         ret = MV_CC_SetBoolValue(camera_handle_, "AcquisitionFrameRateEnable", false);
-        SDK_RET_ASSERT(ret, "Failed to set acquisition frame rate enable.", ret);
+        SDK_RET_ASSERT(ret, "Failed to set acquisition frame rate enable.");
 
         ret = MV_CC_SetBayerCvtQuality(camera_handle_, 1);
-        SDK_RET_ASSERT(ret, "Failed to set bayer cvt quality.", ret);
+        SDK_RET_ASSERT(ret, "Failed to set bayer cvt quality.");
 
         // 文档建议：在 MV_CC_StartGrabbing() 之前调用 MV_CC_SetImageNodeNum()
         // 设置合适的缓冲节点数量，影响因子包括：相机帧率、图像分辨率、计算机性能
         // 注意：此处使用默认值，如需优化可根据实际情况调整
         ret = MV_CC_SetImageNodeNum(camera_handle_, 5);
-        SDK_RET_ASSERT(ret, "Failed to set image node num.", ret);
+        SDK_RET_ASSERT(ret, "Failed to set image node num.");
+
+        // 设置取流策略为 LatestImagesOnly（实时场景优先取最新帧，丢弃积压）
+        // 注意：必须在 StartGrabbing 之前调用；Linux 下仅 USB 设备支持
+        ret = MV_CC_SetGrabStrategy(camera_handle_, MV_GrabStrategy_LatestImagesOnly);
+        if (ret != MV_OK) {
+            logger_->warn(
+                "Failed to set grab strategy (may not be supported on this "
+                "platform/device): {}",
+                error_code_to_message(ret));
+        }
+
+        // 注册设备断连回调，及时感知相机离线（必须在 StartGrabbing 之前）
+        ret = MV_CC_RegisterExceptionCallBack(camera_handle_, Impl::on_exception_callback, this);
+        if (ret != MV_OK) {
+            logger_->warn("Failed to register exception callback: {}", error_code_to_message(ret));
+        }
+
+        // 注册流异常回调，及时感知丢包/断流/图像异常（必须在 StartGrabbing 之前）
+        ret = MV_CC_RegisterStreamExceptionCallBack(
+            camera_handle_, Impl::on_stream_exception_callback, this);
+        if (ret != MV_OK) {
+            logger_->warn(
+                "Failed to register stream exception callback: {}", error_code_to_message(ret));
+        }
 
         ret = MV_CC_StartGrabbing(camera_handle_);
-        SDK_RET_ASSERT(ret, "Failed to start grabbing.", error_code_to_message(ret));
+        SDK_RET_ASSERT(ret, "Failed to start grabbing.");
 
         // SOFTWARE 模式下设置 TriggerSource 为 SOFTWARE
         if (sync_mode == SyncMode::SOFTWARE) {
             ret = MV_CC_SetEnumValue(camera_handle_, "TriggerSource", MV_TRIGGER_SOURCE_SOFTWARE);
-            SDK_RET_ASSERT(ret, "Failed to set trigger source. : soft trigger", ret);
+            SDK_RET_ASSERT(ret, "Failed to set trigger source. : soft trigger");
         }
 
         destroy_handle.disable();
@@ -455,7 +516,8 @@ private:
 
     // 将 HIK SDK 的 Bayer 像素格式映射到 OpenCV 的解拜耳代码
     // 参考：OpenCV cvtColor 文档中 Bayer 模式定义
-    static std::expected<int, CameraError> get_bayer_conversion_code(MvGvspPixelType enType) {
+    static std::expected<int, CameraError>
+        get_bayer_conversion_code(MvGvspPixelType enType) noexcept {
         switch (enType) {
         // 8-bit Bayer 格式（推荐使用）
         case PixelType_Gvsp_BayerRG8: return cv::COLOR_BayerBG2BGR_EA;
@@ -499,7 +561,12 @@ private:
         }
     }
 
-    void uninit_camera() {
+    void uninit_camera() noexcept {
+        // 如果句柄未初始化（构造失败路径），无需清理
+        if (camera_handle_ == nullptr) {
+            return;
+        }
+
         // 按照官方文档的顺序清理资源
         // StopGrabbing → CloseDevice → DestroyHandle
 
@@ -526,7 +593,7 @@ private:
 
     template <typename Func>
     struct FinalAction {
-        explicit FinalAction(Func func)
+        explicit FinalAction(Func func) noexcept
             : clean_{func}
             , enabled_(true) {}
 
@@ -535,12 +602,12 @@ private:
         FinalAction(FinalAction&&)                 = delete;
         FinalAction& operator=(FinalAction&&)      = delete;
 
-        ~FinalAction() {
+        ~FinalAction() noexcept {
             if (enabled_)
                 clean_();
         }
 
-        void disable() { enabled_ = false; }
+        void disable() noexcept { enabled_ = false; }
 
     private:
         Func clean_;
@@ -548,6 +615,52 @@ private:
     };
 
     void* camera_handle_ = nullptr;
+
+    // 设备断连回调（通过 MV_CC_RegisterExceptionCallBack 注册）
+    static void __stdcall on_exception_callback(unsigned int nMsgType, void* pUser) noexcept {
+        auto* self = static_cast<Impl*>(pUser);
+        if (nMsgType == MV_EXCEPTION_DEV_DISCONNECT) {
+            self->logger_->error("[HIK] Device disconnected!");
+        } else {
+            self->logger_->warn("[HIK] Device exception: {}", exception_type_to_string(nMsgType));
+        }
+    }
+
+    // 流异常回调（通过 MV_CC_RegisterStreamExceptionCallBack 注册）
+    static void __stdcall
+        on_stream_exception_callback(MV_CC_STREAM_EXCEPTION_INFO* pstInfo, void* pUser) noexcept {
+        auto* self = static_cast<Impl*>(pUser);
+        self->logger_->error(
+            "[HIK] Stream exception: {}, serial={}",
+            stream_exception_type_to_string(pstInfo->enExceptionType),
+            reinterpret_cast<const char*>(pstInfo->chSerialNumber));
+    }
+
+    static const char* exception_type_to_string(unsigned int nMsgType) noexcept {
+        switch (nMsgType) {
+        case MV_EXCEPTION_DEV_DISCONNECT: return "device disconnected";
+        case MV_EXCEPTION_VERSION_CHECK: return "SDK/driver version mismatch";
+        default: return "unknown";
+        }
+    }
+
+    static const char* stream_exception_type_to_string(MV_CC_STREAM_EXCEPTION_TYPE type) noexcept {
+        switch (type) {
+        case MV_CC_STREAM_EXCEPTION_ABNORMAL_IMAGE: return "abnormal image (discarded)";
+        case MV_CC_STREAM_EXCEPTION_LIST_OVERFLOW:
+            return "buffer list full (frames not consumed in time)";
+        case MV_CC_STREAM_EXCEPTION_LIST_EMPTY: return "buffer list empty";
+        case MV_CC_STREAM_EXCEPTION_RECONNECTION: return "stream reconnection triggered";
+        case MV_CC_STREAM_EXCEPTION_DISCONNECTED:
+            return "stream reconnection failed, grabbing stopped";
+        case MV_CC_STREAM_EXCEPTION_DEVICE: return "device exception, grabbing stopped";
+        case MV_CC_STREAM_EXCEPTION_PARTIAL_IMAGE:
+            return "partial image (insufficient line height, discarded)";
+        case MV_CC_STREAM_EXCEPTION_IMAGE_BUFFER_OVERFLOW:
+            return "image data exceeds buffer capacity (discarded)";
+        default: return "unknown";
+        }
+    }
 
     std::shared_ptr<spdlog::logger> logger_ = []() {
         auto logger = spdlog::get("hikcamera");
@@ -560,7 +673,8 @@ private:
 
 // Factory method implementation
 std::expected<std::unique_ptr<ImageCapturer>, CameraError> ImageCapturer::create(
-    const CameraProfile& profile, const char* user_defined_name, const SyncMode& sync_mode) {
+    const CameraProfile& profile, const char* user_defined_name,
+    const SyncMode& sync_mode) noexcept {
     auto capturer    = std::make_unique<ImageCapturer>();
     auto init_result = capturer->init(profile, user_defined_name, sync_mode);
     if (!init_result) {
@@ -570,31 +684,36 @@ std::expected<std::unique_ptr<ImageCapturer>, CameraError> ImageCapturer::create
     return capturer;
 }
 
-ImageCapturer::ImageCapturer()
+ImageCapturer::ImageCapturer() noexcept
     : impl_(std::make_unique<ImageCapturer::Impl>()) {}
 
 ImageCapturer::~ImageCapturer() = default;
 
 std::expected<void, CameraError> ImageCapturer::init(
-    const CameraProfile& profile, const char* user_defined_name, const SyncMode& sync_mode) {
+    const CameraProfile& profile, const char* user_defined_name,
+    const SyncMode& sync_mode) noexcept {
     return impl_->init(profile, user_defined_name, sync_mode);
 }
 
-std::expected<void, CameraError> ImageCapturer::software_trigger_on() {
+std::expected<void, CameraError> ImageCapturer::software_trigger_on() noexcept {
     return impl_->software_trigger_on();
 }
 
 std::expected<void, CameraError>
-    ImageCapturer::set_frame_rate_inner_trigger_mode(float frame_rate) {
+    ImageCapturer::set_frame_rate_inner_trigger_mode(float frame_rate) noexcept {
     return impl_->set_frame_rate_inner_trigger_mode(frame_rate);
 }
 
+std::expected<void, CameraError> ImageCapturer::stop_grabbing() noexcept {
+    return impl_->stop_grabbing();
+}
+
 std::expected<cv::Mat, CameraError>
-    ImageCapturer::read(std::chrono::duration<unsigned int, std::milli> timeout) {
+    ImageCapturer::read(std::chrono::duration<unsigned int, std::milli> timeout) noexcept {
     return impl_->read(timeout);
 }
 
-std::expected<std::tuple<int, int>, CameraError> ImageCapturer::get_width_height() const {
+std::expected<std::tuple<int, int>, CameraError> ImageCapturer::get_width_height() const noexcept {
     return impl_->get_image_size();
 }
 

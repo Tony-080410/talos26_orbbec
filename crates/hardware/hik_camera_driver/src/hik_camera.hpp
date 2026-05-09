@@ -41,8 +41,8 @@ struct CameraError {
 // SDK 全局初始化/清理
 // 文档要求：在单个进程中，MV_CC_Initialize() 和 MV_CC_Finalize() 只能调用一次
 // 建议在程序启动时调用 initialize_sdk()，退出时调用 finalize_sdk()
-[[nodiscard]] std::expected<void, CameraError> initialize_sdk();
-void finalize_sdk();
+[[nodiscard]] std::expected<void, CameraError> initialize_sdk() noexcept;
+void finalize_sdk() noexcept;
 
 class ImageCapturer final {
 public:
@@ -67,30 +67,35 @@ public:
     // Factory method for creating ImageCapturer with std::expected
     static std::expected<std::unique_ptr<ImageCapturer>, CameraError> create(
         const CameraProfile& profile = CameraProfile{}, const char* user_defined_name = nullptr,
-        const SyncMode& sync_mode = SyncMode::NONE);
+        const SyncMode& sync_mode = SyncMode::NONE) noexcept;
 
     ImageCapturer(const ImageCapturer&)            = delete;
     ImageCapturer& operator=(const ImageCapturer&) = delete;
 
-    ~ImageCapturer();
+    ~ImageCapturer() noexcept;
 
-    [[nodiscard]] std::expected<cv::Mat, CameraError>
-        read(std::chrono::duration<unsigned int, std::milli> timeout = std::chrono::seconds(5));
+    [[nodiscard]] std::expected<cv::Mat, CameraError> read(
+        std::chrono::duration<unsigned int, std::milli> timeout = std::chrono::seconds(5)) noexcept;
 
-    [[nodiscard]] std::expected<std::tuple<int, int>, CameraError> get_width_height() const;
+    [[nodiscard]] std::expected<std::tuple<int, int>, CameraError>
+        get_width_height() const noexcept;
 
-    [[nodiscard]] std::expected<void, CameraError> software_trigger_on();
+    [[nodiscard]] std::expected<void, CameraError> software_trigger_on() noexcept;
     [[nodiscard]] std::expected<void, CameraError>
-        set_frame_rate_inner_trigger_mode(float frame_rate);
+        set_frame_rate_inner_trigger_mode(float frame_rate) noexcept;
+
+    /// 停止取流，可在 shutdown 时提前调用以避免缓冲区溢出回调
+    [[nodiscard]] std::expected<void, CameraError> stop_grabbing() noexcept;
 
     friend std::unique_ptr<ImageCapturer> std::make_unique<ImageCapturer>();
 
 private:
     // Default constructor for internal use by create()
-    ImageCapturer();
+    ImageCapturer() noexcept;
 
     [[nodiscard]] std::expected<void, CameraError> init(
-        const CameraProfile& profile, const char* user_defined_name, const SyncMode& sync_mode);
+        const CameraProfile& profile, const char* user_defined_name,
+        const SyncMode& sync_mode) noexcept;
 
     class Impl;
     std::unique_ptr<Impl> impl_;
