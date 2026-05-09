@@ -114,15 +114,15 @@ initial_sigma_velocity_body = 5.0
 initial_sigma_position = 0.20
 
 [naive_ldm.model]
-sigma_inert_omega = 50.0
-sigma_inert_accel = 50.0
+sigma_inert_omega = 100.0
+sigma_inert_accel = 150.0
 sigma_rot_x = 0.5
 sigma_rot_y = 1.5
 sigma_rot_z = 1.5
 sigma_r_bearing_yaw = 0.5
 sigma_r_bearing_pitch = 0.2
 sigma_distance_min = 0.01
-k_distance_depth = 0.5
+k_distance_depth = 4.0
 k_distance_planar = 0.5
 
 [tracker]
