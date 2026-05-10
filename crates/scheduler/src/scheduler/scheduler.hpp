@@ -43,6 +43,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <expected>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <new>
@@ -251,6 +252,14 @@ public:
      * FixedRate threads will exit after their current tick completes.
      */
     void stop() noexcept;
+
+    /**
+     * @brief Register a callback invoked during stop(), before lifecycle transition
+     *
+     * Hooks run in registration order. Use for cleanup that must happen before the
+     * scheduler stops executing systems (e.g. stopping camera streaming).
+     */
+    void add_shutdown_hook(std::function<void()> hook);
 
     /**
      * @brief Add a system and rebuild on the safe path
@@ -552,6 +561,9 @@ private:
     std::atomic<bool> paused_{false};
     std::condition_variable pause_cv_;
     std::mutex pause_mutex_;
+
+    // Shutdown hooks (executed in registration order during stop())
+    std::vector<std::function<void()>> shutdown_hooks_;
 };
 
 // ============================================================================

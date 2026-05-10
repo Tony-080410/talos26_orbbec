@@ -332,8 +332,8 @@ std::expected<L1L2SetupResult, std::string> setup_l1(
                 imu_ready = true;
                 return {};
             },
-            [&camera, &output, &imu,
-             &imu_ready](hardware::DirectConfig cfg) -> std::expected<void, std::string> {
+            [&camera, &output, &imu, &imu_ready,
+             &scheduler](hardware::DirectConfig cfg) -> std::expected<void, std::string> {
                 talos_gimbal::Stm32Parser::latest_imu = &g_imu_data;
 
                 auto mcu_config = cfg.hardware.mcu;
@@ -402,6 +402,7 @@ std::expected<L1L2SetupResult, std::string> setup_l1(
                         fmt::format("init hikrobot camera: {}", input_result.error()));
                 }
                 camera = std::make_shared<fcs::L1::CameraInterface>(std::move(*input_result));
+                scheduler.add_shutdown_hook([camera]() { camera->stop(); });
                 return {};
             }},
         cfg);

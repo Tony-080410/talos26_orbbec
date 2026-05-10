@@ -189,8 +189,7 @@ public:
 
         // MV_CC_GetImageBuffer timeout 单位是毫秒（nMsec）
         // 注意：不要乘以 1000000，timeout.count() 已经是毫秒数
-        unsigned int ret =
-            MV_CC_GetImageBuffer(camera_handle_, &stImageInfo, timeout.count() * 100000);
+        unsigned int ret = MV_CC_GetImageBuffer(camera_handle_, &stImageInfo, timeout.count());
         if (ret != MV_OK) {
             logger_->error(
                 "Failed to get image buffer: {} [code=0x{:08X}]", error_code_to_message(ret), ret);
@@ -687,7 +686,7 @@ std::expected<std::unique_ptr<ImageCapturer>, CameraError> ImageCapturer::create
 ImageCapturer::ImageCapturer() noexcept
     : impl_(std::make_unique<ImageCapturer::Impl>()) {}
 
-ImageCapturer::~ImageCapturer() = default;
+ImageCapturer::~ImageCapturer() noexcept = default;
 
 std::expected<void, CameraError> ImageCapturer::init(
     const CameraProfile& profile, const char* user_defined_name,

@@ -19,7 +19,7 @@ class ImageCapturer::Impl {};
 ImageCapturer::ImageCapturer() noexcept
     : impl_(nullptr) {}
 
-ImageCapturer::~ImageCapturer() = default;
+ImageCapturer::~ImageCapturer() noexcept = default;
 
 std::expected<std::unique_ptr<ImageCapturer>, CameraError> ImageCapturer::create(
     const CameraProfile& /*profile*/, const char* /*user_defined_name*/,

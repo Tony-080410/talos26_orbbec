@@ -114,6 +114,15 @@ public:
 
     [[nodiscard]] const CameraConfig& camera_info() const noexcept { return info_; }
 
+    void stop() noexcept {
+        if (camera_) {
+            auto result = camera_->stop_grabbing();
+            if (!result) {
+                SPDLOG_ERROR("HikInput stop_grabbing failed: {}", result.error());
+            }
+        }
+    }
+
 private:
     /// Get timestamp compensated for exposure time (midpoint of exposure)
     /// This aligns with at_vision's timestamp: now() - exposure_time / 2
@@ -180,6 +189,16 @@ public:
 
     [[nodiscard]] static std::expected<CameraInterface, InputError>
         create_hik(const CameraConfig& config) noexcept;
+
+    void stop() noexcept {
+        std::visit(
+            [](auto& input) {
+                if constexpr (requires { input.stop(); }) {
+                    input.stop();
+                }
+            },
+            mode_);
+    }
 
 private:
     InputMode mode_;

@@ -348,6 +348,10 @@ void Scheduler::stop() noexcept {
     pause_cv_.notify_all();
 }
 
+void Scheduler::add_shutdown_hook(std::function<void()> hook) {
+    shutdown_hooks_.push_back(std::move(hook));
+}
+
 auto Scheduler::hot_add_system(std::unique_ptr<SystemBase> system) -> BuildResult {
     if (!system) {
         std::abort();
@@ -1752,6 +1756,12 @@ void Scheduler::run_compute_loop() {
                 std::this_thread::sleep_for(SLEEP_DURATION);
             }
         }
+    }
+    // Execute shutdown hooks before lifecycle transition, so systems
+    // can perform cleanup (e.g. stop camera streaming) before the
+    // scheduler stops executing.
+    for (auto& hook : shutdown_hooks_) {
+        hook();
     }
 }
 
