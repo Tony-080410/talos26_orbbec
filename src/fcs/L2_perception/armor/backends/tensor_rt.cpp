@@ -60,7 +60,7 @@ static TrtLogger g_trt_logger;
 // Class-to-Color/Number Mapping (64 classes)
 // ============================================================================
 // 64 classes = 4 colors × 2 sizes × 8 numbers
-// Color encoding: 0=Blue, 1=Red, 2=None (Gray), 3=Purple
+// Color encoding: 0=Red, 1=Blue, 2=None (Gray), 3=Purple
 // Size encoding: 0-7=Small, 8-15=Small, ...
 // Number encoding: mod 8 (0=Sentry, 1-5=Numbers, 6=Outpost, 7=Base)
 
@@ -71,25 +71,7 @@ struct ClassMapping {
 
 static constexpr std::array<ClassMapping, 64> g_class_mappings = {
     {
-     // Blue, Small (0-7)
-        {ArmorColor::Blue, ArmorName::Sentry},
-     {ArmorColor::Blue, ArmorName::One},
-     {ArmorColor::Blue, ArmorName::Two},
-     {ArmorColor::Blue, ArmorName::Three},
-     {ArmorColor::Blue, ArmorName::Four},
-     {ArmorColor::Blue, ArmorName::Five},
-     {ArmorColor::Blue, ArmorName::Outpost},
-     {ArmorColor::Blue, ArmorName::Base},
-     // Blue, Large (8-15)
-        {ArmorColor::Blue, ArmorName::Sentry},
-     {ArmorColor::Blue, ArmorName::One},
-     {ArmorColor::Blue, ArmorName::Two},
-     {ArmorColor::Blue, ArmorName::Three},
-     {ArmorColor::Blue, ArmorName::Four},
-     {ArmorColor::Blue, ArmorName::Five},
-     {ArmorColor::Blue, ArmorName::Outpost},
-     {ArmorColor::Blue, ArmorName::Base},
-     // Red, Small (16-23)
+     // Red, Small (0-7)
         {ArmorColor::Red, ArmorName::Sentry},
      {ArmorColor::Red, ArmorName::One},
      {ArmorColor::Red, ArmorName::Two},
@@ -98,7 +80,7 @@ static constexpr std::array<ClassMapping, 64> g_class_mappings = {
      {ArmorColor::Red, ArmorName::Five},
      {ArmorColor::Red, ArmorName::Outpost},
      {ArmorColor::Red, ArmorName::Base},
-     // Red, Large (24-31)
+     // Red, Large (8-15)
         {ArmorColor::Red, ArmorName::Sentry},
      {ArmorColor::Red, ArmorName::One},
      {ArmorColor::Red, ArmorName::Two},
@@ -107,6 +89,24 @@ static constexpr std::array<ClassMapping, 64> g_class_mappings = {
      {ArmorColor::Red, ArmorName::Five},
      {ArmorColor::Red, ArmorName::Outpost},
      {ArmorColor::Red, ArmorName::Base},
+     // Blue, Small (16-23)
+        {ArmorColor::Blue, ArmorName::Sentry},
+     {ArmorColor::Blue, ArmorName::One},
+     {ArmorColor::Blue, ArmorName::Two},
+     {ArmorColor::Blue, ArmorName::Three},
+     {ArmorColor::Blue, ArmorName::Four},
+     {ArmorColor::Blue, ArmorName::Five},
+     {ArmorColor::Blue, ArmorName::Outpost},
+     {ArmorColor::Blue, ArmorName::Base},
+     // Blue, Large (24-31)
+        {ArmorColor::Blue, ArmorName::Sentry},
+     {ArmorColor::Blue, ArmorName::One},
+     {ArmorColor::Blue, ArmorName::Two},
+     {ArmorColor::Blue, ArmorName::Three},
+     {ArmorColor::Blue, ArmorName::Four},
+     {ArmorColor::Blue, ArmorName::Five},
+     {ArmorColor::Blue, ArmorName::Outpost},
+     {ArmorColor::Blue, ArmorName::Base},
      // None (Gray), Small (32-39)
         {ArmorColor::Neutral, ArmorName::Sentry},
      {ArmorColor::Neutral, ArmorName::One},
