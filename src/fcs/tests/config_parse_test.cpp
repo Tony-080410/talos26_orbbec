@@ -107,24 +107,6 @@ TEST(ConfigParse, VisionBaseTomlMatchesExpectedSemanticsAndValues) {
     EXPECT_TRUE(config.at_legacy->traditional.classifier_enable_type_filtering);
     EXPECT_TRUE(config.at_legacy->traditional.classifier_use_softmax);
 
-    EXPECT_EQ(config.at_legacy->openvino.model_path, "models/best.onnx");
-    EXPECT_EQ(config.at_legacy->openvino.device, "CPU");
-    EXPECT_EQ(config.at_legacy->openvino.device_priorities, "");
-    EXPECT_FALSE(config.at_legacy->openvino.enable_profiling);
-    EXPECT_FALSE(config.at_legacy->openvino.enable_multi_thread);
-    EXPECT_DOUBLE_EQ(config.at_legacy->openvino.confidence_threshold, 0.75);
-    EXPECT_DOUBLE_EQ(config.at_legacy->openvino.nms_threshold, 0.30);
-    EXPECT_EQ(config.at_legacy->openvino.top_k, 128);
-
-    EXPECT_EQ(config.at_legacy->openvino_tup.model_path, "models/opt-1208-001.onnx");
-    EXPECT_EQ(config.at_legacy->openvino_tup.device, "CPU");
-    EXPECT_EQ(config.at_legacy->openvino_tup.device_priorities, "");
-    EXPECT_FALSE(config.at_legacy->openvino_tup.enable_profiling);
-    EXPECT_FALSE(config.at_legacy->openvino_tup.enable_multi_thread);
-    EXPECT_DOUBLE_EQ(config.at_legacy->openvino_tup.confidence_threshold, 0.75);
-    EXPECT_DOUBLE_EQ(config.at_legacy->openvino_tup.nms_threshold, 0.30);
-    EXPECT_EQ(config.at_legacy->openvino_tup.top_k, 128);
-
     EXPECT_EQ(config.at_legacy->tensor_rt.model_path, "models/best_fp16.onnx");
     EXPECT_EQ(config.at_legacy->tensor_rt.engine_path, "models/best_fp16_sm87_fp16.engine");
     EXPECT_EQ(config.at_legacy->tensor_rt.engine_cache_dir, "/tmp/tensorrt_cache");

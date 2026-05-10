@@ -12,6 +12,7 @@
 #include <opencv2/core.hpp>
 
 #include "L2_perception/armor/solver.hpp"
+#include "L3_estimation/tracker/new_motion_model.hpp"
 #include "camera_config.hpp"
 
 namespace {
@@ -146,6 +147,19 @@ double rotation_error_rad(
     return Eigen::AngleAxisd(delta).angle();
 }
 
+Eigen::Vector4d make_prior_ypdr(const Eigen::Vector3d& translation, double armor_yaw) {
+    const double horizontal = std::hypot(translation.x(), translation.y());
+    Eigen::Vector4d ypdr;
+    ypdr << std::atan2(translation.y(), translation.x()), std::atan2(-translation.z(), horizontal),
+        translation.norm(), armor_yaw;
+    return ypdr;
+}
+
+Eigen::Matrix4d make_prior_R(const Eigen::Vector4d& ypdr) {
+    fcs::L3::RobotEkfMotionModel model;
+    return model.R(ypdr);
+}
+
 TEST(PnPSolver, RecoversSmallArmorPoseWithoutPriorUnderDistortion) {
     const auto camera_config = make_test_camera_config();
 
@@ -180,6 +194,7 @@ TEST(PnPSolver, RecoversLargeArmorPoseWithPosePriorUnderDistortion) {
     const Eigen::Matrix3d rotation_prior    = armor_rotation(yaw_gt + 0.06, fcs::ArmorName::One);
     const Eigen::Vector3d translation_prior = translation_gt + Eigen::Vector3d(0.03, -0.02, 0.10);
     const auto prior_rvec                   = eigen_rotation_to_rvec(rotation_prior);
+    const Eigen::Vector4d prior_ypdr        = make_prior_ypdr(translation_prior, yaw_gt + 0.06);
 
     std::vector<fcs::L2::PnPSolver::PosePrior> priors;
     priors.push_back({
@@ -188,6 +203,8 @@ TEST(PnPSolver, RecoversLargeArmorPoseWithPosePriorUnderDistortion) {
         .tvec      = cv::Vec3d(translation_prior.x(), translation_prior.y(), translation_prior.z()),
         .hint_cost = 1e-4,
         .armor_id  = 0,
+        .ypdr      = prior_ypdr,
+        .R         = make_prior_R(prior_ypdr),
     });
 
     const auto result = solver.solve_with_ba(detection, Eigen::Matrix3d::Identity(), 5678, priors);
@@ -214,6 +231,7 @@ TEST(PnPSolver, KeepsConstrainedPoseManifoldWithBiasedCornersAndPrior) {
     const Eigen::Matrix3d rotation_prior    = armor_rotation(yaw_gt - 0.08, fcs::ArmorName::Five);
     const Eigen::Vector3d translation_prior = translation_gt + Eigen::Vector3d(-0.02, 0.02, 0.12);
     const auto prior_rvec                   = eigen_rotation_to_rvec(rotation_prior);
+    const Eigen::Vector4d prior_ypdr        = make_prior_ypdr(translation_prior, yaw_gt - 0.08);
 
     std::vector<fcs::L2::PnPSolver::PosePrior> priors;
     priors.push_back({
@@ -222,6 +240,8 @@ TEST(PnPSolver, KeepsConstrainedPoseManifoldWithBiasedCornersAndPrior) {
         .tvec      = cv::Vec3d(translation_prior.x(), translation_prior.y(), translation_prior.z()),
         .hint_cost = 5e-4,
         .armor_id  = 0,
+        .ypdr      = prior_ypdr,
+        .R         = make_prior_R(prior_ypdr),
     });
 
     const auto result = solver.solve_with_ba(detection, Eigen::Matrix3d::Identity(), 9012, priors);

@@ -115,7 +115,6 @@ Talos 当前配置里会在目标侧查找这些库：
 - `Ceres`
 - `libusb-1.0`
 - `FFmpeg`
-- 可选：`OpenVINO`
 - 可选：`TensorRT`
 - 可选：AX SDK (`/soc`)
 

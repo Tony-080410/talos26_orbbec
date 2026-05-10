@@ -1,4 +1,4 @@
-backend_type = "Traditional"  # Options: "Traditional", "OpenVINO", "OpenVINOTup", "TensorRT", "Axera"
+backend_type = "OnnxRuntime"  # Options: "Traditional", "OnnxRuntime", "TensorRT", "Axera"
 detect_color = "Blue"
 capabilities = ["Armor"]
 
@@ -24,23 +24,9 @@ classifier_confidence_threshold = 0.5
 classifier_enable_type_filtering = true
 classifier_use_softmax = true
 
-# Required if backend_type = "nn"
-[openvino]
-model_path = "models/best.onnx"
-device = "CPU"
-device_priorities = ""
-enable_profiling = false
-enable_multi_thread = false
-confidence_threshold = 0.75
-nms_threshold = 0.30
-top_k = 128
-
-[openvino_tup]
-model_path = "models/opt-1208-001.onnx"
-device = "CPU"
-device_priorities = ""
-enable_profiling = false
-enable_multi_thread = false
+[onnx_runtime]
+model_path = "models/best_fp16.onnx"
+cache_dir = "/tmp/ort_cache"
 confidence_threshold = 0.75
 nms_threshold = 0.30
 top_k = 128
@@ -313,7 +299,6 @@ min_target_light_aspect_ratio = 0.5
 max_target_light_aspect_ratio = 1.5
 min_target_roi_area = 100.0
 
-
 [energy_meter]
 lost_thres = 10
 tracking_thres = 3
@@ -321,7 +306,7 @@ tracking_thres = 3
 matcher_gate = 25.0
 # Frames a locked blade must be lost before unlocking and re-selecting
 blade_unlock_frames = 10
-reset_vote_time=1.0
+reset_vote_time = 1.0
 
 [energy_meter.big_model]
 sigma_xy = 2.0

@@ -9,16 +9,13 @@
 namespace fcs::L2 {
 
 enum class ArmorBackendType : int {
-    Traditional = 0,
-#if TALOS_HAS_OPENVINO
-    OpenVINO    = 1, // AT model (YOLO11-pose)
-    OpenVINOTup = 2, // TUP model (YOLOX multi-scale)
-#endif
+    Traditional,
+    OnnxRuntime,
 #if TALOS_HAS_TENSORRT
-    TensorRT = 3,    // TensorRT backend (GPU-accelerated)
+    TensorRT, // TensorRT backend (GPU-accelerated)
 #endif
 #if TALOS_HAS_AXERA
-    Axera = 4,       // Axera AX650 NPU backend
+    Axera,    // Axera AX650 NPU backend
 #endif
 };
 
@@ -52,41 +49,13 @@ struct ArmorTraditionalConfig {
     bool classifier_use_softmax            = true; // Legacy networks output logits, need softmax
 };
 
-// ============================================================================
-// AT Legacy NN Backend Config
-// ============================================================================
-
-struct ArmorOpenVinoConfig {
+struct ArmorOrtConfig {
     std::string model_path{};
-    std::string device{};
-    std::string device_priorities{};
-    bool enable_profiling{};
-    bool enable_multi_thread{};
-
+    std::string cache_dir{};
     double confidence_threshold{};
     double nms_threshold{};
     int top_k{};
 };
-
-// ============================================================================
-// AT Legacy NN TUP Backend Config (YOLOX multi-scale)
-// ============================================================================
-
-struct ArmorOpenVinoTupConfig {
-    std::string model_path{};
-    std::string device{};
-    std::string device_priorities{};
-    bool enable_profiling{};
-    bool enable_multi_thread{};
-
-    double confidence_threshold{};
-    double nms_threshold{};
-    int top_k{};
-};
-
-// ============================================================================
-// AT Legacy TRT Backend Config (TensorRT)
-// ============================================================================
 
 struct ArmorTensorRtConfig {
     std::string engine_path{};
@@ -109,10 +78,6 @@ struct ArmorTensorRtConfig {
     int top_k                   = 128;
 };
 
-// ============================================================================
-// AT Legacy Axera Backend Config (AX650 NPU)
-// ============================================================================
-
 struct ArmorAxeraConfig {
     std::string model_path{};
 
@@ -132,15 +97,10 @@ struct ArmorAxeraConfig {
     int top_k                   = 128;
 };
 
-// ============================================================================
-// AT Legacy Full Config
-// ============================================================================
-
 struct ArmorDetectorConfig {
     ArmorBackendType backend_type;
     ArmorTraditionalConfig traditional;
-    ArmorOpenVinoConfig openvino;
-    ArmorOpenVinoTupConfig openvino_tup;
+    ArmorOrtConfig onnx_runtime;
     ArmorTensorRtConfig tensor_rt;
     ArmorAxeraConfig axera;
     ArmorReadbackRoiConfig readback_roi;

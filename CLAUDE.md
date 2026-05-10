@@ -280,7 +280,7 @@ crates/fast_tf/src/
 | Eigen3   | 3.4+     | 线性代数               |
 | OpenCV   | 4.x      | 图像处理               |
 | Ceres    | 2.x      | 非线性优化（自动微分） |
-| OpenVINO | optional | 推理后端               |
+| ONNXRuntime | >= 1.26.0 | 推理后端               |
 | TensorRT | optional | 推理后端               |
 
 ---

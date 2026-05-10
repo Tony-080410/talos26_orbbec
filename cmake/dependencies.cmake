@@ -110,6 +110,7 @@ find_package(OpenCV REQUIRED COMPONENTS core imgproc imgcodecs calib3d dnn)
 # Include FetchContent helper
 include(${CMAKE_CURRENT_LIST_DIR}/fetch-content-helper.cmake)
 include(${CMAKE_CURRENT_LIST_DIR}/ffmpeg.cmake)
+include(${CMAKE_CURRENT_LIST_DIR}/fetch-onnxruntime.cmake)
 
 fetch_dependency(NAME Eigen3
                  REPO gitlab.com/libeigen/eigen
@@ -141,12 +142,6 @@ fetch_dependency(NAME tomlplusplus
                  REPO marzer/tomlplusplus
                  VERSION 1c8b7466e4946fcc3bf20484c0e1d001202cca5a)
 
-find_package(OpenVINO QUIET COMPONENTS Runtime)
-if (OpenVINO_FOUND)
-    message(STATUS "OpenVINO found at: ${OpenVINO_DIR}")
-else ()
-    message(STATUS "OpenVINO not found - OpenVINO backends will be disabled")
-endif ()
 find_package(TBB REQUIRED)
 if (BUILD_TESTING)
     find_package(GTest REQUIRED)

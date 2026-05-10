@@ -198,6 +198,7 @@ set(FCS_SOURCES
         src/fcs/L2_perception/rune/rune_detector.cpp
         src/fcs/L2_perception/rune/rune_systems.cpp
         src/fcs/L2_perception/armor/backends/traditional.cpp
+        src/fcs/L2_perception/armor/backends/ort.cpp
         src/fcs/L2_perception/armor/backends/traditional_classifier.cpp
         src/fcs/L3_estimation/tracker_systems.cpp
         src/fcs/L3_estimation/extended_kalman_filter.cpp
@@ -212,15 +213,6 @@ set(FCS_SOURCES
         src/fcs/L5_weapon/enhanced/trajectory_optimizer.cpp
         src/fcs/L5_weapon/enhanced/weapon_systems.cpp
 )
-
-if(OpenVINO_FOUND)
-    list(APPEND FCS_SOURCES
-        src/fcs/L2_perception/armor/backends/openvino.cpp
-        src/fcs/L2_perception/armor/backends/openvino_tup.cpp)
-    message(STATUS "OpenVINO backends enabled")
-else()
-    message(STATUS "OpenVINO backends disabled (OpenVINO not found)")
-endif()
 
 if(TensorRT_FOUND)
     list(APPEND FCS_SOURCES src/fcs/L2_perception/armor/backends/tensor_rt.cpp)
@@ -261,13 +253,6 @@ else()
     target_compile_definitions(fcs PUBLIC TALOS_HAS_TENSORRT=0)
 endif()
 
-if(OpenVINO_FOUND)
-    target_compile_definitions(fcs PUBLIC TALOS_HAS_OPENVINO=1)
-    message(STATUS "OpenVINO support enabled")
-else()
-    target_compile_definitions(fcs PUBLIC TALOS_HAS_OPENVINO=0)
-endif()
-
 if(AXERA_FOUND)
     target_compile_definitions(fcs PUBLIC TALOS_HAS_AXERA=1)
     target_include_directories(fcs SYSTEM PUBLIC ${AXERA_INCLUDE_DIRS})
@@ -291,7 +276,7 @@ target_link_libraries(fcs PUBLIC
         ipc
         chiral
         ${OpenCV_LIBS}
-        $<$<TARGET_EXISTS:openvino::runtime>:openvino::runtime>
+        onnxruntime::onnxruntime
         $<$<TARGET_EXISTS:TensorRT::TensorRT>:TensorRT::TensorRT>
         $<$<TARGET_EXISTS:TensorRT::nvonnxparser>:TensorRT::nvonnxparser>
 PRIVATE

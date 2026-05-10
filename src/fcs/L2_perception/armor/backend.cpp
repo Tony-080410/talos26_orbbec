@@ -1,10 +1,7 @@
+#include "L2_perception/armor/backends/ort.hpp"
 #include "L2_perception/armor/backends/traditional.hpp"
 #include "L2_perception/armor/config.hpp"
 #include "core/armor_types.hpp"
-#if TALOS_HAS_OPENVINO
-# include "L2_perception/armor/backends/openvino.hpp"
-# include "L2_perception/armor/backends/openvino_tup.hpp"
-#endif
 #if TALOS_HAS_TENSORRT
 # include "L2_perception/armor/backends/tensor_rt.hpp"
 #endif
@@ -29,13 +26,8 @@ DetectorBackend& DetectorBackend::operator=(DetectorBackend&&) noexcept = defaul
 DetectorBackend::DetectorBackend(std::unique_ptr<TraditionalBackend> backend)
     : backend_(std::move(backend)) {}
 
-#if TALOS_HAS_OPENVINO
-DetectorBackend::DetectorBackend(std::unique_ptr<NNBackend> backend)
+DetectorBackend::DetectorBackend(std::unique_ptr<OrtBackend> backend)
     : backend_(std::move(backend)) {}
-
-DetectorBackend::DetectorBackend(std::unique_ptr<NNTupBackend> backend)
-    : backend_(std::move(backend)) {}
-#endif
 
 #if TALOS_HAS_TENSORRT
 DetectorBackend::DetectorBackend(std::unique_ptr<TrtBackend> backend)
@@ -63,15 +55,9 @@ void DetectorBackend::set_backend(std::unique_ptr<TraditionalBackend> backend) {
     backend_ = std::move(backend);
 }
 
-#if TALOS_HAS_OPENVINO
-void DetectorBackend::set_backend(std::unique_ptr<NNBackend> backend) {
+void DetectorBackend::set_backend(std::unique_ptr<OrtBackend> backend) {
     backend_ = std::move(backend);
 }
-
-void DetectorBackend::set_backend(std::unique_ptr<NNTupBackend> backend) {
-    backend_ = std::move(backend);
-}
-#endif
 
 #if TALOS_HAS_TENSORRT
 void DetectorBackend::set_backend(std::unique_ptr<TrtBackend> backend) {
@@ -122,22 +108,13 @@ BackendInputResolution DetectorBackend::input_resolution() const noexcept {
         }
         return DetectorBackend(std::make_unique<TraditionalBackend>(std::move(*result)));
     }
-#if TALOS_HAS_OPENVINO
-    case ArmorBackendType::OpenVINO: {
-        auto result = NNBackend::create(config.openvino);
+    case ArmorBackendType::OnnxRuntime: {
+        auto result = OrtBackend::create(config.onnx_runtime);
         if (!result) {
             return std::unexpected(result.error());
         }
-        return DetectorBackend(std::make_unique<NNBackend>(std::move(*result)));
+        return DetectorBackend(std::make_unique<OrtBackend>(std::move(*result)));
     }
-    case ArmorBackendType::OpenVINOTup: {
-        auto result = NNTupBackend::create(config.openvino_tup);
-        if (!result) {
-            return std::unexpected(result.error());
-        }
-        return DetectorBackend(std::make_unique<NNTupBackend>(std::move(*result)));
-    }
-#endif
 #if TALOS_HAS_TENSORRT
     case ArmorBackendType::TensorRT: {
         auto result = TrtBackend::create(config.tensor_rt);

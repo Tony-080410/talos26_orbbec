@@ -1,5 +1,6 @@
 #pragma once
 
+#include "L2_perception/armor/backends/ort.hpp"
 #include "L2_perception/armor/readback_roi.hpp"
 #include "core/armor_types.hpp"
 #include "core/types.hpp"
@@ -23,10 +24,7 @@ namespace fcs::L2 {
 // ============================================================================
 
 class TraditionalBackend;
-#if TALOS_HAS_OPENVINO
-class NNBackend;
-class NNTupBackend;
-#endif
+class OrtBackend;
 #if TALOS_HAS_TENSORRT
 class TrtBackend;
 #endif
@@ -36,10 +34,6 @@ class AxeraBackend;
 
 // Forward declare config types (defined in config.hpp)
 struct ArmorDetectorConfig;
-#if TALOS_HAS_OPENVINO
-struct ArmorOpenVinoConfig;
-struct ArmorOpenVinoTupConfig;
-#endif
 #if TALOS_HAS_TENSORRT
 struct TrtConfig;
 #endif
@@ -47,35 +41,21 @@ struct TrtConfig;
 struct AxeraConfig;
 #endif
 struct ArmorTraditionalConfig;
+struct ArmorOrtConfig;
 
 // ============================================================================
 // Runtime Polymorphic Backend Wrapper (using std::variant)
 // ============================================================================
 
 /// Backend variant type for runtime switching
+using DetectorBackendVariant = std::variant<
 #if TALOS_HAS_AXERA
-using DetectorBackendVariant = std::variant<
-    std::unique_ptr<TraditionalBackend>,
-# if TALOS_HAS_OPENVINO
-    std::unique_ptr<NNBackend>, std::unique_ptr<NNTupBackend>,
-# endif
-# if TALOS_HAS_TENSORRT
-    std::unique_ptr<TrtBackend>,
-# endif
-    std::unique_ptr<AxeraBackend>>;
-#elif TALOS_HAS_TENSORRT
-using DetectorBackendVariant = std::variant<
-    std::unique_ptr<TraditionalBackend>,
-# if TALOS_HAS_OPENVINO
-    std::unique_ptr<NNBackend>, std::unique_ptr<NNTupBackend>,
-# endif
-    std::unique_ptr<TrtBackend>>;
-#elif TALOS_HAS_OPENVINO
-using DetectorBackendVariant = std::variant<
-    std::unique_ptr<TraditionalBackend>, std::unique_ptr<NNBackend>, std::unique_ptr<NNTupBackend>>;
-#else
-using DetectorBackendVariant = std::variant<std::unique_ptr<TraditionalBackend>>;
+    std::unique_ptr<AxeraBackend>,
 #endif
+#if TALOS_HAS_TENSORRT
+    std::unique_ptr<TrtBackend>,
+#endif
+    std::unique_ptr<TraditionalBackend>, std::unique_ptr<OrtBackend>>;
 
 /// Runtime-configurable detector backend wrapper
 /// Implementation methods are in detector_backend.cpp to avoid
@@ -97,10 +77,7 @@ public:
 
     /// Construct with a specific backend
     explicit DetectorBackend(std::unique_ptr<TraditionalBackend> backend);
-#if TALOS_HAS_OPENVINO
-    explicit DetectorBackend(std::unique_ptr<NNBackend> backend);
-    explicit DetectorBackend(std::unique_ptr<NNTupBackend> backend);
-#endif
+    explicit DetectorBackend(std::unique_ptr<OrtBackend> backend);
 #if TALOS_HAS_TENSORRT
     explicit DetectorBackend(std::unique_ptr<TrtBackend> backend);
 #endif
@@ -116,10 +93,7 @@ public:
 
     /// Switch to a different backend
     void set_backend(std::unique_ptr<TraditionalBackend> backend);
-#if TALOS_HAS_OPENVINO
-    void set_backend(std::unique_ptr<NNBackend> backend);
-    void set_backend(std::unique_ptr<NNTupBackend> backend);
-#endif
+    void set_backend(std::unique_ptr<OrtBackend> backend);
 #if TALOS_HAS_TENSORRT
     void set_backend(std::unique_ptr<TrtBackend> backend);
 #endif

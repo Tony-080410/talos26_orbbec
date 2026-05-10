@@ -2,7 +2,7 @@
 
 # Talos
 
-**RoboMaster 自瞄上位机基座**
+**RoboMaster 上位机自瞄**
 
 _如同守卫克里特岛的青铜巨人，以钢铁之躯承载自瞄意志。_
 
@@ -16,7 +16,7 @@ _如同守卫克里特岛的青铜巨人，以钢铁之躯承载自瞄意志。_
 
 ## Talos
 
-Talos 是一个 RoboMaster 自瞄上位机基座。
+Talos 是一个 RoboMaster 自瞄上位机。
 
 它把传感输入、目标感知、状态估计、瞄准规划、开火决策和控制输出组织为一条火控流水线。
 
@@ -71,7 +71,7 @@ Resource ──read──▶ System ──write──▶ Resource
 | [OpenCV](https://opencv.org)                      | 4.x      | 图像处理       |
 | [Ceres](https://ceres-solver.org)                 | 2.x      | 非线性优化与自动微分 |
 | [FFmpeg](https://ffmpeg.org)                      | 8.x      | 图传编码与解码    |
-| [OpenVINO](https://docs.openvino.ai)              | optional | 推理后端       |
+| [ONNXRuntime](https://onnxruntime.ai)              | >= 1.26 | 推理后端       |
 | [TensorRT](https://developer.nvidia.com/tensorrt) | optional | 推理后端       |
 
 ## 快速开始

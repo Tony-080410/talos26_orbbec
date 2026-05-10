@@ -33,6 +33,7 @@ CRIT.md
 camera_extrinsic.toml
 3dparty/foxglove-*.zip
 3dparty/*.zip
+3dparty/*.tgz
 3dparty/tomlplusplus
 target/
 rateui/target

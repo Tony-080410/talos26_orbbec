@@ -3,12 +3,6 @@
         "--header-insertion=never"
     ],
     "clangd.path": "clangd",
-    "cmake.configureEnvironment": {
-        "OpenVINO_DIR": "/opt/intel/openvino/runtime/cmake",
-        "CMAKE_PREFIX_PATH": "/opt/intel/openvino/runtime/cmake",
-        "LD_LIBRARY_PATH": "/opt/intel/openvino/runtime/lib/intel64:${env:LD_LIBRARY_PATH}",
-        "PATH": "/opt/intel/openvino/runtime/bin/intel64:${env:PATH}"
-    },
     "cmake.environment": {
         "CC": "clang-21",
         "CXX": "clang++-21",
