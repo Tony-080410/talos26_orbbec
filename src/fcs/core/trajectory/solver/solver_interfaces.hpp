@@ -3,6 +3,8 @@
 #include "core/trajectory/model/ballistic_model.hpp"
 #include <Eigen/Core>
 
+#include <expected>
+#include <string>
 #include <string_view>
 #include <utility>
 #include <vector>
@@ -11,23 +13,19 @@ namespace fcs::core::trajectory::solver {
 
 /// Complete trajectory solution result
 ///
-/// Value object representing the complete result of solving for a trajectory
-/// trajectory to hit a target. Replaces the old output-parameter pattern.
+/// Value object representing the complete result of solving for a ballistic
+/// trajectory to hit a target. When returned via std::expected, a present value
+/// guarantees a converged, valid solution.
 struct AimSolution {
     double yaw{0.0};            ///< Firing azimuth angle (radians)
     double pitch{0.0};          ///< Firing elevation angle (radians)
     double time_of_flight{0.0}; ///< Time of flight (seconds)
-    bool converged{false};      ///< Whether solution converged
     int iterations{0};          ///< Number of iterations performed
-
-    [[nodiscard]] bool is_valid() const noexcept {
-        return converged && std::isfinite(yaw) && std::isfinite(pitch) && time_of_flight > 0.0;
-    }
 };
 
 /// Trajectory solver interface (stateless)
 ///
-/// This interface provides the core solving functionality for trajectory
+/// This interface provides the core solving functionality for ballistic
 /// trajectory compensation. It is deliberately stateless - the bullet velocity
 /// is passed as a parameter rather than stored, eliminating the need for
 /// const_cast tricks.
@@ -41,8 +39,8 @@ public:
     ///
     /// @param target_pos Target position in world coordinates (meters)
     /// @param v0 Muzzle velocity (m/s)
-    /// @return Complete aim solution with angles, time of flight, and convergence status
-    [[nodiscard]] virtual AimSolution
+    /// @return AimSolution on success, or error string describing the failure reason
+    [[nodiscard]] virtual std::expected<AimSolution, std::string>
         solve(const Eigen::Vector3d& target_pos, double v0) const noexcept = 0;
 
     /// Generate trajectory points for visualization

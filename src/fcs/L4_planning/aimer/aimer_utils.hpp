@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <expected>
 
 namespace fcs::L4 {
 
@@ -23,12 +24,15 @@ inline constexpr double kFlyingTimeRefineTolerance = 1e-3;
 /// @param solver Ballistic trajectory solver
 /// @param target_pos_muzzle Target position in muzzle frame
 /// @param bullet_speed Bullet speed (m/s)
-/// @return {yaw, pitch} in radians
-[[nodiscard]] inline Eigen::Vector2d compute_aim_point(
+/// @return {yaw, pitch} in radians, or error string if solver failed
+[[nodiscard]] inline std::expected<Eigen::Vector2d, std::string> compute_aim_point(
     const core::trajectory::solver::TrajectorySolver& solver,
     const Eigen::Vector3d& target_pos_muzzle, double bullet_speed) noexcept {
     const auto solution = solver.solve(target_pos_muzzle, bullet_speed);
-    return Eigen::Vector2d{solution.yaw, solution.pitch};
+    if (!solution.has_value()) {
+        return std::unexpected(solution.error());
+    }
+    return Eigen::Vector2d{solution->yaw, solution->pitch};
 }
 
 /// Perform iterative flying time refinement
@@ -52,16 +56,16 @@ template <class PredictFn>
         const Eigen::Vector3d predicted_pos = predict_fn(initial_delay + flying_time);
         const auto solution                 = solver.solve(predicted_pos, bullet_speed);
 
-        if (!solution.converged || !std::isfinite(solution.time_of_flight)
-            || solution.time_of_flight <= 0.0) {
+        if (!solution.has_value() || !std::isfinite(solution->time_of_flight)
+            || solution->time_of_flight <= 0.0) {
             break;
         }
 
-        if (std::abs(solution.time_of_flight - flying_time) < kFlyingTimeRefineTolerance) {
-            last_valid_flying_time = solution.time_of_flight;
+        if (std::abs(solution->time_of_flight - flying_time) < kFlyingTimeRefineTolerance) {
+            last_valid_flying_time = solution->time_of_flight;
             break;
         }
-        flying_time            = solution.time_of_flight;
+        flying_time            = solution->time_of_flight;
         last_valid_flying_time = flying_time;
     }
     return initial_delay + last_valid_flying_time;

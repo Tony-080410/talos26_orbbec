@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <expected>
 #include <iostream>
 #include <memory>
 #include <mutex>
@@ -37,15 +38,14 @@ using namespace std::chrono_literals;
 
 class MockTrajectorySolver final : public fcs::core::trajectory::solver::TrajectorySolver {
 public:
-    [[nodiscard]] fcs::core::trajectory::solver::AimSolution
+    [[nodiscard]] std::expected<fcs::core::trajectory::solver::AimSolution, std::string>
         solve(const Eigen::Vector3d& target_pos, double v0) const noexcept override {
         const double distance = target_pos.norm();
         const double xy       = std::hypot(target_pos.x(), target_pos.y());
-        return {
+        return fcs::core::trajectory::solver::AimSolution{
             .yaw            = std::atan2(target_pos.y(), target_pos.x()),
             .pitch          = std::atan2(target_pos.z(), xy),
             .time_of_flight = distance / std::max(v0, 1e-6),
-            .converged      = true,
             .iterations     = 1,
         };
     }
@@ -65,15 +65,9 @@ public:
 
 class InvalidTrajectorySolver final : public fcs::core::trajectory::solver::TrajectorySolver {
 public:
-    [[nodiscard]] fcs::core::trajectory::solver::AimSolution
+    [[nodiscard]] std::expected<fcs::core::trajectory::solver::AimSolution, std::string>
         solve(const Eigen::Vector3d&, double) const noexcept override {
-        return {
-            .yaw            = 0.0,
-            .pitch          = 0.0,
-            .time_of_flight = 0.0,
-            .converged      = false,
-            .iterations     = 1,
-        };
+        return std::unexpected("InvalidTrajectorySolver: always fails");
     }
 
     [[nodiscard]] std::vector<std::pair<double, double>>

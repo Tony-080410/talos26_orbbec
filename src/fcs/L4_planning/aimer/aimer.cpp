@@ -495,12 +495,12 @@ std::expected<TargetPrediction, std::string> Aimer::aim_generic_rune(
     output.predicted_future_ns = offset_timestamp_ns(target.timestamp_ns, total_time);
     const auto solution =
         solver.solve(output.predicted_position - muzzle.translation(), bullet_speed);
-    if (!solution.is_valid()) {
-        return std::unexpected("ballistic solver failed to produce a valid aim solution");
+    if (!solution.has_value()) {
+        return std::unexpected(solution.error());
     }
-    output.flying_time = solution.time_of_flight;
+    output.flying_time = solution->time_of_flight;
 
-    const auto [yaw, pitch] = compose_gimbal_aim_angles(solution, gimbal, muzzle);
+    const auto [yaw, pitch] = compose_gimbal_aim_angles(*solution, gimbal, muzzle);
 
     output.aim_yaw   = yaw;
     output.aim_pitch = pitch;
@@ -640,12 +640,12 @@ std::expected<TargetPrediction, std::string> Aimer::aim(
 
     const auto solution =
         solver.solve(output.predicted_position - muzzle.translation(), bullet_speed);
-    if (!solution.is_valid()) {
-        return std::unexpected("ballistic solver failed to produce a valid aim solution");
+    if (!solution.has_value()) {
+        return std::unexpected(solution.error());
     }
-    output.flying_time = solution.time_of_flight;
+    output.flying_time = solution->time_of_flight;
 
-    const auto [yaw, pitch] = compose_gimbal_aim_angles(solution, gimbal, muzzle);
+    const auto [yaw, pitch] = compose_gimbal_aim_angles(*solution, gimbal, muzzle);
 
     output.aim_yaw   = yaw;
     output.aim_pitch = pitch;

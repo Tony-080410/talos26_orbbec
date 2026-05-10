@@ -40,7 +40,7 @@ public:
     }
 
     /// Solve for firing angles to hit target
-    [[nodiscard]] AimSolution
+    [[nodiscard]] std::expected<AimSolution, std::string>
         solve(const Eigen::Vector3d& target_pos, double v0) const noexcept override;
 
     /// Generate trajectory points for visualization
@@ -98,7 +98,7 @@ public:
     }
 
     /// Solve for firing angles to hit target
-    [[nodiscard]] AimSolution
+    [[nodiscard]] std::expected<AimSolution, std::string>
         solve(const Eigen::Vector3d& target_pos, double v0) const noexcept override;
 
     /// Generate trajectory points for visualization
@@ -136,7 +136,7 @@ namespace detail {
 ///
 /// This function implements the core iteration logic used by IterativeSolver.
 /// It's separated to allow reuse in different contexts.
-[[nodiscard]] AimSolution iterative_solve_pitch(
+[[nodiscard]] std::expected<AimSolution, std::string> iterative_solve_pitch(
     const model::BallisticModel& model, const Eigen::Vector3d& target_pos, double v0,
     int max_iterations, double height_tolerance, double max_pitch) noexcept;
 

@@ -1,6 +1,10 @@
 #include "core/trajectory/solver/trajectory_solver.hpp"
 
 #include <cmath>
+#include <expected>
+#include <string>
+
+#include <fmt/format.h>
 
 namespace fcs::core::trajectory::solver {
 
@@ -8,17 +12,14 @@ namespace fcs::core::trajectory::solver {
 // DirectSolver Implementation
 // ============================================================================
 
-AimSolution DirectSolver::solve(const Eigen::Vector3d& target_pos, double v0) const noexcept {
+std::expected<AimSolution, std::string>
+    DirectSolver::solve(const Eigen::Vector3d& target_pos, double v0) const noexcept {
     const double target_height = target_pos.z();
     const double distance      = std::hypot(target_pos.x(), target_pos.y());
 
     if (distance < 1e-6) {
-        return {
-            .yaw            = std::atan2(target_pos.y(), target_pos.x()),
-            .pitch          = 0.0,
-            .time_of_flight = 0.0,
-            .converged      = false,
-            .iterations     = 0};
+        return std::unexpected(
+            fmt::format("DirectSolver::solve: target too close, distance={:.6f}m", distance));
     }
 
     // For DirectSolver, we use iterative refinement with the model's compute_impact
@@ -39,22 +40,20 @@ AimSolution DirectSolver::solve(const Eigen::Vector3d& target_pos, double v0) co
         angle      = std::atan2(iterative_height, distance);
 
         if (std::abs(angle) > kMaxPitch) {
-            return {
-                .yaw            = std::atan2(target_pos.y(), target_pos.x()),
-                .pitch          = angle,
-                .time_of_flight = 0.0,
-                .converged      = false,
-                .iterations     = iterations};
+            return std::unexpected(
+                fmt::format(
+                    "DirectSolver::solve: pitch angle {:.4f}rad exceeds maximum {:.4f}rad at "
+                    "iteration {}",
+                    angle, kMaxPitch, iterations));
         }
 
         const auto impact = model_->compute_impact(distance, angle, v0);
         if (!impact) {
-            return {
-                .yaw            = std::atan2(target_pos.y(), target_pos.x()),
-                .pitch          = angle,
-                .time_of_flight = 0.0,
-                .converged      = false,
-                .iterations     = iterations};
+            return std::unexpected(
+                fmt::format(
+                    "DirectSolver::solve: model compute_impact failed at distance={:.3f}m, "
+                    "angle={:.4f}rad, v0={:.1f}m/s, iteration={}",
+                    distance, angle, v0, iterations));
         }
 
         impact_height = impact->z;
@@ -62,23 +61,21 @@ AimSolution DirectSolver::solve(const Eigen::Vector3d& target_pos, double v0) co
         dh            = target_height - impact_height;
 
         if (std::abs(dh) < kHeightTolerance) {
-            return {
+            return AimSolution{
                 .yaw            = std::atan2(target_pos.y(), target_pos.x()),
                 .pitch          = angle,
                 .time_of_flight = tof,
-                .converged      = true,
                 .iterations     = iterations};
         }
 
         iterative_height += dh;
     }
 
-    return {
-        .yaw            = std::atan2(target_pos.y(), target_pos.x()),
-        .pitch          = angle,
-        .time_of_flight = tof,
-        .converged      = std::abs(dh) < kHeightTolerance,
-        .iterations     = iterations};
+    return std::unexpected(
+        fmt::format(
+            "DirectSolver::solve: failed to converge after {} iterations, final dh={:.4f}m, "
+            "tolerance={:.4f}m",
+            kMaxIterations, std::abs(dh), kHeightTolerance));
 }
 
 std::vector<std::pair<double, double>>
@@ -106,7 +103,8 @@ std::vector<std::pair<double, double>>
 // IterativeSolver Implementation
 // ============================================================================
 
-AimSolution IterativeSolver::solve(const Eigen::Vector3d& target_pos, double v0) const noexcept {
+std::expected<AimSolution, std::string>
+    IterativeSolver::solve(const Eigen::Vector3d& target_pos, double v0) const noexcept {
     return detail::iterative_solve_pitch(
         *model_, target_pos, v0, static_cast<int>(config_.max_iterations), config_.height_tolerance,
         config_.max_pitch);
@@ -139,7 +137,7 @@ std::vector<std::pair<double, double>> IterativeSolver::generate_trajectory(
 
 namespace detail {
 
-AimSolution iterative_solve_pitch(
+std::expected<AimSolution, std::string> iterative_solve_pitch(
     const model::BallisticModel& model, const Eigen::Vector3d& target_pos, double v0,
     int max_iterations, double height_tolerance, double max_pitch) noexcept {
 
@@ -148,8 +146,8 @@ AimSolution iterative_solve_pitch(
     const double yaw           = std::atan2(target_pos.y(), target_pos.x());
 
     if (distance < 1e-6) {
-        return {
-            .yaw = yaw, .pitch = 0.0, .time_of_flight = 0.0, .converged = false, .iterations = 0};
+        return std::unexpected(
+            fmt::format("iterative_solve_pitch: target too close, distance={:.6f}m", distance));
     }
 
     double iterative_height = target_height;
@@ -164,22 +162,20 @@ AimSolution iterative_solve_pitch(
         angle      = std::atan2(iterative_height, distance);
 
         if (std::abs(angle) > max_pitch) {
-            return {
-                .yaw            = yaw,
-                .pitch          = angle,
-                .time_of_flight = 0.0,
-                .converged      = false,
-                .iterations     = iterations};
+            return std::unexpected(
+                fmt::format(
+                    "iterative_solve_pitch: pitch angle {:.4f}rad exceeds maximum {:.4f}rad at "
+                    "iteration {}",
+                    angle, max_pitch, iterations));
         }
 
         const auto impact = model.compute_impact(distance, angle, v0);
         if (!impact) {
-            return {
-                .yaw            = yaw,
-                .pitch          = angle,
-                .time_of_flight = 0.0,
-                .converged      = false,
-                .iterations     = iterations};
+            return std::unexpected(
+                fmt::format(
+                    "iterative_solve_pitch: model compute_impact failed at distance={:.3f}m, "
+                    "angle={:.4f}rad, v0={:.1f}m/s, iteration={}",
+                    distance, angle, v0, iterations));
         }
 
         impact_height = impact->z;
@@ -187,23 +183,18 @@ AimSolution iterative_solve_pitch(
         dh            = target_height - impact_height;
 
         if (std::abs(dh) < height_tolerance) {
-            return {
-                .yaw            = yaw,
-                .pitch          = angle,
-                .time_of_flight = tof,
-                .converged      = true,
-                .iterations     = iterations};
+            return AimSolution{
+                .yaw = yaw, .pitch = angle, .time_of_flight = tof, .iterations = iterations};
         }
 
         iterative_height += dh;
     }
 
-    return {
-        .yaw            = yaw,
-        .pitch          = angle,
-        .time_of_flight = tof,
-        .converged      = std::abs(dh) < height_tolerance,
-        .iterations     = iterations};
+    return std::unexpected(
+        fmt::format(
+            "iterative_solve_pitch: failed to converge after {} iterations, final dh={:.4f}m, "
+            "tolerance={:.4f}m",
+            max_iterations, std::abs(dh), height_tolerance));
 }
 
 } // namespace detail
