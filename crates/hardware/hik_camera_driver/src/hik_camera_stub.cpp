@@ -5,6 +5,8 @@
 
 namespace hikcamera {
 
+std::string error_code_to_message(unsigned int code) noexcept { return "unsupported"; }
+
 class ImageCapturer::Impl {};
 
 ImageCapturer::ImageCapturer() noexcept
