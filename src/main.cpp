@@ -39,8 +39,7 @@ int main() {
     // (foxglove setup requires fcs_visualization, which is not linked by the fcs library)
     auto foxglove_cfg = config->foxglove;
 
-    talos::World world;
-    talos::Scheduler scheduler(world, config->scheduler);
+    talos::Scheduler scheduler(config->scheduler);
 
     // Foxglove visualization setup (separate library dependency)
     if (foxglove_cfg.enabled) {
@@ -48,7 +47,7 @@ int main() {
         if (server_result) {
             std::shared_ptr<fcs::visualization::FoxgloveServer> server = std::move(*server_result);
             fcs::visualization::attach_foxglove_sink(*server);
-            world.insert_resource(server);
+            scheduler.world().insert_resource(server);
             fcs::visualization::register_foxglove_systems(
                 std::holds_alternative<fcs::hardware::DaedalusConfig>(config->backend), scheduler,
                 &scheduler);
@@ -68,7 +67,7 @@ int main() {
         SPDLOG_INFO("Foxglove visualization disabled by config");
     }
 
-    if (auto r = fcs::boot(world, scheduler, std::move(*config)); !r) {
+    if (auto r = fcs::boot(scheduler, std::move(config.value())); !r) {
         SPDLOG_CRITICAL("{}", r.error());
         return 1;
     }

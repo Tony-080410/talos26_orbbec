@@ -16,7 +16,6 @@
 #include <limits>
 #include <map>
 #include <nlohmann/json.hpp>
-#include <optional>
 #include <spdlog/spdlog.h>
 #include <unordered_map>
 
@@ -179,9 +178,8 @@ static void print_mermaid_rebuild_hint(const char* message) {
 // Constructor / Destructor
 // ============================================================================
 
-Scheduler::Scheduler(World& world, const SchedulerConfig config)
-    : world_(world)
-    , config_(config)
+Scheduler::Scheduler(const SchedulerConfig config) noexcept
+    : config_(config)
     , stats_start_time_(Clock::now()) {}
 
 Scheduler::~Scheduler() {

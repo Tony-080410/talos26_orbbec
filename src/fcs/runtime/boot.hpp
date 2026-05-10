@@ -14,6 +14,6 @@ namespace fcs {
 /// The caller must handle Foxglove setup separately (it lives in fcs_visualization,
 /// which is not linked by the fcs library).
 [[nodiscard]] std::expected<void, std::string>
-    boot(talos::World& world, talos::Scheduler& scheduler, RuntimeConfig&& config);
+    boot(talos::Scheduler& scheduler, RuntimeConfig&& config);
 
 } // namespace fcs

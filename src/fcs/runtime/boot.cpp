@@ -68,8 +68,8 @@ void init_coordinate_system(fast_tf::CoordinateSystem& system, const RobotExtrin
 } // namespace
 
 [[nodiscard]] std::expected<void, std::string>
-    boot(talos::World& world, talos::Scheduler& scheduler, RuntimeConfig&& config) {
-
+    boot(talos::Scheduler& scheduler, RuntimeConfig&& config) {
+    auto& world = scheduler.world();
     // Insert config as shared resource (for foxglove and other systems)
     world.insert_resource(config.foxglove);
 

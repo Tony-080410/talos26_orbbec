@@ -134,8 +134,8 @@ public:
      * - `world`: the world containing resources and channels
      * - `config`: optional scheduler configuration
      */
-    explicit Scheduler(World& world, SchedulerConfig config = {});
-    ~Scheduler();
+    explicit Scheduler(SchedulerConfig config = {}) noexcept;
+    ~Scheduler() noexcept;
 
     Scheduler(const Scheduler&)            = delete;
     Scheduler& operator=(const Scheduler&) = delete;
@@ -520,7 +520,7 @@ private:
     // Members
     // ========================================================================
 
-    World& world_;
+    World world_{};
     SchedulerConfig config_;
 
     // Systems
