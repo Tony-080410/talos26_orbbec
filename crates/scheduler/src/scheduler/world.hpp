@@ -5,13 +5,14 @@
 #include "system/components.hpp"
 #include "system/system_meta.hpp"
 
-#include <any>
 #include <atomic>
 #include <concepts>
 #include <cstdint>
 #include <memory>
+#include <spdlog/spdlog.h>
 #include <type_traits>
 #include <typeindex>
+#include <typeinfo>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -22,6 +23,102 @@ namespace rclcompat {
 template <typename T, typename Topic>
 struct PubSlot;
 } // namespace rclcompat
+
+// ============================================================================
+// Move-only type erasure
+// ============================================================================
+// Similar in spirit to std::any, but intentionally move-only.
+// This is suitable for storing unique_ptr<T>, move-only channel storage, and
+// non-copyable resources without forcing the underlying storage to inherit from
+// a virtual base.
+
+class UniqueAny {
+    struct Concept {
+        virtual ~Concept()                                  = default;
+        virtual const std::type_info& type() const noexcept = 0;
+    };
+
+    template <typename T>
+    struct Model final : Concept {
+        T value;
+
+        template <typename... Args>
+        explicit Model(std::in_place_t, Args&&... args) noexcept(
+            std::is_nothrow_constructible_v<T, Args&&...>)
+            : value(std::forward<Args>(args)...) {}
+
+        const std::type_info& type() const noexcept override { return typeid(T); }
+    };
+
+    std::unique_ptr<Concept> ptr_;
+
+public:
+    UniqueAny()  = default;
+    ~UniqueAny() = default;
+
+    UniqueAny(UniqueAny&&) noexcept            = default;
+    UniqueAny& operator=(UniqueAny&&) noexcept = default;
+
+    UniqueAny(const UniqueAny&)            = delete;
+    UniqueAny& operator=(const UniqueAny&) = delete;
+
+    template <typename T, typename... Args>
+    static UniqueAny make(Args&&... args) {
+        UniqueAny out;
+        out.emplace<T>(std::forward<Args>(args)...);
+        return out;
+    }
+
+    template <typename T, typename... Args>
+    T& emplace(Args&&... args) {
+        ptr_ = std::make_unique<Model<T>>(std::in_place, std::forward<Args>(args)...);
+        return static_cast<Model<T>*>(ptr_.get())->value;
+    }
+
+    [[nodiscard]] bool has_value() const noexcept { return static_cast<bool>(ptr_); }
+
+    [[nodiscard]] const std::type_info& type() const noexcept {
+        return ptr_ ? ptr_->type() : typeid(void);
+    }
+
+    template <typename T>
+    [[nodiscard]] T* get() noexcept {
+        if (!ptr_ || ptr_->type() != typeid(T)) {
+            return nullptr;
+        }
+        return &static_cast<Model<T>*>(ptr_.get())->value;
+    }
+
+    template <typename T>
+    [[nodiscard]] const T* get() const noexcept {
+        if (!ptr_ || ptr_->type() != typeid(T)) {
+            return nullptr;
+        }
+        return &static_cast<const Model<T>*>(ptr_.get())->value;
+    }
+
+    template <typename T>
+    [[nodiscard]] T& as() noexcept {
+        auto* p = get<T>();
+        if (!p) {
+            panic(
+                "UniqueAny bad cast: requested {} but stored {}",
+                detail::demangle(typeid(T).name()), detail::demangle(type().name()));
+        }
+        return *p;
+    }
+
+    template <typename T>
+    [[nodiscard]] const T& as() const noexcept {
+        auto* p = get<T>();
+        if (!p) {
+            panic(
+                "UniqueAny bad cast: requested {} but stored {}",
+                detail::demangle(typeid(T).name()), detail::demangle(type().name()));
+        }
+        return *p;
+    }
+};
 
 // ============================================================================
 // Resource Wrapper
@@ -50,21 +147,17 @@ struct WorldLifetimeToken {};
 // ============================================================================
 // Design Note: Type Erasure for Heterogeneous Storage
 // ============================================================================
-// World needs to store arbitrary types (resources, channels, atomics) in maps.
-// std::any is used here as a type-erasure pattern - all accesses go through
-// templates that know the exact type, providing compile-time type safety at
-// the call site while allowing heterogeneous storage internally.
+// World stores arbitrary resource and channel storage types behind UniqueAny.
+// UniqueAny is intentionally move-only, unlike std::any. This allows the world
+// to store move-only resources and unique_ptr-backed channel storage without
+// forcing the actual storage types into a virtual inheritance hierarchy.
 //
-// Alternative approaches considered:
-// - Template-based storage: Would require users to specify all types upfront
-// - std::variant: Not scalable for open-ended type sets
-// - std::shared_ptr<void>: Same type-safety issues as std::any
-//
-// This is an internal implementation detail; the public API is fully type-safe.
+// Public APIs remain typed. All casts happen at the boundary where the world
+// already knows the exact T from the template call site.
 // ============================================================================
 
 // ============================================================================
-// SPSC Storage: holds split writer and reader (wrapped in shared_ptr for any)
+// SPSC Storage: holds split writer and reader
 // ============================================================================
 
 template <typename T>
@@ -79,10 +172,10 @@ struct SpscStorage {
     bool writer_claimed = false;
     bool reader_claimed = false;
 
-    static std::shared_ptr<SpscStorage> create() {
+    static std::unique_ptr<SpscStorage> create() {
         auto ch         = primitive::make_spsc_channel<T>();
         auto [w, r]     = ch.split();
-        auto storage    = std::make_shared<SpscStorage>();
+        auto storage    = std::make_unique<SpscStorage>();
         storage->writer = std::make_unique<Writer>(std::move(w));
         storage->reader = std::make_unique<Reader>(std::move(r));
         return storage;
@@ -90,7 +183,7 @@ struct SpscStorage {
 };
 
 // ============================================================================
-// SPMC Storage: holds channel and readers
+// SPMC Storage: holds channel and reader clones
 // ============================================================================
 
 template <typename T>
@@ -99,25 +192,158 @@ struct SpmcStorage {
     using Reader     = Channel::Reader;
     using value_type = T;
 
-    std::shared_ptr<Channel> channel;
-    std::vector<std::shared_ptr<Reader>> readers;
+    std::unique_ptr<Channel> channel;
+    std::vector<std::unique_ptr<Reader>> readers;
 
-    static std::shared_ptr<SpmcStorage> create() {
-        auto storage     = std::make_shared<SpmcStorage>();
-        storage->channel = std::make_shared<Channel>(primitive::make_spmc_channel<T>());
+    static std::unique_ptr<SpmcStorage> create() {
+        auto storage     = std::make_unique<SpmcStorage>();
+        storage->channel = std::make_unique<Channel>(primitive::make_spmc_channel<T>());
         return storage;
     }
 
-    std::shared_ptr<Reader> add_reader() {
-        auto reader = std::make_shared<Reader>(channel->clone_reader());
-        readers.push_back(reader);
-        return reader;
+    Reader* add_reader() {
+        auto reader = std::make_unique<Reader>(channel->clone_reader());
+        auto* raw   = reader.get();
+        readers.push_back(std::move(reader));
+        return raw;
+    }
+};
+
+// ============================================================================
+// ResourceStore
+// ============================================================================
+
+class ResourceStore {
+public:
+    template <typename T, typename... Args>
+    [[nodiscard]] T& emplace(Args&&... args) {
+        using U = std::remove_cvref_t<T>;
+
+        auto [it, inserted] = resources_.try_emplace(typeid(U));
+
+        if (!inserted) [[unlikely]] {
+            panic("Resource already exists: {}", detail::demangle(typeid(U).name()));
+        }
+
+        auto& storage =
+            it->second.template emplace<Resource<U>>(std::in_place, std::forward<Args>(args)...);
+
+        return storage.value;
+    }
+
+    template <typename T>
+    [[nodiscard]] bool contains() const noexcept {
+        return resources_.contains(typeid(T));
+    }
+
+    template <typename T>
+    [[nodiscard]] const Resource<T>* get_storage() const noexcept {
+        const auto it = resources_.find(typeid(T));
+        if (it == resources_.end()) [[unlikely]] {
+            return nullptr;
+        }
+        return it->second.template get<Resource<T>>();
+    }
+
+    template <typename T>
+    [[nodiscard]] Resource<T>* get_storage_mut() noexcept {
+        const auto it = resources_.find(typeid(T));
+        if (it == resources_.end()) [[unlikely]] {
+            return nullptr;
+        }
+        return it->second.template get<Resource<T>>();
+    }
+
+    template <typename T>
+    [[nodiscard]] const T& get() const noexcept {
+        auto* storage = get_storage<T>();
+        if (!storage) [[unlikely]] {
+            panic("Resource not found: {}", detail::demangle(typeid(T).name()));
+        }
+        return storage->value;
+    }
+
+    template <typename T>
+    [[nodiscard]] T& get_mut() noexcept {
+        auto* storage = get_storage_mut<T>();
+        if (!storage) [[unlikely]] {
+            panic("Resource not found: {}", detail::demangle(typeid(T).name()));
+        }
+        return storage->value;
+    }
+
+private:
+    std::unordered_map<std::type_index, UniqueAny> resources_;
+};
+
+// ============================================================================
+// ChannelStore
+// ============================================================================
+
+class ChannelStore {
+public:
+    void open_binding() noexcept { channel_binding_depth_.fetch_add(1, std::memory_order_acq_rel); }
+
+    void close_binding() noexcept {
+        channel_binding_depth_.fetch_sub(1, std::memory_order_acq_rel);
+    }
+
+    [[nodiscard]] bool binding_open() const noexcept {
+        return channel_binding_depth_.load(std::memory_order_acquire) != 0;
+    }
+
+    template <typename Storage, typename Topic = system::DefaultTopic>
+    [[nodiscard]] Storage* get_storage() noexcept {
+        ensure_binding_open();
+
+        using T = typename Storage::value_type;
+        const system::ChannelKey key{typeid(T), typeid(Topic)};
+
+        auto& storage_map   = select_storage_map<Storage>();
+        auto [it, inserted] = storage_map.try_emplace(key);
+
+        if (inserted) {
+            it->second.template emplace<std::unique_ptr<Storage>>(Storage::create());
+        }
+
+        auto* ptr = it->second.template get<std::unique_ptr<Storage>>();
+
+        if (!ptr || !*ptr) [[unlikely]] {
+            panic(
+                "Channel storage type mismatch: {}@{}", detail::demangle(typeid(T).name()),
+                detail::demangle(typeid(Topic).name()));
+        }
+
+        return ptr->get();
+    }
+
+private:
+    std::unordered_map<system::ChannelKey, UniqueAny, system::ChannelKeyHash> spsc_storage_;
+    std::unordered_map<system::ChannelKey, UniqueAny, system::ChannelKeyHash> spmc_storage_;
+    std::atomic<std::uint32_t> channel_binding_depth_{0};
+
+    void ensure_binding_open() const noexcept {
+        if (!binding_open()) [[unlikely]] {
+            panic("Channel endpoints can only be claimed during scheduler-controlled bind phases");
+        }
+    }
+
+    template <typename Storage>
+    [[nodiscard]] auto& select_storage_map() noexcept {
+        using T = typename Storage::value_type;
+
+        if constexpr (std::is_same_v<Storage, SpscStorage<T>>) {
+            return spsc_storage_;
+        } else {
+            return spmc_storage_;
+        }
     }
 };
 
 // ============================================================================
 // World: Resource + Channel Container
 // ============================================================================
+
 using namespace system;
 using namespace talos::scheduler::detail;
 
@@ -128,31 +354,28 @@ public:
     template <typename T>
     void insert_resource(T&& resource) {
         using U = std::remove_cvref_t<T>;
+        SPDLOG_DEBUG("register {}", demangle(typeid(T).name()));
         ensure_resource_structure_mutable<U>();
-        resources_[typeid(U)] = std::make_shared<Resource<U>>(std::forward<T>(resource));
+        static_cast<void>(resources_.template emplace<U>(std::forward<T>(resource)));
     }
 
     template <typename T, typename... Args>
     [[nodiscard]] T& emplace_resource(Args&&... args) {
-        ensure_resource_structure_mutable<T>();
-        auto storage = std::make_shared<Resource<T>>(std::in_place, std::forward<Args>(args)...);
-        auto& value  = storage->value;
-        resources_[typeid(T)] = std::move(storage);
-        return value;
+        using U = std::remove_cvref_t<T>;
+        ensure_resource_structure_mutable<U>();
+        return resources_.template emplace<U>(std::forward<Args>(args)...);
     }
 
     template <typename T>
     void unsafe_insert_resource(T&& resource) {
-        using U               = std::remove_cvref_t<T>;
-        resources_[typeid(U)] = std::make_shared<Resource<U>>(std::forward<T>(resource));
+        using U = std::remove_cvref_t<T>;
+        static_cast<void>(resources_.template emplace<U>(std::forward<T>(resource)));
     }
 
     template <typename T, typename... Args>
     [[nodiscard]] T& unsafe_emplace_resource(Args&&... args) {
-        auto storage = std::make_shared<Resource<T>>(std::in_place, std::forward<Args>(args)...);
-        auto& value  = storage->value;
-        resources_[typeid(T)] = std::move(storage);
-        return value;
+        using U = std::remove_cvref_t<T>;
+        return resources_.template emplace<U>(std::forward<Args>(args)...);
     }
 
     void freeze_resource_structure() noexcept;
@@ -165,32 +388,22 @@ public:
 
     template <typename T>
     [[nodiscard]] bool has_resource() const noexcept {
-        return resources_.contains(typeid(T));
+        return resources_.template contains<T>();
     }
 
-    /// Get read-only resource. Panics if resource not found (bind-phase error).
+    /// Get read-only resource. Panics if resource not found.
     template <typename T>
     [[nodiscard]] res<T> get_res() const noexcept {
-        return get_resource_helper<T, res<T>>(
-            [](auto* storage) { return res<T>{&storage->value}; });
+        return res<T>{&resources_.template get<T>()};
     }
 
-    /// Get mutable resource. Panics if resource not found (bind-phase error).
+    /// Get mutable resource. Panics if resource not found.
     template <typename T>
     [[nodiscard]] res_mut<T> get_res_mut() noexcept {
-        return get_resource_helper<T, res_mut<T>>(
-            [](auto* storage) { return res_mut<T>{&storage->value}; });
+        return res_mut<T>{&resources_.template get_mut<T>()};
     }
 
     // ==================== Type-Dispatched Access ====================
-    //
-    // Unified get() that uses tag dispatch (zero if-constexpr, zero pasta)
-    //
-    // Usage: world.get<res<Config>>(); world.get<spsc<Image, Tag>>();
-    // Channel components are only valid during scheduler-controlled bind phases.
-    //
-    // Channel endpoints are bind-phase only. Calling channel getters outside scheduler bind()
-    // aborts because it would mutate or claim graph-visible topology behind the scheduler's back.
 
     template <typename ComponentT>
     [[nodiscard]] auto get() noexcept {
@@ -222,20 +435,20 @@ private:
     template <typename T, typename Topic>
     friend struct rclcompat::PubSlot;
 
-    void open_channel_binding() noexcept;
+    void open_channel_binding() noexcept { channels_.open_binding(); }
 
-    void close_channel_binding() noexcept;
+    void close_channel_binding() noexcept { channels_.close_binding(); }
 
-    [[nodiscard]] bool channel_binding_open() const noexcept;
+    [[nodiscard]] bool channel_binding_open() const noexcept { return channels_.binding_open(); }
 
-    // Unified channel accessor: one template for all member-pointer-based access
+    // Unified channel accessor: one template for member-pointer-based access.
     template <typename Ret, typename Topic, typename Storage, auto MemberPtr>
     [[nodiscard]] auto get_channel_member() noexcept {
         auto* s = get_channel_storage<Storage, Topic>();
         return Ret{(s->*MemberPtr).get()};
     }
 
-    // Channel implementations (3 cases use unified get_channel_member, 1 special case)
+    // Channel implementations.
     template <typename T, typename Topic = DefaultTopic>
     [[nodiscard]] auto get_impl(spsc<T, Topic>) noexcept {
         auto* s = get_channel_storage<SpscStorage<T>, Topic>();
@@ -262,9 +475,8 @@ private:
 
     template <typename T, typename Topic = DefaultTopic>
     [[nodiscard]] auto get_impl(spmc<T, Topic>) noexcept {
-        // Special case: spmc reader calls add_reader()
         auto* s = get_channel_storage<SpmcStorage<T>, Topic>();
-        return spmc<T, Topic>{s->add_reader().get()};
+        return spmc<T, Topic>{s->add_reader()};
     }
 
     template <typename T, typename Topic = DefaultTopic>
@@ -283,25 +495,15 @@ private:
         return get_res_mut<T>();
     }
 
-    // Original storage accessor (kept for get_channel_storage compatibility)
     template <typename Storage, typename Topic = DefaultTopic>
     [[nodiscard]] auto* get_channel_storage() noexcept {
-        ensure_channel_binding_open();
-        using T = typename Storage::value_type;
-        const ChannelKey key{typeid(T), typeid(Topic)};
-        auto& storage_map = select_storage_map<Storage>();
-        if (!storage_map.contains(key)) {
-            storage_map[key] = Storage::create();
-        }
-        return std::any_cast<std::shared_ptr<Storage>>(storage_map.at(key)).get();
+        return channels_.template get_storage<Storage, Topic>();
     }
 
 private:
-    std::unordered_map<std::type_index, std::any> resources_;
-    std::unordered_map<ChannelKey, std::any, ChannelKeyHash> spsc_storage_;
-    std::unordered_map<ChannelKey, std::any, ChannelKeyHash> spmc_storage_;
+    ResourceStore resources_;
+    ChannelStore channels_;
     std::atomic<bool> resource_structure_frozen_{false};
-    std::atomic<std::uint32_t> channel_binding_depth_{0};
     std::shared_ptr<WorldLifetimeToken> lifetime_token_ = std::make_shared<WorldLifetimeToken>();
 
     template <typename T>
@@ -315,32 +517,8 @@ private:
         }
     }
 
-    void ensure_channel_binding_open() const noexcept;
-
 public:
     [[nodiscard]] std::weak_ptr<WorldLifetimeToken> lifetime_token() const noexcept;
-
-private:
-    /// Helper: Get resource storage with unified error handling
-    template <typename T, typename Return, typename MapFn>
-    [[nodiscard]] Return get_resource_helper(MapFn&& map_fn) const noexcept {
-        const auto it = resources_.find(typeid(T));
-        if (it == resources_.end()) [[unlikely]] {
-            panic("Resource not found: {}", demangle(typeid(T).name()));
-        }
-        auto storage = std::any_cast<std::shared_ptr<Resource<T>>>(it->second);
-        return map_fn(storage.get());
-    }
-
-    /// Helper: Select the right storage map based on storage type
-    template <typename Storage>
-    auto& select_storage_map() noexcept {
-        if constexpr (std::is_same_v<Storage, SpscStorage<typename Storage::value_type>>) {
-            return spsc_storage_;
-        } else {
-            return spmc_storage_;
-        }
-    }
 };
 
 template <typename T, typename Topic = DefaultTopic>

@@ -182,7 +182,7 @@ Scheduler::Scheduler(const SchedulerConfig config) noexcept
     : config_(config)
     , stats_start_time_(Clock::now()) {}
 
-Scheduler::~Scheduler() {
+Scheduler::~Scheduler() noexcept {
     stop();
 
     for (auto& t : fixed_rate_threads_) {

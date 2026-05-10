@@ -43,8 +43,7 @@ struct CustomFusionOut {};
 void test_scheduler_fixed_rate_and_pool() {
     printf("=== Test: Fixed rate + Pool Systems ===\n");
 
-    talos::World world;
-    talos::Scheduler scheduler(world);
+    talos::Scheduler scheduler({});
 
     std::atomic imu_count{0};
     std::atomic camera_count{0};
@@ -141,8 +140,7 @@ void test_silent_vs_notify() {
 
     struct NotifyTag {};
 
-    talos::World world;
-    talos::Scheduler scheduler(world);
+    talos::Scheduler scheduler({});
 
     std::atomic silent_count{0};
     std::atomic notify_count{0};
@@ -200,8 +198,7 @@ void test_multiple_writers_error() {
 
     struct SharedChannel {};
 
-    talos::World world;
-    talos::Scheduler scheduler(world);
+    talos::Scheduler scheduler({});
 
     // Two systems writing to the same channel - should fail
     scheduler.add_system<talos::pool_compute>(
@@ -240,8 +237,7 @@ void test_multiple_readers_error() {
 
     struct SpscChannel {};
 
-    talos::World world;
-    talos::Scheduler scheduler(world);
+    talos::Scheduler scheduler({});
 
     // One writer
     scheduler.add_system<talos::pool_compute>(
@@ -283,8 +279,7 @@ void test_spmc_multiple_readers_ok() {
 
     struct BroadcastChannel {};
 
-    talos::World world;
-    talos::Scheduler scheduler(world);
+    talos::Scheduler scheduler({});
 
     // One external source feeding multiple compute readers
     scheduler.add_system<talos::fixed_rate<30>>(
@@ -319,8 +314,7 @@ void test_orphaned_reader_error() {
 
     struct OrphanChannel {};
 
-    talos::World world;
-    talos::Scheduler scheduler(world);
+    talos::Scheduler scheduler({});
 
     // Reader without writer - should fail
     scheduler.add_system<talos::pool_compute>(
@@ -350,8 +344,7 @@ void test_channel_kind_conflict() {
 
     struct ConflictChannel {};
 
-    talos::World world;
-    talos::Scheduler scheduler(world);
+    talos::Scheduler scheduler({});
 
     // Write as SPSC
     scheduler.add_system<talos::pool_compute>(
@@ -387,8 +380,7 @@ void test_dependency_cycle_error() {
     struct ChannelBC {};
     struct ChannelCA {};
 
-    talos::World world;
-    talos::Scheduler scheduler(world);
+    talos::Scheduler scheduler({});
 
     // A -> B -> C -> A (cycle)
     scheduler.add_system<talos::pool_compute>(
@@ -433,8 +425,7 @@ void test_dependency_cycle_error() {
 void test_unreachable_compute_error() {
     printf("=== Test: Unreachable Compute Error ===\n");
 
-    talos::World world;
-    talos::Scheduler scheduler(world);
+    talos::Scheduler scheduler({});
 
     scheduler.add_system<talos::pool_compute>("isolated_compute", []() {});
 
@@ -460,8 +451,7 @@ void test_unreachable_compute_error() {
 void test_too_many_compute_systems_error() {
     printf("=== Test: Too Many Compute Systems Error ===\n");
 
-    talos::World world;
-    talos::Scheduler scheduler(world);
+    talos::Scheduler scheduler({});
 
     for (std::size_t i = 0; i <= talos::TooManyComputeSystemsError::max_count; ++i) {
         scheduler.add_system<talos::pool_compute>(fmt::format("compute_{}", i), []() {});
@@ -496,8 +486,7 @@ void test_valid_dependency_chain() {
     struct Stopice2Out {};
     struct Stopice3Out {};
 
-    talos::World world;
-    talos::Scheduler scheduler(world);
+    talos::Scheduler scheduler({});
 
     // Linear reactive pipeline: source -> stopice1 -> stopice2 -> stopice3
     scheduler.add_system<talos::fixed_rate<30>>(
@@ -540,8 +529,7 @@ void test_failed_safe_hot_add_leaves_scheduler_configuring() {
 
     struct SafeHotAddChannel {};
 
-    talos::World world;
-    talos::Scheduler scheduler(world);
+    talos::Scheduler scheduler({});
 
     scheduler.add_system<talos::fixed_rate<30>>(
         "source", [](talos::spmc_mut<int, SafeHotAddChannel> out) { out.write(1); });
@@ -613,8 +601,8 @@ public:
 void test_repeated_build_binds_custom_system_once() {
     printf("=== Test: Repeated Build Binds Custom System Once ===\n");
 
-    talos::World world;
-    talos::Scheduler scheduler(world);
+    talos::Scheduler scheduler({});
+
     std::atomic<int> bind_count{0};
 
     auto idx_result =
@@ -703,8 +691,7 @@ public:
 void test_custom_system_injection() {
     printf("=== Test: Custom System Injection ===\n");
 
-    talos::World world;
-    talos::Scheduler scheduler(world);
+    talos::Scheduler scheduler({});
 
     std::atomic<int> camera_count{0};
     std::atomic<int> custom_runs{0};

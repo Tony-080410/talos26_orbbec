@@ -115,7 +115,6 @@ void init_coordinate_system(fast_tf::CoordinateSystem& system, const RobotExtrin
 
     SPDLOG_INFO("armor backend: {}", backend_handle_result->name);
 
-    world.insert_resource(setup_result.value().camera_config);
     world.insert_resource(std::move(backend_handle_result->backend));
     world.insert_resource(L2::create_pnp_solver(setup_result.value().camera_config));
 
