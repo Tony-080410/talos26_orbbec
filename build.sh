@@ -8,12 +8,13 @@
 #   Linux  | clang 21+       | libstdc++ (via GCC 13+ toolchain) | x86_64/arm64
 #
 # Usage:
-#   ./build.sh [--debug|--release] [--asan] [--test] [--calib|--playground] [--] [app args...]
+#   ./build.sh [--debug|--release] [--asan|--tsan] [--test] [--calib|--playground] [--] [app args...]
 #
 # Examples:
 #   ./build.sh
 #   ./build.sh --debug
 #   ./build.sh --asan
+#   ./build.sh --tsan
 #   ./build.sh --test --no-run
 #   ./build.sh --cross
 #   ./build.sh --calib -- --camera 0
@@ -65,6 +66,7 @@ BUILD_TYPE="Release"
 BUILD_TARGET="talos"
 ENABLE_CALIBRATION="OFF"
 ENABLE_ASAN="OFF"
+ENABLE_TSAN="OFF"
 ENABLE_TESTING="OFF"
 RUN_AFTER_BUILD="ON"
 VERBOSE="OFF"
@@ -330,12 +332,45 @@ configure_asan_runtime() {
     fi
 
     # ASan detailed output
-    export ASAN_OPTIONS="symbolize=1:fast_unwind_on_malloc=0:detect_leaks=1:malloc_context_size=30:print_suppressions=0:verbosity=0"
+    # detect_leaks: Linux only (requires ptrace); macOS does not support LSan
+    local detect_leaks_val
+    if [[ "$OS" == "linux" ]]; then
+        detect_leaks_val="1"
+    else
+        detect_leaks_val="0"
+    fi
+    
+    export ASAN_OPTIONS="symbolize=1:fast_unwind_on_malloc=0:detect_leaks=${detect_leaks_val}:malloc_context_size=30:print_suppressions=0:verbosity=0"
 
-    # LSan standalone control (used by LSAN_OPTIONS even under ASan)
+    # LSan standalone control — Linux only
     export LSAN_OPTIONS="report_objects=1:print_suppressions=0"
 
     ok "ASan runtime configured"
+}
+
+# -----------------------------------------------------------------------------
+# TSan runtime
+# -----------------------------------------------------------------------------
+configure_tsan_runtime() {
+    [[ "$ENABLE_TSAN" == "ON" ]] || return 0
+
+    # Ensure llvm-symbolizer is discoverable
+    local symbolizer
+    symbolizer="$(which llvm-symbolizer 2>/dev/null || which llvm-symbolizer-21 2>/dev/null || which llvm-symbolizer-22 2>/dev/null || true)"
+    if [[ -n "$symbolizer" ]]; then
+        export TSAN_SYMBOLIZER_PATH="$symbolizer"
+        info "TSan symbolizer: ${symbolizer}"
+    else
+        warn "llvm-symbolizer not found - TSan reports will lack source-level symbolization"
+    fi
+
+    # TSan detailed output
+    # history_size=7: deeper stack history per race event
+    # second_deadlock_stack=1: show second stack in deadlock reports
+    # halt_on_error=0: continue after first error (collect all races)
+    export TSAN_OPTIONS="history_size=7:second_deadlock_stack=1:halt_on_error=0:verbosity=0"
+
+    ok "TSan runtime configured"
 }
 
 # -----------------------------------------------------------------------------
@@ -350,6 +385,7 @@ configure_cmake() {
         "-DCMAKE_BUILD_TYPE=${BUILD_TYPE}"
         "-DENABLE_CALIBRATION=${ENABLE_CALIBRATION}"
         "-DENABLE_ASAN=${ENABLE_ASAN}"
+        "-DENABLE_TSAN=${ENABLE_TSAN}"
         "-DTALOS_BUILD_TESTING=${ENABLE_TESTING}"
         "${CMAKE_EXTRA_ARGS[@]}"
     )
@@ -387,6 +423,7 @@ run_target() {
     [[ "$RUN_AFTER_BUILD" == "ON" ]] || return 0
 
     configure_asan_runtime
+    configure_tsan_runtime
 
     local exe="./build/bin/${BUILD_TARGET}"
     [[ -x "$exe" ]] || die "Built executable not found: $exe"
@@ -403,6 +440,7 @@ run_tests() {
     [[ "$ENABLE_TESTING" == "ON" ]] || return 0
 
     configure_asan_runtime
+    configure_tsan_runtime
 
     info "Running tests..."
     ctest --test-dir build --output-on-failure --parallel "${BUILD_JOBS}"
@@ -425,6 +463,10 @@ parse_args() {
                 ;;
             --asan|-fsanitize=address)
                 ENABLE_ASAN="ON"
+                shift
+                ;;
+            --tsan|-fsanitize=thread)
+                ENABLE_TSAN="ON"
                 shift
                 ;;
             --test)
@@ -500,9 +542,15 @@ main() {
 
     ensure_generator
 
+    # ASan and TSan are mutually exclusive
+    if [[ "$ENABLE_ASAN" == "ON" && "$ENABLE_TSAN" == "ON" ]]; then
+        die "Cannot enable both ASan and TSan simultaneously. Choose one."
+    fi
+
     info "Platform: ${OS} (${ARCH})"
     info "Build type: ${BUILD_TYPE}"
     info "ASAN: ${ENABLE_ASAN}"
+    info "TSAN: ${ENABLE_TSAN}"
     info "Target: ${BUILD_TARGET}"
     info "Run after build: ${RUN_AFTER_BUILD}"
     info "Build log redaction: ${REDACT_BUILD_OUTPUT}"

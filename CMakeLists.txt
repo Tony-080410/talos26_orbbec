@@ -45,6 +45,25 @@ else()
     message(STATUS "AddressSanitizer: DISABLED")
 endif()
 
+# ============================================================================
+# ThreadSanitizer Option (Data Race Detection)
+# ============================================================================
+option(ENABLE_TSAN "Enable ThreadSanitizer for data race detection" OFF)
+
+if(ENABLE_TSAN)
+    message(STATUS "ThreadSanitizer: ENABLED")
+    add_compile_options(
+        -fsanitize=thread
+        -fno-omit-frame-pointer
+        -g3
+    )
+    add_link_options(-fsanitize=thread -g3)
+    message(STATUS "  Compile flags: -fsanitize=thread -fno-omit-frame-pointer -g3")
+    message(STATUS "  Link flags:    -fsanitize=thread -g3")
+else()
+    message(STATUS "ThreadSanitizer: DISABLED")
+endif()
+
 # Add project cmake directory to module search path
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 
