@@ -294,7 +294,7 @@ Eigen::Vector3d Aimer::predict_position(
         blade_local.z());
 
     Eigen::Vector3d predicted_position = r_center + blade_offset;
-    // predicted_position.z()             = predicted_position.z() - 0.1;
+
     return predicted_position;
 }
 

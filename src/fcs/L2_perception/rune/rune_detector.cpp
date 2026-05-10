@@ -1355,7 +1355,7 @@ std::expected<fast_tf::TransformMatrixd<rune, fast_tf::odom>, std::string> RuneD
     if (pose_prior_.timestamp > 0 && (timestamp_sec - pose_prior_.timestamp) < 0.5) {
         rvec   = pose_prior_.rvec.clone();
         tvec   = pose_prior_.tvec.clone();
-        pnp_ok = cv::solvePnP(
+        pnp_ok = cv::solvePnPRansac(
             object_points, norm_points, kIdentityK, cv::Mat(), rvec, tvec, true,
             cv::SOLVEPNP_ITERATIVE);
     }
@@ -1363,11 +1363,11 @@ std::expected<fast_tf::TransformMatrixd<rune, fast_tf::odom>, std::string> RuneD
     // Fallback: standard method
     if (!pnp_ok) {
         if (targets.size() == 1) {
-            pnp_ok = cv::solvePnP(
+            pnp_ok = cv::solvePnPRansac(
                 object_points, norm_points, kIdentityK, cv::Mat(), rvec, tvec, false,
                 cv::SOLVEPNP_IPPE);
         } else {
-            pnp_ok = cv::solvePnP(
+            pnp_ok = cv::solvePnPRansac(
                 object_points, norm_points, kIdentityK, cv::Mat(), rvec, tvec, false,
                 cv::SOLVEPNP_SQPNP);
         }

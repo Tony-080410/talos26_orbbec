@@ -6,8 +6,17 @@
 
 namespace fcs::energy_meter {
 
+/// Tracker state machine states
+enum class TrackerState : uint8_t {
+    IDLE,      // No target, waiting for first observation
+    DETECTING, // Collecting consecutive detections to confirm target
+    TRACKING,  // Firmly tracking, EKF is stable
+    TEMP_LOST, // Temporarily lost, predicting forward
+};
+
 struct EnergyMeterState {
     uint64_t timestamp_ns{};
+    TrackerState tracker_state{TrackerState::IDLE};
     bool tracking_valid{false};
 
     Eigen::Vector3d r_center_odom{Eigen::Vector3d::Zero()};
@@ -29,6 +38,7 @@ struct EnergyMeterState {
 
     bool model_valid{false};
     bool is_big_rune{true};
+    bool obs_valid{false};
 
     Eigen::Vector3d position{Eigen::Vector3d::Zero()};
     Eigen::Quaterniond quat{Eigen::Quaterniond::Identity()};

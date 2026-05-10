@@ -25,7 +25,7 @@ namespace {
 template <typename ModelT>
 EnergyMeterState build_state_from_tracker(
     const ::energy_meter::Tracker<ModelT>& tracker, uint64_t timestamp_ns, int tracking_frames,
-    bool is_big) {
+    bool is_big, bool obs_valid) {
     const auto& x = tracker.get_state();
 
     const double roll   = x(ModelT::THETA);
@@ -56,6 +56,7 @@ EnergyMeterState build_state_from_tracker(
 
     EnergyMeterState out;
     out.timestamp_ns   = timestamp_ns;
+    out.tracker_state  = static_cast<TrackerState>(tracker.state);
     out.tracking_valid = is_tracking;
     out.r_center_odom  = r_center;
     out.radius         = radius;
@@ -67,6 +68,8 @@ EnergyMeterState build_state_from_tracker(
     out.is_big_rune    = is_big;
     out.position       = r_center + blade_offset;
     out.quat           = yaw_quat * roll_quat;
+
+    out.obs_valid = obs_valid;
 
     if constexpr (std::is_same_v<ModelT, ::energy_meter::BigRuneModel>) {
         out.t           = x(ModelT::TAU);
@@ -87,14 +90,15 @@ EnergyMeterState build_state_from_tracker(
 
 EnergyMeterState build_state(
     const ::energy_meter::AnyTracker& tracker_var, uint64_t timestamp_ns, int tracking_frames,
-    bool is_big) {
+    bool is_big, bool obs_valid) {
     return std::visit(
         [&](const auto& tk) -> EnergyMeterState {
             using T = std::decay_t<decltype(tk)>;
             if constexpr (std::is_same_v<T, std::monostate>) {
                 return EnergyMeterState{};
             } else {
-                return build_state_from_tracker(tk, timestamp_ns, tracking_frames, is_big);
+                return build_state_from_tracker(
+                    tk, timestamp_ns, tracking_frames, is_big, obs_valid);
             }
         },
         tracker_var);
@@ -128,7 +132,7 @@ void register_energy_meter_systems(talos::Scheduler& scheduler, EnergyMeterL3Con
             last_timestamp_ns = frame_ns;
 
             // Reset on large gap
-            if (dt > 2.0) {
+            if (dt > cfg->reset_vote_time) {
                 **tracker_ptr     = ::energy_meter::AnyTracker{};
                 last_timestamp_ns = 0;
                 tracking_frames   = 0;
@@ -166,8 +170,8 @@ void register_energy_meter_systems(talos::Scheduler& scheduler, EnergyMeterL3Con
                         tracker_var);
 
                     tracking_frames = is_tracking ? tracking_frames + 1 : 0;
-                    state_out.write(
-                        build_state(tracker_var, frame_ns, tracking_frames, voter.is_big()));
+                    state_out.write(build_state(
+                        tracker_var, frame_ns, tracking_frames, voter.is_big(), obs_valid));
                 }
                 return;
             }
@@ -246,8 +250,8 @@ void register_energy_meter_systems(talos::Scheduler& scheduler, EnergyMeterL3Con
                 tracker_var);
 
             tracking_frames = is_tracking ? tracking_frames + 1 : 0;
-            state_out.write(
-                build_state(tracker_var, obs->timestamp_ns, tracking_frames, voter.is_big()));
+            state_out.write(build_state(
+                tracker_var, obs->timestamp_ns, tracking_frames, voter.is_big(), obs_valid));
         });
 }
 

@@ -135,6 +135,7 @@ void register_debug_systems(talos::scheduler::Scheduler& app, talos::Scheduler* 
 
             nlohmann::json em_json;
             em_json["timestamp_ns"]   = state->timestamp_ns;
+            em_json["tracker_state"]  = magic_enum::enum_name(state->tracker_state);
             em_json["tracking_valid"] = state->tracking_valid;
             em_json["r_center_odom"]  = {
                 state->r_center_odom.x(), state->r_center_odom.y(), state->r_center_odom.z()};
@@ -150,6 +151,8 @@ void register_debug_systems(talos::scheduler::Scheduler& app, talos::Scheduler* 
             em_json["omega"]       = state->omega;
             em_json["b"]           = state->b;
             em_json["r"]           = state->radius;
+            em_json["obs_valid"]   = state->obs_valid;
+            em_json["yaw"]         = state->yaw;
 
             detail::publish_json_message<EnergyMeterMessage>(*server, em_json);
         });

@@ -321,6 +321,7 @@ tracking_thres = 3
 matcher_gate = 25.0
 # Frames a locked blade must be lost before unlocking and re-selecting
 blade_unlock_frames = 10
+reset_vote_time=1.0
 
 [energy_meter.big_model]
 sigma_xy = 2.0

@@ -639,6 +639,7 @@ template <fast_tf::frame Frame>
         {             "a",                           state.a},
         {         "omega",                       state.omega},
         {             "b",                           state.b},
+        {     "obs_vaild",                   state.obs_valid},
     };
 }
 
