@@ -32,8 +32,15 @@ option(ENABLE_ASAN "Enable AddressSanitizer for memory leak detection" OFF)
 
 if(ENABLE_ASAN)
     message(STATUS "AddressSanitizer: ENABLED")
-    add_compile_options(-fsanitize=address -fno-omit-frame-pointer -g)
-    add_link_options(-fsanitize=address)
+    add_compile_options(
+        -fsanitize=address
+        -fno-omit-frame-pointer
+        -fno-optimize-sibling-calls
+        -g3
+    )
+    add_link_options(-fsanitize=address -g3)
+    message(STATUS "  Compile flags: -fsanitize=address -fno-omit-frame-pointer -fno-optimize-sibling-calls -g3")
+    message(STATUS "  Link flags:    -fsanitize=address -g3")
 else()
     message(STATUS "AddressSanitizer: DISABLED")
 endif()

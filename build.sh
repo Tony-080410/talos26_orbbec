@@ -314,6 +314,31 @@ configure_linux() {
 }
 
 # -----------------------------------------------------------------------------
+# ASan runtime
+# -----------------------------------------------------------------------------
+configure_asan_runtime() {
+    [[ "$ENABLE_ASAN" == "ON" ]] || return 0
+
+    # Ensure llvm-symbolizer is discoverable
+    local symbolizer
+    symbolizer="$(which llvm-symbolizer 2>/dev/null || which llvm-symbolizer-21 2>/dev/null || which llvm-symbolizer-22 2>/dev/null || true)"
+    if [[ -n "$symbolizer" ]]; then
+        export ASAN_SYMBOLIZER_PATH="$symbolizer"
+        info "ASan symbolizer: ${symbolizer}"
+    else
+        warn "llvm-symbolizer not found - ASan reports will lack source-level symbolization"
+    fi
+
+    # ASan detailed output
+    export ASAN_OPTIONS="symbolize=1:fast_unwind_on_malloc=0:detect_leaks=1:malloc_context_size=30:print_suppressions=0:verbosity=0"
+
+    # LSan standalone control (used by LSAN_OPTIONS even under ASan)
+    export LSAN_OPTIONS="report_objects=1:print_suppressions=0"
+
+    ok "ASan runtime configured"
+}
+
+# -----------------------------------------------------------------------------
 # CMake / build / run
 # -----------------------------------------------------------------------------
 configure_cmake() {
@@ -361,6 +386,8 @@ build_target() {
 run_target() {
     [[ "$RUN_AFTER_BUILD" == "ON" ]] || return 0
 
+    configure_asan_runtime
+
     local exe="./build/bin/${BUILD_TARGET}"
     [[ -x "$exe" ]] || die "Built executable not found: $exe"
 
@@ -374,6 +401,8 @@ run_target() {
 
 run_tests() {
     [[ "$ENABLE_TESTING" == "ON" ]] || return 0
+
+    configure_asan_runtime
 
     info "Running tests..."
     ctest --test-dir build --output-on-failure --parallel "${BUILD_JOBS}"
