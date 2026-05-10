@@ -35,10 +35,23 @@ enum class SyncMode {
 
 struct CameraError {
     std::string message;
-    unsigned int error_code = 0;
+    std::optional<unsigned int> error_code;
+
+    CameraError(std::string msg)
+        : message(std::move(msg)) {}
+
+    CameraError(const char* msg)
+        : message(std::string(msg)) {}
+
+    CameraError(std::string msg, int error_code)
+        : message(std::move(msg))
+        , error_code(static_cast<unsigned int>(error_code)) {}
 
     std::string what() const {
-        return fmt::format("{}: {}", message, error_code_to_message(error_code));
+        if (error_code.has_value()) {
+            return fmt::format("{}: {}", message, error_code_to_message(error_code.value()));
+        }
+        return message;
     }
 };
 
@@ -84,6 +97,8 @@ public:
 
     /// 停止取流，可在 shutdown 时提前调用以避免缓冲区溢出回调
     [[nodiscard]] std::expected<void, CameraError> stop_grabbing() noexcept;
+
+    [[nodiscard]] bool valid() const noexcept;
 
     friend std::unique_ptr<ImageCapturer> std::make_unique<ImageCapturer>();
 

@@ -18,7 +18,9 @@
 namespace fcs::L1 {
 
 struct Timeout {};
-struct Disconnected {};
+struct Disconnected {
+    std::string ctx;
+};
 struct ProducerNotAvailable {};
 
 using InputError = std::variant<
@@ -80,9 +82,11 @@ class HikInput {
 public:
     explicit HikInput(
         std::unique_ptr<hikcamera::ImageCapturer> camera, CameraConfig info,
+        hikcamera::ImageCapturer::CameraProfile profile,
         std::chrono::duration<float, std::micro> exposure_time) noexcept
         : camera_(std::move(camera))
         , info_(std::move(info))
+        , profile_(profile)
         , exposure_time_ns_(
               static_cast<uint64_t>(
                   std::chrono::duration_cast<std::chrono::nanoseconds>(exposure_time).count())) {}
@@ -115,6 +119,17 @@ public:
         auto result = camera_->read(
             std::chrono::duration_cast<std::chrono::duration<unsigned int, std::milli>>(timeout));
         if (!result) {
+            if (!camera_->valid()) {
+                if (retry_-- > 0) {
+                    auto cam = hikcamera::ImageCapturer::create(profile_);
+                    if (!cam) {
+                        return std::unexpected(cam.error());
+                    }
+                    camera_ = std::move(cam.value());
+                    retry_  = 0;
+                }
+                return std::unexpected(Disconnected{result.error().what()});
+            }
             return std::unexpected(result.error());
         }
         return Frame{
@@ -137,8 +152,10 @@ private:
 
     std::unique_ptr<hikcamera::ImageCapturer> camera_;
     CameraConfig info_;
+    hikcamera::ImageCapturer::CameraProfile profile_;
     uint64_t exposure_time_ns_; // Exposure time in nanoseconds
     uint64_t seq_{0};
+    uint64_t retry_{25565};
 };
 
 class CameraInterface {
@@ -221,8 +238,8 @@ struct formatter<fcs::L1::Timeout> : formatter<std::string_view> {
 
 template <>
 struct formatter<fcs::L1::Disconnected> : formatter<std::string_view> {
-    auto format(const fcs::L1::Disconnected, format_context& ctx) const {
-        return formatter<std::string_view>::format("disconnected", ctx);
+    auto format(const fcs::L1::Disconnected d, format_context& ctx) const {
+        return formatter<std::string_view>::format(fmt::format("disconnected: {}", d.ctx), ctx);
     }
 };
 

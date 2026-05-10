@@ -31,7 +31,7 @@ std::expected<CameraInterface, InputError>
     if (!result) {
         return std::unexpected(result.error());
     }
-    return CameraInterface(HikInput(std::move(*result), config, profile.exposure_time));
+    return CameraInterface(HikInput(std::move(*result), config, profile, profile.exposure_time));
 }
 
 } // namespace fcs::L1
