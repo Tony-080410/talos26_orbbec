@@ -20,7 +20,7 @@
 
 namespace hikcamera {
 
-std::string error_code_to_message(unsigned int code) {
+std::string error_code_to_message(unsigned int code) noexcept {
     switch (code) {
     // Success
     case MV_OK: return "Success";
@@ -117,8 +117,7 @@ public:
 
         unsigned int ret = MV_CC_Initialize();
         if (ret != MV_OK) {
-            return std::unexpected(
-                CameraError{"Failed to initialize HIK SDK: " + error_code_to_message(ret), ret});
+            return std::unexpected(CameraError{"Failed to initialize HIK SDK: ", ret});
         }
 
         initialized_ = true;
@@ -135,10 +134,7 @@ public:
 
 private:
     SDKInitializer() noexcept = default;
-    ~SDKInitializer() noexcept {
-        SPDLOG_INFO("finalize");
-        finalize();
-    }
+    ~SDKInitializer() noexcept { finalize(); }
 
     std::mutex mutex_;
     bool initialized_ = false;
@@ -169,6 +165,7 @@ public:
             SPDLOG_ERROR("[HIK] Camera init failed: {}", init_result.error().message);
             return init_result;
         }
+        SPDLOG_INFO("[HIK] Camera initialzied, {}", collect_device_info(device_info.value()));
         SPDLOG_INFO("[HIK] Camera init OK, clearing stale buffers...");
 
         // 清除缓冲区中的残留帧（处理程序异常退出后的脏数据）
@@ -196,8 +193,7 @@ public:
         if (ret != MV_OK) {
             logger_->error(
                 "Failed to get image buffer: {} [code=0x{:08X}]", error_code_to_message(ret), ret);
-            return std::unexpected(
-                CameraError{"Failed to get image buffer: " + error_code_to_message(ret), ret});
+            return std::unexpected(CameraError{"Failed to get image buffer: ", ret});
         }
 
         // RAII 包装器确保 MV_CC_FreeImageBuffer 被调用一次
@@ -302,8 +298,7 @@ public:
         unsigned int ret = MV_CC_StopGrabbing(camera_handle_);
         if (ret != MV_OK) {
             logger_->error("Failed to stop grabbing: {}", error_code_to_message(ret));
-            return std::unexpected(
-                CameraError{"Failed to stop grabbing: " + error_code_to_message(ret), ret});
+            return std::unexpected(CameraError{"Failed to stop grabbing: ", ret});
         }
         return {};
     }
@@ -325,6 +320,62 @@ private:
             return std::unexpected(CameraError{message, static_cast<unsigned int>(ret)}); \
         }                                                                                 \
     } while (false)
+
+    std::string collect_device_info(MV_CC_DEVICE_INFO* pDeviceInfo) noexcept {
+        // 辅助 lambda：获取字符串节点
+        auto get_str = [&](const char* node) -> std::string {
+            MVCC_STRINGVALUE strVal = {};
+            int ret                 = MV_CC_GetStringValue(camera_handle_, node, &strVal);
+            if (ret == MV_OK) {
+                return reinterpret_cast<char*>(strVal.chCurValue);
+            }
+            return fmt::format("N/A [{}]", error_code_to_message(ret));
+        };
+
+        // 辅助 lambda：获取整型节点
+        auto get_int = [&](const char* node) -> std::string {
+            MVCC_INTVALUE_EX intVal = {};
+            int ret                 = MV_CC_GetIntValueEx(camera_handle_, node, &intVal);
+            if (ret == MV_OK) {
+                return std::to_string(intVal.nCurValue);
+            }
+            return fmt::format("N/A [{}]", error_code_to_message(ret));
+        };
+
+        // 辅助 lambda：获取枚举的符号名
+        auto get_enum_sym = [&](const char* node) -> std::string {
+            MVCC_ENUMVALUE enumVal = {};
+            int ret                = MV_CC_GetEnumValue(camera_handle_, node, &enumVal);
+            if (ret != MV_OK) {
+                return fmt::format("N/A [{}]", error_code_to_message(ret));
+            }
+            MVCC_ENUMENTRY entry = {};
+            entry.nValue         = enumVal.nCurValue;
+            ret                  = MV_CC_GetEnumEntrySymbolic(camera_handle_, node, &entry);
+            if (ret == MV_OK) {
+                return entry.chSymbolic;
+            }
+            return std::to_string(enumVal.nCurValue);
+        };
+
+        // 解析 IP（仅 GigE）
+        std::string ip_str = "N/A";
+        if (pDeviceInfo->nTLayerType == MV_GIGE_DEVICE) {
+            auto& gige = pDeviceInfo->SpecialInfo.stGigEInfo;
+            ip_str     = fmt::format(
+                "{}.{}.{}.{}", (gige.nCurrentIp >> 24) & 0xFF, (gige.nCurrentIp >> 16) & 0xFF,
+                (gige.nCurrentIp >> 8) & 0xFF, gige.nCurrentIp & 0xFF);
+        }
+
+        return fmt::format(
+            "{} {} (manuf: {}, ver: {}, fw: {}, sn: {}, user: {}, type: {}, scan: {}, "
+            "link: {} Mbps, ip: {})",
+            get_str("DeviceVendorName"), get_str("DeviceModelName"),
+            get_str("DeviceManufacturerInfo"), get_str("DeviceVersion"),
+            get_str("DeviceFirmwareVersion"), get_str("DeviceSerialNumber"),
+            get_str("DeviceUserID"), get_enum_sym("DeviceType"), get_enum_sym("DeviceScanType"),
+            get_int("DeviceLinkSpeed"), ip_str);
+    }
 
     bool is_same_device_name(MV_CC_DEVICE_INFO* pstMVDevInfo, const char* targetName) noexcept {
         if (nullptr == pstMVDevInfo) {
@@ -380,8 +431,7 @@ private:
         memset(&device_list, 0, sizeof(MV_CC_DEVICE_INFO_LIST));
         unsigned int ret = MV_CC_EnumDevices(MV_GIGE_DEVICE | MV_USB_DEVICE, &device_list);
         if (ret != MV_OK) {
-            return std::unexpected(
-                CameraError{"Failed to enum Devices: " + error_code_to_message(ret), ret});
+            return std::unexpected(CameraError{"Failed to enum Devices: ", ret});
         }
         if (device_list.nDeviceNum == 0) {
             return std::unexpected(CameraError{"Find No Devices.", 0});
@@ -439,6 +489,14 @@ private:
             // 使用 MV_CC_SetIntValueEx 而非 MV_CC_SetIntValue（与官方示例保持一致）
             ret = MV_CC_SetIntValueEx(camera_handle_, "GevSCPSPacketSize", nPacketSize);
             SDK_RET_ASSERT(ret, "Failed to set packet Size.");
+
+            ret = MV_CC_SetIntValueEx(camera_handle_, "GevHeartbeatTimeout", 3000);
+            SDK_RET_ASSERT(ret, "Failed to set heartbeat timeout.");
+
+            ret = MV_CC_SetBoolValue(camera_handle_, "FrameTimeoutEnable", true);
+            SDK_RET_ASSERT(ret, "Failed to enable frame timeout.");
+            ret = MV_CC_SetIntValueEx(camera_handle_, "FrameTimeoutTime", 2000); // 2秒
+            SDK_RET_ASSERT(ret, "Failed to set frame timeout time.");
         }
 
         // Set pixel format to 8-bit BayerRG for ADC depth
@@ -463,8 +521,14 @@ private:
         ret = MV_CC_SetFloatValue(camera_handle_, "ExposureTime", profile.exposure_time.count());
         SDK_RET_ASSERT(ret, "Failed to set exposure time.");
 
+        ret = MV_CC_SetEnumValue(camera_handle_, "GainAuto", MV_GAIN_MODE_OFF);
+        SDK_RET_ASSERT(ret, "Failed to set auto gain off.");
+
         ret = MV_CC_SetFloatValue(camera_handle_, "Gain", profile.gain);
         SDK_RET_ASSERT(ret, "Failed to set gain.");
+
+        ret = MV_CC_SetEnumValue(camera_handle_, "AcquisitionMode", MV_ACQ_MODE_CONTINUOUS);
+        SDK_RET_ASSERT(ret, "Failed to set acquisition mode to continuous.");
 
         ret = MV_CC_SetBoolValue(camera_handle_, "AcquisitionFrameRateEnable", false);
         SDK_RET_ASSERT(ret, "Failed to set acquisition frame rate enable.");
@@ -632,10 +696,12 @@ private:
     static void __stdcall
         on_stream_exception_callback(MV_CC_STREAM_EXCEPTION_INFO* pstInfo, void* pUser) noexcept {
         auto* self = static_cast<Impl*>(pUser);
-        self->logger_->error(
-            "[HIK] Stream exception: {}, serial={}",
-            stream_exception_type_to_string(pstInfo->enExceptionType),
-            reinterpret_cast<const char*>(pstInfo->chSerialNumber));
+        if (pstInfo->enExceptionType != MV_CC_STREAM_EXCEPTION_LIST_OVERFLOW) {
+            self->logger_->error(
+                "[HIK] Stream exception: {}, serial={}",
+                stream_exception_type_to_string(pstInfo->enExceptionType),
+                reinterpret_cast<const char*>(pstInfo->chSerialNumber));
+        }
     }
 
     static const char* exception_type_to_string(unsigned int nMsgType) noexcept {

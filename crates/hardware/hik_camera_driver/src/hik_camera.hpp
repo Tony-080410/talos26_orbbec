@@ -18,6 +18,8 @@
 
 namespace hikcamera {
 
+std::string error_code_to_message(unsigned int code) noexcept;
+
 enum class RotateType {
     None,
     Clockwise90,
@@ -35,7 +37,9 @@ struct CameraError {
     std::string message;
     unsigned int error_code = 0;
 
-    std::string what() const { return message + " (code: " + std::to_string(error_code) + ")"; }
+    std::string what() const {
+        return fmt::format("{}: {}", message, error_code_to_message(error_code));
+    }
 };
 
 class ImageCapturer final {
