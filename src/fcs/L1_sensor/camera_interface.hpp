@@ -30,6 +30,13 @@ public:
         : client_(std::move(client))
         , info_(std::move(info)) {}
 
+    ~IpcInput() { SPDLOG_INFO("IpcInput destructed"); }
+
+    IpcInput& operator=(const IpcInput&) = delete;
+
+    IpcInput(IpcInput&&) noexcept            = default;
+    IpcInput& operator=(IpcInput&&) noexcept = default;
+
     [[nodiscard]] std::optional<Frame> try_recv() const noexcept {
         auto result = client_->recv_image();
         if (!result) {
@@ -80,6 +87,11 @@ public:
               static_cast<uint64_t>(
                   std::chrono::duration_cast<std::chrono::nanoseconds>(exposure_time).count())) {}
 
+    HikInput& operator=(const HikInput&) = delete;
+
+    HikInput(HikInput&&) noexcept            = default;
+    HikInput& operator=(HikInput&&) noexcept = default;
+
     [[nodiscard]] std::optional<Frame> try_recv() noexcept {
         using namespace std::chrono_literals;
         // NOTE: Using host timestamp (now_ns) instead of camera timestamp.
@@ -114,15 +126,6 @@ public:
 
     [[nodiscard]] const CameraConfig& camera_info() const noexcept { return info_; }
 
-    void stop() noexcept {
-        if (camera_) {
-            auto result = camera_->stop_grabbing();
-            if (!result) {
-                SPDLOG_ERROR("HikInput stop_grabbing failed: {}", result.error());
-            }
-        }
-    }
-
 private:
     /// Get timestamp compensated for exposure time (midpoint of exposure)
     /// This aligns with at_vision's timestamp: now() - exposure_time / 2
@@ -142,9 +145,16 @@ class CameraInterface {
 public:
     using InputMode = std::variant<std::monostate, IpcInput, HikInput>;
 
-    CameraInterface() = default;
+    explicit CameraInterface() = default;
+
     explicit CameraInterface(InputMode mode) noexcept
         : mode_(std::move(mode)) {}
+
+    CameraInterface(const CameraInterface&)            = delete;
+    CameraInterface& operator=(const CameraInterface&) = delete;
+
+    CameraInterface(CameraInterface&&) noexcept            = default;
+    CameraInterface& operator=(CameraInterface&&) noexcept = default;
 
     [[nodiscard]] std::optional<Frame> try_recv() noexcept {
         return std::visit(
@@ -189,16 +199,6 @@ public:
 
     [[nodiscard]] static std::expected<CameraInterface, InputError>
         create_hik(const CameraConfig& config) noexcept;
-
-    void stop() noexcept {
-        std::visit(
-            [](auto& input) {
-                if constexpr (requires { input.stop(); }) {
-                    input.stop();
-                }
-            },
-            mode_);
-    }
 
 private:
     InputMode mode_;

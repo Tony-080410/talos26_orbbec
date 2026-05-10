@@ -296,8 +296,8 @@ struct Imu {
 
 std::expected<L1L2SetupResult, std::string> setup_l1(
     talos::World& world, talos::Scheduler& scheduler, hardware::HardwareBackendConfig cfg) {
-    std::shared_ptr<fcs::L1::CameraInterface> camera;
-    std::shared_ptr<fcs::L1::OutputInterface> output;
+    std::unique_ptr<fcs::L1::CameraInterface> camera;
+    std::unique_ptr<fcs::L1::OutputInterface> output;
     auto imu       = std::make_shared<Imu>();
     bool imu_ready = false;
     world.insert_resource(core::ImuState{});
@@ -326,14 +326,15 @@ std::expected<L1L2SetupResult, std::string> setup_l1(
                         fmt::format("init daedalus output: {}", out_result.error()));
                 }
 
-                camera    = std::make_shared<fcs::L1::CameraInterface>(std::move(*input_result));
-                output    = std::make_shared<fcs::L1::OutputInterface>(std::move(*out_result));
+                camera =
+                    std::make_unique<fcs::L1::CameraInterface>(std::move(input_result.value()));
+                output = std::make_unique<fcs::L1::OutputInterface>(std::move(out_result.value()));
                 imu->impl = DaedalusImu{ipc_device};
                 imu_ready = true;
                 return {};
             },
-            [&camera, &output, &imu, &imu_ready,
-             &scheduler](hardware::DirectConfig cfg) -> std::expected<void, std::string> {
+            [&camera, &output, &imu,
+             &imu_ready](hardware::DirectConfig cfg) -> std::expected<void, std::string> {
                 talos_gimbal::Stm32Parser::latest_imu = &g_imu_data;
 
                 auto mcu_config = cfg.hardware.mcu;
@@ -369,7 +370,7 @@ std::expected<L1L2SetupResult, std::string> setup_l1(
                                     "failed connecting to mcu via {}", mcu_config->mcu_backend));
                         }
                         SPDLOG_INFO("connected to mcu via {}", mcu_config->mcu_backend);
-                        output = std::make_shared<fcs::L1::OutputInterface>(
+                        output = std::make_unique<fcs::L1::OutputInterface>(
                             fcs::L1::McuOutput(mcu_device));
                         imu->impl = McuImu{mcu_config, mcu_device, &g_imu_data};
                         imu_ready = true;
@@ -386,7 +387,7 @@ std::expected<L1L2SetupResult, std::string> setup_l1(
                         std::shared_ptr<talos::chiral::gimbal::TalosEndpoint> chiral =
                             std::move(chiral_result.value());
 
-                        output = std::make_shared<fcs::L1::OutputInterface>(
+                        output = std::make_unique<fcs::L1::OutputInterface>(
                             fcs::L1::ChiralOutput(chiral));
                         imu->impl = ChiralImu{
                             mcu_config,
@@ -401,8 +402,8 @@ std::expected<L1L2SetupResult, std::string> setup_l1(
                     return std::unexpected(
                         fmt::format("init hikrobot camera: {}", input_result.error()));
                 }
-                camera = std::make_shared<fcs::L1::CameraInterface>(std::move(*input_result));
-                scheduler.add_shutdown_hook([camera]() { camera->stop(); });
+                camera =
+                    std::make_unique<fcs::L1::CameraInterface>(std::move(input_result.value()));
                 return {};
             }},
         cfg);

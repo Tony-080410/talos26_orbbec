@@ -135,24 +135,27 @@ public:
 
 private:
     SDKInitializer() noexcept = default;
-    ~SDKInitializer() noexcept { finalize(); }
+    ~SDKInitializer() noexcept {
+        SPDLOG_INFO("finalize");
+        finalize();
+    }
 
     std::mutex mutex_;
     bool initialized_ = false;
 };
 } // namespace
 
-std::expected<void, CameraError> initialize_sdk() noexcept {
-    return SDKInitializer::instance().initialize();
-}
-
-void finalize_sdk() noexcept { SDKInitializer::instance().finalize(); }
-
 class ImageCapturer::Impl {
 public:
     std::expected<void, CameraError> init(
         const CameraProfile& profile, const char* user_defined_name,
         const SyncMode& sync_mode) noexcept {
+        SPDLOG_INFO("[HIK] Initializing sdk...");
+        auto init_sdk_result = SDKInitializer::instance().initialize();
+        if (!init_sdk_result) {
+            SPDLOG_ERROR("[HIK] SDK initialization failed: {}", init_sdk_result.error().message);
+            return std::unexpected(init_sdk_result.error());
+        }
         SPDLOG_INFO("[HIK] Starting camera init...");
         auto device_info = search_camera(user_defined_name);
         if (!device_info) {
