@@ -11,6 +11,7 @@
 #include "frame.hpp"
 
 #include <Eigen/Geometry>
+#include <cmath>
 #include <magic_enum.hpp>
 #include <nlohmann/json.hpp>
 #include <system_helpers.hpp>
@@ -511,6 +512,7 @@ void register_l2_perception_systems(talos::scheduler::Scheduler& app) {
     app.add_system<talos::pool_compute>(
         "foxglove_l2_measurement_pub",
         [](talos::spmc<ArmorMeasurementBatch, MeasurementChannelTopic> meas_in,
+           talos::res<fast_tf::CoordinateSystem> tf_system,
            talos::res<std::shared_ptr<FoxgloveServer>> server) {
             if (!detail::foxglove_ready(*server, meas_in)) {
                 return;
@@ -527,6 +529,9 @@ void register_l2_perception_systems(talos::scheduler::Scheduler& app) {
             j["timestamp"]["sec"]  = batch->timestamp_ns / 1000000000L;
             j["timestamp"]["nsec"] = batch->timestamp_ns % 1000000000L;
             j["measurements"]      = nlohmann::json::array();
+
+            auto tf_lookup = fast_tf::lookup_clamped<fast_tf::odom, fast_tf::camera_optical>(
+                *tf_system, batch->timestamp_ns);
 
             for (const auto& m : batch->measurements) {
                 const auto t   = m.transform.translation();
@@ -548,6 +553,18 @@ void register_l2_perception_systems(talos::scheduler::Scheduler& app) {
                 mj["euler"]["pitch"]    = p;
                 mj["euler"]["yaw"]      = y;
                 mj["distance"]          = t.norm();
+
+                if (tf_lookup) {
+                    auto target_in_ref = (m.transform);
+
+                    auto target_pos_yaw = fcs::L3::xyz2ypd(target_in_ref.translation())[0];
+                    auto [roll, pitch, target_yaw] = target_in_ref.euler_rot().rpy();
+
+                    mj["delta_angle"] =
+                        L3::shortest_rad(target_pos_yaw, target_yaw) * 180.0 / std::numbers::pi;
+                }
+
+                j["measurements"].push_back(mj);
             }
 
             detail::publish_json_message<MeasurementMessage>(*server, j);

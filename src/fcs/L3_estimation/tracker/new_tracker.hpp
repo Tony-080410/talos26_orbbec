@@ -152,12 +152,14 @@ public:
             auto d = update_target_(
                 *outpost_target_, measurements, OutpostEkfMotionModel::ARMORS_NUM,
                 outpost_last_armor_id_, false);
-
+            if (!outpost_target_.has_value()) {
+                return false;
+            }
             auto x           = outpost_target_->x();
             auto v_yaw       = x[O_VYAW];
             auto ref         = OutpostEkfMotionModel::OUTPOST_V_YAW;
             auto std         = 0.6 * OutpostEkfMotionModel::OUTPOST_V_YAW;
-            constexpr auto K = 0.5; // Magic that auto stick to ground truth vyaw
+            constexpr auto K = 0.6; // Magic that auto stick to ground truth vyaw
             v_yaw            = OutpostEkfMotionModel::OUTPOST_V_YAW * std::tanh(K * v_yaw);
             if (v_yaw > std) {
                 v_yaw = ref;

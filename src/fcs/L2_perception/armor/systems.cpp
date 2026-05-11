@@ -4,6 +4,7 @@
 #include "L2_perception/armor/config.hpp"
 #include "L2_perception/armor/readback_roi.hpp"
 #include "L2_perception/armor/solver.hpp"
+#include "core/math/normalize.hpp"
 #include "core/runtime.hpp"
 #include "core/types.hpp"
 #include "frame.hpp"
@@ -331,6 +332,18 @@ void register_detection_systems(talos::Scheduler& scheduler) noexcept {
                     (*solver_ptr)
                         ->solve_with_ba(detection, R_odom_camera, detections->timestamp_ns, priors);
                 if (result) {
+                    if (result->name == ArmorName::Outpost) {
+                        auto target_in_ref = T_odom_camera * result->transform;
+
+                        auto target_pos_yaw = core::math::xyz2ypd(target_in_ref.translation())[0];
+                        auto [roll, pitch, target_yaw] = target_in_ref.euler_rot().rpy();
+
+                        auto delta_angle = core::math::normalize_angle(target_yaw - target_pos_yaw)
+                                         * 180.0 / std::numbers::pi;
+                        if (std::abs(delta_angle) > 45) {
+                            continue;
+                        }
+                    }
                     measurements.push_back(std::move(*result));
                 }
             }
