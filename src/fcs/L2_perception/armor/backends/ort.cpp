@@ -217,7 +217,7 @@ std::expected<OrtBackend, std::string> OrtBackend::create(Config config) noexcep
 
         auto& impl = *backend.impl_;
 
-        impl.session_options.SetIntraOpNumThreads(8);
+        impl.session_options.SetIntraOpNumThreads(2);
         impl.session_options.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
         impl.session_options.SetExecutionMode(ExecutionMode::ORT_SEQUENTIAL);
         impl.session_options.SetDeterministicCompute(true);
