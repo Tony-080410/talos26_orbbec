@@ -1,3 +1,4 @@
+#include "L3_estimation/tracker/util.hpp"
 #include "base.hpp"
 #include "foxglove_types.hpp"
 #include "scene_builder.hpp"
@@ -12,6 +13,7 @@
 #include <Eigen/Geometry>
 #include <magic_enum.hpp>
 #include <nlohmann/json.hpp>
+#include <system_helpers.hpp>
 
 namespace fcs::visualization::foxglove::systems {
 
@@ -527,8 +529,10 @@ void register_l2_perception_systems(talos::scheduler::Scheduler& app) {
             j["measurements"]      = nlohmann::json::array();
 
             for (const auto& m : batch->measurements) {
-                const auto t = m.transform.translation();
-                const auto q = m.transform.quaternion();
+                const auto t   = m.transform.translation();
+                const auto q   = m.transform.quaternion();
+                auto [r, p, y] = m.transform.euler_rot().rpy();
+
                 nlohmann::json mj;
                 mj["timestamp_ns"]      = m.timestamp_ns;
                 mj["timestamp"]         = nlohmann::json::object();
@@ -540,7 +544,10 @@ void register_l2_perception_systems(talos::scheduler::Scheduler& app) {
                 mj["confidence"]        = m.confidence;
                 mj["position"]          = {t.x(), t.y(), t.z()};
                 mj["orientation"]       = {q.x(), q.y(), q.z(), q.w()};
-                j["measurements"].push_back(mj);
+                mj["euler"]["roll"]     = r;
+                mj["euler"]["pitch"]    = p;
+                mj["euler"]["yaw"]      = y;
+                mj["distance"]          = t.norm();
             }
 
             detail::publish_json_message<MeasurementMessage>(*server, j);
