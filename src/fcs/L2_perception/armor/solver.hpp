@@ -310,7 +310,7 @@ public:
         // ====================================================================
         ceres::Problem problem;
         // Huber loss for robustness (ownership transferred to problem)
-        auto* loss_function = new ceres::HuberLoss(0.5);
+        // auto* loss_function = new ceres::HuberLoss(0.5);
 
         for (size_t i = 0; i < obj_pts_eigen.size(); ++i) {
             ceres::CostFunction* cost = ConstrainedReprojError::Create(
@@ -335,8 +335,8 @@ public:
             auto original_norm = initial_pose.value().prior_distance_m
                                    ? initial_pose.value().prior_distance_m.value()
                                    : cv::norm(tvec);
-            problem.SetParameterLowerBound(translation_ypd, 2, std::max(0.0, original_norm - 0.2));
-            problem.SetParameterUpperBound(translation_ypd, 2, original_norm + 0.2);
+            problem.SetParameterLowerBound(translation_ypd, 2, std::max(0.0, original_norm - 0.5));
+            problem.SetParameterUpperBound(translation_ypd, 2, original_norm + 0.5);
         }
 
         ceres::Solver::Options options;
