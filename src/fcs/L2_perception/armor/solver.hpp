@@ -8,6 +8,7 @@
 #include <expected>
 #include <limits>
 #include <numbers>
+#include <opencv2/core/matx.hpp>
 #include <optional>
 #include <vector>
 
@@ -19,6 +20,7 @@
 #include <opencv2/core/eigen.hpp>
 
 #include "camera_config.hpp"
+#include "euler.hpp"
 
 namespace fcs::L2 {
 
@@ -40,26 +42,23 @@ enum class PnPError {
 }
 
 // ============================================================================
-// Yaw-Only Reprojection Error (4DOF Optimization)
+// Constrained Reprojection Error (4DOF Optimization)
 // ============================================================================
 
-/// Ceres cost function for yaw-only bundle adjustment
-/// Optimizes only yaw angle in IMU/gimbal frame while keeping pitch fixed
-/// Based on FYT's implementation
-struct YawOnlyReprojError {
-    YawOnlyReprojError(
+/// Ceres cost function for constrained reprojection refinement.
+/// Optimizes armor yaw in the odom/imu frame plus camera-frame translation
+/// parameterized as optical-frame yaw/pitch/distance. Armor pitch stays fixed.
+struct ConstrainedReprojError {
+    ConstrainedReprojError(
         const Eigen::Vector3d& Pw, const Eigen::Vector2d& uv, const Eigen::Matrix3d& R_cam_imu,
-        const Eigen::Matrix3d& R_pitch, const Eigen::Vector3d& t_cam_armor,
-        const Eigen::Matrix3d& K)
+        const Eigen::Matrix3d& R_pitch)
         : Pw_(Pw)
         , uv_(uv)
         , R_cam_imu_(R_cam_imu)
-        , R_pitch_(R_pitch)
-        , t_(t_cam_armor)
-        , K_(K) {}
+        , R_pitch_(R_pitch) {}
 
     template <typename T>
-    bool operator()(const T* const yaw, T* residuals) const {
+    bool operator()(const T* const yaw, const T* const translation_ypd, T* residuals) const {
         // R_yaw: rotation around Z axis in IMU frame
         const T cy = ceres::cos(yaw[0]);
         const T sy = ceres::sin(yaw[0]);
@@ -75,9 +74,15 @@ struct YawOnlyReprojError {
         Eigen::Matrix<T, 3, 1> Pw;
         Pw << T(Pw_.x()), T(Pw_.y()), T(Pw_.z());
 
-        // Translation (fixed, from initial PnP)
+        // Translation in camera optical frame, parameterized as:
+        // yaw = atan2(x, z), pitch = atan2(y, hypot(x, z)), distance = ||t||.
+        const T t_yaw      = translation_ypd[0];
+        const T t_pitch    = translation_ypd[1];
+        const T t_distance = translation_ypd[2];
+        const T cp         = ceres::cos(t_pitch);
         Eigen::Matrix<T, 3, 1> t;
-        t << T(t_.x()), T(t_.y()), T(t_.z());
+        t << t_distance * cp * ceres::sin(t_yaw), t_distance * ceres::sin(t_pitch),
+            t_distance * cp * ceres::cos(t_yaw);
 
         // Transform to camera frame
         Eigen::Matrix<T, 3, 1> Pc = R * Pw + t;
@@ -92,15 +97,8 @@ struct YawOnlyReprojError {
         }
 
         // Normalized image plane coordinates
-        Eigen::Matrix<T, 3, 1> p_norm;
-        p_norm << Xc / Zc, Yc / Zc, T(1);
-
-        // Pixel coordinates (no distortion, consistent with FYT BA)
-        Eigen::Matrix<T, 3, 3> K     = K_.template cast<T>();
-        Eigen::Matrix<T, 3, 1> p_img = K * p_norm;
-
-        residuals[0] = p_img(0) - T(uv_.x());
-        residuals[1] = p_img(1) - T(uv_.y());
+        residuals[0] = Xc / Zc - T(uv_.x());
+        residuals[1] = Yc / Zc - T(uv_.y());
         return true;
     }
 
@@ -125,10 +123,9 @@ struct YawOnlyReprojError {
     // ====================================================================
     static ceres::CostFunction* Create(
         const Eigen::Vector3d& Pw, const Eigen::Vector2d& uv, const Eigen::Matrix3d& R_cam_imu,
-        const Eigen::Matrix3d& R_pitch, const Eigen::Vector3d& t_cam_armor,
-        const Eigen::Matrix3d& K) {
-        return new ceres::AutoDiffCostFunction<YawOnlyReprojError, 2, 1>(
-            new YawOnlyReprojError(Pw, uv, R_cam_imu, R_pitch, t_cam_armor, K));
+        const Eigen::Matrix3d& R_pitch) {
+        return new ceres::AutoDiffCostFunction<ConstrainedReprojError, 2, 1, 3>(
+            new ConstrainedReprojError(Pw, uv, R_cam_imu, R_pitch));
     }
 
 private:
@@ -136,9 +133,31 @@ private:
     Eigen::Vector2d uv_;
     Eigen::Matrix3d R_cam_imu_;
     Eigen::Matrix3d R_pitch_;
-    Eigen::Vector3d t_;
-    Eigen::Matrix3d K_;
 };
+
+[[nodiscard]] inline Eigen::Vector3d
+    camera_translation_to_ypd(const Eigen::Vector3d& translation) noexcept {
+    const double horizontal = std::hypot(translation.x(), translation.z());
+    return {
+        std::atan2(translation.x(), translation.z()),
+        std::atan2(translation.y(), horizontal),
+        translation.norm(),
+    };
+}
+
+[[nodiscard]] inline Eigen::Vector3d
+    camera_ypd_to_translation(const Eigen::Vector3d& translation_ypd) noexcept {
+    const double yaw      = translation_ypd.x();
+    const double pitch    = translation_ypd.y();
+    const double distance = translation_ypd.z();
+    const double cp       = std::cos(pitch);
+
+    return {
+        distance * cp * std::sin(yaw),
+        distance * std::sin(pitch),
+        distance * cp * std::cos(yaw),
+    };
+}
 
 [[nodiscard]] inline double armor_pitch_rad_for(ArmorName name) noexcept {
     constexpr double kTiltRad = 15.0 * std::numbers::pi / 180.0;
@@ -207,10 +226,11 @@ public:
         build_model_points();
     }
 
-    /// Solve PnP with yaw-only BA refinement (4DOF optimization)
-    /// First solves standard PnP, then refines yaw using Ceres BA
+    /// Solve armor pose with prior-seeded constrained reprojection refinement.
+    /// OpenCV PnP is used only to enter a plausible local basin; the final solve
+    /// happens on the physical 4DoF manifold (yaw + camera-frame translation).
     /// @param detection Armor detection with 4 corners
-    /// @param R_imu_cam Rotation from IMU/gimbal to camera frame
+    /// @param R_imu_cam Rotation from camera frame into the yaw frame (imu/odom)
     /// @param timestamp_ns Timestamp for the measurement
     /// @return Measurement with refined 3D pose, or error
     [[nodiscard]] PoseResult solve_with_ba(
@@ -221,17 +241,15 @@ public:
             return std::unexpected(input.error());
         }
 
-        // Step 1: Initial 6DoF PnP using IPPE
-        cv::Mat rvec, tvec;
-        bool success = cv::solvePnP(
-            input->obj_points, input->img_points, camera_matrix_, dist_coeffs_, rvec, tvec, false,
-            cv::SOLVEPNP_IPPE);
-
-        if (!success) {
+        // Step 1: Initial 6DoF pose estimate in the undistorted normalized plane
+        const auto initial_pose = solve_initial_pose(*input, pose_priors);
+        if (!initial_pose.has_value()) {
             return std::unexpected(PnPError::SolveFailed);
         }
+        cv::Mat rvec = initial_pose->rvec.clone();
+        cv::Mat tvec = initial_pose->tvec.clone();
 
-        // Step 2: Convert rvec/tvec to Eigen
+        // Step 2: Convert rvec/tvec to Eigen.
         cv::Mat R_cv;
         cv::Rodrigues(rvec, R_cv);
 
@@ -251,49 +269,19 @@ public:
             }
         }
 
-        // R_cam_imu = R_imu_cam.transpose()
-        Eigen::Matrix3d R_cam_imu = R_imu_cam.transpose();
+        // Step 3: Prepare the constrained pose model.
+        const Eigen::Matrix3d R_cam_imu = R_imu_cam.transpose();
+        const double armor_pitch_rad    = armor_pitch_rad_for(detection.name);
+        const Eigen::Matrix3d R_pitch   = armor_pitch_rotation(armor_pitch_rad);
+        double yaw                      = extract_yaw_from_rotation(R_cam_armor, R_imu_cam);
+        const Eigen::Vector3d initial_translation_ypd = camera_translation_to_ypd(t_cam_armor);
+        double translation_ypd[3]                     = {
+            initial_translation_ypd.x(),
+            initial_translation_ypd.y(),
+            initial_translation_ypd.z(),
+        };
 
-        // R_imu_armor = R_imu_cam * R_cam_armor
-        Eigen::Matrix3d R_imu_armor = R_imu_cam * R_cam_armor;
-
-        // Step 3: Extract initial yaw from R_imu_armor
-        // Yaw is rotation around Z axis in IMU frame
-        // Clamp to [-1, 1] — noisy PnP can produce slightly non-orthogonal R
-        const double r01    = std::clamp(-R_imu_armor(0, 1), -1.0, 1.0);
-        const double r11    = std::clamp(R_imu_armor(1, 1), -1.0, 1.0);
-        double theta_by_sin = std::asin(r01);
-        double theta_by_cos = std::acos(r11);
-        double yaw_init     = 0.0;
-
-        if (std::abs(theta_by_sin) > 1e-5) {
-            yaw_init = (theta_by_sin > 0.0) ? theta_by_cos : -theta_by_cos;
-        } else {
-            yaw_init = (r11 > 0.0) ? 0.0 : std::numbers::pi;
-        }
-
-        // Step 4: Armor pitch constraint (15 deg, negative for outpost)
-        constexpr double FIFTEEN_DEG_RAD = 15.0 * std::numbers::pi / 180.0;
-        double armor_pitch_rad           = FIFTEEN_DEG_RAD;
-        if (detection.name == ArmorName::Outpost) {
-            armor_pitch_rad = -FIFTEEN_DEG_RAD;
-        }
-
-        Eigen::Matrix3d R_pitch;
-        {
-            double cp = std::cos(armor_pitch_rad);
-            double sp = std::sin(armor_pitch_rad);
-            R_pitch << cp, 0.0, sp, 0.0, 1.0, 0.0, -sp, 0.0, cp;
-        }
-
-        // Step 5: Camera intrinsic matrix K (without distortion for BA)
-        Eigen::Matrix3d K = Eigen::Matrix3d::Identity();
-        K(0, 0)           = camera_matrix_.at<double>(0, 0);
-        K(1, 1)           = camera_matrix_.at<double>(1, 1);
-        K(0, 2)           = camera_matrix_.at<double>(0, 2);
-        K(1, 2)           = camera_matrix_.at<double>(1, 2);
-
-        // Step 6: Prepare 3D model points and 2D observations
+        // Step 4: Prepare 3D model points and normalized 2D observations.
         std::vector<Eigen::Vector3d> obj_pts_eigen;
         obj_pts_eigen.reserve(input->obj_points.size());
         for (const auto& p : input->obj_points) {
@@ -301,20 +289,19 @@ public:
         }
 
         std::vector<Eigen::Vector2d> img_pts_eigen;
-        img_pts_eigen.reserve(input->img_points.size());
-        for (const auto& p : input->img_points) {
+        img_pts_eigen.reserve(input->norm_points.size());
+        for (const auto& p : input->norm_points) {
             img_pts_eigen.emplace_back(p.x, p.y);
         }
 
-        // Step 7: Build Ceres problem - optimize yaw only
-        double yaw = yaw_init;
+        // Step 5: Build Ceres problem - optimize constrained pose on the normalized plane.
 
         // ====================================================================
         // CERES SOLVER OWNERSHIP TRANSFER (RAII-compliant)
         // ====================================================================
         //
         // Ceres Problem takes ownership of CostFunction and LossFunction pointers.
-        // See YawOnlyReprojError::Create() above for full provenance.
+        // See ConstrainedReprojError::Create() above for full provenance.
         //
         // We allocate with new (required by Ceres API), transfer ownership
         // via AddResidualBlock(), and let Ceres Problem destructor handle cleanup.
@@ -323,17 +310,34 @@ public:
         // ====================================================================
         ceres::Problem problem;
         // Huber loss for robustness (ownership transferred to problem)
-        auto* loss_function = new ceres::HuberLoss(1.0);
+        auto* loss_function = new ceres::HuberLoss(0.5);
 
         for (size_t i = 0; i < obj_pts_eigen.size(); ++i) {
-            ceres::CostFunction* cost = YawOnlyReprojError::Create(
-                obj_pts_eigen[i], img_pts_eigen[i], R_cam_imu, R_pitch, t_cam_armor, K);
-            problem.AddResidualBlock(cost, loss_function, &yaw);
+            ceres::CostFunction* cost = ConstrainedReprojError::Create(
+                obj_pts_eigen[i], img_pts_eigen[i], R_cam_imu, R_pitch);
+            problem.AddResidualBlock(cost, nullptr, &yaw, translation_ypd);
         }
 
-        // Constrain yaw to [-pi, pi]
+        // Constrain armor yaw to [-pi, pi] and optical bearing to the front camera hemisphere.
         problem.SetParameterLowerBound(&yaw, 0, -std::numbers::pi);
         problem.SetParameterUpperBound(&yaw, 0, std::numbers::pi);
+        constexpr double kBearingLimit = std::numbers::pi / 2.0 - 1e-6;
+        problem.SetParameterLowerBound(translation_ypd, 0, -kBearingLimit);
+        problem.SetParameterUpperBound(translation_ypd, 0, kBearingLimit);
+        problem.SetParameterLowerBound(translation_ypd, 1, -kBearingLimit);
+        problem.SetParameterUpperBound(translation_ypd, 1, kBearingLimit);
+        if (detection.name == ArmorName::Outpost) {
+            if (initial_pose.has_value() && initial_pose->prior_armor_yaw.has_value()) {
+                auto pr = initial_pose->prior_armor_yaw.value();
+                problem.SetParameterLowerBound(&yaw, 0, std::max(-std::numbers::pi, pr - 0.1256));
+                problem.SetParameterUpperBound(&yaw, 0, std::min(pr + 0.1256, std::numbers::pi));
+            }
+            auto original_norm = initial_pose.value().prior_distance_m
+                                   ? initial_pose.value().prior_distance_m.value()
+                                   : cv::norm(tvec);
+            problem.SetParameterLowerBound(translation_ypd, 2, std::max(0.0, original_norm - 0.2));
+            problem.SetParameterUpperBound(translation_ypd, 2, original_norm + 0.2);
+        }
 
         ceres::Solver::Options options;
         options.linear_solver_type           = ceres::DENSE_QR;
@@ -343,21 +347,25 @@ public:
         ceres::Solver::Summary summary;
         ceres::Solve(options, &problem, &summary);
 
-        // Step 8: Reconstruct refined rotation if optimization succeeded
-        if (std::isfinite(yaw)) {
-            double cy = std::cos(yaw);
-            double sy = std::sin(yaw);
-            Eigen::Matrix3d R_yaw;
-            R_yaw << cy, -sy, 0.0, sy, cy, 0.0, 0.0, 0.0, 1.0;
+        // Step 6: Reconstruct refined constrained pose if optimization succeeded.
+        const Eigen::Vector3d refined_translation = camera_ypd_to_translation(
+            Eigen::Vector3d{translation_ypd[0], translation_ypd[1], translation_ypd[2]});
+        const bool translation_finite =
+            std::isfinite(translation_ypd[0]) && std::isfinite(translation_ypd[1])
+            && std::isfinite(translation_ypd[2]) && refined_translation.allFinite()
+            && refined_translation.z() > 1e-3;
+        if (summary.IsSolutionUsable() && std::isfinite(yaw) && translation_finite) {
+            const Eigen::Matrix3d R_cam_armor_refined = R_cam_imu * yaw_rotation(yaw) * R_pitch;
 
-            Eigen::Matrix3d R_cam_armor_refined = R_cam_imu * R_yaw * R_pitch;
-
-            // Write back to rvec (tvec unchanged)
+            // Write back the constrained pose.
             cv::Mat R_refined_cv;
             cv::eigen2cv(R_cam_armor_refined, R_refined_cv);
             cv::Rodrigues(R_refined_cv, rvec);
+            tvec =
+                (cv::Mat_<double>(3, 1) << refined_translation.x(), refined_translation.y(),
+                 refined_translation.z());
         }
-        // If optimization failed, use original PnP result
+        // If optimization failed, keep the initial basin pose.
 
         return make_camera_measurement(detection, rvec, tvec, timestamp_ns, input->dist_to_center);
     }
@@ -380,16 +388,147 @@ public:
     }
 
 private:
+    struct SolvePose {
+        cv::Mat rvec;
+        cv::Mat tvec;
+        double reprojection_rmse{std::numeric_limits<double>::infinity()};
+        std::optional<double> prior_armor_yaw{};
+        std::optional<double> prior_distance_m{};
+    };
+
     struct PnPInput {
         const std::vector<cv::Point3f>& obj_points;
         std::vector<cv::Point2f> img_points;
+        std::vector<cv::Point2f> norm_points;
         float dist_to_center;
     };
+
+    [[nodiscard]] static cv::Mat identity_camera_matrix() { return cv::Mat::eye(3, 3, CV_64F); }
+
+    [[nodiscard]] static bool pose_is_finite(const cv::Mat& rvec, const cv::Mat& tvec) {
+        const double* rd = rvec.ptr<double>();
+        const double* td = tvec.ptr<double>();
+        for (int i = 0; i < 3; ++i) {
+            if (!std::isfinite(rd[i]) || !std::isfinite(td[i])) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    [[nodiscard]] static double normalized_reprojection_rmse(
+        const PnPInput& input, const cv::Mat& rvec, const cv::Mat& tvec) {
+        std::vector<cv::Point2f> projected;
+        cv::projectPoints(
+            input.obj_points, rvec, tvec, identity_camera_matrix(), cv::Mat{}, projected);
+        if (projected.size() != input.norm_points.size()) {
+            return std::numeric_limits<double>::infinity();
+        }
+
+        double sum_sq = 0.0;
+        for (size_t i = 0; i < projected.size(); ++i) {
+            const cv::Point2f d = projected[i] - input.norm_points[i];
+            sum_sq += static_cast<double>(d.x) * static_cast<double>(d.x)
+                    + static_cast<double>(d.y) * static_cast<double>(d.y);
+        }
+        return std::sqrt(sum_sq / static_cast<double>(projected.size()));
+    }
+
+    [[nodiscard]] std::optional<SolvePose> solve_with_ippe(const PnPInput& input) const {
+        cv::Mat rvec, tvec;
+        const bool success = cv::solvePnP(
+            input.obj_points, input.norm_points, identity_camera_matrix(), cv::Mat{}, rvec, tvec,
+            false, cv::SOLVEPNP_IPPE);
+        if (!success || !pose_is_finite(rvec, tvec)) {
+            return std::nullopt;
+        }
+
+        const double reprojection_rmse = normalized_reprojection_rmse(input, rvec, tvec);
+
+        return SolvePose{
+            .rvec              = std::move(rvec),
+            .tvec              = std::move(tvec),
+            .reprojection_rmse = reprojection_rmse,
+        };
+    }
+
+    [[nodiscard]] std::optional<SolvePose>
+        solve_with_priors(const PnPInput& input, const std::vector<PosePrior>& pose_priors) const {
+        if (pose_priors.empty()) {
+            return std::nullopt;
+        }
+        auto ippe = solve_with_ippe(input);
+        if (!ippe) {
+            return std::nullopt;
+        }
+        auto norm = cv::norm(ippe->tvec);
+
+        std::vector<PosePrior> sorted_priors = pose_priors;
+        std::sort(
+            sorted_priors.begin(), sorted_priors.end(),
+            [norm](const PosePrior& a, const PosePrior& b) {
+                return std::abs(norm - cv::norm(a.tvec)) < std::abs(norm - cv::norm(b.tvec));
+            });
+
+        std::optional<SolvePose> best;
+        for (const auto& prior : sorted_priors) {
+            const double prior_distance = std::sqrt(
+                prior.tvec[0] * prior.tvec[0] + prior.tvec[1] * prior.tvec[1]
+                + prior.tvec[2] * prior.tvec[2]);
+            if (!std::isfinite(prior_distance) || prior_distance <= 1e-3) {
+                continue;
+            }
+
+            cv::Mat rvec = (cv::Mat_<double>(3, 1) << prior.rvec[0], prior.rvec[1], prior.rvec[2]);
+            cv::Mat tvec = (cv::Mat_<double>(3, 1) << prior.tvec[0], prior.tvec[1], prior.tvec[2]);
+            const bool success = cv::solvePnP(
+                input.obj_points, input.norm_points, identity_camera_matrix(), cv::Mat{}, rvec,
+                tvec, true, cv::SOLVEPNP_ITERATIVE);
+            if (!success || !pose_is_finite(rvec, tvec)) {
+                continue;
+            }
+
+            const double reprojection_rmse = normalized_reprojection_rmse(input, rvec, tvec);
+            if (!std::isfinite(reprojection_rmse)) {
+                continue;
+            }
+            Eigen::Matrix3d x;
+            cv::Mat xx;
+            cv::Rodrigues(prior.rvec, xx);
+            cv::cv2eigen(xx, x);
+            if (!best.has_value() || reprojection_rmse < best->reprojection_rmse) {
+                best = SolvePose{
+                    .rvec              = std::move(rvec),
+                    .tvec              = std::move(tvec),
+                    .reprojection_rmse = reprojection_rmse,
+                    .prior_armor_yaw   = (math_fuxk::rpy(x).yaw / 180.0) * std::numbers::pi,
+                    .prior_distance_m  = prior_distance,
+                };
+            }
+        }
+
+        return best;
+    }
+
+    [[nodiscard]] std::optional<SolvePose>
+        solve_initial_pose(const PnPInput& input, const std::vector<PosePrior>& pose_priors) const {
+        const auto prior_pose = solve_with_priors(input, pose_priors);
+        if (prior_pose.has_value()) {
+            return prior_pose;
+        }
+        return solve_with_ippe(input);
+    }
 
     [[nodiscard]] std::expected<PnPInput, PnPError>
         make_pnp_input(const ArmorDetection& detection) const {
         auto img_points = detection.image_points();
         if (img_points.size() != 4) {
+            return std::unexpected(PnPError::InvalidDetection);
+        }
+
+        std::vector<cv::Point2f> norm_points;
+        cv::undistortPoints(img_points, norm_points, camera_matrix_, dist_coeffs_);
+        if (norm_points.size() != img_points.size()) {
             return std::unexpected(PnPError::InvalidDetection);
         }
 
@@ -399,6 +538,7 @@ private:
         return PnPInput{
             .obj_points     = obj_points,
             .img_points     = std::move(img_points),
+            .norm_points    = std::move(norm_points),
             .dist_to_center = static_cast<float>(cv::norm(detection.center() - image_center_)),
         };
     }

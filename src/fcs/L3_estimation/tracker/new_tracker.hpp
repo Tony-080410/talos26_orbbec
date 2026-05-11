@@ -152,6 +152,21 @@ public:
             auto d = update_target_(
                 *outpost_target_, measurements, OutpostEkfMotionModel::ARMORS_NUM,
                 outpost_last_armor_id_, false);
+
+            auto x           = outpost_target_->x();
+            auto v_yaw       = x[O_VYAW];
+            auto ref         = OutpostEkfMotionModel::OUTPOST_V_YAW;
+            auto std         = 0.6 * OutpostEkfMotionModel::OUTPOST_V_YAW;
+            constexpr auto K = 0.5; // Magic that auto stick to ground truth vyaw
+            v_yaw            = OutpostEkfMotionModel::OUTPOST_V_YAW * std::tanh(K * v_yaw);
+            if (v_yaw > std) {
+                v_yaw = ref;
+            } else if (v_yaw < -std) {
+                v_yaw = -ref;
+            }
+            x[O_VYAW] = v_yaw;
+
+            outpost_target_->set_state_unsafe(x);
             return d;
         }
 
@@ -210,10 +225,17 @@ public:
             xp0 << x0, y0, armor_yaw, 0.0, z0, z0, z0;
             OutpostEkfMotionModel::MatXX P0 = OutpostEkfMotionModel::MatXX::Identity();
 
-            P0(O_XC, O_XC) = 1e-9;
-            P0(O_YC, O_YC) = 1e-9;
+            P0(O_XC, O_XC)   = 1e9;
+            P0(O_YC, O_YC)   = 1e9;
+            P0(O_VYAW, O_XC) = 1e9;
+            P0(O_XC, O_VYAW) = 1e9;
+            P0(O_YC, O_VYAW) = 1e9;
+            P0(O_VYAW, O_YC) = 1e9;
 
+            P0(O_YAW, O_YAW)   = 1e9;
+            P0(O_YAW, O_VYAW)  = 1e9;
             P0(O_VYAW, O_VYAW) = 1e9;
+            P0(O_VYAW, O_YAW)  = 1e9;
 
             P0(O_Z0, O_Z0) = 1e9;
             P0(O_Z1, O_Z1) = 1e9;
