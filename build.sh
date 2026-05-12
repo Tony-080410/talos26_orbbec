@@ -71,6 +71,7 @@ ENABLE_TESTING="OFF"
 RUN_AFTER_BUILD="ON"
 VERBOSE="OFF"
 REDACT_BUILD_OUTPUT="ON"
+CROSS_COMPILE="OFF"
 GENERATOR="Ninja"
 RUN_ARGS=()
 
@@ -339,7 +340,7 @@ configure_asan_runtime() {
     else
         detect_leaks_val="0"
     fi
-    
+
     export ASAN_OPTIONS="symbolize=1:fast_unwind_on_malloc=0:detect_leaks=${detect_leaks_val}:malloc_context_size=30:print_suppressions=0:verbosity=0"
 
     # LSan standalone control — Linux only
@@ -419,6 +420,14 @@ build_target() {
     ok "Build complete!"
 }
 
+install_target() {
+    [[ "$CROSS_COMPILE" == "ON" ]] || return 0
+
+    info "Installing to bin/ (cross-compile)..."
+    cmake --install build --prefix bin
+    ok "Install complete!"
+}
+
 run_target() {
     [[ "$RUN_AFTER_BUILD" == "ON" ]] || return 0
 
@@ -479,7 +488,8 @@ parse_args() {
                 ENABLE_CALIBRATION="ON"
                 shift
                 ;;
-            -x|-cx|--cross)
+            -x|--ax|-ax|-cx|--cross)
+                CROSS_COMPILE="ON"
                 CMAKE_EXTRA_ARGS+=(
                     "-DCMAKE_TOOLCHAIN_FILE=cmake/toolchains/aarch64-linux-gnu-clang.cmake"
                         "-DTALOS_TARGET_TRIPLE=aarch64-unknown-linux-gnu"
@@ -549,6 +559,7 @@ main() {
 
     info "Platform: ${OS} (${ARCH})"
     info "Build type: ${BUILD_TYPE}"
+    info "Cross-compile: ${CROSS_COMPILE}"
     info "ASAN: ${ENABLE_ASAN}"
     info "TSAN: ${ENABLE_TSAN}"
     info "Target: ${BUILD_TARGET}"
@@ -567,6 +578,7 @@ main() {
 
     configure_cmake
     build_target
+    install_target
     run_tests
     run_target
 }

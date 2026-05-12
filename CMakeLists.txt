@@ -369,6 +369,7 @@ target_link_libraries(talos-playground PRIVATE
         Eigen3::Eigen
         lieplusplus
         ipc
+        talos_gimbal
         talos_log
         chiral
         spdlog::spdlog
@@ -542,7 +543,7 @@ file(GLOB TALOS_FETCHED_RUNTIME_LIBS
 "${CMAKE_BINARY_DIR}/_deps/fmt-build/libfmt*.so"
 "${CMAKE_BINARY_DIR}/_deps/fmt-build/libfmt*.so.*"
 "${CMAKE_BINARY_DIR}/_deps/fmt-build/libfmt*.dylib"
-"${CMAKE_BINARY_DIR}/_deps/fmt-build/libfm*t.dylib*"
+"${CMAKE_BINARY_DIR}/_deps/fmt-build/libfmt*.dylib*"
 "${CMAKE_BINARY_DIR}/_deps/spdlog-build/libspdlog*.so"
 "${CMAKE_BINARY_DIR}/_deps/spdlog-build/libspdlog*.so.*"
 "${CMAKE_BINARY_DIR}/_deps/spdlog-build/libspdlog*.dylib"
