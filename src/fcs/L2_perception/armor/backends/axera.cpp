@@ -6,7 +6,6 @@
 
 #include <algorithm>
 #include <array>
-#include <chrono>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -14,7 +13,6 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
-#include <limits>
 #include <utility>
 
 #include <opencv2/imgproc.hpp>
@@ -24,6 +22,72 @@ namespace fcs::L2 {
 
 namespace {
 
+namespace {
+[[nodiscard]] const char* ax_module_name(int id) noexcept {
+    switch (id) {
+    case 0x01: return "AX_ID_ISP";
+    case 0x02: return "AX_ID_CE";
+    case 0x03: return "AX_ID_VO";
+    case 0x04: return "AX_ID_VDSP";
+    case 0x06: return "AX_ID_NPU";
+    case 0x07: return "AX_ID_VENC";
+    case 0x08: return "AX_ID_VDEC";
+    case 0x09: return "AX_ID_JENC";
+    case 0x0A: return "AX_ID_JDEC";
+    case 0x0B: return "AX_ID_SYS";
+    case 0x0D: return "AX_ID_IVPS";
+    case 0x12: return "AX_ID_USER";
+    default: return "AX_ID_?";
+    }
+}
+
+[[nodiscard]] const char* ax_err_name(int id) noexcept {
+    switch (id) {
+    case 0x01: return "AX_ERR_INVALID_MODID";
+    case 0x02: return "AX_ERR_INVALID_DEVID";
+    case 0x03: return "AX_ERR_INVALID_GRPID";
+    case 0x04: return "AX_ERR_INVALID_CHNID";
+    case 0x05: return "AX_ERR_INVALID_PIPEID";
+    case 0x0A: return "AX_ERR_ILLEGAL_PARAM";
+    case 0x0B: return "AX_ERR_NULL_PTR";
+    case 0x0C: return "AX_ERR_BAD_ADDR";
+    case 0x10: return "AX_ERR_SYS_NOTREADY";
+    case 0x11: return "AX_ERR_BUSY";
+    case 0x12: return "AX_ERR_NOT_INIT";
+    case 0x13: return "AX_ERR_NOT_CONFIG";
+    case 0x14: return "AX_ERR_NOT_SUPPORT";
+    case 0x15: return "AX_ERR_NOT_PERM";
+    case 0x16: return "AX_ERR_EXIST";
+    case 0x17: return "AX_ERR_UNEXIST";
+    case 0x18: return "AX_ERR_NOMEM";
+    case 0x19: return "AX_ERR_NOBUF";
+    case 0x1A: return "AX_ERR_NOT_MATCH";
+    case 0x20: return "AX_ERR_BUF_EMPTY";
+    case 0x21: return "AX_ERR_BUF_FULL";
+    case 0x22: return "AX_ERR_QUEUE_EMPTY";
+    case 0x23: return "AX_ERR_QUEUE_FULL";
+    case 0x27: return "AX_ERR_TIMED_OUT";
+    case 0x28: return "AX_ERR_FLOW_END";
+    case 0x29: return "AX_ERR_UNKNOWN";
+    default: return "AX_ERR_?";
+    }
+}
+} // namespace
+
+std::string ax_error_string(AX_S32 err) noexcept {
+    if (err >= 0)
+        return std::format("OK(0x{:X})", static_cast<unsigned>(err));
+
+    const unsigned code       = static_cast<unsigned>(err);
+    const unsigned module     = (code >> 16) & 0xFF;
+    const unsigned sub_module = (code >> 8) & 0xFF;
+    const unsigned err_id     = code & 0xFF;
+
+    return fmt::format(
+        "{}/{} {}(0x{:02X}) [raw=0x{:08X}]", ax_module_name(static_cast<int>(module)), sub_module,
+        ax_err_name(static_cast<int>(err_id)), err_id, code);
+}
+
 // 快速 sigmoid（直接用 std::exp，但提前过滤减少调用次数）
 inline float fast_sigmoid(float x) noexcept {
     if (x > 6.0f)
@@ -32,28 +96,6 @@ inline float fast_sigmoid(float x) noexcept {
         return 0.0f;
     return 1.0f / (1.0f + std::exp(-x));
 }
-
-class ScopedTimer {
-public:
-    explicit ScopedTimer(std::string name)
-        : name_(std::move(name))
-        , start_(std::chrono::high_resolution_clock::now()) {}
-
-    ~ScopedTimer() {
-        auto* logger = spdlog::default_logger_raw();
-        if (!logger || !logger->should_log(spdlog::level::debug)) {
-            return;
-        }
-        const auto end      = std::chrono::high_resolution_clock::now();
-        const auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start_);
-        (void)duration;
-        SPDLOG_DEBUG("[AxeraBackend] {} elapsed: {} us", name_, duration.count());
-    }
-
-private:
-    std::string name_;
-    std::chrono::high_resolution_clock::time_point start_;
-};
 
 constexpr int AX_CMM_ALIGN_SIZE           = 128;
 constexpr const char* AX_CMM_SESSION_NAME = "ax-samples-cmm";
@@ -170,7 +212,6 @@ std::expected<void, std::string> prepare_io(
             free_io_index(io_data->pInputs, i);
             delete[] io_data->pInputs;
             io_data->pInputs = nullptr;
-            SPDLOG_ERROR("[AxeraBackend] Allocate input{} failed", i);
             return std::unexpected(
                 "Axera NPU input buffer allocation failed for index " + std::to_string(i));
         }
@@ -195,7 +236,6 @@ std::expected<void, std::string> prepare_io(
             delete[] io_data->pOutputs;
             io_data->pInputs  = nullptr;
             io_data->pOutputs = nullptr;
-            SPDLOG_ERROR("[AxeraBackend] Allocate output{} failed", i);
             return std::unexpected(
                 "Axera NPU output buffer allocation failed for index " + std::to_string(i));
         }
@@ -367,8 +407,7 @@ std::expected<AxeraBackend, std::string> AxeraBackend::create(Config config) noe
     AxeraBackend backend(std::move(config));
     const auto& cfg = backend.get_config();
     if (!std::filesystem::exists(cfg.model_path)) {
-        SPDLOG_ERROR("[AxeraBackend] Model file not found: {}", cfg.model_path);
-        return std::unexpected("Axera model file not found: " + cfg.model_path);
+        return std::unexpected(fmt::format("axmodel not found: {}", cfg.model_path));
     }
 
     auto init_result = backend.init();
@@ -386,8 +425,7 @@ std::expected<void, std::string> AxeraBackend::init() noexcept {
 
     const auto& cfg = get_config();
     if (!std::filesystem::exists(cfg.model_path)) {
-        SPDLOG_ERROR("[AxeraBackend] Model file not found: {}", cfg.model_path);
-        return std::unexpected("Axera model file not found: " + cfg.model_path);
+        return std::unexpected(fmt::format("axmodel not found: {}", cfg.model_path));
     }
 
     bool sys_initialized     = false;
@@ -413,75 +451,68 @@ std::expected<void, std::string> AxeraBackend::init() noexcept {
 
     auto ret = AX_SYS_Init();
     if (ret != 0) {
-        SPDLOG_ERROR("[AxeraBackend] AX_SYS_Init failed: {}", ret);
-        return std::unexpected("Axera AX_SYS_Init failed with code " + std::to_string(ret));
+        return std::unexpected(fmt::format("AX_SYS_Init: {}", ax_error_string(ret)));
     }
     sys_initialized = true;
 
-    (void)init_ivps();
+    auto ivps = init_ivps();
+    if (!ivps) {
+        SPDLOG_WARN("init_ivps: {}, falling back to OpenCV preprocessing", ivps.error());
+    } else {
+        SPDLOG_INFO("IVPS initialized for hardware-accelerated resize");
+    }
 
     AX_ENGINE_NPU_ATTR_T npu_attr{};
     npu_attr.eHardMode = AX_ENGINE_VIRTUAL_NPU_DISABLE;
     ret                = AX_ENGINE_Init(&npu_attr);
     if (ret != 0) {
-        SPDLOG_ERROR("[AxeraBackend] AX_ENGINE_Init failed: {}", ret);
         cleanup_failed_init();
-        return std::unexpected("Axera AX_ENGINE_Init failed with code " + std::to_string(ret));
+        return std::unexpected(fmt::format("AX_ENGINE_Init: {}", ax_error_string(ret)));
     }
     engine_initialized = true;
 
     if (!read_file(cfg.model_path, model_buffer_)) {
-        SPDLOG_ERROR("[AxeraBackend] Failed to read model file: {}", cfg.model_path);
         cleanup_failed_init();
-        return std::unexpected("Axera failed to read model file: " + cfg.model_path);
+        return std::unexpected(fmt::format("read {}: {}", cfg.model_path, ax_error_string(ret)));
     }
 
     ret = AX_ENGINE_CreateHandle(&handle_, model_buffer_.data(), model_buffer_.size());
     if (ret != 0) {
-        SPDLOG_ERROR("[AxeraBackend] AX_ENGINE_CreateHandle failed: {}", ret);
         cleanup_failed_init();
-        return std::unexpected(
-            "Axera AX_ENGINE_CreateHandle failed with code " + std::to_string(ret));
+        return std::unexpected(fmt::format("AX_ENGINE_CreateHandle: {}", ax_error_string(ret)));
     }
 
     ret = AX_ENGINE_CreateContext(handle_);
     if (ret != 0) {
-        SPDLOG_ERROR("[AxeraBackend] AX_ENGINE_CreateContext failed: {}", ret);
         cleanup_failed_init();
-        return std::unexpected(
-            "Axera AX_ENGINE_CreateContext failed with code " + std::to_string(ret));
+        return std::unexpected(fmt::format("AX_ENGINE_CreateContext: {}", ax_error_string(ret)));
     }
 
     AX_ENGINE_IO_INFO_T* io_info = nullptr;
     ret                          = AX_ENGINE_GetIOInfo(handle_, &io_info);
     if (ret != 0) {
-        SPDLOG_ERROR("[AxeraBackend] AX_ENGINE_GetIOInfo failed: {}", ret);
         cleanup_failed_init();
-        return std::unexpected("Axera AX_ENGINE_GetIOInfo failed with code " + std::to_string(ret));
+        return std::unexpected(fmt::format("AX_ENGINE_GetIOInfo: {}", ax_error_string(ret)));
     }
 
-    SPDLOG_INFO("[AxeraBackend] Model: {}", cfg.model_path);
+    SPDLOG_INFO("axmodel: {}", cfg.model_path);
     const int predecode_output_dim = 4 + cfg.num_colors + cfg.num_pairs + cfg.num_kpts * 2;
     int expected_anchors           = 0;
     for (const int s : cfg.strides) {
         expected_anchors += (cfg.input_width / s) * (cfg.input_height / s);
     }
     SPDLOG_INFO(
-        "[AxeraBackend] Expecting concat-predecode model: input={}x{}, output_dim={}, "
+        "expecting concat-predecode model: input={}x{}, output_dim={}, "
         "anchors={}",
         cfg.input_width, cfg.input_height, predecode_output_dim, expected_anchors);
     for (int i = 0; i < static_cast<int>(io_info->nInputSize); ++i) {
         const auto& in = io_info->pInputs[i];
-        SPDLOG_INFO("[AxeraBackend]   Input[{}]: name={}, size={} bytes", i, in.pName, in.nSize);
+        SPDLOG_INFO("  input[{}]: name={}, size={} bytes", i, in.pName, in.nSize);
     }
     for (int i = 0; i < static_cast<int>(io_info->nOutputSize); ++i) {
         const auto& out = io_info->pOutputs[i];
-        SPDLOG_INFO("[AxeraBackend]   Output[{}]: name={}, size={} bytes", i, out.pName, out.nSize);
+        SPDLOG_INFO("  output[{}]: name={}, size={} bytes", i, out.pName, out.nSize);
     }
-    SPDLOG_INFO(
-        "[AxeraBackend] Using CPU decode for concat predecode output (anchor offsets removed "
-        "from "
-        "model)");
 
     auto io_result = prepare_io(
         io_info, &io_data_,
@@ -493,7 +524,7 @@ std::expected<void, std::string> AxeraBackend::init() noexcept {
     }
 
     cached_grid_ = build_decode_grid();
-    SPDLOG_INFO("[AxeraBackend] Cached decode grid with {} anchors", cached_grid_.grid_x.size());
+    SPDLOG_INFO("cached decode grid with {} anchors", cached_grid_.grid_x.size());
 
     if (io_data_.nInputSize > 0 && io_data_.pInputs[0].pVirAddr != nullptr) {
         auto* warmup_input = static_cast<uint8_t*>(io_data_.pInputs[0].pVirAddr);
@@ -501,12 +532,11 @@ std::expected<void, std::string> AxeraBackend::init() noexcept {
         // Non-cached buffer: no flush needed.
     }
     ret = AX_ENGINE_RunSync(handle_, &io_data_);
-    if (ret != 0) {
-        SPDLOG_WARN("[AxeraBackend] Warmup AX_ENGINE_RunSync failed: {}", ret);
+    if (ret != AX_SUCCESS) {
+        return std::unexpected(fmt::format("warmup AX_ENGINE_RunSync: {}", ax_error_string(ret)));
     }
 
     initialized_ = true;
-    SPDLOG_INFO("[AxeraBackend] Initialization complete");
     return {};
 }
 
@@ -536,10 +566,8 @@ void AxeraBackend::preprocess_image(const cv::Mat& image) noexcept {
 std::expected<void, std::string> AxeraBackend::init_ivps() noexcept {
     const auto ret = AX_IVPS_Init();
     if (ret != AX_SUCCESS) {
-        SPDLOG_WARN(
-            "[AxeraBackend] AX_IVPS_Init failed: {:#x}, falling back to OpenCV preprocessing", ret);
         ivps_initialized_ = false;
-        return {};
+        return std::unexpected(fmt::format("AX_IVPS_Init: {}", ax_error_string(ret)));
     }
 
     // 初始化 aspect ratio 配置（STRETCH 模式，类似测试代码）
@@ -548,7 +576,6 @@ std::expected<void, std::string> AxeraBackend::init_ivps() noexcept {
     ivps_aspect_ratio_.eAligns[1] = AX_IVPS_ASPECT_RATIO_VERTICAL_CENTER;
     ivps_aspect_ratio_.nBgColor   = 0xFF00FF; // 紫色背景（STRETCH 模式下不可见）
 
-    SPDLOG_INFO("[AxeraBackend] IVPS initialized for hardware-accelerated resize");
     ivps_initialized_ = true;
     return {};
 }
@@ -570,30 +597,34 @@ std::expected<void, std::string>
     ivps_max_src_width_  = max_src_width;
     ivps_max_src_height_ = max_src_height;
 
-    // 计算对齐后的 stride（类似测试代码）
-    constexpr int ALIGN = 16;
+    // BGR888 stride must be a multiple of 3; align to 48 bytes (16 pixels × 3 bytes/pixel)
+    // to satisfy both the 3-byte pixel packing constraint and hardware alignment requirements.
+    // Reference: ax-video-sdk src/common/ax_image_processor_ax650.cpp MakeAlignedDescriptor()
+    constexpr int ALIGN = 48;
     const AX_U32 aligned_stride =
         ((static_cast<AX_U32>(max_src_width) * 3 + ALIGN - 1) / ALIGN) * ALIGN;
     ivps_src_stride_      = aligned_stride;
     ivps_src_buffer_size_ = aligned_stride * static_cast<AX_U32>(max_src_height);
 
-    // 分配源缓冲区（使用 AX_SYS_MemAllocCached）
-    const auto ret = AX_SYS_MemAllocCached(
+    // Use non-cached allocation: CPU writes once, IVPS DMA reads once.
+    // Cached buffer would require AX_SYS_MflushCache syscall per frame (~0.1-0.2ms)
+    // with no cache reuse benefit.  Non-cached writes are ~10-20% slower per byte
+    // but eliminate syscall jitter entirely — same tradeoff as NPU input buffer (line 232).
+    const auto ret = AX_SYS_MemAlloc(
         &ivps_src_phy_addr_, &ivps_src_vir_addr_, ivps_src_buffer_size_, ALIGN,
         reinterpret_cast<const AX_S8*>("ivps-src"));
 
     if (ret != AX_SUCCESS || ivps_src_vir_addr_ == nullptr) {
-        SPDLOG_WARN("[AxeraBackend] IVPS src buffer alloc failed: {:#x}", ret);
         ivps_src_phy_addr_    = 0;
         ivps_src_vir_addr_    = nullptr;
         ivps_src_buffer_size_ = 0;
         ivps_src_stride_      = 0;
-        return std::unexpected("Axera IVPS source buffer allocation failed");
+        return std::unexpected(fmt::format("AX_SYS_MemAlloc: {}", ax_error_string(ret)));
     }
 
     SPDLOG_INFO(
-        "[AxeraBackend] IVPS buffers allocated: {}x{} (stride={}) -> {}x{}", max_src_width,
-        max_src_height, aligned_stride, config_.input_width, config_.input_height);
+        "IVPS buffers allocated: {}x{} (stride={}) -> {}x{}", max_src_width, max_src_height,
+        aligned_stride, config_.input_width, config_.input_height);
     return {};
 }
 
@@ -609,11 +640,6 @@ void AxeraBackend::free_ivps_buffers() noexcept {
 
 void AxeraBackend::preprocess_image_ivps(const cv::Mat& image) noexcept {
     if (!ivps_initialized_) {
-        static bool warned = false;
-        if (!warned) {
-            SPDLOG_WARN("[AxeraBackend] IVPS not initialized, using OpenCV (slower)");
-            warned = true;
-        }
         preprocess_image(image);
         return;
     }
@@ -625,7 +651,7 @@ void AxeraBackend::preprocess_image_ivps(const cv::Mat& image) noexcept {
         if (!buffer_result) {
             static bool warned = false;
             if (!warned) {
-                SPDLOG_WARN("[AxeraBackend] Failed to allocate IVPS buffers, using OpenCV");
+                SPDLOG_WARN("allocate_ivps_buffers: {}, using opencv", buffer_result.error());
                 warned = true;
             }
             preprocess_image(image);
@@ -667,14 +693,14 @@ void AxeraBackend::preprocess_image_ivps(const cv::Mat& image) noexcept {
     dst_frame.u32FrameSize    = static_cast<AX_U32>(config_.input_width * config_.input_height * 3);
     dst_frame.stCompressInfo.enCompressMode = AX_COMPRESS_MODE_NONE;
 
-    // 调用 IVPS 硬件加速
-    const auto ret = AX_IVPS_CropResizeTdp(&src_frame, &dst_frame, &ivps_aspect_ratio_);
+    // Source buffer is non-cached; CPU writes land directly in DDR — no flush needed.
+
+    // AX650 CropResize uses VPP engine, not TDP.
+    // TDP is designed for CSC operations and does not reliably support BGR888 resize.
+    // Reference: ax-video-sdk CropResizeDispatched() defaults to VPP for AX650.
+    const auto ret = AX_IVPS_CropResizeVpp(&src_frame, &dst_frame, &ivps_aspect_ratio_);
     if (ret != AX_SUCCESS) {
-        static bool warned = false;
-        if (!warned) {
-            SPDLOG_WARN("[AxeraBackend] AX_IVPS_CropResizeTdp failed: {:#x}, using OpenCV", ret);
-            warned = true;
-        }
+        SPDLOG_WARN("AX_IVPS_CropResizeVpp: {}, using opencv", ax_error_string(ret));
         preprocess_image(image);
         return;
     }
@@ -682,7 +708,7 @@ void AxeraBackend::preprocess_image_ivps(const cv::Mat& image) noexcept {
     static bool logged_ivps_success = false;
     if (!logged_ivps_success) {
         SPDLOG_INFO(
-            "[AxeraBackend] IVPS hardware resize working! ({}x{} -> {}x{})", image.cols, image.rows,
+            "IVPS hardware resize working! ({}x{} -> {}x{})", image.cols, image.rows,
             config_.input_width, config_.input_height);
         logged_ivps_success = true;
     }
@@ -697,7 +723,7 @@ bool AxeraBackend::infer() noexcept {
 
     const auto ret = AX_ENGINE_RunSync(handle_, &io_data_);
     if (ret != 0) {
-        SPDLOG_ERROR("[AxeraBackend] AX_ENGINE_RunSync failed: {}", ret);
+        SPDLOG_ERROR("infer: AX_ENGINE_RunSync: {}", ax_error_string(ret));
         return false;
     }
     return true;
@@ -731,8 +757,6 @@ AxeraBackend::DecodeGrid AxeraBackend::build_decode_grid() const noexcept {
 
 std::vector<ArmorDetection>
     AxeraBackend::postprocess_concat_predecode(const PreprocContext& ctx) const noexcept {
-    const auto total_start = std::chrono::high_resolution_clock::now();
-
     const int predecode_box_dim  = 4;
     const int predecode_obj_dim  = config_.num_pairs;
     const int predecode_kpts_dim = config_.num_kpts * 2;
@@ -756,7 +780,7 @@ std::vector<ArmorDetection>
     }
 
     if (output_buf == nullptr) {
-        SPDLOG_ERROR("[AxeraBackend] No valid concat-predecode output tensor found");
+        SPDLOG_ERROR("No valid concat-predecode output tensor found");
         return {};
     }
 
@@ -764,8 +788,7 @@ std::vector<ArmorDetection>
         static_cast<size_t>(output_buf->nSize) / (sizeof(float) * predecode_output_dim));
     if (num_anchors != static_cast<int>(cached_grid_.grid_x.size())) {
         SPDLOG_ERROR(
-            "[AxeraBackend] Anchor count mismatch: output={} grid={}", num_anchors,
-            cached_grid_.grid_x.size());
+            "Anchor count mismatch: output={} grid={}", num_anchors, cached_grid_.grid_x.size());
         return {};
     }
 
@@ -775,15 +798,13 @@ std::vector<ArmorDetection>
     const float* obj_logits   = color_logits + config_.num_colors * num_anchors;
     const float* raw_kpts     = obj_logits + predecode_obj_dim * num_anchors;
 
-    const auto phase1_end = std::chrono::high_resolution_clock::now();
-
     const float confidence_threshold = static_cast<float>(config_.confidence_threshold);
     const float logit_threshold = std::log(confidence_threshold / (1.0f - confidence_threshold));
 
     static bool logged_threshold = false;
     if (!logged_threshold) {
         SPDLOG_INFO(
-            "[AxeraBackend] confidence_threshold={}, logit_threshold={:.2f}", confidence_threshold,
+            "confidence_threshold={}, logit_threshold={:.2f}", confidence_threshold,
             logit_threshold);
         logged_threshold = true;
     }
@@ -800,8 +821,6 @@ std::vector<ArmorDetection>
     }
     auto& ranked = postproc_ranked_buf_;
 
-    int anchor_scan_count = 0;
-
     for (int anchor_idx = 0; anchor_idx < num_anchors; ++anchor_idx) {
         float best_obj_logit = obj_logits[anchor_idx];
         int pair_id          = 0;
@@ -816,7 +835,6 @@ std::vector<ArmorDetection>
         if (best_obj_logit < logit_threshold) {
             continue;
         }
-        ++anchor_scan_count;
 
         const RankedAnchor item{best_obj_logit, pair_id, anchor_idx};
         if (ranked.size() < pre_nms_top_k) {
@@ -830,8 +848,6 @@ std::vector<ArmorDetection>
             std::push_heap(ranked.begin(), ranked.end(), min_heap_comp);
         }
     }
-
-    const auto phase2_end = std::chrono::high_resolution_clock::now();
 
     std::sort(ranked.begin(), ranked.end(), [](const RankedAnchor& lhs, const RankedAnchor& rhs) {
         return lhs.best_obj_logit > rhs.best_obj_logit;
@@ -905,27 +921,7 @@ std::vector<ArmorDetection>
         candidates.push_back(std::move(candidate));
     }
 
-    const auto phase3_end = std::chrono::high_resolution_clock::now();
-
-    auto result = nms(candidates, ctx.orig_w, ctx.orig_h);
-
-    const auto total_end = std::chrono::high_resolution_clock::now();
-
-    const auto phase2_us =
-        std::chrono::duration_cast<std::chrono::microseconds>(phase2_end - phase1_end).count();
-    const auto phase3_us =
-        std::chrono::duration_cast<std::chrono::microseconds>(phase3_end - phase2_end).count();
-    const auto nms_us =
-        std::chrono::duration_cast<std::chrono::microseconds>(total_end - phase3_end).count();
-    const auto total_us =
-        std::chrono::duration_cast<std::chrono::microseconds>(total_end - total_start).count();
-
-    // SPDLOG_INFO(
-    //     "[AxeraBackend] Postproc: scan={}ms decode={}ms nms={}ms total={}ms | passed={}/{}",
-    //     phase2_us / 1000.0, phase3_us / 1000.0, nms_us / 1000.0, total_us / 1000.0,
-    //     anchor_scan_count, num_anchors);
-
-    return result;
+    return nms(candidates, ctx.orig_w, ctx.orig_h);
 }
 
 std::vector<ArmorDetection> AxeraBackend::nms(
@@ -1011,56 +1007,26 @@ std::vector<ArmorDetection> AxeraBackend::nms(
 
 AxeraBackend::DetectionResult
     AxeraBackend::detect_impl(const cv::Mat& image, ArmorColor color) noexcept {
-    const auto total_start = std::chrono::high_resolution_clock::now();
-
     const auto ctx = preprocess(image, color);
     if (!ctx.is_four_three && !warned_non_four_three_input_) {
         SPDLOG_WARN(
-            "[AxeraBackend] Input {}x{} is not 4:3; direct resize to {}x{} will be used "
-            "without "
-            "letterbox",
+            "Input {}x{} is not 4:3; direct resize to {}x{} will be used "
+            "without letterbox",
             image.cols, image.rows, config_.input_width, config_.input_height);
         warned_non_four_three_input_ = true;
     }
 
-    // Preprocess timing
-    const auto preproc_start = std::chrono::high_resolution_clock::now();
     if (ivps_initialized_) {
         preprocess_image_ivps(image);
     } else {
         preprocess_image(image);
     }
-    const auto preproc_end = std::chrono::high_resolution_clock::now();
-    const auto preproc_us =
-        std::chrono::duration_cast<std::chrono::microseconds>(preproc_end - preproc_start).count();
 
-    // Inference timing
-    const auto infer_start = std::chrono::high_resolution_clock::now();
     if (!infer()) {
         return std::unexpected("Axera NPU inference failed (AX_ENGINE_RunSync)");
     }
-    const auto infer_end = std::chrono::high_resolution_clock::now();
-    const auto infer_us =
-        std::chrono::duration_cast<std::chrono::microseconds>(infer_end - infer_start).count();
 
-    // Postprocess timing
-    const auto postproc_start = std::chrono::high_resolution_clock::now();
-    auto detections           = postprocess_concat_predecode(ctx);
-    const auto postproc_end   = std::chrono::high_resolution_clock::now();
-    const auto postproc_us =
-        std::chrono::duration_cast<std::chrono::microseconds>(postproc_end - postproc_start)
-            .count();
-
-    const auto total_end = std::chrono::high_resolution_clock::now();
-    const auto total_us =
-        std::chrono::duration_cast<std::chrono::microseconds>(total_end - total_start).count();
-
-    // SPDLOG_INFO(
-    //     "[AxeraBackend], ArmorColor color Timing: preproc={:.2f}ms, infer={:.2f}ms,
-    //     postproc={:.2f}ms, " "total={:.2f}ms", preproc_us / 1000.0, infer_us / 1000.0,
-    //     postproc_us / 1000.0, total_us / 1000.0);
-
-    return detections;
+    return postprocess_concat_predecode(ctx);
 }
 
 } // namespace fcs::L2
