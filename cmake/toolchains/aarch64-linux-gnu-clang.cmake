@@ -1,11 +1,13 @@
 set(CMAKE_SYSTEM_NAME Linux)
 set(CMAKE_SYSTEM_PROCESSOR aarch64)
 set(CMAKE_TRY_COMPILE_TARGET_TYPE STATIC_LIBRARY)
+
 list(APPEND CMAKE_TRY_COMPILE_PLATFORM_VARIABLES
     TALOS_SYSROOT
     TALOS_TARGET_TRIPLE
     TALOS_LLVM_ROOT
-    TALOS_GNU_TOOLCHAIN_ROOT)
+    TALOS_GNU_TOOLCHAIN_ROOT
+    TALOS_CLANG_RESOURCE_DIR)
 
 set(TALOS_SYSROOT "$ENV{TALOS_SYSROOT}" CACHE PATH "Target aarch64 Linux sysroot")
 if (NOT TALOS_SYSROOT)
@@ -18,17 +20,24 @@ if (NOT IS_DIRECTORY "${TALOS_SYSROOT}")
     message(FATAL_ERROR "TALOS_SYSROOT does not exist: ${TALOS_SYSROOT}")
 endif ()
 
+get_filename_component(TALOS_SYSROOT "${TALOS_SYSROOT}" REALPATH)
+
 set(TALOS_TARGET_TRIPLE "aarch64-unknown-linux-gnu" CACHE STRING
     "GNU target triple used for clang cross-compilation")
 set(TALOS_LLVM_ROOT "" CACHE PATH
     "Optional LLVM/Clang installation root (should contain bin/clang and bin/clang++)")
 set(TALOS_GNU_TOOLCHAIN_ROOT "" CACHE PATH
     "GNU cross-toolchain root used by clang to locate libstdc++, crt objects and binutils")
+set(TALOS_CLANG_RESOURCE_DIR "" CACHE PATH
+    "Target Clang resource directory that contains lib/linux/libclang_rt.*")
 
 function(_talos_normalize_gnu_toolchain_root out_var input_root)
     set(_root "${input_root}")
     if (IS_DIRECTORY "${_root}/toolchain/bin" AND IS_DIRECTORY "${_root}/toolchain/lib/gcc")
         set(_root "${_root}/toolchain")
+    endif ()
+    if (_root AND IS_DIRECTORY "${_root}")
+        get_filename_component(_root "${_root}" REALPATH)
     endif ()
     set(${out_var} "${_root}" PARENT_SCOPE)
 endfunction()
@@ -52,7 +61,9 @@ if (TALOS_GNU_TOOLCHAIN_ROOT)
 endif ()
 
 foreach(_talos_root IN LISTS _talos_program_roots)
-    list(PREPEND CMAKE_PROGRAM_PATH "${_talos_root}/bin")
+    if (IS_DIRECTORY "${_talos_root}/bin")
+        list(PREPEND CMAKE_PROGRAM_PATH "${_talos_root}/bin")
+    endif ()
 endforeach ()
 
 find_program(TALOS_CLANG
@@ -78,9 +89,68 @@ if (NOT TALOS_GNU_TOOLCHAIN_ROOT)
     _talos_normalize_gnu_toolchain_root(TALOS_GNU_TOOLCHAIN_ROOT "${TALOS_GNU_TOOLCHAIN_ROOT}")
 endif ()
 
+if (NOT IS_DIRECTORY "${TALOS_GNU_TOOLCHAIN_ROOT}")
+    message(FATAL_ERROR "TALOS_GNU_TOOLCHAIN_ROOT does not exist: ${TALOS_GNU_TOOLCHAIN_ROOT}")
+endif ()
+
 set(CMAKE_C_COMPILER_EXTERNAL_TOOLCHAIN "${TALOS_GNU_TOOLCHAIN_ROOT}")
 set(CMAKE_CXX_COMPILER_EXTERNAL_TOOLCHAIN "${TALOS_GNU_TOOLCHAIN_ROOT}")
 set(CMAKE_SYSROOT "${TALOS_SYSROOT}")
+
+# ------------------------------------------------------------------------------
+# Target clang resource-dir inside sysroot
+#
+# Important:
+#   --sysroot does not redirect clang's resource-dir.
+#   compiler-rt / clang_rt must be wired explicitly.
+# ------------------------------------------------------------------------------
+
+if (NOT TALOS_CLANG_RESOURCE_DIR)
+    file(GLOB _talos_clang_resource_candidates
+        LIST_DIRECTORIES TRUE
+        "${CMAKE_SYSROOT}/lib/clang/*"
+        "${CMAKE_SYSROOT}/usr/lib/clang/*")
+
+    list(SORT _talos_clang_resource_candidates COMPARE NATURAL ORDER DESCENDING)
+
+    foreach(_candidate IN LISTS _talos_clang_resource_candidates)
+        if (IS_DIRECTORY "${_candidate}/lib/linux")
+            set(TALOS_CLANG_RESOURCE_DIR "${_candidate}" CACHE PATH
+                "Auto-detected target Clang resource directory" FORCE)
+            break()
+        endif ()
+    endforeach ()
+endif ()
+
+if (NOT TALOS_CLANG_RESOURCE_DIR)
+    message(FATAL_ERROR
+        "Could not find target Clang resource dir under sysroot. "
+        "Expected something like ${CMAKE_SYSROOT}/lib/clang/<version>/lib/linux.")
+endif ()
+
+if (NOT IS_DIRECTORY "${TALOS_CLANG_RESOURCE_DIR}")
+    message(FATAL_ERROR
+        "TALOS_CLANG_RESOURCE_DIR does not exist: ${TALOS_CLANG_RESOURCE_DIR}")
+endif ()
+
+get_filename_component(TALOS_CLANG_RESOURCE_DIR "${TALOS_CLANG_RESOURCE_DIR}" REALPATH)
+
+set(_talos_clang_rt_linux_dir "${TALOS_CLANG_RESOURCE_DIR}/lib/linux")
+set(_talos_clang_rt_triple_dir "${TALOS_CLANG_RESOURCE_DIR}/lib/${TALOS_TARGET_TRIPLE}")
+
+if (NOT EXISTS "${_talos_clang_rt_linux_dir}/libclang_rt.builtins-aarch64.a")
+    message(FATAL_ERROR
+        "Target compiler-rt builtins not found in: "
+        "${_talos_clang_rt_linux_dir}")
+endif ()
+
+if (EXISTS "${_talos_clang_rt_linux_dir}/libclang_rt.asan-aarch64.a")
+    set(TALOS_HAS_ASAN_RUNTIME TRUE CACHE BOOL
+        "Target compiler-rt has ASan runtime" FORCE)
+else ()
+    set(TALOS_HAS_ASAN_RUNTIME FALSE CACHE BOOL
+        "Target compiler-rt has ASan runtime" FORCE)
+endif ()
 
 set(TALOS_MULTIARCH_DIRS
     "${TALOS_TARGET_TRIPLE}"
@@ -96,7 +166,7 @@ foreach(_talos_arch IN LISTS TALOS_MULTIARCH_DIRS)
 endforeach ()
 
 set(_talos_common_target_flags
-    "--target=${TALOS_TARGET_TRIPLE} --sysroot=${CMAKE_SYSROOT} --gcc-toolchain=${TALOS_GNU_TOOLCHAIN_ROOT}")
+    "--target=${TALOS_TARGET_TRIPLE} --sysroot=${CMAKE_SYSROOT} --gcc-toolchain=${TALOS_GNU_TOOLCHAIN_ROOT} -resource-dir=${TALOS_CLANG_RESOURCE_DIR}")
 
 set(CMAKE_C_FLAGS_INIT "${_talos_common_target_flags}")
 set(CMAKE_CXX_FLAGS_INIT "${_talos_common_target_flags} -stdlib=libstdc++")
@@ -199,3 +269,14 @@ message(STATUS "Clang C compiler: ${CMAKE_C_COMPILER}")
 message(STATUS "Clang CXX compiler: ${CMAKE_CXX_COMPILER}")
 message(STATUS "GNU toolchain root: ${TALOS_GNU_TOOLCHAIN_ROOT}")
 message(STATUS "Target library architecture: ${CMAKE_LIBRARY_ARCHITECTURE}")
+message(STATUS "Target Clang resource dir: ${TALOS_CLANG_RESOURCE_DIR}")
+message(STATUS "Target clang_rt linux dir: ${_talos_clang_rt_linux_dir}")
+message(STATUS "Target ASan runtime: ${TALOS_HAS_ASAN_RUNTIME}")
+
+if (EXISTS "${_talos_clang_rt_triple_dir}/libclang_rt.asan.a")
+    message(STATUS "Target clang_rt triple dir: ${_talos_clang_rt_triple_dir}")
+else ()
+    message(STATUS
+        "Target clang_rt triple dir is not populated: ${_talos_clang_rt_triple_dir}. "
+        "This is OK if clang uses lib/linux layout.")
+endif ()
