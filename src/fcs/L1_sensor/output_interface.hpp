@@ -2,6 +2,7 @@
 
 #include "L5_weapon/fire_control.hpp"
 #include "chiral/gimbal.hpp"
+#include "quanta/stream_transport.hpp"
 #include "shm_client.hpp"
 #include "talos_gimbal/mcu_device.hpp"
 
@@ -25,6 +26,7 @@ public:
     explicit IpcOutput(std::shared_ptr<ipc::ShmClient> client) noexcept;
 
     void send(const L5::WeaponCommand& cmd) const noexcept;
+    void send_quanta(const quanta::TransportChunk& chunk) const noexcept;
 
 private:
     std::shared_ptr<ipc::ShmClient> client_;
@@ -39,6 +41,7 @@ public:
     explicit McuOutput(std::shared_ptr<talos_gimbal::McuDeviceHandle> device) noexcept;
 
     void send(const L5::WeaponCommand& cmd) const noexcept;
+    void send_quanta(const quanta::TransportChunk& chunk) const noexcept;
 
 private:
     std::shared_ptr<talos_gimbal::McuDeviceHandle> device_;
@@ -49,6 +52,7 @@ public:
     explicit ChiralOutput(std::shared_ptr<talos::chiral::gimbal::TalosEndpoint> device) noexcept;
 
     void send(const L5::WeaponCommand& cmd) const noexcept;
+    void send_quanta(const quanta::TransportChunk& chunk) const noexcept;
 
 private:
     std::shared_ptr<talos::chiral::gimbal::TalosEndpoint> device_;
@@ -72,6 +76,16 @@ public:
             [&cmd](auto& output) {
                 if constexpr (!std::is_same_v<std::decay_t<decltype(output)>, std::monostate>) {
                     output.send(cmd);
+                }
+            },
+            mode_);
+    }
+
+    void send(const quanta::TransportChunk& chunk) noexcept {
+        std::visit(
+            [&chunk](auto& output) {
+                if constexpr (!std::is_same_v<std::decay_t<decltype(output)>, std::monostate>) {
+                    output.send_quanta(std::move(chunk));
                 }
             },
             mode_);

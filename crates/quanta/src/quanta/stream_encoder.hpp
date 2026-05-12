@@ -10,6 +10,10 @@
 #include <string>
 #include <utility>
 
+namespace quanta::detail {
+class EncoderBackend;
+} // namespace quanta::detail
+
 namespace quanta {
 
 // ---------------------------------------------------------------------------
@@ -53,7 +57,7 @@ public:
 
     void request_keyframe() noexcept;
 
-    std::optional<EncodedPacket> poll_packet();
+    std::optional<EncodedPacket> poll_packet() noexcept;
 
     std::expected<void, std::string> flush() noexcept;
 
@@ -64,9 +68,8 @@ public:
     [[nodiscard]] std::pair<int, int> dimensions() const;
 
 private:
-    class Impl;
-    explicit StreamEncoder(std::unique_ptr<Impl> impl);
-    std::unique_ptr<Impl> impl_;
+    explicit StreamEncoder(std::unique_ptr<detail::EncoderBackend> backend);
+    std::unique_ptr<detail::EncoderBackend> backend_;
 };
 
 } // namespace quanta

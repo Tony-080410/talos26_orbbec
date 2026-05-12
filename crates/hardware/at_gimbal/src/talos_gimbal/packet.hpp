@@ -22,9 +22,9 @@ struct HeaderFrame {
 
     static constexpr uint8_t EoF() { return 0xA5; }
 
-    uint8_t sof;                                        // 0x5A
+    uint8_t sof; // 0x5A
     uint8_t len;
-    uint8_t id;                                         // 0x01
+    uint8_t id;  // 0x01
 };
 
 struct ReceiveImuData {
@@ -39,6 +39,32 @@ struct ReceiveImuData {
         float yaw_vel;
         float pitch_vel;
         float roll_vel;
+    } data;
+    uint8_t eof; // 0xA5
+};
+
+// 0x03 sent by mcu
+struct ReceiveCapabilitiesData {
+    HeaderFrame header;
+    uint32_t time_stamp;
+    struct {
+        // 0: 未开启跟随 1: 开启跟随
+        uint8_t following;
+        // 0: 未开启开符模式 1: 开启开符模式
+        uint8_t power_rune;
+        // 0: 未开启 Quanta 图传 1: 开启 Quanta 图传
+        uint8_t quanta;
+    } data;
+    uint8_t eof; // 0xA5
+};
+
+// 0x04 sent by talos
+struct SendQuantaData {
+    HeaderFrame header;
+    uint32_t time_stamp;
+    struct {
+        uint16_t custom_byte_block_len;
+        uint8_t custom_byte_block[300];
     } data;
     uint8_t eof;                                        // 0xA5
 };
