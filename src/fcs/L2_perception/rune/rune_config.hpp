@@ -12,16 +12,10 @@ struct RuneDetectorConfig {
     // 流水灯参数
     double min_roundness{0.6};
     double max_roundness{1.0};
-    int min_arrow_light_num{3};
-    int max_arrow_light_num{15};
-    double min_arrow_aspect_ratio{2.0};
-    double max_arrow_aspect_ratio{12.0};
-    double max_arrow_area{5000.0};
     double min_arrow_light_area{10.0};
     double max_arrow_light_area{250.0};
     double min_arrow_light_aspect_ratio{1.5};
     double max_arrow_light_aspect_ratio{5.0};
-    double max_same_arrow_area_ratio{5.0};
 
     // ROI参数
     double global_roi_length_ratio{1.5};

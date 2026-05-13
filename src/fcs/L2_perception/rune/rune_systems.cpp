@@ -87,27 +87,20 @@ void register_rune_detection_systems(talos::Scheduler& scheduler, RuneDetectorCo
                     cv::cvtColor(detector->arrowImg, arrow_vis, cv::COLOR_GRAY2BGR);
                     // 用绿色绘制所有检测到的 arrow 轮廓
                     for (const auto& arrow : detector->arrows) {
-                        if (!arrow.contour.empty()) {
-                            // 转换轮廓坐标（考虑 global ROI 偏移）
-                            std::vector<cv::Point> contour;
-                            for (const auto& pt : arrow.contour) {
-                                contour.emplace_back(pt);
-                            }
-                            cv::polylines(arrow_vis, contour, true, cv::Scalar(0, 255, 0), 2);
-                            // 绘制旋转矩形
-                            cv::RotatedRect box = arrow.rotated;
 
-                            cv::Point2f vertices[4];
-                            box.points(vertices);
-                            for (int j = 0; j < 4; ++j) {
-                                cv::line(
-                                    arrow_vis, vertices[j], vertices[(j + 1) % 4],
-                                    cv::Scalar(255, 0, 255), 2);
-                            }
-                            // 绘制中心点
+                        // 绘制旋转矩形
+                        cv::RotatedRect box = arrow.rotated;
 
-                            cv::circle(arrow_vis, arrow.center, 3, cv::Scalar(0, 255, 255), -1);
+                        cv::Point2f vertices[4];
+                        box.points(vertices);
+                        for (int j = 0; j < 4; ++j) {
+                            cv::line(
+                                arrow_vis, vertices[j], vertices[(j + 1) % 4],
+                                cv::Scalar(255, 0, 255), 2);
                         }
+                        // 绘制中心点
+
+                        cv::circle(arrow_vis, arrow.center, 3, cv::Scalar(0, 255, 255), -1);
                     }
                     // // 显示检测状态
                     // cv::putText(

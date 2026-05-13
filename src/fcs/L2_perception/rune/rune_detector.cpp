@@ -112,14 +112,6 @@ bool Arrow::set(const std::vector<Light>& lights, bool debug_mode) {
         }
     }
 
-    if (contour.size() < 5) {
-        if (debug_mode) {
-            std::cerr << "[ERROR] Arrow::set: Contour too small. size=" << contour.size()
-                      << std::endl;
-        }
-        return false;
-    }
-
     // 设置成员变量
     rotated = cv::minAreaRect(contour);
 
@@ -323,113 +315,57 @@ void RuneDetector::setLocalRoi() {
     }
 }
 
-bool sameArrow(const Light& l1, const Light& l2, const fcs::rune::RuneDetectorConfig& params) {
-    // 判断面积比
-    double areaRatio{l1.area / l2.area};
-    if ((areaRatio >= 1 / params.max_same_arrow_area_ratio
-         && areaRatio <= params.max_same_arrow_area_ratio)
-        == false) {
-        // std::cerr << "[ERROR] sameArrow: areaRatio = " << areaRatio << std::endl;
-        return false;
-    }
-
-    // 判断距离
-    double distance{cv::norm(l1.rotated.center - l2.rotated.center)};
-    double maxDistance{1.5 * (l1.size.width + l2.size.width)};
-    if (distance > maxDistance) {
-        // std::cerr << "[ERROR] sameArrow: distance = " << distance << std::endl;
-        return false;
-    }
-
-    return true;
-}
-
 bool findArrow(
-    Arrow& arrow, const std::vector<Light>& lights, const fcs::rune::RuneDetectorConfig& params) {
-    // 利用 cv::partition 匹配箭头
-    std::vector<int> labels;
-    cv::partition(lights, labels, [&params](const Light& l1, const Light& l2) {
-        return sameArrow(l1, l2, params);
-    });
-    // data 记录了标识号和其对应次数
-    std::vector<std::pair<int, int>> data;
-    for (auto label : labels) {
-        // 对每个 label，从已记录的数据中寻找是否有这个条目，有则对应计数项
-        // +1，否则新增一个条目
-        auto iter =
-            std::find_if(data.begin(), data.end(), [label](const std::pair<int, int>& unit) {
-                return unit.first == label;
-            });
-        if (iter == data.end()) {
-            data.emplace_back(label, 1);
-        } else {
-            iter->second += 1;
-        }
-    }
-    if (data.empty() == true) {
-        return false;
-    }
-    // 寻找出现次数最多的 label 和其对应的 num
-    auto [maxLabel, maxNum]{*std::max_element(
-        data.begin(), data.end(), [](const std::pair<int, int>& i, const std::pair<int, int>& j) {
-            return i.second < j.second;
-        })};
-    // 判断 num 是否符合要求
-    if ((maxNum >= params.min_arrow_light_num && maxNum <= params.max_arrow_light_num) == false) {
-        if (params.debug_mode) {
-            std::cerr << "[ERROR] findArrow: Arrow light number invalid. maxNum=" << maxNum
-                      << " (valid: " << params.min_arrow_light_num << "-"
-                      << params.max_arrow_light_num << ")" << std::endl;
-        }
-        return false;
-    }
-    // 再次遍历 labels，选取和 maxLabel 相同的 label，并存入一个向量
-    std::vector<int> arrowIndices;
-    for (size_t i = 0; i < labels.size(); ++i) {
-        if (labels[i] == maxLabel) {
-            arrowIndices.push_back(i);
-        }
-    }
-    // 根据这个向量，将其对应的灯条轮廓点集中每个点存入箭头点的向量中
-    std::vector<Light> arrowLights;
-    for (auto index : arrowIndices) {
-        arrowLights.push_back(lights.at(index));
-    }
-    // 设置这个箭头
+    std::vector<Arrow>& arrows, const std::vector<Light>& lights, const cv::Mat& img,
+    const fcs::rune::RuneDetectorConfig& params) {
 
-    if (arrowLights.empty()) {
-        if (params.debug_mode) {
-            std::cerr << "[ERROR] findArrow: arrowLights empty" << std::endl;
-        }
+    if (lights.size() == 0) {
         return false;
     }
 
-    if (!arrow.set(arrowLights, params.debug_mode)) {
-        if (params.debug_mode) {
-            std::cerr << "[ERROR] findArrow: arrow.set() failed" << std::endl;
+    for (const auto& light : lights) {
+        Arrow arrow;
+        // 再次遍历 labels，选取和 maxLabel 相同的 label，并存入一个向量
+
+        cv::Rect roi = light.rotated.boundingRect();
+
+        roi &= cv::Rect(0, 0, img.cols, img.rows);
+
+        cv::Mat roi_img = img(roi).clone();
+
+        cv::Mat labels, stats, centroids;
+        int num = cv::connectedComponentsWithStats(roi_img, labels, stats, centroids, 8);
+
+        int valid_cnt = 0;
+
+        for (int i = 1; i < num; i++) {
+            int area = stats.at<int>(i, cv::CC_STAT_AREA);
+
+            if (area > 20)
+                valid_cnt++;
         }
+
+        if (valid_cnt <= 2) {
+            continue;
+        }
+
+        std::vector<Light> lg;
+        lg.emplace_back(light);
+
+        if (!arrow.set(lg, params.debug_mode)) {
+            if (params.debug_mode) {
+                std::cerr << "[ERROR] findArrow: arrow.set() failed" << std::endl;
+            }
+            continue;
+        }
+
+        arrows.emplace_back(arrow);
+    }
+
+    if (arrows.empty()) {
         return false;
     }
 
-    // 判断长宽比
-    if ((arrow.ratio >= params.min_arrow_aspect_ratio
-         && arrow.ratio <= params.max_arrow_aspect_ratio)
-        == false) {
-        if (params.debug_mode) {
-            std::cerr << "[ERROR] findArrow: Arrow aspect ratio invalid. ratio=" << arrow.ratio
-                      << " (valid: " << params.min_arrow_aspect_ratio << "-"
-                      << params.max_arrow_aspect_ratio << ")" << std::endl;
-        }
-        return false;
-    }
-    // 判断面积
-    if (arrow.area > params.max_arrow_area) {
-        if (params.debug_mode) {
-            std::cerr << "[ERROR] findArrow: Arrow area too large. area=" << arrow.area
-                      << " (max: " << params.max_arrow_area << ")" << std::endl;
-        }
-        return false;
-    }
     return true;
 }
 
@@ -463,34 +399,18 @@ void findArrowLights(
 
 bool RuneDetector::detectAllArrows() {
     cv::Mat binImg = arrowImg.clone(); // 二值图
+
+    cv::Mat kernel = cv::getStructuringElement(0, cv::Size(10, 10));
+    cv::morphologyEx(binImg, binImg, cv::MORPH_CLOSE, kernel);
+
     arrows.clear();
 
-    while (true) {
-        std::vector<Light> lights;
-        findArrowLights(binImg, lights, params_);
+    std::vector<Light> lights;
+    findArrowLights(binImg, lights, params_);
 
-        Arrow found;
-        if (!findArrow(found, lights, params_))
-            break;                     // 找不到新箭头，退出循环
-
-        arrows.push_back(found);
-
-        std::vector<cv::Point> contour_i;
-        contour_i.reserve(found.contour.size());
-
-        for (const auto& p : found.contour) {
-            contour_i.emplace_back(
-                static_cast<int>(std::round(p.x)), static_cast<int>(std::round(p.y)));
-        }
-
-        // 用掩膜遮掉已经识别的箭头灯条
-        cv::drawContours(
-            binImg, std::vector<std::vector<cv::Point>>{contour_i}, -1, cv::Scalar(0), cv::FILLED);
-    }
-
-    if (arrows.empty()) {
+    if (!findArrow(arrows, lights, arrowImg, params_))
         return false;
-    }
+
     return true;
 }
 
@@ -503,7 +423,7 @@ bool findCenterR(
 
         if (!arrow.contour.empty()) {
             if (cv::pointPolygonTest(arrow.contour, iter->center, false) >= 0) {
-                continue; // 在箭头内部，跳过
+                continue;              // 在箭头内部，跳过
             }
         } else {
             // 如果箭头只有 RotatedRect，使用矩形判断
