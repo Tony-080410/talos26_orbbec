@@ -120,18 +120,19 @@ public:
             std::chrono::duration_cast<std::chrono::duration<unsigned int, std::milli>>(timeout));
         if (!result) {
             if (!camera_->valid()) {
-                if (retry_-- > 0) {
+                if (retry_ > 0) {
+                    --retry_;
                     auto cam = hikcamera::ImageCapturer::create(profile_);
                     if (!cam) {
                         return std::unexpected(cam.error());
                     }
                     camera_ = std::move(cam.value());
-                    retry_  = 0;
                 }
                 return std::unexpected(Disconnected{result.error().what()});
             }
             return std::unexpected(result.error());
         }
+        retry_ = kReconnectRetryLimit;
         return Frame{
             .seq          = seq_++,
             .timestamp_ns = now_ns(),
@@ -155,7 +156,8 @@ private:
     hikcamera::ImageCapturer::CameraProfile profile_;
     uint64_t exposure_time_ns_; // Exposure time in nanoseconds
     uint64_t seq_{0};
-    uint64_t retry_{25565};
+    static constexpr uint64_t kReconnectRetryLimit = 25565;
+    uint64_t retry_{kReconnectRetryLimit};
 };
 
 class CameraInterface {

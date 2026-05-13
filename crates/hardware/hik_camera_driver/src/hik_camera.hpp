@@ -11,10 +11,12 @@
 #include <fmt/format.h>
 #include <memory>
 #include <opencv2/core/mat.hpp>
+#include <optional>
 #include <ratio>
 #include <string>
 #include <string_view>
 #include <tuple>
+#include <utility>
 
 namespace hikcamera {
 

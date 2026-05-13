@@ -2,9 +2,13 @@
 #include "CameraParams.h"
 #include "MvErrorDefine.h"
 
+#include <atomic>
 #include <cstring>
+#include <exception>
 #include <memory>
 #include <mutex>
+#include <string_view>
+#include <vector>
 
 #include <chrono>
 #include <opencv2/core.hpp>
@@ -158,11 +162,11 @@ public:
         }
 
         SPDLOG_INFO("initializing camera..");
-        auto init_result = init_camera(**device_info, profile, sync_mode);
+        auto init_result = init_camera(*device_info, profile, sync_mode);
         if (!init_result) {
             return std::unexpected(fmt::format("init camera: {}", init_result.error()));
         }
-        SPDLOG_INFO("camera: {}", collect_device_info(device_info.value()));
+        SPDLOG_INFO("camera: {}", collect_device_info(&*device_info));
 
         // 清除缓冲区中的残留帧（处理程序异常退出后的脏数据）
         // 相比 read() 等待超时，ClearImageBuffer 更直接且不会阻塞
@@ -177,11 +181,26 @@ public:
 
     ~Impl() noexcept { uninit_camera(); }
 
-    std::tuple<int, int> get_image_size() const noexcept { return {image_width_, image_height_}; }
+    std::tuple<int, int> get_image_size() const noexcept {
+        std::lock_guard<std::mutex> lock(camera_mutex_);
+        return {image_width_, image_height_};
+    }
 
     std::expected<cv::Mat, CameraError>
         read(std::chrono::duration<unsigned int, std::milli> timeout) noexcept {
-        MV_FRAME_OUT stImageInfo;
+        std::lock_guard<std::mutex> lock(camera_mutex_);
+
+        if (camera_handle_ == nullptr) {
+            return std::unexpected(CameraError{"get image buffer: camera handle is null"});
+        }
+        if (!callback_state_->valid.load(std::memory_order_acquire)) {
+            return std::unexpected(CameraError{"get image buffer: camera is not valid"});
+        }
+        if (!grabbing_) {
+            return std::unexpected(CameraError{"get image buffer: camera is not grabbing"});
+        }
+
+        MV_FRAME_OUT stImageInfo{};
 
         // MV_CC_GetImageBuffer timeout 单位是毫秒（nMsec）
         // 注意：不要乘以 1000000，timeout.count() 已经是毫秒数
@@ -221,19 +240,15 @@ public:
         const int height = stImageInfo.stFrameInfo.nHeight;
         cv::Mat raw_bayer{height, width, CV_8UC1, stImageInfo.pBufAddr};
 
-        // 使用 OpenCV 的 EA（Edge-Aware，边缘感知）算法解拜耳
-        // 相比普通插值更注重边缘方向，能减少边缘处的彩边和模糊
-        // 在画质与速度之间通常比 VNG 更适合实时视觉场景
         cv::Mat img;
-        cv::cvtColor(raw_bayer, img, *bayer_code);
+        try {
+            // 使用 OpenCV 的 EA（Edge-Aware，边缘感知）算法解拜耳
+            // 相比普通插值更注重边缘方向，能减少边缘处的彩边和模糊
+            // 在画质与速度之间通常比 VNG 更适合实时视觉场景
+            cv::cvtColor(raw_bayer, img, *bayer_code);
 
-        // 缓存图像尺寸（供 get_width_height() 使用）
-        image_width_  = width;
-        image_height_ = height;
-
-        // 旋转图像（如果需要）
-        if (rotate_type_ != RotateType::None) {
-            try {
+            // 旋转图像（如果需要）
+            if (rotate_type_ != RotateType::None) {
                 switch (rotate_type_) {
                 case RotateType::None: break;
                 case RotateType::Clockwise90: cv::rotate(img, img, cv::ROTATE_90_CLOCKWISE); break;
@@ -242,16 +257,32 @@ public:
                     cv::rotate(img, img, cv::ROTATE_90_COUNTERCLOCKWISE);
                     break;
                 }
-            } catch (const cv::Exception& e) {
-                return std::unexpected(fmt::format("rotate image: {}", e.what()));
             }
+        } catch (const cv::Exception& e) {
+            return std::unexpected(fmt::format("convert image: {}", e.what()));
+        } catch (const std::exception& e) {
+            return std::unexpected(fmt::format("convert image: {}", e.what()));
         }
+
+        // 缓存图像尺寸（供 get_width_height() 使用）
+        image_width_  = width;
+        image_height_ = height;
 
         // buffer_guard 析构时会自动调用 MV_CC_FreeImageBuffer
         return img;
     }
 
     std::expected<void, CameraError> software_trigger_on() noexcept {
+        std::lock_guard<std::mutex> lock(camera_mutex_);
+        if (camera_handle_ == nullptr) {
+            return std::unexpected(CameraError{"send software trigger: camera handle is null"});
+        }
+        if (!callback_state_->valid.load(std::memory_order_acquire)) {
+            return std::unexpected(CameraError{"send software trigger: camera is not valid"});
+        }
+        if (!grabbing_) {
+            return std::unexpected(CameraError{"send software trigger: camera is not grabbing"});
+        }
         auto ret = MV_CC_SetCommandValue(camera_handle_, "TriggerSoftware");
         if (MV_OK != ret) {
             return std::unexpected(CameraError{"send software trigger", ret});
@@ -260,6 +291,15 @@ public:
     }
 
     std::expected<void, CameraError> set_frame_rate_inner_trigger_mode(float frame_rate) noexcept {
+        std::lock_guard<std::mutex> lock(camera_mutex_);
+
+        if (camera_handle_ == nullptr) {
+            return std::unexpected(CameraError{"set frame rate: camera handle is null"});
+        }
+        if (!callback_state_->valid.load(std::memory_order_acquire)) {
+            return std::unexpected(CameraError{"set frame rate: camera is not valid"});
+        }
+
         // 在触发模式下，帧率由触发信号控制，AcquisitionFrameRate 设置无效
         if (trigger_mode_) {
             return std::unexpected("set frame rate in trigger mode");
@@ -277,17 +317,23 @@ public:
     }
 
     std::expected<void, CameraError> stop_grabbing() noexcept {
+        std::lock_guard<std::mutex> lock(camera_mutex_);
         if (camera_handle_ == nullptr) {
+            return {};
+        }
+        if (!grabbing_) {
             return {};
         }
         auto ret = MV_CC_StopGrabbing(camera_handle_);
         if (ret != MV_OK) {
             return std::unexpected(CameraError{"stop grabbing", ret});
         }
+        grabbing_ = false;
+        callback_state_->valid.store(false, std::memory_order_release);
         return {};
     }
 
-    bool valid() const noexcept { return valid_; }
+    bool valid() const noexcept { return callback_state_->valid.load(std::memory_order_acquire); }
 
 private:
     RotateType rotate_type_ = RotateType::None;
@@ -298,7 +344,12 @@ private:
 
     // 记录当前是否处于触发模式（在 init_camera 时确定）
     bool trigger_mode_ = false;
-    bool valid_        = false;
+    bool grabbing_     = false;
+    struct CallbackState {
+        std::atomic_bool active{false};
+        std::atomic_bool valid{false};
+        std::shared_ptr<spdlog::logger> logger;
+    };
 
 #define SDK_RET_ASSERT(ret, message)                           \
     do {                                                       \
@@ -307,13 +358,53 @@ private:
         }                                                      \
     } while (false)
 
+    template <typename Char, std::size_t N>
+    static std::string_view sdk_string_view(const Char (&value)[N]) noexcept {
+        const auto* data = reinterpret_cast<const char*>(value);
+        const auto* end  = static_cast<const char*>(std::memchr(data, '\0', N));
+        return {data, static_cast<std::size_t>(end == nullptr ? N : end - data)};
+    }
+
+    template <typename Char, std::size_t N>
+    static bool sdk_string_equals(const Char (&value)[N], const char* target) noexcept {
+        if (target == nullptr) {
+            return false;
+        }
+        const auto view       = sdk_string_view(value);
+        const auto target_len = std::strlen(target);
+        return view.size() == target_len && std::memcmp(view.data(), target, view.size()) == 0;
+    }
+
+    static std::shared_ptr<spdlog::logger> make_logger() {
+        auto logger = spdlog::get("hikcamera");
+        if (!logger) {
+            logger = spdlog::default_logger();
+        }
+        return logger;
+    }
+
+    static std::shared_ptr<CallbackState>
+        make_callback_state(std::shared_ptr<spdlog::logger> logger) {
+        auto state    = std::make_shared<CallbackState>();
+        state->logger = std::move(logger);
+
+        // SDK callbacks only carry a raw pUser. Keep states process-lifetime so a
+        // late vendor callback cannot dereference a destroyed ImageCapturer::Impl.
+        static auto* states      = new std::vector<std::shared_ptr<CallbackState>>();
+        static auto* states_lock = new std::mutex();
+        std::lock_guard<std::mutex> lock(*states_lock);
+        states->push_back(state);
+
+        return state;
+    }
+
     std::string collect_device_info(MV_CC_DEVICE_INFO* pDeviceInfo) noexcept {
         // 辅助 lambda：获取字符串节点
         auto get_str = [&](const char* node) -> std::string {
             MVCC_STRINGVALUE strVal = {};
             int ret                 = MV_CC_GetStringValue(camera_handle_, node, &strVal);
             if (ret == MV_OK) {
-                return reinterpret_cast<char*>(strVal.chCurValue);
+                return std::string{sdk_string_view(strVal.chCurValue)};
             }
             return fmt::format("N/A [{}]", error_code_to_message(ret));
         };
@@ -339,7 +430,7 @@ private:
             entry.nValue         = enumVal.nCurValue;
             ret                  = MV_CC_GetEnumEntrySymbolic(camera_handle_, node, &entry);
             if (ret == MV_OK) {
-                return entry.chSymbolic;
+                return std::string{sdk_string_view(entry.chSymbolic)};
             }
             return std::to_string(enumVal.nCurValue);
         };
@@ -368,19 +459,18 @@ private:
             SPDLOG_LOGGER_ERROR(logger_, "The Pointer of pstMVDevInfo is NULL!");
             return false;
         }
-        const unsigned char* deviceName;
         if (pstMVDevInfo->nTLayerType == MV_GIGE_DEVICE) {
-            deviceName = pstMVDevInfo->SpecialInfo.stGigEInfo.chUserDefinedName;
+            return sdk_string_equals(
+                pstMVDevInfo->SpecialInfo.stGigEInfo.chUserDefinedName, targetName);
         } else if (pstMVDevInfo->nTLayerType == MV_USB_DEVICE) {
-            deviceName = pstMVDevInfo->SpecialInfo.stUsb3VInfo.chUserDefinedName;
+            return sdk_string_equals(
+                pstMVDevInfo->SpecialInfo.stUsb3VInfo.chUserDefinedName, targetName);
         } else {
             return false;
         }
-
-        return strcmp(reinterpret_cast<const char*>(deviceName), targetName) == 0;
     }
 
-    std::expected<MV_CC_DEVICE_INFO*, CameraError>
+    std::expected<MV_CC_DEVICE_INFO, CameraError>
         search_camera(const char* user_defined_name) noexcept {
         MV_CC_DEVICE_INFO_LIST device_list;
         memset(&device_list, 0, sizeof(MV_CC_DEVICE_INFO_LIST));
@@ -399,11 +489,11 @@ private:
                         "must pass in the device name because {} devices were found",
                         device_list.nDeviceNum));
             }
-            return device_list.pDeviceInfo[0];
+            return *device_list.pDeviceInfo[0];
         } else {
             for (auto i = 0; i < device_list.nDeviceNum; i++) {
                 if (is_same_device_name(device_list.pDeviceInfo[i], user_defined_name))
-                    return device_list.pDeviceInfo[i];
+                    return *device_list.pDeviceInfo[i];
             }
             return std::unexpected(
                 fmt::format(
@@ -424,11 +514,20 @@ private:
         // 参考文档：Deprecated camera initialization related APIs: MV_CC_CreateHandleWithoutLog()
         ret = MV_CC_CreateHandle(&camera_handle_, pDeviceInfo);
         SDK_RET_ASSERT(ret, "create handle");
-        FinalAction destroy_handle{[this]() { MV_CC_DestroyHandle(camera_handle_); }};
+        FinalAction destroy_handle{[this]() {
+            if (camera_handle_ != nullptr) {
+                MV_CC_DestroyHandle(camera_handle_);
+                camera_handle_ = nullptr;
+            }
+        }};
 
         ret = MV_CC_OpenDevice(camera_handle_);
         SDK_RET_ASSERT(ret, "open device");
-        FinalAction close_device{[this]() { MV_CC_CloseDevice(camera_handle_); }};
+        FinalAction close_device{[this]() {
+            if (camera_handle_ != nullptr) {
+                MV_CC_CloseDevice(camera_handle_);
+            }
+        }};
 
         if (pDeviceInfo->nTLayerType == MV_GIGE_DEVICE) {
             int nPacketSize = MV_CC_GetOptimalPacketSize(camera_handle_);
@@ -504,30 +603,51 @@ private:
                 error_code_to_message(ret));
         }
 
+        callback_state_->active.store(true, std::memory_order_release);
+        FinalAction deactivate_callbacks{[state = callback_state_]() {
+            state->valid.store(false, std::memory_order_release);
+            state->active.store(false, std::memory_order_release);
+        }};
+
         // 注册设备断连回调，及时感知相机离线（必须在 StartGrabbing 之前）
-        ret = MV_CC_RegisterExceptionCallBack(camera_handle_, Impl::on_exception_callback, this);
+        ret = MV_CC_RegisterExceptionCallBack(
+            camera_handle_, Impl::on_exception_callback, callback_state_.get());
         SDK_RET_ASSERT(ret, "register exception callback");
+
+        FinalAction unregister_callbacks{[this]() {
+            if (camera_handle_ != nullptr) {
+                MV_CC_RegisterExceptionCallBack(camera_handle_, nullptr, nullptr);
+            }
+        }};
 
         // 注册流异常回调，及时感知丢包/断流/图像异常（必须在 StartGrabbing 之前）
         ret = MV_CC_RegisterStreamExceptionCallBack(
-            camera_handle_, Impl::on_stream_exception_callback, this);
+            camera_handle_, Impl::on_stream_exception_callback, callback_state_.get());
         SDK_RET_ASSERT(ret, "register stream exception callback");
 
-        ret = MV_CC_StartGrabbing(camera_handle_);
-        SDK_RET_ASSERT(ret, "start grabbing");
-
-        FinalAction stop_grabbing{[this]() { MV_CC_StopGrabbing(camera_handle_); }};
-
-        // SOFTWARE 模式下设置 TriggerSource 为 SOFTWARE
+        // SOFTWARE 模式下设置 TriggerSource 为 SOFTWARE。SDK 示例在 StartGrabbing 前设置。
         if (sync_mode == SyncMode::SOFTWARE) {
             ret = MV_CC_SetEnumValue(camera_handle_, "TriggerSource", MV_TRIGGER_SOURCE_SOFTWARE);
             SDK_RET_ASSERT(ret, "set trigger source: soft trigger");
         }
 
+        callback_state_->valid.store(true, std::memory_order_release);
+        ret = MV_CC_StartGrabbing(camera_handle_);
+        SDK_RET_ASSERT(ret, "start grabbing");
+        grabbing_ = true;
+
+        FinalAction stop_grabbing{[this]() {
+            if (camera_handle_ != nullptr) {
+                MV_CC_StopGrabbing(camera_handle_);
+            }
+            grabbing_ = false;
+        }};
+
         stop_grabbing.disable();
+        unregister_callbacks.disable();
+        deactivate_callbacks.disable();
         destroy_handle.disable();
         close_device.disable();
-        valid_ = true;
         return {};
     }
 
@@ -578,18 +698,34 @@ private:
     }
 
     void uninit_camera() noexcept {
+        std::lock_guard<std::mutex> lock(camera_mutex_);
+
         // 如果句柄未初始化（构造失败路径），无需清理
         if (camera_handle_ == nullptr) {
             return;
         }
 
+        callback_state_->valid.store(false, std::memory_order_release);
+        callback_state_->active.store(false, std::memory_order_release);
+
         // 按照官方文档的顺序清理资源
         // StopGrabbing → CloseDevice → DestroyHandle
 
-        auto nRet = MV_CC_StopGrabbing(camera_handle_);
+        auto nRet = MV_OK;
+
+        if (grabbing_) {
+            nRet = MV_CC_StopGrabbing(camera_handle_);
+            if (MV_OK != nRet) {
+                SPDLOG_LOGGER_ERROR(logger_, "stop grabbing: {}", error_code_to_message(nRet));
+                // 即使失败也继续尝试清理，确保尽可能释放资源
+            }
+            grabbing_ = false;
+        }
+
+        nRet = MV_CC_RegisterExceptionCallBack(camera_handle_, nullptr, nullptr);
         if (MV_OK != nRet) {
-            SPDLOG_LOGGER_ERROR(logger_, "stop grabbing: {}", error_code_to_message(nRet));
-            // 即使失败也继续尝试清理，确保尽可能释放资源
+            SPDLOG_LOGGER_ERROR(
+                logger_, "unregister exception callback: {}", error_code_to_message(nRet));
         }
 
         nRet = MV_CC_CloseDevice(camera_handle_);
@@ -631,27 +767,41 @@ private:
     };
 
     void* camera_handle_ = nullptr;
+    mutable std::mutex camera_mutex_;
+    std::shared_ptr<spdlog::logger> logger_        = make_logger();
+    std::shared_ptr<CallbackState> callback_state_ = make_callback_state(logger_);
 
     // 设备断连回调（通过 MV_CC_RegisterExceptionCallBack 注册）
     static void __stdcall on_exception_callback(unsigned int nMsgType, void* pUser) noexcept {
-        auto* self   = static_cast<Impl*>(pUser);
-        self->valid_ = false;
+        auto* state = static_cast<CallbackState*>(pUser);
+        if (state == nullptr || !state->active.load(std::memory_order_acquire)) {
+            return;
+        }
+        state->valid.store(false, std::memory_order_release);
         if (nMsgType == MV_EXCEPTION_DEV_DISCONNECT) {
-            SPDLOG_LOGGER_CRITICAL(self->logger_, "device disconnected!");
+            SPDLOG_LOGGER_CRITICAL(state->logger, "device disconnected!");
         } else {
-            SPDLOG_LOGGER_ERROR(self->logger_, "device: {}", exception_type_to_string(nMsgType));
+            SPDLOG_LOGGER_ERROR(state->logger, "device: {}", exception_type_to_string(nMsgType));
         }
     }
 
     // 流异常回调（通过 MV_CC_RegisterStreamExceptionCallBack 注册）
     static void __stdcall
         on_stream_exception_callback(MV_CC_STREAM_EXCEPTION_INFO* pstInfo, void* pUser) noexcept {
-        auto* self = static_cast<Impl*>(pUser);
+        auto* state = static_cast<CallbackState*>(pUser);
+        if (state == nullptr || pstInfo == nullptr
+            || !state->active.load(std::memory_order_acquire)) {
+            return;
+        }
+        if (pstInfo->enExceptionType == MV_CC_STREAM_EXCEPTION_DISCONNECTED
+            || pstInfo->enExceptionType == MV_CC_STREAM_EXCEPTION_DEVICE) {
+            state->valid.store(false, std::memory_order_release);
+        }
         if (pstInfo->enExceptionType != MV_CC_STREAM_EXCEPTION_LIST_OVERFLOW) {
+            const auto serial_number = std::string{sdk_string_view(pstInfo->chSerialNumber)};
             SPDLOG_LOGGER_ERROR(
-                self->logger_, "stream: {}, serial={}",
-                stream_exception_type_to_string(pstInfo->enExceptionType),
-                reinterpret_cast<const char*>(pstInfo->chSerialNumber));
+                state->logger, "stream: {}, serial={}",
+                stream_exception_type_to_string(pstInfo->enExceptionType), serial_number);
         }
     }
 
@@ -680,14 +830,6 @@ private:
         default: return "unknown";
         }
     }
-
-    std::shared_ptr<spdlog::logger> logger_ = []() {
-        auto logger = spdlog::get("hikcamera");
-        if (!logger) {
-            logger = spdlog::default_logger();
-        }
-        return logger;
-    }();
 };
 
 // Factory method implementation
