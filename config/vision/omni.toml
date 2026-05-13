@@ -15,5 +15,3 @@ trajectory.type = "Ideal"
 trajectory.gravity = 0.0
 
 mpc_weapon.enabled = false
-
-readback_roi.enabled = false

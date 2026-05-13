@@ -327,11 +327,6 @@ public:
         problem.SetParameterLowerBound(translation_ypd, 1, -kBearingLimit);
         problem.SetParameterUpperBound(translation_ypd, 1, kBearingLimit);
         if (detection.name == ArmorName::Outpost) {
-            if (initial_pose.has_value() && initial_pose->prior_armor_yaw.has_value()) {
-                auto pr = initial_pose->prior_armor_yaw.value();
-                problem.SetParameterLowerBound(&yaw, 0, std::max(-std::numbers::pi, pr - 0.1256));
-                problem.SetParameterUpperBound(&yaw, 0, std::min(pr + 0.1256, std::numbers::pi));
-            }
             auto original_norm = initial_pose.value().prior_distance_m
                                    ? initial_pose.value().prior_distance_m.value()
                                    : cv::norm(tvec);
@@ -501,7 +496,7 @@ private:
                     .rvec              = std::move(rvec),
                     .tvec              = std::move(tvec),
                     .reprojection_rmse = reprojection_rmse,
-                    .prior_armor_yaw   = (math_fuxk::rpy(x).yaw / 180.0) * std::numbers::pi,
+                    .prior_armor_yaw   = math_fuxk::rpy(x).yaw,
                     .prior_distance_m  = prior_distance,
                 };
             }
