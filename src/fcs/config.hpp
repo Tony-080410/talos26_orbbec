@@ -19,6 +19,7 @@
 #include "core/runtime.hpp"
 #include "core/trajectory/config.hpp"
 #include "euler.hpp"
+#include "quanta/transcoder.hpp"
 #include <magic_enum.hpp>
 
 namespace fcs {
@@ -87,6 +88,7 @@ struct HardwareConfig {
 struct VisionConfig {
     ArmorColor detect_color;
     toml_helper::required<std::vector<core::Capability>> capabilities;
+    quanta::EncodeParams quanta{};
     core::trajectory::TrajectoryConfig trajectory{};
     toml_helper::flatten<L2::ArmorDetectorConfig> armor{};
     rune::RuneDetectorConfig rune_detector{};

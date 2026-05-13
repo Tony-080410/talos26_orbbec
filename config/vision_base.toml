@@ -1,6 +1,6 @@
 backend_type = "OnnxRuntime"  # Options: "Traditional", "OnnxRuntime", "TensorRT", "Axera"
 detect_color = "Blue"
-capabilities = ["Armor"]
+capabilities = ["Armor", "Quanta"]
 
 # Required if backend_type = "traditional"
 [traditional]

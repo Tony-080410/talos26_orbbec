@@ -44,9 +44,10 @@ using detecting_color     = res<ArmorColor>;
 using detecting_color_mut = res_mut<ArmorColor>;
 
 enum Capability {
-    Armor = 0,
-    Rune  = 1,
-    Ldm   = 2,
+    Armor  = 0,
+    Rune   = 1,
+    Ldm    = 2,
+    Quanta = 3,
 };
 
 using capabilities     = res<std::vector<Capability>>;

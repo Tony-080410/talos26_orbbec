@@ -269,6 +269,7 @@ target_link_libraries(fcs PUBLIC
         toml_std
         fast_tf
         scheduler
+        quanta
         Eigen3::Eigen
         Ceres::ceres
         talos_gimbal

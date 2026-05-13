@@ -81,7 +81,7 @@ public:
             mode_);
     }
 
-    void send(const quanta::TransportChunk& chunk) noexcept {
+    void send_quanta(const quanta::TransportChunk& chunk) noexcept {
         std::visit(
             [&chunk](auto& output) {
                 if constexpr (!std::is_same_v<std::decay_t<decltype(output)>, std::monostate>) {

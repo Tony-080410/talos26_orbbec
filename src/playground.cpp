@@ -37,26 +37,37 @@ int main() {
     bytes.back()  = 0xA6;
 
     for (std::size_t i = 1; i + 1 < bytes.size(); ++i) {
-        bytes[i] = static_cast<uint8_t>(i - 1);
+        //    bytes[i] = static_cast<uint8_t>(i - 1);
     }
-    bytes[51] = 1;
-    bytes[52] = 1;
-    bytes[53] = 4;
-    bytes[54] = 5;
-    bytes[55] = 1;
-    bytes[56] = 4;
 
-    bytes[184] = 1;
-    bytes[185] = 9;
-    bytes[186] = 1;
-    bytes[187] = 9;
-    bytes[188] = 8;
-    bytes[189] = 1;
-    bytes[190] = 0;
+    bytes[51] = 'R';
+    bytes[52] = 'o';
+    bytes[53] = 'b';
+    bytes[54] = 'o';
+    bytes[55] = 'M';
+    bytes[56] = 'a';
+    bytes[57] = 's';
+    bytes[58] = 't';
+    bytes[59] = 'e';
+    bytes[60] = 'r';
 
-    bytes[296] = 8;
-    bytes[297] = 0;
-    bytes[298] = 8;
+    bytes[184] = 'A';
+    bytes[185] = 'C';
+    bytes[186] = 'T';
+    bytes[187] = 'O';
+    bytes[188] = 'R';
+
+    bytes[190] = 'T';
+    bytes[191] = 'h';
+    bytes[192] = 'i';
+    bytes[193] = 'n';
+    bytes[194] = 'k';
+    bytes[195] = 'e';
+    bytes[196] = 'r';
+
+    bytes[297] = 'A';
+    bytes[298] = 'C';
+    bytes[299] = 'K';
 
     // Main loop
     SPDLOG_INFO("starting main loop...");
@@ -74,7 +85,7 @@ int main() {
     // actual id is 0x04
     constexpr uint8_t data_id_protocol = (data_length_hi << 4) | 0x04;
 
-    constexpr std::size_t kMaxCustomBlockBytes = 30;
+    constexpr std::size_t kMaxCustomBlockBytes = 300;
 
     while (g_running) {
         // 测试 2: 接收指令

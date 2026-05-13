@@ -30,9 +30,9 @@ void register_debug_systems(talos::scheduler::Scheduler& app, talos::Scheduler* 
     // =========================================================================
 
     app.add_system<talos::fixed_rate_silent<1>>(
-        "foxglove_res_pub",
-        [](talos::res<std::shared_ptr<FoxgloveServer>> server,
-           core::trajectory::bullet_speed bullet_speed, core::detecting_color color) {
+        "foxglove_res_pub", [](talos::res<std::shared_ptr<FoxgloveServer>> server,
+                               core::trajectory::bullet_speed bullet_speed,
+                               core::detecting_color color, core::capabilities cap) {
             auto& server_ptr = *server; // 引用绑定
             if (!server_ptr->is_initialized()) {
                 return;
@@ -44,6 +44,12 @@ void register_debug_systems(talos::scheduler::Scheduler& app, talos::Scheduler* 
             j["timestamp"]["nsec"] = now % 1000000000L;
             j["bullet_speed"]      = bullet_speed->bullet_speed;
             j["color"]             = magic_enum::enum_name(*color);
+            std::vector<std::string> cap_str;
+            cap_str.reserve(cap->size());
+            for (const auto& c : *cap) {
+                cap_str.emplace_back(magic_enum::enum_name(c));
+            }
+            j["capabilities"] = cap_str;
 
             detail::publish_json_message<ResourceMessage>(*server, j);
         });

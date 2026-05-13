@@ -455,17 +455,19 @@ std::expected<L1L2SetupResult, std::string> setup_l1(
             cam_out.write(fcs::ImageFrame{std::move(img), frame->timestamp_ns, seq});
         });
 
+    scheduler.world().insert_resource(std::move(output));
+
     if (imu_ready) {
         // L1 Output System: Send WeaponCommand to device
         scheduler.add_system<talos::fixed_rate<250, 1>>(
             "weapon_output",
-            [output = std::move(output)](
-                talos::spmc<fcs::L5::WeaponCommand, fcs::WeaponCommandChannelTopic> cmd_in) {
+            [](talos::res<std::unique_ptr<fcs::L1::OutputInterface>> output,
+               talos::spmc<fcs::L5::WeaponCommand, fcs::WeaponCommandChannelTopic> cmd_in) {
                 auto cmd = cmd_in.read();
                 if (!cmd) [[unlikely]] {
                     return;
                 }
-                output->send(*cmd);
+                (*output)->send(*cmd);
             });
     }
 

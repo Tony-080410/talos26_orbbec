@@ -120,7 +120,7 @@ void McuOutput::send_quanta(const quanta::TransportChunk& chunk) const noexcept 
 
     std::size_t remaining = bytes.size();
     std::size_t offset    = 0;
-
+    static uint32_t s     = 0;
     while (remaining > 0) {
         const std::size_t this_len = std::min(remaining, kMaxCustomBlockBytes);
 
@@ -131,8 +131,7 @@ void McuOutput::send_quanta(const quanta::TransportChunk& chunk) const noexcept 
                          .len = data_length_protocol,
                          .id  = data_id_protocol,
                          },
-            // ffs
-            .time_stamp = static_cast<uint32_t>(clock::now_ns()),
+            .time_stamp = static_cast<uint32_t>(s++),
             .data =
                 {
                          .custom_byte_block_len = static_cast<uint16_t>(this_len),

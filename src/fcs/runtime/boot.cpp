@@ -1,5 +1,6 @@
 #include "runtime/boot.hpp"
 
+#include "L1_sensor/output_interface.hpp"
 #include "L2_perception/armor/readback_roi.hpp"
 #include "L2_perception/armor/systems.hpp"
 #include "L2_perception/ldm/ldm_systems.hpp"
@@ -11,8 +12,12 @@
 #include "L5_weapon/enhanced/weapon_systems.hpp"
 #include "chiral/chiral_collector_system.hpp"
 #include "core/armor_types.hpp"
+#include "core/channel_topics.hpp"
+#include "core/runtime.hpp"
 #include "core/trajectory/resource.hpp"
+#include "core/types.hpp"
 #include "frame.hpp"
+#include "quanta/stream_transport.hpp"
 #include "runtime/capturer.hpp"
 #include "runtime/config_loader.hpp"
 #include "runtime/l1_l2_setup.hpp"
@@ -28,6 +33,15 @@ namespace fcs {
 namespace {
 
 inline constexpr auto to_rad(double x) noexcept { return (x / 180.0) * std::numbers::pi_v<double>; }
+
+// ============================================================================
+// Quanta 图传编码器状态
+// ============================================================================
+
+struct QuantaEncoderState {
+    std::optional<quanta::StreamSender> sender;
+    int64_t next_pts{0};
+};
 
 void init_coordinate_system(fast_tf::CoordinateSystem& system, const RobotExtrinsicConfig& config) {
     constexpr fp_t pi = std::numbers::pi;
@@ -146,6 +160,64 @@ void init_coordinate_system(fast_tf::CoordinateSystem& system, const RobotExtrin
         chiral::register_chiral_collector_system(scheduler);
         SPDLOG_INFO("chiral system registered");
     }
+
+    auto quanta_cfg    = config.vision.quanta;
+    auto encoder_state = std::make_shared<QuantaEncoderState>();
+
+    {
+        quanta::StreamTransportConfig transport_cfg;
+        transport_cfg.mtu_bytes      = 300;
+        transport_cfg.transport_hz   = 50;
+        transport_cfg.max_stream_fps = quanta_cfg.framerate;
+
+        auto sender = quanta::StreamSender::create(
+            quanta_cfg, transport_cfg, static_cast<int>(quanta_cfg.max_width),
+            static_cast<int>(quanta_cfg.max_height));
+        if (!sender) {
+            return std::unexpected(fmt::format("quanta-encoder create: {}", sender.error()));
+        }
+        encoder_state->sender.emplace(std::move(*sender));
+        SPDLOG_INFO(
+            "quanta-encoder initialized: {}x{} @ {}fps", quanta_cfg.max_width,
+            quanta_cfg.max_height, quanta_cfg.framerate);
+    }
+
+    scheduler.add_system<talos::fixed_rate<50, 3>>(
+        "quanta-encoder",
+        [encoder_state](
+            talos::spmc<ImageFrame, ImageChannelTopic> image_in,
+            talos::res<std::unique_ptr<fcs::L1::OutputInterface>> output, core::capabilities cap) {
+            if (!core::capable(*cap, core::Capability::Quanta)) {
+                return;
+            }
+            auto& state = *encoder_state;
+
+            auto frame = image_in.read();
+            if (!frame) {
+                return;
+            }
+
+            const int64_t pts  = state.next_pts++;
+            auto submit_result = state.sender->submit_frame(
+                frame->image.data, static_cast<int>(frame->image.step[0]), pts,
+                frame->timestamp_ns);
+            if (!submit_result) {
+                SPDLOG_WARN("quanta-encoder submit: {}", submit_result.error());
+                return;
+            }
+
+            while (true) {
+                auto chunk_result = state.sender->poll_chunk();
+                if (!chunk_result) {
+                    SPDLOG_WARN("quanta-encoder poll: {}", chunk_result.error());
+                    break;
+                }
+                if (!chunk_result->has_value()) {
+                    break;
+                }
+                (*output)->send_quanta(**chunk_result);
+            }
+        });
 
     runtime::register_runtime_capturer_system(scheduler, config.capturer, config.launch);
 
