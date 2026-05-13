@@ -127,7 +127,7 @@ void register_rune_detection_systems(talos::Scheduler& scheduler, RuneDetectorCo
                             const auto& kp = target.keypnt;
                             // 转换坐标到全局（考虑 global ROI 偏移）
 
-                            // 用不同颜色绘制四个角点：左上(蓝)、右上(绿)、右下(红)、左下(黄)
+                            // 用不同颜色绘制四个角点：左上(蓝)、左下(绿)、右下(红)、右上(黄)
                             cv::Scalar color_lu(255, 0, 0);   // 蓝色
                             cv::Scalar color_ru(0, 255, 0);   // 绿色
                             cv::Scalar color_rd(0, 0, 255);   // 红色
@@ -137,6 +137,14 @@ void register_rune_detection_systems(talos::Scheduler& scheduler, RuneDetectorCo
                             cv::circle(arrow_vis, kp.ru, 6, color_ru, -1);
                             cv::circle(arrow_vis, kp.rd, 6, color_rd, -1);
                             cv::circle(arrow_vis, kp.ld, 6, color_ld, -1);
+
+                            if (detector->targets.size() == 1 && target.other) {
+
+                                cv::circle(arrow_vis, target.other_point2f[0], 6, color_lu, -1);
+                                cv::circle(arrow_vis, target.other_point2f[1], 6, color_ru, -1);
+                                cv::circle(arrow_vis, target.other_point2f[2], 6, color_rd, -1);
+                                cv::circle(arrow_vis, target.other_point2f[3], 6, color_ld, -1);
+                            }
 
                             // // 绘制角点标签
                             // cv::putText(
@@ -161,7 +169,7 @@ void register_rune_detection_systems(talos::Scheduler& scheduler, RuneDetectorCo
 
                 dbg.arrow_jpeg = encode_jpeg(arrow_vis.empty() ? detector->arrowImg : arrow_vis);
 
-                // 画重投影对比图：检测点(红) vs 重投影点(绿) + 四个 keypoint
+                // // 画重投影对比图：检测点(红) vs 重投影点(绿) + 四个 keypoint
                 cv::Mat reproj_vis;
                 // if (!detector->targetImg.empty()&&!detector->debug_detected_points_.empty()) {
                 //     cv::cvtColor(detector->targetImg, reproj_vis, cv::COLOR_GRAY2BGR);

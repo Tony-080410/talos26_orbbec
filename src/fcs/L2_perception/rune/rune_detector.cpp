@@ -15,6 +15,7 @@
 #include <opencv2/imgproc.hpp>
 #include <ranges>
 #include <spdlog/spdlog.h>
+#include <utility>
 #include <vector>
 
 namespace angles {
@@ -795,7 +796,7 @@ void addReferRuneCenter(const cv::Point2f& rc, Points& target, bool debug_mode =
 }
 
 inline bool markRuneTarget(
-    std::vector<cv::Point> arrow, cv::Point2f rc, cv::Point2f target,
+    const std::vector<cv::Point>& arrow, const cv::Point2f& rc, cv::Point2f target,
     const std::vector<std::vector<cv::Point>>& contours, const std::vector<cv::Vec4i>& hierarchy,
     Target& result, bool debug_mode = false) {
 
@@ -875,7 +876,7 @@ inline bool markRuneTarget(
 
     Points points;
 
-    for (auto cnt : res) {
+    for (const auto& cnt : res) {
 
         cv::Moments m = cv::moments(cnt);
         if (m.m00 == 0) {
@@ -889,7 +890,7 @@ inline bool markRuneTarget(
         cv::Point2f center(m.m10 / m.m00, m.m01 / m.m00);
         points.corners.emplace_back(center);
     }
-    points.center = target;
+    points.center = std::move(target);
 
     if (points.corners.size() < 4) {
         if (debug_mode) {
@@ -917,7 +918,7 @@ void RuneDetector::setKeyPoints() {
         cv::findContours(detect, contours, hierarchy, cv::RETR_CCOMP, cv::CHAIN_APPROX_SIMPLE);
 
         std::vector<cv::Point> arrow_contour;
-        for (auto cnt_pt : arrows[i].contour) {
+        for (const auto& cnt_pt : arrows[i].contour) {
             cv::Point pt = cnt_pt - cv::Point(targetROIs[i].tl());
             arrow_contour.emplace_back(pt);
         }
@@ -956,6 +957,114 @@ void RuneDetector::setKeyPoints() {
         targets[i].keypnt.ld = rune_target.keypnt.ld + targetROIs[i].tl();
 
         targets[i].initKey = true;
+
+        if (targets.size() == 1 && targets[0].initKey) {
+            std::vector<cv::Point> out_cnt;
+            double max_area = -1.0;
+            for (size_t k = 0; k < contours.size(); k++) {
+                if (hierarchy[k][3] == -1 && hierarchy[k][2] != -1) {
+                    double area = cv::contourArea(contours[k]);
+                    if (area > max_area) {
+                        max_area = area;
+                        out_cnt  = contours[k];
+                    }
+                }
+            }
+
+            if (out_cnt.empty()) {
+                targets[i].other = false;
+                return;
+            }
+
+            cv::Point2f offset = targetROIs[i].tl();
+            for (auto& pnt : out_cnt) {
+                pnt = cv::Point(
+                    static_cast<int>(pnt.x + offset.x), static_cast<int>(pnt.y + offset.y));
+            }
+
+            // 计算 4 个中点
+            cv::Point2f top_mid   = (targets[i].keypnt.lu + targets[i].keypnt.ru) * 0.5f;
+            cv::Point2f bot_mid   = (targets[i].keypnt.rd + targets[i].keypnt.ld) * 0.5f;
+            cv::Point2f left_mid  = (targets[i].keypnt.lu + targets[i].keypnt.ld) * 0.5f;
+            cv::Point2f right_mid = (targets[i].keypnt.ru + targets[i].keypnt.rd) * 0.5f;
+
+            targets[i].other_point2f.resize(4);
+
+            // 辅助函数：计算射线与轮廓的交点
+            auto find_intersection = [&](const cv::Point2f& origin,
+                                         const cv::Point2f& dir) -> cv::Point2f {
+                const cv::Point2f& ext_p1 = origin;
+                cv::Point2f ext_p2        = origin + dir * 1000.0f;
+
+                cv::Point2f best_pt(-1, -1);
+                bool found     = false;
+                float max_dist = 0.0f;
+
+                for (size_t j = 0; j < out_cnt.size(); j++) {
+                    cv::Point2f a(
+                        static_cast<float>(out_cnt[j].x), static_cast<float>(out_cnt[j].y));
+                    cv::Point2f b(
+                        static_cast<float>(out_cnt[(j + 1) % out_cnt.size()].x),
+                        static_cast<float>(out_cnt[(j + 1) % out_cnt.size()].y));
+
+                    cv::Point2f d1 = ext_p2 - ext_p1;
+                    cv::Point2f d2 = b - a;
+                    float cross    = d1.x * d2.y - d1.y * d2.x;
+                    if (std::abs(cross) < 1e-10f)
+                        continue;
+
+                    cv::Point2f diff = a - ext_p1;
+                    float t          = (diff.x * d2.y - diff.y * d2.x) / cross;
+                    float u          = (diff.x * d1.y - diff.y * d1.x) / cross;
+
+                    if (u >= 0.0f && u <= 1.0f && t >= 0.0f) {
+                        cv::Point2f pt = ext_p1 + t * d1;
+                        float dist     = (pt - origin).dot(dir);
+                        if (dist > max_dist) {
+                            max_dist = dist;
+                            best_pt  = pt;
+                            found    = true;
+                        }
+                    }
+                }
+                if (!found) {
+                    targets[0].other = false;
+                    return cv::Point2f(-1, -1);
+                }
+
+                return best_pt;
+            };
+
+            targets[i].other = true;
+
+            cv::Point2f dir_up = top_mid - bot_mid;
+            float len_up       = std::sqrt(dir_up.dot(dir_up));
+            if (len_up > 1e-6f) {
+                dir_up /= len_up;
+                targets[i].other_point2f[0] = find_intersection(top_mid, dir_up);
+            }
+
+            cv::Point2f dir_down = bot_mid - top_mid;
+            float len_down       = std::sqrt(dir_down.dot(dir_down));
+            if (len_down > 1e-6f) {
+                dir_down /= len_down;
+                targets[i].other_point2f[1] = find_intersection(bot_mid, dir_down);
+            }
+
+            cv::Point2f dir_left = left_mid - right_mid;
+            float len_left       = std::sqrt(dir_left.dot(dir_left));
+            if (len_left > 1e-6f) {
+                dir_left /= len_left;
+                targets[i].other_point2f[2] = find_intersection(left_mid, dir_left);
+            }
+
+            cv::Point2f dir_right = right_mid - left_mid;
+            float len_right       = std::sqrt(dir_right.dot(dir_right));
+            if (len_right > 1e-6f) {
+                dir_right /= len_right;
+                targets[i].other_point2f[3] = find_intersection(right_mid, dir_right);
+            }
+        }
     }
 }
 
@@ -1022,7 +1131,7 @@ bool findTarget(
 
     std::vector<Light> targets;
 
-    for (auto frame : frames) {
+    for (const auto& frame : frames) {
         if ((frame.roundness >= params.min_roundness && frame.roundness <= params.max_roundness)
             == false) {
             continue;
@@ -1082,7 +1191,7 @@ bool RuneDetector::detectAllTargets() {
 
         targets.push_back(t);
     } else {
-        for (auto targetRoi : targetROIs) {
+        for (const auto& targetRoi : targetROIs) {
             lights.clear();
             cv::Mat detect = (targetImg & localMask)(targetRoi);
 
@@ -1211,7 +1320,7 @@ inline cv::Point3f rotateX(const cv::Point3f& p, double roll) {
 }
 
 void addOther(
-    cv::Point2f center, Target& one, const Target& other, std::vector<cv::Point2f>& points2d,
+    const cv::Point2f& center, Target& one, const Target& other, std::vector<cv::Point2f>& points2d,
     std::vector<cv::Point3f>& points3d, bool debug_mode = false) {
 
     auto l1 = center - one.center;
@@ -1316,7 +1425,17 @@ std::expected<fast_tf::TransformMatrixd<rune, fast_tf::odom>, std::string> RuneD
         image_points.emplace_back(targets[0].keypnt.rd);
         image_points.emplace_back(targets[0].keypnt.ld);
         image_points.emplace_back(targets[0].center);
-        object_points = targets[0].small_points3d;
+        if (targets[0].other) {
+            image_points.emplace_back(targets[0].other_point2f[0]);
+            image_points.emplace_back(targets[0].other_point2f[1]);
+            image_points.emplace_back(targets[0].other_point2f[2]);
+            image_points.emplace_back(targets[0].other_point2f[3]);
+
+            object_points = targets[0].small_points3d;
+        } else {
+            object_points = targets[0].points3d;
+        }
+
     } else if (targets.size() == 2) {
         // 选择 roll 最接近上一帧的靶作为主目标，保证追踪连续性
         if (has_last_target_) {
@@ -1457,11 +1576,57 @@ std::expected<fast_tf::TransformMatrixd<rune, fast_tf::odom>, std::string> RuneD
     cv::projectPoints(
         object_points, rvec, tvec, cameraMatrix, distCoeffs, debug_reprojected_points_);
 
-    double total_error = 0.0;
-    for (size_t i = 0; i < image_points.size(); ++i) {
-        total_error += cv::norm(image_points[i] - debug_reprojected_points_[i]);
-    }
-    debug_reproj_error_ = total_error / static_cast<double>(image_points.size());
+    // double total_error = 0.0;
+    // bool is_small_rune = (targets.size() == 1);
+
+    // for (size_t i = 0; i < image_points.size(); ++i) {
+    //     double err = cv::norm(image_points[i] - debug_reprojected_points_[i]);
+    //     total_error += err;
+
+    //     // 打印每个点的误差（调试模式）
+    //     if (params_.debug_mode) {
+    //         const char* label = "";
+    //         if (is_small_rune) {
+    //             switch (i) {
+    //             case 0: label = "R标中心"; break;
+    //             case 1: label = "LU(左上)"; break;
+    //             case 2: label = "RU(左下)"; break;
+    //             case 3: label = "RD(右下)"; break;
+    //             case 4: label = "LD(右上)"; break;
+    //             case 5: label = "靶中心"; break;
+    //             case 6: label = "other_top"; break;
+    //             case 7: label = "other_bot"; break;
+    //             case 8: label = "other_left"; break;
+    //             case 9: label = "other_right"; break;
+    //             default: label = "?"; break;
+    //             }
+    //         } else {
+    //             switch (i) {
+    //             case 0: label = "R标中心"; break;
+    //             case 1: label = "LU"; break;
+    //             case 2: label = "RU"; break;
+    //             case 3: label = "RD"; break;
+    //             case 4: label = "LD"; break;
+    //             case 5: label = "靶1中心"; break;
+    //             case 6: label = "靶2_LU"; break;
+    //             case 7: label = "靶2_RU"; break;
+    //             case 8: label = "靶2_RD"; break;
+    //             case 9: label = "靶2_LD"; break;
+    //             case 10: label = "靶2中心"; break;
+    //             default: label = "?"; break;
+    //             }
+    //         }
+    //         SPDLOG_ERROR(
+    //             "[PnP] [{}] {} err={:.2f}px  det=({:.1f},{:.1f})  rep=({:.1f},{:.1f})", i, label,
+    //             err, image_points[i].x, image_points[i].y, debug_reprojected_points_[i].x,
+    //             debug_reprojected_points_[i].y);
+    //     }
+    // }
+    // debug_reproj_error_ = total_error / static_cast<double>(image_points.size());
+    // if (params_.debug_mode) {
+    //     SPDLOG_ERROR("[PnP] 平均误差: {:.2f}px (共{}点)", debug_reproj_error_,
+    //     image_points.size());
+    // }
 
     auto pose = fast_tf::TransformMatrixd<rune, fast_tf::camera_optical>::from_pnp(rvec, tvec);
 

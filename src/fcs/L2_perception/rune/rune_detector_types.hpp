@@ -17,6 +17,7 @@ enum class Status {
 
 constexpr double RUNE_PAN_REAL_DIS = 0.15; // 靶的宽度
 constexpr double RUNE_R2PANCENTER  = 0.7;  // 中心到靶的距离
+constexpr double RUNE              = 0.15;
 
 struct Points {
     cv::Point2f center;
@@ -25,9 +26,9 @@ struct Points {
 
 struct KeyPoint {
     cv::Point2f lu = cv::Point2f(0, 0);    // 左上
-    cv::Point2f ru = cv::Point2f(0, 0);    // 右上
+    cv::Point2f ru = cv::Point2f(0, 0);    // 左下
     cv::Point2f rd = cv::Point2f(0, 0);    // 右下
-    cv::Point2f ld = cv::Point2f(0, 0);    // 左下
+    cv::Point2f ld = cv::Point2f(0, 0);    // 右上
 };
 
 struct Light {
@@ -60,14 +61,20 @@ struct Target {
     std::vector<cv::Point> contour;
     void set(const Light& l);
     KeyPoint keypnt;
-    bool initKey;
+    bool initKey = false;
+    bool other   = false;
+    std::vector<cv::Point2f> other_point2f;
     std::vector<cv::Point3f> small_points3d = {
-        {0.0f,                      0.0f,                                        0.0f}, // P0
-        {0.0f,  RUNE_PAN_REAL_DIS / 2.0f, RUNE_R2PANCENTER + RUNE_PAN_REAL_DIS / 2.0f}, // P1
-        {0.0f,  RUNE_PAN_REAL_DIS / 2.0f, RUNE_R2PANCENTER - RUNE_PAN_REAL_DIS / 2.0f}, // P2
-        {0.0f, -RUNE_PAN_REAL_DIS / 2.0f, RUNE_R2PANCENTER - RUNE_PAN_REAL_DIS / 2.0f}, // P3
-        {0.0f, -RUNE_PAN_REAL_DIS / 2.0f, RUNE_R2PANCENTER + RUNE_PAN_REAL_DIS / 2.0f}, // P4
-        {0.0f,                      0.0f,                            RUNE_R2PANCENTER}  // P5
+        {-0.18f,                      0.0f,                                        0.0f}, // P0
+        {  0.0f,  RUNE_PAN_REAL_DIS / 2.0f, RUNE_R2PANCENTER + RUNE_PAN_REAL_DIS / 2.0f}, // P1
+        {  0.0f,  RUNE_PAN_REAL_DIS / 2.0f, RUNE_R2PANCENTER - RUNE_PAN_REAL_DIS / 2.0f}, // P2
+        {  0.0f, -RUNE_PAN_REAL_DIS / 2.0f, RUNE_R2PANCENTER - RUNE_PAN_REAL_DIS / 2.0f}, // P3
+        {  0.0f, -RUNE_PAN_REAL_DIS / 2.0f, RUNE_R2PANCENTER + RUNE_PAN_REAL_DIS / 2.0f}, // P4
+        {  0.0f,                      0.0f,                            RUNE_R2PANCENTER}, // P5
+        {  0.0f,                      RUNE,                            RUNE_R2PANCENTER},
+        {  0.0f,                     -RUNE,                            RUNE_R2PANCENTER},
+        {  0.0f,                      0.0f,                     RUNE_R2PANCENTER + RUNE},
+        {  0.0f,                      0.0f,                     RUNE_R2PANCENTER - RUNE}
     };
 
     std::vector<cv::Point3f> points3d = {

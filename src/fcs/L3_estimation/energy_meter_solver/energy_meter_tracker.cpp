@@ -230,8 +230,8 @@ bool Tracker<BigRuneModel>::first_meet_u(
     }
 
     BigRuneModel::MatXX P0                   = BigRuneModel::MatXX::Identity() * 0.1;
-    P0(BigRuneModel::A, BigRuneModel::A)     = 0.05;
-    P0(BigRuneModel::W, BigRuneModel::W)     = 0.01;
+    P0(BigRuneModel::A, BigRuneModel::A)     = 0.08;
+    P0(BigRuneModel::W, BigRuneModel::W)     = 0.05;
     P0(BigRuneModel::TAU, BigRuneModel::TAU) = 4.0;
 
     init_ekf(x0, P0);

@@ -89,8 +89,8 @@ struct BigRuneModel {
         Scalar sigma_z{1.5};
         Scalar sigma_yaw{1e-4};
         Scalar sigma_theta{0.2};
-        Scalar sigma_a{0.05};
-        Scalar sigma_w{0.02};
+        Scalar sigma_a{0.10};
+        Scalar sigma_w{0.15};
 
         Scalar radius{0.7};
         MeasurementNoiseParams meas{};
