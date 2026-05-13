@@ -129,6 +129,26 @@ void register_energy_meter_systems(talos::Scheduler& scheduler, EnergyMeterL3Con
             if (last_timestamp_ns > 0 && frame_ns > last_timestamp_ns) {
                 dt = static_cast<double>(frame_ns - last_timestamp_ns) * 1e-9;
             }
+
+            auto& tracker_var = **tracker_ptr;
+
+            // IDLE 状态且无有效观测，直接返回
+            bool is_idle = false;
+            std::visit(
+                [&](const auto& tk) {
+                    using T = std::decay_t<decltype(tk)>;
+                    if constexpr (std::is_same_v<T, std::monostate>) {
+                        is_idle = true;
+                    } else {
+                        is_idle = (tk.state == T::IDLE);
+                    }
+                },
+                tracker_var);
+
+            if (is_idle && !obs_valid) {
+                return;
+            }
+
             last_timestamp_ns = frame_ns;
 
             // Reset on large gap
@@ -140,8 +160,6 @@ void register_energy_meter_systems(talos::Scheduler& scheduler, EnergyMeterL3Con
                 SPDLOG_WARN("energy_meter: large gap {:.1f}s, resetting", dt);
                 return;
             }
-
-            auto& tracker_var = **tracker_ptr;
 
             // ── No valid observation: advance state machine, publish lost state ──
             if (!obs_valid) {
