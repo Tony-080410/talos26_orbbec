@@ -3,6 +3,7 @@
 #include "L2_perception/ldm/ldm_config.hpp"
 #include "L2_perception/ldm/ldm_detector.hpp"
 #include "L2_perception/ldm/ldm_solver.hpp"
+#include "L3_estimation/ldm_naive/types.hpp"
 #include "camera_config.hpp"
 #include "core/channel_topics.hpp"
 #include "core/runtime.hpp"
@@ -10,11 +11,56 @@
 #include "frame.hpp"
 #include "scheduler/scheduler.hpp"
 
+#include <opencv2/calib3d.hpp>
+
 #include <spdlog/spdlog.h>
 
 namespace fcs::L2::ldm {
 
-namespace {} // namespace
+namespace {
+
+/// Build a PosePrior from the last known LDM tracker state.
+/// Extracts the odom-frame pose (R, p) from the SE2(3) state, transforms to
+/// camera frame via T_odom_camera, and converts to OpenCV rvec/tvec.
+/// Returns std::nullopt if the tracker is not in a tracking state.
+[[nodiscard]] std::optional<LdmSolver::PosePrior> make_ldm_pose_prior(
+    const fcs::L3::ldm::LdmState& state,
+    const LdmSolver::OdomCameraTransform& T_odom_camera) noexcept {
+    if (!state.is_tracking()) {
+        return std::nullopt;
+    }
+
+    // T_odom_camera : FrameTransform<odom, camera_optical>
+    //   p_odom = R_oc * p_camera + t_oc
+    // Inverse gives camera←odom:
+    //   p_camera = R_oc^T * (p_odom - t_oc)
+    const auto T_camera_odom = T_odom_camera.inverse();
+
+    // Build camera→ldm_body transform from tracker state.
+    // state.X.R() = R_odom_body  (world→body, expressed in odom)
+    // state.X.p() = position of body origin in odom
+    const Eigen::Matrix3d R_camera_body = T_camera_odom.rotation() * state.X.R();
+    const Eigen::Vector3d t_camera_body =
+        T_camera_odom.rotation() * state.X.p() + T_camera_odom.translation();
+
+    if (!t_camera_body.allFinite() || t_camera_body.z() <= 1e-3) {
+        return std::nullopt;
+    }
+
+    // Convert to OpenCV rvec/tvec format expected by PosePrior.
+    Eigen::Matrix3d R_cv = R_camera_body;
+    cv::Mat R_mat;
+    cv::eigen2cv(R_cv, R_mat);
+    cv::Mat rvec;
+    cv::Rodrigues(R_mat, rvec);
+
+    return LdmSolver::PosePrior{
+        .rvec = cv::Vec3d(rvec.at<double>(0), rvec.at<double>(1), rvec.at<double>(2)),
+        .tvec = cv::Vec3d(t_camera_body.x(), t_camera_body.y(), t_camera_body.z()),
+    };
+}
+
+} // namespace
 
 void register_ldm_systems(
     talos::Scheduler& scheduler, LdmDetectorConfig&& config,
@@ -29,8 +75,9 @@ void register_ldm_systems(
             talos::spmc<ImageFrame, ImageChannelTopic> image_in,
             talos::spmc_mut<LdmDetection, LdmDetectionChannelTopic> detection_out,
             talos::spmc_mut<LdmMeasurement, LdmMeasurementChannelTopic> measurement_out,
-            talos::res<LdmDetectorConfig> cfg_, core::detecting_color detecting_color_,
-            core::capabilities cap, talos::res<fast_tf::CoordinateSystem> tf_system) mutable {
+            talos::spmc<fcs::L3::ldm::LdmState> ldm_state_in, talos::res<LdmDetectorConfig> cfg_,
+            core::detecting_color detecting_color_, core::capabilities cap,
+            talos::res<fast_tf::CoordinateSystem> tf_system) mutable {
             if (!core::capable(*cap, core::Capability::Ldm)) {
                 return;
             }
@@ -61,7 +108,13 @@ void register_ldm_systems(
                 *tf_system, frame->timestamp_ns);
 
             if (tf_lookup) {
-                auto meas_result = solver_ptr->solve(detection, *tf_lookup);
+                // Build prior from last known tracker state for distance bounding.
+                std::optional<LdmSolver::PosePrior> prior;
+                if (auto ldm_state = ldm_state_in.read()) {
+                    prior = make_ldm_pose_prior(*ldm_state, *tf_lookup);
+                }
+
+                auto meas_result = solver_ptr->solve(detection, *tf_lookup, prior);
                 if (meas_result) {
                     measurement_out.write(std::move(*meas_result));
                 } else {

@@ -25,9 +25,55 @@
 
 namespace fcs::L2::ldm {
 
+// ============================================================================
+// YPD spherical coordinate helpers (yaw-pitch-distance)
+//
+// Camera-frame translation is reparameterized into a physically meaningful
+// spherical triplet:
+//   yaw     = atan2(x, z)          – bearing in the XZ plane
+//   pitch   = atan2(y, hypot(x,z)) – elevation
+//   distance = ||t||               – range
+//
+// This decouples direction from depth, making Ceres bounds physically
+// interpretable and avoiding the coordinate coupling that Cartesian (x,y,z)
+// induces in the Jacobian.
+// ============================================================================
+[[nodiscard]] inline Eigen::Vector3d
+    camera_translation_to_ypd(const Eigen::Vector3d& translation) noexcept {
+    const double horizontal = std::hypot(translation.x(), translation.z());
+    return {
+        std::atan2(translation.x(), translation.z()),
+        std::atan2(translation.y(), horizontal),
+        translation.norm(),
+    };
+}
+
+[[nodiscard]] inline Eigen::Vector3d
+    camera_ypd_to_translation(const Eigen::Vector3d& translation_ypd) noexcept {
+    const double yaw      = translation_ypd.x();
+    const double pitch    = translation_ypd.y();
+    const double distance = translation_ypd.z();
+    const double cp       = std::cos(pitch);
+
+    return {
+        distance * cp * std::sin(yaw),
+        distance * std::sin(pitch),
+        distance * cp * std::cos(yaw),
+    };
+}
+
 class LdmSolver {
 public:
     using OdomCameraTransform = fast_tf::FrameTransform<fast_tf::odom, fast_tf::camera_optical>;
+
+    /// Prior pose hint from a tracker or previous frame.  Used to constrain
+    /// the Ceres distance parameter band during refinement, preventing the
+    /// solver from drifting into depth basins that are physically implausible
+    /// given the inter-frame motion budget.
+    struct PosePrior {
+        cv::Vec3d rvec{};
+        cv::Vec3d tvec{};
+    };
 
     explicit LdmSolver(
         const CameraConfig& config, const LdmDetectorConfig& detector_config) noexcept
@@ -36,8 +82,9 @@ public:
         cv::eigen2cv(config.distort_coefficient, dist_coeffs_);
     }
 
-    [[nodiscard]] std::expected<LdmMeasurement, std::string>
-        solve(const LdmDetection& detection, const OdomCameraTransform& T_odom_camera) const {
+    [[nodiscard]] std::expected<LdmMeasurement, std::string> solve(
+        const LdmDetection& detection, const OdomCameraTransform& T_odom_camera,
+        const std::optional<PosePrior>& prior = std::nullopt) const {
         if (detection.pairs.empty()) {
             // return std::unexpected(std::string("solve: detection has no pairs (NoPairs)"));
             return LdmMeasurement{
@@ -62,7 +109,7 @@ public:
             auto candidate = base_candidate;
             assign_visible_face_indices(candidate, detection.pairs);
             if (has_face_assignment(candidate)) {
-                evaluate_candidate(candidate, detection.pairs, T_odom_camera);
+                evaluate_candidate(candidate, detection.pairs, T_odom_camera, prior);
                 evaluated_candidates.push_back(std::move(candidate));
             }
         }
@@ -74,7 +121,7 @@ public:
 
         // ── Phase 2: Build combined candidates ──
         auto combined_candidates =
-            build_combined_candidates(evaluated_candidates, detection.pairs, T_odom_camera);
+            build_combined_candidates(evaluated_candidates, detection.pairs, T_odom_camera, prior);
         evaluated_candidates.insert(
             evaluated_candidates.end(), combined_candidates.begin(), combined_candidates.end());
 
@@ -163,8 +210,11 @@ private:
             , observed_x(normalized_point.x())
             , observed_y(normalized_point.y()) {}
 
+        /// @param angles           [yaw, pitch, roll] – Euler angles (Y-X-Z intrinsic)
+        /// @param translation_ypd  [t_yaw, t_pitch, t_distance] – spherical translation
+        /// @param residuals        [u, v] normalized-plane reprojection error
         template <typename T>
-        bool operator()(const T* const angles, const T* const translation, T* residuals) const {
+        bool operator()(const T* const angles, const T* const translation_ypd, T* residuals) const {
             const T yaw   = angles[0];
             const T pitch = angles[1];
             const T roll  = angles[2];
@@ -175,6 +225,7 @@ private:
             const T cr    = ceres::cos(roll);
             const T sr    = ceres::sin(roll);
 
+            // Rotate model point: R_yaw → R_pitch → R_roll
             const T yaw_x = cy * T(model_x) + sy * T(model_z);
             const T yaw_y = T(model_y);
             const T yaw_z = -sy * T(model_x) + cy * T(model_z);
@@ -183,9 +234,25 @@ private:
             const T pitch_y = cp * yaw_y - sp * yaw_z;
             const T pitch_z = sp * yaw_y + cp * yaw_z;
 
-            const T x = cr * pitch_x - sr * pitch_y + translation[0];
-            const T y = sr * pitch_x + cr * pitch_y + translation[1];
-            const T z = pitch_z + translation[2];
+            // Reconstruct Cartesian translation from YPD spherical coordinates.
+            // YPD decouples bearing/distance → physically meaningful Ceres bounds.
+            const T t_yaw      = translation_ypd[0];
+            const T t_pitch    = translation_ypd[1];
+            const T t_distance = translation_ypd[2];
+            const T ctp        = ceres::cos(t_pitch);
+            const T tx         = t_distance * ctp * ceres::sin(t_yaw);
+            const T ty         = t_distance * ceres::sin(t_pitch);
+            const T tz         = t_distance * ctp * ceres::cos(t_yaw);
+
+            const T x = cr * pitch_x - sr * pitch_y + tx;
+            const T y = sr * pitch_x + cr * pitch_y + ty;
+            const T z = pitch_z + tz;
+
+            // Reject points behind camera or too close (avoids division by ~0 → NaN)
+            constexpr double kMinDepth = 1e-3;
+            if (z < T(kMinDepth)) {
+                return false;
+            }
 
             residuals[0] = x / z - T(observed_x);
             residuals[1] = y / z - T(observed_y);
@@ -398,7 +465,8 @@ private:
 
     [[nodiscard]] std::optional<LdmMeshCandidate> try_merge_candidates(
         const LdmMeshCandidate& base, const LdmMeshCandidate& extra,
-        const std::vector<LightPair>& pairs, const OdomCameraTransform& T_odom_camera) const {
+        const std::vector<LightPair>& pairs, const OdomCameraTransform& T_odom_camera,
+        const std::optional<PosePrior>& prior = std::nullopt) const {
         if (!has_face_assignment(base) || !has_face_assignment(extra)) {
             return std::nullopt;
         }
@@ -468,7 +536,7 @@ private:
         merged.preliminary_score =
             ((lhs_weight * base.preliminary_score) + (rhs_weight * extra.preliminary_score))
             / std::max(1.0f, lhs_weight + rhs_weight);
-        evaluate_candidate(merged, pairs, T_odom_camera);
+        evaluate_candidate(merged, pairs, T_odom_camera, prior);
         if (!merged.solved) {
             return std::nullopt;
         }
@@ -477,7 +545,8 @@ private:
 
     [[nodiscard]] std::vector<LdmMeshCandidate> build_combined_candidates(
         const std::vector<LdmMeshCandidate>& evaluated_candidates,
-        const std::vector<LightPair>& pairs, const OdomCameraTransform& T_odom_camera) const {
+        const std::vector<LightPair>& pairs, const OdomCameraTransform& T_odom_camera,
+        const std::optional<PosePrior>& prior = std::nullopt) const {
         std::vector<size_t> source_indices;
         source_indices.reserve(evaluated_candidates.size());
         for (size_t i = 0; i < evaluated_candidates.size(); ++i) {
@@ -518,7 +587,7 @@ private:
                     }
 
                     auto merged = try_merge_candidates(
-                        current, evaluated_candidates[other_idx], pairs, T_odom_camera);
+                        current, evaluated_candidates[other_idx], pairs, T_odom_camera, prior);
                     if (!merged.has_value()) {
                         continue;
                     }
@@ -903,36 +972,101 @@ private:
 
     [[nodiscard]] std::expected<BoundedPoseSeed, std::string> refine_pose_seed(
         const CandidateCorrespondences& correspondences, const BoundedPoseSeed& seed,
-        bool lock_yaw = false) const {
+        bool lock_yaw = false, const std::optional<PosePrior>& prior = std::nullopt) const {
         const double max_angle = pose_angle_limit(config_.max_pose_angle_rad);
         double angles[3]       = {
             std::remainder(seed.yaw, 2.0 * std::numbers::pi_v<double>),
             std::clamp(seed.pitch, -max_angle, max_angle),
             std::clamp(seed.roll, -max_angle, max_angle),
         };
-        double translation[3] = {seed.translation.x(), seed.translation.y(), seed.translation.z()};
+
+        // Convert seed Cartesian translation to YPD spherical coordinates for
+        // Ceres.  YPD decouples bearing from depth → physically meaningful
+        // bounds that prevent the solver from sliding along degenerate valleys
+        // in the Cartesian Jacobian.
+        const Eigen::Vector3d seed_ypd = camera_translation_to_ypd(seed.translation);
+        double translation_ypd[3]      = {seed_ypd.x(), seed_ypd.y(), seed_ypd.z()};
+
         ceres::Problem problem;
         for (size_t i = 0; i < correspondences.obj_points.size(); ++i) {
             problem.AddResidualBlock(
                 BoundedPoseReprojectionError::Create(
                     correspondences.obj_points[i], correspondences.normalized_points[i]),
-                new ceres::HuberLoss(0.005), angles, translation);
+                new ceres::HuberLoss(0.005), angles, translation_ypd);
         }
+        // Decompose prior rvec into yaw/pitch/roll for angle bounds.
+        // Uses the same Euler convention as bounded_pose_rotation:
+        //   R = R(roll, Z) * R(pitch, X) * R(yaw, Y)
+        std::optional<std::array<double, 3>> prior_angles;
+        if (prior.has_value()) {
+            cv::Mat R_cv;
+            cv::Rodrigues(cv::Mat(prior->rvec), R_cv);
+            Eigen::Matrix3d R_prior;
+            cv::cv2eigen(R_cv, R_prior);
+            auto decomposed = decompose_rotation(R_prior);
+            if (decomposed.has_value()) {
+                prior_angles = *decomposed;
+            }
+        }
+
         if (lock_yaw) {
             // Yaw is geometrically determined by face assignment — narrow band
             // for noise smoothing without allowing visibility-breaking drift.
             constexpr double kYawBand = 0.1;
             problem.SetParameterLowerBound(angles, 0, seed.yaw - kYawBand);
             problem.SetParameterUpperBound(angles, 0, seed.yaw + kYawBand);
+        } else if (prior_angles.has_value()) {
+            // Prior yaw with a band — constrains the full yaw search to a
+            // physically plausible neighbourhood around the tracker prediction.
+            constexpr double kPriorYawBand = 2.8;
+            const double prior_yaw =
+                std::remainder((*prior_angles)[0], 2.0 * std::numbers::pi_v<double>);
+            problem.SetParameterLowerBound(angles, 0, prior_yaw - kPriorYawBand);
+            problem.SetParameterUpperBound(angles, 0, prior_yaw + kPriorYawBand);
         } else {
             problem.SetParameterLowerBound(angles, 0, -std::numbers::pi_v<double>);
             problem.SetParameterUpperBound(angles, 0, std::numbers::pi_v<double>);
         }
-        problem.SetParameterLowerBound(angles, 1, -max_angle);
-        problem.SetParameterUpperBound(angles, 1, max_angle);
-        problem.SetParameterLowerBound(angles, 2, -max_angle);
-        problem.SetParameterUpperBound(angles, 2, max_angle);
-        problem.SetParameterLowerBound(translation, 2, 1e-3);
+
+        if (prior_angles.has_value()) {
+            constexpr double kPriorAngleBand = 0.5;
+            problem.SetParameterLowerBound(
+                angles, 1, std::max(-max_angle, (*prior_angles)[1] - kPriorAngleBand));
+            problem.SetParameterUpperBound(
+                angles, 1, std::min(max_angle, (*prior_angles)[1] + kPriorAngleBand));
+            problem.SetParameterLowerBound(
+                angles, 2, std::max(-max_angle, (*prior_angles)[2] - kPriorAngleBand));
+            problem.SetParameterUpperBound(
+                angles, 2, std::min(max_angle, (*prior_angles)[2] + kPriorAngleBand));
+        } else {
+            problem.SetParameterLowerBound(angles, 1, -max_angle);
+            problem.SetParameterUpperBound(angles, 1, max_angle);
+            problem.SetParameterLowerBound(angles, 2, -max_angle);
+            problem.SetParameterUpperBound(angles, 2, max_angle);
+        }
+
+        // YPD bearing bounds: constrain to front camera hemisphere.
+        constexpr double kBearingLimit = std::numbers::pi_v<double> / 2.0 - 1e-6;
+        problem.SetParameterLowerBound(translation_ypd, 0, -kBearingLimit);
+        problem.SetParameterUpperBound(translation_ypd, 0, kBearingLimit);
+        problem.SetParameterLowerBound(translation_ypd, 1, -kBearingLimit);
+        problem.SetParameterUpperBound(translation_ypd, 1, kBearingLimit);
+
+        // Distance bound: use prior to set a physically plausible band, otherwise
+        // only enforce the minimum-depth (1mm) lower bound.
+        if (prior.has_value()) {
+            const double prior_distance = cv::norm(prior->tvec);
+            if (std::isfinite(prior_distance) && prior_distance > 1e-3) {
+                constexpr double kDistanceBand = 1.0;
+                problem.SetParameterLowerBound(
+                    translation_ypd, 2, std::max(1e-3, prior_distance - kDistanceBand));
+                problem.SetParameterUpperBound(translation_ypd, 2, prior_distance + kDistanceBand);
+            } else {
+                problem.SetParameterLowerBound(translation_ypd, 2, 1e-3);
+            }
+        } else {
+            problem.SetParameterLowerBound(translation_ypd, 2, 1e-3);
+        }
 
         ceres::Solver::Options options;
         options.linear_solver_type           = ceres::DENSE_QR;
@@ -948,7 +1082,8 @@ private:
         refined.yaw         = std::remainder(angles[0], 2.0 * std::numbers::pi_v<double>);
         refined.pitch       = angles[1];
         refined.roll        = angles[2];
-        refined.translation = Eigen::Vector3d(translation[0], translation[1], translation[2]);
+        refined.translation = camera_ypd_to_translation(
+            Eigen::Vector3d{translation_ypd[0], translation_ypd[1], translation_ypd[2]});
         if (!summary.IsSolutionUsable() || !angle_within_limit(refined.pitch, max_angle)
             || !angle_within_limit(refined.roll, max_angle)
             || !std::isfinite(refined.translation.x()) || !std::isfinite(refined.translation.y())
@@ -965,7 +1100,8 @@ private:
     }
 
     [[nodiscard]] std::expected<BoundedPoseSeed, std::string> solve_constrained_pose_seed(
-        const LdmMeshCandidate& candidate, const CandidateCorrespondences& correspondences) const {
+        const LdmMeshCandidate& candidate, const CandidateCorrespondences& correspondences,
+        const std::optional<PosePrior>& prior = std::nullopt) const {
         const auto seeds = make_pose_seeds(correspondences);
         if (seeds.empty()) {
             return std::unexpected(
@@ -974,7 +1110,7 @@ private:
 
         std::optional<BoundedPoseSeed> best_seed;
         for (const auto& seed : seeds) {
-            const auto refined = refine_pose_seed(correspondences, seed);
+            const auto refined = refine_pose_seed(correspondences, seed, false, prior);
             if (!refined.has_value()) {
                 continue;
             }
@@ -999,7 +1135,8 @@ private:
 
     [[nodiscard]] std::expected<BoundedPoseSeed, std::string> solve_visible_pose_seed(
         const LdmMeshCandidate& candidate, const std::vector<LightPair>& pairs,
-        const CandidateCorrespondences& correspondences) const {
+        const CandidateCorrespondences& correspondences,
+        const std::optional<PosePrior>& prior = std::nullopt) const {
         if (!has_face_assignment(candidate)) {
             return std::unexpected(
                 std::string("solve_visible_pose_seed: candidate has no face assignment"));
@@ -1060,7 +1197,7 @@ private:
         // Yaw is locked — only pitch/roll/translation are refined.  The yaw
         // from face assignment (adjacent faces at 45° is ground truth) must
         // not drift, otherwise observed faces become invisible.
-        auto refined = refine_pose_seed(correspondences, seed, true);
+        auto refined = refine_pose_seed(correspondences, seed, true, prior);
         if (!refined.has_value()) {
             return std::unexpected(std::string("solve_visible_pose_seed: refine_pose_seed failed"));
         }
@@ -1205,7 +1342,8 @@ private:
 
     [[nodiscard]] std::expected<ConstrainedPoseSolution, std::string>
         solve_constrained_candidate_pose(
-            const LdmMeshCandidate& candidate, const std::vector<LightPair>& pairs) const {
+            const LdmMeshCandidate& candidate, const std::vector<LightPair>& pairs,
+            const std::optional<PosePrior>& prior = std::nullopt) const {
         if (candidate.pair_indices.size() == 1u) {
             return solve_single_face_candidate_pose(candidate, pairs);
         }
@@ -1224,10 +1362,10 @@ private:
         // 3+ pairs: use PnP with full yaw search (more stable across distance).
         // < 3 pairs: use face-assignment yaw (locked to avoid visibility drift).
         auto seed = candidate.pair_indices.size() >= 3u
-                      ? solve_constrained_pose_seed(candidate, *correspondences)
-                      : solve_visible_pose_seed(candidate, pairs, *correspondences);
+                      ? solve_constrained_pose_seed(candidate, *correspondences, prior)
+                      : solve_visible_pose_seed(candidate, pairs, *correspondences, prior);
         if (!seed.has_value() && candidate.pair_indices.size() < 3u) {
-            seed = solve_constrained_pose_seed(candidate, *correspondences);
+            seed = solve_constrained_pose_seed(candidate, *correspondences, prior);
         }
         if (!seed.has_value()) {
             return std::unexpected(
@@ -1304,7 +1442,8 @@ private:
 
     void evaluate_candidate(
         LdmMeshCandidate& candidate, const std::vector<LightPair>& pairs,
-        const OdomCameraTransform& T_odom_camera) const {
+        const OdomCameraTransform& T_odom_camera,
+        const std::optional<PosePrior>& prior = std::nullopt) const {
         candidate.estimated_center_image_px =
             estimate_candidate_center_image(pairs, candidate.pair_indices);
         if (!face_sequence_is_consistent(candidate.octagon_face_indices)) {
@@ -1315,7 +1454,7 @@ private:
             return;
         }
 
-        const auto solution = solve_constrained_candidate_pose(candidate, pairs);
+        const auto solution = solve_constrained_candidate_pose(candidate, pairs, prior);
         if (!solution.has_value()) {
             candidate.solved               = false;
             candidate.depth_valid          = false;
