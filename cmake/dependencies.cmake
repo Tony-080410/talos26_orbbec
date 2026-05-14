@@ -189,17 +189,8 @@ else ()
 endif ()
 
 # Axera AX650 SDK configuration
-# Force a consistent header/lib pair from /soc/soc to avoid ABI drift.
-set(_axera_include_roots "")
-set(_axera_library_roots "")
-if (CMAKE_SYSROOT)
-    list(APPEND _axera_include_roots "${CMAKE_SYSROOT}/soc/soc/include")
-    list(APPEND _axera_library_roots "${CMAKE_SYSROOT}/soc/soc/lib")
-endif ()
-list(APPEND _axera_include_roots "/soc/soc/include")
-list(APPEND _axera_library_roots "/soc/soc/lib")
-list(REMOVE_DUPLICATES _axera_include_roots)
-list(REMOVE_DUPLICATES _axera_library_roots)
+# SDK should be deployed to /soc/ with env vars set (see docs/ax650.md)
+# CMAKE_PREFIX_PATH, CMAKE_INCLUDE_PATH, CMAKE_LIBRARY_PATH will be searched automatically
 
 # Reset cached paths so re-configure follows the forced /soc/soc search roots.
 unset(AXERA_INCLUDE_DIRS CACHE)
@@ -210,36 +201,27 @@ unset(AXERA_VENC_LIBRARY CACHE)
 
 find_path(AXERA_INCLUDE_DIRS
     NAMES ax_sys_api.h ax_engine_api.h
-    PATHS ${_axera_include_roots}
-    NO_DEFAULT_PATH
+    PATH_SUFFIXES "soc/include" "include"
     DOC "Axera SDK include directory"
 )
 
 find_library(AXERA_SYS_LIBRARY
     NAMES ax_sys
-    PATHS ${_axera_library_roots}
-    NO_DEFAULT_PATH
     DOC "Axera system library"
 )
 
 find_library(AXERA_ENGINE_LIBRARY
     NAMES ax_engine
-    PATHS ${_axera_library_roots}
-    NO_DEFAULT_PATH
     DOC "Axera engine library"
 )
 
 find_library(AXERA_IVPS_LIBRARY
     NAMES ax_ivps
-    PATHS ${_axera_library_roots}
-    NO_DEFAULT_PATH
     DOC "Axera IVPS library"
 )
 
 find_library(AXERA_VENC_LIBRARY
         NAMES ax_venc
-        PATHS ${_axera_library_roots}
-        NO_DEFAULT_PATH
         DOC "Axera VENC library"
 )
 
