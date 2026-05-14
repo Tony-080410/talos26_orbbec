@@ -10,6 +10,7 @@
 #include "frame.hpp"
 #include "scheduler/scheduler.hpp"
 
+#include <magic_enum.hpp>
 #include <spdlog/spdlog.h>
 
 #include <opencv2/core/eigen.hpp>
@@ -116,6 +117,9 @@ void register_rune_detection_systems(talos::Scheduler& scheduler, RuneDetectorCo
                     // 绘制靶的四个 keypoint（用不同颜色）
                     for (size_t i = 0; i < detector->targets.size(); ++i) {
                         const auto& target = detector->targets[i];
+                        cv::circle(
+                            arrow_vis, detector->targets[i].center, 6, cv::Scalar(255, 255, 0), -1);
+
                         if (target.initKey) {
                             const auto& kp = target.keypnt;
                             // 转换坐标到全局（考虑 global ROI 偏移）
@@ -160,6 +164,13 @@ void register_rune_detection_systems(talos::Scheduler& scheduler, RuneDetectorCo
                     }
                 }
 
+                if (!detector->rCenterImg.empty()) {
+                    // 绘制中心区域矩形
+                    if (detector->rcenter.center != cv::Point2f(0, 0)) {
+                        cv::circle(
+                            arrow_vis, detector->rcenter.center, 5, cv::Scalar(0, 0, 255), -1);
+                    }
+                }
                 dbg.arrow_jpeg = encode_jpeg(arrow_vis.empty() ? detector->arrowImg : arrow_vis);
 
                 // // 画重投影对比图：检测点(红) vs 重投影点(绿) + 四个 keypoint
@@ -223,9 +234,10 @@ void register_rune_detection_systems(talos::Scheduler& scheduler, RuneDetectorCo
             }
 
             if (!dbg.detect_reversed) {
+                // SPDLOG_WARN(
+                //     "rune detector : detect fail :{}", magic_enum::enum_name(detector->status));
                 debug_out.write(std::move(dbg));
                 // obs_out.write(out);
-                // std::cerr << "[rune_system] detector failed!!!!";
                 return;
             }
 
@@ -239,7 +251,6 @@ void register_rune_detection_systems(talos::Scheduler& scheduler, RuneDetectorCo
                 dbg.tf_ok = false;
                 debug_out.write(std::move(dbg));
                 // obs_out.write(out);
-                std::cerr << "[rune_system] tf failed!!!!";
                 return;
             }
             dbg.tf_ok = true;

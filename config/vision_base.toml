@@ -272,8 +272,8 @@ rcenter_threshold = 120
 min_roundness = 0.6
 max_roundness = 1.0
 min_arrow_light_area = 250.0
-max_arrow_light_area = 5000.0
-min_arrow_light_aspect_ratio = 3.0
+max_arrow_light_area = 2000.0
+min_arrow_light_aspect_ratio = 6.0
 max_arrow_light_aspect_ratio = 10.0
 
 # ROI参数
