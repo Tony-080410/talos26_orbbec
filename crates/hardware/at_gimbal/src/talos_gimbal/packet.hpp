@@ -64,7 +64,7 @@ struct SendQuantaData {
     uint32_t time_stamp;
     struct {
         uint16_t custom_byte_block_len;
-        uint8_t custom_byte_block[300];
+        uint8_t custom_byte_block[298];
     } data;
     uint8_t eof;                                        // 0xA5
 };

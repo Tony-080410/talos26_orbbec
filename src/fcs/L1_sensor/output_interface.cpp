@@ -113,7 +113,7 @@ void McuOutput::send_quanta(const quanta::TransportChunk& chunk) const noexcept 
     // actual id is 0x04
     constexpr uint8_t data_id_protocol = (data_length_hi << 4) | 0x04;
 
-    constexpr std::size_t kMaxCustomBlockBytes = 300;
+    constexpr std::size_t kMaxCustomBlockBytes = 298;
 
     const auto& bytes = chunk.bytes();
     const auto* ptr   = bytes.data();
