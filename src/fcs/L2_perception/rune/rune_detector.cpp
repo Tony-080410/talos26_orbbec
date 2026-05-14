@@ -116,15 +116,6 @@ bool Arrow::set(const std::vector<Light>& lights, bool debug_mode) {
     // 设置成员变量
     rotated = cv::minAreaRect(contour);
 
-    if (rotated.size.width < 5.0f || rotated.size.height < 5.0f) {
-        if (debug_mode) {
-            SPDLOG_ERROR(
-                "Arrow::set: Rotated rect size too small. width = {} , height = {}",
-                rotated.size.width, rotated.size.height);
-        }
-        return false;
-    }
-
     center = rotated.center;
     // 较长的一边为height，较短的一边为width
     size.height = rotated.size.height;
