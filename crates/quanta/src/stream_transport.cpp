@@ -1,6 +1,6 @@
 #include "quanta/stream_transport.hpp"
 
-#include "quanta/ffmpeg_raii.hpp"
+#include "quanta/decoder_backend.hpp"
 #include "quanta/stream_encoder.hpp"
 
 #include <algorithm>
@@ -19,22 +19,7 @@
 #include <utility>
 #include <vector>
 
-extern "C" {
-#include <libavcodec/avcodec.h>
-#include <libavutil/frame.h>
-#include <libswscale/swscale.h>
-}
-
 namespace quanta {
-
-using detail::alloc_codec_ctx;
-using detail::alloc_frame;
-using detail::alloc_packet;
-using detail::CodecCtxPtr;
-using detail::create_sws;
-using detail::FramePtr;
-using detail::PacketPtr;
-using detail::SwsCtxPtr;
 
 namespace {
 
@@ -86,12 +71,6 @@ template <class UInt>
         config.now_ns = [] { return default_now_ns(); };
     }
     return config;
-}
-
-[[nodiscard]] std::string ffmpeg_error(int code) {
-    char buffer[128]{};
-    av_strerror(code, buffer, sizeof(buffer));
-    return std::string(buffer);
 }
 
 [[nodiscard]] uint64_t ms_to_ns(uint64_t ms) { return ms * 1'000'000ULL; }
@@ -1190,134 +1169,76 @@ private:
         }
     }
 
-    std::expected<void, std::string> ensure_decoder() {
-        if (dec_ctx_ && dec_frame_)
+    std::expected<void, std::string> ensure_decoder_backend() {
+        if (decoder_)
             return {};
-
-        const AVCodec* decoder = avcodec_find_decoder(AV_CODEC_ID_HEVC);
-        if (!decoder)
-            return std::unexpected("HEVC decoder not found");
-
-        dec_ctx_   = alloc_codec_ctx(decoder);
-        dec_frame_ = alloc_frame();
-        if (!dec_ctx_ || !dec_frame_)
-            return std::unexpected("Cannot allocate decoder context/frame");
-
-        dec_ctx_->pkt_timebase = AVRational{1, transport_config_.max_stream_fps};
-        // 不主动输出损坏帧；丢包期间由上层沿用上一张好帧，等后续关键帧恢复。
-        int ret = avcodec_open2(dec_ctx_.get(), decoder, nullptr);
-        if (ret < 0)
-            return std::unexpected("Cannot open HEVC decoder: " + ffmpeg_error(ret));
-        return {};
-    }
-
-    std::expected<void, std::string> ensure_bgr_converter(const AVFrame* frame) {
-        if (sws_ctx_ && sws_width_ == frame->width && sws_height_ == frame->height
-            && sws_pix_fmt_ == static_cast<AVPixelFormat>(frame->format)) {
-            return {};
-        }
-
-        sws_ctx_ = create_sws(
-            frame->width, frame->height, static_cast<AVPixelFormat>(frame->format), frame->width,
-            frame->height, AV_PIX_FMT_BGR24);
-        if (!sws_ctx_)
-            return std::unexpected("Cannot create BGR swscale context");
-
-        sws_width_   = frame->width;
-        sws_height_  = frame->height;
-        sws_pix_fmt_ = static_cast<AVPixelFormat>(frame->format);
+        auto result = detail::create_optimal_decoder_backend(transport_config_.max_stream_fps);
+        if (!result)
+            return std::unexpected(std::move(result.error()));
+        decoder_ = std::move(*result);
         return {};
     }
 
     std::expected<void, std::string> decode_current_frame(uint64_t receive_timestamp_ns) {
         (void)receive_timestamp_ns;
 
-        if (auto decoder = ensure_decoder(); !decoder)
-            return decoder;
+        if (auto dec = ensure_decoder_backend(); !dec)
+            return dec;
 
-        auto packet = alloc_packet();
-        if (!packet)
-            return std::unexpected("Cannot allocate decode packet");
-        int ret = av_new_packet(packet.get(), static_cast<int>(assembly_.bytes.size()));
-        if (ret < 0)
-            return std::unexpected("Cannot allocate decode packet bytes: " + ffmpeg_error(ret));
-        std::memcpy(packet->data, assembly_.bytes.data(), assembly_.bytes.size());
-        packet->pts                      = assembly_.pts;
-        packet->dts                      = assembly_.pts;
-        uint64_t decode_stage_started_ns = transport_config_.now_ns();
+        const uint64_t decode_start_ns = transport_config_.now_ns();
+        auto result                    = decoder_->decode(
+            std::span<const uint8_t>(assembly_.bytes.data(), assembly_.bytes.size()),
+            assembly_.pts);
 
-        ret = avcodec_send_packet(dec_ctx_.get(), packet.get());
-        if (ret < 0) {
+        if (!result) {
+            // Decode pipeline error — don't flush DPB, let subsequent IDR recover.
             stats_.decode_errors++;
             stats_.bad_frames++;
             if (!assembly_.keyframe)
                 stats_.bad_p_frames++;
-            // 不 flush: 保留 DPB 历史, 等后续关键帧或刷新帧恢复。
-            return std::unexpected("Decode send failed: " + ffmpeg_error(ret));
+            return std::unexpected(std::move(result.error()));
         }
 
-        while (true) {
-            ret = avcodec_receive_frame(dec_ctx_.get(), dec_frame_.get());
-            if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF)
-                break;
-            if (ret < 0) {
-                stats_.decode_errors++;
-                stats_.bad_frames++;
-                if (!assembly_.keyframe)
-                    stats_.bad_p_frames++;
-                // 不 flush: 保留 DPB 历史, 等后续关键帧或刷新帧恢复。
-                return std::unexpected("Decode receive failed: " + ffmpeg_error(ret));
-            }
+        auto& decode = *result;
 
-            if ((dec_frame_->flags & AV_FRAME_FLAG_CORRUPT) != 0) {
-                stats_.decode_errors++;
-                stats_.bad_frames++;
-                if (!assembly_.keyframe)
-                    stats_.bad_p_frames++;
-                stats_.frames_dropped++;
-                const uint64_t decode_finished_ns = transport_config_.now_ns();
-                queue_last_good_substitute(
-                    assembly_.frame_seq, assembly_.pts, assembly_.capture_timestamp_ns,
-                    decode_finished_ns, SubstituteReason::DecodeError);
-                av_frame_unref(dec_frame_.get());
-                decode_stage_started_ns = decode_finished_ns;
-                continue;
-            }
+        // Handle corrupt frames detected within the decode pipeline.
+        if (decode.had_corrupt_frame) {
+            stats_.decode_errors++;
+            stats_.bad_frames++;
+            if (!assembly_.keyframe)
+                stats_.bad_p_frames++;
+            stats_.frames_dropped++;
+            const uint64_t now_ns = transport_config_.now_ns();
+            queue_last_good_substitute(
+                assembly_.frame_seq, assembly_.pts, assembly_.capture_timestamp_ns, now_ns,
+                SubstituteReason::DecodeError);
+        }
 
-            if (auto sws_ready = ensure_bgr_converter(dec_frame_.get()); !sws_ready)
-                return sws_ready;
-
+        // Process successfully decoded frames.
+        for (auto& image : decode.frames) {
             DecodedFrame frame;
-            frame.width     = dec_frame_->width;
-            frame.height    = dec_frame_->height;
-            frame.linesize  = frame.width * 3;
-            frame.pts       = dec_frame_->pts != AV_NOPTS_VALUE ? dec_frame_->pts : assembly_.pts;
-            frame.frame_seq = assembly_.frame_seq;
-            const uint64_t decode_finished_ns = transport_config_.now_ns();
-            const uint64_t decode_elapsed_ns  = decode_finished_ns >= decode_stage_started_ns
-                                                  ? decode_finished_ns - decode_stage_started_ns
-                                                  : 0;
-            frame.capture_timestamp_ns        = assembly_.capture_timestamp_ns;
-            frame.decode_timestamp_ns         = decode_finished_ns;
+            frame.width                 = image.width;
+            frame.height                = image.height;
+            frame.linesize              = image.linesize;
+            frame.data                  = std::move(image.data);
+            frame.pts                   = image.pts;
+            frame.frame_seq             = assembly_.frame_seq;
+            frame.capture_timestamp_ns  = assembly_.capture_timestamp_ns;
+            frame.decode_timestamp_ns   = transport_config_.now_ns();
             frame.end_to_end_latency_ns = frame.decode_timestamp_ns >= frame.capture_timestamp_ns
                                             ? frame.decode_timestamp_ns - frame.capture_timestamp_ns
                                             : 0;
-            frame.data.resize(static_cast<size_t>(frame.linesize) * frame.height);
-
-            uint8_t* dst_data[4] = {frame.data.data(), nullptr, nullptr, nullptr};
-            int dst_linesize[4]  = {frame.linesize, 0, 0, 0};
-            sws_scale(
-                sws_ctx_.get(), dec_frame_->data, dec_frame_->linesize, 0, dec_frame_->height,
-                dst_data, dst_linesize);
 
             if (assembly_.keyframe)
                 stats_.idr_frames++;
 
             update_motion_history(frame);
+
+            const uint64_t decode_elapsed_ns = frame.decode_timestamp_ns >= decode_start_ns
+                                                 ? frame.decode_timestamp_ns - decode_start_ns
+                                                 : 0;
             record_display_frame_metrics(frame, false, decode_elapsed_ns);
             frame_queue_.push_back(std::move(frame));
-            av_frame_unref(dec_frame_.get());
-            decode_stage_started_ns = decode_finished_ns;
         }
 
         return {};
@@ -1326,12 +1247,7 @@ private:
     StreamTransportConfig transport_config_;
     StreamReceiverStats stats_{};
     AssemblyState assembly_{};
-    CodecCtxPtr dec_ctx_;
-    FramePtr dec_frame_;
-    SwsCtxPtr sws_ctx_;
-    AVPixelFormat sws_pix_fmt_ = AV_PIX_FMT_NONE;
-    int sws_width_             = 0;
-    int sws_height_            = 0;
+    std::unique_ptr<detail::DecoderBackend> decoder_;
     std::vector<uint64_t> latency_samples_ns_;
     std::vector<uint64_t> decode_samples_ns_;
     std::vector<uint64_t> frame_gap_samples_ns_;

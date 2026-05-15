@@ -378,6 +378,27 @@ target_link_libraries(talos-playground PRIVATE
 )
 
 # ============================================================================
+# Quanta IPC E2E Demo: IPC -> Quanta encode -> queue transport -> decode -> imshow
+# ============================================================================
+
+add_executable(quanta-ipc-demo src/quanta_ipc_demo.cpp)
+
+target_include_directories(quanta-ipc-demo PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/crates/hardware_daedalus/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/crates/log/src
+)
+
+target_link_libraries(quanta-ipc-demo PRIVATE
+        quanta
+        ipc
+        talos_log
+        spdlog::spdlog
+        opencv_core
+        opencv_imgproc
+        opencv_highgui
+)
+
+# ============================================================================
 # MPC Benchmark: 2x TinyMPC (double/dynamic) vs DualSmallMpcSolver (float/fixed)
 # ============================================================================
 add_library(tinympc_bench STATIC
@@ -472,6 +493,7 @@ set(TALOS_INSTALL_TARGETS
         quanta-stream-test
         quanta-stream-loopback
         quanta-stream-demo
+        quanta-ipc-demo
 )
 
 set(TALOS_OPTIONAL_INSTALL_TARGETS

@@ -8,6 +8,7 @@ crate(
         src/stream_encoder.cpp
         src/stream_transport.cpp
         src/encoder_backend_ffmpeg.cpp
+        src/decoder_backend_ffmpeg.cpp
     DEPS
         PkgConfig::AVCODEC
         PkgConfig::AVFORMAT
