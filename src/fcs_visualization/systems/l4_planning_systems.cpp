@@ -143,17 +143,34 @@ inline void append_selection_trace_metadata(
     return {value.x(), value.y(), value.z()};
 }
 
+[[nodiscard]] inline nlohmann::json
+    json_filter_convergence(const ::fcs::L3::FilterConvergenceState& state) {
+    return {
+        {                       "status",                                    magic_enum::enum_name(state.status)},
+        {"normalized_innovation_squared", std::isfinite(state.normalized_innovation_squared)
+ ? nlohmann::json(state.normalized_innovation_squared)
+ : nlohmann::json(nullptr)                                             },
+        {          "max_covariance_diag",           std::isfinite(state.max_covariance_diag)
+           ? nlohmann::json(state.max_covariance_diag)
+           : nlohmann::json(nullptr)                                   },
+        {"consecutive_converged_updates",                                    state.consecutive_converged_updates},
+        { "consecutive_diverged_updates",                                     state.consecutive_diverged_updates},
+    };
+}
+
 [[nodiscard]] inline nlohmann::json json_robot_state(const ::fcs::L3::RobotTargetState& state) {
     nlohmann::json state_json = {
-        {       "type",                        "robot"},
-        {   "position",      json_vec3(state.position)},
-        {   "velocity",      json_vec3(state.velocity)},
-        {        "yaw",                      state.yaw},
-        {      "v_yaw",                    state.v_yaw},
-        {     "radius", {state.radius0, state.radius1}},
-        {         "z1",                       state.z1},
-        { "armors_num",               state.armors_num},
-        {"armor_poses",        nlohmann::json::array()},
+        {       "type",                                    "robot"},
+        {   "position",                  json_vec3(state.position)},
+        {   "distance",                      state.position.norm()},
+        {   "velocity",                  json_vec3(state.velocity)},
+        {        "yaw",                                  state.yaw},
+        {      "v_yaw",                                state.v_yaw},
+        {     "radius",             {state.radius0, state.radius1}},
+        {         "z1",                                   state.z1},
+        { "armors_num",                           state.armors_num},
+        {"convergence", json_filter_convergence(state.convergence)},
+        {"armor_poses",                    nlohmann::json::array()},
     };
 
     const auto armors = state.armor_poses();
@@ -170,15 +187,17 @@ inline void append_selection_trace_metadata(
 
 [[nodiscard]] inline nlohmann::json json_outpost_state(const ::fcs::L3::OutpostTargetState& state) {
     nlohmann::json state_json = {
-        {       "type",                                 "outpost"},
-        {   "position",  {state.position.x(), state.position.y()}},
-        {   "velocity",                 json_vec3(state.velocity)},
-        {        "yaw",                                 state.yaw},
-        {      "v_yaw",                               state.v_yaw},
-        {          "z",      {state.z[0], state.z[1], state.z[2]}},
-        {     "radius",     ::fcs::L3::OutpostTargetState::radius},
-        { "armors_num", ::fcs::L3::OutpostTargetState::armors_num},
-        {"armor_poses",                   nlohmann::json::array()},
+        {       "type",                                  "outpost"},
+        {   "position",   {state.position.x(), state.position.y()}},
+        {   "distance",                      state.position.norm()},
+        {   "velocity",                  json_vec3(state.velocity)},
+        {        "yaw",                                  state.yaw},
+        {      "v_yaw",                                state.v_yaw},
+        {          "z",       {state.z[0], state.z[1], state.z[2]}},
+        {     "radius",      ::fcs::L3::OutpostTargetState::radius},
+        { "armors_num",  ::fcs::L3::OutpostTargetState::armors_num},
+        {"convergence", json_filter_convergence(state.convergence)},
+        {"armor_poses",                    nlohmann::json::array()},
     };
 
     const auto armors = state.armor_poses();

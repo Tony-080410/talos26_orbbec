@@ -20,7 +20,11 @@
 #pragma once
 
 // std
+#include <algorithm>
+#include <cmath>
+#include <cstdint>
 #include <functional>
+#include <limits>
 // Eigen
 #include <Eigen/Dense>
 // ceres
@@ -69,16 +73,35 @@ public:
     using UpdateQFunc = std::function<MatrixXX()>;
     using UpdateRFunc = std::function<MatrixZZ(const MatrixZ1& z)>;
 
+    enum class ConvergenceStatus : uint8_t {
+        Unknown,
+        Converging,
+        Converged,
+        Diverging,
+    };
+
+    struct ConvergenceCriteria {
+        double converged_nis{2.0 * static_cast<double>(N_Z)};
+        double diverged_nis{25.0 * static_cast<double>(N_Z)};
+        double converged_max_covariance_diag{1e6};
+        double diverged_max_covariance_diag{1e12};
+        double min_covariance_diag{-1e-9};
+        int converged_updates{3};
+        int diverged_updates{2};
+    };
+
     explicit ExtendedKalmanFilter(
         const PredicFunc& f, const MeasureFunc& h, const UpdateQFunc& u_q, const UpdateRFunc& u_r,
-        const MatrixXX& P0) noexcept
+        const MatrixXX& P0, ConvergenceCriteria convergence_criteria = {}) noexcept
         : f(f)
         , h(h)
         , update_Q(u_q)
         , update_R(u_r)
-        , P_post(P0) {
+        , P_post(P0)
+        , convergence_criteria_(convergence_criteria) {
         F = MatrixXX::Zero();
         H = MatrixZX::Zero();
+        update_covariance_stat_(P_post);
     }
 
     // Set the initial state
@@ -90,6 +113,44 @@ public:
     [[nodiscard]] const MatrixXZ& K_gain() const noexcept { return K_; }
     [[nodiscard]] const MatrixXX& Q_mat() const noexcept { return Q; }
     [[nodiscard]] const MatrixZZ& R_mat() const noexcept { return R; }
+    [[nodiscard]] ConvergenceStatus convergence_status() const noexcept {
+        return convergence_status_;
+    }
+    [[nodiscard]] bool converging() const noexcept {
+        return convergence_status_ == ConvergenceStatus::Converging;
+    }
+    [[nodiscard]] bool converged() const noexcept {
+        return convergence_status_ == ConvergenceStatus::Converged;
+    }
+    [[nodiscard]] bool diverging() const noexcept {
+        return convergence_status_ == ConvergenceStatus::Diverging;
+    }
+    [[nodiscard]] double normalized_innovation_squared() const noexcept {
+        return normalized_innovation_squared_;
+    }
+    [[nodiscard]] double max_covariance_diag() const noexcept { return max_covariance_diag_; }
+    [[nodiscard]] int consecutive_converged_updates() const noexcept {
+        return consecutive_converged_updates_;
+    }
+    [[nodiscard]] int consecutive_diverged_updates() const noexcept {
+        return consecutive_diverged_updates_;
+    }
+    [[nodiscard]] const ConvergenceCriteria& convergence_criteria() const noexcept {
+        return convergence_criteria_;
+    }
+
+    void setConvergenceCriteria(ConvergenceCriteria criteria) noexcept {
+        convergence_criteria_ = criteria;
+        resetConvergenceStatus();
+    }
+
+    void resetConvergenceStatus() noexcept {
+        convergence_status_            = ConvergenceStatus::Unknown;
+        consecutive_converged_updates_ = 0;
+        consecutive_diverged_updates_  = 0;
+        normalized_innovation_squared_ = std::numeric_limits<double>::infinity();
+        max_covariance_diag_           = std::numeric_limits<double>::infinity();
+    }
 
     void setPredictFunc(const PredicFunc& f) noexcept { this->f = f; }
 
@@ -114,6 +175,7 @@ public:
         Q      = update_Q();
         P_pri  = F * P_post * F.transpose() + Q;
         x_post = x_pri;
+        update_prediction_health_();
 
         return x_pri;
     }
@@ -134,12 +196,33 @@ public:
             H.block(i, 0, 1, N_X) = z_p_jet[i].v.transpose();
         }
 
-        R      = update_R(z);
-        K_     = P_pri * H.transpose() * (H * P_pri * H.transpose() + R).inverse();
-        x_post = x_post + K_ * (z - z_pri);
+        R                 = update_R(z);
+        const MatrixZ1 nu = z - z_pri;
+        const MatrixZZ S  = H * P_pri * H.transpose() + R;
+        Eigen::LDLT<MatrixZZ> ldlt(S);
+        if (!S.allFinite() || ldlt.info() != Eigen::Success || !ldlt.isPositive()) {
+            K_                             = MatrixXZ::Zero();
+            normalized_innovation_squared_ = std::numeric_limits<double>::infinity();
+            mark_immediate_divergence_();
+            return x_post;
+        }
+
+        const MatrixZ1 solved_nu = ldlt.solve(nu);
+        const MatrixZX gain_t    = ldlt.solve(H * P_pri.transpose());
+        if (!solved_nu.allFinite() || !gain_t.allFinite()) {
+            K_                             = MatrixXZ::Zero();
+            normalized_innovation_squared_ = std::numeric_limits<double>::infinity();
+            mark_immediate_divergence_();
+            return x_post;
+        }
+
+        normalized_innovation_squared_ = std::max(0.0, static_cast<double>(nu.dot(solved_nu)));
+        K_                             = gain_t.transpose();
+        x_post                         = x_post + K_ * nu;
         // Joseph form: guarantees P_post stays symmetric positive-definite
         const MatrixXX IKH = MatrixXX::Identity() - K_ * H;
         P_post             = IKH * P_pri * IKH.transpose() + K_ * R * K_.transpose();
+        update_convergence_status_();
         return x_post;
     }
 
@@ -147,9 +230,112 @@ public:
     void decorrelate(int i, int j) noexcept {
         P_post(i, j) = 0.0;
         P_post(j, i) = 0.0;
+        update_covariance_stat_(P_post);
     }
 
 private:
+    void update_prediction_health_() noexcept {
+        update_covariance_stat_(P_pri);
+        if (!x_pri.allFinite() || !P_pri.allFinite()
+            || min_covariance_diag(P_pri) < convergence_criteria_.min_covariance_diag) {
+            mark_immediate_divergence_();
+            return;
+        }
+
+        if (max_covariance_diag_ > convergence_criteria_.diverged_max_covariance_diag) {
+            register_divergence_sample_();
+            return;
+        }
+
+        if (convergence_status_ == ConvergenceStatus::Unknown) {
+            convergence_status_ = ConvergenceStatus::Converging;
+        }
+        if (convergence_status_ == ConvergenceStatus::Converged
+            && max_covariance_diag_ > convergence_criteria_.converged_max_covariance_diag) {
+            convergence_status_            = ConvergenceStatus::Converging;
+            consecutive_converged_updates_ = 0;
+        }
+    }
+
+    void update_convergence_status_() noexcept {
+        update_covariance_stat_(P_post);
+        if (!std::isfinite(normalized_innovation_squared_) || !x_post.allFinite()
+            || !P_post.allFinite()
+            || min_covariance_diag(P_post) < convergence_criteria_.min_covariance_diag) {
+            mark_immediate_divergence_();
+            return;
+        }
+
+        const bool covariance_diverging =
+            max_covariance_diag_ > convergence_criteria_.diverged_max_covariance_diag;
+        const bool innovation_diverging =
+            normalized_innovation_squared_ > convergence_criteria_.diverged_nis;
+        if (covariance_diverging || innovation_diverging) {
+            register_divergence_sample_();
+            return;
+        }
+
+        consecutive_diverged_updates_ = 0;
+        const bool covariance_converged =
+            max_covariance_diag_ <= convergence_criteria_.converged_max_covariance_diag;
+        const bool innovation_converged =
+            normalized_innovation_squared_ <= convergence_criteria_.converged_nis;
+        if (covariance_converged && innovation_converged) {
+            ++consecutive_converged_updates_;
+            convergence_status_ = (consecutive_converged_updates_
+                                   >= std::max(1, convergence_criteria_.converged_updates))
+                                    ? ConvergenceStatus::Converged
+                                    : ConvergenceStatus::Converging;
+            return;
+        }
+
+        consecutive_converged_updates_ = 0;
+        convergence_status_            = ConvergenceStatus::Converging;
+    }
+
+    void register_divergence_sample_() noexcept {
+        consecutive_converged_updates_ = 0;
+        ++consecutive_diverged_updates_;
+        convergence_status_ =
+            (consecutive_diverged_updates_ >= std::max(1, convergence_criteria_.diverged_updates))
+                ? ConvergenceStatus::Diverging
+                : ConvergenceStatus::Converging;
+    }
+
+    void mark_immediate_divergence_() noexcept {
+        consecutive_converged_updates_ = 0;
+        consecutive_diverged_updates_  = std::max(1, convergence_criteria_.diverged_updates);
+        convergence_status_            = ConvergenceStatus::Diverging;
+    }
+
+    void update_covariance_stat_(const MatrixXX& P) noexcept {
+        max_covariance_diag_ = max_abs_covariance_diag(P);
+    }
+
+    static double max_abs_covariance_diag(const MatrixXX& P) noexcept {
+        double max_diag = 0.0;
+        for (int i = 0; i < N_X; ++i) {
+            const double diag = P(i, i);
+            if (!std::isfinite(diag)) {
+                return std::numeric_limits<double>::infinity();
+            }
+            max_diag = std::max(max_diag, std::abs(diag));
+        }
+        return max_diag;
+    }
+
+    static double min_covariance_diag(const MatrixXX& P) noexcept {
+        double min_diag = std::numeric_limits<double>::infinity();
+        for (int i = 0; i < N_X; ++i) {
+            const double diag = P(i, i);
+            if (!std::isfinite(diag)) {
+                return -std::numeric_limits<double>::infinity();
+            }
+            min_diag = std::min(min_diag, diag);
+        }
+        return min_diag;
+    }
+
     // Process nonlinear vector function
     PredicFunc f;
     MatrixXX F;
@@ -175,4 +361,11 @@ private:
     MatrixX1 x_pri;
     // Posteriori state
     MatrixX1 x_post;
+
+    ConvergenceCriteria convergence_criteria_{};
+    ConvergenceStatus convergence_status_{ConvergenceStatus::Unknown};
+    int consecutive_converged_updates_{0};
+    int consecutive_diverged_updates_{0};
+    double normalized_innovation_squared_{std::numeric_limits<double>::infinity()};
+    double max_covariance_diag_{std::numeric_limits<double>::infinity()};
 };

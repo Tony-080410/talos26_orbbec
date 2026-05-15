@@ -102,6 +102,28 @@ public:
     [[nodiscard]] const MatXZ& K_gain() const noexcept { return ekf_.K_gain(); }
     [[nodiscard]] const MatXX& Q_mat() const noexcept { return ekf_.Q_mat(); }
     [[nodiscard]] const MatZZ& R_mat() const noexcept { return ekf_.R_mat(); }
+    [[nodiscard]] FilterConvergenceState convergence() const noexcept {
+        FilterConvergenceState state;
+        switch (ekf_.convergence_status()) {
+        case EKF::ConvergenceStatus::Unknown:
+            state.status = FilterConvergenceStatus::Unknown;
+            break;
+        case EKF::ConvergenceStatus::Converging:
+            state.status = FilterConvergenceStatus::Converging;
+            break;
+        case EKF::ConvergenceStatus::Converged:
+            state.status = FilterConvergenceStatus::Converged;
+            break;
+        case EKF::ConvergenceStatus::Diverging:
+            state.status = FilterConvergenceStatus::Diverging;
+            break;
+        }
+        state.normalized_innovation_squared = ekf_.normalized_innovation_squared();
+        state.max_covariance_diag           = ekf_.max_covariance_diag();
+        state.consecutive_converged_updates = ekf_.consecutive_converged_updates();
+        state.consecutive_diverged_updates  = ekf_.consecutive_diverged_updates();
+        return state;
+    }
 
     void set_state_unsafe(VecX x) noexcept { ekf_.setState(x); }
 
@@ -155,20 +177,6 @@ public:
             if (!outpost_target_.has_value()) {
                 return false;
             }
-            auto x           = outpost_target_->x();
-            auto v_yaw       = x[O_VYAW];
-            auto ref         = OutpostEkfMotionModel::OUTPOST_V_YAW;
-            auto std         = 0.6 * OutpostEkfMotionModel::OUTPOST_V_YAW;
-            constexpr auto K = 0.6; // Magic that auto stick to ground truth vyaw
-            v_yaw            = OutpostEkfMotionModel::OUTPOST_V_YAW * std::tanh(K * v_yaw);
-            if (v_yaw > std) {
-                v_yaw = ref;
-            } else if (v_yaw < -std) {
-                v_yaw = -ref;
-            }
-            x[O_VYAW] = v_yaw;
-
-            outpost_target_->set_state_unsafe(x);
             return d;
         }
 
@@ -227,21 +235,15 @@ public:
             xp0 << x0, y0, armor_yaw, 0.0, z0, z0, z0;
             OutpostEkfMotionModel::MatXX P0 = OutpostEkfMotionModel::MatXX::Identity();
 
-            P0(O_XC, O_XC)   = 1e9;
-            P0(O_YC, O_YC)   = 1e9;
-            P0(O_VYAW, O_XC) = 1e9;
-            P0(O_XC, O_VYAW) = 1e9;
-            P0(O_YC, O_VYAW) = 1e9;
-            P0(O_VYAW, O_YC) = 1e9;
+            P0(O_XC, O_XC) = 1;
+            P0(O_YC, O_YC) = 1;
 
-            P0(O_YAW, O_YAW)   = 1e9;
-            P0(O_YAW, O_VYAW)  = 1e9;
-            P0(O_VYAW, O_VYAW) = 1e9;
-            P0(O_VYAW, O_YAW)  = 1e9;
+            P0(O_YAW, O_YAW)   = 0.4;
+            P0(O_VYAW, O_VYAW) = 100;
 
-            P0(O_Z0, O_Z0) = 1e9;
-            P0(O_Z1, O_Z1) = 1e9;
-            P0(O_Z2, O_Z2) = 1e9;
+            P0(O_Z0, O_Z0) = 1e-4;
+            P0(O_Z1, O_Z1) = 0.1;
+            P0(O_Z2, O_Z2) = 0.1;
             outpost_target_.emplace();
             outpost_target_->initialize(config_.outpost.model, xp0, P0);
             outpost_last_armor_id_ = 0;
@@ -264,18 +266,19 @@ public:
                 h_prior;
             RobotEkfMotionModel::MatXX P0 = RobotEkfMotionModel::MatXX::Identity();
 
-            P0(XC, XC) = 1e9;
-            P0(YC, YC) = 1e9;
+            P0(XC, XC) = 1;
+            P0(YC, YC) = 1;
 
-            P0(VX, VX) = 1e9;
-            P0(VY, VY) = 1e9;
-            P0(VZ, VZ) = 1e9;
+            P0(VX, VX) = 64;
+            P0(VY, VY) = 64;
+            P0(VZ, VZ) = 64;
 
-            P0(V_YAW, V_YAW) = 1e9;
+            P0(YAW, YAW)     = 0.4;
+            P0(V_YAW, V_YAW) = 100;
 
             P0(LOG_R0, LOG_R0) = 1e-5 / (r0_prior * r0_prior);
             P0(LOG_R1, LOG_R1) = 1e-5 / (r1_prior * r1_prior);
-            P0(H, H)           = 1e-5;
+            P0(H, H)           = 1;
 
             robot_target_.emplace();
             robot_target_->initialize(config_.robot.model, xp0, P0);
@@ -314,6 +317,7 @@ public:
             state.K              = robot_target_->K_gain();
             state.Q              = robot_target_->Q_mat();
             state.R              = robot_target_->R_mat();
+            state.convergence    = robot_target_->convergence();
             output.state         = state;
             output.last_armor_id = robot_last_armor_id_;
         } else if (outpost_target_.has_value()) {
@@ -327,6 +331,7 @@ public:
             state.K              = outpost_target_->K_gain();
             state.Q              = outpost_target_->Q_mat();
             state.R              = outpost_target_->R_mat();
+            state.convergence    = outpost_target_->convergence();
             output.state         = state;
             output.last_armor_id = outpost_last_armor_id_;
         }

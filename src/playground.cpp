@@ -31,14 +31,26 @@ int main() {
     }
 
     uint64_t frame_count = 0;
-    std::array<uint8_t, 300> bytes{};
+    std::array<uint8_t, 298> bytes{};
 
-    bytes.front() = 0x6A;
-    bytes.back()  = 0xA6;
+    bytes[0] = 'T';
+    bytes[1] = 'A';
+    bytes[2] = 'L';
+    bytes[3] = 'O';
+    bytes[4] = 'S';
+    bytes[5] = '!';
 
-    for (std::size_t i = 1; i + 1 < bytes.size(); ++i) {
-        //    bytes[i] = static_cast<uint8_t>(i - 1);
-    }
+    bytes[7]  = 'P';
+    bytes[8]  = 'r';
+    bytes[9]  = 'a';
+    bytes[10] = 'y';
+    bytes[11] = 'S';
+    bytes[12] = 'k';
+    bytes[13] = 'y';
+    bytes[14] = '1';
+    bytes[15] = '3';
+    bytes[16] = '3';
+    bytes[17] = '7';
 
     bytes[51] = 'R';
     bytes[52] = 'o';
@@ -65,12 +77,12 @@ int main() {
     bytes[195] = 'e';
     bytes[196] = 'r';
 
-    bytes[297] = 'A';
-    bytes[298] = 'C';
-    bytes[299] = 'K';
+    bytes[295] = 'A';
+    bytes[296] = 'C';
+    bytes[297] = 'K';
 
     // Main loop
-    SPDLOG_INFO("starting main loop...");
+    SPDLOG_INFO("starting maeikn loop...");
 
     // evil hack for extended data length
     constexpr auto data_length_raw = sizeof(talos_gimbal::SendQuantaData::data);
@@ -85,7 +97,7 @@ int main() {
     // actual id is 0x04
     constexpr uint8_t data_id_protocol = (data_length_hi << 4) | 0x04;
 
-    constexpr std::size_t kMaxCustomBlockBytes = 300;
+    constexpr std::size_t kMaxCustomBlockBytes = 298;
 
     while (g_running) {
         // 测试 2: 接收指令
@@ -110,7 +122,7 @@ int main() {
                 .time_stamp = static_cast<uint32_t>(frame_count),
                 .data =
                     {
-                             .custom_byte_block_len = static_cast<uint16_t>(this_len),
+                             .custom_byte_block_len = 298,
                              .custom_byte_block     = {},
                              },
                 .eof = talos_gimbal::HeaderFrame::EoF(),
@@ -123,7 +135,7 @@ int main() {
             offset += this_len;
             remaining -= this_len;
         }
-        std::this_thread::sleep_for(20ms); // ~30 FPS
+        std::this_thread::sleep_for(100ms); // ~30 FPS
     }
 
     talos_gimbal::SendQuantaData packet{
@@ -137,7 +149,7 @@ int main() {
         .time_stamp = static_cast<uint32_t>(frame_count),
         .data =
             {
-                     .custom_byte_block_len = static_cast<uint16_t>(10),
+                     .custom_byte_block_len = static_cast<uint16_t>(300),
                      .custom_byte_block     = {},
                      },
         .eof = talos_gimbal::HeaderFrame::EoF(),

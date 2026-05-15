@@ -28,6 +28,21 @@ enum class TrackerStatus : uint8_t {
     TempLost  = 3, // Temporarily lost, using prediction
 };
 
+enum class FilterConvergenceStatus : uint8_t {
+    Unknown    = 0,
+    Converging = 1,
+    Converged  = 2,
+    Diverging  = 3,
+};
+
+struct FilterConvergenceState {
+    FilterConvergenceStatus status{FilterConvergenceStatus::Unknown};
+    double normalized_innovation_squared{std::numeric_limits<double>::infinity()};
+    double max_covariance_diag{std::numeric_limits<double>::infinity()};
+    int consecutive_converged_updates{0};
+    int consecutive_diverged_updates{0};
+};
+
 // ============================================================================
 // Robot Target State (11-dim model output)
 // ============================================================================
@@ -52,6 +67,7 @@ struct RobotTargetState {
     Eigen::MatrixXd K; // Kalman gain (11×4)
     Eigen::MatrixXd Q; // Process noise covariance (11×11)
     Eigen::MatrixXd R; // Measurement noise covariance (4×4)
+    FilterConvergenceState convergence{};
 
     /// Calculate all armor poses [x, y, z, yaw]
     [[nodiscard]] std::array<Eigen::Vector4d, 4> armor_poses() const noexcept;
@@ -76,6 +92,7 @@ struct OutpostTargetState {
     Eigen::MatrixXd K; // Kalman gain (7×4)
     Eigen::MatrixXd Q; // Process noise covariance (7×7)
     Eigen::MatrixXd R; // Measurement noise covariance (4×4)
+    FilterConvergenceState convergence{};
 
     /// Calculate all armor poses [x, y, z, yaw]
     [[nodiscard]] std::array<Eigen::Vector4d, 3> armor_poses() const noexcept;

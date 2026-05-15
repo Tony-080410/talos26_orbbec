@@ -272,6 +272,20 @@ auto serialize_control_chunk(
     return json::array({v.x(), v.y()});
 }
 
+[[nodiscard]] auto to_json_filter_convergence(const L3::FilterConvergenceState& state) -> json {
+    return json{
+        {                       "status",                          magic_enum::enum_name(state.status)},
+        {"normalized_innovation_squared", std::isfinite(state.normalized_innovation_squared)
+ ? json(state.normalized_innovation_squared)
+ : json(nullptr)                                             },
+        {          "max_covariance_diag",           std::isfinite(state.max_covariance_diag)
+           ? json(state.max_covariance_diag)
+           : json(nullptr)                                   },
+        {"consecutive_converged_updates",                          state.consecutive_converged_updates},
+        { "consecutive_diverged_updates",                           state.consecutive_diverged_updates},
+    };
+}
+
 [[nodiscard]] auto to_json_quat(const Eigen::Quaterniond& q) -> json {
     return json{
         {"x", q.x()},
@@ -340,14 +354,15 @@ struct ConfigSnapshotSource {
 
 [[nodiscard]] auto to_json_robot_state(const L3::RobotTargetState& state) -> json {
     return json{
-        {  "position", to_json_vec3(state.position)},
-        {  "velocity", to_json_vec3(state.velocity)},
-        {       "yaw",                    state.yaw},
-        {     "v_yaw",                  state.v_yaw},
-        {   "radius0",                state.radius0},
-        {   "radius1",                state.radius1},
-        {        "z1",                     state.z1},
-        {"armors_num",             state.armors_num},
+        {   "position",                  to_json_vec3(state.position)},
+        {   "velocity",                  to_json_vec3(state.velocity)},
+        {        "yaw",                                     state.yaw},
+        {      "v_yaw",                                   state.v_yaw},
+        {    "radius0",                                 state.radius0},
+        {    "radius1",                                 state.radius1},
+        {         "z1",                                      state.z1},
+        { "armors_num",                              state.armors_num},
+        {"convergence", to_json_filter_convergence(state.convergence)},
     };
 }
 
@@ -358,13 +373,14 @@ struct ConfigSnapshotSource {
     }
 
     return json{
-        {  "position", to_json_vec2(state.position)},
-        {  "velocity", to_json_vec3(state.velocity)},
-        {       "yaw",                    state.yaw},
-        {     "v_yaw",                  state.v_yaw},
-        {         "z",                 std::move(z)},
-        {    "radius",                 state.radius},
-        {"armors_num",             state.armors_num},
+        {   "position",                  to_json_vec2(state.position)},
+        {   "velocity",                  to_json_vec3(state.velocity)},
+        {        "yaw",                                     state.yaw},
+        {      "v_yaw",                                   state.v_yaw},
+        {          "z",                                  std::move(z)},
+        {     "radius",                                  state.radius},
+        { "armors_num",                              state.armors_num},
+        {"convergence", to_json_filter_convergence(state.convergence)},
     };
 }
 
