@@ -301,6 +301,81 @@ int clamp_int(int value, int lo, int hi) noexcept {
     return value < lo ? lo : (value > hi ? hi : value);
 }
 
+AX_U32 align_up_u32(AX_U32 value, AX_U32 alignment) noexcept {
+    if (alignment == 0U) {
+        return value;
+    }
+    return ((value + alignment - 1U) / alignment) * alignment;
+}
+
+AX_U32 bgr888_stride_aligned(int width) noexcept {
+    // Same convention as ax-video-sdk: RGB/BGR24 uses 16-pixel alignment,
+    // i.e. 16 * 3 = 48 bytes, so stride remains divisible by 3.
+    constexpr AX_U32 ALIGN = 48U;
+    return align_up_u32(static_cast<AX_U32>(std::max(width, 0)) * 3U, ALIGN);
+}
+
+// Drop-in cpp-local IVPS destination buffer. This avoids changing axera.hpp while
+// keeping the IVPS image-frame buffer separate from the NPU tensor buffer.
+// Assumption: one AxeraBackend instance is active, which matches the current backend usage.
+AX_U64 g_ivps_dst_phy_addr    = 0;
+void* g_ivps_dst_vir_addr     = nullptr;
+AX_U32 g_ivps_dst_buffer_size = 0;
+AX_U32 g_ivps_dst_stride      = 0;
+int g_ivps_dst_width          = 0;
+int g_ivps_dst_height         = 0;
+
+void free_ivps_dst_buffer() noexcept {
+    if (g_ivps_dst_vir_addr != nullptr && g_ivps_dst_phy_addr != 0) {
+        AX_SYS_MemFree(g_ivps_dst_phy_addr, g_ivps_dst_vir_addr);
+    }
+    g_ivps_dst_phy_addr    = 0;
+    g_ivps_dst_vir_addr    = nullptr;
+    g_ivps_dst_buffer_size = 0;
+    g_ivps_dst_stride      = 0;
+    g_ivps_dst_width       = 0;
+    g_ivps_dst_height      = 0;
+}
+
+std::expected<void, std::string> allocate_ivps_dst_buffer(int width, int height) noexcept {
+    if (width <= 0 || height <= 0) {
+        return std::unexpected(fmt::format("invalid IVPS dst size: {}x{}", width, height));
+    }
+
+    const AX_U32 stride = bgr888_stride_aligned(width);
+    const AX_U32 size   = stride * static_cast<AX_U32>(height);
+
+    if (g_ivps_dst_vir_addr != nullptr && g_ivps_dst_width == width && g_ivps_dst_height == height
+        && g_ivps_dst_stride == stride && g_ivps_dst_buffer_size >= size) {
+        return {};
+    }
+
+    free_ivps_dst_buffer();
+
+    constexpr AX_U32 ALIGN = 0x1000;
+    const auto ret         = AX_SYS_MemAlloc(
+        &g_ivps_dst_phy_addr, &g_ivps_dst_vir_addr, size, ALIGN,
+        reinterpret_cast<const AX_S8*>("ivps-dst"));
+
+    if (ret != AX_SUCCESS || g_ivps_dst_vir_addr == nullptr) {
+        g_ivps_dst_phy_addr    = 0;
+        g_ivps_dst_vir_addr    = nullptr;
+        g_ivps_dst_buffer_size = 0;
+        g_ivps_dst_stride      = 0;
+        g_ivps_dst_width       = 0;
+        g_ivps_dst_height      = 0;
+        return std::unexpected(fmt::format("AX_SYS_MemAlloc ivps-dst: {}", ax_error_string(ret)));
+    }
+
+    g_ivps_dst_buffer_size = size;
+    g_ivps_dst_stride      = stride;
+    g_ivps_dst_width       = width;
+    g_ivps_dst_height      = height;
+
+    SPDLOG_INFO("IVPS dst buffer allocated: {}x{} stride={} size={}", width, height, stride, size);
+    return {};
+}
+
 } // namespace
 
 AxeraBackend::AxeraBackend(Config config) noexcept
@@ -600,11 +675,10 @@ std::expected<void, std::string>
     // BGR888 stride must be a multiple of 3; align to 48 bytes (16 pixels × 3 bytes/pixel)
     // to satisfy both the 3-byte pixel packing constraint and hardware alignment requirements.
     // Reference: ax-video-sdk src/common/ax_image_processor_ax650.cpp MakeAlignedDescriptor()
-    constexpr int ALIGN = 48;
-    const AX_U32 aligned_stride =
-        ((static_cast<AX_U32>(max_src_width) * 3 + ALIGN - 1) / ALIGN) * ALIGN;
-    ivps_src_stride_      = aligned_stride;
-    ivps_src_buffer_size_ = aligned_stride * static_cast<AX_U32>(max_src_height);
+    constexpr int ALIGN         = 48;
+    const AX_U32 aligned_stride = bgr888_stride_aligned(max_src_width);
+    ivps_src_stride_            = aligned_stride;
+    ivps_src_buffer_size_       = aligned_stride * static_cast<AX_U32>(max_src_height);
 
     // Use non-cached allocation: CPU writes once, IVPS DMA reads once.
     // Cached buffer would require AX_SYS_MflushCache syscall per frame (~0.1-0.2ms)
@@ -636,6 +710,8 @@ void AxeraBackend::free_ivps_buffers() noexcept {
     ivps_src_vir_addr_    = nullptr;
     ivps_src_buffer_size_ = 0;
     ivps_src_stride_      = 0;
+
+    free_ivps_dst_buffer();
 }
 
 void AxeraBackend::preprocess_image_ivps(const cv::Mat& image) noexcept {
@@ -644,10 +720,34 @@ void AxeraBackend::preprocess_image_ivps(const cv::Mat& image) noexcept {
         return;
     }
 
-    // 检查是否需要重新分配缓冲区
-    if (image.cols > ivps_max_src_width_ || image.rows > ivps_max_src_height_
+    if (image.empty() || image.type() != CV_8UC3) {
+        SPDLOG_WARN(
+            "preprocess_image_ivps expects non-empty CV_8UC3 BGR image, got type={} "
+            "size={}x{}; using opencv",
+            image.type(), image.cols, image.rows);
+        preprocess_image(image);
+        return;
+    }
+
+    // VPP is stricter than cv::resize: several MSP builds reject odd source geometry
+    // with AX_ERR_ILLEGAL_PARAM even for BGR888. Crop off the last row/column for
+    // the hardware path only; losing one border pixel is negligible and avoids CPU fallback.
+    const int hw_src_w = image.cols & ~1;
+    const int hw_src_h = image.rows & ~1;
+    if (hw_src_w <= 0 || hw_src_h <= 0) {
+        SPDLOG_WARN(
+            "IVPS source size becomes invalid after even alignment: original={}x{}, hw={}x{}; "
+            "using opencv",
+            image.cols, image.rows, hw_src_w, hw_src_h);
+        preprocess_image(image);
+        return;
+    }
+
+    // Check whether the reusable source image-frame buffer must grow.
+    // Allocate against the effective even geometry, not the original odd camera width.
+    if (hw_src_w > ivps_max_src_width_ || hw_src_h > ivps_max_src_height_
         || ivps_src_vir_addr_ == nullptr) {
-        auto buffer_result = allocate_ivps_buffers(image.cols, image.rows);
+        auto buffer_result = allocate_ivps_buffers(hw_src_w, hw_src_h);
         if (!buffer_result) {
             static bool warned = false;
             if (!warned) {
@@ -659,10 +759,21 @@ void AxeraBackend::preprocess_image_ivps(const cv::Mat& image) noexcept {
         }
     }
 
-    // 构造源帧描述（参考测试代码）
+    const size_t packed_row  = static_cast<size_t>(config_.input_width) * 3U;
+    const size_t packed_size = packed_row * static_cast<size_t>(config_.input_height);
+    if (io_data_.pInputs == nullptr || io_data_.pInputs[0].pVirAddr == nullptr
+        || static_cast<size_t>(io_data_.pInputs[0].nSize) < packed_size) {
+        SPDLOG_WARN(
+            "NPU input buffer invalid/small for direct IVPS dst: nSize={}, required={}; using "
+            "opencv",
+            io_data_.pInputs != nullptr ? io_data_.pInputs[0].nSize : 0, packed_size);
+        preprocess_image(image);
+        return;
+    }
+
     AX_VIDEO_FRAME_T src_frame{};
-    src_frame.u32Width                      = image.cols;
-    src_frame.u32Height                     = image.rows;
+    src_frame.u32Width                      = static_cast<AX_U32>(hw_src_w);
+    src_frame.u32Height                     = static_cast<AX_U32>(hw_src_h);
     src_frame.u32PicStride[0]               = ivps_src_stride_;
     src_frame.enImgFormat                   = AX_FORMAT_BGR888;
     src_frame.u64PhyAddr[0]                 = ivps_src_phy_addr_;
@@ -670,37 +781,36 @@ void AxeraBackend::preprocess_image_ivps(const cv::Mat& image) noexcept {
     src_frame.u32FrameSize                  = ivps_src_buffer_size_;
     src_frame.stCompressInfo.enCompressMode = AX_COMPRESS_MODE_NONE;
 
-    // 复制图像数据到源缓冲区（优化：只复制实际需要的区域）
-    auto* dst_ptr         = static_cast<uint8_t*>(ivps_src_vir_addr_);
-    const size_t row_size = image.cols * 3;
-    if (image.isContinuous() && image.cols * 3 == static_cast<int>(ivps_src_stride_)) {
-        std::memcpy(dst_ptr, image.data, row_size * image.rows);
-    } else {
-        for (int y = 0; y < image.rows; ++y) {
-            std::memcpy(
-                dst_ptr + static_cast<size_t>(y) * ivps_src_stride_, image.ptr(y), row_size);
-        }
+    auto* src_buffer       = static_cast<uint8_t*>(ivps_src_vir_addr_);
+    const size_t src_bytes = static_cast<size_t>(hw_src_w) * 3U;
+    for (int y = 0; y < hw_src_h; ++y) {
+        std::memcpy(
+            src_buffer + static_cast<size_t>(y) * ivps_src_stride_, image.ptr(y), src_bytes);
     }
 
-    // 构造目标帧描述（直接写入 NPU 输入缓冲区）
+    // Fast path: direct IVPS -> NPU input.
+    // This is safe for your current model size because 768 * 3 = 2304, which already satisfies
+    // the BGR888 48-byte stride convention used by the Axera sample code. It removes the extra
+    // staging-buffer memcpy that doubled latency on your board.
     AX_VIDEO_FRAME_T dst_frame{};
     dst_frame.u32Width        = config_.input_width;
     dst_frame.u32Height       = config_.input_height;
-    dst_frame.u32PicStride[0] = config_.input_width * 3;
+    dst_frame.u32PicStride[0] = static_cast<AX_U32>(packed_row);
     dst_frame.enImgFormat     = AX_FORMAT_BGR888;
     dst_frame.u64PhyAddr[0]   = io_data_.pInputs[0].phyAddr;
     dst_frame.u64VirAddr[0]   = reinterpret_cast<AX_U64>(io_data_.pInputs[0].pVirAddr);
-    dst_frame.u32FrameSize    = static_cast<AX_U32>(config_.input_width * config_.input_height * 3);
+    dst_frame.u32FrameSize    = static_cast<AX_U32>(packed_size);
     dst_frame.stCompressInfo.enCompressMode = AX_COMPRESS_MODE_NONE;
 
-    // Source buffer is non-cached; CPU writes land directly in DDR — no flush needed.
-
-    // AX650 CropResize uses VPP engine, not TDP.
-    // TDP is designed for CSC operations and does not reliably support BGR888 resize.
-    // Reference: ax-video-sdk CropResizeDispatched() defaults to VPP for AX650.
     const auto ret = AX_IVPS_CropResizeVpp(&src_frame, &dst_frame, &ivps_aspect_ratio_);
     if (ret != AX_SUCCESS) {
-        SPDLOG_WARN("AX_IVPS_CropResizeVpp: {}, using opencv", ax_error_string(ret));
+        SPDLOG_WARN(
+            "AX_IVPS_CropResizeVpp direct-dst failed: {}, src={}x{} stride={} frameSize={}, "
+            "dst={}x{} stride={} frameSize={} npuSize={}; using opencv",
+            ax_error_string(ret), src_frame.u32Width, src_frame.u32Height,
+            src_frame.u32PicStride[0], src_frame.u32FrameSize, dst_frame.u32Width,
+            dst_frame.u32Height, dst_frame.u32PicStride[0], dst_frame.u32FrameSize,
+            io_data_.pInputs[0].nSize);
         preprocess_image(image);
         return;
     }
@@ -708,12 +818,14 @@ void AxeraBackend::preprocess_image_ivps(const cv::Mat& image) noexcept {
     static bool logged_ivps_success = false;
     if (!logged_ivps_success) {
         SPDLOG_INFO(
-            "IVPS hardware resize working! ({}x{} -> {}x{})", image.cols, image.rows,
-            config_.input_width, config_.input_height);
+            "IVPS hardware resize working direct to NPU input! ({}x{} effective from {}x{} -> "
+            "{}x{}, src_stride={}, dst_stride={})",
+            hw_src_w, hw_src_h, image.cols, image.rows, config_.input_width, config_.input_height,
+            ivps_src_stride_, dst_frame.u32PicStride[0]);
         logged_ivps_success = true;
     }
 
-    // Input buffer is non-cached; no flush needed — DMA writes land directly in DDR.
+    // NPU input buffer is allocated non-cached in prepare_io(); no flush required.
 }
 
 bool AxeraBackend::infer() noexcept {
