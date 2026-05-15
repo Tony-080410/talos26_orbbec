@@ -19,15 +19,15 @@ armor_max_large_center_distance = 8.0
 armor_max_angle = 40.0
 
 # Classifier configuration (ONNX-based number classification)
-classifier_model_path = "models/mlp.onnx"
-classifier_confidence_threshold = 0.5
-classifier_enable_type_filtering = true
+classifier_model_path = "models/mlp_finetuned.onnx"
+classifier_confidence_threshold = 0.1
+classifier_enable_type_filtering = false
 classifier_use_softmax = true
 
 [onnx_runtime]
 model_path = "models/best_fp16.onnx"
 cache_dir = "/tmp/ort_cache"
-confidence_threshold = 0.75
+confidence_threshold = 0.25
 nms_threshold = 0.30
 top_k = 128
 
@@ -55,7 +55,7 @@ num_colors = 4
 num_kpts = 4
 num_pairs = 12
 strides = [8, 16, 32]
-confidence_threshold = 0.6
+confidence_threshold = 0.25
 nms_threshold = 0.30
 top_k = 64
 
@@ -137,7 +137,7 @@ radius1 = 0.23
 height = 0.05
 
 [tracker.outpost]
-matcher_gate = 4.0
+matcher_gate = 10.0
 lost_threshold = 1.0
 tracking_threshold = 4
 

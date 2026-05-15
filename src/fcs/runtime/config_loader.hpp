@@ -18,7 +18,7 @@ namespace hardware {
 enum Transport { Direct, Chiral };
 
 struct DaedalusConfig {
-    double bullet_speed{25.0};
+    double bullet_speed{11.0};
 };
 
 struct DirectConfig {
