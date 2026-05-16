@@ -181,11 +181,10 @@ struct DaedalusImu {
             note_control_update(pose->timestamp_ns);
         }
         if (const auto pose = ipc_device->recv_pose(ipc::POSE_CAMERA)) {
-            const Eigen::Quaterniond q(pose->qw, pose->qx, pose->qy, pose->qz);
             fast_tf::update(
                 *tf_buffer,
-                fast_tf::EdgeTransform<fast_tf::camera_link_fuxk_frame>::from_quaternion_xyz(
-                    q, pose->x, pose->y, pose->z),
+                fast_tf::EdgeTransform<fast_tf::camera_link_fuxk_frame>::from_translation(
+                    pose->x, pose->y, pose->z),
                 pose->timestamp_ns);
             note_control_update(pose->timestamp_ns);
         }

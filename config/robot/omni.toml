@@ -14,9 +14,6 @@ gain = 16.9
 translation = [0, 0, 0]
 
 camera_link.translation = [0.1760306, 0, 0.00]
-camera_link.roll = 0.0
-camera_link.pitch = 0.0
-camera_link.yaw = 0.0
 
 muzzle_link.translation = [0.1760306, 0.0, 0.0]
 

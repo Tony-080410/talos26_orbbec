@@ -42,13 +42,19 @@ struct RobotExtrinsicConfig {
                 degree roll{};
                 degree pitch{};
                 degree yaw{};
-
                 math_fuxk::Ros2EulerRotd rotation() const noexcept {
                     return math_fuxk::rpy(roll, pitch, yaw);
                 }
             };
             struct muzzle_link_t {
                 Eigen::Vector3d translation{};
+                degree roll{};
+                degree pitch{};
+                degree yaw{};
+
+                math_fuxk::Ros2EulerRotd rotation() const noexcept {
+                    return math_fuxk::rpy(roll, pitch, yaw);
+                }
             };
             Eigen::Vector3d translation{};
             camera_link_t camera_link{};

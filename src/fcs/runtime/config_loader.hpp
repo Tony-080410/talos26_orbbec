@@ -19,6 +19,7 @@ enum Transport { Direct, Chiral };
 
 struct DaedalusConfig {
     double bullet_speed{11.0};
+    RobotExtrinsicConfig extrinsic{};
 };
 
 struct DirectConfig {

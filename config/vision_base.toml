@@ -55,12 +55,12 @@ num_colors = 4
 num_kpts = 4
 num_pairs = 12
 strides = [8, 16, 32]
-confidence_threshold = 0.25
+confidence_threshold = 0.6
 nms_threshold = 0.30
 top_k = 64
 
 [readback_roi]
-enabled = true
+enabled = false
 stale_timeout_s = 0.20
 margin_ratio_x = 0.20
 margin_ratio_y = 0.00

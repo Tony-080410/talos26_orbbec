@@ -47,6 +47,37 @@ auto parse_preset(LaunchConfig& launch) -> std::expected<PresetEntry, std::strin
     return entry;
 }
 
+auto load_hardware_config(std::string_view robot) -> std::expected<HardwareConfig, std::string> {
+    auto hardware_path = fmt::format("config/robot/{}.toml", robot);
+    auto hardware_tbl  = toml::parse_file(hardware_path);
+    if (hardware_tbl.failed()) {
+        return std::unexpected(
+            fmt::format("{}: {}", hardware_path, format_parse_error(hardware_tbl.error())));
+    }
+
+    auto hardware_config = toml_helper::from_table<HardwareConfig>(hardware_tbl.table());
+    if (!hardware_config) {
+        return std::unexpected(fmt::format("hardware config: {}", hardware_config.error()));
+    }
+    return std::move(*hardware_config);
+}
+
+auto load_robot_extrinsic_config(std::string_view robot)
+    -> std::expected<RobotExtrinsicConfig, std::string> {
+    auto hardware_path = fmt::format("config/robot/{}.toml", robot);
+    auto hardware_tbl  = toml::parse_file(hardware_path);
+    if (hardware_tbl.failed()) {
+        return std::unexpected(
+            fmt::format("{}: {}", hardware_path, format_parse_error(hardware_tbl.error())));
+    }
+
+    auto extrinsic = toml_helper::read<RobotExtrinsicConfig>(hardware_tbl.table(), "extrinsic");
+    if (!extrinsic) {
+        return std::unexpected(fmt::format("hardware extrinsic: {}", extrinsic.error()));
+    }
+    return *extrinsic;
+}
+
 } // namespace
 
 [[nodiscard]] std::expected<RuntimeConfig, std::string> load_config(std::string_view path) {
@@ -107,15 +138,8 @@ auto parse_preset(LaunchConfig& launch) -> std::expected<PresetEntry, std::strin
     case Chiral:
     case CameraOnly:
     case Direct: {
-        bool camera_only = preset.backend == CameraOnly;
-        // Load hardware config
-        auto hardware_path = fmt::format("config/robot/{}.toml", preset.robot);
-        auto hardware_tbl  = toml::parse_file(hardware_path);
-        if (hardware_tbl.failed()) {
-            return std::unexpected(
-                fmt::format("{}: {}", hardware_path, format_parse_error(hardware_tbl.error())));
-        }
-        auto hardware_config = toml_helper::from_table<HardwareConfig>(hardware_tbl.table());
+        bool camera_only     = preset.backend == CameraOnly;
+        auto hardware_config = load_hardware_config(preset.robot.get());
         if (!hardware_config) {
             return std::unexpected(fmt::format("hardware config: {}", hardware_config.error()));
         }
@@ -123,11 +147,18 @@ auto parse_preset(LaunchConfig& launch) -> std::expected<PresetEntry, std::strin
             .camera_only = camera_only,
             .transport   = preset.backend != Chiral ? hardware::Transport::Direct
                                                     : hardware::Transport::Chiral,
-            .hardware    = std::move(hardware_config.value())};
+            .hardware    = std::move(*hardware_config)};
         break;
     };
     case Daedalus: {
-        cfg = launch.daedalus;
+        auto extrinsic = load_robot_extrinsic_config(preset.robot.get());
+        if (!extrinsic) {
+            return std::unexpected(extrinsic.error());
+        }
+        cfg = hardware::DaedalusConfig{
+            .bullet_speed = launch.daedalus.bullet_speed,
+            .extrinsic    = std::move(*extrinsic),
+        };
         break;
     }
     }

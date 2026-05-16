@@ -72,10 +72,11 @@ void init_coordinate_system(fast_tf::CoordinateSystem& system, const RobotExtrin
         0);
 
     auto d = config.gimbal_yaw.gimbal_pitch.muzzle_link.translation;
+    auto e = config.gimbal_yaw.gimbal_pitch.muzzle_link.rotation();
     fast_tf::update<fast_tf::muzzle_link_fuxk_frame>(
         system,
-        fast_tf::EdgeTransform<fast_tf::muzzle_link_fuxk_frame>::from_translation(
-            d.x(), d.y(), d.z()),
+        fast_tf::EdgeTransform<fast_tf::muzzle_link_fuxk_frame>::from_rpy(
+            to_rad(e.roll), to_rad(e.pitch), to_rad(e.yaw), d.x(), d.y(), d.z()),
         0);
 }
 
@@ -100,7 +101,7 @@ void init_coordinate_system(fast_tf::CoordinateSystem& system, const RobotExtrin
                 chiral = cfg.hardware.chiral;
             },
             [&coordinate_system, &world](hardware::DaedalusConfig cfg) {
-                init_coordinate_system(coordinate_system, {});
+                init_coordinate_system(coordinate_system, cfg.extrinsic);
                 world.insert_resource(
                     core::trajectory::bullet_speed_data{.bullet_speed = cfg.bullet_speed});
             }},
@@ -166,13 +167,12 @@ void init_coordinate_system(fast_tf::CoordinateSystem& system, const RobotExtrin
 
     {
         quanta::StreamTransportConfig transport_cfg;
-        transport_cfg.mtu_bytes      = 300;
+        transport_cfg.mtu_bytes      = 298;
         transport_cfg.transport_hz   = 50;
         transport_cfg.max_stream_fps = quanta_cfg.framerate;
 
         auto sender = quanta::StreamSender::create(
-            quanta_cfg, transport_cfg, static_cast<int>(quanta_cfg.max_width),
-            static_cast<int>(quanta_cfg.max_height));
+            quanta_cfg, transport_cfg, static_cast<int>(1440), static_cast<int>(1080));
         if (!sender) {
             return std::unexpected(fmt::format("quanta-encoder create: {}", sender.error()));
         }
@@ -193,28 +193,24 @@ void init_coordinate_system(fast_tf::CoordinateSystem& system, const RobotExtrin
             auto& state = *encoder_state;
 
             auto frame = image_in.read();
-            if (!frame) {
-                return;
+            if (frame) {
+                auto img = frame->image;
+
+                const int64_t pts  = state.next_pts++;
+                auto submit_result = state.sender->submit_frame(
+                    img.data, static_cast<int>(img.step[0]), pts, frame->timestamp_ns);
+                if (!submit_result) {
+                    SPDLOG_WARN("quanta-encoder submit: {}", submit_result.error());
+                    return;
+                }
             }
 
-            const int64_t pts  = state.next_pts++;
-            auto submit_result = state.sender->submit_frame(
-                frame->image.data, static_cast<int>(frame->image.step[0]), pts,
-                frame->timestamp_ns);
-            if (!submit_result) {
-                SPDLOG_WARN("quanta-encoder submit: {}", submit_result.error());
+            auto chunk_result = state.sender->poll_chunk();
+            if (!chunk_result) {
+                SPDLOG_WARN("quanta-encoder poll: {}", chunk_result.error());
                 return;
             }
-
-            while (true) {
-                auto chunk_result = state.sender->poll_chunk();
-                if (!chunk_result) {
-                    SPDLOG_WARN("quanta-encoder poll: {}", chunk_result.error());
-                    break;
-                }
-                if (!chunk_result->has_value()) {
-                    break;
-                }
+            if (chunk_result->has_value()) {
                 (*output)->send_quanta(**chunk_result);
             }
         });
