@@ -13,6 +13,7 @@
 #include <vector>
 
 #include <Eigen/Core>
+#include <Eigen/Eigenvalues>
 #include <Eigen/Geometry>
 #include <ceres/ceres.h>
 #include <opencv2/calib3d.hpp>
@@ -178,6 +179,193 @@ private:
     Eigen::Matrix3d R_yaw;
     R_yaw << cy, -sy, 0.0, sy, cy, 0.0, 0.0, 0.0, 1.0;
     return R_yaw;
+}
+
+[[nodiscard]] inline std::vector<cv::Point2f>
+    debias_correlated_corner_scale(std::vector<cv::Point2f> img_points) noexcept {
+    if (img_points.size() != 4) {
+        return img_points;
+    }
+
+    cv::Point2f center(0.0f, 0.0f);
+    for (const auto& p : img_points) {
+        center += p;
+    }
+    center *= 0.25f;
+
+    // Detector keypoints tend to sit slightly inside bright light-bar corners.
+    // A fixed pixel-domain outward correction removes the non-zero mean scale
+    // bias; the remaining uncertainty is still modeled in covariance below.
+    constexpr float kCorrelatedScaleDebiasPx = 0.65f;
+    for (auto& p : img_points) {
+        const cv::Point2f radial = p - center;
+        const float norm         = std::sqrt(radial.x * radial.x + radial.y * radial.y);
+        if (std::isfinite(norm) && norm > 1e-6f) {
+            p += (kCorrelatedScaleDebiasPx / norm) * radial;
+        }
+    }
+    return img_points;
+}
+
+/// Reprojection Jacobian with respect to x = [armor_yaw, bearing_yaw, bearing_pitch, log_distance].
+[[nodiscard]] static Eigen::Matrix<double, 8, 4> compute_reprojection_jacobian_x(
+    const std::vector<Eigen::Vector3d>& obj_pts, const Eigen::Matrix3d& R_cam_imu,
+    const Eigen::Matrix3d& R_pitch, double armor_yaw, const Eigen::Vector3d& ypd) noexcept {
+    Eigen::Matrix<double, 8, 4> J;
+    J.setZero();
+    if (obj_pts.size() != 4) {
+        J.setConstant(std::numeric_limits<double>::quiet_NaN());
+        return J;
+    }
+
+    const double r = armor_yaw;
+    const double a = ypd.x();
+    const double b = ypd.y();
+    const double d = ypd.z();
+    if (!(d > 1e-9) || !std::isfinite(d)) {
+        J.setConstant(std::numeric_limits<double>::quiet_NaN());
+        return J;
+    }
+    const double cr = std::cos(r);
+    const double sr = std::sin(r);
+
+    Eigen::Matrix3d R_yaw;
+    R_yaw << cr, -sr, 0.0, sr, cr, 0.0, 0.0, 0.0, 1.0;
+
+    Eigen::Matrix3d dR_yaw_dr;
+    dR_yaw_dr << -sr, -cr, 0.0, cr, -sr, 0.0, 0.0, 0.0, 0.0;
+
+    const Eigen::Matrix3d R        = R_cam_imu * R_yaw * R_pitch;
+    const Eigen::Matrix3d dR_dr    = R_cam_imu * dR_yaw_dr * R_pitch;
+    const double sa                = std::sin(a);
+    const double ca                = std::cos(a);
+    const double sb                = std::sin(b);
+    const double cb                = std::cos(b);
+    const Eigen::Vector3d dt_da    = {d * cb * ca, 0.0, -d * cb * sa};
+    const Eigen::Vector3d dt_db    = {-d * sb * sa, d * cb, -d * sb * ca};
+    const Eigen::Vector3d dt_dlogd = {d * cb * sa, d * sb, d * cb * ca};
+
+    for (int i = 0; i < 4; ++i) {
+        const Eigen::Vector3d& Pw = obj_pts[static_cast<size_t>(i)];
+        const Eigen::Vector3d Pc  = R * Pw + Eigen::Vector3d{d * cb * sa, d * sb, d * cb * ca};
+        const double X            = Pc.x();
+        const double Y            = Pc.y();
+        const double Z            = Pc.z();
+        if (!(Z > 1e-9) || !Pc.allFinite()) {
+            J.setConstant(std::numeric_limits<double>::quiet_NaN());
+            return J;
+        }
+
+        Eigen::Matrix<double, 2, 3> J_proj;
+        J_proj << 1.0 / Z, 0.0, -X / (Z * Z), 0.0, 1.0 / Z, -Y / (Z * Z);
+
+        J.block<2, 1>(2 * i, 0) = J_proj * (dR_dr * Pw);
+        J.block<2, 1>(2 * i, 1) = J_proj * dt_da;
+        J.block<2, 1>(2 * i, 2) = J_proj * dt_db;
+        J.block<2, 1>(2 * i, 3) = J_proj * dt_dlogd;
+    }
+    return J;
+}
+
+struct PnpGeometryInfo {
+    Eigen::Matrix4d cov_ypdr{Eigen::Matrix4d::Identity() * 1e6};
+    double condition_number{1e6};
+};
+
+template <int N>
+[[nodiscard]] static Eigen::Matrix<double, N, N> pseudo_inverse_spd(
+    const Eigen::Matrix<double, N, N>& H, double relative_threshold = 1e-9) noexcept {
+    Eigen::SelfAdjointEigenSolver<Eigen::Matrix<double, N, N>> es(H);
+    if (es.info() != Eigen::Success || !H.allFinite()) {
+        return Eigen::Matrix<double, N, N>::Identity() * 1e6;
+    }
+
+    const auto evals        = es.eigenvalues();
+    const auto evecs        = es.eigenvectors();
+    const double lambda_max = std::max(evals.maxCoeff(), 1e-18);
+    const double threshold  = relative_threshold * lambda_max;
+
+    Eigen::Matrix<double, N, N> D_inv = Eigen::Matrix<double, N, N>::Zero();
+    for (int i = 0; i < N; ++i) {
+        D_inv(i, i) = (evals(i) > threshold) ? 1.0 / evals(i) : 1e6;
+    }
+
+    return evecs * D_inv * evecs.transpose();
+}
+
+[[nodiscard]] static PnpGeometryInfo compute_pnp_geometry_info_ypdr(
+    const std::vector<Eigen::Vector3d>& obj_pts, const Eigen::Matrix3d& R_cam_imu,
+    const Eigen::Matrix3d& R_pitch, double armor_yaw, const Eigen::Vector3d& refined_ypd,
+    const std::vector<Eigen::Vector2d>& img_pts, double residual_variance,
+    double correlated_scale_variance) noexcept {
+    PnpGeometryInfo info;
+    const Eigen::Matrix<double, 8, 4> J =
+        compute_reprojection_jacobian_x(obj_pts, R_cam_imu, R_pitch, armor_yaw, refined_ypd);
+    if (!J.allFinite()) {
+        return info;
+    }
+
+    const Eigen::Matrix4d H     = J.transpose() * J;
+    const Eigen::Matrix4d H_inv = pseudo_inverse_spd<4>(H);
+    Eigen::Matrix4d R_rypd      = H_inv;
+    R_rypd                      = 0.5 * (R_rypd + R_rypd.transpose());
+    R_rypd *= std::max(residual_variance, 1e-12);
+
+    // The dominant detector error for far armor is not independent corner jitter.
+    // Blooming/thresholding/keypoint heatmaps often move all four corners radially
+    // inward or outward together. That image-scale mode is almost invisible in the
+    // post-fit residual but maps directly into log-distance, so model it as a
+    // rank-1 correlated measurement-noise component.
+    if (img_pts.size() == 4 && std::isfinite(correlated_scale_variance)
+        && correlated_scale_variance > 0.0) {
+        Eigen::Vector2d center = Eigen::Vector2d::Zero();
+        for (const auto& p : img_pts) {
+            center += p;
+        }
+        center *= 0.25;
+
+        Eigen::Matrix<double, 8, 1> scale_mode;
+        scale_mode.setZero();
+        bool scale_mode_valid = true;
+        for (int i = 0; i < 4; ++i) {
+            const Eigen::Vector2d radial = img_pts[static_cast<size_t>(i)] - center;
+            const double norm            = radial.norm();
+            if (!std::isfinite(norm) || norm < 1e-12) {
+                scale_mode_valid = false;
+                break;
+            }
+            scale_mode.template segment<2>(2 * i) = radial / norm;
+        }
+
+        if (scale_mode_valid && scale_mode.allFinite()) {
+            const Eigen::Vector4d dx = H_inv * J.transpose() * scale_mode;
+            if (dx.allFinite()) {
+                R_rypd += correlated_scale_variance * (dx * dx.transpose());
+                R_rypd = 0.5 * (R_rypd + R_rypd.transpose());
+            }
+        }
+    }
+
+    Eigen::Matrix4d P = Eigen::Matrix4d::Zero();
+    P(0, 1)           = 1.0;
+    P(1, 2)           = 1.0;
+    P(2, 3)           = 1.0;
+    P(3, 0)           = 1.0;
+
+    info.cov_ypdr = P * R_rypd * P.transpose();
+    info.cov_ypdr = 0.5 * (info.cov_ypdr + info.cov_ypdr.transpose());
+
+    const Eigen::Matrix<double, 8, 4> J_dimless = J;
+    const Eigen::Matrix4d H_dimless             = J_dimless.transpose() * J_dimless;
+    Eigen::SelfAdjointEigenSolver<Eigen::Matrix4d> es(H_dimless);
+    if (es.info() == Eigen::Success && H_dimless.allFinite()) {
+        const auto evals        = es.eigenvalues();
+        const double lambda_min = std::max(evals.minCoeff(), 1e-18);
+        const double lambda_max = std::max(evals.maxCoeff(), lambda_min);
+        info.condition_number   = std::clamp(lambda_max / lambda_min, 1.0, 1e6);
+    }
+
+    return info;
 }
 
 [[nodiscard]] inline double extract_yaw_from_rotation(
@@ -362,7 +550,39 @@ public:
         }
         // If optimization failed, keep the initial basin pose.
 
-        return make_camera_measurement(detection, rvec, tvec, timestamp_ns, input->dist_to_center);
+        auto measurement =
+            make_camera_measurement(detection, rvec, tvec, timestamp_ns, input->dist_to_center);
+        if (summary.IsSolutionUsable() && std::isfinite(yaw) && translation_finite) {
+            const Eigen::Vector3d refined_ypd{
+                translation_ypd[0],
+                translation_ypd[1],
+                translation_ypd[2],
+            };
+            const double final_rmse    = normalized_reprojection_rmse(*input, rvec, tvec);
+            const double point_count   = static_cast<double>(obj_pts_eigen.size());
+            const double residual_dim  = 2.0 * point_count;
+            constexpr double kParamDim = 4.0;
+            const double dof           = std::max(1.0, residual_dim - kParamDim);
+            const double sigma2_from_residual =
+                std::isfinite(final_rmse) ? final_rmse * final_rmse * point_count / dof : 0.0;
+            const double fx    = camera_matrix_.at<double>(0, 0);
+            const double fy    = camera_matrix_.at<double>(1, 1);
+            const double focal = std::sqrt(std::max(1e-9, fx * fy));
+            // Independent keypoint jitter. The correlated scale mode below carries the
+            // range-critical corner shrink/expand uncertainty.
+            constexpr double kIndependentCornerSigmaPxFloor = 0.5;
+            constexpr double kCorrelatedScaleSigmaPx        = 1.0;
+            const double sigma_norm_floor = kIndependentCornerSigmaPxFloor / focal;
+            const double sigma_norm_scale = kCorrelatedScaleSigmaPx / focal;
+            const double residual_variance =
+                std::max(sigma2_from_residual, sigma_norm_floor * sigma_norm_floor);
+            const PnpGeometryInfo pnp_geometry = compute_pnp_geometry_info_ypdr(
+                obj_pts_eigen, R_cam_imu, R_pitch, yaw, refined_ypd, img_pts_eigen,
+                residual_variance, sigma_norm_scale * sigma_norm_scale);
+            measurement.pnp_cov_ypdr         = pnp_geometry.cov_ypdr;
+            measurement.pnp_condition_number = pnp_geometry.condition_number;
+        }
+        return measurement;
     }
 
     /// Solve PnP with BA for multiple detections
@@ -516,7 +736,7 @@ private:
 
     [[nodiscard]] std::expected<PnPInput, PnPError>
         make_pnp_input(const ArmorDetection& detection) const {
-        auto img_points = detection.image_points();
+        auto img_points = debias_correlated_corner_scale(detection.image_points());
         if (img_points.size() != 4) {
             return std::unexpected(PnPError::InvalidDetection);
         }
