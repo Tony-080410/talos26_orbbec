@@ -118,15 +118,15 @@ lost_threshold = 0.5  # Aligned with at_vision rm_bringup config
 tracking_threshold = 5  # Aligned with at_vision rm_bringup config
 
 [tracker.robot.model]
-sigma_a_xy = 10.0
-sigma_a_z = 0.1
-sigma_a_yaw = 8.0
+sigma_a_xy = 10.0  # Aligned with at_vision
+sigma_a_z = 0.1  # Aligned with at_vision (was 1.0)
+sigma_a_yaw = 20.0  # Aligned with at_vision
 sigma_r0 = 1e-5
 sigma_r1 = 1e-5
-sigma_h = 0.2
+sigma_h = 1.0  # Aligned with at_vision (was 0.5)
 meas_yaw_var_floor = 4e-3
 meas_pitch_var_floor = 4e-3
-meas_dist_var_floor = 2.5e-3
+meas_dist_var_floor = 0.3
 meas_dist_delta_angle_k = 1.0
 meas_armor_yaw_var_floor = 9e-2
 meas_armor_yaw_range_k = 0.005
@@ -137,19 +137,15 @@ radius1 = 0.23
 height = 0.05
 
 [tracker.outpost]
-matcher_gate = 4.0
+matcher_gate = 10.0
 lost_threshold = 1.0
 tracking_threshold = 4
 
 [tracker.outpost.model]
-sigma_q_xy = 8.0
+sigma_q_xy = 10.0
 sigma_q_z = 1.0
-sigma_a_yaw = 2.61327412
-meas_yaw_var_floor = 4e-3
-meas_pitch_var_floor = 4e-3
-meas_log_dist_var_floor = 2.5e-3
-meas_dist_k = 0.42
-meas_armor_yaw_var_floor = 9e-2
+sigma_a_yaw = 1.0
+meas_dist_k = 0.43
 yaw_log_k = 0.005
 
 # ============================================================================

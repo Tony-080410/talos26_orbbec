@@ -43,7 +43,7 @@ enum OutpostState : uint8_t {
     O_STATE_MAX,
 };
 
-/// Measurement space: [bearing_yaw, bearing_pitch, log_distance, armor_yaw]
+/// Measurement space (spherical): [yaw, pitch, distance, armor_yaw]
 enum Measure : uint8_t {
     ARMOR_YAW,
     ARMOR_PITCH,

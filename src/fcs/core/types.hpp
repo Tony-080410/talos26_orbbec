@@ -100,13 +100,7 @@ struct ArmorMeasurementT {
     ArmorType type                 = ArmorType::Small;
     float confidence               = 0.0f;
     float distance_to_image_center = 0.0f; // Pixel distance from armor center to image center
-    /// PnP pose covariance in EKF measurement coordinates:
-    /// [bearing_yaw, bearing_pitch, log_distance, armor_yaw].
-    /// Estimated from the normalized-plane reprojection Jacobian and propagated across frames.
-    Eigen::Matrix4d pnp_cov_ypdr = Eigen::Matrix4d::Identity() * 1e6;
-    /// Condition number of the dimensionless local PnP Jacobian.
-    double pnp_condition_number = 1e6;
-    uint64_t timestamp_ns       = 0;
+    uint64_t timestamp_ns          = 0;
 
     ArmorMeasurementT() = default;
 
@@ -131,8 +125,6 @@ struct ArmorMeasurementT {
         reframed.type                     = type;
         reframed.confidence               = confidence;
         reframed.distance_to_image_center = distance_to_image_center;
-        reframed.pnp_cov_ypdr             = pnp_cov_ypdr;
-        reframed.pnp_condition_number     = pnp_condition_number;
         reframed.timestamp_ns             = timestamp_ns;
         return reframed;
     }

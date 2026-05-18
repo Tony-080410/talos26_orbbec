@@ -77,7 +77,7 @@ public:
             VecZ z;
             z[0]         = ypd[0];
             z[1]         = ypd[1];
-            z[2]         = std::log(std::max(ypd[2], 1e-9));
+            z[2]         = ypd[2];
             z[3]         = m.transform.euler_rot().yaw;
             meas_list[j] = z;
         }

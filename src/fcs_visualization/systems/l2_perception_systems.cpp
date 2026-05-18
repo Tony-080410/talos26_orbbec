@@ -22,31 +22,6 @@ namespace {
 
 constexpr uint64_t kLdmSceneLifetimeNs = 5'000'000;
 
-[[nodiscard]] nlohmann::json matrix4_to_json(const Eigen::Matrix4d& mat) {
-    nlohmann::json rows = nlohmann::json::array();
-    for (int r = 0; r < 4; ++r) {
-        nlohmann::json row = nlohmann::json::array();
-        for (int c = 0; c < 4; ++c) {
-            row.push_back(mat(r, c));
-        }
-        rows.push_back(std::move(row));
-    }
-    return rows;
-}
-
-[[nodiscard]] nlohmann::json matrix4_diag_to_json(const Eigen::Matrix4d& mat) {
-    nlohmann::json diag = nlohmann::json::array();
-    for (int i = 0; i < 4; ++i) {
-        diag.push_back(mat(i, i));
-    }
-    return diag;
-}
-
-[[nodiscard]] std::string matrix4_row_string(const Eigen::Matrix4d& mat, int row) {
-    return fmt::format(
-        "[{:.3e}, {:.3e}, {:.3e}, {:.3e}]", mat(row, 0), mat(row, 1), mat(row, 2), mat(row, 3));
-}
-
 [[nodiscard]] ::foxglove::schemas::Color
     ldm_scene_color(const fcs::L2::ldm::LdmMeasurement& measurement) noexcept {
     switch (measurement.depth_quality) {
@@ -356,29 +331,24 @@ void register_l2_perception_systems(talos::scheduler::Scheduler& app) {
                 const auto t  = m.transform.translation();
                 const auto q  = m.transform.quaternion();
 
-                auto builder =
-                    viz::EntityBuilder::create<fast_tf::odom>("l2", fmt::format("armor_{}", i));
-                builder.position(t.x(), t.y(), t.z())
-                    .orientation(q.x(), q.y(), q.z(), q.w())
-                    .cube(
-                        tac::Geometry::ARMOR_THICKNESS, tac::Geometry::ARMOR_HEIGHT_SMALL,
-                        tac::Geometry::ARMOR_WIDTH)
-                    .color(tac::L2::MEASUREMENT_GHOST)
-                    .text_with_offset(
-                        fmt::format(
-                            "{} {}", magic_enum::enum_name(m.name), magic_enum::enum_name(m.type)),
-                        0, -tac::Text::SIZE_MEDIUM, 0, tac::L2::LABEL_FONT_SIZE)
-                    .metadata("confidence", fmt::format("{:.3f}", m.confidence))
-                    .metadata("color", std::string(magic_enum::enum_name(m.color)))
-                    .metadata("pnp_cov_order", "bearing_yaw,bearing_pitch,log_distance,armor_yaw")
-                    .metadata("pnp_condition", fmt::format("{:.3e}", m.pnp_condition_number))
-                    .metadata("pnp_cov[0]", matrix4_row_string(m.pnp_cov_ypdr, 0))
-                    .metadata("pnp_cov[1]", matrix4_row_string(m.pnp_cov_ypdr, 1))
-                    .metadata("pnp_cov[2]", matrix4_row_string(m.pnp_cov_ypdr, 2))
-                    .metadata("pnp_cov[3]", matrix4_row_string(m.pnp_cov_ypdr, 3))
-                    .timestamp(m.timestamp_ns);
-
-                auto entity = builder.build();
+                // Use convenience builder - semantic layer organization
+                auto entity =
+                    viz::EntityBuilder::create<fast_tf::odom>("l2", fmt::format("armor_{}", i))
+                        .position(t.x(), t.y(), t.z())
+                        .orientation(q.x(), q.y(), q.z(), q.w())
+                        .cube(
+                            tac::Geometry::ARMOR_THICKNESS, tac::Geometry::ARMOR_HEIGHT_SMALL,
+                            tac::Geometry::ARMOR_WIDTH)
+                        .color(tac::L2::MEASUREMENT_GHOST)
+                        .text_with_offset(
+                            fmt::format(
+                                "{} {}", magic_enum::enum_name(m.name),
+                                magic_enum::enum_name(m.type)),
+                            0, -tac::Text::SIZE_MEDIUM, 0, tac::L2::LABEL_FONT_SIZE)
+                        .metadata("confidence", fmt::format("{:.3f}", m.confidence))
+                        .metadata("color", std::string(magic_enum::enum_name(m.color)))
+                        .timestamp(m.timestamp_ns)
+                        .build();
 
                 entities.push_back(std::move(entity));
             }
@@ -569,27 +539,20 @@ void register_l2_perception_systems(talos::scheduler::Scheduler& app) {
                 auto [r, p, y] = m.transform.euler_rot().rpy();
 
                 nlohmann::json mj;
-                mj["timestamp_ns"]          = m.timestamp_ns;
-                mj["timestamp"]             = nlohmann::json::object();
-                mj["timestamp"]["sec"]      = m.timestamp_ns / 1000000000L;
-                mj["timestamp"]["nsec"]     = m.timestamp_ns % 1000000000L;
-                mj["name"]                  = std::string(magic_enum::enum_name(m.name));
-                mj["type"]                  = std::string(magic_enum::enum_name(m.type));
-                mj["color"]                 = std::string(magic_enum::enum_name(m.color));
-                mj["confidence"]            = m.confidence;
-                mj["position"]              = {t.x(), t.y(), t.z()};
-                mj["orientation"]           = {q.x(), q.y(), q.z(), q.w()};
-                mj["euler"]["roll"]         = r;
-                mj["euler"]["pitch"]        = p;
-                mj["euler"]["yaw"]          = y;
-                mj["distance"]              = t.norm();
-                mj["pnp_geometry"]["order"] = {
-                    "bearing_yaw", "bearing_pitch", "log_distance", "armor_yaw"};
-                mj["pnp_geometry"]["cov_ypdr"]  = matrix4_to_json(m.pnp_cov_ypdr);
-                mj["pnp_geometry"]["diag"]      = matrix4_diag_to_json(m.pnp_cov_ypdr);
-                mj["pnp_geometry"]["condition"] = m.pnp_condition_number;
-                mj["pnp_geometry"]["note"] =
-                    "normalized-plane PnP covariance propagated to measurement coordinates";
+                mj["timestamp_ns"]      = m.timestamp_ns;
+                mj["timestamp"]         = nlohmann::json::object();
+                mj["timestamp"]["sec"]  = m.timestamp_ns / 1000000000L;
+                mj["timestamp"]["nsec"] = m.timestamp_ns % 1000000000L;
+                mj["name"]              = std::string(magic_enum::enum_name(m.name));
+                mj["type"]              = std::string(magic_enum::enum_name(m.type));
+                mj["color"]             = std::string(magic_enum::enum_name(m.color));
+                mj["confidence"]        = m.confidence;
+                mj["position"]          = {t.x(), t.y(), t.z()};
+                mj["orientation"]       = {q.x(), q.y(), q.z(), q.w()};
+                mj["euler"]["roll"]     = r;
+                mj["euler"]["pitch"]    = p;
+                mj["euler"]["yaw"]      = y;
+                mj["distance"]          = t.norm();
 
                 if (tf_lookup) {
                     auto target_in_ref = (m.transform);

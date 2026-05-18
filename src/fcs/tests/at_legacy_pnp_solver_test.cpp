@@ -90,16 +90,6 @@ fcs::ArmorDetection make_detection(
 
     std::array<cv::Point2f, 4> corners{};
     std::copy(projected.begin(), projected.end(), corners.begin());
-
-    const auto center = (corners[0] + corners[1] + corners[2] + corners[3]) * 0.25f;
-    constexpr float kSyntheticDetectorScaleBiasPx = 0.65f;
-    for (auto& corner : corners) {
-        const cv::Point2f delta = center - corner;
-        const float norm        = std::sqrt(delta.x * delta.x + delta.y * delta.y);
-        if (norm > 1e-6f) {
-            corner += (kSyntheticDetectorScaleBiasPx / norm) * delta;
-        }
-    }
     return fcs::ArmorDetection(corners, name, color, 1.0f);
 }
 
@@ -116,13 +106,6 @@ fcs::ArmorDetection
         }
     }
 
-    return fcs::ArmorDetection(corners, detection.name, detection.color, detection.confidence);
-}
-
-fcs::ArmorDetection debiased_detection_for_projection(const fcs::ArmorDetection& detection) {
-    const auto debiased = fcs::L2::debias_correlated_corner_scale(detection.image_points());
-    std::array<cv::Point2f, 4> corners{};
-    std::copy(debiased.begin(), debiased.end(), corners.begin());
     return fcs::ArmorDetection(corners, detection.name, detection.color, detection.confidence);
 }
 
@@ -164,6 +147,19 @@ double rotation_error_rad(
     return Eigen::AngleAxisd(delta).angle();
 }
 
+Eigen::Vector4d make_prior_ypdr(const Eigen::Vector3d& translation, double armor_yaw) {
+    const double horizontal = std::hypot(translation.x(), translation.y());
+    Eigen::Vector4d ypdr;
+    ypdr << std::atan2(translation.y(), translation.x()), std::atan2(-translation.z(), horizontal),
+        translation.norm(), armor_yaw;
+    return ypdr;
+}
+
+Eigen::Matrix4d make_prior_R(const Eigen::Vector4d& ypdr) {
+    fcs::L3::RobotEkfMotionModel model;
+    return model.R(ypdr);
+}
+
 TEST(PnPSolver, RecoversSmallArmorPoseWithoutPriorUnderDistortion) {
     const auto camera_config = make_test_camera_config();
 
@@ -181,10 +177,7 @@ TEST(PnPSolver, RecoversSmallArmorPoseWithoutPriorUnderDistortion) {
     const auto& measurement = *result;
     EXPECT_LT((measurement.transform.translation() - translation_gt).norm(), 2e-3);
     EXPECT_LT(rotation_error_rad(measurement, rotation_gt), 3e-3);
-    EXPECT_LT(
-        reprojection_rmse_px(
-            measurement, debiased_detection_for_projection(detection), camera_config),
-        0.1);
+    EXPECT_LT(reprojection_rmse_px(measurement, detection, camera_config), 0.1);
 }
 
 TEST(PnPSolver, RecoversLargeArmorPoseWithPosePriorUnderDistortion) {
@@ -201,6 +194,7 @@ TEST(PnPSolver, RecoversLargeArmorPoseWithPosePriorUnderDistortion) {
     const Eigen::Matrix3d rotation_prior    = armor_rotation(yaw_gt + 0.06, fcs::ArmorName::One);
     const Eigen::Vector3d translation_prior = translation_gt + Eigen::Vector3d(0.03, -0.02, 0.10);
     const auto prior_rvec                   = eigen_rotation_to_rvec(rotation_prior);
+    const Eigen::Vector4d prior_ypdr        = make_prior_ypdr(translation_prior, yaw_gt + 0.06);
 
     std::vector<fcs::L2::PnPSolver::PosePrior> priors;
     priors.push_back({
@@ -209,6 +203,8 @@ TEST(PnPSolver, RecoversLargeArmorPoseWithPosePriorUnderDistortion) {
         .tvec      = cv::Vec3d(translation_prior.x(), translation_prior.y(), translation_prior.z()),
         .hint_cost = 1e-4,
         .armor_id  = 0,
+        .ypdr      = prior_ypdr,
+        .R         = make_prior_R(prior_ypdr),
     });
 
     const auto result = solver.solve_with_ba(detection, Eigen::Matrix3d::Identity(), 5678, priors);
@@ -217,10 +213,7 @@ TEST(PnPSolver, RecoversLargeArmorPoseWithPosePriorUnderDistortion) {
     const auto& measurement = *result;
     EXPECT_LT((measurement.transform.translation() - translation_gt).norm(), 2e-3);
     EXPECT_LT(rotation_error_rad(measurement, rotation_gt), 3e-3);
-    EXPECT_LT(
-        reprojection_rmse_px(
-            measurement, debiased_detection_for_projection(detection), camera_config),
-        0.1);
+    EXPECT_LT(reprojection_rmse_px(measurement, detection, camera_config), 0.1);
 }
 
 TEST(PnPSolver, KeepsConstrainedPoseManifoldWithBiasedCornersAndPrior) {
@@ -238,6 +231,7 @@ TEST(PnPSolver, KeepsConstrainedPoseManifoldWithBiasedCornersAndPrior) {
     const Eigen::Matrix3d rotation_prior    = armor_rotation(yaw_gt - 0.08, fcs::ArmorName::Five);
     const Eigen::Vector3d translation_prior = translation_gt + Eigen::Vector3d(-0.02, 0.02, 0.12);
     const auto prior_rvec                   = eigen_rotation_to_rvec(rotation_prior);
+    const Eigen::Vector4d prior_ypdr        = make_prior_ypdr(translation_prior, yaw_gt - 0.08);
 
     std::vector<fcs::L2::PnPSolver::PosePrior> priors;
     priors.push_back({
@@ -246,6 +240,8 @@ TEST(PnPSolver, KeepsConstrainedPoseManifoldWithBiasedCornersAndPrior) {
         .tvec      = cv::Vec3d(translation_prior.x(), translation_prior.y(), translation_prior.z()),
         .hint_cost = 5e-4,
         .armor_id  = 0,
+        .ypdr      = prior_ypdr,
+        .R         = make_prior_R(prior_ypdr),
     });
 
     const auto result = solver.solve_with_ba(detection, Eigen::Matrix3d::Identity(), 9012, priors);
@@ -261,35 +257,6 @@ TEST(PnPSolver, KeepsConstrainedPoseManifoldWithBiasedCornersAndPrior) {
     EXPECT_LT(Eigen::AngleAxisd(delta).angle(), 1e-6);
     EXPECT_LT(rotation_error_rad(measurement, rotation_gt), 3e-2);
     EXPECT_GT(measurement.transform.translation().z(), 1.0);
-}
-
-TEST(PnPSolver, CorrelatedCornerScaleBiasInflatesLogDistanceCovariance) {
-    const auto camera_config = make_test_camera_config();
-
-    fcs::L2::PnPSolver solver(camera_config);
-
-    const double yaw_gt               = 0.18;
-    const Eigen::Matrix3d rotation_gt = armor_rotation(yaw_gt, fcs::ArmorName::Three);
-    const Eigen::Vector3d translation_gt(0.0, -0.04, 6.0);
-    const auto detection_gt = make_detection(
-        fcs::ArmorName::Three, fcs::ArmorColor::Blue, rotation_gt, translation_gt, camera_config);
-    const auto biased_detection = bias_detection_towards_center(detection_gt, 1.0f);
-
-    const auto clean_result = solver.solve_with_ba(detection_gt, Eigen::Matrix3d::Identity(), 3456);
-    const auto biased_result =
-        solver.solve_with_ba(biased_detection, Eigen::Matrix3d::Identity(), 3457);
-
-    ASSERT_TRUE(clean_result.has_value());
-    ASSERT_TRUE(biased_result.has_value());
-
-    const double clean_log_var   = clean_result->pnp_cov_ypdr(2, 2);
-    const double biased_log_var  = biased_result->pnp_cov_ypdr(2, 2);
-    const double biased_distance = biased_result->transform.translation().norm();
-    const double gt_distance     = translation_gt.norm();
-
-    EXPECT_GT(biased_distance, gt_distance * 1.05);
-    EXPECT_GT(biased_log_var, clean_log_var);
-    EXPECT_GT(std::sqrt(std::max(0.0, biased_log_var)), 0.08);
 }
 
 } // namespace
