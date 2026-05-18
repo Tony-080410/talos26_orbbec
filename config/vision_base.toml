@@ -1,6 +1,6 @@
 backend_type = "OnnxRuntime"  # Options: "Traditional", "OnnxRuntime", "TensorRT", "Axera"
 detect_color = "Blue"
-capabilities = ["Armor", "Quanta"]
+capabilities = ["Armor"]
 
 # Required if backend_type = "traditional"
 [traditional]
@@ -181,25 +181,23 @@ switch_margin = 0.08
 image_center = 1.0
 track_state = 3.0
 tof = 1.5
-distance = 1.0
 gimbal_effort = 1.0
 armor_name = 6.5
 
 [aimer.target_selection.refs]
 image_center_ref_px = 300.0
 tof_ref_s = 0.35
-distance_ref_m = 10.0
 yaw_effort_ref_deg = 20.0
 pitch_effort_ref_deg = 10.0
 
 [aimer.target_selection.armor_name_score]
 sentry = 0.5
-one = 1.0
-two = 0.5
-three = 0.5
-four = 0.5
-five = 0.5
-outpost = 0.5
+one = 0.5
+two = 0.3
+three = 0.8
+four = 0.8
+five = 0.0
+outpost = 0.3
 base = 0.5
 base_large = 0.5
 invalid = 0.0

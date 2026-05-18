@@ -49,7 +49,6 @@ struct TargetSelectionScores {
     double image_center{0.0};
     double track_state{0.0};
     double tof{0.0};
-    double distance{0.0};
     double gimbal_effort{0.0};
     double armor_name{0.0};
 };
@@ -247,14 +246,6 @@ struct ReadbackRoiTimestamps {
     return clamp01(1.0 - prediction.flying_time / cfg.refs.tof_ref_s);
 }
 
-[[nodiscard]] double
-    score_distance(const TargetSelectionConfig& cfg, const TargetPrediction& prediction) noexcept {
-    if (!std::isfinite(prediction.distance) || cfg.refs.distance_ref_m <= 1e-6) {
-        return 0.0;
-    }
-    return clamp01(1.0 - prediction.distance / cfg.refs.distance_ref_m);
-}
-
 [[nodiscard]] GimbalEffortMetrics compute_gimbal_effort_metrics(
     const TargetSelectionConfig& cfg, double current_yaw, double current_pitch,
     const TargetPrediction& prediction) noexcept {
@@ -283,19 +274,17 @@ struct ReadbackRoiTimestamps {
     scores.image_center = score_image_center(cfg, tracker, current_ns);
     scores.track_state  = score_track_state(cfg, tracker);
     scores.tof          = score_tof(cfg, prediction);
-    scores.distance     = score_distance(cfg, prediction);
     scores.gimbal_effort =
         compute_gimbal_effort_metrics(cfg, current_yaw, current_pitch, prediction).score;
     scores.armor_name = clamp01(cfg.armor_name_score.score(tracker.target_name));
 
-    const double weighted_sum =
-        cfg.weights.image_center * scores.image_center
-        + cfg.weights.track_state * scores.track_state + cfg.weights.tof * scores.tof
-        + cfg.weights.distance * scores.distance + cfg.weights.gimbal_effort * scores.gimbal_effort
-        + cfg.weights.armor_name * scores.armor_name;
+    const double weighted_sum = cfg.weights.image_center * scores.image_center
+                              + cfg.weights.track_state * scores.track_state
+                              + cfg.weights.tof * scores.tof
+                              + cfg.weights.gimbal_effort * scores.gimbal_effort
+                              + cfg.weights.armor_name * scores.armor_name;
     const double total_weight = cfg.weights.image_center + cfg.weights.track_state + cfg.weights.tof
-                              + cfg.weights.distance + cfg.weights.gimbal_effort
-                              + cfg.weights.armor_name;
+                              + cfg.weights.gimbal_effort + cfg.weights.armor_name;
 
     scores.total = total_weight > 1e-6 ? weighted_sum / total_weight : 0.0;
     return scores;
@@ -325,21 +314,19 @@ struct ReadbackRoiTimestamps {
     entry.image_center_score  = scores.image_center;
     entry.track_state_score   = scores.track_state;
     entry.tof_score           = scores.tof;
-    entry.distance_score      = scores.distance;
     entry.gimbal_effort_score = scores.gimbal_effort;
     entry.armor_name_score    = scores.armor_name;
 
     entry.image_center_weighted  = cfg.weights.image_center * scores.image_center;
     entry.track_state_weighted   = cfg.weights.track_state * scores.track_state;
     entry.tof_weighted           = cfg.weights.tof * scores.tof;
-    entry.distance_weighted      = cfg.weights.distance * scores.distance;
     entry.gimbal_effort_weighted = cfg.weights.gimbal_effort * scores.gimbal_effort;
     entry.armor_name_weighted    = cfg.weights.armor_name * scores.armor_name;
     entry.weighted_sum           = entry.image_center_weighted + entry.track_state_weighted
-                       + entry.tof_weighted + entry.distance_weighted + entry.gimbal_effort_weighted
+                       + entry.tof_weighted + entry.gimbal_effort_weighted
                        + entry.armor_name_weighted;
     entry.total_weight = cfg.weights.image_center + cfg.weights.track_state + cfg.weights.tof
-                       + cfg.weights.distance + cfg.weights.gimbal_effort + cfg.weights.armor_name;
+                       + cfg.weights.gimbal_effort + cfg.weights.armor_name;
     entry.total_score = scores.total;
     return entry;
 }

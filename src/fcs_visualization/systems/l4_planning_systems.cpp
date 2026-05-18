@@ -76,14 +76,12 @@ inline void append_selection_trace_metadata(
         .metadata("target_selection.image_center_score", format_score(entry.image_center_score))
         .metadata("target_selection.track_state_score", format_score(entry.track_state_score))
         .metadata("target_selection.tof_score", format_score(entry.tof_score))
-        .metadata("target_selection.distance_score", format_score(entry.distance_score))
         .metadata("target_selection.gimbal_effort_score", format_score(entry.gimbal_effort_score))
         .metadata("target_selection.armor_name_score", format_score(entry.armor_name_score))
         .metadata(
             "target_selection.image_center_weighted", format_score(entry.image_center_weighted))
         .metadata("target_selection.track_state_weighted", format_score(entry.track_state_weighted))
         .metadata("target_selection.tof_weighted", format_score(entry.tof_weighted))
-        .metadata("target_selection.distance_weighted", format_score(entry.distance_weighted))
         .metadata(
             "target_selection.gimbal_effort_weighted", format_score(entry.gimbal_effort_weighted))
         .metadata("target_selection.armor_name_weighted", format_score(entry.armor_name_weighted))
@@ -272,13 +270,11 @@ inline void append_selection_trace_metadata(
         {      "image_center_score",                                                        entry.image_center_score},
         {       "track_state_score",                                                         entry.track_state_score},
         {               "tof_score",                                                                 entry.tof_score},
-        {          "distance_score",                                                            entry.distance_score},
         {     "gimbal_effort_score",                                                       entry.gimbal_effort_score},
         {        "armor_name_score",                                                          entry.armor_name_score},
         {   "image_center_weighted",                                                     entry.image_center_weighted},
         {    "track_state_weighted",                                                      entry.track_state_weighted},
         {            "tof_weighted",                                                              entry.tof_weighted},
-        {       "distance_weighted",                                                         entry.distance_weighted},
         {  "gimbal_effort_weighted",                                                    entry.gimbal_effort_weighted},
         {     "armor_name_weighted",                                                       entry.armor_name_weighted},
         {            "weighted_sum",                                                              entry.weighted_sum},

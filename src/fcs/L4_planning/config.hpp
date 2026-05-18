@@ -9,7 +9,6 @@ struct TargetSelectionWeights {
     double image_center{5.0};
     double track_state{3.0};
     double tof{1.5};
-    double distance{1.0};
     double gimbal_effort{1.0};
     double armor_name{0.5};
 };
@@ -17,7 +16,6 @@ struct TargetSelectionWeights {
 struct TargetSelectionRefs {
     double image_center_ref_px{300.0};
     double tof_ref_s{0.35};
-    double distance_ref_m{10.0};
     double yaw_effort_ref_deg{20.0};
     double pitch_effort_ref_deg{10.0};
 };

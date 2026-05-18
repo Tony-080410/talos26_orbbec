@@ -38,14 +38,12 @@ struct TargetSelectionTraceEntry {
     double image_center_score{0.0};
     double track_state_score{0.0};
     double tof_score{0.0};
-    double distance_score{0.0};
     double gimbal_effort_score{0.0};
     double armor_name_score{0.0};
 
     double image_center_weighted{0.0};
     double track_state_weighted{0.0};
     double tof_weighted{0.0};
-    double distance_weighted{0.0};
     double gimbal_effort_weighted{0.0};
     double armor_name_weighted{0.0};
 
