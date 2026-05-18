@@ -137,6 +137,23 @@ inline constexpr double kFixedRuneSpeed = std::numbers::pi / 3.0;
     return pick_best(candidates, delta_angles, direction, v_yaw);
 }
 
+[[nodiscard]] double front_window_rad(const AimerConfig& config) noexcept {
+    return config.front_window_deg * std::numbers::pi / 180.0;
+}
+
+[[nodiscard]] std::vector<int> filter_front_window(
+    const std::vector<int>& candidates, const std::vector<double>& delta_angles,
+    double front_window) {
+    std::vector<int> filtered;
+    filtered.reserve(candidates.size());
+    for (const int id : candidates) {
+        if (std::abs(delta_angles[static_cast<size_t>(id)]) <= front_window) {
+            filtered.push_back(id);
+        }
+    }
+    return filtered;
+}
+
 template <size_t N>
 [[nodiscard]] std::vector<double>
     build_delta_angles(const std::array<Eigen::Vector4d, N>& armor_poses, double center_yaw) {
@@ -169,18 +186,17 @@ template <size_t N>
     }
 
     const auto fallback_best = [&]() noexcept {
+        const auto candidates =
+            filter_front_window(all_ids, delta_angles, front_window_rad(config));
+        if (!candidates.empty()) {
+            return pick_best(candidates, delta_angles, direction, target_v_yaw);
+        }
         return pick_best(all_ids, delta_angles, direction, target_v_yaw);
     };
 
     if (context.phase == ArmorAimPhase::SingleArmor && !is_outpost) {
-        const double front_window = config.front_window_deg * std::numbers::pi / 180.0;
-        std::vector<int> candidates;
-        candidates.reserve(armors_num);
-        for (int i = 0; i < armors_num; ++i) {
-            if (std::abs(delta_angles[static_cast<size_t>(i)]) <= front_window) {
-                candidates.push_back(i);
-            }
-        }
+        const auto candidates =
+            filter_front_window(all_ids, delta_angles, front_window_rad(config));
         if (candidates.empty()) {
             return 0;
         }
@@ -207,6 +223,7 @@ template <size_t N>
                 pair_ids.push_back(2);
             }
         }
+        pair_ids = filter_front_window(pair_ids, delta_angles, front_window_rad(config));
         if (!pair_ids.empty()) {
             return pick_best(pair_ids, delta_angles, direction, target_v_yaw);
         }
