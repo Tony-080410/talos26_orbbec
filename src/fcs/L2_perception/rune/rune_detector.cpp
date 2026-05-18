@@ -331,6 +331,8 @@ bool findArrow(
                 valid_cnt++;
         }
 
+        // SPDLOG_INFO("valid_cnt = {}, light num = {}", valid_cnt, lights.size());
+
         if (valid_cnt <= 5) {
             continue;
         }
@@ -387,8 +389,10 @@ void findArrowLights(
 bool RuneDetector::detectAllArrows() {
     cv::Mat binImg = arrowImg.clone(); // 二值图
 
-    cv::Mat kernel = cv::getStructuringElement(0, cv::Size(10, 10));
-    cv::morphologyEx(binImg, binImg, cv::MORPH_CLOSE, kernel);
+    cv::Mat close_kernel = cv::getStructuringElement(0, cv::Size(10, 10));
+    cv::Mat open_kernel  = cv::getStructuringElement(0, cv::Size(5, 5));
+    cv::morphologyEx(binImg, binImg, cv::MORPH_CLOSE, close_kernel);
+    cv::morphologyEx(binImg, binImg, cv::MORPH_OPEN, open_kernel);
 
     arrows.clear();
 
@@ -486,14 +490,14 @@ bool findCenterLights(
         if (cv::contourArea(cnt) < 80)
             continue;
         auto cnt_norm = normalizeContour(cnt);
-        double score  = cv::matchShapes(cnt_norm, R_norm, cv::CONTOURS_MATCH_I1, 0);
+        double score  = cv::matchShapes(cnt_norm, R_norm, cv::CONTOURS_MATCH_I1, 0); // 差异度
         if (score < best_score) {
             best_score = score;
             best_cnt   = cnt;
         }
     }
 
-    if (!best_cnt.empty() && best_score < 0.3) {
+    if (!best_cnt.empty() && best_score < 0.4) {
         Light light(best_cnt, localRoi, image);
         // 判断长宽比
         if (light.ratio > params.max_center_aspect_ratio) {

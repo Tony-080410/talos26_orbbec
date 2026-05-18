@@ -275,7 +275,7 @@ min_roundness = 0.6
 max_roundness = 1.0
 min_arrow_light_area = 250.0
 max_arrow_light_area = 2000.0
-min_arrow_light_aspect_ratio = 6.0
+min_arrow_light_aspect_ratio = 4.5
 max_arrow_light_aspect_ratio = 10.0
 
 # ROI参数
@@ -305,25 +305,25 @@ blade_unlock_frames = 10
 reset_vote_time = 1.0
 
 [energy_meter.big_model]
-sigma_xy = 2.0
-sigma_z = 1.5
+sigma_xy = 0.3
+sigma_z = 0.225
 sigma_yaw = 1e-4
-sigma_theta = 0.1
-sigma_a = 0.1
-sigma_w = 0.1
+sigma_theta = 0.02
+sigma_a = 0.05
+sigma_w = 0.01
 radius = 0.7
 
 [energy_meter.big_model.meas]
-R_scale = 5
+R_scale = 0.02
 meas_dist_k = 0.43
 
 [energy_meter.small_model]
-sigma_xy = 0.01
-sigma_z = 0.01
+sigma_xy = 0.001
+sigma_z = 0.001
 sigma_yaw = 1e-4
-sigma_theta = 0.001
+sigma_theta = 0.01
 radius = 0.7
 
 [energy_meter.small_model.meas]
-R_scale = 0.1
+R_scale = 0.02
 meas_dist_k = 0.43

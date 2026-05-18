@@ -52,9 +52,9 @@ struct MeasurementNoiseParams {
 
     Eigen::Matrix<double, MEASURE_MAX, MEASURE_MAX> Rs =
         Eigen::Matrix<double, MEASURE_MAX, MEASURE_MAX>::Zero();
-    Rs.diagonal() << p.R_scale * (weight + std::abs(delta_yaw / 3 + 1)),
-        p.R_scale * (weight + std::abs(delta_yaw / 3 + 1)), p.R_scale * weight,
-        (std::log(std::abs(distance) + 1) / 200 + 9e-2), 0.1;
+    Rs.diagonal() << p.R_scale * (weight + std::abs(delta_yaw / 5.0 + 0.5)),
+        p.R_scale * (weight + std::abs(delta_yaw / 5.0 + 0.5)), p.R_scale * weight,
+        (std::log(std::abs(distance) + 1) / 150.0 + 5e-2), 5e-2;
     return Rs;
 }
 
