@@ -5,12 +5,10 @@
 // STL
 #include <array>
 #include <chrono>
+#include <condition_variable>
 #include <cstddef>
 #include <span>
 #include <thread>
-// libusb
-#include <condition_variable>
-#include <libusb-1.0/libusb.h>
 // spdlog
 #include <spdlog/spdlog.h>
 
@@ -203,6 +201,11 @@ private:
             rx_transfer_ = nullptr;
             return LIBUSB_ERROR_IO;
         }
+        {
+            std::lock_guard lock(mtx_);
+            transfer_active_ = true;
+            transfer_done_   = false;
+        }
         return std::nullopt;
     }
 
@@ -226,8 +229,6 @@ private:
 
     static void LIBUSB_CALL on_rx_complete(libusb_transfer* tr) noexcept {
         auto self = static_cast<Stm32Impl*>(tr->user_data);
-
-        self->transfer_done_ = true;
 
         if (tr->status == LIBUSB_TRANSFER_CANCELLED) [[unlikely]] {
             self->notify_transfer_done();
@@ -278,30 +279,37 @@ private:
 
     void notify_transfer_done() noexcept {
         std::lock_guard lock(mtx_);
-        transfer_done_ = true;
+        transfer_active_ = false;
+        transfer_done_   = true;
         cv_.notify_one();
     }
 
     void wait_transfer_done() noexcept {
         std::unique_lock lock(mtx_);
-        auto start = std::chrono::steady_clock::now();
-        while (!transfer_done_ && state_ != State::Disconnected) {
+        while (transfer_active_) {
             // 必须在等待时处理事件，否则回调不会被调用
             lock.unlock();
             timeval tv{0, 10000};
             libusb_handle_events_timeout_completed(ctx_, &tv, nullptr);
             lock.lock();
-            if (std::chrono::steady_clock::now() - start > std::chrono::milliseconds(200)) {
-                break;
-            }
         }
     }
 
     void close_device() noexcept {
         if (rx_transfer_) {
-            transfer_done_ = false;
-            libusb_cancel_transfer(rx_transfer_);
-            wait_transfer_done();
+            bool should_cancel = false;
+            {
+                std::lock_guard lock(mtx_);
+                should_cancel  = transfer_active_;
+                transfer_done_ = !transfer_active_;
+            }
+            if (should_cancel) {
+                const auto rc = libusb_cancel_transfer(rx_transfer_);
+                if (rc != LIBUSB_SUCCESS && rc != LIBUSB_ERROR_NOT_FOUND) {
+                    SPDLOG_WARN("libusb_cancel_transfer failed: {}", libusb_error_name(rc));
+                }
+                wait_transfer_done();
+            }
             libusb_free_transfer(rx_transfer_);
             rx_transfer_ = nullptr;
         }
@@ -378,7 +386,8 @@ private:
     // 用于等待 transfer 取消完成
     std::mutex mtx_;
     std::condition_variable cv_;
-    bool transfer_done_ = false;
+    bool transfer_active_ = false;
+    bool transfer_done_   = false;
 };
 static_assert(Device<Stm32Impl<Stm32Parser>>);
 } // namespace talos_gimbal

@@ -40,7 +40,7 @@ if (ENABLE_CALIBRATION)
     fmt::fmt
     ${OpenCV_LIBS}
     Eigen3::Eigen
-    ${LIBUSB_LINK_LIBRARIES}
+    talos_libusb_static
     foxglove_cpp
     ${foxglove_SOURCE_DIR}/lib/libfoxglove.a
     "$<$<PLATFORM_ID:Darwin>:-framework Security>"

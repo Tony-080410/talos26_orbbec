@@ -2,7 +2,5 @@ crate(
     NAME talos_gimbal
     TYPE INTERFACE
     DEPS
-        ${LIBUSB_LINK_LIBRARIES}
+        talos_libusb_static
 )
-
-target_include_directories(talos_gimbal INTERFACE ${LIBUSB_INCLUDE_DIRS})
