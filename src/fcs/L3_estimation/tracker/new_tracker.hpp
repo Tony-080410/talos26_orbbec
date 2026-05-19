@@ -408,9 +408,12 @@ private:
             const VecZ z_raw = measurement_to_z_(meas);
             for (int id = 0; id < armors_num; ++id) {
                 const VecZ z_pred = target.model().h(target.x(), id);
-                const VecZ nu     = innovation_(z_pred, z_raw);
-                const MatZZ R     = target.model().R(z_raw);
-                const double d2   = mahalanobis_diag_(nu, R);
+                if (!armor_measurement_visible_from_origin(z_pred)) {
+                    continue;
+                }
+                const VecZ nu   = innovation_(z_pred, z_raw);
+                const MatZZ R   = target.model().R(z_raw);
+                const double d2 = mahalanobis_diag_(nu, R);
                 if (!std::isfinite(d2) || d2 >= matcher_gate_) {
                     continue;
                 }

@@ -2,11 +2,47 @@
 
 #include "L3_estimation/manager.hpp"
 #include "L3_estimation/tracker/config.hpp"
+#include "L3_estimation/tracker/data_associator.hpp"
 #include "core/types.hpp"
 
+#include <cmath>
 #include <magic_enum.hpp>
+#include <numbers>
 
 namespace fcs::L3::testing {
+
+struct AssociatorVisibilityModel {
+    using Scalar                    = double;
+    static constexpr int NX         = 1;
+    static constexpr int NZ         = MEASURE_MAX;
+    static constexpr int ARMORS_NUM = 2;
+
+    using VecX  = Eigen::Matrix<double, NX, 1>;
+    using VecZ  = Eigen::Matrix<double, NZ, 1>;
+    using MatXX = Eigen::Matrix<double, NX, NX>;
+    using MatZZ = Eigen::Matrix<double, NZ, NZ>;
+
+    [[nodiscard]] VecX f(const VecX& x, double) const noexcept { return x; }
+
+    [[nodiscard]] VecZ h(const VecX& x) const noexcept { return h(x, 0); }
+
+    [[nodiscard]] VecZ h(const VecX&, int armor_id) const noexcept {
+        VecZ z             = VecZ::Zero();
+        z[ARMOR_YAW]       = 0.0;
+        z[ARMOR_PITCH]     = 0.0;
+        z[ARMOR_DISTANCE]  = (armor_id == 0) ? 4.0 : 5.0;
+        z[ARMOR_YAW_ARMOR] = (armor_id == 0) ? 0.0 : std::numbers::pi;
+        return z;
+    }
+
+    [[nodiscard]] MatXX Q_sqrt(double) const noexcept { return MatXX::Zero(); }
+
+    [[nodiscard]] MatZZ R_sqrt(const VecZ&) const noexcept { return MatZZ::Identity(); }
+
+    [[nodiscard]] Eigen::Matrix<double, NZ, 1> R_diag(const VecZ&) const noexcept {
+        return Eigen::Matrix<double, NZ, 1>::Constant(1e-3);
+    }
+};
 
 // ============================================================================
 // Test Fixtures
@@ -42,6 +78,20 @@ protected:
         meas.distance_to_image_center = distance;
         // Default-constructed transform is identity
         meas.transform = {};
+        return meas;
+    }
+
+    [[nodiscard]] ArmorMeasurement create_pose_measurement(
+        ArmorName name, ArmorColor color, const Eigen::Vector3d& position, double yaw,
+        float image_center_distance = 0.0f) {
+        ArmorMeasurement meas;
+        meas.name                     = name;
+        meas.color                    = color;
+        meas.type                     = ArmorType::Small;
+        meas.confidence               = 1.0f;
+        meas.distance_to_image_center = image_center_distance;
+        meas.transform                = ArmorMeasurement::Transform::from_rpy(
+            0.0, 0.0, yaw, position.x(), position.y(), position.z());
         return meas;
     }
 
@@ -291,6 +341,50 @@ TEST_F(TrackerManagerTest, UpdateAll_HandlesEmptyMeasurementBatch) {
     const auto outputs = manager.update_all(batch);
 
     EXPECT_EQ(outputs.size(), 0);
+}
+
+TEST_F(TrackerManagerTest, DataAssociator_RejectsInvisibleArmorId) {
+    AssociatorVisibilityModel model;
+    AssociatorVisibilityModel::VecX x = AssociatorVisibilityModel::VecX::Zero();
+
+    const int hidden_id = 1;
+    const auto z_hidden = model.h(x, hidden_id);
+    ASSERT_FALSE(armor_measurement_visible_from_origin(z_hidden));
+
+    const auto hidden_position =
+        ypd2xyz({z_hidden[ARMOR_YAW], z_hidden[ARMOR_PITCH], z_hidden[ARMOR_DISTANCE]});
+    const auto batch = create_batch({create_pose_measurement(
+        ArmorName::One, ArmorColor::Red, hidden_position, z_hidden[ARMOR_YAW_ARMOR])});
+
+    DataAssociator<AssociatorVisibilityModel> associator;
+    const auto result = associator.match(
+        batch, x, AssociatorVisibilityModel::MatXX::Zero(), model, ArmorName::One, 10.0,
+        AssociatorVisibilityModel::ARMORS_NUM);
+
+    EXPECT_TRUE(result.armors.empty());
+    EXPECT_TRUE(result.armor_ids.empty());
+}
+
+TEST_F(TrackerManagerTest, TrackerNew_RejectsInvisibleArmorIdMatch) {
+    config_.robot.tracking_threshold = 0;
+    TrackerNew tracker(config_);
+
+    const double radius        = config_.robot_inekf.radius0;
+    auto initial_batch         = create_batch({create_pose_measurement(
+        ArmorName::One, ArmorColor::Red, Eigen::Vector3d(5.0 - radius, 0.0, 0.0), 0.0)});
+    initial_batch.timestamp_ns = 1000000;
+
+    ASSERT_TRUE(tracker.first_meet(initial_batch).has_value());
+    ASSERT_EQ(tracker.status(), TrackerStatus::Detecting);
+
+    auto hidden_batch         = create_batch({create_pose_measurement(
+        ArmorName::One, ArmorColor::Red, Eigen::Vector3d(5.0 + radius, 0.0, 0.0),
+        std::numbers::pi)});
+    hidden_batch.timestamp_ns = 2000000;
+
+    tracker.predict(0.001);
+    EXPECT_FALSE(tracker.update(hidden_batch));
+    EXPECT_EQ(tracker.status(), TrackerStatus::Idle);
 }
 
 // ============================================================================

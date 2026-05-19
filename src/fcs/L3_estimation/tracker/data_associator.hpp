@@ -86,6 +86,7 @@ public:
         struct PredMeas {
             VecZ z_pred;
             MatZ Pzz;
+            bool visible{false};
         };
         std::vector<PredMeas> pred_cache(armors_num);
 
@@ -94,6 +95,10 @@ public:
 
         for (int id = 0; id < armors_num; ++id) {
             const VecZ z0 = model.h(x_pred, id);
+            if (!armor_measurement_visible_from_origin(z0)) {
+                pred_cache[id] = {z0, MatZ::Zero(), false};
+                continue;
+            }
 
             std::array<VecZ, 2 * NX> z_sig{};
             for (int k = 0; k < NX; ++k) {
@@ -131,7 +136,7 @@ public:
                 Pzz.noalias() += w * (dz * dz.transpose());
             }
 
-            pred_cache[id] = {z_bar, Pzz};
+            pred_cache[id] = {z_bar, Pzz, true};
         }
 
         // Compute costs for each (observation, armor_id) pair
@@ -141,6 +146,9 @@ public:
             }
 
             for (int id = 0; id < armors_num; ++id) {
+                if (!pred_cache[id].visible) {
+                    continue;
+                }
                 const auto& z_pred = pred_cache[id].z_pred;
 
                 VecZ nu;

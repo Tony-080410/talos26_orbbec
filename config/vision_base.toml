@@ -48,15 +48,15 @@ top_k = 128
 
 # Required if backend_type = "Axera" (AX650 NPU)
 [axera]
-model_path = "models/qat_u16_all.axmodel.axmodel"  # Path to AX650 .axmodel file
+model_path = "models/qat_u16_all.axmodel"  # Path to AX650 .axmodel file
 input_width = 768
 input_height = 576
 num_colors = 4
 num_kpts = 4
 num_pairs = 12
 strides = [8, 16, 32]
-confidence_threshold = 0.6
-nms_threshold = 0.30
+confidence_threshold = 0.5
+nms_threshold = 0.10
 top_k = 128
 
 [readback_roi]
@@ -137,7 +137,7 @@ radius1 = 0.23
 height = 0.05
 
 [tracker.outpost]
-matcher_gate = 10.0
+matcher_gate = 2.0
 lost_threshold = 1.0
 tracking_threshold = 4
 

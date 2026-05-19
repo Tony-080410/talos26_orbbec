@@ -230,6 +230,22 @@ enum Measure : uint8_t {
     return prev + d;
 }
 
+/// A plate is visible from the observation origin only when its yaw points into
+/// the front-facing half-plane relative to the bearing from origin to plate.
+[[nodiscard]] inline bool
+    armor_face_visible_from_origin(double bearing_yaw, double armor_yaw) noexcept {
+    if (!std::isfinite(bearing_yaw) || !std::isfinite(armor_yaw)) {
+        return false;
+    }
+    constexpr double kMaxVisibleYawError = std::numbers::pi / 2.0;
+    return std::abs(shortest_rad(bearing_yaw, armor_yaw)) < kMaxVisibleYawError;
+}
+
+template <typename VecZ>
+[[nodiscard]] inline bool armor_measurement_visible_from_origin(const VecZ& z) noexcept {
+    return armor_face_visible_from_origin(z[ARMOR_YAW], z[ARMOR_YAW_ARMOR]);
+}
+
 // ============================================================================
 // Armor Position Calculation
 // ============================================================================

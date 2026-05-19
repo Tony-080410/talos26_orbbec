@@ -15,11 +15,6 @@
 namespace fcs::L4 {
 namespace {
 
-enum VelocityDirection : uint8_t {
-    Left  = 0,
-    Right = 1,
-};
-
 using fcs::core::math::normalize_angle;
 
 inline constexpr double kFixedRuneSpeed = std::numbers::pi / 3.0;
@@ -74,69 +69,6 @@ inline constexpr double kFixedRuneSpeed = std::numbers::pi / 3.0;
     return best;
 }
 
-[[nodiscard]] int pick_best_by_incoming(
-    const std::vector<int>& candidates, const std::vector<double>& delta_angles,
-    double v_yaw) noexcept {
-    if (candidates.empty()) {
-        return 0;
-    }
-
-    int best = candidates.front();
-
-    for (const int id : candidates) {
-        const double delta      = delta_angles[static_cast<size_t>(id)];
-        const double best_delta = delta_angles[static_cast<size_t>(best)];
-
-        if (v_yaw > 0.0) {
-            // yaw 正转时，优先选左侧即将到来的板
-            if (delta < best_delta) {
-                best = id;
-            }
-        } else if (v_yaw < 0.0) {
-            // yaw 反转时，优先选右侧即将到来的板
-            if (delta > best_delta) {
-                best = id;
-            }
-        } else {
-            // 不转时，退化为选离中心最近的板
-            if (std::abs(delta) < std::abs(best_delta)) {
-                best = id;
-            }
-        }
-    }
-
-    return best;
-}
-
-[[nodiscard]] int pick_best(
-    const std::vector<int>& candidates, const std::vector<double>& delta_angles,
-    std::optional<VelocityDirection> direction, double v_yaw) noexcept {
-    if (candidates.empty()) {
-        return 0;
-    }
-
-    if (direction.has_value()) {
-        const bool rotate_left = v_yaw < 0.0;
-        const bool motion_left = direction.value() == VelocityDirection::Left;
-        if (motion_left == rotate_left) {
-            return pick_best_by_incoming(candidates, delta_angles, v_yaw);
-        }
-    }
-
-    return pick_best_by_min_delta(candidates, delta_angles);
-}
-
-[[nodiscard]] int pick_locked_or_best(
-    const std::vector<int>& candidates, const std::vector<double>& delta_angles,
-    const std::optional<int>& preferred, std::optional<VelocityDirection> direction,
-    double v_yaw) noexcept {
-    if (preferred.has_value()
-        && std::find(candidates.begin(), candidates.end(), *preferred) != candidates.end()) {
-        return *preferred;
-    }
-    return pick_best(candidates, delta_angles, direction, v_yaw);
-}
-
 [[nodiscard]] double front_window_rad(const AimerConfig& config) noexcept {
     return config.front_window_deg * std::numbers::pi / 180.0;
 }
@@ -168,10 +100,8 @@ template <size_t N>
 template <size_t N>
 [[nodiscard]] int select_armor_id(
     const std::array<Eigen::Vector4d, N>& armor_poses, double center_yaw,
-    const ArmorAimContext& context, const AimerConfig& config,
-    std::optional<VelocityDirection> direction, double target_v_yaw, bool is_outpost) noexcept {
+    const ArmorAimContext& context, const AimerConfig& config, bool is_outpost) noexcept {
     const int armors_num = static_cast<int>(N);
-    const auto preferred = sanitize_preferred(context.preferred_armor_id, armors_num);
 
     if (!context.target_jumped) {
         return 0;
@@ -185,53 +115,18 @@ template <size_t N>
         all_ids.push_back(i);
     }
 
-    const auto fallback_best = [&]() noexcept {
-        const auto candidates =
-            filter_front_window(all_ids, delta_angles, front_window_rad(config));
-        if (!candidates.empty()) {
-            return pick_best(candidates, delta_angles, direction, target_v_yaw);
+    const auto candidates = filter_front_window(all_ids, delta_angles, front_window_rad(config));
+    const auto preferred  = sanitize_preferred(context.preferred_armor_id, armors_num);
+    if (!candidates.empty()) {
+        if (preferred.has_value()
+            && std::find(candidates.begin(), candidates.end(), *preferred) != candidates.end()) {
+            return *preferred;
         }
-        return pick_best(all_ids, delta_angles, direction, target_v_yaw);
-    };
-
-    if (context.phase == ArmorAimPhase::SingleArmor && !is_outpost) {
-        const auto candidates =
-            filter_front_window(all_ids, delta_angles, front_window_rad(config));
-        if (candidates.empty()) {
-            return 0;
-        }
-        if (candidates.size() == 1U) {
-            return candidates.front();
-        }
-        return pick_locked_or_best(candidates, delta_angles, preferred, direction, target_v_yaw);
+        return pick_best_by_min_delta(candidates, delta_angles);
     }
 
-    if (context.phase == ArmorAimPhase::WholeCarPair && !is_outpost) {
-        std::vector<int> pair_ids;
-        pair_ids.reserve(2);
-        const bool use_high_layer = armor_poses[1][2] > armor_poses[0][2];
-        if (use_high_layer) {
-            if (armors_num > 1) {
-                pair_ids.push_back(1);
-            }
-            if (armors_num > 3) {
-                pair_ids.push_back(3);
-            }
-        } else {
-            pair_ids.push_back(0);
-            if (armors_num > 2) {
-                pair_ids.push_back(2);
-            }
-        }
-        pair_ids = filter_front_window(pair_ids, delta_angles, front_window_rad(config));
-        if (!pair_ids.empty()) {
-            return pick_best(pair_ids, delta_angles, direction, target_v_yaw);
-        }
-    }
-
-    (void)config;
-    (void)target_v_yaw;
-    return fallback_best();
+    (void)is_outpost;
+    return pick_best_by_min_delta(all_ids, delta_angles);
 }
 
 [[nodiscard]] Eigen::Vector3d project_center_aim(
@@ -248,6 +143,14 @@ template <size_t N>
 
     const Eigen::Vector2d projected_xy = center.head<2>() - radius * ray;
     return Eigen::Vector3d{projected_xy.x(), projected_xy.y(), armor_z};
+}
+
+[[nodiscard]] int target_armors_num(const L3::RobotTargetState& target) noexcept {
+    return std::clamp(target.armors_num, 1, 4);
+}
+
+[[nodiscard]] int target_armors_num(const L3::OutpostTargetState& /*target*/) noexcept {
+    return L3::OutpostTargetState::armors_num;
 }
 
 } // namespace
@@ -325,18 +228,6 @@ Eigen::Vector3d
     return predict_aim_point(target, dt, {}, {}).position;
 }
 
-[[nodiscard]] Eigen::Vector2d
-    velocity_xy_in_gimbal(const Eigen::Vector3d& velocity_odom, double gimbal_yaw) noexcept {
-    const double c = std::cos(gimbal_yaw);
-    const double s = std::sin(gimbal_yaw);
-
-    // R(-yaw) * v_world
-    const double vx = c * velocity_odom.x() + s * velocity_odom.y();
-    const double vy = -s * velocity_odom.x() + c * velocity_odom.y();
-
-    return {vx, vy};
-}
-
 Aimer::PredictedAimPoint Aimer::predict_aim_point(
     const L3::RobotTargetState& target, double dt, const ArmorAimContext& context,
     const MuzzleTransform& muzzle, std::optional<int> forced_armor_id) const noexcept {
@@ -347,22 +238,16 @@ Aimer::PredictedAimPoint Aimer::predict_aim_point(
     const auto armor_poses  = predicted.armor_poses();
     const double center_yaw = center_yaw_from_xy(predicted.position.x(), predicted.position.y());
 
-    std::optional<VelocityDirection> direction = std::nullopt;
-    const auto vel = velocity_xy_in_gimbal(predicted.velocity, muzzle.euler_rot().yaw).y();
-    if (std::abs(predicted.velocity.norm()) > config_.min_coming_vel
-        && std::abs(vel) > config_.min_coming_vel_horizon) {
-        direction = vel > 0 ? VelocityDirection::Left : VelocityDirection::Right;
-    }
     const int armor_id =
         sanitize_preferred(forced_armor_id, predicted.armors_num)
-            .value_or(select_armor_id(
-                armor_poses, center_yaw, context, config_, direction, predicted.v_yaw, false));
+            .value_or(select_armor_id(armor_poses, center_yaw, context, config_, false));
     const Eigen::Vector4d& armor_pose = armor_poses[static_cast<size_t>(armor_id)];
     const double radius               = (armor_id % 2 == 0) ? predicted.radius0 : predicted.radius1;
 
     PredictedAimPoint result;
-    result.armor_id = armor_id;
-    result.position = armor_pose.head<3>();
+    result.armor_id    = armor_id;
+    result.delta_angle = normalize_angle(armor_pose[3] - center_yaw);
+    result.position    = armor_pose.head<3>();
 
     if (context.phase == ArmorAimPhase::WholeCarCenter) {
         result.position =
@@ -382,13 +267,13 @@ Aimer::PredictedAimPoint Aimer::predict_aim_point(
     const double center_yaw = center_yaw_from_xy(predicted.position.x(), predicted.position.y());
     const int armor_id =
         sanitize_preferred(forced_armor_id, L3::OutpostTargetState::armors_num)
-            .value_or(select_armor_id(
-                armor_poses, center_yaw, context, config_, std::nullopt, predicted.v_yaw, true));
+            .value_or(select_armor_id(armor_poses, center_yaw, context, config_, true));
     const Eigen::Vector4d& armor_pose = armor_poses[static_cast<size_t>(armor_id)];
 
     PredictedAimPoint result;
-    result.armor_id = armor_id;
-    result.position = armor_pose.head<3>();
+    result.armor_id    = armor_id;
+    result.delta_angle = normalize_angle(armor_pose[3] - center_yaw);
+    result.position    = armor_pose.head<3>();
 
     if (context.phase == ArmorAimPhase::WholeCarCenter) {
         result.position = project_center_aim(
@@ -422,47 +307,65 @@ std::expected<TargetPrediction, std::string> Aimer::aim_generic(
         * 1e-9;
     const double total_delay = age + prediction_delay;
 
-    const Eigen::Vector3d muzzle_pos  = muzzle.translation();
-    const auto rough_predicted        = predict_aim_point(target, total_delay, context, muzzle);
-    const int rough_selected_armor_id = rough_predicted.armor_id;
-    const auto refine_total_prediction_time = [&](int forced_armor_id) noexcept {
+    const Eigen::Vector3d muzzle_pos        = muzzle.translation();
+    const auto refine_total_prediction_time = [&](int armor_id) noexcept {
         return refine_flying_time(
             solver,
             [&](double dt) -> Eigen::Vector3d {
-                return predict_aim_point(target, dt, context, muzzle, forced_armor_id).position
+                return predict_aim_point(target, dt, context, muzzle, armor_id).position
                      - muzzle_pos;
             },
             total_delay, bullet_speed);
     };
 
-    int refined_armor_id         = rough_selected_armor_id;
-    double total_prediction_time = total_delay;
-    PredictedAimPoint predicted{};
-    bool stabilized = false;
+    const int armors_num             = target_armors_num(target);
+    const auto preferred             = sanitize_preferred(context.preferred_armor_id, armors_num);
+    const double front_window        = front_window_rad(config_);
+    bool has_preferred               = false;
+    bool has_front_best              = false;
+    bool has_any_best                = false;
+    double preferred_time            = total_delay;
+    double front_best_time           = total_delay;
+    double any_best_time             = total_delay;
+    PredictedAimPoint preferred_pred = {};
+    PredictedAimPoint front_best     = {};
+    PredictedAimPoint any_best       = {};
 
-    // Stabilize ballistic refinement across armor handoffs so time-of-flight and aim point
-    // describe the same armor when the final selection changes during iteration.
-    for (int pass = 0; pass < 3; ++pass) {
-        total_prediction_time = refine_total_prediction_time(refined_armor_id);
-        predicted             = predict_aim_point(target, total_prediction_time, context, muzzle);
-        if (predicted.armor_id == refined_armor_id) {
-            stabilized = true;
-            break;
+    for (int armor_id = 0; armor_id < armors_num; ++armor_id) {
+        const double candidate_time = refine_total_prediction_time(armor_id);
+        const PredictedAimPoint candidate =
+            predict_aim_point(target, candidate_time, context, muzzle, armor_id);
+        const double abs_delta = std::abs(candidate.delta_angle);
+        if (!has_any_best || abs_delta < std::abs(any_best.delta_angle)) {
+            has_any_best  = true;
+            any_best      = candidate;
+            any_best_time = candidate_time;
         }
-        refined_armor_id = predicted.armor_id;
+        if (abs_delta > front_window) {
+            continue;
+        }
+        if (preferred.has_value() && armor_id == *preferred) {
+            has_preferred  = true;
+            preferred_pred = candidate;
+            preferred_time = candidate_time;
+        }
+        if (!has_front_best || abs_delta < std::abs(front_best.delta_angle)) {
+            has_front_best  = true;
+            front_best      = candidate;
+            front_best_time = candidate_time;
+        }
     }
 
-    if (!stabilized) {
-        total_prediction_time = refine_total_prediction_time(refined_armor_id);
-        predicted =
-            predict_aim_point(target, total_prediction_time, context, muzzle, refined_armor_id);
-    }
+    const double total_prediction_time =
+        has_preferred ? preferred_time : (has_front_best ? front_best_time : any_best_time);
+    const PredictedAimPoint predicted =
+        has_preferred ? preferred_pred : (has_front_best ? front_best : any_best);
 
     output.predicted_position      = predicted.position;
     output.predicted_future_ns     = offset_timestamp_ns(measurement_ns, total_prediction_time);
     output.flying_time             = total_prediction_time - total_delay;
     output.selected_armor_id       = predicted.armor_id;
-    output.rough_selected_armor_id = rough_selected_armor_id;
+    output.rough_selected_armor_id = predicted.armor_id;
 
     auto aim_angles =
         compute_gimbal_aim_angles(output.predicted_position, gimbal, muzzle, solver, bullet_speed);
