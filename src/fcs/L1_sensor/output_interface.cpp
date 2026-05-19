@@ -6,6 +6,8 @@
 #include "talos_gimbal/mcu_device.hpp"
 #include "talos_gimbal/packet.hpp"
 
+#include <spdlog/spdlog.h>
+
 namespace fcs::L1 {
 
 // ============================================================================
@@ -20,7 +22,7 @@ void IpcOutput::send(const L5::WeaponCommand& cmd) const noexcept {
         return;
     }
 
-    // 转换: rad → deg
+    // 转换: rad -> deg
     const auto yaw_deg    = static_cast<float>(cmd.yaw * detail::RAD_TO_DEG);
     const auto pitch_deg  = -static_cast<float>(cmd.pitch * detail::RAD_TO_DEG);
     const auto distance_m = static_cast<float>(cmd.distance);
@@ -49,8 +51,7 @@ void McuOutput::send(const L5::WeaponCommand& cmd) const noexcept {
         return;
     }
 
-    // Serial只用于全向感知
-    if (device_->backend() == talos_gimbal::McuBackend::Serial) {
+    if (device_->is_serial()) {
         talos_gimbal::SendSimpleVisionData packet{
             .header =
                 {
@@ -64,7 +65,10 @@ void McuOutput::send(const L5::WeaponCommand& cmd) const noexcept {
                          },
             .eof = talos_gimbal::HeaderFrame::EoF(),
         };
-        device_->send_sync(reinterpret_cast<uint8_t*>(&packet), sizeof(packet));
+        if (auto result = device_->send_sync(reinterpret_cast<uint8_t*>(&packet), sizeof(packet));
+            !result) {
+            SPDLOG_WARN("send simple vision data: {}", result.error());
+        }
     } else {
         talos_gimbal::SendVisionData packet{
             .header =
@@ -86,7 +90,10 @@ void McuOutput::send(const L5::WeaponCommand& cmd) const noexcept {
                          },
             .eof = talos_gimbal::HeaderFrame::EoF(),
         };
-        device_->send_sync(reinterpret_cast<uint8_t*>(&packet), sizeof(packet));
+        if (auto result = device_->send_sync(reinterpret_cast<uint8_t*>(&packet), sizeof(packet));
+            !result) {
+            SPDLOG_WARN("send vision data: {}", result.error());
+        }
     }
 }
 
@@ -97,7 +104,7 @@ void McuOutput::send_quanta(const quanta::TransportChunk& chunk) const noexcept 
     if (!device_->is_connected()) [[unlikely]] {
         return;
     }
-    if (device_->backend() == talos_gimbal::McuBackend::Serial) {
+    if (device_->is_serial()) {
         return;
     }
     // evil hack for extended data length
@@ -142,7 +149,10 @@ void McuOutput::send_quanta(const quanta::TransportChunk& chunk) const noexcept 
 
         std::memcpy(packet.data.custom_byte_block, ptr + offset, this_len);
 
-        device_->send_sync(reinterpret_cast<uint8_t*>(&packet), sizeof(packet));
+        if (auto result = device_->send_sync(reinterpret_cast<uint8_t*>(&packet), sizeof(packet));
+            !result) {
+            SPDLOG_WARN("send quanta data: {}", result.error());
+        }
 
         offset += this_len;
         remaining -= this_len;
@@ -192,20 +202,22 @@ std::expected<OutputInterface, std::string>
 
 std::expected<OutputInterface, std::string> OutputInterface::create_usb(
     const uint16_t vendor_id, const std::optional<uint16_t> product_id) noexcept {
-    auto device = talos_gimbal::McuDeviceHandle::create_usb(vendor_id, product_id);
-    if (!device) {
-        return std::unexpected("failed to connect USB device");
+    auto device_result = talos_gimbal::McuDeviceHandle::create_usb(vendor_id, product_id);
+    if (!device_result) {
+        return std::unexpected(std::move(device_result).error());
     }
-    return OutputInterface(McuOutput(std::move(device)));
+    return OutputInterface(McuOutput(
+        std::make_shared<talos_gimbal::McuDeviceHandle>(std::move(device_result).value())));
 }
 
 std::expected<OutputInterface, std::string>
     OutputInterface::create_serial(const std::string& device_path, int baud_rate) noexcept {
-    auto device = talos_gimbal::McuDeviceHandle::create_serial(device_path, baud_rate);
-    if (!device) {
-        return std::unexpected("failed to connect serial device");
+    auto device_result = talos_gimbal::McuDeviceHandle::create_serial(device_path, baud_rate);
+    if (!device_result) {
+        return std::unexpected(std::move(device_result).error());
     }
-    return OutputInterface(McuOutput(std::move(device)));
+    return OutputInterface(McuOutput(
+        std::make_shared<talos_gimbal::McuDeviceHandle>(std::move(device_result).value())));
 }
 
 } // namespace fcs::L1

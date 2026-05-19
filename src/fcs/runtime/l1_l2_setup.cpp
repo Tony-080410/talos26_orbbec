@@ -348,8 +348,13 @@ std::expected<L1L2SetupResult, std::string> setup_l1(
                             SPDLOG_INFO(
                                 "connecting to mcu via serial with {} @ {} baud",
                                 mcu_config->serial_device, mcu_config->serial_baud_rate);
-                            mcu_device = McuHandle::create_serial(
+                            auto device_result = McuHandle::create_serial(
                                 mcu_config->serial_device, mcu_config->serial_baud_rate);
+                            if (!device_result) {
+                                return std::unexpected(device_result.error());
+                            }
+                            mcu_device =
+                                std::make_shared<McuHandle>(std::move(device_result).value());
                         } else {
                             if (mcu_config->mcu_product_id) {
                                 SPDLOG_INFO(
@@ -360,13 +365,13 @@ std::expected<L1L2SetupResult, std::string> setup_l1(
                                     "connecting to mcu via USB with {:#x} (product_id unspecified)",
                                     mcu_config->mcu_vendor_id);
                             }
-                            mcu_device = McuHandle::create_usb(
+                            auto device_result = McuHandle::create_usb(
                                 mcu_config->mcu_vendor_id, mcu_config->mcu_product_id);
-                        }
-                        if (!mcu_device) {
-                            return std::unexpected(
-                                fmt::format(
-                                    "failed connecting to mcu via {}", mcu_config->mcu_backend));
+                            if (!device_result) {
+                                return std::unexpected(device_result.error());
+                            }
+                            mcu_device =
+                                std::make_shared<McuHandle>(std::move(device_result).value());
                         }
                         SPDLOG_INFO("connected to mcu via {}", mcu_config->mcu_backend);
                         output = std::make_unique<fcs::L1::OutputInterface>(

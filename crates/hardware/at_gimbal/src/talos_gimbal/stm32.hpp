@@ -7,13 +7,19 @@
 #include <chrono>
 #include <condition_variable>
 #include <cstddef>
-#include <span>
+#include <expected>
+#include <mutex>
+#include <string>
 #include <thread>
 // spdlog
 #include <spdlog/spdlog.h>
 
 /* ------------------- error ------------------- */
 namespace talos_gimbal {
+[[nodiscard]] inline const char* libusb_error_text(const int err) noexcept {
+    return libusb_strerror(err);
+}
+
 template <class F>
 class scoped_exit {
 public:
@@ -45,13 +51,13 @@ public:
     Stm32Parser& operator=(const Stm32Parser&) = delete;
     static void parse(const std::span<const std::byte> data) noexcept {
         if (const auto size = data.size_bytes(); size < sizeof(HeaderFrame)) [[unlikely]] {
-            SPDLOG_WARN("Frame size too small, expected {}, got {}", sizeof(HeaderFrame), size);
+            SPDLOG_WARN("frame too small: expected {}, got {}", sizeof(HeaderFrame), size);
             return;
         }
         const auto header_frame = reinterpret_cast<const HeaderFrame*>(data.data());
         if (header_frame->sof != HeaderFrame::SoF()) [[unlikely]] {
             SPDLOG_WARN(
-                "Frame header invalid, expected {:X}, got {:X}", HeaderFrame::SoF(),
+                "frame header invalid: expected {:#x}, got {:#x}", HeaderFrame::SoF(),
                 header_frame->sof);
             return;
         }
@@ -62,7 +68,6 @@ public:
             }
         } else if (header_frame->id == 0x03) {
             if (latest_imu && data.size_bytes() >= sizeof(ReceiveSimpleImuData)) {
-                // 复用一下接口
                 const auto* received   = reinterpret_cast<const ReceiveSimpleImuData*>(data.data());
                 latest_imu->header     = received->header;
                 latest_imu->time_stamp = received->time_stamp;
@@ -100,36 +105,44 @@ struct Stm32Impl {
     // 公共接口
     // ─────────────────────────────────────────────
 
-    [[nodiscard]] std::expected<void, UsbInitError> connect(
+    [[nodiscard]] std::expected<void, std::string> connect(
         const uint16_t vendor_id           = VID,
         std::optional<uint16_t> product_id = std::nullopt) noexcept {
-        if (!ctx_ && libusb_init(&ctx_) != LIBUSB_SUCCESS) {
-            return std::unexpected(LIBUSB_ERROR_OTHER);
+        if (!ctx_) {
+            const auto rc = libusb_init_context(&ctx_, nullptr, 0);
+            if (rc != LIBUSB_SUCCESS) {
+                return std::unexpected(
+                    fmt::format("libusb_init_context: {}", libusb_error_text(rc)));
+            }
         }
 
         if (!product_id) {
             auto result = find_device(ctx_, vendor_id);
-            if (!result)
-                return std::unexpected(result.error());
+            if (!result) {
+                return std::unexpected(
+                    fmt::format(
+                        "find usb device(vendor_id={:#06x}): {}", vendor_id, result.error()));
+            }
             product_id = *result;
         }
         vid_ = vendor_id;
         pid_ = *product_id;
 
-        if (auto err = open_device(vendor_id, *product_id)) {
-            return std::unexpected(*err);
+        if (auto result = open_device(vendor_id, *product_id); !result) {
+            return std::unexpected(std::move(result).error());
         }
 
-        if (auto err = setup_transfer()) {
-            return std::unexpected(*err);
+        if (auto result = setup_transfer(); !result) {
+            return std::unexpected(std::move(result).error());
         }
 
-        if (auto err = register_hotplug(vendor_id, *product_id)) {
-            return std::unexpected(*err);
+        if (auto result = register_hotplug(vendor_id, *product_id); !result) {
+            return std::unexpected(std::move(result).error());
         }
 
         state_    = State::Connected;
         first_rx_ = true;
+        SPDLOG_INFO("usb mcu connected (vendor_id={:#06x}, product_id={:#06x})", vid_, pid_);
         return {};
     }
 
@@ -145,16 +158,31 @@ struct Stm32Impl {
         }
     }
 
-    bool send_sync(
+    [[nodiscard]] std::expected<void, std::string> send_sync(
         const uint8_t* data, const size_t size, const unsigned timeout_ms = 500) const noexcept {
         if (!handle_) {
-            return false;
+            return std::unexpected(
+                fmt::format(
+                    "send_sync(vendor_id={:#06x}, product_id={:#06x}): device not connected", vid_,
+                    pid_));
         }
         int actual    = 0;
         const auto rc = libusb_bulk_transfer(
             handle_, EP_OUT, const_cast<uint8_t*>(data), static_cast<int>(size), &actual,
             timeout_ms);
-        return rc == 0 && actual == static_cast<int>(size);
+        if (rc != LIBUSB_SUCCESS) {
+            return std::unexpected(
+                fmt::format(
+                    "libusb_bulk_transfer(endpoint={:#04x}, size={}, timeout={}ms): {}", EP_OUT,
+                    size, timeout_ms, libusb_error_text(rc)));
+        }
+        if (actual != static_cast<int>(size)) {
+            return std::unexpected(
+                fmt::format(
+                    "libusb_bulk_transfer: incomplete write (expected {}, wrote {})", size,
+                    actual));
+        }
+        return {};
     }
 
     bool is_connected() const noexcept { return state_ == State::Connected; }
@@ -169,49 +197,69 @@ private:
     // 内部实现
     // ─────────────────────────────────────────────
 
-    std::optional<libusb_error> open_device(const uint16_t vid, const uint16_t pid) noexcept {
+    [[nodiscard]] std::expected<void, std::string>
+        open_device(const uint16_t vid, const uint16_t pid) noexcept {
         handle_ = libusb_open_device_with_vid_pid(ctx_, vid, pid);
-        if (!handle_)
-            return LIBUSB_ERROR_NO_DEVICE;
-
-        if (libusb_kernel_driver_active(handle_, INTERFACE_NUM)) {
-            libusb_detach_kernel_driver(handle_, INTERFACE_NUM);
+        if (!handle_) {
+            return std::unexpected(
+                fmt::format(
+                    "libusb_open_device_with_vid_pid(vendor_id={:#06x}, product_id={:#06x}): {}",
+                    vid, pid, libusb_error_text(LIBUSB_ERROR_NO_DEVICE)));
         }
 
-        if (libusb_claim_interface(handle_, INTERFACE_NUM) != 0) {
+        // Auto-detach kernel driver (libusb 1.0.16+)
+        libusb_set_auto_detach_kernel_driver(handle_, 1);
+
+        const auto claim_rc =
+            static_cast<libusb_error>(libusb_claim_interface(handle_, INTERFACE_NUM));
+        if (claim_rc != LIBUSB_SUCCESS) {
             libusb_close(handle_);
             handle_ = nullptr;
-            return LIBUSB_ERROR_BUSY;
+            return std::unexpected(
+                fmt::format(
+                    "libusb_claim_interface(interface={}, vendor_id={:#06x}, product_id={:#06x}): "
+                    "{}",
+                    INTERFACE_NUM, vid, pid, libusb_error_text(claim_rc)));
         }
-        return std::nullopt;
+        return {};
     }
 
-    std::optional<libusb_error> setup_transfer() noexcept {
+    [[nodiscard]] std::expected<void, std::string> setup_transfer() noexcept {
         rx_transfer_ = libusb_alloc_transfer(0);
         if (!rx_transfer_) {
-            return LIBUSB_ERROR_NO_MEM;
+            return std::unexpected(
+                fmt::format(
+                    "libusb_alloc_transfer(vendor_id={:#06x}, product_id={:#06x}): {}", vid_, pid_,
+                    libusb_error_text(LIBUSB_ERROR_NO_MEM)));
         }
 
         libusb_fill_bulk_transfer(
             rx_transfer_, handle_, EP_IN, rx_buf_.data(), rx_buf_.size(),
             &Stm32Impl::on_rx_complete, this, 0);
 
-        if (libusb_submit_transfer(rx_transfer_) != LIBUSB_SUCCESS) {
+        const auto submit_rc = static_cast<libusb_error>(libusb_submit_transfer(rx_transfer_));
+        if (submit_rc != LIBUSB_SUCCESS) {
             libusb_free_transfer(rx_transfer_);
             rx_transfer_ = nullptr;
-            return LIBUSB_ERROR_IO;
+            return std::unexpected(
+                fmt::format(
+                    "libusb_submit_transfer(endpoint={:#04x}, vendor_id={:#06x}, "
+                    "product_id={:#06x}): {}",
+                    EP_IN, vid_, pid_, libusb_error_text(submit_rc)));
         }
         {
             std::lock_guard lock(mtx_);
             transfer_active_ = true;
-            transfer_done_   = false;
         }
-        return std::nullopt;
+        return {};
     }
 
-    std::optional<libusb_error> register_hotplug(const uint16_t vid, const uint16_t pid) noexcept {
+    [[nodiscard]] std::expected<void, std::string>
+        register_hotplug(const uint16_t vid, const uint16_t pid) noexcept {
         if (!libusb_has_capability(LIBUSB_CAP_HAS_HOTPLUG)) {
-            return LIBUSB_ERROR_NOT_SUPPORTED;
+            return std::unexpected(
+                fmt::format(
+                    "libusb hotplug unsupported(vendor_id={:#06x}, product_id={:#06x})", vid, pid));
         }
 
         auto rc = libusb_hotplug_register_callback(
@@ -220,7 +268,13 @@ private:
                 LIBUSB_HOTPLUG_EVENT_DEVICE_LEFT | LIBUSB_HOTPLUG_EVENT_DEVICE_ARRIVED),
             LIBUSB_HOTPLUG_NO_FLAGS, vid, pid, LIBUSB_HOTPLUG_MATCH_ANY, &Stm32Impl::on_hotplug,
             this, &hp_handle_);
-        return rc == LIBUSB_SUCCESS ? std::nullopt : std::optional(static_cast<libusb_error>(rc));
+        if (rc == LIBUSB_SUCCESS) {
+            return {};
+        }
+        return std::unexpected(
+            fmt::format(
+                "libusb_hotplug_register_callback(vendor_id={:#06x}, product_id={:#06x}): {}", vid,
+                pid, libusb_error_text(rc)));
     }
 
     // ─────────────────────────────────────────────
@@ -241,6 +295,7 @@ private:
         }
 
         if (tr->status != LIBUSB_TRANSFER_COMPLETED) [[unlikely]] {
+            SPDLOG_WARN("usb rx transfer failed (status={})", static_cast<int>(tr->status));
             self->state_ = State::NeedsReconnect;
             self->notify_transfer_done();
             return;
@@ -254,6 +309,7 @@ private:
 
         // 继续接收
         if (libusb_submit_transfer(tr) != LIBUSB_SUCCESS) {
+            SPDLOG_WARN("usb rx resubmit failed");
             self->state_ = State::NeedsReconnect;
             self->notify_transfer_done();
         }
@@ -263,10 +319,13 @@ private:
         libusb_context*, libusb_device*, const libusb_hotplug_event event, void* user) noexcept {
         auto self = static_cast<Stm32Impl*>(user);
         if (event == LIBUSB_HOTPLUG_EVENT_DEVICE_LEFT) {
+            SPDLOG_INFO(
+                "usb mcu disconnected (vendor_id={:#06x}, product_id={:#06x})", self->vid_,
+                self->pid_);
             self->state_ = State::NeedsReconnect;
         } else if (event == LIBUSB_HOTPLUG_EVENT_DEVICE_ARRIVED) {
             if (self->state_ == State::NeedsReconnect) {
-                // 延迟重连，让设备枚举完成
+                SPDLOG_INFO("usb mcu re-appeared, waiting for enumeration...");
                 std::this_thread::sleep_for(std::chrono::milliseconds(300));
             }
         }
@@ -280,14 +339,12 @@ private:
     void notify_transfer_done() noexcept {
         std::lock_guard lock(mtx_);
         transfer_active_ = false;
-        transfer_done_   = true;
         cv_.notify_one();
     }
 
     void wait_transfer_done() noexcept {
         std::unique_lock lock(mtx_);
         while (transfer_active_) {
-            // 必须在等待时处理事件，否则回调不会被调用
             lock.unlock();
             timeval tv{0, 10000};
             libusb_handle_events_timeout_completed(ctx_, &tv, nullptr);
@@ -300,13 +357,12 @@ private:
             bool should_cancel = false;
             {
                 std::lock_guard lock(mtx_);
-                should_cancel  = transfer_active_;
-                transfer_done_ = !transfer_active_;
+                should_cancel = transfer_active_;
             }
             if (should_cancel) {
                 const auto rc = libusb_cancel_transfer(rx_transfer_);
                 if (rc != LIBUSB_SUCCESS && rc != LIBUSB_ERROR_NOT_FOUND) {
-                    SPDLOG_WARN("libusb_cancel_transfer failed: {}", libusb_error_name(rc));
+                    SPDLOG_WARN("libusb_cancel_transfer: {}", libusb_error_text(rc));
                 }
                 wait_transfer_done();
             }
@@ -321,14 +377,26 @@ private:
     }
 
     void reconnect() noexcept {
+        SPDLOG_INFO("usb mcu reconnecting (vendor_id={:#06x}, product_id={:#06x})...", vid_, pid_);
         close_device();
-        if (!open_device(vid_, pid_) && !setup_transfer()) {
-            state_    = State::Connected;
-            first_rx_ = true;
+        if (auto open_result = open_device(vid_, pid_); !open_result) {
+            SPDLOG_WARN("usb mcu reconnect failed: {}", open_result.error());
+            return;
         }
+        if (auto setup_result = setup_transfer(); !setup_result) {
+            SPDLOG_WARN("usb mcu reconnect setup failed: {}", setup_result.error());
+            return;
+        }
+        state_    = State::Connected;
+        first_rx_ = true;
+        SPDLOG_INFO("usb mcu reconnected (vendor_id={:#06x}, product_id={:#06x})", vid_, pid_);
     }
 
     void shutdown() noexcept {
+        if (state_ == State::Disconnected) {
+            return;
+        }
+        SPDLOG_INFO("usb mcu shutting down");
         state_ = State::Disconnected;
         if (hp_handle_) {
             libusb_hotplug_deregister_callback(ctx_, hp_handle_);
@@ -341,12 +409,16 @@ private:
         }
     }
 
-    [[nodiscard]] static std::expected<uint16_t, UsbInitError>
+    [[nodiscard]] static std::expected<uint16_t, std::string>
         find_device(libusb_context* ctx, const uint16_t vid) noexcept {
         libusb_device** list;
         auto cnt = libusb_get_device_list(ctx, &list);
-        if (cnt < 0)
-            return std::unexpected(static_cast<libusb_error>(cnt));
+        if (cnt < 0) {
+            return std::unexpected(
+                fmt::format(
+                    "libusb_get_device_list(vendor_id={:#06x}): {}", vid,
+                    libusb_error_text(static_cast<int>(cnt))));
+        }
 
         scoped_exit cleanup{[&] { libusb_free_device_list(list, 1); }};
 
@@ -355,17 +427,26 @@ private:
 
         for (ssize_t i = 0; i < cnt; ++i) {
             libusb_device_descriptor desc{};
-            if (libusb_get_device_descriptor(list[i], &desc) != 0)
+            const auto desc_rc =
+                static_cast<libusb_error>(libusb_get_device_descriptor(list[i], &desc));
+            if (desc_rc != LIBUSB_SUCCESS) {
                 continue;
+            }
             if (desc.idVendor != vid)
                 continue;
             found_pid = desc.idProduct;
-            if (++count > 1)
-                return std::unexpected(LIBUSB_ERROR_OVERFLOW);
+            if (++count > 1) {
+                return std::unexpected(
+                    fmt::format(
+                        "find usb device(vendor_id={:#06x}): multiple product ids matched", vid));
+            }
         }
 
-        return count == 1 ? std::expected<uint16_t, UsbInitError>(found_pid)
-                          : std::unexpected(LIBUSB_ERROR_NOT_FOUND);
+        if (count == 1) {
+            return found_pid;
+        }
+        return std::unexpected(
+            fmt::format("find usb device(vendor_id={:#06x}): no matching device found", vid));
     }
 
     // ─────────────────────────────────────────────
@@ -383,11 +464,11 @@ private:
     State state_   = State::Disconnected;
     bool first_rx_ = true;
 
-    // 用于等待 transfer 取消完成
+    // Transfer 取消同步：reconnect/close_device 在事件循环内调用，
+    // mutex + condvar 保证 cancel-then-wait 和回调之间的正确同步。
     std::mutex mtx_;
     std::condition_variable cv_;
     bool transfer_active_ = false;
-    bool transfer_done_   = false;
 };
 static_assert(Device<Stm32Impl<Stm32Parser>>);
 } // namespace talos_gimbal

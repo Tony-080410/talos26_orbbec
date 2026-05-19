@@ -26,7 +26,7 @@ int main() {
     SPDLOG_INFO("creating shared memory regions...");
     auto client = talos_gimbal::McuDeviceHandle::create_usb(0x0483, std::nullopt);
     if (!client) {
-        SPDLOG_CRITICAL("failed to connect to usb");
+        SPDLOG_CRITICAL("{}", client.error());
         return 1;
     }
 
@@ -130,7 +130,11 @@ int main() {
 
             std::memcpy(packet.data.custom_byte_block, ptr + offset, this_len);
             packet.data.custom_byte_block[19] = frame_count;
-            client->send_sync(reinterpret_cast<uint8_t*>(&packet), sizeof(packet));
+            if (auto result =
+                    client->send_sync(reinterpret_cast<uint8_t*>(&packet), sizeof(packet));
+                !result) {
+                SPDLOG_WARN("send: {}", result.error());
+            }
 
             offset += this_len;
             remaining -= this_len;
@@ -156,7 +160,10 @@ int main() {
     };
     std::memset(packet.data.custom_byte_block, 0, 300);
 
-    client->send_sync(reinterpret_cast<uint8_t*>(&packet), sizeof(packet));
+    if (auto result = client->send_sync(reinterpret_cast<uint8_t*>(&packet), sizeof(packet));
+        !result) {
+        SPDLOG_WARN("send: {}", result.error());
+    }
 
     // Cleanup
     SPDLOG_INFO(
@@ -164,6 +171,5 @@ int main() {
         std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::system_clock::now() - start)
             .count());
-    client.reset();
     return 0;
 }

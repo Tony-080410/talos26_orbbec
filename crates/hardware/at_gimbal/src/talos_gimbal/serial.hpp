@@ -24,56 +24,91 @@
 
 namespace talos_gimbal {
 
-enum class SerialError : uint8_t {
-    OpenFailed,
-    GetAttrFailed,
-    SetAttrFailed,
-    NotConnected,
-    WriteFailed,
+// ============================================================================
+// FileDescriptor — RAII owner for POSIX file descriptors
+// ============================================================================
+
+class FileDescriptor {
+public:
+    FileDescriptor() noexcept = default;
+    explicit FileDescriptor(int fd) noexcept
+        : fd_(fd) {}
+
+    ~FileDescriptor() noexcept {
+        if (fd_ >= 0) {
+            ::close(fd_);
+        }
+    }
+
+    FileDescriptor(const FileDescriptor&)            = delete;
+    FileDescriptor& operator=(const FileDescriptor&) = delete;
+
+    FileDescriptor(FileDescriptor&& other) noexcept
+        : fd_(other.fd_) {
+        other.fd_ = -1;
+    }
+
+    FileDescriptor& operator=(FileDescriptor&& other) noexcept {
+        if (this != &other) {
+            if (fd_ >= 0) {
+                ::close(fd_);
+            }
+            fd_       = other.fd_;
+            other.fd_ = -1;
+        }
+        return *this;
+    }
+
+    [[nodiscard]] int get() const noexcept { return fd_; }
+    [[nodiscard]] bool valid() const noexcept { return fd_ >= 0; }
+
+    int release() noexcept { return std::exchange(fd_, -1); }
+
+private:
+    int fd_ = -1;
 };
+
+// ============================================================================
+// SerialImpl
+// ============================================================================
 
 template <Parser Parser>
 class SerialImpl {
 public:
     SerialImpl() = default;
 
-    ~SerialImpl() noexcept { disconnect(); }
+    ~SerialImpl() noexcept = default;
 
     SerialImpl(const SerialImpl&)            = delete;
     SerialImpl& operator=(const SerialImpl&) = delete;
     SerialImpl(SerialImpl&& other) noexcept
-        : fd_(other.fd_)
-        , connected_(other.connected_)
-        , rx_buf_(std::move(other.rx_buf_)) {
-        other.fd_        = -1;
-        other.connected_ = false;
-    }
+        : fd_(std::move(other.fd_))
+        , device_path_(std::move(other.device_path_))
+        , rx_buf_(std::move(other.rx_buf_)) {}
     SerialImpl& operator=(SerialImpl&& other) noexcept {
         if (this != &other) {
-            disconnect();
-            fd_              = other.fd_;
-            connected_       = other.connected_;
-            rx_buf_          = std::move(other.rx_buf_);
-            other.fd_        = -1;
-            other.connected_ = false;
+            fd_          = std::move(other.fd_);
+            device_path_ = std::move(other.device_path_);
+            rx_buf_      = std::move(other.rx_buf_);
         }
         return *this;
     }
 
-    [[nodiscard]] std::expected<void, SerialError>
+    [[nodiscard]] std::expected<void, std::string>
         connect(const std::string& device_path = "/dev/ttyS4", int baud_rate = 115200) noexcept {
-        fd_ = ::open(device_path.c_str(), O_RDWR | O_NOCTTY | O_NONBLOCK);
-        if (fd_ < 0) {
-            SPDLOG_ERROR("serial open '{}' failed: {}", device_path, std::strerror(errno));
-            return std::unexpected(SerialError::OpenFailed);
+        auto fd = ::open(device_path.c_str(), O_RDWR | O_NOCTTY | O_NONBLOCK);
+        if (fd < 0) {
+            return std::unexpected(
+                fmt::format("open serial device(path={}): {}", device_path, std::strerror(errno)));
         }
 
         termios tty{};
-        if (::tcgetattr(fd_, &tty) != 0) {
-            SPDLOG_ERROR("tcgetattr failed: {}", std::strerror(errno));
-            ::close(fd_);
-            fd_ = -1;
-            return std::unexpected(SerialError::GetAttrFailed);
+        if (::tcgetattr(fd, &tty) != 0) {
+            // fd not yet owned by FileDescriptor, close manually
+            ::close(fd);
+            return std::unexpected(
+                fmt::format(
+                    "tcgetattr serial device(path={}): {}", device_path, std::strerror(errno)));
         }
 
         // Raw mode
@@ -95,41 +130,37 @@ public:
         ::cfsetispeed(&tty, speed);
         ::cfsetospeed(&tty, speed);
 
-        if (::tcsetattr(fd_, TCSANOW, &tty) != 0) {
-            SPDLOG_ERROR("tcsetattr failed: {}", std::strerror(errno));
-            ::close(fd_);
-            fd_ = -1;
-            return std::unexpected(SerialError::SetAttrFailed);
+        if (::tcsetattr(fd, TCSANOW, &tty) != 0) {
+            ::close(fd);
+            return std::unexpected(
+                fmt::format(
+                    "tcsetattr serial device(path={}, baud_rate={}): {}", device_path, baud_rate,
+                    std::strerror(errno)));
         }
 
-        ::tcflush(fd_, TCIOFLUSH);
-        connected_ = true;
-        SPDLOG_INFO("serial connected to {} @ {} baud", device_path, baud_rate);
+        ::tcflush(fd, TCIOFLUSH);
+        fd_          = FileDescriptor(fd);
+        device_path_ = device_path;
+        SPDLOG_INFO("serial mcu connected (path={}, baud_rate={})", device_path, baud_rate);
         return {};
     }
 
-    void disconnect() noexcept {
-        if (fd_ >= 0) {
-            connected_ = false;
-            ::close(fd_);
-            fd_ = -1;
-        }
-    }
+    void disconnect() noexcept { fd_ = FileDescriptor(-1); }
 
     void handle_events() noexcept {
-        if (!connected_ || fd_ < 0)
+        if (!fd_.valid())
             return;
 
         // Poll for available data with zero timeout (non-blocking)
-        struct pollfd pfd{.fd = fd_, .events = POLLIN, .revents = 0};
+        struct pollfd pfd{.fd = fd_.get(), .events = POLLIN, .revents = 0};
         while (::poll(&pfd, 1, 0) > 0 && (pfd.revents & POLLIN)) {
             uint8_t tmp[512];
-            auto n = ::read(fd_, tmp, sizeof(tmp));
+            auto n = ::read(fd_.get(), tmp, sizeof(tmp));
             if (n > 0) {
                 rx_buf_.insert(rx_buf_.end(), tmp, tmp + n);
             } else if (n < 0 && errno != EAGAIN && errno != EWOULDBLOCK) {
-                connected_ = false;
-                SPDLOG_WARN("serial read error: {}", std::strerror(errno));
+                SPDLOG_WARN("serial read error(path={}): {}", device_path_, std::strerror(errno));
+                disconnect();
                 return;
             }
         }
@@ -138,10 +169,12 @@ public:
         while (try_parse_frame()) {}
     }
 
-    bool send_sync(
+    [[nodiscard]] std::expected<void, std::string> send_sync(
         const uint8_t* data, const size_t size, const unsigned timeout_ms = 500) const noexcept {
-        if (!connected_ || fd_ < 0)
-            return false;
+        if (!fd_.valid()) {
+            return std::unexpected(
+                fmt::format("send_sync(path={}): device not connected", device_path_));
+        }
 
         size_t written      = 0;
         const auto deadline = [] {
@@ -153,31 +186,36 @@ public:
                                + static_cast<long long>(timeout_ms) * 1'000'000LL;
 
         while (written < size) {
-            struct pollfd pfd{.fd = fd_, .events = POLLOUT, .revents = 0};
+            struct pollfd pfd{.fd = fd_.get(), .events = POLLOUT, .revents = 0};
             if (::poll(&pfd, 1, 10) <= 0) {
                 // Check timeout
                 struct timespec now;
                 ::clock_gettime(CLOCK_MONOTONIC, &now);
-                if (now.tv_sec * 1'000'000'000LL + now.tv_nsec >= deadline_ns)
-                    return false;
+                if (now.tv_sec * 1'000'000'000LL + now.tv_nsec >= deadline_ns) {
+                    return std::unexpected(
+                        fmt::format(
+                            "serial write timeout(path={}, timeout={}ms, written {}/{}): exceeded "
+                            "deadline",
+                            device_path_, timeout_ms, written, size));
+                }
                 continue;
             }
 
-            auto n = ::write(fd_, data + written, size - written);
+            auto n = ::write(fd_.get(), data + written, size - written);
             if (n < 0) {
                 if (errno == EAGAIN || errno == EWOULDBLOCK)
                     continue;
-                SPDLOG_WARN("serial write error: {}", std::strerror(errno));
-                return false;
+                return std::unexpected(
+                    fmt::format("serial write(path={}): {}", device_path_, std::strerror(errno)));
             }
             written += static_cast<size_t>(n);
         }
 
-        ::tcdrain(fd_);
-        return true;
+        ::tcdrain(fd_.get());
+        return {};
     }
 
-    bool is_connected() const noexcept { return connected_; }
+    bool is_connected() const noexcept { return fd_.valid(); }
 
 private:
     static speed_t baud_to_speed(int baud) noexcept {
@@ -237,24 +275,9 @@ private:
         return true;
     }
 
-    int fd_         = -1;
-    bool connected_ = false;
+    FileDescriptor fd_;
+    std::string device_path_;
     std::vector<uint8_t> rx_buf_;
 };
 
 } // namespace talos_gimbal
-
-// ============================================================================
-// fmt::formatter specializations
-// ============================================================================
-
-namespace fmt {
-
-template <>
-struct formatter<talos_gimbal::SerialError> : formatter<std::string_view> {
-    auto format(talos_gimbal::SerialError e, format_context& ctx) const {
-        return formatter<std::string_view>::format(magic_enum::enum_name(e), ctx);
-    }
-};
-
-} // namespace fmt
