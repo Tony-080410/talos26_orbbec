@@ -48,7 +48,7 @@ top_k = 128
 
 # Required if backend_type = "Axera" (AX650 NPU)
 [axera]
-model_path = "models/the_most_expected_one.axmodel"  # Path to AX650 .axmodel file
+model_path = "models/qat_u16_all.axmodel.axmodel"  # Path to AX650 .axmodel file
 input_width = 768
 input_height = 576
 num_colors = 4
@@ -57,7 +57,7 @@ num_pairs = 12
 strides = [8, 16, 32]
 confidence_threshold = 0.6
 nms_threshold = 0.30
-top_k = 64
+top_k = 128
 
 [readback_roi]
 enabled = false
