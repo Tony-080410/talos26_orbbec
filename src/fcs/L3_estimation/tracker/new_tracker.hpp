@@ -18,6 +18,7 @@
 #include <utility>
 #include <vector>
 
+#include <Eigen/Eigenvalues>
 #include <ceres/jet.h>
 
 namespace fcs::L3 {
@@ -64,7 +65,12 @@ public:
             }
             return Q;
         };
-        auto r = [this](const VecZ& z) -> MatZZ { return model_.R(z); };
+        auto r = [this](const VecZ& z) -> MatZZ {
+            if (update_R_override_.has_value()) {
+                return *update_R_override_;
+            }
+            return model_.R(z);
+        };
 
         ekf_ = EKF(f, h, q, r, P0);
         ekf_.setState(x0);
@@ -86,6 +92,21 @@ public:
         }
         armor_id_ = Model::clamp_armor_id(armor_id);
         x_        = ekf_.update(z);
+        update_R_override_.reset();
+        // Decorrelate independent log-radius states to prevent correlation hallucination
+        if constexpr (Model::kHasLogRadii) {
+            ekf_.decorrelate(LOG_R0, LOG_R1);
+        }
+    }
+
+    void update(const VecZ& z, int armor_id, const MatZZ& R) noexcept {
+        if (!active_) {
+            return;
+        }
+        update_R_override_ = R;
+        armor_id_          = Model::clamp_armor_id(armor_id);
+        x_                 = ekf_.update(z);
+        update_R_override_.reset();
         // Decorrelate independent log-radius states to prevent correlation hallucination
         if constexpr (Model::kHasLogRadii) {
             ekf_.decorrelate(LOG_R0, LOG_R1);
@@ -138,6 +159,7 @@ private:
     Model model_{};
     EKF ekf_{};
     VecX x_{VecX::Zero()};
+    std::optional<MatZZ> update_R_override_{};
 };
 
 class TrackerNew {
@@ -241,7 +263,7 @@ public:
             P0(O_YAW, O_YAW)   = 0.4;
             P0(O_VYAW, O_VYAW) = 100;
 
-            P0(O_Z0, O_Z0) = 1e-4;
+            P0(O_Z0, O_Z0) = 0.1;
             P0(O_Z1, O_Z1) = 0.1;
             P0(O_Z2, O_Z2) = 0.1;
             outpost_target_.emplace();
@@ -372,6 +394,7 @@ private:
         int armor_id{0};
         double cost{0.0};
         typename TargetInfo::VecZ z_update{};
+        typename TargetInfo::MatZZ R_update{};
     };
 
     template <typename TargetInfo>
@@ -404,8 +427,11 @@ private:
         candidates.reserve(obs_indices.size() * static_cast<size_t>(armors_num));
 
         for (const size_t obs_index : obs_indices) {
-            const auto& meas = measurements.measurements[obs_index];
-            const VecZ z_raw = measurement_to_z_(meas);
+            const auto& meas    = measurements.measurements[obs_index];
+            const VecZ z_raw    = measurement_to_z_(meas);
+            const MatZZ R_model = target.model().R(z_raw);
+            const MatZZ R_update =
+                pnp_augmented_measurement_R_<TargetInfo>(R_model, meas.pnp_cov_ypdr);
             for (int id = 0; id < armors_num; ++id) {
                 const VecZ z_pred = target.model().h(target.x(), id);
                 if (!armor_measurement_visible_from_origin(z_pred)) {
@@ -413,7 +439,7 @@ private:
                 }
                 const VecZ nu   = innovation_(z_pred, z_raw);
                 const MatZZ R   = target.model().R(z_raw);
-                const double d2 = mahalanobis_diag_(nu, R);
+                const double d2 = mahalanobis_(nu, R);
                 if (!std::isfinite(d2) || d2 >= matcher_gate_) {
                     continue;
                 }
@@ -428,6 +454,7 @@ private:
                 candidate.armor_id  = id;
                 candidate.cost      = cost;
                 candidate.z_update  = wrap_measurement_(z_pred, z_raw);
+                candidate.R_update  = R_update;
                 candidates.push_back(candidate);
             }
         }
@@ -473,7 +500,7 @@ private:
         }
 
         for (const auto& candidate : selected) {
-            target.update(candidate.z_update, candidate.armor_id);
+            target.update(candidate.z_update, candidate.armor_id, candidate.R_update);
             const bool another_pair =
                 enable_robot_pair_measure && (candidate.armor_id == 1 || candidate.armor_id == 3);
             set_measurement_(candidate.z_update, another_pair);
@@ -540,9 +567,57 @@ private:
         RobotEkfMotionModel::VecZ z;
         z[ARMOR_YAW]       = ypd[0];
         z[ARMOR_PITCH]     = ypd[1];
-        z[ARMOR_DISTANCE]  = ypd[2];
+        z[ARMOR_DISTANCE]  = std::log(std::max(ypd[2], 1e-9));
         z[ARMOR_YAW_ARMOR] = meas.yaw();
         return z;
+    }
+
+    template <typename TargetInfo>
+    static typename TargetInfo::MatZZ pnp_augmented_measurement_R_(
+        const typename TargetInfo::MatZZ& model_R, const Eigen::Matrix4d& pnp_cov_ypdr) noexcept {
+        using MatZZ = typename TargetInfo::MatZZ;
+
+        const MatZZ base_R = make_spd_R_(model_R);
+        if (!pnp_cov_ypdr.allFinite()) {
+            return base_R;
+        }
+
+        MatZZ pnp_R = 0.5 * (pnp_cov_ypdr + pnp_cov_ypdr.transpose());
+        if (!pnp_R.allFinite()) {
+            return base_R;
+        }
+
+        Eigen::SelfAdjointEigenSolver<MatZZ> es(pnp_R);
+        if (es.info() == Eigen::Success && pnp_R.allFinite()) {
+            const auto evals = es.eigenvalues().cwiseMax(0.0);
+            pnp_R = es.eigenvectors() * evals.asDiagonal() * es.eigenvectors().transpose();
+            pnp_R = 0.5 * (pnp_R + pnp_R.transpose());
+        }
+
+        const MatZZ combined_R = base_R + pnp_R;
+        return make_spd_R_(combined_R);
+    }
+
+    template <typename MatZZ>
+    static MatZZ make_spd_R_(const MatZZ& input) noexcept {
+        MatZZ R = 0.5 * (input + input.transpose());
+        for (int i = 0; i < MatZZ::RowsAtCompileTime; ++i) {
+            if (!std::isfinite(R(i, i)) || R(i, i) < 1e-8) {
+                R(i, i) = 1e-8;
+            }
+        }
+
+        Eigen::LDLT<MatZZ> ldlt(R);
+        if (R.allFinite() && ldlt.info() == Eigen::Success && ldlt.isPositive()) {
+            return R;
+        }
+
+        MatZZ fallback = MatZZ::Zero();
+        for (int i = 0; i < MatZZ::RowsAtCompileTime; ++i) {
+            const double var = input(i, i);
+            fallback(i, i)   = std::isfinite(var) ? std::max(1e-8, var) : 1e6;
+        }
+        return fallback;
     }
 
     template <typename VecZ>
@@ -563,16 +638,6 @@ private:
         z[ARMOR_DISTANCE]  = z_raw[ARMOR_DISTANCE];
         z[ARMOR_YAW_ARMOR] = unwrap_rad(z_pred[ARMOR_YAW_ARMOR], z_raw[ARMOR_YAW_ARMOR]);
         return z;
-    }
-
-    template <typename VecZ, typename MatZZ>
-    static double mahalanobis_diag_(const VecZ& nu, const MatZZ& R) noexcept {
-        double d2 = 0.0;
-        for (int i = 0; i < VecZ::RowsAtCompileTime; ++i) {
-            const double var = std::max(1e-9, R(i, i));
-            d2 += nu[i] * nu[i] / var;
-        }
-        return d2;
     }
 
     /// Full Mahalanobis distance with LDLT decomposition for non-diagonal R.

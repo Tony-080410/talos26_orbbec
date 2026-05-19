@@ -83,6 +83,86 @@ std::array<cv::Point2f, 4> sort_corners(const std::array<cv::Point2f, 4>& points
         && snapshot.tracker.target_color == detection.color;
 }
 
+[[nodiscard]] Eigen::Vector3d
+    camera_translation_to_ypd_local(const Eigen::Vector3d& translation) noexcept {
+    const double horizontal = std::hypot(translation.x(), translation.z());
+    return {
+        std::atan2(translation.x(), translation.z()),
+        std::atan2(translation.y(), horizontal),
+        translation.norm(),
+    };
+}
+
+[[nodiscard]] Eigen::Matrix3d camera_ypld_to_xyz_jacobian(const Eigen::Vector3d& ypd) noexcept {
+    const double yaw      = ypd.x();
+    const double pitch    = ypd.y();
+    const double distance = ypd.z();
+
+    const double sy = std::sin(yaw);
+    const double cy = std::cos(yaw);
+    const double sp = std::sin(pitch);
+    const double cp = std::cos(pitch);
+
+    Eigen::Matrix3d J;
+    J << distance * cp * cy, -distance * sp * sy, distance * cp * sy, 0.0, distance * cp,
+        distance * sp, -distance * cp * sy, -distance * sp * cy, distance * cp * cy;
+    return J;
+}
+
+[[nodiscard]] Eigen::Matrix3d odom_xyz_to_ypld_jacobian(const Eigen::Vector3d& xyz) noexcept {
+    const double x     = xyz.x();
+    const double y     = xyz.y();
+    const double z     = xyz.z();
+    const double r2_xy = x * x + y * y;
+    const double r2    = r2_xy + z * z;
+    const double r_xy  = std::sqrt(r2_xy);
+    const double r     = std::sqrt(r2);
+
+    if (r_xy < 1e-10 || r < 1e-10) {
+        return Eigen::Matrix3d::Identity();
+    }
+
+    Eigen::Matrix3d J;
+    J(0, 0) = -y / r2_xy;
+    J(0, 1) = x / r2_xy;
+    J(0, 2) = 0.0;
+
+    const double denom = r2 * r_xy;
+    J(1, 0)            = x * z / denom;
+    J(1, 1)            = y * z / denom;
+    J(1, 2)            = -r_xy / r2;
+
+    J(2, 0) = x / r2;
+    J(2, 1) = y / r2;
+    J(2, 2) = z / r2;
+    return J;
+}
+
+[[nodiscard]] Eigen::Matrix4d reframe_camera_pnp_cov_ypdr_to_odom(
+    const CameraArmorMeasurement& camera_measurement, const ArmorMeasurement& odom_measurement,
+    const fast_tf::FrameTransform<fast_tf::odom, fast_tf::camera_optical>& T_odom_camera) noexcept {
+    if (!camera_measurement.pnp_cov_ypdr.allFinite()) {
+        return Eigen::Matrix4d::Identity() * 1e6;
+    }
+
+    const Eigen::Vector3d camera_ypd =
+        camera_translation_to_ypd_local(camera_measurement.transform.translation());
+    const Eigen::Matrix3d J_camera_xyz = camera_ypld_to_xyz_jacobian(camera_ypd);
+    const Eigen::Matrix3d J_odom_ypd =
+        odom_xyz_to_ypld_jacobian(odom_measurement.transform.translation());
+
+    Eigen::Matrix4d J   = Eigen::Matrix4d::Zero();
+    J.block<3, 3>(0, 0) = J_odom_ypd * T_odom_camera.rotation() * J_camera_xyz;
+    J(3, 3)             = 1.0;
+
+    Eigen::Matrix4d cov = J * camera_measurement.pnp_cov_ypdr * J.transpose();
+    cov                 = 0.5 * (cov + cov.transpose());
+    if (!cov.allFinite()) {
+        return Eigen::Matrix4d::Identity() * 1e6;
+    }
+    return cov;
+}
+
 [[nodiscard]] std::vector<PnPSolver::PosePrior> make_pose_priors(
     const ArmorDetection& detection, const TrackerReadbackSnapshot& snapshot,
     const fast_tf::FrameTransform<fast_tf::camera_optical, fast_tf::odom>& T_odom_camera,
@@ -352,7 +432,10 @@ void register_detection_systems(talos::Scheduler& scheduler) noexcept {
             odom_measurements.reserve(measurements.size());
 
             for (const auto& meas : measurements) {
-                odom_measurements.push_back(meas.reframe(T_odom_camera));
+                auto odom_measurement = meas.reframe(T_odom_camera);
+                odom_measurement.pnp_cov_ypdr =
+                    reframe_camera_pnp_cov_ypdr_to_odom(meas, odom_measurement, T_odom_camera);
+                odom_measurements.push_back(std::move(odom_measurement));
             }
 
             measurement_out.write(

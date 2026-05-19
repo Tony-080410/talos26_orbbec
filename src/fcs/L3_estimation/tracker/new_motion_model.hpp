@@ -50,9 +50,12 @@ struct RobotEkfMotionModel {
         Scalar sigma_r1    = 1.0;  // log(R1) drift noise in log-space
         Scalar sigma_h     = 0.5;  // Height H drift noise
         // Measurement noise parameters (variance domain).
-        Scalar meas_yaw_var_floor       = 4e-3;
-        Scalar meas_pitch_var_floor     = 4e-3;
-        Scalar meas_dist_var_floor      = 0.3;
+        Scalar meas_yaw_var_floor   = 4e-3;
+        Scalar meas_pitch_var_floor = 4e-3;
+        // Variance of log(distance), so sqrt(var) is approximately relative range sigma.
+        // Keep this as the model/systematic floor; range-dependent PnP geometry is added
+        // separately from L2 as covariance, not baked into this constant.
+        Scalar meas_dist_var_floor      = 2.5e-3;
         Scalar meas_dist_delta_angle_k  = 1.0;
         Scalar meas_armor_yaw_var_floor = 9e-2;
         Scalar meas_armor_yaw_range_k   = 1.0 / 200.0;
@@ -84,8 +87,8 @@ struct RobotEkfMotionModel {
         using std::cos;
         using std::exp;
         using std::hypot;
+        using std::log;
         using std::sin;
-        using std::sqrt;
 
         const int id       = clamp_armor_id(armor_id);
         const bool is_high = (id == kHighArmorIdA || id == kHighArmorIdB);
@@ -102,7 +105,7 @@ struct RobotEkfMotionModel {
 
         z[ARMOR_YAW]       = atan2(armor_y, armor_x);
         z[ARMOR_PITCH]     = atan2(-armor_z, horizontal);
-        z[ARMOR_DISTANCE]  = distance;
+        z[ARMOR_DISTANCE]  = log(distance + T(1e-9));
         z[ARMOR_YAW_ARMOR] = yaw;
     }
 
@@ -153,27 +156,28 @@ struct RobotEkfMotionModel {
     [[nodiscard]] MatZZ R(const VecZ& z) const noexcept {
         MatZZ R                  = MatZZ::Zero();
         const double delta_angle = shortest_rad(z[ARMOR_YAW], z[ARMOR_YAW_ARMOR]);
+        const double distance    = std::exp(std::clamp(z[ARMOR_DISTANCE], -20.0, 20.0));
         R(0, 0)                  = std::max(1e-8, params.meas_yaw_var_floor);
         R(1, 1)                  = std::max(1e-8, params.meas_pitch_var_floor);
         R(2, 2)                  = std::max(
             1e-8, params.meas_dist_var_floor
                       + params.meas_dist_delta_angle_k * std::log(std::abs(delta_angle) + 1.0));
         R(3, 3) = std::max(
-            1e-8,
-            params.meas_armor_yaw_var_floor
-                + params.meas_armor_yaw_range_k * std::log(std::abs(z[ARMOR_DISTANCE]) + 1.0));
+            1e-8, params.meas_armor_yaw_var_floor
+                      + params.meas_armor_yaw_range_k * std::log(distance + 1.0));
         return R;
     }
 
     /// Measurement noise diagonal (match reference: +0.3 not +1.0)
     [[nodiscard]] Eigen::Matrix<Scalar, NZ, 1> R_diag(const VecZ& z) const noexcept {
         const Scalar delta_angle = shortest_rad(z[ARMOR_YAW], z[ARMOR_YAW_ARMOR]);
+        const Scalar distance    = std::exp(std::clamp(z[ARMOR_DISTANCE], -20.0, 20.0));
         Eigen::Matrix<Scalar, NZ, 1> R_dig;
         R_dig << params.meas_yaw_var_floor, params.meas_pitch_var_floor,
             params.meas_dist_var_floor
                 + params.meas_dist_delta_angle_k * std::log(std::abs(delta_angle) + 1.0),
             params.meas_armor_yaw_var_floor
-                + params.meas_armor_yaw_range_k * std::log(std::abs(z[ARMOR_DISTANCE]) + 1.0);
+                + params.meas_armor_yaw_range_k * std::log(distance + 1.0);
         return R_dig;
     }
 };
@@ -198,9 +202,14 @@ struct OutpostEkfMotionModel {
         Scalar sigma_q_z   = 1.0;
         Scalar sigma_a_yaw = 1.0;
 
-        // 观测噪声（和距离、yaw 误差有关）
-        Scalar meas_dist_k = 0.43;  // 距离权重的系数 K
-        Scalar yaw_log_k   = 0.005; // yaw 噪声前的系数
+        // Measurement noise floor for log-distance. Range-dependent PnP geometry is added
+        // separately from L2 as covariance.
+        Scalar meas_yaw_var_floor       = 4e-3;
+        Scalar meas_pitch_var_floor     = 4e-3;
+        Scalar meas_log_dist_var_floor  = 2.5e-3;
+        Scalar meas_dist_k              = 0.43;
+        Scalar meas_armor_yaw_var_floor = 9e-2;
+        Scalar yaw_log_k                = 0.005;
     };
     Params params{};
 
@@ -225,8 +234,8 @@ struct OutpostEkfMotionModel {
         using std::atan2;
         using std::cos;
         using std::hypot;
+        using std::log;
         using std::sin;
-        using std::sqrt;
 
         const int id       = clamp_armor_id(armor_id);
         const T angle_step = T(2.0 * std::numbers::pi / static_cast<double>(ARMORS_NUM));
@@ -241,7 +250,7 @@ struct OutpostEkfMotionModel {
 
         z[ARMOR_YAW]       = atan2(armor_y, armor_x);
         z[ARMOR_PITCH]     = atan2(-armor_z, horizontal);
-        z[ARMOR_DISTANCE]  = distance;
+        z[ARMOR_DISTANCE]  = log(distance + T(1e-9));
         z[ARMOR_YAW_ARMOR] = yaw;
     }
 
@@ -289,19 +298,29 @@ struct OutpostEkfMotionModel {
     [[nodiscard]] MatZZ R(const VecZ& z) const noexcept {
         MatZZ R                  = MatZZ::Zero();
         const double delta_angle = shortest_rad(z[ARMOR_YAW], z[ARMOR_YAW_ARMOR]);
-        // Keep measurement model aligned with ISRCKF OutpostModel::R_diag.
-        R(0, 0) = 4e-3;
-        R(1, 1) = 4e-3;
-        R(2, 2) = std::log(std::abs(delta_angle) + 1.0) + 0.3;
-        R(3, 3) = std::log(std::abs(z[ARMOR_DISTANCE]) + 1.0) / 200.0 + 9e-2;
+        const double distance    = std::exp(std::clamp(z[ARMOR_DISTANCE], -20.0, 20.0));
+        R(0, 0)                  = std::max(1e-8, params.meas_yaw_var_floor);
+        R(1, 1)                  = std::max(1e-8, params.meas_pitch_var_floor);
+        R(2, 2)                  = std::max(
+            1e-8, params.meas_log_dist_var_floor
+                      + params.meas_dist_k * std::log(std::abs(delta_angle) + 1.0));
+        R(3, 3) = std::max(
+            1e-8, params.meas_armor_yaw_var_floor + params.yaw_log_k * std::log(distance + 1.0));
         return R;
     }
 
     Eigen::Matrix<Scalar, NZ, 1> R_diag(const VecZ& z) const {
-        const double delta_angle = shortest_rad(z[0], z[3]);
+        const double delta_angle = shortest_rad(z[ARMOR_YAW], z[ARMOR_YAW_ARMOR]);
+        const double distance    = std::exp(std::clamp(z[ARMOR_DISTANCE], -20.0, 20.0));
         Eigen::Matrix<Scalar, NZ, 1> R_dig;
-        R_dig << 4e-3, 4e-3, std::log(std::abs(delta_angle) + 1.0) + 0.3,
-            std::log(std::abs(z[ARMOR_DISTANCE]) + 1.0) / 200.0 + 9e-2;
+        R_dig << std::max(1e-8, params.meas_yaw_var_floor),
+            std::max(1e-8, params.meas_pitch_var_floor),
+            std::max(
+                1e-8, params.meas_log_dist_var_floor
+                          + params.meas_dist_k * std::log(std::abs(delta_angle) + 1.0)),
+            std::max(
+                1e-8,
+                params.meas_armor_yaw_var_floor + params.yaw_log_k * std::log(distance + 1.0));
         return R_dig;
     }
 };
