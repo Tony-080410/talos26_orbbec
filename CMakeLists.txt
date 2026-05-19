@@ -563,14 +563,14 @@ foreach(_lib IN LISTS TALOS_FFMPEG_RUNTIME_LIBS)
 endforeach()
 
 file(GLOB TALOS_FETCHED_RUNTIME_LIBS
-"${CMAKE_BINARY_DIR}/_deps/fmt-build/libfmt*.so"
-"${CMAKE_BINARY_DIR}/_deps/fmt-build/libfmt*.so.*"
-"${CMAKE_BINARY_DIR}/_deps/fmt-build/libfmt*.dylib"
-"${CMAKE_BINARY_DIR}/_deps/fmt-build/libfmt*.dylib*"
-"${CMAKE_BINARY_DIR}/_deps/spdlog-build/libspdlog*.so"
-"${CMAKE_BINARY_DIR}/_deps/spdlog-build/libspdlog*.so.*"
-"${CMAKE_BINARY_DIR}/_deps/spdlog-build/libspdlog*.dylib"
-"${CMAKE_BINARY_DIR}/_deps/spdlog-build/libspdlog*.dylib*"
+    "${CMAKE_BINARY_DIR}/_deps/fmt-build/libfmt*.so"
+    "${CMAKE_BINARY_DIR}/_deps/fmt-build/libfmt*.so.*"
+    "${CMAKE_BINARY_DIR}/_deps/fmt-build/libfmt*.dylib"
+    "${CMAKE_BINARY_DIR}/_deps/fmt-build/libfmt*.dylib*"
+    "${CMAKE_BINARY_DIR}/_deps/spdlog-build/libspdlog*.so"
+    "${CMAKE_BINARY_DIR}/_deps/spdlog-build/libspdlog*.so.*"
+    "${CMAKE_BINARY_DIR}/_deps/spdlog-build/libspdlog*.dylib"
+    "${CMAKE_BINARY_DIR}/_deps/spdlog-build/libspdlog*.dylib*"
     "${CMAKE_BINARY_DIR}/_deps/onnxruntime-src/lib/*.dylib*"
     "${CMAKE_BINARY_DIR}/_deps/onnxruntime-src/lib/*.so*"
 )
