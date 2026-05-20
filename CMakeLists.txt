@@ -290,6 +290,7 @@ set(FCS_SOURCES
         src/fcs/L2_perception/armor/backends/traditional_classifier.cpp
         src/fcs/L3_estimation/tracker_systems.cpp
         src/fcs/L3_estimation/extended_kalman_filter.cpp
+        src/fcs/L3_estimation/cubature_kalman_filter.cpp
         src/fcs/L3_estimation/energy_meter_solver/energy_meter_tracker.cpp
         src/fcs/L3_estimation/energy_meter_solver/voter.cpp
         src/fcs/L3_estimation/energy_meter/energy_meter_systems.cpp
