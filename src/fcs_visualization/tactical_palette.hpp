@@ -88,8 +88,8 @@ constexpr ::foxglove::schemas::Color CANDIDATE_RUNNER_UP  = {1.00, 0.75, 0.20, 0
 constexpr ::foxglove::schemas::Color CANDIDATE_ELIMINATED = {0.60, 0.60, 0.60, 0.25};
 
 // Trajectory colors
-constexpr ::foxglove::schemas::Color TRAJECTORY_FIRE = {0.50, 1.00, 0.30, 0.40};
-constexpr ::foxglove::schemas::Color TRAJECTORY_HOLD = {0.30, 0.40, 0.50, 0.25};
+constexpr ::foxglove::schemas::Color TRAJECTORY_FIRE = {0.50, 1.00, 0.30, 0.10};
+constexpr ::foxglove::schemas::Color TRAJECTORY_HOLD = {0.30, 0.40, 0.50, 0.05};
 
 // MPC colors
 constexpr ::foxglove::schemas::Color MPC_PRESENT   = {0.00, 1.00, 0.80, 0.40};
