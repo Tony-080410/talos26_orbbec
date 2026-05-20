@@ -1,6 +1,6 @@
 #include "L1_sensor/output_interface.hpp"
+
 #include "chiral/gimbal.hpp"
-#include "core/time.hpp"
 #include "quanta/stream_transport.hpp"
 #include "shm_client.hpp"
 #include "talos_gimbal/mcu_device.hpp"
@@ -8,7 +8,14 @@
 
 #include <spdlog/spdlog.h>
 
+#include <algorithm>
+#include <cstring>
+
 namespace fcs::L1 {
+
+namespace {
+constexpr double kRadToDeg = 180.0 / M_PI;
+} // namespace
 
 // ============================================================================
 // IpcOutput 实现
@@ -19,12 +26,12 @@ IpcOutput::IpcOutput(std::shared_ptr<ipc::ShmClient> client) noexcept
 
 void IpcOutput::send(const L5::WeaponCommand& cmd) const noexcept {
     if (!client_) [[unlikely]] {
+        SPDLOG_ERROR("IpcOutput::send: client is null, dropping weapon command");
         return;
     }
 
-    // 转换: rad -> deg
-    const auto yaw_deg    = static_cast<float>(cmd.yaw * detail::RAD_TO_DEG);
-    const auto pitch_deg  = -static_cast<float>(cmd.pitch * detail::RAD_TO_DEG);
+    const auto yaw_deg    = static_cast<float>(cmd.yaw * kRadToDeg);
+    const auto pitch_deg  = -static_cast<float>(cmd.pitch * kRadToDeg);
     const auto distance_m = static_cast<float>(cmd.distance);
 
     client_->send_gimbal_cmd(yaw_deg, pitch_deg, distance_m, cmd.fire);
@@ -39,15 +46,21 @@ void IpcOutput::send_quanta(const quanta::TransportChunk& chunk) const noexcept 
 // McuOutput 实现
 // ============================================================================
 
+static_assert(std::is_trivially_copyable_v<talos_gimbal::SendSimpleVisionData>);
+static_assert(std::is_trivially_copyable_v<talos_gimbal::SendVisionData>);
+static_assert(std::is_trivially_copyable_v<talos_gimbal::SendQuantaData>);
+
 McuOutput::McuOutput(std::shared_ptr<talos_gimbal::McuDeviceHandle> device) noexcept
     : device_(std::move(device)) {}
 
 void McuOutput::send(const L5::WeaponCommand& cmd) const noexcept {
     if (!device_) [[unlikely]] {
+        SPDLOG_ERROR("McuOutput::send: device is null, dropping weapon command");
         return;
     }
 
     if (!device_->is_connected()) [[unlikely]] {
+        SPDLOG_ERROR("McuOutput::send: device disconnected, dropping weapon command");
         return;
     }
 
@@ -61,11 +74,12 @@ void McuOutput::send(const L5::WeaponCommand& cmd) const noexcept {
                          },
             .data =
                 {
-                         .target_yaw = static_cast<float>(cmd.yaw * detail::RAD_TO_DEG),
+                         .target_yaw = static_cast<float>(cmd.yaw * kRadToDeg),
                          },
             .eof = talos_gimbal::HeaderFrame::EoF(),
         };
-        if (auto result = device_->send_sync(reinterpret_cast<uint8_t*>(&packet), sizeof(packet));
+        if (auto result =
+                device_->send_sync(reinterpret_cast<const uint8_t*>(&packet), sizeof(packet));
             !result) {
             SPDLOG_WARN("send simple vision data: {}", result.error());
         }
@@ -80,17 +94,18 @@ void McuOutput::send(const L5::WeaponCommand& cmd) const noexcept {
             .data =
                 {
                          .fire_advice  = cmd.fire,
-                         .target_yaw   = static_cast<float>(cmd.yaw * detail::RAD_TO_DEG),
-                         .target_pitch = -static_cast<float>(cmd.pitch * detail::RAD_TO_DEG),
-                         .ref_yaw_v    = static_cast<float>(cmd.yaw_vel * detail::RAD_TO_DEG),
-                         .ref_pitch_v  = -static_cast<float>(cmd.pitch_vel * detail::RAD_TO_DEG),
-                         .ref_yaw_a    = static_cast<float>(cmd.yaw_accel * detail::RAD_TO_DEG),
-                         .ref_pitch_a  = -static_cast<float>(cmd.pitch_accel * detail::RAD_TO_DEG),
+                         .target_yaw   = static_cast<float>(cmd.yaw * kRadToDeg),
+                         .target_pitch = -static_cast<float>(cmd.pitch * kRadToDeg),
+                         .ref_yaw_v    = static_cast<float>(cmd.yaw_vel * kRadToDeg),
+                         .ref_pitch_v  = -static_cast<float>(cmd.pitch_vel * kRadToDeg),
+                         .ref_yaw_a    = static_cast<float>(cmd.yaw_accel * kRadToDeg),
+                         .ref_pitch_a  = -static_cast<float>(cmd.pitch_accel * kRadToDeg),
                          .distance     = static_cast<float>(cmd.distance),
                          },
             .eof = talos_gimbal::HeaderFrame::EoF(),
         };
-        if (auto result = device_->send_sync(reinterpret_cast<uint8_t*>(&packet), sizeof(packet));
+        if (auto result =
+                device_->send_sync(reinterpret_cast<const uint8_t*>(&packet), sizeof(packet));
             !result) {
             SPDLOG_WARN("send vision data: {}", result.error());
         }
@@ -107,18 +122,14 @@ void McuOutput::send_quanta(const quanta::TransportChunk& chunk) const noexcept 
     if (device_->is_serial()) {
         return;
     }
-    // evil hack for extended data length
+
+    // extended data length encoding: u12 length stored in (len_lo, id_hi[3:0])
     constexpr auto data_length_raw = sizeof(talos_gimbal::SendQuantaData::data);
-    // maximum extended data length is stored as u12
-    static_assert(data_length_raw < 4096);
-    // lower bits
-    // higher bits, 4bits available
-    constexpr uint8_t data_length_hi = data_length_raw >> 8;
-    // double check for only 4bits
-    static_assert((data_length_hi & 0b1111) == data_length_hi);
-    constexpr uint8_t data_length_protocol = data_length_raw & 0b11111111;
-    // actual id is 0x04
-    constexpr uint8_t data_id_protocol = (data_length_hi << 4) | 0x04;
+    static_assert(data_length_raw < 4096, "data length exceeds u12 range");
+    constexpr uint8_t data_length_hi = static_cast<uint8_t>(data_length_raw >> 8);
+    static_assert((data_length_hi & 0b1111) == data_length_hi, "length hi must fit in 4 bits");
+    constexpr uint8_t data_length_protocol = static_cast<uint8_t>(data_length_raw & 0xFF);
+    constexpr uint8_t data_id_protocol     = static_cast<uint8_t>((data_length_hi << 4) | 0x04);
 
     constexpr std::size_t kMaxCustomBlockBytes = 298;
 
@@ -127,7 +138,7 @@ void McuOutput::send_quanta(const quanta::TransportChunk& chunk) const noexcept 
 
     std::size_t remaining = bytes.size();
     std::size_t offset    = 0;
-    static uint32_t s     = 0;
+
     while (remaining > 0) {
         const std::size_t this_len = std::min(remaining, kMaxCustomBlockBytes);
 
@@ -138,7 +149,7 @@ void McuOutput::send_quanta(const quanta::TransportChunk& chunk) const noexcept 
                          .len = data_length_protocol,
                          .id  = data_id_protocol,
                          },
-            .time_stamp = static_cast<uint32_t>(s++),
+            .time_stamp = quanta_seq_.fetch_add(1, std::memory_order_relaxed),
             .data =
                 {
                          .custom_byte_block_len = static_cast<uint16_t>(this_len),
@@ -149,7 +160,8 @@ void McuOutput::send_quanta(const quanta::TransportChunk& chunk) const noexcept 
 
         std::memcpy(packet.data.custom_byte_block, ptr + offset, this_len);
 
-        if (auto result = device_->send_sync(reinterpret_cast<uint8_t*>(&packet), sizeof(packet));
+        if (auto result =
+                device_->send_sync(reinterpret_cast<const uint8_t*>(&packet), sizeof(packet));
             !result) {
             SPDLOG_WARN("send quanta data: {}", result.error());
         }
@@ -159,11 +171,16 @@ void McuOutput::send_quanta(const quanta::TransportChunk& chunk) const noexcept 
     }
 }
 
+// ============================================================================
+// ChiralOutput 实现
+// ============================================================================
+
 ChiralOutput::ChiralOutput(std::shared_ptr<talos::chiral::gimbal::TalosEndpoint> device) noexcept
     : device_(std::move(device)) {}
 
 void ChiralOutput::send(const L5::WeaponCommand& cmd) const noexcept {
     if (!device_) [[unlikely]] {
+        SPDLOG_ERROR("ChiralOutput::send: device is null, dropping weapon command");
         return;
     }
 
@@ -171,12 +188,12 @@ void ChiralOutput::send(const L5::WeaponCommand& cmd) const noexcept {
         talos::chiral::gimbal::McuRequest{
             .timestamp_ns_system_clock = static_cast<int64_t>(cmd.timestamp_ns),
             .fire_advice               = cmd.fire,
-            .target_yaw                = static_cast<float>(cmd.yaw * detail::RAD_TO_DEG),
-            .target_pitch              = -static_cast<float>(cmd.pitch * detail::RAD_TO_DEG),
-            .ref_yaw_v                 = static_cast<float>(cmd.yaw_vel * detail::RAD_TO_DEG),
-            .ref_pitch_v               = -static_cast<float>(cmd.pitch_vel * detail::RAD_TO_DEG),
-            .ref_yaw_a                 = static_cast<float>(cmd.yaw_accel * detail::RAD_TO_DEG),
-            .ref_pitch_a               = -static_cast<float>(cmd.pitch_accel * detail::RAD_TO_DEG),
+            .target_yaw                = static_cast<float>(cmd.yaw * kRadToDeg),
+            .target_pitch              = -static_cast<float>(cmd.pitch * kRadToDeg),
+            .ref_yaw_v                 = static_cast<float>(cmd.yaw_vel * kRadToDeg),
+            .ref_pitch_v               = -static_cast<float>(cmd.pitch_vel * kRadToDeg),
+            .ref_yaw_a                 = static_cast<float>(cmd.yaw_accel * kRadToDeg),
+            .ref_pitch_a               = -static_cast<float>(cmd.pitch_accel * kRadToDeg),
             .distance                  = static_cast<float>(cmd.distance),
         });
 }
@@ -187,21 +204,38 @@ void ChiralOutput::send_quanta(const quanta::TransportChunk& chunk) const noexce
 }
 
 // ============================================================================
+// OutputInterface 实现
+// ============================================================================
+
+OutputInterface::OutputInterface(OutputMode mode) noexcept
+    : mode_(std::move(mode)) {}
+
+void OutputInterface::send(const L5::WeaponCommand& cmd) noexcept {
+    std::visit([&cmd](auto& output) { output.send(cmd); }, mode_);
+}
+
+void OutputInterface::send_quanta(const quanta::TransportChunk& chunk) noexcept {
+    std::visit([&chunk](auto& output) { output.send_quanta(chunk); }, mode_);
+}
+
+// ============================================================================
 // OutputInterface 工厂方法
 // ============================================================================
 
-std::expected<OutputInterface, std::string>
-    OutputInterface::create_ipc(std::shared_ptr<ipc::ShmClient> client) noexcept {
+auto OutputInterface::create_ipc(std::shared_ptr<ipc::ShmClient> client) noexcept
+    -> std::expected<OutputInterface, std::string> {
     return OutputInterface(IpcOutput(std::move(client)));
 }
 
-[[nodiscard]] static std::expected<OutputInterface, std::string>
-    create_chiral(std::shared_ptr<talos::chiral::gimbal::TalosEndpoint> client) noexcept {
+auto OutputInterface::create_chiral(
+    std::shared_ptr<talos::chiral::gimbal::TalosEndpoint> client) noexcept
+    -> std::expected<OutputInterface, std::string> {
     return OutputInterface(ChiralOutput(std::move(client)));
 }
 
-std::expected<OutputInterface, std::string> OutputInterface::create_usb(
-    const uint16_t vendor_id, const std::optional<uint16_t> product_id) noexcept {
+auto OutputInterface::create_usb(
+    const uint16_t vendor_id, const std::optional<uint16_t> product_id) noexcept
+    -> std::expected<OutputInterface, std::string> {
     auto device_result = talos_gimbal::McuDeviceHandle::create_usb(vendor_id, product_id);
     if (!device_result) {
         return std::unexpected(std::move(device_result).error());
@@ -210,8 +244,8 @@ std::expected<OutputInterface, std::string> OutputInterface::create_usb(
         std::make_shared<talos_gimbal::McuDeviceHandle>(std::move(device_result).value())));
 }
 
-std::expected<OutputInterface, std::string>
-    OutputInterface::create_serial(const std::string& device_path, int baud_rate) noexcept {
+auto OutputInterface::create_serial(const std::string& device_path, int baud_rate) noexcept
+    -> std::expected<OutputInterface, std::string> {
     auto device_result = talos_gimbal::McuDeviceHandle::create_serial(device_path, baud_rate);
     if (!device_result) {
         return std::unexpected(std::move(device_result).error());
