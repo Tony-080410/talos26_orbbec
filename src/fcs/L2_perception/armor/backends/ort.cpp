@@ -13,7 +13,10 @@
 #include <onnxruntime_c_api.h>
 #include <spdlog/common.h>
 #include <spdlog/spdlog-inl.h>
+#include <sstream>
 #include <string>
+#include <string_view>
+#include <unordered_map>
 #include <vector>
 
 #ifdef __APPLE__
@@ -41,6 +44,20 @@ struct ClassMapping {
     ArmorColor color;
     ArmorName name;
 };
+
+#if defined(__linux__) && defined(__x86_64__)
+[[nodiscard]] bool provider_available(
+    const std::vector<std::string>& providers, std::string_view provider_name) noexcept {
+    return std::any_of(providers.begin(), providers.end(), [&](const std::string& provider) {
+        return provider == provider_name;
+    });
+}
+
+[[nodiscard]] std::string pick_openvino_device_type() noexcept {
+    // Prefer FP16 on Intel Xe-class iGPU. Fall back to FP32 if session creation rejects it.
+    return "GPU_FP16";
+}
+#endif
 
 constexpr std::array<ClassMapping, 64> g_class_mappings = {
     {
@@ -216,11 +233,51 @@ std::expected<OrtBackend, std::string> OrtBackend::create(Config config) noexcep
         const auto& cfg = backend.get_config();
 
         auto& impl = *backend.impl_;
+        std::string selected_provider{"CPUExecutionProvider"};
+        const auto available_providers = Ort::GetAvailableProviders();
 
         impl.session_options.SetIntraOpNumThreads(2);
         impl.session_options.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
         impl.session_options.SetExecutionMode(ExecutionMode::ORT_SEQUENTIAL);
         impl.session_options.SetDeterministicCompute(true);
+#if defined(__linux__) && defined(__x86_64__)
+        if (provider_available(available_providers, "OpenVINOExecutionProvider")
+            || provider_available(available_providers, "OpenVINO")) {
+            const auto openvino_device_type = pick_openvino_device_type();
+
+            try {
+                OrtOpenVINOProviderOptions openvino_options{};
+                openvino_options.device_type = openvino_device_type.c_str();
+                openvino_options.cache_dir   = cfg.cache_dir.empty() ? "" : cfg.cache_dir.c_str();
+
+                impl.session_options.AppendExecutionProvider_OpenVINO(openvino_options);
+                selected_provider = "OpenVINOExecutionProvider(" + openvino_device_type + ")";
+            } catch (const std::exception& gpu_fp16_error) {
+                SPDLOG_WARN(
+                    "[OrtBackend] Failed to enable OpenVINO {}: {}. Retrying with GPU_FP32.",
+                    openvino_device_type, gpu_fp16_error.what());
+
+                try {
+                    OrtOpenVINOProviderOptions openvino_options{};
+                    static constexpr char kFallbackDeviceType[] = "GPU_FP32";
+                    openvino_options.device_type                = kFallbackDeviceType;
+                    openvino_options.cache_dir = cfg.cache_dir.empty() ? "" : cfg.cache_dir.c_str();
+
+                    impl.session_options.AppendExecutionProvider_OpenVINO(openvino_options);
+                    selected_provider = "OpenVINOExecutionProvider(GPU_FP32)";
+                } catch (const std::exception& gpu_fp32_error) {
+                    SPDLOG_WARN(
+                        "[OrtBackend] Failed to enable OpenVINO GPU execution: {}. Falling back "
+                        "to CPUExecutionProvider.",
+                        gpu_fp32_error.what());
+                }
+            }
+        } else {
+            SPDLOG_INFO(
+                "[OrtBackend] OpenVINOExecutionProvider is not available in this ONNX Runtime "
+                "build. Falling back to CPUExecutionProvider.");
+        }
+#endif
 #ifdef __APPLE__
         std::unordered_map<std::string, std::string> coreml_options;
 
@@ -232,6 +289,7 @@ std::expected<OrtBackend, std::string> OrtBackend::create(Config config) noexcep
         coreml_options["ModelCacheDirectory"]                = cfg.cache_dir;
 
         impl.session_options.AppendExecutionProvider("CoreML", coreml_options);
+        selected_provider = "CoreMLExecutionProvider";
 #endif
         impl.session =
             std::make_unique<Ort::Session>(impl.env, cfg.model_path.c_str(), impl.session_options);
@@ -270,9 +328,10 @@ std::expected<OrtBackend, std::string> OrtBackend::create(Config config) noexcep
         impl.input_shape = std::move(input_shape);
 
         SPDLOG_INFO(
-            "[OrtBackend] ONNXRuntime initialized. input={}, output={}, shape=[{}, {}, {}, {}]",
-            impl.input_name, impl.output_name, impl.input_shape[0], impl.input_shape[1],
-            impl.input_shape[2], impl.input_shape[3]);
+            "[OrtBackend] ONNXRuntime initialized. provider={}, input={}, output={}, shape=[{}, "
+            "{}, {}, {}]",
+            selected_provider, impl.input_name, impl.output_name, impl.input_shape[0],
+            impl.input_shape[1], impl.input_shape[2], impl.input_shape[3]);
 
         return backend;
     } catch (const std::exception& e) {
