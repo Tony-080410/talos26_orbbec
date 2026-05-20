@@ -71,6 +71,7 @@ function(_fetch_dependency_from_git name repo tag)
         GIT_TAG ${tag}
         GIT_SHALLOW TRUE
         SYSTEM
+        GIT_SUBMODULES_RECURSE TRUE
     )
     FetchContent_MakeAvailable(${name})
 endfunction()

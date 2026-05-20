@@ -134,15 +134,21 @@ fetch_dependency(NAME nlohmann_json
                  REPO nlohmann/json
                  VERSION 3946872265598aed5a7aea68cad4d9d1f168bd4b)
 
+set(_prev_build_testing "${BUILD_TESTING}")
+set(BUILD_TESTING OFF CACHE BOOL "" FORCE)
 fetch_dependency(NAME boost_pfr
                  REPO boostorg/pfr
                  VERSION boost-1.90.0)
+set(BUILD_TESTING "${_prev_build_testing}" CACHE BOOL "" FORCE)
 
 fetch_dependency(NAME tomlplusplus
                  REPO marzer/tomlplusplus
                  VERSION 1c8b7466e4946fcc3bf20484c0e1d001202cca5a)
 
+include(cmake/tbb.cmake)
 find_package(TBB REQUIRED)
+sanitize_tbb()
+
 if (BUILD_TESTING)
     find_package(GTest REQUIRED)
 endif ()

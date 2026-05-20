@@ -7,6 +7,7 @@ crate(
         talos_log
         fmt::fmt
         TBB::tbb
+        nlohmann_json::nlohmann_json
 )
 
 # rclcompat 测试需要额外的 include 目录
