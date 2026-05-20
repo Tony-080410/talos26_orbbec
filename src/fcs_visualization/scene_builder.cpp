@@ -344,7 +344,7 @@ std::vector<::foxglove::schemas::SceneEntity> bullet_trajectory(
         entities.push_back(
             EntityBuilder::create<fast_tf::muzzle>("l4", "bullet_traj_line")
                 .timestamp(timestamp_ns)
-                .line_list(std::move(line_points), color, L4::TRAJECTORY_DOT)
+                .line_strip(std::move(line_points), color, L4::TRAJECTORY_LINE_THICKNESS)
                 .build());
     }
 

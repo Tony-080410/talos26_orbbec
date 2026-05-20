@@ -133,7 +133,7 @@ void register_rune_systems(talos::scheduler::Scheduler& app) {
                 viz::EntityBuilder::create<fast_tf::odom>("rune", "r_center")
                     .position(obs->r_center_odom.translation())
                     .size(0.08)
-                    .color(tac::L3::PREDICTION_AMBER)
+                    .color(tac::L4::MPC_REFERENCE)
                     .sphere()
                     .timestamp(obs->timestamp_ns)
                     .build());
@@ -144,7 +144,7 @@ void register_rune_systems(talos::scheduler::Scheduler& app) {
                     viz::EntityBuilder::create<fast_tf::odom>("rune", fmt::format("target_{}", i))
                         .position(p)
                         .size(0.06)
-                        .color(tac::L3::TRACKING_LOCKED)
+                        .color(tac::L4::MPC_PRESENT)
                         .sphere()
                         .timestamp(obs->timestamp_ns)
                         .build());
@@ -178,7 +178,7 @@ void register_rune_systems(talos::scheduler::Scheduler& app) {
                 viz::EntityBuilder::create<fast_tf::odom>("rune_ekf", "r_center")
                     .position(state->r_center_odom)
                     .size(0.10)
-                    .color(tac::L3::PREDICTION_AMBER)
+                    .color(tac::L4::MPC_REFERENCE)
                     .sphere()
                     .timestamp(state->timestamp_ns)
                     .build());
@@ -216,7 +216,8 @@ void register_rune_systems(talos::scheduler::Scheduler& app) {
                         blade_local.x() * sy + blade_local.y() * cy, blade_local.z());
 
                 const bool is_tracked = (i == tracked_id);
-                const auto color  = is_tracked ? tac::L3::TRACKING_LOCKED : tac::Semantic::INERT;
+                const auto color =
+                    is_tracked ? tac::L4::MPC_PRESENT : tac::with_alpha(tac::Semantic::INERT, 0.30);
                 const double size = is_tracked ? 0.08 : 0.04;
 
                 entities.push_back(
@@ -251,9 +252,11 @@ void register_rune_systems(talos::scheduler::Scheduler& app) {
                         state->r_center_odom.z() + local.z());
                     circle_points.push_back(viz::make_point3(world));
                 }
-                auto arc_builder = viz::EntityBuilder::create<fast_tf::odom>("rune_ekf", "arc")
-                                       .line_loop(circle_points, tac::Semantic::INERT, 0.005)
-                                       .timestamp(state->timestamp_ns);
+                auto arc_builder =
+                    viz::EntityBuilder::create<fast_tf::odom>("rune_ekf", "arc")
+                        .line_loop(
+                            circle_points, tac::with_alpha(tac::Semantic::INERT, 0.24), 0.005)
+                        .timestamp(state->timestamp_ns);
                 entities.push_back(std::move(arc_builder).build());
             }
 

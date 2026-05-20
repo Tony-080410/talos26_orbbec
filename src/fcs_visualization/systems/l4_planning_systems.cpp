@@ -604,145 +604,30 @@ void register_l4_planning_systems(talos::scheduler::Scheduler& app) {
 
             std::vector<::foxglove::schemas::SceneEntity> entities;
 
-            // if (const auto snapshot = l4_detail::future_armor_snapshot(*plan)) {
-            //     // ── Target center ──────────────────────────────────────────
-            //     entities.push_back(
-            //         viz::EntityBuilder::create<fast_tf::odom>("l4", "target_center")
-            //             .timestamp(plan->timestamp_ns)
-            //             .position(snapshot->center)
-            //             .size(tac::L3::ROBOT_CENTER_SIZE * 0.75)
-            //             .color(tac::L4::MPC_PRESENT)
-            //             .alpha(0.6)
-            //             .sphere()
-            //             .text_with_offset(
-            //                 "Target Center", 0.0, 0.0, tac::L3::LABEL_OFFSET_Z,
-            //                 tac::Text::SIZE_SMALL)
-            //             .build());
-
-            //     // ── Velocity arrows ────────────────────────────────────────
-            //     entities.push_back(
-            //         viz::patterns::velocity_arrows<fast_tf::odom>(
-            //             snapshot->center, snapshot->linear_velocity, snapshot->angular_velocity,
-            //             plan->timestamp_ns));
-
-            //     // ── Future armor plates (clearly visible) ──────────────────
-            //     std::vector<::foxglove::schemas::Point3> armor_link_points;
-            //     const auto center_pt = viz::make_point3(snapshot->center);
-            //     for (int i = 0; i < static_cast<int>(snapshot->armors.size()); ++i) {
-            //         const auto& armor_pose          = snapshot->armors[static_cast<size_t>(i)];
-            //         const Eigen::Vector3d armor_pos = armor_pose.head<3>();
-            //         entities.push_back(
-            //             viz::EntityBuilder::create<fast_tf::odom>(
-            //                 "l4", fmt::format("future_armor_{}", i))
-            //                 .timestamp(plan->timestamp_ns)
-            //                 .position(armor_pos)
-            //                 .orientation(l4_detail::armor_orientation(armor_pose[3]))
-            //                 .color(tac::L4::FUTURE_ARMOR)
-            //                 .cube(
-            //                     tac::Geometry::ARMOR_THICKNESS,
-            //                     tac::Geometry::ARMOR_HEIGHT_SMALL, tac::Geometry::ARMOR_WIDTH)
-            //                 .text_with_offset(
-            //                     std::to_string(i), 0.0, 0.0, tac::L3::LABEL_OFFSET_Z,
-            //                     tac::Text::SIZE_SMALL)
-            //                 .metadata("armor_id", std::to_string(i))
-            //                 .build());
-            //         // Collect points for connecting lines
-            //         armor_link_points.push_back(center_pt);
-            //         armor_link_points.push_back(viz::make_point3(armor_pos));
-            //     }
-
-            //     // ── Target center → armors connecting lines ────────────────
-            //     if (armor_link_points.size() >= 4) {
-            //         entities.push_back(
-            //             viz::EntityBuilder::create<fast_tf::odom>("l4", "armor_links")
-            //                 .timestamp(plan->timestamp_ns)
-            //                 .line_list(
-            //                     std::move(armor_link_points), tac::L4::SPATIAL_LINK,
-            //                     tac::L4::SPATIAL_LINK_THICKNESS)
-            //                 .build());
-            //     }
-
-            //     // ── Selection overlay (primary visual) ─────────────────────
-            //     const auto add_overlay =
-            //         [&](int armor_id, const std::string& entity_id, const std::string& label,
-            //             const ::foxglove::schemas::Color& color, double size_scale) {
-            //             if (armor_id < 0 || armor_id >=
-            //             static_cast<int>(snapshot->armors.size())) {
-            //                 return;
-            //             }
-            //             const Eigen::Vector3d armor_pos =
-            //                 snapshot->armors[static_cast<size_t>(armor_id)].head<3>();
-            //             entities.push_back(
-            //                 viz::EntityBuilder::create<fast_tf::odom>("l4", entity_id)
-            //                     .timestamp(plan->timestamp_ns)
-            //                     .position(armor_pos)
-            //                     .size(tac::L4::SELECTION_SIZE * size_scale)
-            //                     .color(color)
-            //                     .sphere()
-            //                     .text_with_offset(
-            //                         label, 0.0, 0.0, tac::L3::LABEL_OFFSET_Z * 1.6,
-            //                         tac::Text::SIZE_SMALL)
-            //                     .metadata("armor_id", std::to_string(armor_id))
-            //                     .build());
-            //         };
-
-            //     if (plan->selected_armor_id == plan->rough_selected_armor_id) {
-            //         add_overlay(
-            //             plan->selected_armor_id, "selected_rough_armor",
-            //             fmt::format("Selected {}", plan->selected_armor_id),
-            //             plan->fire_advice ? tac::L4::GIMBAL_AIM_FIRE : tac::L4::GIMBAL_AIM_HOLD,
-            //             1.25);
-            //     } else {
-            //         add_overlay(
-            //             plan->rough_selected_armor_id, "rough_armor",
-            //             fmt::format("Rough {}", plan->rough_selected_armor_id),
-            //             tac::L4::MPC_REFERENCE, 1.0);
-            //         add_overlay(
-            //             plan->selected_armor_id, "selected_armor",
-            //             fmt::format("Selected {}", plan->selected_armor_id),
-            //             plan->fire_advice ? tac::L4::GIMBAL_AIM_FIRE : tac::L4::GIMBAL_AIM_HOLD,
-            //             1.25);
-            //     }
-            // }
-
-            // Predicted position and fire_advice no longer available from ControlIntent;
-            // they belonged to L4 internal state.
-
-            // ── Selection trace — visual hierarchy ─────────────────────────
             if (trace) {
                 for (const auto& candidate : trace->candidates) {
                     if (!candidate.target_center) {
                         continue;
                     }
 
-                    // Visual hierarchy: selected > runner_up > eliminated
-                    const bool is_selected  = candidate.selected;
-                    const bool is_runner_up = candidate.runner_up;
-                    const bool show_label   = is_selected || is_runner_up;
-
-                    // Size & alpha by tier
-                    const double size_scale = is_selected ? 1.25 : is_runner_up ? 1.0 : 0.7;
-                    const double alpha_val  = is_selected ? 0.95 : is_runner_up ? 0.75 : 0.25;
-
-                    // Color by tier
-                    const auto& tier_color = is_selected  ? (tac::L4::GIMBAL_AIM_FIRE)
-                                           : is_runner_up ? tac::L4::CANDIDATE_RUNNER_UP
-                                                          : tac::L4::CANDIDATE_ELIMINATED;
+                    const auto tier  = candidate.selected  ? tac::SelectionTier::Selected
+                                     : candidate.runner_up ? tac::SelectionTier::RunnerUp
+                                                           : tac::SelectionTier::Eliminated;
+                    const auto style = tac::selection_style(tier);
 
                     auto builder = viz::EntityBuilder::create<fast_tf::odom>(
                                        "l4", l4_detail::selection_trace_entity_id(candidate))
                                        .timestamp(trace->timestamp_ns)
                                        .position(*candidate.target_center)
-                                       .size(tac::L4::SELECTION_SIZE * size_scale)
-                                       .color(tier_color)
-                                       .alpha(alpha_val)
+                                       .size(tac::L4::SELECTION_SIZE * style.size_scale)
+                                       .color(style.color)
+                                       .alpha(style.alpha)
                                        .sphere();
 
-                    // Simplified label — identity + rank only, scores in metadata
-                    if (show_label) {
+                    if (style.show_label) {
                         builder.text_with_offset(
                             fmt::format(
-                                "#{}{} {}", candidate.rank, is_selected ? "*" : "",
+                                "#{}{} {}", candidate.rank, candidate.selected ? "*" : "",
                                 l4_detail::selection_identity(candidate)),
                             tac::L4::SELECTION_SIZE * 1.5, 0.0, tac::L3::LABEL_OFFSET_Z,
                             tac::Text::SIZE_SMALL);

@@ -17,18 +17,12 @@ namespace fcs::visualization::foxglove::systems {
 
 namespace {
 
-// Ground truth team colors
-constexpr auto kTeamRed  = ::foxglove::schemas::Color{1.0, 0.20, 0.20, 0.85};
-constexpr auto kTeamBlue = ::foxglove::schemas::Color{0.20, 0.40, 1.00, 0.85};
-// Ground truth rune color
-constexpr auto kRuneColor = ::foxglove::schemas::Color{0.00, 0.95, 0.90, 0.70};
-// Text label color
-constexpr auto kLabelColor = ::foxglove::schemas::Color{1.0, 1.0, 1.0, 0.90};
+constexpr auto kRuneColor  = tac::with_alpha(tac::Semantic::STATUS_ACTIVE, 0.62);
+constexpr auto kLabelColor = tac::Text::PRIMARY;
 
-constexpr double kRobotSphereRadius = 0.12;
-constexpr double kRuneSphereRadius  = 0.15;
-constexpr double kLabelOffsetZ      = 0.18;
-constexpr double kLabelFontSize     = 0.08;
+constexpr double kRuneSphereRadius = 0.15;
+constexpr double kLabelOffsetZ     = 0.18;
+constexpr double kLabelFontSize    = 0.08;
 
 [[nodiscard]] const char* armor_label_name(uint8_t label) noexcept {
     switch (label) {

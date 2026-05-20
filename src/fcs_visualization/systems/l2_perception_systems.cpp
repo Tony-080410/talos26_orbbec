@@ -50,12 +50,12 @@ constexpr uint64_t kLdmSceneLifetimeNs = 5'000'000;
 [[nodiscard]] ::foxglove::schemas::Color
     ldm_scene_color(const fcs::L2::ldm::LdmMeasurement& measurement) noexcept {
     switch (measurement.depth_quality) {
-    case fcs::L2::ldm::LdmDepthQuality::Stable: return tac::Semantic::STATUS_ACTIVE;
-    case fcs::L2::ldm::LdmDepthQuality::Constrained: return tac::Semantic::ALERT;
-    case fcs::L2::ldm::LdmDepthQuality::BearingOnly: return tac::L2::MEASUREMENT_CONFIDENCE;
-    case fcs::L2::ldm::LdmDepthQuality::None: return tac::Semantic::INERT;
+    case fcs::L2::ldm::LdmDepthQuality::Stable: return tac::L2::LDM_STABLE;
+    case fcs::L2::ldm::LdmDepthQuality::Constrained: return tac::L2::LDM_CONSTRAINED;
+    case fcs::L2::ldm::LdmDepthQuality::BearingOnly: return tac::L2::LDM_BEARING_ONLY;
+    case fcs::L2::ldm::LdmDepthQuality::None: return tac::L2::LDM_NONE;
     }
-    return tac::Semantic::INERT;
+    return tac::L2::LDM_NONE;
 }
 
 [[nodiscard]] std::string ldm_label(const fcs::L2::ldm::LdmMeasurement& measurement) {
@@ -202,11 +202,7 @@ inline void add_ldm_volume_edges(
         .orientation(pose.quaternion())
         .color(color);
 
-    // Dimmed colour for invisible (dashed) edges
-    auto dimmed_color = color;
-    dimmed_color.r *= 0.4f;
-    dimmed_color.g *= 0.4f;
-    dimmed_color.b *= 0.4f;
+    const auto dimmed_color = tac::scaled_rgb(color, 0.45);
 
     // Draw edges: solid for visible, dashed for invisible
     add_ldm_volume_edges(builder, config, visible_faces, color, dimmed_color, 0.0025);
@@ -237,11 +233,7 @@ inline void add_ldm_volume_edges(
         .orientation(pose.quaternion())
         .color(color);
 
-    // Dimmed colour for invisible (dashed) edges
-    auto dimmed_color = color;
-    dimmed_color.r *= 0.4f;
-    dimmed_color.g *= 0.4f;
-    dimmed_color.b *= 0.4f;
+    const auto dimmed_color = tac::scaled_rgb(color, 0.45);
 
     // Draw edges: solid for visible, dashed for invisible
     add_ldm_volume_edges(builder, config, visible_faces, color, dimmed_color, 0.0025);
@@ -360,10 +352,10 @@ void register_l2_perception_systems(talos::scheduler::Scheduler& app) {
                     viz::EntityBuilder::create<fast_tf::odom>("l2", fmt::format("armor_{}", i));
                 builder.position(t.x(), t.y(), t.z())
                     .orientation(q.x(), q.y(), q.z(), q.w())
+                    .color(tac::L2::MEASUREMENT_GHOST)
                     .cube(
                         tac::Geometry::ARMOR_THICKNESS, tac::Geometry::ARMOR_HEIGHT_SMALL,
                         tac::Geometry::ARMOR_WIDTH)
-                    .color(tac::L2::MEASUREMENT_GHOST)
                     .text_with_offset(
                         fmt::format(
                             "{} {}", magic_enum::enum_name(m.name), magic_enum::enum_name(m.type)),

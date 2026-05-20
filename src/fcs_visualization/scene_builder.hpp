@@ -364,7 +364,7 @@ inline ::foxglove::schemas::SceneEntity predicted_armor(
     return EntityBuilder::create<Frame>("l3", std::move(entity_id))
         .position(pos)
         .size(L3::ARMOR_PLATE_SIZE)
-        .color(L3::PREDICTION_AMBER)
+        .color(L3::PREDICTION_CONTEXT)
         .sphere()
         .text_with_offset(
             fmt::format("pred_{}", armor_id), 0, 0, L3::LABEL_OFFSET_Z, Text::SIZE_MEDIUM)

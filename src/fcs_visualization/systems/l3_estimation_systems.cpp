@@ -57,14 +57,14 @@ namespace fcs::visualization::foxglove::systems {
         .orientation(Eigen::Quaterniond(state.rotation()));
 
     builder.line_strip(
-        {viz::make_point3(0.0, 0.0, 0.0), viz::make_point3(kAxisLength, 0.0, 0.0)},
-        viz::make_color(1.0, 0.20, 0.20, 0.85), kThickness);
+        {viz::make_point3(0.0, 0.0, 0.0), viz::make_point3(kAxisLength, 0.0, 0.0)}, tac::Axis::X,
+        kThickness);
     builder.line_strip(
-        {viz::make_point3(0.0, 0.0, 0.0), viz::make_point3(0.0, kAxisLength, 0.0)},
-        viz::make_color(0.50, 1.00, 0.30, 0.85), kThickness);
+        {viz::make_point3(0.0, 0.0, 0.0), viz::make_point3(0.0, kAxisLength, 0.0)}, tac::Axis::Y,
+        kThickness);
     builder.line_strip(
-        {viz::make_point3(0.0, 0.0, 0.0), viz::make_point3(0.0, 0.0, kAxisLength)},
-        viz::make_color(0.00, 0.95, 0.90, 0.85), kThickness);
+        {viz::make_point3(0.0, 0.0, 0.0), viz::make_point3(0.0, 0.0, kAxisLength)}, tac::Axis::Z,
+        kThickness);
 
     return builder.build();
 }
@@ -250,7 +250,7 @@ void register_l3_estimation_systems(talos::scheduler::Scheduler& app) {
 
             std::vector<::foxglove::schemas::SceneEntity> entities;
 
-            // Predicted armors (present) - neon cyan for all tracking targets
+            // Predicted armors are context; the active target remains the visual focus.
             for (const auto& output : *outputs) {
                 if (!output.is_tracking())
                     continue;
@@ -282,7 +282,7 @@ void register_l3_estimation_systems(talos::scheduler::Scheduler& app) {
                                 "l3", fmt::format("pred_{}_{}", target_key, i))
                                 .position(armor_pos)
                                 .size(tac::L3::ARMOR_PLATE_SIZE)
-                                .color(tac::L3::TRACKING_LOCKED)
+                                .color(tac::L3::PREDICTION_CONTEXT)
                                 .sphere()
                                 .text_with_offset(
                                     fmt::format("{}:{}", target_key, i), 0, 0,
@@ -354,7 +354,7 @@ void register_l3_estimation_systems(talos::scheduler::Scheduler& app) {
                             std::clamp(255.0 * (mat(r, c) - vmin) / range, 0.0, 255.0));
 
                 cv::Mat colored;
-                cv::applyColorMap(gray, colored, cv::COLORMAP_JET);
+                cv::applyColorMap(gray, colored, cv::COLORMAP_VIRIDIS);
 
                 // Scale up to cell size
                 cv::Mat big;
@@ -363,13 +363,17 @@ void register_l3_estimation_systems(talos::scheduler::Scheduler& app) {
 
                 // Grid lines
                 for (int r = 0; r <= rows; ++r)
-                    cv::line(big, {0, r * cell}, {cols * cell, r * cell}, {30, 30, 30}, 1);
+                    cv::line(
+                        big, {0, r * cell}, {cols * cell, r * cell},
+                        tac::to_cv_bgr(tac::Semantic::CONTEXT), 1);
                 for (int c = 0; c <= cols; ++c)
-                    cv::line(big, {c * cell, 0}, {c * cell, rows * cell}, {30, 30, 30}, 1);
+                    cv::line(
+                        big, {c * cell, 0}, {c * cell, rows * cell},
+                        tac::to_cv_bgr(tac::Semantic::CONTEXT), 1);
 
                 // Cell value text
                 constexpr double kValFontScale = 0.38;
-                const cv::Scalar kValColor(255, 255, 255);
+                const cv::Scalar kValColor     = tac::to_cv_bgr(tac::Text::PRIMARY);
                 for (int r = 0; r < rows; ++r) {
                     for (int c = 0; c < cols; ++c) {
                         const double v = mat(r, c);
@@ -392,13 +396,14 @@ void register_l3_estimation_systems(talos::scheduler::Scheduler& app) {
                 }
 
                 // Margins for labels
-                const int kLeftMargin = cell + 8;
-                const int kTopMargin  = cell + 10;
-                const cv::Scalar kLabelColor(210, 210, 210);
-                constexpr double kFontScale = 0.45;
+                const int kLeftMargin        = cell + 8;
+                const int kTopMargin         = cell + 10;
+                const cv::Scalar kLabelColor = tac::to_cv_bgr(tac::Text::SECONDARY);
+                constexpr double kFontScale  = 0.45;
 
                 cv::Mat canvas(
-                    kTopMargin + big.rows, kLeftMargin + big.cols, CV_8UC3, cv::Scalar(20, 20, 20));
+                    kTopMargin + big.rows, kLeftMargin + big.cols, CV_8UC3,
+                    tac::to_cv_bgr(tac::Semantic::SURFACE));
                 big.copyTo(canvas(cv::Rect(kLeftMargin, kTopMargin, big.cols, big.rows)));
 
                 // Row labels (left side, right-aligned)
@@ -431,11 +436,11 @@ void register_l3_estimation_systems(talos::scheduler::Scheduler& app) {
             };
 
             // --- Compose panels per target (vertically stacked) ---
-            constexpr int kCell   = 60;
-            constexpr int kMargin = 8;
-            const cv::Scalar kBg(20, 20, 20);
-            const cv::Scalar kWhite(220, 220, 220);
-            constexpr int kTitleH = 22;
+            constexpr int kCell     = 60;
+            constexpr int kMargin   = 8;
+            const cv::Scalar kBg    = tac::to_cv_bgr(tac::Semantic::SURFACE);
+            const cv::Scalar kWhite = tac::to_cv_bgr(tac::Text::PRIMARY);
+            constexpr int kTitleH   = 22;
 
             // Per-target row: P, K, Q placed horizontally
             struct TargetRow {
@@ -549,7 +554,8 @@ void register_l3_estimation_systems(talos::scheduler::Scheduler& app) {
                     // Small tag above matrix
                     cv::putText(
                         composite, m.tag, cv::Point(x_off + 4, y_off + 14),
-                        cv::FONT_HERSHEY_SIMPLEX, 0.4, cv::Scalar(180, 200, 255), 1, cv::LINE_AA);
+                        cv::FONT_HERSHEY_SIMPLEX, 0.4, tac::to_cv_bgr(tac::Text::SECONDARY), 1,
+                        cv::LINE_AA);
                     if (!m.img.empty())
                         m.img.copyTo(
                             composite(cv::Rect(x_off, y_off + kTitleH, m.img.cols, m.img.rows)));

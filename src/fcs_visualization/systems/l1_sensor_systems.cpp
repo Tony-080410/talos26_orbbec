@@ -117,13 +117,12 @@ inline void draw_dashed_line(
 inline void draw_visibility_line(
     cv::Mat& image, cv::Point2f start, cv::Point2f end, const cv::Scalar& color, bool visible) {
     if (visible) {
-        cv::line(image, start, end, color, 2, cv::LINE_AA);
+        cv::line(image, start, end, color, tac::Image::LINE_MEDIUM, cv::LINE_AA);
         return;
     }
 
-    // Invisible (back-facing) edges: clearly visible dashed line so the user can distinguish
-    const cv::Scalar dashed_color(color[0] * 0.7, color[1] * 0.7, color[2] * 0.7, color[3]);
-    // draw_dashed_line(image, start, end, dashed_color, 2);
+    const cv::Scalar dashed_color = tac::to_cv_bgr(tac::Image::LDM_SECONDARY);
+    draw_dashed_line(image, start, end, dashed_color, tac::Image::LINE_THIN);
 }
 
 inline void draw_ldm_projected_outline(
@@ -277,7 +276,8 @@ void register_l1_sensor_systems(talos::scheduler::Scheduler& app) {
             talos::spmc<L2::ldm::LdmDetection, LdmDetectionChannelTopic> ldm_in,
             talos::spmc<L2::ldm::LdmMeasurement, LdmMeasurementChannelTopic> ldm_meas_in,
             talos::res<std::shared_ptr<FoxgloveServer>> server, talos::res<CameraConfig> cam,
-            talos::res<FoxgloveConfig> foxglove_cfg, core::detecting_color detecting_color_,
+            talos::res<FoxgloveConfig> foxglove_cfg,
+            [[maybe_unused]] core::detecting_color detecting_color_,
             talos::res<fast_tf::CoordinateSystem> tf_buffer,
             talos::res<L2::ldm::LdmDetectorConfig> ldm_config) mutable {
             if (!foxglove_ready(*server, det_in)) {
@@ -295,43 +295,34 @@ void register_l1_sensor_systems(talos::scheduler::Scheduler& app) {
             // Clone image and draw detection boxes
             cv::Mat img_bgr = batch->image.clone();
 
-            const cv::Scalar roi_color =
-                batch->has_detector_roi ? cv::Scalar(0, 255, 255) : cv::Scalar(0, 0, 255);
-            cv::rectangle(img_bgr, batch->detector_roi, roi_color, 2, cv::LINE_AA);
+            const cv::Scalar roi_color = tac::to_cv_bgr(
+                batch->has_detector_roi ? tac::Image::ROI_VALID : tac::Image::ROI_MISSING);
+            cv::rectangle(
+                img_bgr, batch->detector_roi, roi_color, tac::Image::LINE_MEDIUM, cv::LINE_AA);
 
-            // Determine ally color from config (opposite of detect_color)
-            // detect_color is enemy color, so ally is the opposite
-            const cv::Scalar ally_color =
-                (*detecting_color_ == ArmorColor::Red)
-                    ? cv::Scalar(0, 0, 255)  // BGR: Red (ally is red when detecting red enemies)
-                    : cv::Scalar(255, 0, 0); // BGR: Blue (ally is blue when detecting blue enemies)
-
-            // Draw optical center (principal point) with ally color
-            // cx, cy are at camera_matrix(0,2) and camera_matrix(1,2)
-            const double cx      = cam->camera_matrix(0, 2);
-            const double cy      = cam->camera_matrix(1, 2);
-            const int cross_size = 15;
+            // Draw optical center (principal point). cx, cy are at camera_matrix(0,2)/(1,2).
+            const double cx = cam->camera_matrix(0, 2);
+            const double cy = cam->camera_matrix(1, 2);
             cv::drawMarker(
-                img_bgr, cv::Point(static_cast<int>(cx), static_cast<int>(cy)), ally_color,
-                cv::MARKER_CROSS, cross_size, 2);
+                img_bgr, cv::Point(static_cast<int>(cx), static_cast<int>(cy)),
+                tac::to_cv_bgr(tac::Image::OPTICAL_CENTER), cv::MARKER_CROSS,
+                tac::Image::MARKER_SIZE, tac::Image::LINE_MEDIUM);
 
-            // Box color is always green
-            const cv::Scalar box_color(0, 255, 0);
+            const cv::Scalar box_color       = tac::to_cv_bgr(tac::Image::DETECTION_BOX);
+            const cv::Scalar text_color      = tac::to_cv_bgr(tac::Image::DETECTION_TEXT);
+            const cv::Scalar corner_primary  = tac::to_cv_bgr(tac::Image::CORNER_PRIMARY);
+            const cv::Scalar corner_context  = tac::to_cv_bgr(tac::Image::CORNER_SECONDARY);
             std::array<cv::Scalar, 4> colors = {
-                cv::Scalar(255, 0, 0),  // 红色 (RT)
-                cv::Scalar(0, 255, 0),  // 绿色 (LT)
-                cv::Scalar(0, 0, 255),  // 蓝色 (LB)
-                cv::Scalar(0, 255, 255) // 黄色 (RB)
-            };
+                corner_primary, corner_context, corner_context, corner_primary};
             for (const auto& det : batch->detections) {
                 // Draw detection box
                 for (size_t j = 0; j < det.corners.size(); j++) {
                     auto pp1 = det.corners[j];
                     auto pp2 = det.corners[(j + 1) % 4];
-                    cv::circle(img_bgr, pp1, 2, colors[(j + 1) % 4], 2);
+                    cv::circle(img_bgr, pp1, 2, colors[(j + 1) % 4], tac::Image::LINE_MEDIUM);
                     cv::arrowedLine(
-                        img_bgr, pp1, pp2, colors[(j + 1) % 4], 2, cv::LINE_8, 0,
-                        10.0 / cv::norm(pp1 - pp2));
+                        img_bgr, pp1, pp2, colors[(j + 1) % 4], tac::Image::LINE_MEDIUM,
+                        cv::LINE_AA, 0, 10.0 / cv::norm(pp1 - pp2));
                 }
 
                 // Draw debug info below the box
@@ -343,13 +334,15 @@ void register_l1_sensor_systems(talos::scheduler::Scheduler& app) {
                     "{} {} {}", magic_enum::enum_name(det.name), magic_enum::enum_name(det.type),
                     magic_enum::enum_name(det.color));
                 cv::putText(
-                    img_bgr, name_type, text_pos, cv::FONT_HERSHEY_SIMPLEX, 0.5, box_color, 1);
+                    img_bgr, name_type, text_pos, cv::FONT_HERSHEY_SIMPLEX, tac::Image::TEXT_SMALL,
+                    text_color, tac::Image::TEXT_THIN, cv::LINE_AA);
 
                 // Line 2: confidence (e.g., "0.95")
                 cv::Point2f conf_pos(det.rect.x, det.rect.y + det.rect.height + 40);
                 std::string conf_str = fmt::format("conf: {:.2f}", det.confidence);
                 cv::putText(
-                    img_bgr, conf_str, conf_pos, cv::FONT_HERSHEY_SIMPLEX, 0.5, box_color, 1);
+                    img_bgr, conf_str, conf_pos, cv::FONT_HERSHEY_SIMPLEX, tac::Image::TEXT_SMALL,
+                    text_color, tac::Image::TEXT_THIN, cv::LINE_AA);
             }
             constexpr uint64_t kMaxLdmOverlaySkewNs = 200'000'000;
             const auto maybe_ldm_det                = ldm_in.read_current();
@@ -368,29 +361,32 @@ void register_l1_sensor_systems(talos::scheduler::Scheduler& app) {
                                           batch->timestamp_ns, kMaxLdmOverlaySkewNs));
 
             if (use_ldm_det) {
-                const auto& ldm_det = *ldm_state.latest_detection;
-                const cv::Scalar blob_color(0, 255, 0);
-                const cv::Scalar pair_color(255, 0, 255);
-                const cv::Scalar center_color(0, 255, 255);
-                cv::Rect2f ldm_rect = ldm_det.rect;
+                const auto& ldm_det           = *ldm_state.latest_detection;
+                const cv::Scalar blob_color   = tac::to_cv_bgr(tac::Image::LDM_SECONDARY);
+                const cv::Scalar pair_color   = tac::to_cv_bgr(tac::Image::LDM_PRIMARY);
+                const cv::Scalar center_color = tac::to_cv_bgr(tac::Image::LDM_CENTER);
+                cv::Rect2f ldm_rect           = ldm_det.rect;
 
                 // Draw blobs
                 for (const auto& blob : ldm_det.blobs) {
-                    cv::rectangle(img_bgr, blob.rect, blob_color, 1, cv::LINE_AA);
+                    cv::rectangle(
+                        img_bgr, blob.rect, blob_color, tac::Image::LINE_THIN, cv::LINE_AA);
                 }
 
                 // Draw pairs
                 for (size_t i = 0; i < ldm_det.pairs.size(); ++i) {
                     const auto& pair = ldm_det.pairs[i];
                     cv::line(
-                        img_bgr, pair.top_center_px, pair.bottom_center_px, pair_color, 2,
-                        cv::LINE_AA);
-                    cv::circle(img_bgr, pair.top_center_px, 4, colors[0], 2);
-                    cv::circle(img_bgr, pair.bottom_center_px, 4, colors[2], 2);
+                        img_bgr, pair.top_center_px, pair.bottom_center_px, pair_color,
+                        tac::Image::LINE_MEDIUM, cv::LINE_AA);
+                    cv::circle(img_bgr, pair.top_center_px, 4, colors[0], tac::Image::LINE_MEDIUM);
+                    cv::circle(
+                        img_bgr, pair.bottom_center_px, 4, colors[2], tac::Image::LINE_MEDIUM);
                     cv::circle(img_bgr, pair.midpoint_px, 3, center_color, -1);
                     cv::putText(
                         img_bgr, fmt::format("p{}", i), pair.midpoint_px + cv::Point2f(4.0f, -4.0f),
-                        cv::FONT_HERSHEY_SIMPLEX, 0.45, center_color, 1, cv::LINE_AA);
+                        cv::FONT_HERSHEY_SIMPLEX, tac::Image::TEXT_SMALL, center_color,
+                        tac::Image::TEXT_THIN, cv::LINE_AA);
                 }
 
                 // Compute rect from pairs
@@ -406,13 +402,15 @@ void register_l1_sensor_systems(talos::scheduler::Scheduler& app) {
                 }
 
                 if (ldm_rect.width > 0.0f && ldm_rect.height > 0.0f) {
-                    cv::rectangle(img_bgr, ldm_rect, box_color, 2, cv::LINE_AA);
+                    cv::rectangle(
+                        img_bgr, ldm_rect, pair_color, tac::Image::LINE_MEDIUM, cv::LINE_AA);
                     cv::putText(
                         img_bgr, fmt::format("LDM {}", ldm_det.pairs.size()),
                         cv::Point(
                             static_cast<int>(ldm_rect.x),
                             std::max(20, static_cast<int>(ldm_rect.y) - 8)),
-                        cv::FONT_HERSHEY_SIMPLEX, 0.55, box_color, 2, cv::LINE_AA);
+                        cv::FONT_HERSHEY_SIMPLEX, tac::Image::TEXT_MEDIUM, pair_color,
+                        tac::Image::TEXT_MEDIUM_PX, cv::LINE_AA);
                 }
             }
 
@@ -428,7 +426,8 @@ void register_l1_sensor_systems(talos::scheduler::Scheduler& app) {
                     fmt::format(
                         "LDM pairs={}/{} {} conf={:.2f}", ldm_meas.selected_pair_count,
                         ldm_meas.pair_count_total, ldm_meas.depth_quality, ldm_meas.confidence),
-                    cv::Point(30, 32), cv::FONT_HERSHEY_SIMPLEX, 0.6, cv::Scalar(0, 255, 255), 2,
+                    cv::Point(30, 32), cv::FONT_HERSHEY_SIMPLEX, tac::Image::TEXT_MEDIUM,
+                    tac::to_cv_bgr(tac::Image::LDM_PRIMARY), tac::Image::TEXT_MEDIUM_PX,
                     cv::LINE_AA);
 
                 if (ldm_meas.transform_cam.has_value()) {
@@ -437,8 +436,9 @@ void register_l1_sensor_systems(talos::scheduler::Scheduler& app) {
                         img_bgr,
                         fmt::format(
                             "cam=[{:.2f},{:.2f},{:.2f}]m", center.x(), center.y(), center.z()),
-                        cv::Point(30, 56), cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(0, 255, 255),
-                        1, cv::LINE_AA);
+                        cv::Point(30, 56), cv::FONT_HERSHEY_SIMPLEX, tac::Image::TEXT_SMALL,
+                        tac::to_cv_bgr(tac::Image::LDM_SECONDARY), tac::Image::TEXT_THIN,
+                        cv::LINE_AA);
                 }
 
                 // Draw mesh projected outline and info from measurement
@@ -454,8 +454,8 @@ void register_l1_sensor_systems(talos::scheduler::Scheduler& app) {
 
                     // Draw center marker
                     cv::drawMarker(
-                        img_bgr, ldm_meas.center_image_px, cv::Scalar(0, 255, 255),
-                        cv::MARKER_CROSS, 18, 2);
+                        img_bgr, ldm_meas.center_image_px, tac::to_cv_bgr(tac::Image::LDM_CENTER),
+                        cv::MARKER_CROSS, 18, tac::Image::LINE_MEDIUM);
 
                     // Faces and RMSE text
                     std::string faces_text;
@@ -477,7 +477,9 @@ void register_l1_sensor_systems(talos::scheduler::Scheduler& app) {
                         cv::Point(
                             static_cast<int>(meas_rect.x),
                             std::max(20, static_cast<int>(meas_rect.y) - 8)),
-                        cv::FONT_HERSHEY_SIMPLEX, 0.45, cv::Scalar(0, 255, 255), 1, cv::LINE_AA);
+                        cv::FONT_HERSHEY_SIMPLEX, tac::Image::TEXT_SMALL,
+                        tac::to_cv_bgr(tac::Image::LDM_PRIMARY), tac::Image::TEXT_THIN,
+                        cv::LINE_AA);
                 }
             }
 
