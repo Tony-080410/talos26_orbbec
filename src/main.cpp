@@ -1,6 +1,7 @@
 #include "fcs/runtime/boot.hpp"
 #include "fcs_visualization/foxglove_sink.hpp"
 #include "fcs_visualization/foxglove_systems.hpp"
+#include "runtime/build_info.hpp"
 #include "runtime/config_loader.hpp"
 #include "scheduler/error_formatter.hpp"
 #include "scheduler/scheduler.hpp"
@@ -28,6 +29,10 @@ int main() {
     init_logger();
     hook_cstream();
     const auto start = std::chrono::system_clock::now();
+    const auto build = fcs::build_info();
+    SPDLOG_INFO(
+        "build version={}@{} git={} host={}", build.git_branch, build.build_date, build.git_commit,
+        build.build_host);
 
     auto config = fcs::load_config("at_vision.toml");
     if (!config) {

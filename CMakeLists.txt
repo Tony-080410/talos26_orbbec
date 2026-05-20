@@ -181,6 +181,94 @@ add_subdirectory(crates/hardware_daedalus)
 # FCS library (Fire Control System)
 # ============================================================================
 
+if(DEFINED ENV{TZ})
+    set(TALOS_PREVIOUS_TZ "$ENV{TZ}")
+    set(TALOS_HAD_PREVIOUS_TZ TRUE)
+else()
+    set(TALOS_HAD_PREVIOUS_TZ FALSE)
+endif()
+
+set(ENV{TZ} "UTC-8")
+string(TIMESTAMP TALOS_BUILD_DATE "%Y-%m-%dT%H:%M:%S+0800")
+if(TALOS_HAD_PREVIOUS_TZ)
+    set(ENV{TZ} "${TALOS_PREVIOUS_TZ}")
+else()
+    unset(ENV{TZ})
+endif()
+find_package(Git QUIET)
+
+set(TALOS_GIT_HASH "unknown")
+set(TALOS_GIT_BRANCH "unknown")
+set(TALOS_GIT_DIRTY_SUFFIX "")
+set(TALOS_BUILD_HOST "unknown")
+
+execute_process(
+        COMMAND hostname
+        OUTPUT_VARIABLE TALOS_BUILD_HOST_OUTPUT
+        ERROR_QUIET
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+)
+if(NOT TALOS_BUILD_HOST_OUTPUT STREQUAL "")
+    set(TALOS_BUILD_HOST "${TALOS_BUILD_HOST_OUTPUT}")
+endif()
+
+if(Git_FOUND)
+    execute_process(
+            COMMAND "${GIT_EXECUTABLE}" -C "${PROJECT_SOURCE_DIR_ABS}" rev-parse --short=6 HEAD
+            OUTPUT_VARIABLE TALOS_GIT_HASH_OUTPUT
+            ERROR_QUIET
+            OUTPUT_STRIP_TRAILING_WHITESPACE
+    )
+    if(NOT TALOS_GIT_HASH_OUTPUT STREQUAL "")
+        set(TALOS_GIT_HASH "${TALOS_GIT_HASH_OUTPUT}")
+    endif()
+
+    execute_process(
+            COMMAND "${GIT_EXECUTABLE}" -C "${PROJECT_SOURCE_DIR_ABS}" rev-parse --abbrev-ref HEAD
+            OUTPUT_VARIABLE TALOS_GIT_BRANCH_OUTPUT
+            ERROR_QUIET
+            OUTPUT_STRIP_TRAILING_WHITESPACE
+    )
+    if(TALOS_GIT_BRANCH_OUTPUT STREQUAL "" OR TALOS_GIT_BRANCH_OUTPUT STREQUAL "HEAD")
+        execute_process(
+                COMMAND "${GIT_EXECUTABLE}" -C "${PROJECT_SOURCE_DIR_ABS}" rev-parse --short=6 HEAD
+                OUTPUT_VARIABLE TALOS_GIT_BRANCH_OUTPUT
+                ERROR_QUIET
+                OUTPUT_STRIP_TRAILING_WHITESPACE
+        )
+    endif()
+    if(NOT TALOS_GIT_BRANCH_OUTPUT STREQUAL "")
+        set(TALOS_GIT_BRANCH "${TALOS_GIT_BRANCH_OUTPUT}")
+    endif()
+
+    execute_process(
+            COMMAND "${GIT_EXECUTABLE}" -C "${PROJECT_SOURCE_DIR_ABS}" status --porcelain --untracked-files=all
+            OUTPUT_VARIABLE TALOS_GIT_STATUS_OUTPUT
+            ERROR_QUIET
+            OUTPUT_STRIP_TRAILING_WHITESPACE
+    )
+    if(NOT TALOS_GIT_STATUS_OUTPUT STREQUAL "")
+        set(TALOS_GIT_DIRTY_SUFFIX "+dirty")
+    endif()
+endif()
+
+set(TALOS_GIT_COMMIT "${TALOS_GIT_HASH}${TALOS_GIT_DIRTY_SUFFIX}")
+
+add_library(talos_build_info STATIC
+        src/fcs/runtime/build_info.cpp
+)
+
+target_include_directories(talos_build_info PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/fcs
+)
+
+target_compile_definitions(talos_build_info PRIVATE
+        TALOS_BUILD_INFO_DATE="${TALOS_BUILD_DATE}"
+        TALOS_BUILD_INFO_HOST="${TALOS_BUILD_HOST}"
+        TALOS_BUILD_INFO_GIT_COMMIT="${TALOS_GIT_COMMIT}"
+        TALOS_BUILD_INFO_GIT_BRANCH="${TALOS_GIT_BRANCH}"
+)
+
 set(FCS_SOURCES
         src/fcs/chiral/chiral_collector_system.cpp
         src/fcs/core/trajectory/solver/trajectory_solver.cpp
@@ -346,9 +434,12 @@ endif()
 # Main executable
 # ============================================================================
 
-add_executable(${PROJECT_NAME} src/main.cpp)
+add_executable(${PROJECT_NAME}
+        src/main.cpp
+)
 
 target_link_libraries(${PROJECT_NAME} PRIVATE
+        talos_build_info
         fcs
         fcs_visualization
         fast_tf
