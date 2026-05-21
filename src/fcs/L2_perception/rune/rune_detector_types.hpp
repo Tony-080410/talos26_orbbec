@@ -33,7 +33,7 @@ struct KeyPoint {
 
 struct Light {
     Light() = default;
-    Light(const std::vector<cv::Point>& cnt, const cv::Rect2f& localRoi, const cv::Mat& image);
+    Light(const std::vector<cv::Point>& cnt, const cv::Rect2f& localRoi);
 
     double roundness;
     std::vector<cv::Point> contour;
@@ -89,7 +89,7 @@ struct Target {
 
 struct Arrow {
     Arrow() = default;
-    bool set(const std::vector<Light>& points, bool debug_mode = false);
+    bool set(const Light& light);
     std::vector<cv::Point> contour;
     cv::Point2f center;
     cv::Size2f size;
@@ -97,7 +97,6 @@ struct Arrow {
     double area;
     cv::RotatedRect rotated;
     double ratio;
-    double fillratio;
 };
 
 } // namespace fyt::rune

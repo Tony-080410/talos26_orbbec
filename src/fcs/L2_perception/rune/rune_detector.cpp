@@ -94,26 +94,9 @@ inline float pointLineDistance(const cv::Point2f& point, const cv::Vec4f& line) 
 }
 
 /*设置流水灯的参数*/
-bool Arrow::set(const std::vector<Light>& lights, bool debug_mode) {
+bool Arrow::set(const Light& light) {
     std::vector<cv::Point2f> arrowPoints;
-    double fillArea        = 0.0;
-    double pointLineThresh = 0.0;
-    std::for_each(lights.begin(), lights.end(), [&](const Light& l) {
-        arrowPoints.insert(arrowPoints.end(), l.contour.begin(), l.contour.end());
-        fillArea += l.contourArea;
-        pointLineThresh += l.size.height / lights.size();
-    });
-    // 滤除距离较大的点
-    contour.clear();
-    cv::Vec4f line;
-    cv::fitLine(arrowPoints, line, cv::DIST_L2, 0, 0.01, 0.01);
-    for (const auto& point : arrowPoints) {
-        if (pointLineDistance(point, line) < pointLineThresh) {
-            contour.push_back(point);
-        }
-    }
-
-    // 设置成员变量
+    contour = light.contour;
     rotated = cv::minAreaRect(contour);
 
     center = rotated.center;
@@ -128,9 +111,8 @@ bool Arrow::set(const std::vector<Light>& lights, bool debug_mode) {
     } else {
         angle = rotated.angle + 90;
     }
-    ratio     = size.height / size.width;
-    area      = size.height * size.width;
-    fillratio = fillArea / area;
+    ratio = size.height / size.width;
+    area  = size.height * size.width;
     return true;
 }
 
@@ -138,20 +120,16 @@ bool Arrow::set(const std::vector<Light>& lights, bool debug_mode) {
 void CenterR::set(const Light& light) {
     this->light  = light;
     boundingRect = cv::boundingRect(light.contour);
-    // 由于灯条角点和中心点已经设置过 roi，因此这里不需要重新设置
-    center = light.center;
+    center       = light.center;
 }
 
 /*设置靶的参数*/
 void Target::set(const Light& l) {
-    // 由于中心点已经设置过 roi，因此这里不需要重新设置
     center  = l.center;
     contour = l.contour;
 }
 
-Light::Light(
-    const std::vector<cv::Point>& cnt, const cv::Rect2f& localRoi,
-    [[maybe_unused]] const cv::Mat& image)
+Light::Light(const std::vector<cv::Point>& cnt, const cv::Rect2f& localRoi)
     : contour(cnt)
     , contourArea(cv::contourArea(cnt))
     , rotated(cv::minAreaRect(cnt)) {
@@ -337,10 +315,7 @@ bool findArrow(
             continue;
         }
 
-        std::vector<Light> lg;
-        lg.emplace_back(light);
-
-        if (!arrow.set(lg, params.debug_mode)) {
+        if (!arrow.set(light)) {
             if (params.debug_mode) {
                 SPDLOG_ERROR("findArrow: arrow.set() failed");
             }
@@ -367,7 +342,7 @@ void findArrowLights(
     std::vector<std::vector<cv::Point>> contours;
     cv::findContours(binary, contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
     for (const auto& contour : contours) {
-        Light light(contour, roi, binary);
+        Light light(contour, roi);
 
         // std::cerr << "area : " << light.area;
         if ((light.area >= params.min_arrow_light_area && light.area <= params.max_arrow_light_area)
@@ -390,9 +365,7 @@ bool RuneDetector::detectAllArrows() {
     cv::Mat binImg = arrowImg.clone(); // 二值图
 
     cv::Mat close_kernel = cv::getStructuringElement(0, cv::Size(10, 10));
-    cv::Mat open_kernel  = cv::getStructuringElement(0, cv::Size(5, 5));
     cv::morphologyEx(binImg, binImg, cv::MORPH_CLOSE, close_kernel);
-    cv::morphologyEx(binImg, binImg, cv::MORPH_OPEN, open_kernel);
 
     arrows.clear();
 
@@ -402,41 +375,6 @@ bool RuneDetector::detectAllArrows() {
     if (!findArrow(arrows, lights, arrowImg, params_))
         return false;
 
-    return true;
-}
-
-bool findCenterR(
-    CenterR& center, const std::vector<Light>& lights, const Arrow& arrow,
-    const fcs::rune::RuneDetectorConfig& params) {
-
-    std::vector<Light> filteredLights;
-    for (auto iter = lights.begin(); iter != lights.end(); ++iter) {
-
-        if (!arrow.contour.empty()) {
-            if (cv::pointPolygonTest(arrow.contour, iter->center, false) >= 0) {
-                continue;              // 在箭头内部，跳过
-            }
-        } else {
-            // 如果箭头只有 RotatedRect，使用矩形判断
-            if (arrow.rotated.boundingRect().contains(iter->center)) {
-                continue;
-            }
-        }
-
-        filteredLights.push_back(*iter);
-    }
-    if (filteredLights.empty()) {
-        if (params.debug_mode) {
-            SPDLOG_ERROR(" findCenterR: No filtered lights found");
-        }
-        return false;
-    }
-    // 取所有符合要求的灯条中面积最大的为中心 R 灯条并设置中心 R
-
-    Light rcenter{*std::max_element(
-        filteredLights.begin(), filteredLights.end(),
-        [](const Light& l1, const Light& l2) { return l1.area < l2.area; })};
-    center.set(rcenter);
     return true;
 }
 
@@ -454,9 +392,8 @@ static std::vector<cv::Point> normalizeContour(const std::vector<cv::Point>& cnt
 }
 
 bool findCenterLights(
-    const cv::Mat& image, std::vector<Light>& lights, const cv::Rect2f& localRoi,
+    const cv::Mat& image, Light& light, const cv::Rect2f& localRoi,
     const fcs::rune::RuneDetectorConfig& params) {
-    lights.clear();
 
     cv::Mat R_mat;
     cv::FileStorage fs("config/r_template0.yml", cv::FileStorage::READ);
@@ -487,7 +424,7 @@ bool findCenterLights(
     std::vector<cv::Point> best_cnt;
 
     for (auto& cnt : contours) {
-        if (cv::contourArea(cnt) < 80)
+        if (cv::contourArea(cnt) < 50)
             continue;
         auto cnt_norm = normalizeContour(cnt);
         double score  = cv::matchShapes(cnt_norm, R_norm, cv::CONTOURS_MATCH_I1, 0); // 差异度
@@ -498,19 +435,8 @@ bool findCenterLights(
     }
 
     if (!best_cnt.empty() && best_score < 0.4) {
-        Light light(best_cnt, localRoi, image);
-        // 判断长宽比
-        if (light.ratio > params.max_center_aspect_ratio) {
-            if (params.debug_mode) {
-                SPDLOG_ERROR(
-                    "findCenterLights: Center light aspect ratio too large. ratio = {} ,(max : "
-                    "{}) ",
-                    light.ratio, params.max_center_aspect_ratio);
-            }
-            return false;
-        }
-        // 如果全部符合，则存入向量中
-        lights.emplace_back(std::move(light));
+        light = Light(best_cnt, localRoi);
+
     } else {
         if (params.debug_mode) {
             SPDLOG_ERROR(
@@ -518,48 +444,23 @@ bool findCenterLights(
         }
         return false;
     }
-    if (lights.empty()) {
-        if (params.debug_mode) {
-            SPDLOG_ERROR("findCenterLights: No lights added after all checks");
-        }
-        return false;
-    }
+
     return true;
 }
 
 /*寻找R中心*/
 bool RuneDetector::detectCenterR() {
     cv::Mat imageCenter = (rCenterImg & localMask)(centerRoi);
-    // 寻找中心灯条，可能是多个
-    std::vector<Light> lights;
-    if (findCenterLights(imageCenter, lights, centerRoi, params_) == false) {
+    Light light;
+
+    if (findCenterLights(imageCenter, light, centerRoi, params_) == false) {
         if (params_.debug_mode) {
             SPDLOG_ERROR("detectCenterR: findCenterLights failed");
         }
         return false;
     }
 
-    if (arrows.empty()) {
-        if (params_.debug_mode) {
-            SPDLOG_ERROR("detectCenterR: arrows empty");
-        }
-        return false;
-    }
-
-    if (arrows[0].center == cv::Point2f(0, 0)) {
-        if (params_.debug_mode) {
-            SPDLOG_ERROR("detectCenterR: arrows[0].center is (0,0)");
-        }
-        return false;
-    }
-
-    // 从灯条中寻找中心 R
-    if (findCenterR(rcenter, lights, arrows[0], params_) == false) {
-        if (params_.debug_mode) {
-            SPDLOG_ERROR("detectCenterR: findCenterR failed");
-        }
-        return false;
-    }
+    rcenter.set(light);
 
     return true;
 }
@@ -993,30 +894,10 @@ bool findTargetLights(
     }
     for (size_t i = 0; i < contours.size(); i++) {
 
-        int child_idx  = hierarchy[i][2];
-        int parent_idx = hierarchy[i][3];
-        if (child_idx == -1 && parent_idx == -1) {
-            continue;
-        }
+        Light light(contours[i], localRoi);
 
-        Light light(contours[i], localRoi, image);
-
-        if (light.ratio < params.min_target_light_aspect_ratio
-            || light.ratio > params.max_target_light_aspect_ratio) {
-            // std::cerr << "[ERROR] findTargetLights: light.ratio = " << light.ratio << std::endl;
-            continue;
-        }
-
-        if (light.area < params.min_target_light_area
-            || light.area > params.max_target_light_area) {
-            // std::cerr << "[ERROR] findTargetLights: light.area = " << light.area << std::endl;
-            continue;
-        }
-
-        if (light.contourArea < params.min_target_light_contour_area
-            || light.contourArea > params.max_target_light_contour_area) {
-            // std::cerr << "[ERROR] findTargetLights: light.contourArea = " << light.contourArea
-            //           << std::endl;
+        if ((light.roundness >= params.min_roundness && light.roundness <= params.max_roundness)
+            == false) {
             continue;
         }
 
@@ -1036,17 +917,7 @@ bool findTargetLights(
 bool findTarget(
     Target& target, const std::vector<Light>& frames, const fcs::rune::RuneDetectorConfig& params) {
 
-    std::vector<Light> targets;
-
-    for (const auto& frame : frames) {
-        if ((frame.roundness >= params.min_roundness && frame.roundness <= params.max_roundness)
-            == false) {
-            continue;
-        }
-
-        targets.emplace_back(frame);
-    }
-    if (targets.empty()) {
+    if (frames.empty()) {
 
         if (params.debug_mode) {
             SPDLOG_ERROR(" findTarget: No targets passed roundness check");
@@ -1054,7 +925,7 @@ bool findTarget(
         return false;
     }
     Light light{
-        *std::max_element(targets.begin(), targets.end(), [](const Light& l1, const Light& l2) {
+        *std::max_element(frames.begin(), frames.end(), [](const Light& l1, const Light& l2) {
             return l1.roundness < l2.roundness;
         })};
 
