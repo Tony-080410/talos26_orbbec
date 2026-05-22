@@ -424,7 +424,7 @@ bool findCenterLights(
     std::vector<cv::Point> best_cnt;
 
     for (auto& cnt : contours) {
-        if (cv::contourArea(cnt) < 50)
+        if (cv::contourArea(cnt) < 50 || cv::contourArea(cnt) > 1000)
             continue;
         auto cnt_norm = normalizeContour(cnt);
         double score  = cv::matchShapes(cnt_norm, R_norm, cv::CONTOURS_MATCH_I1, 0); // 差异度
@@ -434,8 +434,11 @@ bool findCenterLights(
         }
     }
 
-    if (!best_cnt.empty() && best_score < 0.4) {
+    if (!best_cnt.empty() && best_score < 0.5) {
         light = Light(best_cnt, localRoi);
+        if (light.roundness > 0.8) {
+            return false;
+        }
 
     } else {
         if (params.debug_mode) {
