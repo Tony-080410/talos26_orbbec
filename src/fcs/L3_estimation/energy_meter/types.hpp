@@ -26,7 +26,7 @@ struct EnergyMeterState {
     double yaw{0.0};
     double pitch{0.0};
     double roll{0.0}; // signed continuous angle (= THETA for selected blade)
-    double t{0.0};    // time since activation
+    double t{0.0};    // phase-adjusted model time used by the big-rune speed formula
 
     // Model parameters (from sigmoid-mapped state)
     double a{0.0};     // amplitude

@@ -2,12 +2,9 @@
 
 #include "L3_estimation/energy_meter_solver/motion_model.hpp"
 
-#include "L3_estimation/tracker/cubature_kalman_filter.hpp"
-
 #include <Eigen/Core>
 #include <Eigen/Geometry>
 
-#include <cmath>
 #include <cstdint>
 #include <optional>
 #include <variant>
@@ -15,25 +12,38 @@
 
 namespace energy_meter {
 
-// ============================================================================
-// Templated Tracker — works with any model (BigRuneModel, SmallRuneModel)
-// ============================================================================
+struct BigFitResult {
+    double a{0.0};
+    double omega{0.0};
+    double phase{0.0};
+    double c{0.0};
+    double t{0.0};
+    double b{0.0};
+    bool valid{false};
+};
 
 template <typename ModelT>
 struct Tracker {
     using Model = ModelT;
-    using JetX  = ceres::Jet<double, Model::NX>;
-
-    using PredictFunc = std::function<void(const JetX*, JetX*)>;
-    using MeasureFunc = std::function<void(const JetX*, JetX*)>;
-    using CKF         = CubatureKalmanFilter<Model::NX, Model::NZ, PredictFunc, MeasureFunc>;
 
     struct Params {
         int lost_thres{10};
         int tracking_thres{3};
         double matcher_gate{25.0};
+        double angle_match_gate_rad{0.45};
         int blade_unlock_frames{10};
         typename Model::Params model_params{};
+
+        int direction_lock_frames{10};
+        int min_fit_samples{24};
+        int max_fit_samples{160};
+        int fit_iterations{3};
+        double fit_window_sec{3.0};
+        double fit_inlier_threshold_rad{0.16};
+        double fit_penalty_a{2.0};
+        double fit_penalty_w{2.0};
+        double fit_temporal_weight{1.0};
+        double fit_filter_alpha{0.35};
     } params;
 
     enum State : uint8_t {
@@ -44,46 +54,36 @@ struct Tracker {
     } state{IDLE};
 
     Tracker() = default;
-
     explicit Tracker(const Params& p) { set_params(p); }
 
-    void set_params(const Params& p) {
-        params        = p;
-        model_.params = params.model_params;
+    void set_params(const Params& p) { params = p; }
+
+    [[nodiscard]] bool has_filter() const noexcept { return initialized_; }
+    [[nodiscard]] bool has_ekf() const noexcept { return has_filter(); }
+
+    void reset_filter() noexcept;
+    void reset_ekf() noexcept { reset_filter(); }
+
+    [[nodiscard]] auto getRadius() const noexcept -> double { return radius_; }
+    void setRadius(double radius) noexcept { radius_ = radius; }
+
+    [[nodiscard]] auto getCurrentBladeId() const noexcept -> int { return blade_id_; }
+    [[nodiscard]] auto getDirection() const noexcept -> int { return dir_; }
+    [[nodiscard]] auto current_roll() const noexcept -> double {
+        return reference_roll_ + continuous_angle_;
     }
-
-    // ── Filter access ──
-
-    bool has_filter() const { return ckf_.has_value(); }
-    bool has_ekf() const { return has_filter(); }
-
-    void reset_filter() { ckf_.reset(); }
-    void reset_ekf() { reset_filter(); }
-
-    auto get_state() const -> const typename Model::VecX& {
-        static typename Model::VecX zero = Model::VecX::Zero();
-        return ckf_ ? ckf_->X() : zero;
-    }
-
-    auto getRadius() const -> double { return model_.params.radius; }
-
-    void setRadius(double radius) { model_.params.radius = radius; }
-
-    auto getCurrentBladeId() const -> int { return armor_id_; }
-    auto getDirection() const -> int { return dir_; }
-
-    void reset_blade_lock() {
-        blade_locked_      = false;
-        blade_lost_frames_ = 0;
-    }
-
-    // ── Lifecycle ──
+    [[nodiscard]] auto current_yaw() const noexcept -> double { return yaw_; }
+    [[nodiscard]] auto current_pitch() const noexcept -> double { return pitch_; }
+    [[nodiscard]] auto current_center() const noexcept -> const Eigen::Vector3d& { return center_; }
+    [[nodiscard]] auto current_time() const noexcept -> double { return current_time_sec_; }
+    [[nodiscard]] auto model_valid() const noexcept -> bool { return model_valid_; }
+    [[nodiscard]] auto big_fit() const noexcept -> const BigFitResult& { return fit_; }
 
     bool first_meet_u(
         const Eigen::Vector3d& r_center, const Eigen::Vector3d& target_pos,
         const Eigen::Quaterniond& target_quat);
 
-    void predict(double dt);
+    void predict(double dt) noexcept;
 
     bool update(
         const Eigen::Vector3d& rcenter_position,
@@ -96,35 +96,56 @@ struct Tracker {
         const std::vector<Eigen::Quaterniond>& target_quats);
 
 private:
-    void state_machine(bool found);
-    void init_ckf(const typename Model::VecX& x0, const typename Model::MatXX& P0);
+public:
+    struct AngleSample {
+        double t{0.0};
+        double angle{0.0};
+    };
 
-    Model model_{};
-    std::optional<CKF> ckf_;
+private:
+    void reset_runtime_state() noexcept;
+    void state_machine(bool found) noexcept;
+    void initialize_reference(
+        const Eigen::Vector3d& r_center, const Eigen::Vector3d& target_pos,
+        const Eigen::Quaterniond& target_quat) noexcept;
+    void update_direction(double new_angle) noexcept;
+    void update_fit();
 
-    // Direction: +1 CW, -1 ACW
-    int dir_{1};
-    double prev_observed_roll_{0.0};
+    [[nodiscard]] auto select_target(
+        const std::vector<Eigen::Vector3d>& target_positions,
+        const std::vector<Eigen::Quaterniond>& target_quats) const -> std::optional<std::size_t>;
+
+    [[nodiscard]] auto instantaneous_speed(double t) const noexcept -> double;
+
+    double radius_{0.7};
+    Eigen::Vector3d center_{Eigen::Vector3d::Zero()};
+    double yaw_{0.0};
+    double pitch_{0.0};
+    double dt_{0.0};
+
+    bool initialized_{false};
+    uint64_t reference_timestamp_ns_{0};
+    Eigen::Matrix3d reference_rotation_{Eigen::Matrix3d::Identity()};
+
+    double current_time_sec_{0.0};
+    double raw_angle_{0.0};
+    double reference_roll_{0.0};
+    double continuous_angle_{0.0};
+    int cumulative_switches_{0};
+    int blade_id_{0};
+
+    int dir_{0};
     int dir_votes_pos_{0};
     int dir_votes_neg_{0};
     int dir_detect_count_{0};
-    bool dir_locked_{false};
-    static constexpr int DIR_DETECT_FRAMES = 20;
 
     int detecting_count_{0};
     int lost_count_{0};
 
-    bool blade_locked_{false};
-    int blade_lost_frames_{0};
-
-    double dt_{0.0};
-    int armor_id_{0};
-    std::optional<typename Model::VecX> last_state_{};
+    std::vector<AngleSample> samples_{};
+    BigFitResult fit_{};
+    bool model_valid_{false};
 };
-
-// ============================================================================
-// Tracker variant — used by energy_meter_systems after voter decides
-// ============================================================================
 
 using SmallTracker = Tracker<SmallRuneModel>;
 using BigTracker   = Tracker<BigRuneModel>;
