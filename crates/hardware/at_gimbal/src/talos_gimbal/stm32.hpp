@@ -4,6 +4,7 @@
 
 // STL
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <condition_variable>
 #include <cstddef>
@@ -98,8 +99,8 @@ struct Stm32Impl {
 
     Stm32Impl(const Stm32Impl&)            = delete;
     Stm32Impl& operator=(const Stm32Impl&) = delete;
-    Stm32Impl(Stm32Impl&&)                 = default;
-    Stm32Impl& operator=(Stm32Impl&&)      = default;
+    Stm32Impl(Stm32Impl&&)                 = delete;
+    Stm32Impl& operator=(Stm32Impl&&)      = delete;
 
     // ─────────────────────────────────────────────
     // 公共接口
@@ -140,27 +141,28 @@ struct Stm32Impl {
             return std::unexpected(std::move(result).error());
         }
 
-        state_    = State::Connected;
         first_rx_ = true;
+        state_.store(State::Connected, std::memory_order_release);
         SPDLOG_INFO("usb mcu connected (vendor_id={:#06x}, product_id={:#06x})", vid_, pid_);
         return {};
     }
 
     void handle_events() noexcept {
-        if (state_ == State::Disconnected)
+        if (state_.load(std::memory_order_acquire) == State::Disconnected)
             return;
 
         timeval tv{0, 0};
         libusb_handle_events_timeout_completed(ctx_, &tv, nullptr);
 
-        if (state_ == State::NeedsReconnect) {
+        if (state_.load(std::memory_order_acquire) == State::NeedsReconnect) {
             reconnect();
         }
     }
 
     [[nodiscard]] std::expected<void, std::string> send_sync(
         const uint8_t* data, const size_t size, const unsigned timeout_ms = 500) const noexcept {
-        if (!handle_) {
+        std::lock_guard lock(device_mtx_);
+        if (state_.load(std::memory_order_acquire) != State::Connected || !handle_) {
             return std::unexpected(
                 fmt::format(
                     "send_sync(vendor_id={:#06x}, product_id={:#06x}): device not connected", vid_,
@@ -185,7 +187,9 @@ struct Stm32Impl {
         return {};
     }
 
-    bool is_connected() const noexcept { return state_ == State::Connected; }
+    bool is_connected() const noexcept {
+        return state_.load(std::memory_order_acquire) == State::Connected;
+    }
 
 private:
     // ─────────────────────────────────────────────
@@ -289,14 +293,14 @@ private:
             return;
         }
 
-        if (self->state_ != State::Connected) [[unlikely]] {
+        if (self->state_.load(std::memory_order_acquire) != State::Connected) [[unlikely]] {
             self->notify_transfer_done();
             return;
         }
 
         if (tr->status != LIBUSB_TRANSFER_COMPLETED) [[unlikely]] {
             SPDLOG_WARN("usb rx transfer failed (status={})", static_cast<int>(tr->status));
-            self->state_ = State::NeedsReconnect;
+            self->state_.store(State::NeedsReconnect, std::memory_order_release);
             self->notify_transfer_done();
             return;
         }
@@ -310,7 +314,7 @@ private:
         // 继续接收
         if (libusb_submit_transfer(tr) != LIBUSB_SUCCESS) {
             SPDLOG_WARN("usb rx resubmit failed");
-            self->state_ = State::NeedsReconnect;
+            self->state_.store(State::NeedsReconnect, std::memory_order_release);
             self->notify_transfer_done();
         }
     }
@@ -322,9 +326,9 @@ private:
             SPDLOG_INFO(
                 "usb mcu disconnected (vendor_id={:#06x}, product_id={:#06x})", self->vid_,
                 self->pid_);
-            self->state_ = State::NeedsReconnect;
+            self->state_.store(State::NeedsReconnect, std::memory_order_release);
         } else if (event == LIBUSB_HOTPLUG_EVENT_DEVICE_ARRIVED) {
-            if (self->state_ == State::NeedsReconnect) {
+            if (self->state_.load(std::memory_order_acquire) == State::NeedsReconnect) {
                 SPDLOG_INFO("usb mcu re-appeared, waiting for enumeration...");
                 std::this_thread::sleep_for(std::chrono::milliseconds(300));
             }
@@ -353,6 +357,11 @@ private:
     }
 
     void close_device() noexcept {
+        std::lock_guard lock(device_mtx_);
+        close_device_locked();
+    }
+
+    void close_device_locked() noexcept {
         if (rx_transfer_) {
             bool should_cancel = false;
             {
@@ -378,7 +387,8 @@ private:
 
     void reconnect() noexcept {
         SPDLOG_INFO("usb mcu reconnecting (vendor_id={:#06x}, product_id={:#06x})...", vid_, pid_);
-        close_device();
+        std::lock_guard lock(device_mtx_);
+        close_device_locked();
         if (auto open_result = open_device(vid_, pid_); !open_result) {
             SPDLOG_WARN("usb mcu reconnect failed: {}", open_result.error());
             return;
@@ -387,18 +397,18 @@ private:
             SPDLOG_WARN("usb mcu reconnect setup failed: {}", setup_result.error());
             return;
         }
-        state_    = State::Connected;
         first_rx_ = true;
+        state_.store(State::Connected, std::memory_order_release);
         SPDLOG_INFO("usb mcu reconnected (vendor_id={:#06x}, product_id={:#06x})", vid_, pid_);
     }
 
     void shutdown() noexcept {
-        if (state_ == State::Disconnected) {
+        const auto previous_state = state_.exchange(State::Disconnected, std::memory_order_acq_rel);
+        if (previous_state == State::Disconnected && !ctx_) {
             return;
         }
         SPDLOG_INFO("usb mcu shutting down");
-        state_ = State::Disconnected;
-        if (hp_handle_) {
+        if (hp_handle_ && ctx_) {
             libusb_hotplug_deregister_callback(ctx_, hp_handle_);
             hp_handle_ = 0;
         }
@@ -461,8 +471,11 @@ private:
     uint16_t vid_ = 0;
     uint16_t pid_ = 0;
 
-    State state_   = State::Disconnected;
+    std::atomic<State> state_{State::Disconnected};
     bool first_rx_ = true;
+
+    // Protects libusb handle ownership while the writer thread and event thread share the device.
+    mutable std::mutex device_mtx_;
 
     // Transfer 取消同步：reconnect/close_device 在事件循环内调用，
     // mutex + condvar 保证 cancel-then-wait 和回调之间的正确同步。
