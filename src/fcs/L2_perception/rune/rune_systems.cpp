@@ -64,7 +64,8 @@ void register_rune_detection_systems(talos::Scheduler& scheduler, RuneDetectorCo
                 return;
             }
 
-            auto detect_color = *color;
+            // self color for rune
+            auto detect_color = *color == ArmorColor::Red ? ArmorColor::Blue : ArmorColor::Red;
 
             RuneObservation out;
             out.timestamp_ns = frame->timestamp_ns;
