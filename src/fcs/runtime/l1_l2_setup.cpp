@@ -26,6 +26,7 @@
 #include <utility>
 
 #include <fmt/format.h>
+#include <fmt/ranges.h>
 #include <spdlog/spdlog.h>
 
 namespace fcs::runtime {
@@ -139,7 +140,7 @@ struct DaedalusImu {
     void system(
         talos::res_mut<fast_tf::CoordinateSystem> tf_buffer,
         [[maybe_unused]] core::trajectory::bullet_speed_mut bullet_speed,
-        [[maybe_unused]] core::detecting_color_mut detecting_color,
+        [[maybe_unused]] core::detecting_color_mut detecting_color, core::following_mut following,
         [[maybe_unused]] core::imu_state_mut imu_state,
         talos::spmc_mut<core::ControlResourceSnapshot, RuntimeControlStateChannelTopic> control_out,
         talos::spmc_mut<ipc::GroundTruthBatch, GroundTruthBatchChannelTopic> gt_out) noexcept {
@@ -200,6 +201,13 @@ struct DaedalusImu {
         if (const auto obs = ipc_device->recv_chassis_observation()) {
             // TODO
         }
+        if (const auto state = ipc_device->recv_runtime_state()) {
+            const auto next_following = state->following != 0U;
+            if (next_following != following->load()) {
+                following->store(next_following);
+                SPDLOG_INFO("daedalus following changed: {}", next_following);
+            }
+        }
         if (const auto gt = ipc_device->recv_ground_truth()) {
             if (gt->timestamp_ns != last_gt_timestamp_ns) {
                 last_gt_timestamp_ns = gt->timestamp_ns;
@@ -216,20 +224,63 @@ struct DaedalusImu {
 
 using McuHandle = talos_gimbal::McuDeviceHandle;
 static talos_gimbal::ReceiveImuData g_imu_data{};
+static talos_gimbal::ReceiveCapabilitiesData g_capabilities_data{};
+
+void apply_mcu_capabilities(
+    core::capabilities_mut capabilities, core::following_mut following,
+    const talos_gimbal::ReceiveCapabilitiesData& reported) noexcept {
+    if (reported.header.sof != talos_gimbal::HeaderFrame::SoF()
+        || reported.eof != talos_gimbal::HeaderFrame::EoF()) [[unlikely]] {
+        return;
+    }
+
+    constexpr auto mcu_controlled = static_cast<core::CapabilityMask>(
+        core::capability_bit(core::Capability::Rune)
+        | core::capability_bit(core::Capability::Quanta));
+    const auto next_following = reported.data.following != 0U;
+    if (next_following != following->load()) {
+        following->store(next_following);
+        SPDLOG_INFO("MCU following changed: {}", next_following);
+    }
+
+    const auto previous = capabilities->load();
+    auto next           = static_cast<core::CapabilityMask>(previous & ~mcu_controlled);
+    if (reported.data.power_rune != 0U) {
+        next =
+            static_cast<core::CapabilityMask>(next | core::capability_bit(core::Capability::Rune));
+    }
+    if (reported.data.quanta != 0U) {
+        next = static_cast<core::CapabilityMask>(
+            next | core::capability_bit(core::Capability::Quanta));
+    }
+    if (next == previous) {
+        return;
+    }
+
+    capabilities->store(next);
+    SPDLOG_INFO(
+        "MCU capabilities changed: [{}]",
+        fmt::join(core::active_capabilities(*capabilities), ", "));
+}
 
 struct McuImu {
     McuConfig config;
     std::shared_ptr<McuHandle> device;
-    talos_gimbal::ReceiveImuData* imu_data = nullptr;
+    talos_gimbal::ReceiveImuData* imu_data                         = nullptr;
+    const talos_gimbal::ReceiveCapabilitiesData* capabilities_data = nullptr;
 
     void system(
         talos::res_mut<fast_tf::CoordinateSystem> tf_buffer,
         core::trajectory::bullet_speed_mut bullet_speed, core::detecting_color_mut detecting_color,
+        core::capabilities_mut capabilities, core::following_mut following,
         core::imu_state_mut imu_state,
         talos::spmc_mut<core::ControlResourceSnapshot, RuntimeControlStateChannelTopic> control_out,
         [[maybe_unused]] talos::spmc_mut<ipc::GroundTruthBatch, GroundTruthBatchChannelTopic>
             gt_out) noexcept {
         device->handle_events();
+        if (capabilities_data != nullptr) {
+            apply_mcu_capabilities(capabilities, following, *capabilities_data);
+        }
         if (imu_data->header.sof != talos_gimbal::HeaderFrame::SoF()
             || imu_data->eof != talos_gimbal::HeaderFrame::EoF()) [[unlikely]] {
             return;
@@ -279,14 +330,26 @@ struct Imu {
     void system(
         talos::res_mut<fast_tf::CoordinateSystem> tf_buffer,
         core::trajectory::bullet_speed_mut bullet_speed, core::detecting_color_mut detecting_color,
+        core::capabilities_mut capabilities, core::following_mut following,
         core::imu_state_mut imu_state,
         talos::spmc_mut<core::ControlResourceSnapshot, RuntimeControlStateChannelTopic> control_out,
         talos::spmc_mut<ipc::GroundTruthBatch, GroundTruthBatchChannelTopic> gt_out) noexcept {
         std::visit(
-            [&](auto& inner) {
-                inner.system(
-                    tf_buffer, bullet_speed, detecting_color, imu_state, control_out, gt_out);
-            },
+            overloaded{
+                [&](McuImu& inner) {
+                    inner.system(
+                        tf_buffer, bullet_speed, detecting_color, capabilities, following,
+                        imu_state, control_out, gt_out);
+                },
+                [&](DaedalusImu& inner) {
+                    inner.system(
+                        tf_buffer, bullet_speed, detecting_color, following, imu_state, control_out,
+                        gt_out);
+                },
+                [&](auto& inner) {
+                    inner.system(
+                        tf_buffer, bullet_speed, detecting_color, imu_state, control_out, gt_out);
+                }},
             impl);
     }
 };
@@ -334,7 +397,10 @@ std::expected<L1L2SetupResult, std::string> setup_l1(
             },
             [&camera, &output, &imu,
              &imu_ready](hardware::DirectConfig cfg) -> std::expected<void, std::string> {
-                talos_gimbal::Stm32Parser::latest_imu = &g_imu_data;
+                g_imu_data                                     = {};
+                g_capabilities_data                            = {};
+                talos_gimbal::Stm32Parser::latest_imu          = &g_imu_data;
+                talos_gimbal::Stm32Parser::latest_capabilities = nullptr;
 
                 auto mcu_config = cfg.hardware.mcu;
                 if (!cfg.camera_only) {
@@ -372,11 +438,15 @@ std::expected<L1L2SetupResult, std::string> setup_l1(
                             }
                             mcu_device =
                                 std::make_shared<McuHandle>(std::move(device_result).value());
+                            talos_gimbal::Stm32Parser::latest_capabilities = &g_capabilities_data;
                         }
                         SPDLOG_INFO("connected to mcu via {}", mcu_config->mcu_backend);
                         output = std::make_unique<fcs::L1::OutputInterface>(
                             fcs::L1::McuOutput(mcu_device));
-                        imu->impl = McuImu{mcu_config, mcu_device, &g_imu_data};
+                        imu->impl = McuImu{
+                            mcu_config, mcu_device, &g_imu_data,
+                            mcu_config->mcu_backend == fcs::McuBackend::Usb ? &g_capabilities_data
+                                                                            : nullptr};
                         imu_ready = true;
                     } else {
                         SPDLOG_INFO("initializing chiral mcu...");
@@ -425,12 +495,14 @@ std::expected<L1L2SetupResult, std::string> setup_l1(
             [imu = std::move(imu)](
                 talos::res_mut<fast_tf::CoordinateSystem> tf_buffer,
                 core::trajectory::bullet_speed_mut bullet_speed,
-                core::detecting_color_mut detecting_color, core::imu_state_mut imu_state,
+                core::detecting_color_mut detecting_color, core::capabilities_mut capabilities,
+                core::following_mut following, core::imu_state_mut imu_state,
                 talos::spmc_mut<core::ControlResourceSnapshot, RuntimeControlStateChannelTopic>
                     control_out,
                 talos::spmc_mut<ipc::GroundTruthBatch, GroundTruthBatchChannelTopic> gt_out) {
                 imu->system(
-                    tf_buffer, bullet_speed, detecting_color, imu_state, control_out, gt_out);
+                    tf_buffer, bullet_speed, detecting_color, capabilities, following, imu_state,
+                    control_out, gt_out);
             });
     } else {
         SPDLOG_WARN("pretending mcu is connected, no mcu data will be available");

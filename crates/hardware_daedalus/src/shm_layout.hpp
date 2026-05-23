@@ -178,6 +178,18 @@ struct alignas(64) GroundTruthBatch {
 };
 static_assert(sizeof(GroundTruthBatch) == 1664, "GroundTruthBatch must be 1664 bytes");
 
+/**
+ * @brief Daedalus runtime control state - 64 bytes
+ *
+ * Occupies the previously reserved tail slot in ShmMetaRegion.
+ */
+struct alignas(64) RuntimeState {
+    uint64_t timestamp_ns;
+    uint8_t following; // 1=auto aim/follow enabled, 0=disabled
+    uint8_t _pad[55];
+};
+static_assert(sizeof(RuntimeState) == 64, "RuntimeState must be 64 bytes");
+
 // ============ TripleBuffer 槽位 ============
 
 /**
@@ -261,7 +273,7 @@ static_assert(sizeof(ShmHeader) == 64, "ShmHeader must be 64 bytes");
  * ├─────────────────────────────────────┤
  * │ GroundTruthBatch (1664 bytes)       │ offset 1984
  * ├─────────────────────────────────────┤
- * │ _pad (64 bytes)                     │ offset 3648
+ * │ RuntimeState (64 bytes)             │ offset 3648
  * └─────────────────────────────────────┘
  * Total: 3712 bytes
  */
@@ -273,13 +285,14 @@ struct ShmMetaRegion {
     CameraInfo camera_info;
     ChassisObservation chassis_observation;
     GroundTruthBatch ground_truth;
-    uint8_t _pad[64];
+    RuntimeState runtime_state;
 };
 static_assert(sizeof(ShmMetaRegion) == 3712, "ShmMetaRegion must be 3712 bytes");
 static_assert(offsetof(ShmMetaRegion, camera_info) == 1728, "camera_info offset mismatch");
 static_assert(
     offsetof(ShmMetaRegion, chassis_observation) == 1856, "chassis_observation offset mismatch");
 static_assert(offsetof(ShmMetaRegion, ground_truth) == 1984, "ground_truth offset mismatch");
+static_assert(offsetof(ShmMetaRegion, runtime_state) == 3648, "runtime_state offset mismatch");
 
 // Pose 索引
 enum PoseIndex : uint8_t {

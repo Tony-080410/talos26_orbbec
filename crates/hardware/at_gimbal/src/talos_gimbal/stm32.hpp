@@ -47,6 +47,7 @@ class Stm32Parser {
 public:
     // 静态指针，指向外部的 IMU 数据存储 (由外部管理生命周期)
     static inline ReceiveImuData* latest_imu{nullptr};
+    static inline ReceiveCapabilitiesData* latest_capabilities{nullptr};
 
     Stm32Parser(const Stm32Parser&)            = delete;
     Stm32Parser& operator=(const Stm32Parser&) = delete;
@@ -68,19 +69,10 @@ public:
                 *latest_imu          = *received;
             }
         } else if (header_frame->id == 0x03) {
-            if (latest_imu && data.size_bytes() >= sizeof(ReceiveSimpleImuData)) {
-                const auto* received   = reinterpret_cast<const ReceiveSimpleImuData*>(data.data());
-                latest_imu->header     = received->header;
-                latest_imu->time_stamp = received->time_stamp;
-                latest_imu->data.self_color   = received->data.self_color;
-                latest_imu->data.bullet_speed = 0.0f;
-                latest_imu->data.yaw          = received->data.yaw;
-                latest_imu->data.pitch        = received->data.pitch;
-                latest_imu->data.roll         = received->data.roll;
-                latest_imu->data.yaw_vel      = 0.0f;
-                latest_imu->data.pitch_vel    = 0.0f;
-                latest_imu->data.roll_vel     = 0.0f;
-                latest_imu->eof               = received->eof;
+            if (latest_capabilities && data.size_bytes() >= sizeof(ReceiveCapabilitiesData)) {
+                const auto* received =
+                    reinterpret_cast<const ReceiveCapabilitiesData*>(data.data());
+                *latest_capabilities = *received;
             }
         }
     }

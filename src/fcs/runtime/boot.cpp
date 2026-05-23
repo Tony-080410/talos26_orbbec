@@ -108,7 +108,9 @@ void init_coordinate_system(fast_tf::CoordinateSystem& system, const RobotExtrin
         config.backend);
 
     world.insert_resource(config.vision.detect_color);
-    world.insert_resource(config.vision.capabilities.get());
+    static_cast<void>(world.emplace_resource<core::CapabilityState>(
+        std::span<const core::Capability>(config.vision.capabilities.get())));
+    static_cast<void>(world.emplace_resource<core::FollowingState>());
     world.insert_resource(config.vision.armor->readback_roi);
     world.insert_resource(L2::TrackerReadbackCache{});
 

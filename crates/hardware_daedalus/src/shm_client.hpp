@@ -243,6 +243,20 @@ public:
         return gt;
     }
 
+    /**
+     * @brief Receive simulator runtime state.
+     *
+     * The state lives in the formerly reserved tail of the metadata region, so older publishers
+     * expose no valid state (`timestamp_ns == 0`) rather than an incorrect value.
+     */
+    [[nodiscard]] std::optional<RuntimeState> recv_runtime_state() const {
+        const auto state = meta_->runtime_state;
+        if (state.timestamp_ns == 0) {
+            return std::nullopt;
+        }
+        return state;
+    }
+
     // ============ 云台命令发布 ============
 
     /**
