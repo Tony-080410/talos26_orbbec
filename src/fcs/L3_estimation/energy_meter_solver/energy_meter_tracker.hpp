@@ -2,7 +2,7 @@
 
 #include "L3_estimation/energy_meter_solver/motion_model.hpp"
 
-#include "L3_estimation/tracker/cubature_kalman_filter.hpp"
+#include "L3_estimation/tracker/extended_kalman_filter.hpp"
 
 #include <Eigen/Core>
 #include <Eigen/Geometry>
@@ -26,7 +26,7 @@ struct Tracker {
 
     using PredictFunc = std::function<void(const JetX*, JetX*)>;
     using MeasureFunc = std::function<void(const JetX*, JetX*)>;
-    using CKF         = CubatureKalmanFilter<Model::NX, Model::NZ, PredictFunc, MeasureFunc>;
+    using EKF         = ExtendedKalmanFilter<Model::NX, Model::NZ, PredictFunc, MeasureFunc>;
 
     struct Params {
         int lost_thres{10};
@@ -52,17 +52,15 @@ struct Tracker {
         model_.params = params.model_params;
     }
 
-    // ── Filter access ──
+    // ── EKF access ──
 
-    bool has_filter() const { return ckf_.has_value(); }
-    bool has_ekf() const { return has_filter(); }
+    bool has_ekf() const { return ekf_.has_value(); }
 
-    void reset_filter() { ckf_.reset(); }
-    void reset_ekf() { reset_filter(); }
+    void reset_ekf() { ekf_.reset(); }
 
     auto get_state() const -> const typename Model::VecX& {
         static typename Model::VecX zero = Model::VecX::Zero();
-        return ckf_ ? ckf_->X() : zero;
+        return ekf_ ? ekf_->X() : zero;
     }
 
     auto getRadius() const -> double { return model_.params.radius; }
@@ -97,10 +95,10 @@ struct Tracker {
 
 private:
     void state_machine(bool found);
-    void init_ckf(const typename Model::VecX& x0, const typename Model::MatXX& P0);
+    void init_ekf(const typename Model::VecX& x0, const typename Model::MatXX& P0);
 
     Model model_{};
-    std::optional<CKF> ckf_;
+    std::optional<EKF> ekf_;
 
     // Direction: +1 CW, -1 ACW
     int dir_{1};

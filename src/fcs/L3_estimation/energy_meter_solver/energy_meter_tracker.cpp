@@ -15,7 +15,7 @@ namespace energy_meter {
 // ============================================================================
 
 template <typename ModelT>
-void Tracker<ModelT>::init_ckf(const typename Model::VecX& x0, const typename Model::MatXX& P0) {
+void Tracker<ModelT>::init_ekf(const typename Model::VecX& x0, const typename Model::MatXX& P0) {
     auto f = [this](const JetX* x, JetX* xp) {
         Model::template predict_state<JetX>(x, JetX(dt_), dir_, xp);
     };
@@ -25,8 +25,8 @@ void Tracker<ModelT>::init_ckf(const typename Model::VecX& x0, const typename Mo
     auto q = [this]() -> typename Model::MatXX { return model_.Q(dt_); };
     auto r = [this](const typename Model::VecZ& z) -> typename Model::MatZZ { return model_.R(z); };
 
-    ckf_.emplace(f, h, q, r, P0);
-    ckf_->setState(x0);
+    ekf_.emplace(f, h, q, r, P0);
+    ekf_->setState(x0);
 }
 
 template <typename ModelT>
@@ -34,7 +34,7 @@ bool Tracker<ModelT>::update(
     const Eigen::Vector3d& rcenter_position, const std::vector<Eigen::Vector3d>& target_positions,
     const std::vector<Eigen::Quaterniond>& target_quats) {
 
-    if (!ckf_ || target_positions.empty() || target_quats.empty()) {
+    if (!ekf_ || target_positions.empty() || target_quats.empty()) {
         state_machine(false);
         return false;
     }
@@ -42,7 +42,7 @@ bool Tracker<ModelT>::update(
     using VecZ = typename Model::VecZ;
 
     const auto& pos          = rcenter_position;
-    const auto& x_pre        = ckf_->X();
+    const auto& x_pre        = ekf_->X();
     constexpr int armors_num = ARMORS_NUM;
 
     VecZ best_meas   = VecZ::Zero();
@@ -140,14 +140,14 @@ bool Tracker<ModelT>::update(
     z[ARMOR_ROLL] = observed_base_roll + blade_offset;
 
     armor_id_ = best_id;
-    ckf_->update(z);
+    ekf_->update(z);
 
     // Clamp physical parameters to valid range (no sigmoid guard)
     if constexpr (std::is_same_v<ModelT, BigRuneModel>) {
-        auto x      = ckf_->X();
+        auto x      = ekf_->X();
         x(Model::A) = std::clamp(x(Model::A), BigRuneModel::A_LOWER, BigRuneModel::A_UPPER);
         x(Model::W) = std::clamp(x(Model::W), BigRuneModel::W_LOWER, BigRuneModel::W_UPPER);
-        ckf_->setState(x);
+        ekf_->setState(x);
     }
 
     // Direction detection from raw observations
@@ -181,11 +181,11 @@ bool Tracker<ModelT>::update(
 
 template <typename ModelT>
 void Tracker<ModelT>::predict(double dt) {
-    if (!ckf_) {
+    if (!ekf_) {
         return;
     }
     dt_ = std::max(0.0, dt);
-    ckf_->predict();
+    ekf_->predict();
 }
 
 template <typename ModelT>
@@ -234,7 +234,7 @@ bool Tracker<BigRuneModel>::first_meet_u(
     P0(BigRuneModel::W, BigRuneModel::W)     = 0.05;
     P0(BigRuneModel::TAU, BigRuneModel::TAU) = 4.0;
 
-    init_ckf(x0, P0);
+    init_ekf(x0, P0);
 
     dir_                = 1;
     prev_observed_roll_ = roll;
@@ -275,7 +275,7 @@ bool Tracker<SmallRuneModel>::first_meet_u(
     SmallRuneModel::MatXX P0                         = SmallRuneModel::MatXX::Identity() * 0.1;
     P0(SmallRuneModel::THETA, SmallRuneModel::THETA) = 1.0;
 
-    init_ckf(x0, P0);
+    init_ekf(x0, P0);
 
     dir_                = 1;
     prev_observed_roll_ = roll;
@@ -298,9 +298,9 @@ void Tracker<ModelT>::state_machine(bool found) {
             ++detecting_count_;
             state = DETECTING;
         } else {
-            if (ckf_)
-                last_state_.emplace(ckf_->X());
-            ckf_.reset();
+            if (ekf_)
+                last_state_.emplace(ekf_->X());
+            ekf_.reset();
             detecting_count_ = 0;
         }
         break;
@@ -314,9 +314,9 @@ void Tracker<ModelT>::state_machine(bool found) {
             }
         } else {
             detecting_count_ = 0;
-            if (ckf_)
-                last_state_.emplace(ckf_->X());
-            ckf_.reset();
+            if (ekf_)
+                last_state_.emplace(ekf_->X());
+            ekf_.reset();
             state = IDLE;
         }
         break;
@@ -337,9 +337,9 @@ void Tracker<ModelT>::state_machine(bool found) {
             if (lost_count_ > params.lost_thres) {
                 lost_count_      = 0;
                 detecting_count_ = 0;
-                if (ckf_)
-                    last_state_.emplace(ckf_->X());
-                ckf_.reset();
+                if (ekf_)
+                    last_state_.emplace(ekf_->X());
+                ekf_.reset();
                 reset_blade_lock();
                 state = IDLE;
             }
