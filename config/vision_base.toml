@@ -1,6 +1,6 @@
 backend_type = "OnnxRuntime"  # Options: "Traditional", "OnnxRuntime", "TensorRT", "Axera"
 detect_color = "Blue"
-capabilities = ["Rune"]
+capabilities = ["Armor"]
 
 # Required if backend_type = "traditional"
 [traditional]
@@ -302,18 +302,7 @@ tracking_thres = 3
 matcher_gate = 25.0
 # Frames a locked blade must be lost before unlocking and re-selecting
 blade_unlock_frames = 10
-reset_vote_time = 2.0
-angle_match_gate_rad = 0.45
-direction_lock_frames = 4
-min_fit_samples = 26
-max_fit_samples = 240
-fit_iterations = 4
-fit_window_sec = 3.0
-fit_inlier_threshold_rad = 0.08
-fit_penalty_a = 0.5
-fit_penalty_w = 0.5
-fit_temporal_weight = 0.2
-fit_filter_alpha = 1.0
+reset_vote_time = 1.0
 
 [energy_meter.big_model]
 sigma_xy = 0.3

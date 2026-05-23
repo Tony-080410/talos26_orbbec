@@ -12,7 +12,6 @@
 #include <cmath>
 #include <cstdint>
 #include <memory>
-#include <type_traits>
 #include <variant>
 
 #include <spdlog/spdlog.h>
@@ -21,25 +20,27 @@ namespace fcs::energy_meter {
 
 namespace {
 
-template <typename TrackerT>
+// Build state from a tracker of any model type.
+// Both models share indices [XC=0, YC=1, ZC=2, YAW=3, THETA=4].
+template <typename ModelT>
 EnergyMeterState build_state_from_tracker(
-    const TrackerT& tracker, uint64_t timestamp_ns, bool is_big, bool obs_valid) {
-    const double roll       = tracker.current_roll();
-    const double yaw        = tracker.current_yaw();
-    const double pitch      = tracker.current_pitch();
-    const double radius     = tracker.getRadius();
-    const int blade_id      = tracker.getCurrentBladeId();
-    const double blade_roll = roll + static_cast<double>(blade_id) * 2.0 * M_PI / 5.0;
+    const ::energy_meter::Tracker<ModelT>& tracker, uint64_t timestamp_ns, int tracking_frames,
+    bool is_big, bool obs_valid) {
+    const auto& x = tracker.get_state();
 
+    const double roll   = x(ModelT::THETA);
+    const double yaw    = x(ModelT::YAW);
+    const double radius = tracker.getRadius();
+
+    const bool is_tracking =
+        (tracker.state == ::energy_meter::Tracker<ModelT>::TRACKING
+         || tracker.state == ::energy_meter::Tracker<ModelT>::TEMP_LOST);
+
+    const double blade_roll =
+        roll + static_cast<double>(tracker.getCurrentBladeId()) * 2.0 * M_PI / 5.0;
     const double sr = std::sin(blade_roll);
     const double cr = std::cos(blade_roll);
     Eigen::Vector3d blade_local(0.0, -radius * sr, radius * cr);
-
-    const double sp = std::sin(pitch);
-    const double cp = std::cos(pitch);
-    blade_local     = Eigen::Vector3d(
-        blade_local.x() * cp + blade_local.z() * sp, blade_local.y(),
-        -blade_local.x() * sp + blade_local.z() * cp);
 
     const double cy = std::cos(yaw);
     const double sy = std::sin(yaw);
@@ -47,55 +48,57 @@ EnergyMeterState build_state_from_tracker(
         blade_local.x() * cy - blade_local.y() * sy, blade_local.x() * sy + blade_local.y() * cy,
         blade_local.z());
 
-    EnergyMeterState out;
-    out.timestamp_ns  = timestamp_ns;
-    out.tracker_state = static_cast<TrackerState>(tracker.state);
-    out.tracking_valid =
-        tracker.state == TrackerT::TRACKING || tracker.state == TrackerT::TEMP_LOST;
-    out.r_center_odom = tracker.current_center();
-    out.radius        = radius;
-    out.yaw           = yaw;
-    out.pitch         = pitch;
-    out.roll          = roll;
-    out.t             = tracker.current_time();
-    out.blade_id      = blade_id;
-    out.direction     = tracker.getDirection();
-    out.is_big_rune   = is_big;
-    out.obs_valid     = obs_valid;
-    out.position      = out.r_center_odom + blade_offset;
-    out.quat          = Eigen::AngleAxisd(yaw, Eigen::Vector3d::UnitZ())
-             * Eigen::AngleAxisd(pitch, Eigen::Vector3d::UnitY())
-             * Eigen::AngleAxisd(blade_roll, Eigen::Vector3d::UnitX());
+    const Eigen::Vector3d r_center(x(ModelT::XC), x(ModelT::YC), x(ModelT::ZC));
 
-    if constexpr (std::is_same_v<TrackerT, ::energy_meter::BigTracker>) {
-        const auto& fit = tracker.big_fit();
-        out.a           = fit.a;
-        out.omega       = fit.omega;
-        out.b           = fit.b;
-        if (fit.valid && std::abs(fit.omega) > 1e-9) {
-            out.t = tracker.current_time() + fit.phase / fit.omega;
-        }
-        out.model_valid = tracker.model_valid();
+    const Eigen::Quaterniond yaw_quat(std::cos(yaw / 2), 0.0, 0.0, std::sin(yaw / 2));
+    const Eigen::Quaterniond roll_quat(
+        std::cos(blade_roll / 2), std::sin(blade_roll / 2), 0.0, 0.0);
+
+    EnergyMeterState out;
+    out.timestamp_ns   = timestamp_ns;
+    out.tracker_state  = static_cast<TrackerState>(tracker.state);
+    out.tracking_valid = is_tracking;
+    out.r_center_odom  = r_center;
+    out.radius         = radius;
+    out.yaw            = yaw;
+    out.pitch          = 0.0;
+    out.roll           = roll;
+    out.blade_id       = tracker.getCurrentBladeId();
+    out.direction      = tracker.getDirection();
+    out.is_big_rune    = is_big;
+    out.position       = r_center + blade_offset;
+    out.quat           = yaw_quat * roll_quat;
+
+    out.obs_valid = obs_valid;
+
+    if constexpr (std::is_same_v<ModelT, ::energy_meter::BigRuneModel>) {
+        out.t           = x(ModelT::TAU);
+        out.a           = x(ModelT::A);
+        out.omega       = x(ModelT::W);
+        out.b           = ::energy_meter::to_b(out.a);
+        out.model_valid = is_tracking && tracking_frames > 5;
     } else {
+        out.t           = 0.0;
         out.a           = 0.0;
         out.omega       = ::energy_meter::FIXED_RUNE_SPEED;
         out.b           = ::energy_meter::FIXED_RUNE_SPEED;
-        out.model_valid = tracker.model_valid();
+        out.model_valid = is_tracking;
     }
 
     return out;
 }
 
 EnergyMeterState build_state(
-    const ::energy_meter::AnyTracker& tracker_var, uint64_t timestamp_ns, bool is_big,
-    bool obs_valid) {
+    const ::energy_meter::AnyTracker& tracker_var, uint64_t timestamp_ns, int tracking_frames,
+    bool is_big, bool obs_valid) {
     return std::visit(
         [&](const auto& tk) -> EnergyMeterState {
             using T = std::decay_t<decltype(tk)>;
             if constexpr (std::is_same_v<T, std::monostate>) {
                 return EnergyMeterState{};
             } else {
-                return build_state_from_tracker(tk, timestamp_ns, is_big, obs_valid);
+                return build_state_from_tracker(
+                    tk, timestamp_ns, tracking_frames, is_big, obs_valid);
             }
         },
         tracker_var);
@@ -105,6 +108,7 @@ EnergyMeterState build_state(
 
 void register_energy_meter_systems(talos::Scheduler& scheduler, EnergyMeterL3Config&& config) {
     scheduler.world().insert_resource(std::move(config));
+
     scheduler.world().insert_resource(std::make_shared<::energy_meter::AnyTracker>());
 
     scheduler.add_system<talos::pool_compute>(
@@ -125,6 +129,7 @@ void register_energy_meter_systems(talos::Scheduler& scheduler, EnergyMeterL3Con
             if (last_timestamp_ns > 0 && frame_ns > last_timestamp_ns) {
                 dt = static_cast<double>(frame_ns - last_timestamp_ns) * 1e-9;
             }
+
             auto& tracker_var = **tracker_ptr;
 
             // IDLE 状态且无有效观测，直接返回
@@ -170,12 +175,26 @@ void register_energy_meter_systems(talos::Scheduler& scheduler, EnergyMeterL3Con
                     },
                     tracker_var);
 
-                if (!std::holds_alternative<std::monostate>(tracker_var) && voter.determined()) {
-                    state_out.write(build_state(tracker_var, frame_ns, voter.is_big(), false));
+                if (voter.determined() && !std::holds_alternative<std::monostate>(tracker_var)) {
+                    const bool is_tracking = std::visit(
+                        [&](const auto& tk) -> bool {
+                            using T = std::decay_t<decltype(tk)>;
+                            if constexpr (std::is_same_v<T, std::monostate>) {
+                                return false;
+                            } else {
+                                return tk.state == T::TRACKING || tk.state == T::TEMP_LOST;
+                            }
+                        },
+                        tracker_var);
+
+                    tracking_frames = is_tracking ? tracking_frames + 1 : 0;
+                    state_out.write(build_state(
+                        tracker_var, frame_ns, tracking_frames, voter.is_big(), obs_valid));
                 }
                 return;
             }
 
+            // ── Big/small rune detection ──
             if (!voter.determined()) {
                 if (const auto decision = voter.update(obs->target_positions_odom.size())) {
                     SPDLOG_INFO(
@@ -195,51 +214,62 @@ void register_energy_meter_systems(talos::Scheduler& scheduler, EnergyMeterL3Con
                 return;
             }
 
-            auto advance_tracker = [&](auto& tk, const auto& model_params) {
-                using T = std::decay_t<decltype(tk)>;
-                typename T::Params p;
-                p.lost_thres               = cfg->lost_thres;
-                p.tracking_thres           = cfg->tracking_thres;
-                p.matcher_gate             = cfg->matcher_gate;
-                p.angle_match_gate_rad     = cfg->angle_match_gate_rad;
-                p.blade_unlock_frames      = cfg->blade_unlock_frames;
-                p.direction_lock_frames    = cfg->direction_lock_frames;
-                p.min_fit_samples          = cfg->min_fit_samples;
-                p.max_fit_samples          = cfg->max_fit_samples;
-                p.fit_iterations           = cfg->fit_iterations;
-                p.fit_window_sec           = cfg->fit_window_sec;
-                p.fit_inlier_threshold_rad = cfg->fit_inlier_threshold_rad;
-                p.fit_penalty_a            = cfg->fit_penalty_a;
-                p.fit_penalty_w            = cfg->fit_penalty_w;
-                p.fit_temporal_weight      = cfg->fit_temporal_weight;
-                p.fit_filter_alpha         = cfg->fit_filter_alpha;
-                p.model_params             = model_params;
-                tk.set_params(p);
+            // ── EKF tracker step ──
+            std::visit(
+                [&](auto& tk) {
+                    using T = std::decay_t<decltype(tk)>;
+                    if constexpr (!std::is_same_v<T, std::monostate>) {
+                        typename T::Params p;
+                        p.lost_thres          = cfg->lost_thres;
+                        p.tracking_thres      = cfg->tracking_thres;
+                        p.matcher_gate        = cfg->matcher_gate;
+                        p.blade_unlock_frames = cfg->blade_unlock_frames;
+                        if constexpr (std::is_same_v<T, ::energy_meter::BigTracker>) {
+                            p.model_params = cfg->big_model;
+                        } else {
+                            p.model_params = cfg->small_model;
+                        }
+                        tk.set_params(p);
 
-                if (!tk.has_filter()) {
-                    tk.first_meet_u(
-                        obs->r_center_odom.translation(), obs->target_positions_odom.front(),
-                        obs->target_quats_odom.front());
-                }
+                        if (!tk.has_ekf()) {
+                            tk.first_meet_u(
+                                obs->r_center_odom.translation(), obs->target_positions_odom[0],
+                                obs->target_quats_odom[0]);
+                        }
 
-                if (dt > 0.0) {
-                    tk.step(
-                        dt, obs->r_center_odom.translation(), obs->target_positions_odom,
-                        obs->target_quats_odom);
-                } else {
-                    tk.update(
-                        obs->r_center_odom.translation(), obs->target_positions_odom,
-                        obs->target_quats_odom);
-                }
-            };
+                        const double observed_radius =
+                            (obs->target_positions_odom[0] - obs->r_center_odom.translation())
+                                .norm();
+                        tk.setRadius(observed_radius);
 
-            if (auto* tk = std::get_if<::energy_meter::BigTracker>(&tracker_var)) {
-                advance_tracker(*tk, cfg->big_model);
-            } else if (auto* tk = std::get_if<::energy_meter::SmallTracker>(&tracker_var)) {
-                advance_tracker(*tk, cfg->small_model);
-            }
+                        if (dt > 0.0) {
+                            tk.step(
+                                dt, obs->r_center_odom.translation(), obs->target_positions_odom,
+                                obs->target_quats_odom);
+                        } else {
+                            tk.update(
+                                obs->r_center_odom.translation(), obs->target_positions_odom,
+                                obs->target_quats_odom);
+                        }
+                    }
+                },
+                tracker_var);
 
-            state_out.write(build_state(tracker_var, frame_ns, voter.is_big(), true));
+            // ── Output ──
+            const bool is_tracking = std::visit(
+                [&](const auto& tk) -> bool {
+                    using T = std::decay_t<decltype(tk)>;
+                    if constexpr (std::is_same_v<T, std::monostate>) {
+                        return false;
+                    } else {
+                        return tk.state == T::TRACKING || tk.state == T::TEMP_LOST;
+                    }
+                },
+                tracker_var);
+
+            tracking_frames = is_tracking ? tracking_frames + 1 : 0;
+            state_out.write(build_state(
+                tracker_var, obs->timestamp_ns, tracking_frames, voter.is_big(), obs_valid));
         });
 }
 

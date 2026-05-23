@@ -188,8 +188,6 @@ Eigen::Vector3d Aimer::predict_position(
         } else {
             delta_theta = dir * kFixedRuneSpeed * predict_time;
         }
-    } else {
-        delta_theta = dir * kFixedRuneSpeed * predict_time;
     }
 
     // 预测 roll
