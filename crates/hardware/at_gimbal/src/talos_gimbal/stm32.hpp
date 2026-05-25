@@ -1,5 +1,6 @@
 #pragma once
 
+#include "talos_gimbal/packet.hpp"
 #include "usb.hpp"
 
 // STL
@@ -69,10 +70,24 @@ public:
                 *latest_imu          = *received;
             }
         } else if (header_frame->id == 0x03) {
-            if (latest_capabilities && data.size_bytes() >= sizeof(ReceiveCapabilitiesData)) {
+            if (latest_capabilities && data.size_bytes() == sizeof(ReceiveCapabilitiesData)) {
                 const auto* received =
                     reinterpret_cast<const ReceiveCapabilitiesData*>(data.data());
                 *latest_capabilities = *received;
+            }
+            if (latest_imu && data.size_bytes() >= sizeof(ReceiveSimpleImuData)) {
+                const auto* received   = reinterpret_cast<const ReceiveSimpleImuData*>(data.data());
+                latest_imu->header     = received->header;
+                latest_imu->time_stamp = received->time_stamp;
+                latest_imu->data.self_color   = received->data.self_color;
+                latest_imu->data.bullet_speed = 0.0f;
+                latest_imu->data.yaw          = received->data.yaw;
+                latest_imu->data.pitch        = received->data.pitch;
+                latest_imu->data.roll         = received->data.roll;
+                latest_imu->data.yaw_vel      = 0.0f;
+                latest_imu->data.pitch_vel    = 0.0f;
+                latest_imu->data.roll_vel     = 0.0f;
+                latest_imu->eof               = received->eof;
             }
         }
     }
