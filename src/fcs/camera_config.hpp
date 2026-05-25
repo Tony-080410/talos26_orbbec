@@ -3,6 +3,7 @@
 #include <Eigen/Core>
 #include <cstdint>
 #include <fmt/core.h>
+#include <optional>
 #include <string>
 
 #include <magic_enum.hpp>
@@ -20,6 +21,7 @@ struct CameraProfileConfig {
     uint32_t exposure_time_us{3000}; // 3ms in microseconds
     double gain{16.7};
     RotateType rotate_angle{RotateType::None};
+    std::optional<std::string> device_name{};
 };
 
 struct CameraConfig {

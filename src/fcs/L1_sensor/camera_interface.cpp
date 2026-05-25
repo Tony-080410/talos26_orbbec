@@ -61,13 +61,15 @@ auto IpcInput::camera_info() const noexcept -> const CameraConfig& { return info
 HikInput::HikInput(
     std::unique_ptr<hikcamera::ImageCapturer> camera, CameraConfig info,
     hikcamera::ImageCapturer::CameraProfile profile,
-    std::chrono::duration<float, std::micro> exposure_time) noexcept
+    std::chrono::duration<float, std::micro> exposure_time,
+    std::optional<std::string> device_name) noexcept
     : camera_(std::move(camera))
     , info_(std::move(info))
     , profile_(profile)
     , exposure_time_ns_(
           static_cast<uint64_t>(
-              std::chrono::duration_cast<std::chrono::nanoseconds>(exposure_time).count())) {}
+              std::chrono::duration_cast<std::chrono::nanoseconds>(exposure_time).count()))
+    , device_name_(std::move(device_name)) {}
 
 auto HikInput::try_recv() noexcept -> std::optional<Frame> {
     using namespace std::chrono_literals;
@@ -95,7 +97,8 @@ auto HikInput::recv(const std::chrono::milliseconds timeout) noexcept
         if (!camera_->valid()) {
             if (retry_ > 0) {
                 --retry_;
-                auto cam = hikcamera::ImageCapturer::create(profile_);
+                const char* name = device_name_ ? device_name_->c_str() : nullptr;
+                auto cam         = hikcamera::ImageCapturer::create(profile_, name);
                 if (!cam) {
                     return std::unexpected(cam.error());
                 }
@@ -171,11 +174,13 @@ auto CameraInterface::create_hik(const CameraConfig& config) noexcept
     profile.gain        = config.profile.gain;
     profile.rotate_type = config.profile.rotate_angle;
 
-    auto result = hikcamera::ImageCapturer::create(profile);
+    const char* name = config.profile.device_name ? config.profile.device_name->c_str() : nullptr;
+    auto result      = hikcamera::ImageCapturer::create(profile, name);
     if (!result) {
         return std::unexpected(result.error());
     }
-    return CameraInterface(HikInput(std::move(*result), config, profile, profile.exposure_time));
+    return CameraInterface(HikInput(
+        std::move(*result), config, profile, profile.exposure_time, config.profile.device_name));
 }
 
 } // namespace fcs::L1

@@ -60,7 +60,8 @@ public:
     explicit HikInput(
         std::unique_ptr<hikcamera::ImageCapturer> camera, CameraConfig info,
         hikcamera::ImageCapturer::CameraProfile profile,
-        std::chrono::duration<float, std::micro> exposure_time) noexcept;
+        std::chrono::duration<float, std::micro> exposure_time,
+        std::optional<std::string> device_name) noexcept;
 
     HikInput(const HikInput&)            = delete;
     HikInput& operator=(const HikInput&) = delete;
@@ -80,6 +81,7 @@ private:
     hikcamera::ImageCapturer::CameraProfile profile_;
     uint64_t exposure_time_ns_;
     uint64_t seq_{0};
+    std::optional<std::string> device_name_;
     static constexpr uint64_t kReconnectRetryLimit = 25565;
     uint64_t retry_{kReconnectRetryLimit};
 };

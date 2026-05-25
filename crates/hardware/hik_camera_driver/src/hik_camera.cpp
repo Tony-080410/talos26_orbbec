@@ -470,6 +470,24 @@ private:
         }
     }
 
+    static std::string format_device_info(MV_CC_DEVICE_INFO* info) noexcept {
+        if (info->nTLayerType == MV_GIGE_DEVICE) {
+            auto& gige = info->SpecialInfo.stGigEInfo;
+            return fmt::format(
+                "[GigE] name: {}, model: {}, sn: {}, ip: {}.{}.{}.{}",
+                sdk_string_view(gige.chUserDefinedName), sdk_string_view(gige.chModelName),
+                sdk_string_view(gige.chSerialNumber), (gige.nCurrentIp >> 24) & 0xFF,
+                (gige.nCurrentIp >> 16) & 0xFF, (gige.nCurrentIp >> 8) & 0xFF,
+                gige.nCurrentIp & 0xFF);
+        } else if (info->nTLayerType == MV_USB_DEVICE) {
+            auto& usb = info->SpecialInfo.stUsb3VInfo;
+            return fmt::format(
+                "[USB] name: {}, model: {}, sn: {}", sdk_string_view(usb.chUserDefinedName),
+                sdk_string_view(usb.chModelName), sdk_string_view(usb.chSerialNumber));
+        }
+        return "[Unknown transport type]";
+    }
+
     std::expected<MV_CC_DEVICE_INFO, CameraError>
         search_camera(const char* user_defined_name) noexcept {
         MV_CC_DEVICE_INFO_LIST device_list;
@@ -484,6 +502,11 @@ private:
 
         if (user_defined_name == nullptr) {
             if (device_list.nDeviceNum > 1) {
+                SPDLOG_LOGGER_INFO(logger_, "found {} devices:", device_list.nDeviceNum);
+                for (unsigned int i = 0; i < device_list.nDeviceNum; i++) {
+                    SPDLOG_LOGGER_INFO(
+                        logger_, "  [{}]: {}", i, format_device_info(device_list.pDeviceInfo[i]));
+                }
                 return std::unexpected(
                     fmt::format(
                         "must pass in the device name because {} devices were found",
@@ -491,9 +514,14 @@ private:
             }
             return *device_list.pDeviceInfo[0];
         } else {
-            for (auto i = 0; i < device_list.nDeviceNum; i++) {
+            for (unsigned int i = 0; i < device_list.nDeviceNum; i++) {
                 if (is_same_device_name(device_list.pDeviceInfo[i], user_defined_name))
                     return *device_list.pDeviceInfo[i];
+            }
+            SPDLOG_LOGGER_INFO(logger_, "found {} devices:", device_list.nDeviceNum);
+            for (unsigned int i = 0; i < device_list.nDeviceNum; i++) {
+                SPDLOG_LOGGER_INFO(
+                    logger_, "  [{}]: {}", i, format_device_info(device_list.pDeviceInfo[i]));
             }
             return std::unexpected(
                 fmt::format(
