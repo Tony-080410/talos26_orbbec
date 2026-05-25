@@ -97,9 +97,12 @@ struct ChiralImu {
 
         const uint64_t timestamp_ns = fcs::clock::now_ns();
         fast_tf::update_rotate_only<fast_tf::gimbal_yaw_fuxk_frame>(
-            *tf_buffer, math_fuxk::rpy<double>(imu_data.roll, 0.0, imu_data.yaw), timestamp_ns);
+            *tf_buffer,
+            math_fuxk::rpy<double>(imu_data.roll, 0.0, std::numbers::pi * imu_data.yaw / 180.0),
+            timestamp_ns);
         fast_tf::update_rotate_only<fast_tf::gimbal_pitch_fuxk_frame>(
-            *tf_buffer, math_fuxk::rpy<double>(0.0, imu_data.pitch, 0.0), timestamp_ns);
+            *tf_buffer, math_fuxk::rpy<double>(0.0, std::numbers::pi * imu_data.pitch / 180.0, 0.0),
+            timestamp_ns);
         if (config.mcu_authoritative_bullet_speed && imu_data.bullet_speed > 0) {
             double new_speed = std::clamp(
                 static_cast<double>(imu_data.bullet_speed), config.bullet_speed_min,
