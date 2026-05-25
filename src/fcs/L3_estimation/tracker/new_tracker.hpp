@@ -526,7 +526,7 @@ private:
                 }
 
                 const VecZ nu   = innovation_(z_pred, z_raw);
-                const double d2 = mahalanobis_(nu, R_update);
+                const double d2 = mahalanobis_(nu, R_model);
                 if (!std::isfinite(d2) || d2 >= matcher_gate_) {
                     continue;
                 }
@@ -742,8 +742,8 @@ private:
 
         MatZZ R = base_R;
 
-        constexpr double kMinRatio = 0.5;
-        constexpr double kMaxRatio = 10.0;
+        constexpr double kMinRatio = 0.1;
+        constexpr double kMaxRatio = 8.0;
 
         for (int i = 0; i < MatZZ::RowsAtCompileTime; ++i) {
             const double b = std::max(base_R(i, i), 1e-8);
@@ -752,7 +752,7 @@ private:
             R(i, i) = std::clamp(p, kMinRatio * b, kMaxRatio * b);
         }
 
-        constexpr double kMaxCorr = 0.95;
+        constexpr double kMaxCorr = 0.45;
 
         for (int i = 0; i < MatZZ::RowsAtCompileTime; ++i) {
             for (int j = i + 1; j < MatZZ::ColsAtCompileTime; ++j) {

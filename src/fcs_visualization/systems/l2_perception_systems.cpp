@@ -512,6 +512,7 @@ void register_l2_perception_systems(talos::scheduler::Scheduler& app) {
                 const auto& t                     = meas->transform_cam->translation();
                 const auto& q                     = meas->transform_cam->quaternion();
                 j["transform_cam"]                = nlohmann::json::object();
+                j["transform_cam"]["dist"]        = t.norm();
                 j["transform_cam"]["position"]    = {t.x(), t.y(), t.z()};
                 j["transform_cam"]["orientation"] = {q.x(), q.y(), q.z(), q.w()};
             }
@@ -520,6 +521,7 @@ void register_l2_perception_systems(talos::scheduler::Scheduler& app) {
                 const auto& t                      = meas->transform_odom->translation();
                 const auto& q                      = meas->transform_odom->quaternion();
                 j["transform_odom"]                = nlohmann::json::object();
+                j["transform_odom"]["dist"]        = t.norm();
                 j["transform_odom"]["position"]    = {t.x(), t.y(), t.z()};
                 j["transform_odom"]["orientation"] = {q.x(), q.y(), q.z(), q.w()};
             }
