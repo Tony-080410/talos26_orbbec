@@ -345,6 +345,28 @@ TEST(LdmDetector, DetectsThreePairsWhenBottomBlobSortsBeforeTopBlob) {
     EXPECT_EQ(result->value().pair_count(), 3u);
 }
 
+TEST(LdmDetector, DetectsPurpleThreePairImageWithConfiguredColor) {
+    auto config         = make_ldm_config();
+    config.target_color = fcs::ArmorColor::Purple;
+    cv::Mat image(480, 640, CV_8UC3, cv::Scalar(0, 0, 0));
+
+    const std::array<int, 3> top_xs    = {240, 300, 360};
+    const std::array<int, 3> bottom_xs = {238, 298, 358};
+    for (size_t i = 0; i < top_xs.size(); ++i) {
+        cv::rectangle(
+            image, cv::Rect(top_xs[i] - 10, 150, 20, 16), cv::Scalar(255, 0, 255), cv::FILLED);
+        cv::rectangle(
+            image, cv::Rect(bottom_xs[i] - 10, 250, 20, 16), cv::Scalar(255, 0, 255), cv::FILLED);
+    }
+
+    fcs::L2::ldm::LdmDetector detector(config);
+    const auto result = detector.detect(image);
+    ASSERT_TRUE(result.has_value());
+    ASSERT_TRUE(result->has_value());
+    EXPECT_EQ(result->value().color, fcs::ArmorColor::Purple);
+    EXPECT_EQ(result->value().pair_count(), 3u);
+}
+
 TEST(LdmDetector, DetectsAllTwoPairDatasetImages) {
     const auto config = make_ldm_config();
     fcs::L2::ldm::LdmDetector detector(config);
@@ -683,8 +705,7 @@ TEST(LdmSolver, DetectedDatasetTargetsHaveFiniteRmse) {
             const auto measurement =
                 solver.solve(detection_result->value(), aligned_odom_camera_transform());
             if (!measurement.has_value()) {
-                EXPECT_TRUE(false)
-                    << image_path << " error=" << static_cast<int>(measurement.error());
+                EXPECT_TRUE(false) << image_path << " error=" << measurement.error();
                 continue;
             }
             ++solved_measurement_count;

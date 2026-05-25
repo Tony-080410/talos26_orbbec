@@ -19,6 +19,22 @@ namespace fcs::L2::ldm {
 
 namespace {
 
+void apply_detector_boundary_semantics(
+    LdmDetection& detection, std::optional<LdmMeasurement>* measurement,
+    ArmorColor detecting_color) noexcept {
+    if (detection.color != ArmorColor::Purple) {
+        return;
+    }
+
+    detection.accurate = true;
+    detection.color    = detecting_color;
+
+    if (measurement != nullptr && measurement->has_value()) {
+        (*measurement)->accurate = true;
+        (*measurement)->color    = detecting_color;
+    }
+}
+
 /// Build a PosePrior from the last known LDM tracker state.
 /// Extracts the odom-frame pose (R, p) from the SE2(3) state, transforms to
 /// camera frame via T_odom_camera, and converts to OpenCV rvec/tvec.
@@ -86,7 +102,7 @@ void register_ldm_systems(
                 return;
             }
 
-            auto det_result = detector->detect(frame->image, *detecting_color_);
+            auto det_result = detector->detect(frame->image);
             if (!det_result) {
                 SPDLOG_ERROR("ldm detect failed: {}", magic_enum::enum_name(det_result.error()));
                 return;
@@ -96,12 +112,13 @@ void register_ldm_systems(
             detection.timestamp_ns = frame->timestamp_ns;
             detection.frame_id     = frame->frame_id;
             detection.color        = *detecting_color_;
+            detection.accurate     = false;
 
             if (det_result->has_value()) {
                 detection              = std::move(**det_result);
                 detection.timestamp_ns = frame->timestamp_ns;
                 detection.frame_id     = frame->frame_id;
-                detection.color        = *detecting_color_;
+                apply_detector_boundary_semantics(detection, nullptr, *detecting_color_);
             }
 
             auto tf_lookup = fast_tf::lookup_clamped<fast_tf::odom, fast_tf::camera_optical>(
@@ -116,10 +133,20 @@ void register_ldm_systems(
 
                 auto meas_result = solver_ptr->solve(detection, *tf_lookup, prior);
                 if (meas_result) {
-                    measurement_out.write(std::move(*meas_result));
+                    auto measurement                                   = std::move(*meas_result);
+                    std::optional<LdmMeasurement> boundary_measurement = std::move(measurement);
+                    apply_detector_boundary_semantics(
+                        detection, &boundary_measurement, *detecting_color_);
+                    measurement_out.write(std::move(*boundary_measurement));
                 } else {
                     SPDLOG_ERROR("ldm solve failed: {}", meas_result.error());
-                    measurement_out.write(LdmMeasurement{.timestamp_ns = detection.timestamp_ns});
+                    measurement_out.write(
+                        LdmMeasurement{
+                            .timestamp_ns = detection.timestamp_ns,
+                            .frame_id     = detection.frame_id,
+                            .color        = detection.color,
+                            .accurate     = detection.accurate,
+                        });
                 }
             }
 

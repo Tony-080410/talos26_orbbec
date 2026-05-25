@@ -19,6 +19,8 @@ public:
     ~LdmDetector() = default;
 
     std::expected<std::optional<LdmDetection>, DetectorError>
+        detect(const cv::Mat& image) const noexcept;
+    std::expected<std::optional<LdmDetection>, DetectorError>
         detect(const cv::Mat& image, ArmorColor color) const noexcept;
 
 private:

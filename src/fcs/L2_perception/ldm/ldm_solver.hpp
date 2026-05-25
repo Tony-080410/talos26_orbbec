@@ -80,6 +80,14 @@ public:
         : config_(detector_config) {
         cv::eigen2cv(config.camera_matrix, camera_matrix_);
         cv::eigen2cv(config.distort_coefficient, dist_coeffs_);
+
+        const double fx   = std::abs(config.camera_matrix(0, 0));
+        const double fy   = std::abs(config.camera_matrix(1, 1));
+        residual_scale_x_ = (std::isfinite(fx) && fx > 1e-6) ? fx : 1.0;
+        residual_scale_y_ = (std::isfinite(fy) && fy > 1e-6) ? fy : 1.0;
+
+        const double mean_focal_scale = 0.5 * (residual_scale_x_ + residual_scale_y_);
+        huber_delta_px_               = std::max(1.0, 0.005 * mean_focal_scale);
     }
 
     [[nodiscard]] std::expected<LdmMeasurement, std::string> solve(
@@ -88,7 +96,11 @@ public:
         if (detection.pairs.empty()) {
             // return std::unexpected(std::string("solve: detection has no pairs (NoPairs)"));
             return LdmMeasurement{
-                .timestamp_ns = detection.timestamp_ns, .frame_id = detection.frame_id};
+                .timestamp_ns = detection.timestamp_ns,
+                .frame_id     = detection.frame_id,
+                .color        = detection.color,
+                .accurate     = detection.accurate,
+            };
         }
 
         auto preliminary_candidates = build_preliminary_mesh_candidates(detection.pairs, config_);
@@ -146,6 +158,7 @@ public:
         measurement.timestamp_ns        = detection.timestamp_ns;
         measurement.frame_id            = detection.frame_id;
         measurement.color               = detection.color;
+        measurement.accurate            = detection.accurate;
         measurement.pair_count_total    = static_cast<int>(detection.pairs.size());
         measurement.selected_pair_count = static_cast<int>(selected.pair_indices.size());
         measurement.center_image_px     = selected.estimated_center_image_px;
@@ -203,16 +216,19 @@ private:
 
     struct BoundedPoseReprojectionError {
         BoundedPoseReprojectionError(
-            const Eigen::Vector3d& model_point, const Eigen::Vector2d& normalized_point)
+            const Eigen::Vector3d& model_point, const Eigen::Vector2d& normalized_point,
+            double residual_scale_x, double residual_scale_y)
             : model_x(model_point.x())
             , model_y(model_point.y())
             , model_z(model_point.z())
             , observed_x(normalized_point.x())
-            , observed_y(normalized_point.y()) {}
+            , observed_y(normalized_point.y())
+            , residual_scale_x(residual_scale_x)
+            , residual_scale_y(residual_scale_y) {}
 
         /// @param angles           [yaw, pitch, roll] – Euler angles (Y-X-Z intrinsic)
         /// @param translation_ypd  [t_yaw, t_pitch, t_distance] – spherical translation
-        /// @param residuals        [u, v] normalized-plane reprojection error
+        /// @param residuals        [u_px, v_px] focal-weighted reprojection error
         template <typename T>
         bool operator()(const T* const angles, const T* const translation_ypd, T* residuals) const {
             const T yaw   = angles[0];
@@ -254,15 +270,17 @@ private:
                 return false;
             }
 
-            residuals[0] = x / z - T(observed_x);
-            residuals[1] = y / z - T(observed_y);
+            residuals[0] = (x / z - T(observed_x)) * T(residual_scale_x);
+            residuals[1] = (y / z - T(observed_y)) * T(residual_scale_y);
             return true;
         }
 
-        [[nodiscard]] static ceres::CostFunction*
-            Create(const Eigen::Vector3d& model_point, const Eigen::Vector2d& normalized_point) {
+        [[nodiscard]] static ceres::CostFunction* Create(
+            const Eigen::Vector3d& model_point, const Eigen::Vector2d& normalized_point,
+            double residual_scale_x, double residual_scale_y) {
             return new ceres::AutoDiffCostFunction<BoundedPoseReprojectionError, 2, 3, 3>(
-                new BoundedPoseReprojectionError(model_point, normalized_point));
+                new BoundedPoseReprojectionError(
+                    model_point, normalized_point, residual_scale_x, residual_scale_y));
         }
 
         double model_x{0.0};
@@ -270,6 +288,8 @@ private:
         double model_z{0.0};
         double observed_x{0.0};
         double observed_y{0.0};
+        double residual_scale_x{1.0};
+        double residual_scale_y{1.0};
     };
 
     [[nodiscard]] bool has_face_assignment(const LdmMeshCandidate& candidate) const noexcept {
@@ -991,8 +1011,9 @@ private:
         for (size_t i = 0; i < correspondences.obj_points.size(); ++i) {
             problem.AddResidualBlock(
                 BoundedPoseReprojectionError::Create(
-                    correspondences.obj_points[i], correspondences.normalized_points[i]),
-                new ceres::HuberLoss(0.005), angles, translation_ypd);
+                    correspondences.obj_points[i], correspondences.normalized_points[i],
+                    residual_scale_x_, residual_scale_y_),
+                new ceres::HuberLoss(huber_delta_px_), angles, translation_ypd);
         }
         // Decompose prior rvec into yaw/pitch/roll for angle bounds.
         // Uses the same Euler convention as bounded_pose_rotation:
@@ -1072,8 +1093,9 @@ private:
         options.linear_solver_type           = ceres::DENSE_QR;
         options.max_num_iterations           = 50;
         options.minimizer_progress_to_stdout = false;
-        options.function_tolerance           = 1e-12;
-        options.parameter_tolerance          = 1e-12;
+        options.function_tolerance           = 0.0;
+        options.gradient_tolerance           = 0.0;
+        options.parameter_tolerance          = 0.0;
 
         ceres::Solver::Summary summary;
         ceres::Solve(options, &problem, &summary);
@@ -1526,6 +1548,9 @@ private:
     LdmDetectorConfig config_;
     cv::Mat camera_matrix_;
     cv::Mat dist_coeffs_;
+    double residual_scale_x_{1.0};
+    double residual_scale_y_{1.0};
+    double huber_delta_px_{1.0};
 };
 
 } // namespace fcs::L2::ldm

@@ -429,6 +429,7 @@ void register_l2_perception_systems(talos::scheduler::Scheduler& app) {
             j["timestamp"]["sec"]  = det->timestamp_ns / 1000000000L;
             j["timestamp"]["nsec"] = det->timestamp_ns % 1000000000L;
             j["color"]             = std::string(magic_enum::enum_name(det->color));
+            j["accurate"]          = det->accurate;
             j["rect"]              = nlohmann::json::object();
             j["rect"]["x"]         = det->rect.x;
             j["rect"]["y"]         = det->rect.y;
@@ -493,6 +494,7 @@ void register_l2_perception_systems(talos::scheduler::Scheduler& app) {
             j["timestamp"]["sec"]     = meas->timestamp_ns / 1000000000L;
             j["timestamp"]["nsec"]    = meas->timestamp_ns % 1000000000L;
             j["color"]                = std::string(magic_enum::enum_name(meas->color));
+            j["accurate"]             = meas->accurate;
             j["pair_count_total"]     = meas->pair_count_total;
             j["selected_pair_count"]  = meas->selected_pair_count;
             j["center_image_px"]      = nlohmann::json::object();

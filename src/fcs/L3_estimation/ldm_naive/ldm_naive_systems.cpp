@@ -51,7 +51,11 @@ void register_naive_ldm_systems(talos::Scheduler& scheduler, const NaiveLdmConfi
 
             const auto state = tracker->get_output();
             if (state.has_value()) {
-                state_out.write(*state);
+                LdmState output = *state;
+                if (meas.has_value() && meas->accurate) {
+                    output.accurate = true;
+                }
+                state_out.write(std::move(output));
             } else {
                 SPDLOG_TRACE("LdmState unavailable: {}", state.error());
             }

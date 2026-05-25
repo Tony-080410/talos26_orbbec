@@ -83,6 +83,7 @@ struct LdmDetection {
     uint64_t frame_id{0};
     cv::Rect2f rect{};
     ArmorColor color = ArmorColor::Neutral;
+    bool accurate{false};
     std::vector<LightBlob> blobs{};
     std::vector<LightPair> pairs{};
     std::vector<LdmMeshCandidate> mesh_candidates{};
@@ -96,6 +97,7 @@ struct LdmMeasurement {
     uint64_t timestamp_ns{0};
     uint64_t frame_id{0};
     ArmorColor color{ArmorColor::Neutral};
+    bool accurate{false};
     int pair_count_total{0};
     int selected_pair_count{0};
     cv::Point2f center_image_px{};

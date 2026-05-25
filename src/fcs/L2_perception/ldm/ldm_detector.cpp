@@ -84,6 +84,18 @@ namespace {
         static_cast<float>(rect.height));
 }
 
+[[nodiscard]] bool hue_matches_target_color(double hue, ArmorColor color) {
+    switch (color) {
+    case ArmorColor::Blue: return hue >= 90.0 && hue <= 140.0;
+    case ArmorColor::Purple: return hue >= 125.0 && hue <= 165.0;
+    case ArmorColor::Red: return (hue >= 0.0 && hue <= 30.0) || (hue >= 160.0 && hue <= 180.0);
+    default:
+        return hue_matches_target_color(hue, ArmorColor::Red)
+            || hue_matches_target_color(hue, ArmorColor::Blue)
+            || hue_matches_target_color(hue, ArmorColor::Purple);
+    }
+}
+
 [[nodiscard]] cv::Mat
     threshold_target_color(const cv::Mat& image_bgr, ArmorColor color, int min_value = 80) {
     cv::Mat hsv;
@@ -94,6 +106,9 @@ namespace {
     case ArmorColor::Blue:
         cv::inRange(hsv, cv::Scalar(90, 70, min_value), cv::Scalar(140, 255, 255), mask);
         break;
+    case ArmorColor::Purple:
+        cv::inRange(hsv, cv::Scalar(125, 70, min_value), cv::Scalar(165, 255, 255), mask);
+        break;
     case ArmorColor::Red: {
         cv::Mat mask1, mask2;
         cv::inRange(hsv, cv::Scalar(0, 80, min_value), cv::Scalar(30, 255, 255), mask1);
@@ -102,9 +117,10 @@ namespace {
         break;
     }
     default: {
-        cv::Mat red  = threshold_target_color(image_bgr, ArmorColor::Red, min_value);
-        cv::Mat blue = threshold_target_color(image_bgr, ArmorColor::Blue, min_value);
-        mask         = red | blue;
+        cv::Mat red    = threshold_target_color(image_bgr, ArmorColor::Red, min_value);
+        cv::Mat blue   = threshold_target_color(image_bgr, ArmorColor::Blue, min_value);
+        cv::Mat purple = threshold_target_color(image_bgr, ArmorColor::Purple, min_value);
+        mask           = red | blue | purple;
         break;
     }
     }
@@ -170,7 +186,7 @@ namespace {
 
 [[nodiscard]] std::optional<LightBlob> make_narrow_yaw_blob_from_contour(
     const std::vector<cv::Point>& contour, const cv::Mat& hsv, const cv::Mat& mask,
-    const cv::Point& offset, const LdmDetectorConfig& config) {
+    const cv::Point& offset, const LdmDetectorConfig& config, ArmorColor color) {
     cv::Rect rect = cv::boundingRect(contour);
     if (offset.x != 0 || offset.y != 0) {
         rect.x += offset.x;
@@ -206,7 +222,7 @@ namespace {
     }
 
     const double mean_hue = cv::mean(hsv(rect), mask(rect))[0];
-    if (mean_hue < 5.0 || mean_hue > 35.0) {
+    if (!hue_matches_target_color(mean_hue, color)) {
         return std::nullopt;
     }
 
@@ -220,8 +236,8 @@ namespace {
         .fill_ratio   = fill_ratio_px};
 }
 
-[[nodiscard]] std::vector<LightBlob>
-    split_wide_small_blob(const LightBlob& blob, const cv::Mat& hsv, const cv::Mat& mask) {
+[[nodiscard]] std::vector<LightBlob> split_wide_small_blob(
+    const LightBlob& blob, const cv::Mat& hsv, const cv::Mat& mask, ArmorColor color) {
     constexpr float kMinSplitAspect = 1.45f;
     constexpr float kMaxSplitAspect = 2.40f;
     constexpr float kMinSplitWidth  = 14.0f;
@@ -244,7 +260,7 @@ namespace {
     }
 
     const double mean_hue = cv::mean(hsv(rect), mask(rect))[0];
-    if (mean_hue < 5.0 || mean_hue > 35.0) {
+    if (!hue_matches_target_color(mean_hue, color)) {
         return {blob};
     }
 
@@ -334,12 +350,12 @@ namespace {
         for (const auto& core_contour : core_contours) {
             auto blob = make_light_blob_from_contour(core_contour, core_mask, rect.tl(), config);
             if (blob.has_value()) {
-                auto pieces = split_wide_small_blob(*blob, hsv, core_mask);
+                auto pieces = split_wide_small_blob(*blob, hsv, core_mask, color);
                 split_blobs.insert(split_blobs.end(), pieces.begin(), pieces.end());
                 continue;
             }
-            auto narrow_blob =
-                make_narrow_yaw_blob_from_contour(core_contour, hsv, core_mask, rect.tl(), config);
+            auto narrow_blob = make_narrow_yaw_blob_from_contour(
+                core_contour, hsv, core_mask, rect.tl(), config, color);
             if (narrow_blob.has_value()) {
                 narrow_yaw_blobs.push_back(*narrow_blob);
             }
@@ -351,7 +367,7 @@ namespace {
 
         auto blob = make_light_blob_from_contour(contour, mask, {}, config);
         if (blob.has_value()) {
-            auto pieces = split_wide_small_blob(*blob, hsv, mask);
+            auto pieces = split_wide_small_blob(*blob, hsv, mask, color);
             blobs.insert(blobs.end(), pieces.begin(), pieces.end());
         }
     }
@@ -1356,10 +1372,71 @@ struct PairCandidate {
     return detection;
 }
 
+[[nodiscard]] std::pair<size_t, float> best_candidate_signature(const LdmDetection& detection) {
+    size_t max_candidate_pairs = 0;
+    float max_candidate_score  = 0.0f;
+    for (const auto& candidate : detection.mesh_candidates) {
+        max_candidate_pairs = std::max(max_candidate_pairs, candidate.pair_indices.size());
+        max_candidate_score = std::max(max_candidate_score, candidate.preliminary_score);
+    }
+    return {max_candidate_pairs, max_candidate_score};
+}
+
+[[nodiscard]] bool
+    detection_better_than(const LdmDetection& lhs, const std::optional<LdmDetection>& rhs) {
+    if (!rhs.has_value()) {
+        return true;
+    }
+
+    if (lhs.pair_count() != rhs->pair_count()) {
+        return lhs.pair_count() > rhs->pair_count();
+    }
+
+    const auto [lhs_candidate_pairs, lhs_candidate_score] = best_candidate_signature(lhs);
+    const auto [rhs_candidate_pairs, rhs_candidate_score] = best_candidate_signature(*rhs);
+    if (lhs_candidate_pairs != rhs_candidate_pairs) {
+        return lhs_candidate_pairs > rhs_candidate_pairs;
+    }
+    return lhs_candidate_score > rhs_candidate_score;
+}
+
 } // namespace
 
 LdmDetector::LdmDetector(LdmDetectorConfig config) noexcept
     : config_(config) {}
+
+std::expected<std::optional<LdmDetection>, DetectorError>
+    LdmDetector::detect(const cv::Mat& image) const noexcept {
+    if (image.empty()) {
+        return std::unexpected(DetectorError::InvalidImage);
+    }
+
+    std::array<ArmorColor, 4> colors = {
+        config_.target_color,
+        ArmorColor::Red,
+        ArmorColor::Blue,
+        ArmorColor::Purple,
+    };
+
+    std::optional<LdmDetection> best_detection;
+    std::array<bool, 4> tried_colors = {false, false, false, false};
+    for (const ArmorColor color : colors) {
+        const auto color_index = static_cast<size_t>(color);
+        if (color_index >= tried_colors.size() || tried_colors[color_index]) {
+            continue;
+        }
+        tried_colors[color_index] = true;
+
+        auto detection_result = detect_laser_module(image, config_, color);
+        if (!detection_result.has_value()) {
+            continue;
+        }
+        if (detection_better_than(*detection_result, best_detection)) {
+            best_detection = std::move(*detection_result);
+        }
+    }
+    return best_detection;
+}
 
 std::expected<std::optional<LdmDetection>, DetectorError>
     LdmDetector::detect(const cv::Mat& image, ArmorColor color) const noexcept {
