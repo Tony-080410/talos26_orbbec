@@ -23,6 +23,7 @@
 
 #include <array>
 #include <bit>
+#include <deque>
 #include <filesystem>
 #include <fstream>
 #include <memory>
@@ -63,12 +64,13 @@ constexpr uint32_t kControlChunkHeaderWireSize =
     sizeof(uint32_t) + sizeof(uint16_t) + sizeof(uint16_t) + sizeof(uint32_t) + sizeof(uint32_t)
     + sizeof(uint64_t) + sizeof(uint64_t);
 constexpr uint32_t kControlSampleWireSize =
-    (2U * sizeof(uint64_t)) + (7U * sizeof(float)) + (5U * sizeof(uint8_t)) + sizeof(uint64_t)
-    + (8U * sizeof(float)) + (4U * sizeof(uint8_t)) + (2U * sizeof(int32_t))
+    (2U * sizeof(uint64_t)) + (7U * sizeof(float)) + (3U * sizeof(uint8_t)) + sizeof(uint64_t)
+    + (7U * sizeof(float)) + (2U * sizeof(uint8_t)) + (2U * sizeof(int32_t))
     + (2U * sizeof(uint64_t)) + (2U * sizeof(float)) + (2U * sizeof(uint8_t)) + sizeof(uint16_t)
-    + (10U * sizeof(float)) + (4U * kControlTransformWireSize);
+    + (8U * sizeof(float)) + (4U * kControlTransformWireSize);
 static_assert(kControlTransformWireSize == 32U);
 static_assert(kControlChunkHeaderWireSize == 32U);
+static_assert(kControlSampleWireSize == 281U);
 
 template <typename T>
 struct ChannelSnapshot {
@@ -330,12 +332,6 @@ auto serialize_control_chunk(
     };
 }
 
-struct ConfigSnapshotSource {
-    std::string_view key;
-    fs::path source_path;
-    fs::path destination_relative_path;
-};
-
 [[nodiscard]] auto resolve_existing_path(const fs::path& path) -> fs::path {
     if (fs::exists(path)) {
         return path;
@@ -350,6 +346,35 @@ struct ConfigSnapshotSource {
 #endif
 
     return path;
+}
+
+[[nodiscard]] auto normalize_path_for_comparison(const fs::path& path, std::string_view context)
+    -> std::expected<fs::path, std::string> {
+    std::error_code ec;
+    const auto absolute_path = fs::absolute(path, ec);
+    if (ec) {
+        return std::unexpected(
+            fmt::format("{} absolute path {}: {}", context, path.string(), ec.message()));
+    }
+
+    const auto normalized_path = fs::weakly_canonical(absolute_path, ec);
+    if (ec) {
+        return std::unexpected(
+            fmt::format("{} normalize path {}: {}", context, path.string(), ec.message()));
+    }
+    return normalized_path;
+}
+
+[[nodiscard]] auto is_same_or_descendant(const fs::path& path, const fs::path& ancestor) noexcept
+    -> bool {
+    auto path_it = path.begin();
+    for (const auto& ancestor_component : ancestor) {
+        if (path_it == path.end() || *path_it != ancestor_component) {
+            return false;
+        }
+        ++path_it;
+    }
+    return true;
 }
 
 [[nodiscard]] auto to_json_robot_state(const L3::RobotTargetState& state) -> json {
@@ -703,6 +728,24 @@ public:
         -> std::expected<std::shared_ptr<RuntimeCapturer>, std::string> {
         std::error_code ec;
         fs::path base_dir(config.output_dir);
+
+        const auto config_source = normalize_path_for_comparison(
+            resolve_existing_path("config"), "capturer config source");
+        if (!config_source) {
+            return std::unexpected(config_source.error());
+        }
+        const auto output_dir =
+            normalize_path_for_comparison(base_dir, "capturer output directory");
+        if (!output_dir) {
+            return std::unexpected(output_dir.error());
+        }
+        if (is_same_or_descendant(*output_dir, *config_source)) {
+            return std::unexpected(
+                fmt::format(
+                    "capturer output directory {} must not be inside config snapshot source {}",
+                    output_dir->string(), config_source->string()));
+        }
+
         fs::create_directories(base_dir, ec);
         if (ec) {
             return std::unexpected(
@@ -739,17 +782,23 @@ public:
         }
 
         json run_json{
-            {     "created_ns",fcs::clock::now_ns()                               },
-            {        "run_dir",                run_dir.string()},
-            {       "capturer", to_json_capturer_config(config)},
-            {"config_snapshot",                *config_snapshot},
-            {         "launch",
+            {           "created_ns",fcs::clock::now_ns()                                     },
+            {              "run_dir",                run_dir.string()},
+            {             "capturer", to_json_capturer_config(config)},
+            {      "config_snapshot",                *config_snapshot},
+            {"camera_capture_policy",
+             json{
+             {"idle_hz", 4},
+             {"active_hz", 20},
+             {"active_reasons", json::array({"fire", "follow"})},
+             }                                                       },
+            {               "launch",
              json{
              {"backend", magic_enum::enum_name(launch.backend)},
              {"robot", launch.robot},
              {"vision", launch.vision},
-             }                                                 },
-            {        "control",
+             }                                                       },
+            {              "control",
              json{
              {"dir", capturer->relative_path_or_null(capturer->control_dir_)},
              {"schema_version", kControlSchemaVersion},
@@ -757,7 +806,7 @@ public:
              {"sample_size", kControlSampleWireSize},
              {"chunk_header_size", kControlChunkHeaderWireSize},
              {"encoding", "little_endian_explicit"},
-             }                                                 },
+             }                                                       },
         };
 
         if (!capturer->write_file(run_dir / "run.json", run_json.dump(2))) {
@@ -800,10 +849,8 @@ public:
                 camera_json["width"]        = image.value->image.cols;
                 camera_json["height"]       = image.value->image.rows;
                 camera_json["channels"]     = image.value->image.channels();
-                camera_json["image_path"]   = ensure_mat_sidecar(
-                    image.value->image, "camera", image.value->frame_id, image.value->timestamp_ns,
-                    tick_index, tick_timestamp_ns, last_camera_image_,
-                    sidecar_policy.allow_sidecars);
+                camera_json["image_path"] =
+                    lookup_sidecar_path(image.value->frame_id, image.value->timestamp_ns);
             }
             streams["camera"] = std::move(camera_json);
 
@@ -811,8 +858,7 @@ public:
                 make_channel_meta(detection.present(), detection.updated_this_tick);
             if (detection.value) {
                 detection_json.update(to_json_detection_batch(*detection.value));
-                detection_json["image_path"] = resolve_detection_image_path(
-                    *detection.value, tick_index, tick_timestamp_ns, sidecar_policy.allow_sidecars);
+                detection_json["image_path"] = resolve_detection_image_path(*detection.value);
             }
             streams["detector"] = std::move(detection_json);
 
@@ -860,24 +906,10 @@ public:
                 for (const auto& roi : rune_debug.value->target_rois) {
                     target_rois.push_back(to_json_rect(roi));
                 }
-                rune_debug_json["target_rois"] = std::move(target_rois);
-                rune_debug_json["arrow_jpeg_path"] =
-                    sidecar_policy.allow_sidecars ? save_bytes(
-                                                        rune_debug.value->arrow_jpeg, "rune_arrow",
-                                                        tick_index, tick_timestamp_ns)
-                                                  : json(nullptr);
-                rune_debug_json["target_jpeg_path"] =
-                    sidecar_policy.allow_sidecars
-                        ? save_bytes(
-                              rune_debug.value->target_jpeg, "rune_target", tick_index,
-                              tick_timestamp_ns)
-                        : json(nullptr);
-                rune_debug_json["rcenter_jpeg_path"] =
-                    sidecar_policy.allow_sidecars
-                        ? save_bytes(
-                              rune_debug.value->rcenter_jpeg, "rune_rcenter", tick_index,
-                              tick_timestamp_ns)
-                        : json(nullptr);
+                rune_debug_json["target_rois"]       = std::move(target_rois);
+                rune_debug_json["arrow_jpeg_path"]   = nullptr;
+                rune_debug_json["target_jpeg_path"]  = nullptr;
+                rune_debug_json["rcenter_jpeg_path"] = nullptr;
             }
             streams["rune_debug"] = std::move(rune_debug_json);
 
@@ -1072,6 +1104,20 @@ public:
         pending_control_samples_.push_back(sample);
     }
 
+    void capture_camera_tick(
+        uint64_t tick_timestamp_ns, const ChannelSnapshot<ImageFrame>& image,
+        const ChannelSnapshot<L5::WeaponCommand>& weapon_command, bool following_active) noexcept {
+        if (!image.value) {
+            return;
+        }
+
+        const auto mode           = evaluate_camera_capture_mode(weapon_command, following_active);
+        const auto sidecar_policy = evaluate_sidecar_policy();
+        static_cast<void>(capture_camera_sidecar_if_due(
+            image.value->image, image.value->frame_id, image.value->timestamp_ns, tick_timestamp_ns,
+            mode, sidecar_policy.allow_sidecars));
+    }
+
 private:
     RuntimeCapturer(const CapturerConfig& config, fs::path run_dir)
         : run_dir_(std::move(run_dir))
@@ -1087,6 +1133,12 @@ private:
         std::string_view status{"ok"};
     };
 
+    enum class CameraCaptureMode : uint8_t {
+        Idle,
+        Follow,
+        Fire,
+    };
+
     struct CachedSidecar {
         uint64_t frame_id{0};
         uint64_t timestamp_ns{0};
@@ -1099,75 +1151,111 @@ private:
         }
     };
 
-    [[nodiscard]] auto config_snapshot_sources(const CapturerLaunchContext& launch) const
-        -> std::array<ConfigSnapshotSource, 4> {
-        return {
-            {
-             ConfigSnapshotSource{
-                    .key                       = "entry",
-                    .source_path               = "at_vision.toml",
-                    .destination_relative_path = "at_vision.toml",
-                }, ConfigSnapshotSource{
-                    .key                       = "vision_base",
-                    .source_path               = fs::path("config") / "vision_base.toml",
-                    .destination_relative_path = "vision_base.toml",
-                }, ConfigSnapshotSource{
-                    .key = "vision_override",
-                    .source_path =
-                        fs::path("config") / "vision" / fmt::format("{}.toml", launch.vision),
-                    .destination_relative_path =
-                        fs::path("vision") / fmt::format("{}.toml", launch.vision),
-                }, ConfigSnapshotSource{
-                    .key = "hardware",
-                    .source_path =
-                        fs::path("config") / "robot" / fmt::format("{}.toml", launch.robot),
-                    .destination_relative_path =
-                        fs::path("robot") / fmt::format("{}.toml", launch.robot),
-                }, }
-        };
-    }
-
     [[nodiscard]] auto copy_config_snapshot(const CapturerLaunchContext& launch)
         -> std::expected<json, std::string> {
-        json files = json::object();
+        static_cast<void>(launch);
 
-        for (const auto& source : config_snapshot_sources(launch)) {
-            const fs::path resolved_source = resolve_existing_path(source.source_path);
-            if (!fs::exists(resolved_source)) {
-                return std::unexpected(
-                    fmt::format(
-                        "capturer config snapshot missing source file {}",
-                        source.source_path.generic_string()));
-            }
+        const fs::path entry_source  = resolve_existing_path("at_vision.toml");
+        const fs::path config_source = resolve_existing_path("config");
+        if (!fs::exists(entry_source)) {
+            return std::unexpected(
+                fmt::format(
+                    "capturer config snapshot missing source file {}",
+                    entry_source.generic_string()));
+        }
+        if (!fs::exists(config_source) || !fs::is_directory(config_source)) {
+            return std::unexpected(
+                fmt::format(
+                    "capturer config snapshot missing config directory {}",
+                    config_source.generic_string()));
+        }
 
-            const fs::path destination = config_dir_ / source.destination_relative_path;
-            std::error_code ec;
-            fs::create_directories(destination.parent_path(), ec);
-            if (ec) {
-                return std::unexpected(
-                    fmt::format(
-                        "capturer create config snapshot dir {}: {}",
-                        destination.parent_path().string(), ec.message()));
-            }
+        const fs::path entry_destination = run_dir_ / "at_vision.toml";
+        std::error_code ec;
+        fs::copy_file(entry_source, entry_destination, fs::copy_options::overwrite_existing, ec);
+        if (ec) {
+            return std::unexpected(
+                fmt::format(
+                    "capturer copy config snapshot {} -> {}: {}", entry_source.string(),
+                    entry_destination.string(), ec.message()));
+        }
 
-            fs::copy_file(resolved_source, destination, fs::copy_options::overwrite_existing, ec);
-            if (ec) {
-                return std::unexpected(
-                    fmt::format(
-                        "capturer copy config snapshot {} -> {}: {}", resolved_source.string(),
-                        destination.string(), ec.message()));
-            }
-
-            files[std::string(source.key)] = json{
-                {  "source_path", source.source_path.generic_string()},
-                {"snapshot_path",  relative_path_or_null(destination)},
-            };
+        const auto config_copy = copy_directory_tree(config_source, config_dir_);
+        if (!config_copy) {
+            return std::unexpected(config_copy.error());
         }
 
         return json{
-            {  "dir", relative_path_or_null(config_dir_)},
-            {"files",                   std::move(files)},
+            {  "entry_source_path",                         "at_vision.toml"},
+            {"entry_snapshot_path", relative_path_or_null(entry_destination)},
+            {  "config_source_dir",                                 "config"},
+            {"config_snapshot_dir",       relative_path_or_null(config_dir_)},
+            {       "copied_files",                config_copy->copied_files},
+            {        "copied_dirs",          config_copy->copied_directories},
         };
+    }
+
+    struct DirectoryCopySummary {
+        size_t copied_files{0};
+        size_t copied_directories{0};
+    };
+
+    [[nodiscard]] auto copy_directory_tree(const fs::path& source_root, const fs::path& dest_root)
+        -> std::expected<DirectoryCopySummary, std::string> {
+        DirectoryCopySummary summary;
+        std::error_code ec;
+        fs::create_directories(dest_root, ec);
+        if (ec) {
+            return std::unexpected(
+                fmt::format(
+                    "capturer create config snapshot dir {}: {}", dest_root.string(),
+                    ec.message()));
+        }
+
+        for (const auto& entry : fs::recursive_directory_iterator(source_root, ec)) {
+            if (ec) {
+                return std::unexpected(
+                    fmt::format(
+                        "capturer walk config snapshot dir {}: {}", source_root.string(),
+                        ec.message()));
+            }
+
+            const auto relative = entry.path().lexically_relative(source_root);
+            const auto dest     = dest_root / relative;
+            if (entry.is_directory()) {
+                fs::create_directories(dest, ec);
+                if (ec) {
+                    return std::unexpected(
+                        fmt::format(
+                            "capturer create config snapshot dir {}: {}", dest.string(),
+                            ec.message()));
+                }
+                ++summary.copied_directories;
+                continue;
+            }
+            if (!entry.is_regular_file()) {
+                continue;
+            }
+
+            fs::create_directories(dest.parent_path(), ec);
+            if (ec) {
+                return std::unexpected(
+                    fmt::format(
+                        "capturer create config snapshot dir {}: {}", dest.parent_path().string(),
+                        ec.message()));
+            }
+
+            fs::copy_file(entry.path(), dest, fs::copy_options::overwrite_existing, ec);
+            if (ec) {
+                return std::unexpected(
+                    fmt::format(
+                        "capturer copy config snapshot {} -> {}: {}", entry.path().string(),
+                        dest.string(), ec.message()));
+            }
+            ++summary.copied_files;
+        }
+
+        return summary;
     }
 
     [[nodiscard]] auto
@@ -1266,40 +1354,109 @@ private:
         return path.lexically_relative(run_dir_).generic_string();
     }
 
-    [[nodiscard]] auto ensure_mat_sidecar(
-        const cv::Mat& image, std::string_view prefix, uint64_t frame_id,
-        uint64_t source_timestamp_ns, uint64_t tick_index, uint64_t tick_ns, CachedSidecar& cache,
-        bool allow_sidecars) -> json {
-        if (cache.matches(frame_id, source_timestamp_ns)) {
-            return cache.relative_path;
+    [[nodiscard]] auto evaluate_camera_capture_mode(
+        const ChannelSnapshot<L5::WeaponCommand>& weapon_command, bool following_active) const
+        -> CameraCaptureMode {
+        if (weapon_command.value && weapon_command.value->fire) {
+            return CameraCaptureMode::Fire;
+        }
+        if (following_active) {
+            return CameraCaptureMode::Follow;
+        }
+        return CameraCaptureMode::Idle;
+    }
+
+    [[nodiscard]] auto lookup_sidecar_path(uint64_t frame_id, uint64_t timestamp_ns) const -> json {
+        std::scoped_lock lock(image_mutex_);
+        for (auto it = image_sidecars_.rbegin(); it != image_sidecars_.rend(); ++it) {
+            if (it->matches(frame_id, timestamp_ns)) {
+                return it->relative_path;
+            }
+        }
+        return nullptr;
+    }
+
+    void
+        remember_sidecar_path(uint64_t frame_id, uint64_t timestamp_ns, std::string relative_path) {
+        std::scoped_lock lock(image_mutex_);
+        for (auto& cached : image_sidecars_) {
+            if (cached.matches(frame_id, timestamp_ns)) {
+                cached.relative_path = std::move(relative_path);
+                return;
+            }
+        }
+
+        image_sidecars_.push_back(
+            CachedSidecar{
+                .frame_id      = frame_id,
+                .timestamp_ns  = timestamp_ns,
+                .relative_path = std::move(relative_path),
+            });
+        while (image_sidecars_.size() > kMaxCachedImageSidecars) {
+            image_sidecars_.pop_front();
+        }
+    }
+
+    [[nodiscard]] auto ensure_camera_sidecar(
+        const cv::Mat& image, uint64_t frame_id, uint64_t source_timestamp_ns, uint64_t tick_index,
+        uint64_t tick_ns, bool allow_sidecars) -> json {
+        if (const auto cached = lookup_sidecar_path(frame_id, source_timestamp_ns);
+            !cached.is_null()) {
+            return cached;
         }
         if (!allow_sidecars || image.empty()) {
             return nullptr;
         }
 
-        auto path = save_mat_as_jpeg(image, prefix, tick_index, tick_ns, source_timestamp_ns);
+        auto path = save_mat_as_jpeg(image, "camera", tick_index, tick_ns, source_timestamp_ns);
         if (path.is_string()) {
-            cache = CachedSidecar{
-                .frame_id      = frame_id,
-                .timestamp_ns  = source_timestamp_ns,
-                .relative_path = path.get<std::string>(),
-            };
+            remember_sidecar_path(frame_id, source_timestamp_ns, path.get<std::string>());
         }
         return path;
     }
 
-    [[nodiscard]] auto resolve_detection_image_path(
-        const ArmorDetectionBatch& batch, uint64_t tick_index, uint64_t tick_ns,
-        bool allow_sidecars) -> json {
-        if (last_camera_image_.matches(batch.frame_id, batch.timestamp_ns)) {
-            return last_camera_image_.relative_path;
+    [[nodiscard]] auto camera_capture_interval_ns(const CameraCaptureMode mode) const noexcept
+        -> uint64_t {
+        switch (mode) {
+        case CameraCaptureMode::Idle: return 250'000'000ULL;
+        case CameraCaptureMode::Follow:
+        case CameraCaptureMode::Fire: return 50'000'000ULL;
         }
-        if (last_detector_image_.matches(batch.frame_id, batch.timestamp_ns)) {
-            return last_detector_image_.relative_path;
+        return 250'000'000ULL;
+    }
+
+    [[nodiscard]] auto capture_camera_sidecar_if_due(
+        const cv::Mat& image, uint64_t frame_id, uint64_t source_timestamp_ns, uint64_t tick_ns,
+        CameraCaptureMode mode, bool allow_sidecars) -> json {
+        if (const auto cached = lookup_sidecar_path(frame_id, source_timestamp_ns);
+            !cached.is_null()) {
+            return cached;
         }
-        return ensure_mat_sidecar(
-            batch.image, "detector", batch.frame_id, batch.timestamp_ns, tick_index, tick_ns,
-            last_detector_image_, allow_sidecars);
+        if (!allow_sidecars || image.empty()) {
+            return nullptr;
+        }
+
+        {
+            std::scoped_lock lock(image_mutex_);
+            const auto interval_ns = camera_capture_interval_ns(mode);
+            if (last_camera_capture_tick_ns_ != 0
+                && (tick_ns - last_camera_capture_tick_ns_) < interval_ns) {
+                return nullptr;
+            }
+            last_camera_capture_tick_ns_ = tick_ns;
+        }
+
+        return ensure_camera_sidecar(
+            image, frame_id, source_timestamp_ns, 0, tick_ns, allow_sidecars);
+    }
+
+    [[nodiscard]] auto resolve_detection_image_path(const ArmorDetectionBatch& batch) const
+        -> json {
+        if (const auto cached = lookup_sidecar_path(batch.frame_id, batch.timestamp_ns);
+            !cached.is_null()) {
+            return cached;
+        }
+        return nullptr;
     }
 
     [[nodiscard]] auto save_mat_as_jpeg(
@@ -1328,37 +1485,10 @@ private:
         }
     }
 
-    [[nodiscard]] auto save_bytes(
-        const std::vector<uint8_t>& bytes, std::string_view prefix, uint64_t tick_index,
-        uint64_t tick_ns) -> json {
-        if (bytes.empty()) {
-            return nullptr;
-        }
-
-        const fs::path path =
-            images_dir_ / fmt::format("{}_{}_{}.jpg", prefix, tick_index, tick_ns);
-        std::ofstream out(path, std::ios::out | std::ios::binary | std::ios::trunc);
-        if (!out.is_open()) {
-            log_error_throttled(
-                last_write_error_log_ns_, "capturer failed to open sidecar {}", path.string());
-            return nullptr;
-        }
-
-        out.write(
-            reinterpret_cast<const char*>(bytes.data()),
-            static_cast<std::streamsize>(bytes.size()));
-        out.flush();
-        if (!out) {
-            log_error_throttled(
-                last_write_error_log_ns_, "capturer failed to write sidecar {}", path.string());
-            return nullptr;
-        }
-        return relative_path_or_null(path);
-    }
-
     template <typename... Args>
     void log_error_throttled(
         uint64_t& last_log_ns, fmt::format_string<Args...> fmt_str, Args&&... args) const {
+        std::scoped_lock lock(log_mutex_);
         const uint64_t now_ns = fcs::clock::now_ns();
         if (now_ns - last_log_ns < kErrorLogThrottleNs) {
             return;
@@ -1366,6 +1496,8 @@ private:
         last_log_ns = now_ns;
         SPDLOG_ERROR(fmt_str, std::forward<Args>(args)...);
     }
+
+    static constexpr size_t kMaxCachedImageSidecars = 256;
 
     fs::path run_dir_;
     fs::path images_dir_;
@@ -1376,9 +1508,11 @@ private:
     uint64_t reserved_free_bytes_{0};
     uint64_t tick_index_{0};
     std::mutex control_mutex_;
+    mutable std::mutex image_mutex_;
+    mutable std::mutex log_mutex_;
     std::vector<ControlSampleRecord> pending_control_samples_{};
-    CachedSidecar last_camera_image_{};
-    CachedSidecar last_detector_image_{};
+    std::deque<CachedSidecar> image_sidecars_{};
+    uint64_t last_camera_capture_tick_ns_{0};
     mutable uint64_t last_low_disk_log_ns_{0};
     mutable uint64_t last_write_error_log_ns_{0};
 };
@@ -1409,6 +1543,16 @@ void register_runtime_capturer_system(
             capturer->record_control_sample(
                 fcs::clock::now_ns(), sample_channel(control_intent_in),
                 sample_channel(weapon_command_in), sample_channel(control_state_in));
+        });
+    scheduler.add_system<talos::fixed_rate_silent<20>>(
+        "runtime_camera_recorder",
+        [capturer = *capturer_result](
+            talos::spmc<ImageFrame, ImageChannelTopic> image_in,
+            talos::spmc<L5::WeaponCommand, WeaponCommandChannelTopic> weapon_command_in,
+            core::following following) mutable {
+            capturer->capture_camera_tick(
+                fcs::clock::now_ns(), sample_channel(image_in), sample_channel(weapon_command_in),
+                following->load());
         });
     scheduler.add_system<talos::fixed_rate_silent<4>>(
         "runtime_capturer",
