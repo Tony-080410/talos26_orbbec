@@ -568,6 +568,9 @@ private:
         ret = MV_CC_SetEnumValue(camera_handle_, "ExposureAuto", MV_EXPOSURE_AUTO_MODE_OFF);
         SDK_RET_ASSERT(ret, "set auto exposure");
 
+        ret = MV_CC_SetEnumValue(camera_handle_, "ADCBitDepth", profile.adc_depth);
+        SDK_RET_ASSERT(ret, "set adc bit depth");
+
         ret = MV_CC_SetFloatValue(camera_handle_, "ExposureTime", profile.exposure_time.count());
         SDK_RET_ASSERT(ret, "set exposure time");
 

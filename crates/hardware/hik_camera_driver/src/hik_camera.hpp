@@ -60,6 +60,7 @@ struct CameraError {
 class ImageCapturer final {
 public:
     struct CameraProfile {
+        enum ADCBitDepth : uint8_t { Depth8bit = 0, Depth12bit = 3 };
         CameraProfile() noexcept {
             using namespace std::chrono_literals;
             trigger_mode  = false;
@@ -75,6 +76,7 @@ public:
         std::chrono::duration<float, std::micro> exposure_time;
         float gain;
         RotateType rotate_type;
+        ADCBitDepth adc_depth{ADCBitDepth::Depth8bit};
     };
 
     // Factory method for creating ImageCapturer with std::expected
