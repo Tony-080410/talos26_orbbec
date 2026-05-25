@@ -293,11 +293,17 @@ template <int N>
     return evecs * D_inv * evecs.transpose();
 }
 
+enum class RangeParam {
+    Distance,
+    LogDistance,
+};
+
 [[nodiscard]] static PnpGeometryInfo compute_pnp_geometry_info_ypdr(
     const std::vector<Eigen::Vector3d>& obj_pts, const Eigen::Matrix3d& R_cam_imu,
     const Eigen::Matrix3d& R_pitch, double armor_yaw, const Eigen::Vector3d& refined_ypd,
     const std::vector<Eigen::Vector2d>& img_pts, double residual_variance,
-    double correlated_scale_variance) noexcept {
+    double correlated_scale_variance,
+    RangeParam output_range_param = RangeParam::Distance) noexcept {
     PnpGeometryInfo info;
     const Eigen::Matrix<double, 8, 4> J =
         compute_reprojection_jacobian_x(obj_pts, R_cam_imu, R_pitch, armor_yaw, refined_ypd);
@@ -307,17 +313,13 @@ template <int N>
 
     const Eigen::Matrix4d H     = J.transpose() * J;
     const Eigen::Matrix4d H_inv = pseudo_inverse_spd<4>(H);
-    Eigen::Matrix4d R_rypd      = H_inv;
-    R_rypd                      = 0.5 * (R_rypd + R_rypd.transpose());
-    R_rypd *= std::max(residual_variance, 1e-12);
 
-    // The dominant detector error for far armor is not independent corner jitter.
-    // Blooming/thresholding/keypoint heatmaps often move all four corners radially
-    // inward or outward together. That image-scale mode is almost invisible in the
-    // post-fit residual but maps directly into log-distance, so model it as a
-    // rank-1 correlated measurement-noise component.
+    Eigen::Matrix4d R_ayplogd = H_inv * std::max(residual_variance, 1e-12);
+    R_ayplogd                 = 0.5 * (R_ayplogd + R_ayplogd.transpose());
+
     if (img_pts.size() == 4 && std::isfinite(correlated_scale_variance)
         && correlated_scale_variance > 0.0) {
+
         Eigen::Vector2d center = Eigen::Vector2d::Zero();
         for (const auto& p : img_pts) {
             center += p;
@@ -326,22 +328,25 @@ template <int N>
 
         Eigen::Matrix<double, 8, 1> scale_mode;
         scale_mode.setZero();
-        bool scale_mode_valid = true;
+
+        bool valid = true;
         for (int i = 0; i < 4; ++i) {
             const Eigen::Vector2d radial = img_pts[static_cast<size_t>(i)] - center;
             const double norm            = radial.norm();
+
             if (!std::isfinite(norm) || norm < 1e-12) {
-                scale_mode_valid = false;
+                valid = false;
                 break;
             }
+
             scale_mode.template segment<2>(2 * i) = radial / norm;
         }
 
-        if (scale_mode_valid && scale_mode.allFinite()) {
+        if (valid && scale_mode.allFinite()) {
             const Eigen::Vector4d dx = H_inv * J.transpose() * scale_mode;
             if (dx.allFinite()) {
-                R_rypd += correlated_scale_variance * (dx * dx.transpose());
-                R_rypd = 0.5 * (R_rypd + R_rypd.transpose());
+                R_ayplogd += correlated_scale_variance * (dx * dx.transpose());
+                R_ayplogd = 0.5 * (R_ayplogd + R_ayplogd.transpose());
             }
         }
     }
@@ -352,13 +357,39 @@ template <int N>
     P(2, 3)           = 1.0;
     P(3, 0)           = 1.0;
 
-    info.cov_ypdr = P * R_rypd * P.transpose();
-    info.cov_ypdr = 0.5 * (info.cov_ypdr + info.cov_ypdr.transpose());
+    Eigen::Matrix4d R = P * R_ayplogd * P.transpose();
 
-    const Eigen::Matrix<double, 8, 4> J_dimless = J;
-    const Eigen::Matrix4d H_dimless             = J_dimless.transpose() * J_dimless;
-    Eigen::SelfAdjointEigenSolver<Eigen::Matrix4d> es(H_dimless);
-    if (es.info() == Eigen::Success && H_dimless.allFinite()) {
+    if (output_range_param == RangeParam::Distance) {
+        const double d = refined_ypd.z();
+
+        if (std::isfinite(d) && d > 1e-9) {
+            Eigen::Matrix4d S = Eigen::Matrix4d::Identity();
+            S(2, 2)           = d; // log_distance -> distance
+            R                 = S * R * S.transpose();
+        } else {
+            return info;
+        }
+    }
+
+    R = 0.5 * (R + R.transpose());
+
+    Eigen::SelfAdjointEigenSolver<Eigen::Matrix4d> psd(R);
+    if (psd.info() == Eigen::Success && R.allFinite()) {
+        Eigen::Vector4d evals = psd.eigenvalues();
+        Eigen::Matrix4d evecs = psd.eigenvectors();
+
+        for (int i = 0; i < 4; ++i) {
+            evals(i) = std::max(evals(i), 1e-15);
+        }
+
+        R = evecs * evals.asDiagonal() * evecs.transpose();
+        R = 0.5 * (R + R.transpose());
+    }
+
+    info.cov_ypdr = R;
+
+    Eigen::SelfAdjointEigenSolver<Eigen::Matrix4d> es(H);
+    if (es.info() == Eigen::Success && H.allFinite()) {
         const auto evals        = es.eigenvalues();
         const double lambda_min = std::max(evals.minCoeff(), 1e-18);
         const double lambda_max = std::max(evals.maxCoeff(), lambda_min);
@@ -570,10 +601,16 @@ public:
             const double focal = std::sqrt(std::max(1e-9, fx * fy));
             // Independent keypoint jitter. The correlated scale mode below carries the
             // range-critical corner shrink/expand uncertainty.
-            constexpr double kIndependentCornerSigmaPxFloor = 0.5;
-            constexpr double kCorrelatedScaleSigmaPx        = 1.0;
-            const double sigma_norm_floor = kIndependentCornerSigmaPxFloor / focal;
-            const double sigma_norm_scale = kCorrelatedScaleSigmaPx / focal;
+            // constexpr double kCorrelatedScaleSigmaPx        = 10.0;
+            auto distance_factor = 0.25 / 5.0;
+            if (detection.name == ArmorName::Outpost) {
+                distance_factor = 25.0 / 5.0;
+            }
+            const double kIndependentCornerSigmaPxFloor =
+                distance_factor * translation_ypd[2] + 0.5;
+            const auto kCorrelatedScaleSigmaPx = distance_factor * translation_ypd[2] + 1.0;
+            const double sigma_norm_floor      = kIndependentCornerSigmaPxFloor / focal;
+            const double sigma_norm_scale      = kCorrelatedScaleSigmaPx / focal;
             const double residual_variance =
                 std::max(sigma2_from_residual, sigma_norm_floor * sigma_norm_floor);
             const PnpGeometryInfo pnp_geometry = compute_pnp_geometry_info_ypdr(

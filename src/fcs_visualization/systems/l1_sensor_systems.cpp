@@ -310,10 +310,12 @@ void register_l1_sensor_systems(talos::scheduler::Scheduler& app) {
 
             const cv::Scalar box_color       = tac::to_cv_bgr(tac::Image::DETECTION_BOX);
             const cv::Scalar text_color      = tac::to_cv_bgr(tac::Image::DETECTION_TEXT);
-            const cv::Scalar corner_primary  = tac::to_cv_bgr(tac::Image::CORNER_PRIMARY);
-            const cv::Scalar corner_context  = tac::to_cv_bgr(tac::Image::CORNER_SECONDARY);
             std::array<cv::Scalar, 4> colors = {
-                corner_primary, corner_context, corner_context, corner_primary};
+                cv::Scalar(255, 0, 0),  // 红色 (RT)
+                cv::Scalar(0, 255, 0),  // 绿色 (LT)
+                cv::Scalar(0, 0, 255),  // 蓝色 (LB)
+                cv::Scalar(0, 255, 255) // 黄色 (RB)
+            };
             for (const auto& det : batch->detections) {
                 // Draw detection box
                 for (size_t j = 0; j < det.corners.size(); j++) {

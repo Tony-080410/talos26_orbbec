@@ -257,15 +257,15 @@ public:
             xp0 << x0, y0, armor_yaw, 0.0, z0, z0, z0;
             OutpostEkfMotionModel::MatXX P0 = OutpostEkfMotionModel::MatXX::Identity();
 
-            P0(O_XC, O_XC) = 1;
-            P0(O_YC, O_YC) = 1;
+            P0(O_XC, O_XC) = 10;
+            P0(O_YC, O_YC) = 10;
 
             P0(O_YAW, O_YAW)   = 0.4;
             P0(O_VYAW, O_VYAW) = 100;
 
-            P0(O_Z0, O_Z0) = 0.1;
-            P0(O_Z1, O_Z1) = 0.1;
-            P0(O_Z2, O_Z2) = 0.1;
+            P0(O_Z0, O_Z0) = 1.5;
+            P0(O_Z1, O_Z1) = 1.5;
+            P0(O_Z2, O_Z2) = 1.5;
             outpost_target_.emplace();
             outpost_target_->initialize(config_.outpost.model, xp0, P0);
             outpost_last_armor_id_ = 0;
@@ -418,36 +418,120 @@ private:
         }
 
         const double angle_step = 2.0 * std::numbers::pi / static_cast<double>(armors_num);
-        const double phase_shift =
-            target.x()[TargetInfo::Model::kVyawIndex] * last_dt_ / angle_step;
-        const double phase_std = std::clamp(std::abs(last_dt_) * 0.5, 0.05, 1.0);
-        const auto prior = build_mode_prior_(armors_num, last_armor_id, phase_shift, phase_std);
+
+        // -------------------------------------------------------------------------
+        // Prior cost.
+        //
+        // 关键结构：
+        //   cost = observation_d2 + prior_cost
+        //
+        // prior 可以影响当前帧 association 排序；
+        // 但后面 last_armor_id commit 不看 prior，只看 observation-only consistency。
+        // -------------------------------------------------------------------------
+        const auto prior_cost_for_id = [&](int id) noexcept -> double {
+            if (!last_armor_id.has_value()) {
+                return 0.0;
+            }
+
+            constexpr double kMinProb = 1e-6;
+
+            // ---------------------------------------------------------------------
+            // Outpost:
+            //   GT vyaw 不是自由 CV，而是约等于 {-a, 0, +a}。
+            //   所以 matcher prior 单独用三离散模式 mixture。
+            // ---------------------------------------------------------------------
+            if (target_name_ == ArmorName::Outpost) {
+                constexpr double kOutpostVyaw         = 2.51327412;
+                constexpr double kOutpostModePhaseStd = 0.45;
+                constexpr double kOutpostPriorWeight  = 0.6;
+
+                const std::array<double, 3> mode_vyaws = {
+                    -kOutpostVyaw,
+                    0.0,
+                    +kOutpostVyaw,
+                };
+
+                double best_prior_cost = std::numeric_limits<double>::infinity();
+
+                for (const double mode_vyaw : mode_vyaws) {
+                    const double mode_phase_shift = mode_vyaw * last_dt_ / angle_step;
+
+                    const auto mode_prior = build_mode_prior_(
+                        armors_num, last_armor_id, mode_phase_shift, kOutpostModePhaseStd);
+
+                    const double p = std::clamp(
+                        id < static_cast<int>(mode_prior.size())
+                            ? mode_prior[static_cast<size_t>(id)]
+                            : 1.0,
+                        kMinProb, 1.0);
+
+                    best_prior_cost = std::min(best_prior_cost, -2.0 * std::log(p));
+                }
+
+                if (!std::isfinite(best_prior_cost)) {
+                    return 0.0;
+                }
+
+                return kOutpostPriorWeight * best_prior_cost;
+            }
+
+            // ---------------------------------------------------------------------
+            // Normal robot:
+            //   phase prior 来自连续 vyaw，并且由 P(vyaw,vyaw) 控制 prior 尖锐程度。
+            // ---------------------------------------------------------------------
+            const double phase_shift =
+                target.x()[TargetInfo::Model::kVyawIndex] * last_dt_ / angle_step;
+
+            const auto& P = target.P();
+
+            const double vyaw_var = std::max(
+                0.0, static_cast<double>(
+                         P(TargetInfo::Model::kVyawIndex, TargetInfo::Model::kVyawIndex)));
+
+            const double phase_std_from_p =
+                std::sqrt(vyaw_var) * std::abs(last_dt_) / std::max(angle_step, 1e-9);
+
+            const double base_phase_std = std::clamp(std::abs(last_dt_) * 0.5, 0.05, 1.0);
+
+            const double phase_std =
+                std::clamp(std::hypot(base_phase_std, phase_std_from_p), 0.08, 1.5);
+
+            const double prior_weight =
+                std::clamp(1.0 / (1.0 + phase_std_from_p * phase_std_from_p), 0.0, 1.0);
+
+            const auto prior = build_mode_prior_(armors_num, last_armor_id, phase_shift, phase_std);
+
+            const double p = std::clamp(
+                id < static_cast<int>(prior.size()) ? prior[static_cast<size_t>(id)] : 1.0,
+                kMinProb, 1.0);
+
+            return prior_weight * (-2.0 * std::log(p));
+        };
 
         std::vector<MatchCandidate<TargetInfo>> candidates;
         candidates.reserve(obs_indices.size() * static_cast<size_t>(armors_num));
 
         for (const size_t obs_index : obs_indices) {
-            const auto& meas    = measurements.measurements[obs_index];
+            const auto& meas = measurements.measurements[obs_index];
+
             const VecZ z_raw    = measurement_to_z_(meas);
             const MatZZ R_model = target.model().R(z_raw);
             const MatZZ R_update =
                 pnp_augmented_measurement_R_<TargetInfo>(R_model, meas.pnp_cov_ypdr);
+
             for (int id = 0; id < armors_num; ++id) {
                 const VecZ z_pred = target.model().h(target.x(), id);
                 if (!armor_measurement_visible_from_origin(z_pred)) {
                     continue;
                 }
+
                 const VecZ nu   = innovation_(z_pred, z_raw);
-                const MatZZ R   = target.model().R(z_raw);
-                const double d2 = mahalanobis_(nu, R);
+                const double d2 = mahalanobis_(nu, R_update);
                 if (!std::isfinite(d2) || d2 >= matcher_gate_) {
                     continue;
                 }
 
-                const double p = std::clamp(
-                    id < static_cast<int>(prior.size()) ? prior[static_cast<size_t>(id)] : 1.0,
-                    1e-6, 1.0);
-                const double cost = d2 - 2.0 * std::log(p);
+                const double cost = d2 + prior_cost_for_id(id);
 
                 MatchCandidate<TargetInfo> candidate;
                 candidate.obs_index = obs_index;
@@ -488,13 +572,73 @@ private:
         }
 
         state_machine(true);
-        last_armor_id                     = selected.front().armor_id;
-        const auto& primary_measurement   = measurements.measurements[selected.front().obs_index];
-        last_image_center_distance_px_    = primary_measurement.distance_to_image_center;
-        last_observation_timestamp_ns_    = primary_measurement.timestamp_ns;
+
+        // -------------------------------------------------------------------------
+        // Observation-only d2.
+        //
+        // 这里故意不使用 candidate.cost，因为 cost 里含 prior。
+        // last_armor_id 是历史锚点，不能由 prior 自证。
+        // -------------------------------------------------------------------------
+        const auto obs_d2_for =
+            [&](const MatchCandidate<TargetInfo>& candidate) noexcept -> double {
+            const auto& meas = measurements.measurements[candidate.obs_index];
+
+            const VecZ z_raw  = measurement_to_z_(meas);
+            const VecZ z_pred = target.model().h(target.x(), candidate.armor_id);
+            const VecZ nu     = innovation_(z_pred, z_raw);
+
+            return mahalanobis_(nu, candidate.R_update);
+        };
+
+        const auto& primary = selected.front();
+
+        const double primary_obs_d2 = obs_d2_for(primary);
+
+        double second_obs_d2 = std::numeric_limits<double>::infinity();
+        for (const auto& candidate : candidates) {
+            if (candidate.obs_index != primary.obs_index) {
+                continue;
+            }
+
+            if (candidate.armor_id == primary.armor_id) {
+                continue;
+            }
+
+            const double d2 = obs_d2_for(candidate);
+            if (std::isfinite(d2)) {
+                second_obs_d2 = std::min(second_obs_d2, d2);
+            }
+        }
+
+        const double obs_margin = second_obs_d2 - primary_obs_d2;
+
+        // -------------------------------------------------------------------------
+        // Commit gate.
+        //
+        // selected 可以由 prior + obs 决定；
+        // 但 last_armor_id 只能由 observation-only consistency 决定。
+        //
+        // 这样 prior 方向错了时，不会立刻污染 last_armor_id。
+        // -------------------------------------------------------------------------
+        constexpr double kMaxCommitObsD2     = 6.0;
+        constexpr double kMinCommitObsMargin = 2.0;
+
+        const bool commit_last_id = std::isfinite(primary_obs_d2)
+                                 && primary_obs_d2 < kMaxCommitObsD2 && std::isfinite(obs_margin)
+                                 && obs_margin > kMinCommitObsMargin;
+
+        if (commit_last_id) {
+            last_armor_id = primary.armor_id;
+        }
+
+        const auto& primary_measurement = measurements.measurements[primary.obs_index];
+        last_image_center_distance_px_  = primary_measurement.distance_to_image_center;
+        last_observation_timestamp_ns_  = primary_measurement.timestamp_ns;
+
         const bool observed_nonzero_armor = std::any_of(
             selected.begin(), selected.end(),
             [](const MatchCandidate<TargetInfo>& candidate) { return candidate.armor_id != 0; });
+
         if (observed_nonzero_armor) {
             target_jumped_ = true;
         }
@@ -574,28 +718,61 @@ private:
 
     template <typename TargetInfo>
     static typename TargetInfo::MatZZ pnp_augmented_measurement_R_(
-        const typename TargetInfo::MatZZ& model_R, const Eigen::Matrix4d& pnp_cov_ypdr) noexcept {
+        const typename TargetInfo::MatZZ& model_R, const Eigen::Matrix4d& pnp_cov_yplogr) noexcept {
         using MatZZ = typename TargetInfo::MatZZ;
 
         const MatZZ base_R = make_spd_R_(model_R);
-        if (!pnp_cov_ypdr.allFinite()) {
+        if (!pnp_cov_yplogr.allFinite()) {
             return base_R;
         }
 
-        MatZZ pnp_R = 0.5 * (pnp_cov_ypdr + pnp_cov_ypdr.transpose());
+        MatZZ pnp_R = 0.5 * (pnp_cov_yplogr + pnp_cov_yplogr.transpose());
         if (!pnp_R.allFinite()) {
             return base_R;
         }
 
         Eigen::SelfAdjointEigenSolver<MatZZ> es(pnp_R);
-        if (es.info() == Eigen::Success && pnp_R.allFinite()) {
-            const auto evals = es.eigenvalues().cwiseMax(0.0);
-            pnp_R = es.eigenvectors() * evals.asDiagonal() * es.eigenvectors().transpose();
-            pnp_R = 0.5 * (pnp_R + pnp_R.transpose());
+        if (es.info() != Eigen::Success) {
+            return base_R;
         }
 
-        const MatZZ combined_R = base_R + pnp_R;
-        return make_spd_R_(combined_R);
+        auto evals = es.eigenvalues().cwiseMax(0.0);
+        pnp_R      = es.eigenvectors() * evals.asDiagonal() * es.eigenvectors().transpose();
+        pnp_R      = 0.5 * (pnp_R + pnp_R.transpose());
+
+        MatZZ R = base_R;
+
+        constexpr double kMinRatio = 0.5;
+        constexpr double kMaxRatio = 10.0;
+
+        for (int i = 0; i < MatZZ::RowsAtCompileTime; ++i) {
+            const double b = std::max(base_R(i, i), 1e-8);
+            const double p = std::isfinite(pnp_R(i, i)) ? pnp_R(i, i) : b;
+
+            R(i, i) = std::clamp(p, kMinRatio * b, kMaxRatio * b);
+        }
+
+        constexpr double kMaxCorr = 0.95;
+
+        for (int i = 0; i < MatZZ::RowsAtCompileTime; ++i) {
+            for (int j = i + 1; j < MatZZ::ColsAtCompileTime; ++j) {
+                const double denom =
+                    std::sqrt(std::max(pnp_R(i, i), 1e-12) * std::max(pnp_R(j, j), 1e-12));
+
+                double rho = 0.0;
+                if (denom > 0.0 && std::isfinite(pnp_R(i, j))) {
+                    rho = pnp_R(i, j) / denom;
+                }
+
+                rho = std::clamp(rho, -kMaxCorr, kMaxCorr);
+
+                const double cij = rho * std::sqrt(R(i, i) * R(j, j));
+                R(i, j)          = cij;
+                R(j, i)          = cij;
+            }
+        }
+
+        return make_spd_R_(R);
     }
 
     template <typename MatZZ>

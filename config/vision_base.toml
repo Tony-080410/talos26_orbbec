@@ -137,7 +137,7 @@ radius1 = 0.23
 height = 0.05
 
 [tracker.outpost]
-matcher_gate = 2.0
+matcher_gate = 6.0
 lost_threshold = 1.0
 tracking_threshold = 4
 

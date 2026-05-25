@@ -9,9 +9,13 @@
 #include "core/types.hpp"
 #include "frame.hpp"
 #include "scheduler/scheduler.hpp"
+#include <opencv2/imgproc.hpp>
 #include <optional>
 #include <spdlog/spdlog.h>
 
+#include <algorithm>
+#include <cmath>
+#include <cstdlib>
 #include <magic_enum.hpp>
 
 namespace fcs::L2 {
@@ -267,6 +271,65 @@ void offset_detections(std::vector<ArmorDetection>& detections, const cv::Point&
     return roi.x > 0 || roi.y > 0 || roi.width < frame_size.width || roi.height < frame_size.height;
 }
 
+struct AspectRatioBounds {
+    double min;
+    double max;
+};
+
+[[nodiscard]] constexpr double armor_expected_rect_aspect_ratio(ArmorType type) noexcept {
+    switch (type) {
+    case ArmorType::Small: return 135.0 / 55.0;
+    case ArmorType::Large: return 230.0 / 55.0;
+    case ArmorType::Invalid: return 0.0;
+    }
+    std::abort();
+}
+
+[[nodiscard]] constexpr AspectRatioBounds armor_rect_aspect_ratio_bounds(ArmorType type) noexcept {
+    constexpr double min_scale = 0.45;
+    constexpr double max_scale = 1.30;
+    if (type == ArmorType::Invalid) {
+        return {
+            armor_expected_rect_aspect_ratio(ArmorType::Small) * min_scale,
+            armor_expected_rect_aspect_ratio(ArmorType::Large) * max_scale,
+        };
+    }
+
+    const double expected_ratio = armor_expected_rect_aspect_ratio(type);
+    return {expected_ratio * min_scale, expected_ratio * max_scale};
+}
+
+[[nodiscard]] bool detection_rect_aspect_ratio_is_valid(const ArmorDetection& detection) noexcept {
+    float min_x = detection.corners[0].x;
+    float max_x = detection.corners[0].x;
+    float min_y = detection.corners[0].y;
+    float max_y = detection.corners[0].y;
+
+    for (const auto& corner : detection.corners) {
+        if (!std::isfinite(corner.x) || !std::isfinite(corner.y)) {
+            return false;
+        }
+        min_x = std::min(min_x, corner.x);
+        max_x = std::max(max_x, corner.x);
+        min_y = std::min(min_y, corner.y);
+        max_y = std::max(max_y, corner.y);
+    }
+
+    const float width  = max_x - min_x;
+    const float height = max_y - min_y;
+    if (width <= 1e-3f || height <= 1e-3f) {
+        return false;
+    }
+
+    if (width <= height) {
+        return false;
+    }
+
+    const double aspect_ratio = static_cast<double>(width) / static_cast<double>(height);
+    const auto bounds         = armor_rect_aspect_ratio_bounds(detection.type);
+    return bounds.min <= aspect_ratio && aspect_ratio <= bounds.max;
+}
+
 } // namespace
 
 void register_detection_systems(talos::Scheduler& scheduler) noexcept {
@@ -354,7 +417,9 @@ void register_detection_systems(talos::Scheduler& scheduler) noexcept {
             detections_for_pnp.reserve(detections.size());
             std::copy_if(
                 detections.begin(), detections.end(), std::back_inserter(detections_for_pnp),
-                [detect_color](const ArmorDetection& det) { return det.color == detect_color; });
+                [detect_color](const ArmorDetection& det) {
+                    return det.color == detect_color && detection_rect_aspect_ratio_is_valid(det);
+                });
 
             detection_out.write(
                 ArmorDetectionBatch{
