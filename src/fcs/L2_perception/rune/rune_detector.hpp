@@ -142,7 +142,7 @@ public:
     double timestamp_sec{0.0};
 
 private:
-    std::expected<cv::Mat, std::string> processPictures(const cv::Mat& src, fcs::ArmorColor color);
+    void processPictures(const cv::Mat& src, fcs::ArmorColor color);
     bool isArrowRoiMatched(const Arrow& arrow, const cv::Rect2f& roi);
 
     bool detectCenterR();
@@ -161,6 +161,9 @@ private:
 
     // PnP prior from previous frame
     PosePrior pose_prior_;
+
+    std::vector<cv::Point> r_template_norm_;
+    cv::Mat close_kernel_;
 
 public:
     // 重投影调试信息
