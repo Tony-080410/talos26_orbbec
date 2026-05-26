@@ -1,6 +1,7 @@
 #include "hik_camera.hpp"
 #include "CameraParams.h"
 #include "MvErrorDefine.h"
+#include "magic_enum.hpp"
 
 #include <atomic>
 #include <cstring>
@@ -514,12 +515,12 @@ private:
             }
             return *device_list.pDeviceInfo[0];
         } else {
-            for (unsigned int i = 0; i < device_list.nDeviceNum; i++) {
+            for (auto i = 0; i < device_list.nDeviceNum; i++) {
                 if (is_same_device_name(device_list.pDeviceInfo[i], user_defined_name))
                     return *device_list.pDeviceInfo[i];
             }
             SPDLOG_LOGGER_INFO(logger_, "found {} devices:", device_list.nDeviceNum);
-            for (unsigned int i = 0; i < device_list.nDeviceNum; i++) {
+            for (auto i = 0; i < device_list.nDeviceNum; i++) {
                 SPDLOG_LOGGER_INFO(
                     logger_, "  [{}]: {}", i, format_device_info(device_list.pDeviceInfo[i]));
             }
@@ -598,6 +599,11 @@ private:
 
         ret = MV_CC_SetEnumValue(camera_handle_, "ADCBitDepth", profile.adc_depth);
         SDK_RET_ASSERT(ret, "set adc bit depth");
+        if (ret != MV_OK) {
+            SPDLOG_LOGGER_WARN(
+                logger_, "set adc bit depth to {}: {}", magic_enum::enum_name(profile.adc_depth),
+                error_code_to_message(ret));
+        }
 
         ret = MV_CC_SetFloatValue(camera_handle_, "ExposureTime", profile.exposure_time.count());
         SDK_RET_ASSERT(ret, "set exposure time");
