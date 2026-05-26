@@ -1,4 +1,5 @@
 build/
+build-cross/
 bin/*
 CMakeFiles/
 CMakeCache.txt

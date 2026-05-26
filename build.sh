@@ -73,6 +73,7 @@ VERBOSE="OFF"
 REDACT_BUILD_OUTPUT="ON"
 CROSS_COMPILE="OFF"
 GENERATOR="Ninja"
+BUILD_DIR="build"
 RUN_ARGS=()
 
 OS=""
@@ -381,7 +382,7 @@ configure_cmake() {
     CMAKE_CONFIGURE_ARGS=(
         -DCMAKE_COLOR_DIAGNOSTICS=ON
         -G "$GENERATOR"
-        -B build
+        -B "$BUILD_DIR"
         -S .
         "-DCMAKE_BUILD_TYPE=${BUILD_TYPE}"
         "-DENABLE_CALIBRATION=${ENABLE_CALIBRATION}"
@@ -391,15 +392,29 @@ configure_cmake() {
         "${CMAKE_EXTRA_ARGS[@]}"
     )
 
+    local stamp_file="${BUILD_DIR}/.cmake_configure_args"
+    local current_args="${CMAKE_CONFIGURE_ARGS[*]}"
+
+    if [[ -f "$stamp_file" ]]; then
+        local cached_args
+        cached_args="$(cat "$stamp_file")"
+        if [[ "$current_args" == "$cached_args" ]]; then
+            info "CMake cache is up-to-date. Skipping reconfigure."
+            return 0
+        fi
+        info "Build configuration changed. Reconfiguring..."
+    fi
+
     info "Configuring CMake..."
     cmake "${CMAKE_CONFIGURE_ARGS[@]}"
+    echo "$current_args" > "$stamp_file"
 }
 
 build_target() {
     export CMAKE_BUILD_PARALLEL_LEVEL="${BUILD_JOBS}"
 
     CMAKE_BUILD_ARGS=(
-        --build build
+        --build "$BUILD_DIR"
     )
 
     if [[ "$ENABLE_TESTING" == "OFF" ]]; then
@@ -424,7 +439,7 @@ install_target() {
     [[ "$CROSS_COMPILE" == "ON" ]] || return 0
 
     info "Installing to bin/ (cross-compile)..."
-    cmake --install build --prefix bin
+    cmake --install "$BUILD_DIR" --prefix bin
     ok "Install complete!"
 }
 
@@ -434,7 +449,7 @@ run_target() {
     configure_asan_runtime
     configure_tsan_runtime
 
-    local exe="./build/bin/${BUILD_TARGET}"
+    local exe="./${BUILD_DIR}/bin/${BUILD_TARGET}"
     [[ -x "$exe" ]] || die "Built executable not found: $exe"
 
     info "Starting ${BUILD_TARGET}..."
@@ -452,7 +467,7 @@ run_tests() {
     configure_tsan_runtime
 
     info "Running tests..."
-    ctest --test-dir build --output-on-failure --parallel "${BUILD_JOBS}"
+    ctest --test-dir "$BUILD_DIR" --output-on-failure --parallel "${BUILD_JOBS}"
     ok "All tests passed!"
 }
 
@@ -552,6 +567,11 @@ main() {
 
     ensure_generator
 
+    # Separate build directories for native vs cross
+    if [[ "$CROSS_COMPILE" == "ON" ]]; then
+        BUILD_DIR="build-cross"
+    fi
+
     # ASan and TSan are mutually exclusive
     if [[ "$ENABLE_ASAN" == "ON" && "$ENABLE_TSAN" == "ON" ]]; then
         die "Cannot enable both ASan and TSan simultaneously. Choose one."
@@ -559,6 +579,7 @@ main() {
 
     info "Platform: ${OS} (${ARCH})"
     info "Build type: ${BUILD_TYPE}"
+    info "Build dir: ${BUILD_DIR}"
     info "Cross-compile: ${CROSS_COMPILE}"
     info "ASAN: ${ENABLE_ASAN}"
     info "TSAN: ${ENABLE_TSAN}"
