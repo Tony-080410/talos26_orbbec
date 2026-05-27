@@ -393,7 +393,7 @@ private:
     }
 
     void reconnect() noexcept {
-        SPDLOG_INFO("usb mcu reconnecting (vendor_id={:#06x}, product_id={:#06x})...", vid_, pid_);
+        SPDLOG_DEBUG("usb mcu reconnecting (vendor_id={:#06x}, product_id={:#06x})...", vid_, pid_);
         std::lock_guard lock(device_mtx_);
         close_device_locked();
         if (auto open_result = open_device(vid_, pid_); !open_result) {

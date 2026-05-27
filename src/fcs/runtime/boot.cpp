@@ -97,13 +97,13 @@ void init_coordinate_system(fast_tf::CoordinateSystem& system, const RobotExtrin
                 init_coordinate_system(coordinate_system, cfg.hardware.extrinsic);
                 world.insert_resource(
                     core::trajectory::bullet_speed_data{
-                        .bullet_speed = cfg.hardware.mcu->bullet_speed_default});
+                        .filtered = cfg.hardware.mcu->bullet_speed_default});
                 chiral = cfg.hardware.chiral;
             },
             [&coordinate_system, &world](hardware::DaedalusConfig cfg) {
                 init_coordinate_system(coordinate_system, cfg.extrinsic);
                 world.insert_resource(
-                    core::trajectory::bullet_speed_data{.bullet_speed = cfg.bullet_speed});
+                    core::trajectory::bullet_speed_data{.filtered = cfg.bullet_speed});
             }},
         config.backend);
 
@@ -138,8 +138,7 @@ void init_coordinate_system(fast_tf::CoordinateSystem& system, const RobotExtrin
     // Register trajectory solver resource (used by L4/L5)
     core::trajectory::register_resource(scheduler, std::move(config.vision.trajectory));
     SPDLOG_INFO(
-        "bullet_speed={:.3f}m/s",
-        world.get_res<core::trajectory::bullet_speed_data>()->bullet_speed);
+        "bullet_speed={:.3f}m/s", world.get_res<core::trajectory::bullet_speed_data>()->filtered);
 
     // Register AT Legacy detection pipeline systems
     L2::register_detection_systems(scheduler);

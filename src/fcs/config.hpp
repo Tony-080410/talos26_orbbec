@@ -18,6 +18,7 @@
 #include "core/armor_types.hpp"
 #include "core/runtime.hpp"
 #include "core/trajectory/config.hpp"
+#include "core/trajectory/resource.hpp"
 #include "euler.hpp"
 #include "quanta/transcoder.hpp"
 #include <magic_enum.hpp>
@@ -80,8 +81,9 @@ struct McuConfig {
     bool mcu_authoritative_self_color{true};
     bool mcu_authoritative_bullet_speed{true};
     double bullet_speed_default{22.0};
-    double bullet_speed_min{25.0};
-    double bullet_speed_max{15.0};
+    double bullet_speed_min{15.0};
+    double bullet_speed_max{25.0};
+    core::trajectory::bullet_speed_filter_config bullet_speed_filter{};
 };
 
 struct HardwareConfig {

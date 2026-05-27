@@ -727,7 +727,7 @@ void register_l4_planning_systems(talos::scheduler::Scheduler& app) {
                         "Opt", cmd->viz_debug->optimized_plan[static_cast<size_t>(center_index)]),
                     tac::L4::MPC_PRESENT, tac::L4::SELECTION_SIZE);
                 auto trajectory = solver->get()->generate_trajectory(
-                    cmd->pitch, bullet_speed->bullet_speed, cmd->distance);
+                    cmd->pitch, bullet_speed->filtered, cmd->distance);
                 std::vector<Eigen::Vector3d> traj_points;
                 traj_points.reserve(trajectory.size());
                 for (const auto& [x, z] : trajectory) {
@@ -747,7 +747,7 @@ void register_l4_planning_systems(talos::scheduler::Scheduler& app) {
                 if (f) {
                     auto [r, p, y] = f->euler_rot().rpy();
                     auto trajectory =
-                        solver->get()->generate_trajectory(p, bullet_speed->bullet_speed, 15.0);
+                        solver->get()->generate_trajectory(p, bullet_speed->filtered, 15.0);
                     std::vector<Eigen::Vector3d> traj_points;
                     traj_points.reserve(trajectory.size());
                     for (const auto& [x, z] : trajectory) {

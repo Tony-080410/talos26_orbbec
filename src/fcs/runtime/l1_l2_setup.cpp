@@ -104,13 +104,13 @@ struct ChiralImu {
             *tf_buffer, math_fuxk::rpy<double>(0.0, std::numbers::pi * imu_data.pitch / 180.0, 0.0),
             timestamp_ns);
         if (config.mcu_authoritative_bullet_speed && imu_data.bullet_speed > 0) {
-            double new_speed = std::clamp(
-                static_cast<double>(imu_data.bullet_speed), config.bullet_speed_min,
-                config.bullet_speed_max);
-            if (new_speed != bullet_speed->bullet_speed) {
+            const auto changed = bullet_speed->update(
+                static_cast<double>(imu_data.bullet_speed), timestamp_ns, config.bullet_speed_min,
+                config.bullet_speed_max, config.bullet_speed_filter);
+            if (changed) {
                 SPDLOG_INFO(
-                    "bullet speed changed: {} -> {}", bullet_speed->bullet_speed, new_speed);
-                bullet_speed->bullet_speed = new_speed;
+                    "bullet speed filtered: raw={:.1f}m/s -> filtered={:.1f}m/s", bullet_speed->raw,
+                    bullet_speed->filtered);
             }
         }
         if (config.mcu_authoritative_self_color) {
@@ -131,8 +131,8 @@ struct ChiralImu {
         imu_state->pitch_vel    = imu_data.pitch_vel;
         imu_state->roll_vel     = imu_data.roll_vel;
         publish_control_snapshot(
-            control_out, *tf_buffer, *imu_state, *detecting_color, imu_data.bullet_speed,
-            bullet_speed->bullet_speed, timestamp_ns);
+            control_out, *tf_buffer, *imu_state, *detecting_color, bullet_speed->raw,
+            bullet_speed->filtered, timestamp_ns);
     }
 };
 
@@ -219,8 +219,8 @@ struct DaedalusImu {
         }
         if (control_updated) {
             publish_control_snapshot(
-                control_out, *tf_buffer, *imu_state, *detecting_color, bullet_speed->bullet_speed,
-                bullet_speed->bullet_speed, control_timestamp_ns);
+                control_out, *tf_buffer, *imu_state, *detecting_color, bullet_speed->filtered,
+                bullet_speed->filtered, control_timestamp_ns);
         }
     }
 };
@@ -295,13 +295,13 @@ struct McuImu {
         fast_tf::update_rotate_only<fast_tf::gimbal_pitch_fuxk_frame>(
             *tf_buffer, math_fuxk::rpy<double>(0.0, imu_data->data.pitch, 0.0), timestamp_ns);
         if (config.mcu_authoritative_bullet_speed && imu_data->data.bullet_speed > 0) {
-            double new_speed = std::clamp(
-                static_cast<double>(imu_data->data.bullet_speed), config.bullet_speed_min,
-                config.bullet_speed_max);
-            if (new_speed != bullet_speed->bullet_speed) {
+            const auto changed = bullet_speed->update(
+                static_cast<double>(imu_data->data.bullet_speed), timestamp_ns,
+                config.bullet_speed_min, config.bullet_speed_max, config.bullet_speed_filter);
+            if (changed) {
                 SPDLOG_INFO(
-                    "bullet speed changed: {} -> {}", bullet_speed->bullet_speed, new_speed);
-                bullet_speed->bullet_speed = new_speed;
+                    "bullet speed filtered: raw={:.1f}m/s -> filtered={:.1f}m/s", bullet_speed->raw,
+                    bullet_speed->filtered);
             }
         }
         if (config.mcu_authoritative_self_color) {
@@ -322,8 +322,8 @@ struct McuImu {
         imu_state->pitch_vel    = imu_data->data.pitch_vel;
         imu_state->roll_vel     = imu_data->data.roll_vel;
         publish_control_snapshot(
-            control_out, *tf_buffer, *imu_state, *detecting_color, imu_data->data.bullet_speed,
-            bullet_speed->bullet_speed, timestamp_ns);
+            control_out, *tf_buffer, *imu_state, *detecting_color, bullet_speed->raw,
+            bullet_speed->filtered, timestamp_ns);
     }
 };
 

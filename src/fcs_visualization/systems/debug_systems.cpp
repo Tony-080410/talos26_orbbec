@@ -43,7 +43,8 @@ void register_debug_systems(talos::scheduler::Scheduler& app, talos::Scheduler* 
             auto now               = clock::now_ns();
             j["timestamp"]["sec"]  = now / 1000000000L;
             j["timestamp"]["nsec"] = now % 1000000000L;
-            j["bullet_speed"]      = bullet_speed->bullet_speed;
+            j["bullet_speed"]      = bullet_speed->filtered;
+            j["bullet_speed_raw"]  = bullet_speed->raw;
             j["color"]             = magic_enum::enum_name(*color);
             j["following"]         = following->load();
             std::vector<std::string> cap_str;

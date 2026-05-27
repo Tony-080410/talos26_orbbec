@@ -283,7 +283,7 @@ void seed_runtime_resources(talos::World& world) {
     (void)world.emplace_resource<fast_tf::CoordinateSystem>();
     world.insert_resource(fcs::core::ImuState{});
     world.insert_resource(fcs::ArmorColor::Blue);
-    world.insert_resource(fcs::core::trajectory::bullet_speed_data{.bullet_speed = 20.0});
+    world.insert_resource(fcs::core::trajectory::bullet_speed_data{.filtered = 20.0});
     static_cast<void>(world.emplace_resource<fcs::core::FollowingState>());
 }
 
