@@ -201,7 +201,7 @@ int main(int argc, char* argv[]) {
     hardware_config.camera->profile = config->profile;
     hardware_config.mcu             = fcs::McuConfig{};
     hardware_config.extrinsic       = fcs::RobotExtrinsicConfig{};
-    world.insert_resource(fcs::core::trajectory::bullet_speed_data{.filtered = 25.0});
+    world.insert_resource(fcs::core::trajectory::bullet_speed_data{.bullet_speed = 25.0});
     world.insert_resource(fcs::ArmorColor::Blue);
 
     // Setup L1_L2 runtime (camera + IMU)

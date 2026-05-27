@@ -707,7 +707,7 @@ void register_aimer_systems(talos::Scheduler& scheduler, L4Config&& config) {
                 .gimbal       = gimbal,
                 .muzzle       = muzzle,
                 .current_ns   = now_ns,
-                .bullet_speed = bullet_speed_->filtered,
+                .bullet_speed = bullet_speed_->bullet_speed,
                 .solver       = **solver,
                 .aimer        = *aimer,
             };

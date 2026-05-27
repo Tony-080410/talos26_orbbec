@@ -194,7 +194,7 @@ public:
             std::unique_ptr<fcs::core::trajectory::solver::TrajectorySolver>(
                 std::make_unique<MockTrajectorySolver>()));
         scheduler_.world().insert_resource(
-            fcs::core::trajectory::bullet_speed_data{.filtered = 30.0});
+            fcs::core::trajectory::bullet_speed_data{.bullet_speed = 30.0});
 
         fcs::L4::register_aimer_systems(scheduler_, std::move(config));
 
