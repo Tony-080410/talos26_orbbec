@@ -728,7 +728,11 @@ void register_aimer_systems(talos::Scheduler& scheduler, L4Config&& config) {
                 }
             }
             if (!decision) {
-                decision = try_ldm(ldm_in.read_current(), ctx, cfg->reference_trajectory);
+                auto i = ldm_in.read();
+                if (i->status == L3::TrackerStatus::Detecting) {
+                    return;
+                }
+                decision = try_ldm(ldm_in.read(), ctx, cfg->reference_trajectory);
                 if (decision) {
                     // LDM doesn't use armor-tracker-key tracking — reset to avoid
                     // stale key influencing the next armor-selection cycle.
