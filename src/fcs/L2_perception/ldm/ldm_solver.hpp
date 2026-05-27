@@ -103,27 +103,48 @@ public:
             };
         }
 
-        auto preliminary_candidates = build_preliminary_mesh_candidates(detection.pairs, config_);
-        if (preliminary_candidates.empty()) {
-            return std::unexpected(
-                std::string("solve: no preliminary mesh candidates (NoCandidate)"));
-        }
-
-        // ── Phase 1: Evaluate all candidates ──
         std::vector<LdmMeshCandidate> evaluated_candidates;
-        evaluated_candidates.reserve(preliminary_candidates.size() * 16);
+        const auto evaluate_candidates = [&](const std::vector<LdmMeshCandidate>& base_candidates) {
+            for (const auto& base_candidate : base_candidates) {
+                if (base_candidate.pair_indices.empty()) {
+                    continue;
+                }
 
-        for (const auto& base_candidate : preliminary_candidates) {
-            if (base_candidate.pair_indices.empty()) {
-                continue;
-            }
-
-            auto candidate = base_candidate;
-            assign_visible_face_indices(candidate, detection.pairs);
-            if (has_face_assignment(candidate)) {
+                auto candidate = base_candidate;
+                assign_visible_face_indices(candidate, detection.pairs);
+                if (!has_face_assignment(candidate)) {
+                    continue;
+                }
                 evaluate_candidate(candidate, detection.pairs, T_odom_camera, prior);
                 evaluated_candidates.push_back(std::move(candidate));
             }
+        };
+
+        // ── Phase 1: Evaluate detector-provided candidates first ──
+        if (!detection.mesh_candidates.empty()) {
+            evaluated_candidates.reserve(detection.mesh_candidates.size() * 16);
+            evaluate_candidates(detection.mesh_candidates);
+        }
+
+        const auto has_solved_candidate = [&]() {
+            return std::any_of(
+                evaluated_candidates.begin(), evaluated_candidates.end(),
+                [](const LdmMeshCandidate& candidate) { return candidate.solved; });
+        };
+
+        // If detector-side hypotheses cannot produce a pose, fall back to the
+        // exhaustive contiguous-arc hypotheses used by the solver.
+        if (evaluated_candidates.empty() || !has_solved_candidate()
+            || detection.mesh_candidates.size() > 1u) {
+            auto preliminary_candidates =
+                build_preliminary_mesh_candidates(detection.pairs, config_);
+            if (preliminary_candidates.empty() && evaluated_candidates.empty()) {
+                return std::unexpected(
+                    std::string("solve: no preliminary mesh candidates (NoCandidate)"));
+            }
+            evaluated_candidates.reserve(
+                evaluated_candidates.size() + preliminary_candidates.size() * 16);
+            evaluate_candidates(preliminary_candidates);
         }
 
         if (evaluated_candidates.empty()) {

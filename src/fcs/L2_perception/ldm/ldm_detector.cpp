@@ -23,6 +23,52 @@ namespace {
                                              : config.min_preliminary_candidate_score);
 }
 
+[[nodiscard]] size_t candidate_cluster_pair_count(
+    const LdmMeshCandidate& candidate, const std::vector<LightPair>& pairs) {
+    if (candidate.cluster_id < 0) {
+        return candidate.pair_indices.size();
+    }
+
+    return static_cast<size_t>(
+        std::count_if(pairs.begin(), pairs.end(), [&](const LightPair& pair) {
+            return pair.cluster_id == candidate.cluster_id;
+        }));
+}
+
+[[nodiscard]] bool has_min_isolated_two_pair_order_span(
+    const LdmMeshCandidate& candidate, const std::vector<LightPair>& pairs,
+    const LdmDetectorConfig& config) {
+    if (candidate.pair_indices.size() != 2u) {
+        return true;
+    }
+    if (candidate_cluster_pair_count(candidate, pairs) != 2u) {
+        return true;
+    }
+    if (!std::isfinite(config.min_isolated_two_pair_order_span_ratio)
+        || config.min_isolated_two_pair_order_span_ratio < 0.0) {
+        return false;
+    }
+
+    float mean_pair_layer = 0.0f;
+    for (const int pair_idx : candidate.pair_indices) {
+        if (pair_idx < 0 || static_cast<size_t>(pair_idx) >= pairs.size()) {
+            return false;
+        }
+        mean_pair_layer += pair_layer_separation_px(pairs[static_cast<size_t>(pair_idx)]);
+    }
+    mean_pair_layer /= static_cast<float>(candidate.pair_indices.size());
+    if (mean_pair_layer <= 1e-3f) {
+        return false;
+    }
+
+    const auto first_pair_idx = static_cast<size_t>(candidate.pair_indices.front());
+    const auto last_pair_idx  = static_cast<size_t>(candidate.pair_indices.back());
+    const float order_span =
+        std::abs(pairs[last_pair_idx].local_order_px - pairs[first_pair_idx].local_order_px);
+    return order_span / mean_pair_layer
+        >= static_cast<float>(config.min_isolated_two_pair_order_span_ratio);
+}
+
 [[nodiscard]] bool candidate_passes_detection_gate(
     const LdmMeshCandidate& candidate, const std::vector<LightPair>& pairs,
     const LdmDetectorConfig& config) {
@@ -30,12 +76,10 @@ namespace {
         return false;
     }
     if (candidate.preliminary_score < min_candidate_score(candidate, config)) {
-        // 3+ pairs: the 2D pair_group_score is unreliable for slanted-face
-        // projections (non-uniform gaps produce artificially low gap_consistency).
-        // Let the PnP solver judge, not a 2D heuristic.
-        if (candidate.pair_indices.size() < 3) {
-            return false;
-        }
+        return false;
+    }
+    if (!has_min_isolated_two_pair_order_span(candidate, pairs, config)) {
+        return false;
     }
 
     if (candidate.pair_indices.size() <= 2) {
@@ -62,6 +106,27 @@ namespace {
     }
 
     return true;
+}
+
+void retain_selected_candidate_support(std::vector<LdmMeshCandidate>& candidates) {
+    if (candidates.empty()) {
+        return;
+    }
+
+    auto selected_pair_indices = candidates.front().pair_indices;
+    std::sort(selected_pair_indices.begin(), selected_pair_indices.end());
+    candidates.erase(
+        std::remove_if(
+            candidates.begin(), candidates.end(),
+            [&](const LdmMeshCandidate& candidate) {
+                return !std::all_of(
+                    candidate.pair_indices.begin(), candidate.pair_indices.end(),
+                    [&](const int pair_idx) {
+                        return std::binary_search(
+                            selected_pair_indices.begin(), selected_pair_indices.end(), pair_idx);
+                    });
+            }),
+        candidates.end());
 }
 
 [[nodiscard]] float min_projected_pair_vertical_ratio(const LdmDetectorConfig& config) {
@@ -236,53 +301,70 @@ namespace {
         .fill_ratio   = fill_ratio_px};
 }
 
-[[nodiscard]] std::vector<LightBlob> split_wide_small_blob(
-    const LightBlob& blob, const cv::Mat& hsv, const cv::Mat& mask, ArmorColor color) {
-    constexpr float kMinSplitAspect = 1.45f;
-    constexpr float kMaxSplitAspect = 2.40f;
-    constexpr float kMinSplitWidth  = 14.0f;
-    constexpr float kMinSplitHeight = 7.0f;
-    constexpr float kMaxSplitHeight = 18.0f;
-
-    if (blob.aspect_ratio < kMinSplitAspect || blob.aspect_ratio > kMaxSplitAspect
-        || blob.rect.width < kMinSplitWidth || blob.rect.height < kMinSplitHeight
-        || blob.rect.height > kMaxSplitHeight) {
-        return {blob};
+[[nodiscard]] std::vector<LightBlob> resolve_merged_light_blobs(
+    const std::vector<LightBlob>& blobs, const std::vector<LightPair>& pairs,
+    const std::vector<LdmMeshCandidate>& mesh_candidates, const LdmDetectorConfig& config) {
+    const double pair_separation_m = config.geometry.pair_center_separation_m;
+    const double window_length_m   = config.geometry.window_length_m;
+    if (!std::isfinite(pair_separation_m) || pair_separation_m <= 0.0
+        || !std::isfinite(window_length_m) || window_length_m <= 0.0
+        || !std::isfinite(config.max_resolved_window_length_fraction)
+        || config.max_resolved_window_length_fraction <= 0.0
+        || !std::isfinite(config.max_merged_window_pair_separation_px)
+        || config.max_merged_window_pair_separation_px <= 0.0) {
+        return blobs;
     }
 
-    const cv::Rect rect(
-        static_cast<int>(std::round(blob.rect.x)), static_cast<int>(std::round(blob.rect.y)),
-        static_cast<int>(std::round(blob.rect.width)),
-        static_cast<int>(std::round(blob.rect.height)));
-    if (rect.x < 0 || rect.y < 0 || rect.x + rect.width > hsv.cols
-        || rect.y + rect.height > hsv.rows) {
-        return {blob};
+    const float max_single_window_ratio = static_cast<float>(
+        config.max_resolved_window_length_fraction * window_length_m / pair_separation_m);
+    std::vector<float> candidate_pair_separations(blobs.size(), 0.0f);
+    for (const auto& candidate : mesh_candidates) {
+        for (const int pair_idx : candidate.pair_indices) {
+            if (pair_idx < 0 || static_cast<size_t>(pair_idx) >= pairs.size()) {
+                continue;
+            }
+            const auto& pair = pairs[static_cast<size_t>(pair_idx)];
+            for (const int blob_idx : {pair.top_blob_index, pair.bottom_blob_index}) {
+                if (blob_idx < 0 || static_cast<size_t>(blob_idx) >= blobs.size()) {
+                    continue;
+                }
+                candidate_pair_separations[static_cast<size_t>(blob_idx)] = std::max(
+                    candidate_pair_separations[static_cast<size_t>(blob_idx)], pair.center_dy_px);
+            }
+        }
     }
 
-    const double mean_hue = cv::mean(hsv(rect), mask(rect))[0];
-    if (!hue_matches_target_color(mean_hue, color)) {
-        return {blob};
-    }
+    std::vector<LightBlob> resolved;
+    resolved.reserve(blobs.size() * 2u);
+    for (size_t blob_idx = 0; blob_idx < blobs.size(); ++blob_idx) {
+        const auto& blob            = blobs[blob_idx];
+        const float pair_separation = candidate_pair_separations[blob_idx];
+        if (pair_separation <= 1e-3f
+            || pair_separation > static_cast<float>(config.max_merged_window_pair_separation_px)
+            || blob.rect.width / pair_separation <= max_single_window_ratio) {
+            resolved.push_back(blob);
+            continue;
+        }
 
-    std::vector<LightBlob> split;
-    split.reserve(2);
-    const float left_width  = std::floor(blob.rect.width * 0.5f);
-    const float right_width = blob.rect.width - left_width;
-    if (left_width <= 1.0f || right_width <= 1.0f) {
-        return {blob};
-    }
+        const float left_width  = std::floor(blob.rect.width * 0.5f);
+        const float right_width = blob.rect.width - left_width;
+        if (left_width <= 1.0f || right_width <= 1.0f) {
+            resolved.push_back(blob);
+            continue;
+        }
 
-    for (int part = 0; part < 2; ++part) {
-        LightBlob half  = blob;
-        half.rect.x     = blob.rect.x + ((part == 0) ? 0.0f : left_width);
-        half.rect.width = (part == 0) ? left_width : right_width;
-        half.center_px  = cv::Point2f(
-            half.rect.x + half.rect.width * 0.5f, half.rect.y + half.rect.height * 0.5f);
-        half.area_px *= 0.5f;
-        half.aspect_ratio = half.rect.width / std::max(half.rect.height, 1.0f);
-        split.push_back(half);
+        for (int part = 0; part < 2; ++part) {
+            LightBlob half  = blob;
+            half.rect.x     = blob.rect.x + ((part == 0) ? 0.0f : left_width);
+            half.rect.width = (part == 0) ? left_width : right_width;
+            half.center_px  = cv::Point2f(
+                half.rect.x + half.rect.width * 0.5f, half.rect.y + half.rect.height * 0.5f);
+            half.area_px *= 0.5f;
+            half.aspect_ratio = half.rect.width / std::max(half.rect.height, 1.0f);
+            resolved.push_back(half);
+        }
     }
-    return split;
+    return resolved;
 }
 
 [[nodiscard]] bool
@@ -345,13 +427,12 @@ namespace {
         cv::Mat core_roi = core_mask(rect);
         cv::findContours(core_roi, core_contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
 
-        std::vector<LightBlob> split_blobs;
-        split_blobs.reserve(core_contours.size());
+        std::vector<LightBlob> core_blobs;
+        core_blobs.reserve(core_contours.size());
         for (const auto& core_contour : core_contours) {
             auto blob = make_light_blob_from_contour(core_contour, core_mask, rect.tl(), config);
             if (blob.has_value()) {
-                auto pieces = split_wide_small_blob(*blob, hsv, core_mask, color);
-                split_blobs.insert(split_blobs.end(), pieces.begin(), pieces.end());
+                core_blobs.push_back(*blob);
                 continue;
             }
             auto narrow_blob = make_narrow_yaw_blob_from_contour(
@@ -360,15 +441,14 @@ namespace {
                 narrow_yaw_blobs.push_back(*narrow_blob);
             }
         }
-        if (split_blobs.size() >= 2u) {
-            blobs.insert(blobs.end(), split_blobs.begin(), split_blobs.end());
+        if (core_blobs.size() >= 2u) {
+            blobs.insert(blobs.end(), core_blobs.begin(), core_blobs.end());
             continue;
         }
 
         auto blob = make_light_blob_from_contour(contour, mask, {}, config);
         if (blob.has_value()) {
-            auto pieces = split_wide_small_blob(*blob, hsv, mask, color);
-            blobs.insert(blobs.end(), pieces.begin(), pieces.end());
+            blobs.push_back(*blob);
         }
     }
 
@@ -843,7 +923,7 @@ struct ProjectedMatching {
             });
     }
 
-    auto preliminary_candidates = build_preliminary_mesh_candidates(projected_pairs, config);
+    auto preliminary_candidates = build_detection_mesh_candidates(projected_pairs, config);
     for (const auto& candidate : preliminary_candidates) {
         if (!candidate_passes_detection_gate(candidate, projected_pairs, config)) {
             continue;
@@ -1262,7 +1342,7 @@ struct PairCandidate {
         return std::nullopt;
     }
 
-    auto mesh_candidates = build_preliminary_mesh_candidates(pairs, config);
+    auto mesh_candidates = build_detection_mesh_candidates(pairs, config);
     mesh_candidates.erase(
         std::remove_if(
             mesh_candidates.begin(), mesh_candidates.end(),
@@ -1273,14 +1353,31 @@ struct PairCandidate {
     if (mesh_candidates.empty()) {
         return std::nullopt;
     }
+    retain_selected_candidate_support(mesh_candidates);
 
-    std::vector<int> selected_pair_indices;
-    selected_pair_indices.reserve(mesh_candidates.size() * 4);
-    for (const auto& candidate : mesh_candidates) {
-        selected_pair_indices.insert(
-            selected_pair_indices.end(), candidate.pair_indices.begin(),
-            candidate.pair_indices.end());
+    auto resolved_blobs = resolve_merged_light_blobs(blobs, pairs, mesh_candidates, config);
+    if (resolved_blobs.size() != blobs.size()) {
+        annotate_blob_clusters(resolved_blobs, config);
+        auto resolved_pairs      = build_light_pairs(resolved_blobs, config);
+        auto resolved_candidates = build_detection_mesh_candidates(resolved_pairs, config);
+        resolved_candidates.erase(
+            std::remove_if(
+                resolved_candidates.begin(), resolved_candidates.end(),
+                [&](const LdmMeshCandidate& candidate) {
+                    return !candidate_passes_detection_gate(candidate, resolved_pairs, config);
+                }),
+            resolved_candidates.end());
+        if (!resolved_candidates.empty()
+            && resolved_candidates.front().pair_indices.size()
+                   > mesh_candidates.front().pair_indices.size()) {
+            retain_selected_candidate_support(resolved_candidates);
+            blobs           = std::move(resolved_blobs);
+            pairs           = std::move(resolved_pairs);
+            mesh_candidates = std::move(resolved_candidates);
+        }
     }
+
+    std::vector<int> selected_pair_indices = mesh_candidates.front().pair_indices;
     std::sort(selected_pair_indices.begin(), selected_pair_indices.end());
     selected_pair_indices.erase(
         std::unique(selected_pair_indices.begin(), selected_pair_indices.end()),

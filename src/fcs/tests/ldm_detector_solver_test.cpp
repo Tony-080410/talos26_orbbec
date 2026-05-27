@@ -35,7 +35,8 @@ std::vector<fs::path> dataset_images(const fs::path& bucket_dir) {
         if (!entry.is_regular_file()) {
             continue;
         }
-        if (entry.path().extension() != ".png" && entry.path().extension() != ".bmp") {
+        if (entry.path().extension() != ".png" && entry.path().extension() != ".jpg"
+            && entry.path().extension() != ".bmp") {
             continue;
         }
         images.push_back(entry.path());

@@ -143,6 +143,41 @@ namespace fcs::L2::ldm {
         0.0f, 1.0f);
 }
 
+inline void append_mesh_candidate(
+    std::vector<LdmMeshCandidate>* candidates, const std::vector<LightPair>& pairs,
+    const std::vector<int>& ordered_pair_indices, size_t start, size_t length, int cluster_id,
+    const LdmDetectorConfig& config) {
+    LdmMeshCandidate candidate;
+    candidate.cluster_id = cluster_id;
+    candidate.pair_indices.assign(
+        ordered_pair_indices.begin() + static_cast<std::ptrdiff_t>(start),
+        ordered_pair_indices.begin() + static_cast<std::ptrdiff_t>(start + length));
+    candidate.preliminary_score =
+        pair_group_score(pairs, ordered_pair_indices, start, length, config);
+    if (candidate.preliminary_score <= 0.0f) {
+        return;
+    }
+
+    cv::Point2f center(0.0f, 0.0f);
+    for (const int pidx : candidate.pair_indices) {
+        center += pairs[static_cast<size_t>(pidx)].midpoint_px;
+    }
+    candidate.estimated_center_image_px =
+        center * (1.0f / static_cast<float>(candidate.pair_indices.size()));
+    candidates->push_back(std::move(candidate));
+}
+
+inline void sort_mesh_candidates(std::vector<LdmMeshCandidate>* candidates) {
+    std::sort(
+        candidates->begin(), candidates->end(),
+        [](const LdmMeshCandidate& a, const LdmMeshCandidate& b) {
+            if (a.pair_indices.size() != b.pair_indices.size()) {
+                return a.pair_indices.size() > b.pair_indices.size();
+            }
+            return a.preliminary_score > b.preliminary_score;
+        });
+}
+
 [[nodiscard]] inline std::vector<LdmMeshCandidate> build_preliminary_mesh_candidates(
     const std::vector<LightPair>& pairs, const LdmDetectorConfig& config) {
     std::vector<LdmMeshCandidate> candidates;
@@ -174,39 +209,112 @@ namespace fcs::L2::ldm {
             continue;
         }
 
-        // Sort by PCA-derived local_order_px; this is the physical sequence
-        // along the octagon arc. One cluster becomes one candidate using all pairs.
-        // Face indices are assigned later by assign_face_indices_for_candidate
-        // using the local_layer_sep_px cos profile; no sliding window needed.
         std::sort(ordered_pair_indices.begin(), ordered_pair_indices.end(), [&](int lhs, int rhs) {
             return pairs[static_cast<size_t>(lhs)].local_order_px
                  < pairs[static_cast<size_t>(rhs)].local_order_px;
         });
 
-        LdmMeshCandidate candidate;
-        candidate.cluster_id   = cluster_id;
-        candidate.pair_indices = ordered_pair_indices;
-        candidate.preliminary_score =
-            pair_group_score(pairs, ordered_pair_indices, 0, ordered_pair_indices.size(), config);
-        if (candidate.preliminary_score > 0.0f) {
-            cv::Point2f center(0.0f, 0.0f);
-            for (const int pidx : ordered_pair_indices) {
-                center += pairs[static_cast<size_t>(pidx)].midpoint_px;
+        for (size_t length = ordered_pair_indices.size(); length >= 1u; --length) {
+            for (size_t start = 0; start + length <= ordered_pair_indices.size(); ++start) {
+                append_mesh_candidate(
+                    &candidates, pairs, ordered_pair_indices, start, length, cluster_id, config);
             }
-            candidate.estimated_center_image_px =
-                center * (1.0f / static_cast<float>(ordered_pair_indices.size()));
-            candidates.push_back(std::move(candidate));
+            if (length == 1u) {
+                break;
+            }
         }
     }
 
-    std::sort(
-        candidates.begin(), candidates.end(),
-        [](const LdmMeshCandidate& a, const LdmMeshCandidate& b) {
-            if (a.pair_indices.size() != b.pair_indices.size()) {
-                return a.pair_indices.size() > b.pair_indices.size();
+    sort_mesh_candidates(&candidates);
+    return candidates;
+}
+
+[[nodiscard]] inline std::vector<LdmMeshCandidate> build_detection_mesh_candidates(
+    const std::vector<LightPair>& pairs, const LdmDetectorConfig& config) {
+    std::vector<LdmMeshCandidate> candidates;
+    if (pairs.empty()) {
+        return candidates;
+    }
+
+    std::vector<int> cluster_ids;
+    cluster_ids.reserve(pairs.size());
+    for (const auto& pair : pairs) {
+        if (pair.cluster_id < 0) {
+            continue;
+        }
+        if (std::find(cluster_ids.begin(), cluster_ids.end(), pair.cluster_id)
+            == cluster_ids.end()) {
+            cluster_ids.push_back(pair.cluster_id);
+        }
+    }
+
+    const size_t min_candidate_length =
+        std::max<size_t>(2u, static_cast<size_t>(std::max(config.min_pairs_for_detection, 0)));
+    for (const int cluster_id : cluster_ids) {
+        std::vector<int> ordered_pair_indices;
+        ordered_pair_indices.reserve(pairs.size());
+        for (size_t pair_idx = 0; pair_idx < pairs.size(); ++pair_idx) {
+            if (pairs[pair_idx].cluster_id == cluster_id) {
+                ordered_pair_indices.push_back(static_cast<int>(pair_idx));
             }
-            return a.preliminary_score > b.preliminary_score;
+        }
+        if (ordered_pair_indices.size() < min_candidate_length) {
+            continue;
+        }
+
+        std::sort(ordered_pair_indices.begin(), ordered_pair_indices.end(), [&](int lhs, int rhs) {
+            return pairs[static_cast<size_t>(lhs)].local_order_px
+                 < pairs[static_cast<size_t>(rhs)].local_order_px;
         });
+
+        append_mesh_candidate(
+            &candidates, pairs, ordered_pair_indices, 0, ordered_pair_indices.size(), cluster_id,
+            config);
+
+        float mean_pair_layer = 0.0f;
+        for (const int pair_idx : ordered_pair_indices) {
+            mean_pair_layer += pair_layer_separation_px(pairs[static_cast<size_t>(pair_idx)]);
+        }
+        mean_pair_layer /= static_cast<float>(ordered_pair_indices.size());
+        if (!std::isfinite(mean_pair_layer) || mean_pair_layer <= 1e-3f
+            || !std::isfinite(config.max_adjacent_face_order_gap_ratio)
+            || config.max_adjacent_face_order_gap_ratio <= 0.0) {
+            continue;
+        }
+
+        std::vector<size_t> split_points;
+        for (size_t i = 1; i < ordered_pair_indices.size(); ++i) {
+            const auto lhs_idx = static_cast<size_t>(ordered_pair_indices[i - 1]);
+            const auto rhs_idx = static_cast<size_t>(ordered_pair_indices[i]);
+            const float gap    = pairs[rhs_idx].local_order_px - pairs[lhs_idx].local_order_px;
+            if (gap / mean_pair_layer
+                > static_cast<float>(config.max_adjacent_face_order_gap_ratio)) {
+                split_points.push_back(i);
+            }
+        }
+        if (split_points.empty()) {
+            continue;
+        }
+
+        size_t segment_start = 0;
+        for (const size_t split_point : split_points) {
+            const size_t length = split_point - segment_start;
+            if (length >= min_candidate_length) {
+                append_mesh_candidate(
+                    &candidates, pairs, ordered_pair_indices, segment_start, length, cluster_id,
+                    config);
+            }
+            segment_start = split_point;
+        }
+        const size_t tail_length = ordered_pair_indices.size() - segment_start;
+        if (tail_length >= min_candidate_length) {
+            append_mesh_candidate(
+                &candidates, pairs, ordered_pair_indices, segment_start, tail_length, cluster_id,
+                config);
+        }
+    }
+
+    sort_mesh_candidates(&candidates);
     return candidates;
 }
 
