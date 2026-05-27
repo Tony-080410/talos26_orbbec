@@ -718,61 +718,28 @@ private:
 
     template <typename TargetInfo>
     static typename TargetInfo::MatZZ pnp_augmented_measurement_R_(
-        const typename TargetInfo::MatZZ& model_R, const Eigen::Matrix4d& pnp_cov_yplogr) noexcept {
+        const typename TargetInfo::MatZZ& model_R, const Eigen::Matrix4d& pnp_cov_ypdr) noexcept {
         using MatZZ = typename TargetInfo::MatZZ;
 
         const MatZZ base_R = make_spd_R_(model_R);
-        if (!pnp_cov_yplogr.allFinite()) {
+        if (!pnp_cov_ypdr.allFinite()) {
             return base_R;
         }
 
-        MatZZ pnp_R = 0.5 * (pnp_cov_yplogr + pnp_cov_yplogr.transpose());
+        MatZZ pnp_R = 0.5 * (pnp_cov_ypdr + pnp_cov_ypdr.transpose());
         if (!pnp_R.allFinite()) {
             return base_R;
         }
 
         Eigen::SelfAdjointEigenSolver<MatZZ> es(pnp_R);
-        if (es.info() != Eigen::Success) {
-            return base_R;
+        if (es.info() == Eigen::Success && pnp_R.allFinite()) {
+            const auto evals = es.eigenvalues().cwiseMax(0.0);
+            pnp_R = es.eigenvectors() * evals.asDiagonal() * es.eigenvectors().transpose();
+            pnp_R = 0.5 * (pnp_R + pnp_R.transpose());
         }
 
-        auto evals = es.eigenvalues().cwiseMax(0.0);
-        pnp_R      = es.eigenvectors() * evals.asDiagonal() * es.eigenvectors().transpose();
-        pnp_R      = 0.5 * (pnp_R + pnp_R.transpose());
-
-        MatZZ R = base_R;
-
-        constexpr double kMinRatio = 0.1;
-        constexpr double kMaxRatio = 8.0;
-
-        for (int i = 0; i < MatZZ::RowsAtCompileTime; ++i) {
-            const double b = std::max(base_R(i, i), 1e-8);
-            const double p = std::isfinite(pnp_R(i, i)) ? pnp_R(i, i) : b;
-
-            R(i, i) = std::clamp(p, kMinRatio * b, kMaxRatio * b);
-        }
-
-        constexpr double kMaxCorr = 0.45;
-
-        for (int i = 0; i < MatZZ::RowsAtCompileTime; ++i) {
-            for (int j = i + 1; j < MatZZ::ColsAtCompileTime; ++j) {
-                const double denom =
-                    std::sqrt(std::max(pnp_R(i, i), 1e-12) * std::max(pnp_R(j, j), 1e-12));
-
-                double rho = 0.0;
-                if (denom > 0.0 && std::isfinite(pnp_R(i, j))) {
-                    rho = pnp_R(i, j) / denom;
-                }
-
-                rho = std::clamp(rho, -kMaxCorr, kMaxCorr);
-
-                const double cij = rho * std::sqrt(R(i, i) * R(j, j));
-                R(i, j)          = cij;
-                R(j, i)          = cij;
-            }
-        }
-
-        return make_spd_R_(R);
+        const MatZZ combined_R = base_R + pnp_R;
+        return make_spd_R_(combined_R);
     }
 
     template <typename MatZZ>
