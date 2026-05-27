@@ -60,6 +60,8 @@ TEST(ReadConfig, RepositoryLaunchConfigLoadsAndMergesOverrideSemantics) {
     EXPECT_EQ(config.foxglove.port, 8765);
     EXPECT_FALSE(config.foxglove.mcap_path.empty());
     EXPECT_EQ(config.foxglove.quanta.target_bitrate, 100500);
+    EXPECT_FALSE(config.foxglove.quanta.enVBR);
+
     EXPECT_EQ(config.foxglove.quanta.preset, "fast");
     EXPECT_EQ(config.foxglove.quanta.tune, "ssim");
     EXPECT_TRUE(config.foxglove.quanta.intra_refresh);
@@ -194,6 +196,9 @@ TEST(ReadConfig, QuantaOverridesParseWhenProvided) {
                                      "transport = 'WebSocket'\n"
                                      "[foxglove.quanta]\n"
                                      "target_bitrate = 64000\n"
+                                     "enVBR = true\n"
+                                     "min_bit_rate = 32000\n"
+                                     "max_bit_rate = 96000\n"
                                      "preset = 'medium'\n"
                                      "tune = 'fastdecode'\n"
                                      "intra_refresh = true\n"
@@ -206,6 +211,9 @@ TEST(ReadConfig, QuantaOverridesParseWhenProvided) {
 
         auto config = std::move(*result);
         EXPECT_EQ(config.foxglove.quanta.target_bitrate, 64000);
+        EXPECT_TRUE(config.foxglove.quanta.enVBR);
+        EXPECT_EQ(config.foxglove.quanta.min_bit_rate, 32000);
+        EXPECT_EQ(config.foxglove.quanta.max_bit_rate, 96000);
         EXPECT_EQ(config.foxglove.quanta.preset, "medium");
         EXPECT_EQ(config.foxglove.quanta.tune, "fastdecode");
         EXPECT_TRUE(config.foxglove.quanta.intra_refresh);

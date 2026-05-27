@@ -24,7 +24,7 @@ public:
     explicit IpcOutput(std::shared_ptr<ipc::ShmClient> client) noexcept;
 
     void send(const L5::WeaponCommand& cmd) const noexcept;
-    void send_quanta(const quanta::TransportChunk& chunk) const noexcept;
+    void send_quanta(const quanta::QuantaPacket& packet) const noexcept;
 
 private:
     std::shared_ptr<ipc::ShmClient> client_;
@@ -53,7 +53,7 @@ public:
     auto operator=(const McuOutput&) -> McuOutput& = delete;
 
     void send(const L5::WeaponCommand& cmd) const noexcept;
-    void send_quanta(const quanta::TransportChunk& chunk) const noexcept;
+    void send_quanta(const quanta::QuantaPacket& packet) const noexcept;
 
 private:
     std::shared_ptr<talos_gimbal::McuDeviceHandle> device_;
@@ -69,7 +69,7 @@ public:
     explicit ChiralOutput(std::shared_ptr<talos::chiral::gimbal::TalosEndpoint> device) noexcept;
 
     void send(const L5::WeaponCommand& cmd) const noexcept;
-    void send_quanta(const quanta::TransportChunk& chunk) const noexcept;
+    void send_quanta(const quanta::QuantaPacket& packet) const noexcept;
 
 private:
     std::shared_ptr<talos::chiral::gimbal::TalosEndpoint> device_;
@@ -92,23 +92,28 @@ public:
     auto operator=(OutputInterface&&) noexcept -> OutputInterface& = default;
 
     void send(const L5::WeaponCommand& cmd) noexcept;
-    void send_quanta(const quanta::TransportChunk& chunk) noexcept;
+    void send_quanta(quanta::QuantaPacket&& packet) noexcept {
+        std::visit(
+            [&packet](auto& output) {
+                if constexpr (!std::is_same_v<std::decay_t<decltype(output)>, std::monostate>) {
+                    output.send_quanta(packet);
+                }
+            },
+            mode_);
+    }
 
-    [[nodiscard]] static auto create_ipc(std::shared_ptr<ipc::ShmClient> client) noexcept
-        -> std::expected<OutputInterface, std::string>;
+    [[nodiscard]] static std::expected<OutputInterface, std::string>
+        create_ipc(std::shared_ptr<ipc::ShmClient> client) noexcept;
 
-    [[nodiscard]] static auto
-        create_chiral(std::shared_ptr<talos::chiral::gimbal::TalosEndpoint> client) noexcept
-        -> std::expected<OutputInterface, std::string>;
+    [[nodiscard]] static std::expected<OutputInterface, std::string>
+        create_chiral(std::shared_ptr<talos::chiral::gimbal::TalosEndpoint> client) noexcept;
 
-    [[nodiscard]] static auto create_usb(
+    [[nodiscard]] static std::expected<OutputInterface, std::string> create_usb(
         uint16_t vendor_id = talos_gimbal::Stm32Impl<talos_gimbal::Stm32Parser>::VID,
-        std::optional<uint16_t> product_id = std::nullopt) noexcept
-        -> std::expected<OutputInterface, std::string>;
+        std::optional<uint16_t> product_id = std::nullopt) noexcept;
 
-    [[nodiscard]] static auto create_serial(
-        const std::string& device_path = "/dev/ttyS4", int baud_rate = 115200) noexcept
-        -> std::expected<OutputInterface, std::string>;
+    [[nodiscard]] static std::expected<OutputInterface, std::string> create_serial(
+        const std::string& device_path = "/dev/ttyS4", int baud_rate = 115200) noexcept;
 
 private:
     OutputMode mode_;

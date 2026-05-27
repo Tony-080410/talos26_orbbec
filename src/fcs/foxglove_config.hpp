@@ -1,6 +1,6 @@
 #pragma once
 
-#include "quanta/transcoder.hpp"
+#include "quanta/stream_encoder.hpp"
 
 #include <cstdint>
 #include <string>

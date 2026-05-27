@@ -26,10 +26,10 @@ port = 8765
 mcap_path = "record/foxglove.mcap"
 
 [foxglove.quanta]
-target_bitrate = 100500
-max_width = 480
-max_height = 360
-gop_size = 1
+target_bitrate = 67500
+max_width = 200
+max_height = 200
+gop_size = 50
 framerate = 30
 preset = "fast"
 tune = "ssim"

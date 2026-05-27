@@ -7,7 +7,7 @@
 #include <string>
 #include <utility>
 
-namespace quanta::detail {
+namespace quanta {
 
 // ---------------------------------------------------------------------------
 // Abstract encoder backend interface
@@ -60,4 +60,4 @@ public:
     return create_ffmpeg_backend(std::move(params), src_width, src_height, framerate);
 }
 
-} // namespace quanta::detail
+} // namespace quanta

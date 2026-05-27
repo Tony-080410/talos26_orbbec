@@ -20,6 +20,10 @@
 #include "ax_ivps_api.h"
 #include "ax_ivps_type.h"
 
+namespace quanta {
+class AxSysModule;
+}
+
 namespace fcs::L2 {
 
 // ============================================================================
@@ -124,6 +128,7 @@ private:
     Config config_;
     bool initialized_                 = false;
     bool warned_non_four_three_input_ = false;
+    std::shared_ptr<quanta::AxSysModule> ax_sys_module_;
 
     // AX650 NPU resources
     AX_ENGINE_HANDLE handle_ = nullptr;

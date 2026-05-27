@@ -105,6 +105,20 @@ TEST(ConfigParse, InlineHelpersAndFormattersBehaveAsExpected) {
     ASSERT_TRUE(tracker_ptr);
     EXPECT_DOUBLE_EQ(tracker_ptr->robot.matcher_gate, vision.tracker().robot.matcher_gate);
     EXPECT_DOUBLE_EQ(tracker_ptr->outpost.model.yaw_log_k, 0.005);
+    EXPECT_TRUE(vision.quanta_filter.enable_denoise_luma);
+    EXPECT_EQ(vision.quanta_filter.denoise_luma.kernel_size, 5);
+    EXPECT_DOUBLE_EQ(vision.quanta_filter.denoise_luma.sigma_x, 1.0);
+    EXPECT_DOUBLE_EQ(vision.quanta_filter.denoise_luma.sigma_y, 1.0);
+    EXPECT_TRUE(vision.quanta_filter.enable_denoise_chroma);
+    EXPECT_EQ(vision.quanta_filter.denoise_chroma.kernel_size, 3);
+    EXPECT_DOUBLE_EQ(vision.quanta_filter.denoise_chroma.sigma_x, 1.0);
+    EXPECT_DOUBLE_EQ(vision.quanta_filter.denoise_chroma.sigma_y, 1.0);
+    EXPECT_TRUE(vision.quanta_filter.enable_luma_quantization);
+    EXPECT_EQ(vision.quanta_filter.luma_levels, 16);
+    EXPECT_FALSE(vision.quanta.enVBR);
+    EXPECT_EQ(vision.quanta.target_bitrate, 45000);
+    EXPECT_EQ(vision.quanta.min_bit_rate, 0);
+    EXPECT_EQ(vision.quanta.max_bit_rate, 50000);
 
     EXPECT_TRUE(
         fcs::L5::is_on_target(vision.l5->fire_decision, 0.0, 0.0, 0.001, 0.001, 100.0).fire);

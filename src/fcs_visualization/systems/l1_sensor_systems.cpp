@@ -4,13 +4,12 @@
 #include "core/runtime.hpp"
 #include "foxglove_config.hpp"
 #include "foxglove_types.hpp"
-#include "quanta/transcoder.hpp"
+#include "quanta/stream_encoder.hpp"
 
 #include "camera_config.hpp"
 #include "core/channel_topics.hpp"
 #include "core/types.hpp"
 #include "frame.hpp"
-#include "quanta/stream_encoder.hpp"
 
 #include <algorithm>
 #include <array>

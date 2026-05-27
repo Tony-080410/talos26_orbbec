@@ -1,9 +1,9 @@
 #include "quanta/stream_encoder.hpp"
-#include "quanta/encoder_backend.hpp"
+#include "quanta/encode_backend/encoder_backend.hpp"
 
 namespace quanta {
 
-StreamEncoder::StreamEncoder(std::unique_ptr<detail::EncoderBackend> backend)
+StreamEncoder::StreamEncoder(std::unique_ptr<EncoderBackend> backend)
     : backend_(std::move(backend)) {}
 
 StreamEncoder::~StreamEncoder() = default;
@@ -13,8 +13,7 @@ StreamEncoder& StreamEncoder::operator=(StreamEncoder&&) noexcept = default;
 
 std::expected<StreamEncoder, std::string> StreamEncoder::create(
     EncodeParams params, int src_width, int src_height, int framerate) noexcept {
-    auto backend =
-        detail::create_optimal_backend(std::move(params), src_width, src_height, framerate);
+    auto backend = create_optimal_backend(std::move(params), src_width, src_height, framerate);
     if (!backend)
         return std::unexpected(std::move(backend.error()));
     return StreamEncoder(std::move(*backend));

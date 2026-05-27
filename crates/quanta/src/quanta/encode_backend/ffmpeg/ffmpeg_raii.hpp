@@ -1,6 +1,7 @@
 #pragma once
 
 #include <memory>
+#include <string>
 
 extern "C" {
 #include <libavcodec/avcodec.h>
@@ -13,7 +14,7 @@ extern "C" {
 #include <libswscale/swscale.h>
 }
 
-namespace quanta::detail {
+namespace quanta {
 
 struct FmtCtxDeleter {
     void operator()(AVFormatContext* ctx) const {
@@ -76,10 +77,16 @@ inline PacketPtr alloc_packet() { return PacketPtr(av_packet_alloc()); }
 
 inline FilterGraphPtr alloc_filter_graph() { return FilterGraphPtr(avfilter_graph_alloc()); }
 
+inline std::string averr(int code) {
+    char buf[128]{};
+    av_strerror(code, buf, sizeof(buf));
+    return std::string(buf);
+}
+
 inline SwsCtxPtr create_sws(
     int src_w, int src_h, AVPixelFormat src_fmt, int dst_w, int dst_h, AVPixelFormat dst_fmt) {
     return SwsCtxPtr(sws_getContext(
         src_w, src_h, src_fmt, dst_w, dst_h, dst_fmt, SWS_BILINEAR, nullptr, nullptr, nullptr));
 }
 
-} // namespace quanta::detail
+} // namespace quanta

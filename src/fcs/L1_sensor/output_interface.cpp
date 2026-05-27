@@ -36,9 +36,7 @@ void IpcOutput::send(const L5::WeaponCommand& cmd) const noexcept {
 
     client_->send_gimbal_cmd(yaw_deg, pitch_deg, distance_m, cmd.fire);
 }
-
-void IpcOutput::send_quanta(const quanta::TransportChunk& chunk) const noexcept {
-    (void)chunk;
+void IpcOutput::send_quanta(const quanta::QuantaPacket& pakcet) const noexcept {
     /// No-op
 }
 
@@ -112,7 +110,7 @@ void McuOutput::send(const L5::WeaponCommand& cmd) const noexcept {
     }
 }
 
-void McuOutput::send_quanta(const quanta::TransportChunk& chunk) const noexcept {
+void McuOutput::send_quanta(const quanta::QuantaPacket& packet) const noexcept {
     if (!device_) [[unlikely]] {
         return;
     }
@@ -122,53 +120,47 @@ void McuOutput::send_quanta(const quanta::TransportChunk& chunk) const noexcept 
     if (device_->is_serial()) {
         return;
     }
-
-    // extended data length encoding: u12 length stored in (len_lo, id_hi[3:0])
+    // evil hack for extended data length
     constexpr auto data_length_raw = sizeof(talos_gimbal::SendQuantaData::data);
-    static_assert(data_length_raw < 4096, "data length exceeds u12 range");
-    constexpr uint8_t data_length_hi = static_cast<uint8_t>(data_length_raw >> 8);
-    static_assert((data_length_hi & 0b1111) == data_length_hi, "length hi must fit in 4 bits");
-    constexpr uint8_t data_length_protocol = static_cast<uint8_t>(data_length_raw & 0xFF);
-    constexpr uint8_t data_id_protocol     = static_cast<uint8_t>((data_length_hi << 4) | 0x04);
+    // maximum extended data length is stored as u12
+    static_assert(data_length_raw < 4096);
+    // lower bits
+    // higher bits, 4bits available
+    constexpr uint8_t data_length_hi = data_length_raw >> 8;
+    // double check for only 4bits
+    static_assert((data_length_hi & 0b1111) == data_length_hi);
+    constexpr uint8_t data_length_protocol = data_length_raw & 0b11111111;
+    // actual id is 0x04
+    constexpr uint8_t data_id_protocol = (data_length_hi << 4) | 0x04;
 
-    constexpr std::size_t kMaxCustomBlockBytes = 298;
+    constexpr std::size_t kMaxCustomBlockBytes =
+        sizeof(std::declval<talos_gimbal::SendQuantaData>().data.custom_byte_block);
 
-    const auto& bytes = chunk.bytes();
-    const auto* ptr   = bytes.data();
-
-    std::size_t remaining = bytes.size();
-    std::size_t offset    = 0;
-
-    while (remaining > 0) {
-        const std::size_t this_len = std::min(remaining, kMaxCustomBlockBytes);
-
-        talos_gimbal::SendQuantaData packet{
-            .header =
-                {
-                         .sof = talos_gimbal::HeaderFrame::SoF(),
-                         .len = data_length_protocol,
-                         .id  = data_id_protocol,
-                         },
-            .time_stamp = quanta_seq_.fetch_add(1, std::memory_order_relaxed),
-            .data =
-                {
-                         .custom_byte_block_len = static_cast<uint16_t>(this_len),
-                         .custom_byte_block     = {},
-                         },
-            .eof = talos_gimbal::HeaderFrame::EoF(),
-        };
-
-        std::memcpy(packet.data.custom_byte_block, ptr + offset, this_len);
-
-        if (auto result =
-                device_->send_sync(reinterpret_cast<const uint8_t*>(&packet), sizeof(packet));
-            !result) {
-            SPDLOG_WARN("send quanta data: {}", result.error());
-        }
-
-        offset += this_len;
-        remaining -= this_len;
+    const auto bytes = packet.bytes();
+    if (bytes.empty() || bytes.size() > kMaxCustomBlockBytes) {
+        return;
     }
+
+    static uint32_t s = 0;
+    talos_gimbal::SendQuantaData out{
+        .header =
+            {
+                     .sof = talos_gimbal::HeaderFrame::SoF(),
+                     .len = data_length_protocol,
+                     .id  = data_id_protocol,
+                     },
+        .time_stamp = static_cast<uint32_t>(s++),
+        .data =
+            {
+                     .custom_byte_block_len = static_cast<uint16_t>(bytes.size()),
+                     .custom_byte_block     = {},
+                     },
+        .eof = talos_gimbal::HeaderFrame::EoF(),
+    };
+
+    std::memcpy(out.data.custom_byte_block, bytes.data(), bytes.size());
+    SPDLOG_INFO("send_quanta: bytes.size() = {}, seq = {}", bytes.size(), packet.seq);
+    device_->send_sync(reinterpret_cast<uint8_t*>(&out), sizeof(out));
 }
 
 // ============================================================================
@@ -198,8 +190,8 @@ void ChiralOutput::send(const L5::WeaponCommand& cmd) const noexcept {
         });
 }
 
-void ChiralOutput::send_quanta(const quanta::TransportChunk& chunk) const noexcept {
-    (void)chunk;
+void ChiralOutput::send_quanta(const quanta::QuantaPacket& packet) const noexcept {
+    (void)packet;
     /// No-op
 }
 
@@ -212,10 +204,6 @@ OutputInterface::OutputInterface(OutputMode mode) noexcept
 
 void OutputInterface::send(const L5::WeaponCommand& cmd) noexcept {
     std::visit([&cmd](auto& output) { output.send(cmd); }, mode_);
-}
-
-void OutputInterface::send_quanta(const quanta::TransportChunk& chunk) noexcept {
-    std::visit([&chunk](auto& output) { output.send_quanta(chunk); }, mode_);
 }
 
 // ============================================================================

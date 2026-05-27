@@ -1,8 +1,15 @@
 #pragma once
 
+#include "export.hpp"
+
 // ---------------------------------------------------------------------------
 // RAII wrappers for Axera VENC (Video Encoder) hardware module
 // ---------------------------------------------------------------------------
+// AxSysModule: shared, reference-counted AX_SYS_Init / AX_SYS_Deinit.
+//   This is the process-wide AX system lifetime token used by Quanta AX modules
+//   and FCS Axera backends. The refcount state lives in libquanta so all users
+//   share one SYS lifetime.
+//
 // VencModule: shared, reference-counted AX_VENC_Init / AX_VENC_Deinit.
 //   The hardware module is a global resource — multiple encoder instances
 //   (channels) share one module. The last channel to drop its module handle
@@ -21,10 +28,33 @@
 
 extern "C" {
 #include "ax_base_type.h"
+#include "ax_ive_api.h"
+#include "ax_ivps_api.h"
 #include "ax_venc_api.h"
 }
 
-namespace quanta::detail {
+namespace quanta {
+
+// ---------------------------------------------------------------------------
+// RAII AX SYS module handle (reference-counted across libquanta users)
+// ---------------------------------------------------------------------------
+class QUANTA_API AxSysModule {
+public:
+    /// Acquire a shared reference to AX SYS.
+    /// Initializes SYS on first call; subsequent calls bump the refcount.
+    [[nodiscard]] static std::expected<std::shared_ptr<AxSysModule>, std::string>
+        acquire() noexcept;
+
+    ~AxSysModule() noexcept;
+
+    AxSysModule(const AxSysModule&)            = delete;
+    AxSysModule& operator=(const AxSysModule&) = delete;
+    AxSysModule(AxSysModule&&)                 = delete;
+    AxSysModule& operator=(AxSysModule&&)      = delete;
+
+private:
+    AxSysModule() noexcept = default;
+};
 
 // ---------------------------------------------------------------------------
 // RAII VENC module handle (reference-counted)
@@ -46,9 +76,53 @@ public:
     [[nodiscard]] AX_VENC_ENCODER_TYPE_E encoder_type() const noexcept { return encoder_type_; }
 
 private:
-    explicit VencModule(AX_VENC_ENCODER_TYPE_E encoder_type);
+    explicit VencModule(
+        std::shared_ptr<AxSysModule> ax_sys_module, AX_VENC_ENCODER_TYPE_E encoder_type) noexcept;
 
+    std::shared_ptr<AxSysModule> ax_sys_module_;
     AX_VENC_ENCODER_TYPE_E encoder_type_;
+    static std::atomic<int> refcount_;
+};
+
+// ---------------------------------------------------------------------------
+// RAII IVPS module handle (reference-counted)
+// ---------------------------------------------------------------------------
+class IvpsModule {
+public:
+    [[nodiscard]] static std::expected<std::shared_ptr<IvpsModule>, std::string> acquire() noexcept;
+
+    ~IvpsModule();
+
+    IvpsModule(const IvpsModule&)            = delete;
+    IvpsModule& operator=(const IvpsModule&) = delete;
+    IvpsModule(IvpsModule&&)                 = delete;
+    IvpsModule& operator=(IvpsModule&&)      = delete;
+
+private:
+    explicit IvpsModule(std::shared_ptr<AxSysModule> ax_sys_module) noexcept;
+
+    std::shared_ptr<AxSysModule> ax_sys_module_;
+    static std::atomic<int> refcount_;
+};
+
+// ---------------------------------------------------------------------------
+// RAII IVE module handle (reference-counted)
+// ---------------------------------------------------------------------------
+class IveModule {
+public:
+    [[nodiscard]] static std::expected<std::shared_ptr<IveModule>, std::string> acquire() noexcept;
+
+    ~IveModule();
+
+    IveModule(const IveModule&)            = delete;
+    IveModule& operator=(const IveModule&) = delete;
+    IveModule(IveModule&&)                 = delete;
+    IveModule& operator=(IveModule&&)      = delete;
+
+private:
+    explicit IveModule(std::shared_ptr<AxSysModule> ax_sys_module) noexcept;
+
+    std::shared_ptr<AxSysModule> ax_sys_module_;
     static std::atomic<int> refcount_;
 };
 
@@ -75,6 +149,11 @@ public:
     /// Send a frame to the encoder. Returns 0 on success, AX error code on failure.
     [[nodiscard]] AX_S32 send_frame(const AX_VIDEO_FRAME_INFO_T& frame, AX_S32 timeout_ms) noexcept;
 
+    /// Send a frame with per-frame user RC metadata. Returns 0 on success, AX error code on
+    /// failure.
+    [[nodiscard]] AX_S32
+        send_frame_ex(const AX_USER_FRAME_INFO_T& frame, AX_S32 timeout_ms) noexcept;
+
     /// Get encoded stream. Returns 0 on success, AX error code on timeout/failure.
     [[nodiscard]] AX_S32 get_stream(AX_VENC_STREAM_T& stream, AX_S32 timeout_ms) noexcept;
 
@@ -90,6 +169,8 @@ public:
     /// Request an IDR (instantaneous decoder refresh) frame.
     [[nodiscard]] AX_S32 request_idr(bool instant = true) noexcept;
 
+    /// Get RC (rate control) parameters.
+    std::expected<AX_VENC_RC_PARAM_T, std::string> get_rc_param() noexcept;
     /// Set RC (rate control) parameters dynamically.
     [[nodiscard]] AX_S32 set_rc_param(const AX_VENC_RC_PARAM_T& rc_param) noexcept;
 
@@ -115,4 +196,10 @@ private:
     bool active_  = false;
 };
 
-} // namespace quanta::detail
+[[nodiscard]] AX_IVPS_ASPECT_RATIO_T make_stretch_aspect_ratio() noexcept;
+[[nodiscard]] AX_S32 ivps_crop_resize(
+    const AX_VIDEO_FRAME_T* src, AX_VIDEO_FRAME_T* dst,
+    const AX_IVPS_ASPECT_RATIO_T* aspect_ratio) noexcept;
+[[nodiscard]] AX_S32 ivps_csc(const AX_VIDEO_FRAME_T* src, AX_VIDEO_FRAME_T* dst) noexcept;
+
+} // namespace quanta

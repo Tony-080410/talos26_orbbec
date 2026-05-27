@@ -3,6 +3,7 @@
 #include "L2_perception/armor/config.hpp"
 #include "core/armor_types.hpp"
 #include "core/types.hpp"
+#include "quanta/encode_backend/ax/ax_venc_raii.hpp"
 
 #include <algorithm>
 #include <array>
@@ -389,9 +390,8 @@ AxeraBackend::~AxeraBackend() {
         AX_ENGINE_Deinit();
     }
     deinit_ivps();
-    if (initialized_) {
-        AX_SYS_Deinit();
-    }
+    ax_sys_module_.reset();
+    initialized_ = false;
 }
 
 AxeraBackend::AxeraBackend(AxeraBackend&& other) noexcept
@@ -403,6 +403,7 @@ AxeraBackend::AxeraBackend(AxeraBackend&& other) noexcept
     , config_(std::move(other.config_))
     , initialized_(other.initialized_)
     , warned_non_four_three_input_(other.warned_non_four_three_input_)
+    , ax_sys_module_(std::move(other.ax_sys_module_))
     , handle_(other.handle_)
     , io_data_(other.io_data_)
     , model_buffer_(std::move(other.model_buffer_))
@@ -437,9 +438,8 @@ AxeraBackend& AxeraBackend::operator=(AxeraBackend&& other) noexcept {
         AX_ENGINE_Deinit();
     }
     deinit_ivps();
-    if (initialized_) {
-        AX_SYS_Deinit();
-    }
+    ax_sys_module_.reset();
+    initialized_ = false;
 
     cached_grid_                 = std::move(other.cached_grid_);
     postproc_ranked_buf_         = std::move(other.postproc_ranked_buf_);
@@ -449,6 +449,7 @@ AxeraBackend& AxeraBackend::operator=(AxeraBackend&& other) noexcept {
     config_                      = std::move(other.config_);
     initialized_                 = other.initialized_;
     warned_non_four_three_input_ = other.warned_non_four_three_input_;
+    ax_sys_module_               = std::move(other.ax_sys_module_);
     handle_                      = other.handle_;
     io_data_                     = other.io_data_;
     model_buffer_                = std::move(other.model_buffer_);
@@ -503,11 +504,11 @@ std::expected<void, std::string> AxeraBackend::init() noexcept {
         return std::unexpected(fmt::format("axmodel not found: {}", cfg.model_path));
     }
 
-    bool sys_initialized     = false;
     bool engine_initialized  = false;
     auto cleanup_failed_init = [&]() {
         if (io_data_.pInputs != nullptr || io_data_.pOutputs != nullptr) {
             free_io(&io_data_);
+            io_data_ = {};
         }
         if (handle_ != nullptr) {
             AX_ENGINE_DestroyHandle(handle_);
@@ -518,17 +519,15 @@ std::expected<void, std::string> AxeraBackend::init() noexcept {
             engine_initialized = false;
         }
         deinit_ivps();
-        if (sys_initialized) {
-            AX_SYS_Deinit();
-            sys_initialized = false;
-        }
+        ax_sys_module_.reset();
+        initialized_ = false;
     };
 
-    auto ret = AX_SYS_Init();
-    if (ret != 0) {
-        return std::unexpected(fmt::format("AX_SYS_Init: {}", ax_error_string(ret)));
+    auto ax_sys_module = quanta::AxSysModule::acquire();
+    if (!ax_sys_module) {
+        return std::unexpected(std::move(ax_sys_module.error()));
     }
-    sys_initialized = true;
+    ax_sys_module_ = std::move(*ax_sys_module);
 
     auto ivps = init_ivps();
     if (!ivps) {
@@ -539,7 +538,7 @@ std::expected<void, std::string> AxeraBackend::init() noexcept {
 
     AX_ENGINE_NPU_ATTR_T npu_attr{};
     npu_attr.eHardMode = AX_ENGINE_VIRTUAL_NPU_DISABLE;
-    ret                = AX_ENGINE_Init(&npu_attr);
+    auto ret           = AX_ENGINE_Init(&npu_attr);
     if (ret != 0) {
         cleanup_failed_init();
         return std::unexpected(fmt::format("AX_ENGINE_Init: {}", ax_error_string(ret)));
@@ -608,6 +607,7 @@ std::expected<void, std::string> AxeraBackend::init() noexcept {
     }
     ret = AX_ENGINE_RunSync(handle_, &io_data_);
     if (ret != AX_SUCCESS) {
+        cleanup_failed_init();
         return std::unexpected(fmt::format("warmup AX_ENGINE_RunSync: {}", ax_error_string(ret)));
     }
 

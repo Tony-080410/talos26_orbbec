@@ -21,6 +21,7 @@
 #include "runtime/capturer.hpp"
 #include "runtime/config_loader.hpp"
 #include "runtime/l1_l2_setup.hpp"
+#include "runtime/stream_encode.hpp"
 #include "scheduler/error_formatter.hpp"
 #include <fmt/core.h>
 #include <fmt/ranges.h>
@@ -33,15 +34,6 @@ namespace fcs {
 namespace {
 
 inline constexpr auto to_rad(double x) noexcept { return (x / 180.0) * std::numbers::pi_v<double>; }
-
-// ============================================================================
-// Quanta 图传编码器状态
-// ============================================================================
-
-struct QuantaEncoderState {
-    std::optional<quanta::StreamSender> sender;
-    int64_t next_pts{0};
-};
 
 void init_coordinate_system(fast_tf::CoordinateSystem& system, const RobotExtrinsicConfig& config) {
     constexpr fp_t pi = std::numbers::pi;
@@ -164,58 +156,16 @@ void init_coordinate_system(fast_tf::CoordinateSystem& system, const RobotExtrin
         SPDLOG_INFO("chiral system registered");
     }
 
-    auto quanta_cfg    = config.vision.quanta;
-    auto encoder_state = std::make_shared<QuantaEncoderState>();
-
-    {
-        quanta::StreamTransportConfig transport_cfg;
-        transport_cfg.mtu_bytes      = 298;
-        transport_cfg.transport_hz   = 50;
-        transport_cfg.max_stream_fps = quanta_cfg.framerate;
-
-        auto sender = quanta::StreamSender::create(
-            quanta_cfg, transport_cfg, static_cast<int>(1440), static_cast<int>(1080));
-        if (!sender) {
-            return std::unexpected(fmt::format("quanta-encoder create: {}", sender.error()));
-        }
-        encoder_state->sender.emplace(std::move(*sender));
-        SPDLOG_INFO(
-            "quanta-encoder initialized: {}x{} @ {}fps", quanta_cfg.max_width,
-            quanta_cfg.max_height, quanta_cfg.framerate);
+    auto quanta_cfg                  = config.vision.quanta;
+    quanta_cfg.filter                = config.vision.quanta_filter;
+    const auto& stream_camera_config = setup_result.value().camera_config;
+    auto quanta_stream_result        = runtime::register_quanta_stream_systems(
+        world, scheduler, quanta_cfg, static_cast<int>(stream_camera_config.width),
+        static_cast<int>(stream_camera_config.height));
+    if (!quanta_stream_result) {
+        return std::unexpected(
+            fmt::format("register quanta stream: {}", quanta_stream_result.error()));
     }
-
-    scheduler.add_system<talos::fixed_rate<50, 3>>(
-        "quanta-encoder",
-        [encoder_state](
-            talos::spmc<ImageFrame, ImageChannelTopic> image_in,
-            talos::res<std::unique_ptr<fcs::L1::OutputInterface>> output, core::capabilities cap) {
-            if (!core::capable(*cap, core::Capability::Quanta)) {
-                return;
-            }
-            auto& state = *encoder_state;
-
-            auto frame = image_in.read();
-            if (frame) {
-                auto img = frame->image;
-
-                const int64_t pts  = state.next_pts++;
-                auto submit_result = state.sender->submit_frame(
-                    img.data, static_cast<int>(img.step[0]), pts, frame->timestamp_ns);
-                if (!submit_result) {
-                    SPDLOG_WARN("quanta-encoder submit: {}", submit_result.error());
-                    return;
-                }
-            }
-
-            auto chunk_result = state.sender->poll_chunk();
-            if (!chunk_result) {
-                SPDLOG_WARN("quanta-encoder poll: {}", chunk_result.error());
-                return;
-            }
-            if (chunk_result->has_value()) {
-                (*output)->send_quanta(**chunk_result);
-            }
-        });
 
     runtime::register_runtime_capturer_system(scheduler, config.capturer, config.launch);
 

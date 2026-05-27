@@ -2,6 +2,76 @@ backend_type = "OnnxRuntime"  # Options: "Traditional", "OnnxRuntime", "TensorRT
 detect_color = "Blue"
 capabilities = ["Armor"]
 
+[quanta_filter]
+enable = true
+enable_saturation = true
+saturation = 1.0
+enable_denoise_luma = true
+enable_denoise_chroma = true
+enable_denoise_tl = true
+denoise_tl = 0.0
+enable_denoise_tc = true
+denoise_tc = 0.0
+enable_sharpen1_luma = true
+sharpen1_luma = 2.0
+enable_sharpen2_luma = true
+sharpen2_luma = 0.0
+enable_sharpen3_luma = true
+sharpen3_luma = 0
+enable_sharpen1_chroma = true
+sharpen1_chroma = 2.0
+enable_sharpen2_chroma = true
+sharpen2_chroma = 0.0
+enable_sharpen3_chroma = true
+sharpen3_chroma = 0.0
+enable_luma_quantization = false
+luma_levels = 16
+enable_chroma_quantization = false
+chroma_levels = 16
+enable_contour = false
+contour_strength = 1.0
+contour_low_thresh = 36
+contour_high_thresh = 96
+contour_width = 1
+qp_delta_map = false
+qp_edge_delta = 0
+qp_interior_delta = 16
+enable_psy_rd = true
+psy_rd = 0.0
+enable_psy_trellis = true
+psy_trellis = 0.0
+
+[quanta_filter.denoise_luma]
+kernel_size = 5
+sigma_x = 1.0
+sigma_y = 1.0
+
+[quanta_filter.denoise_chroma]
+kernel_size = 3
+sigma_x = 1.0
+sigma_y = 1.0
+
+[quanta]
+max_width = 200
+max_height = 200
+gop_size = 20
+framerate = 30
+preset = "fast"
+tune = "ssim"
+intra_refresh = false
+crf = 52
+lookahead = 0
+target_bitrate = 45000
+enVBR = false
+min_bit_rate = 0
+max_bit_rate = 50000
+vbv_bufsize = 10000
+refresh_num = 4
+bframe = 0
+enScenecut = true
+enAqMode = true
+aq_strength = 0.4
+
 # Required if backend_type = "traditional"
 [traditional]
 advanced_binary = false

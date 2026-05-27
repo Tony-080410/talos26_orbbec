@@ -279,6 +279,8 @@ set(FCS_SOURCES
         src/fcs/runtime/capturer.cpp
         src/fcs/runtime/config_loader.cpp
         src/fcs/runtime/l1_l2_setup.cpp
+        src/fcs/runtime/stream_encode.cpp
+        src/fcs/runtime/stream_send.cpp
         src/fcs/L2_perception/armor/backend.cpp
         src/fcs/L2_perception/armor/systems.cpp
         src/fcs/L2_perception/ldm/ldm_detector.cpp
@@ -301,6 +303,10 @@ set(FCS_SOURCES
         src/fcs/L5_weapon/enhanced/trajectory_optimizer.cpp
         src/fcs/L5_weapon/enhanced/weapon_systems.cpp
 )
+
+if(CMAKE_CROSSCOMPILING)
+    list(APPEND FCS_SOURCES cmake/toolchains/isoc23_shim.cpp)
+endif()
 
 if(TensorRT_FOUND)
     list(APPEND FCS_SOURCES src/fcs/L2_perception/armor/backends/tensor_rt.cpp)
@@ -469,27 +475,6 @@ target_link_libraries(talos-playground PRIVATE
 )
 
 # ============================================================================
-# Quanta IPC E2E Demo: IPC -> Quanta encode -> queue transport -> decode -> imshow
-# ============================================================================
-
-add_executable(quanta-ipc-demo src/quanta_ipc_demo.cpp)
-
-target_include_directories(quanta-ipc-demo PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/crates/hardware_daedalus/src
-        ${CMAKE_CURRENT_SOURCE_DIR}/crates/log/src
-)
-
-target_link_libraries(quanta-ipc-demo PRIVATE
-        quanta
-        ipc
-        talos_log
-        spdlog::spdlog
-        opencv_core
-        opencv_imgproc
-        opencv_highgui
-)
-
-# ============================================================================
 # MPC Benchmark: 2x TinyMPC (double/dynamic) vs DualSmallMpcSolver (float/fixed)
 # ============================================================================
 add_library(tinympc_bench STATIC
@@ -580,11 +565,6 @@ set(TALOS_INSTALL_TARGETS
         ${PROJECT_NAME}
         talos-playground
         bench_mpc
-        quanta-transcode
-        quanta-stream-test
-        quanta-stream-loopback
-        quanta-stream-demo
-        quanta-ipc-demo
 )
 
 set(TALOS_OPTIONAL_INSTALL_TARGETS

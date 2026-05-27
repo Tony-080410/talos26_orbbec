@@ -8,22 +8,31 @@
 //
 //   x265 parameter           AX VENC mapping
 //   ───────────────────────────────────────────────────────────
-//   target_bitrate           CBR u32BitRate + u32StatTime
+//   enVBR=false              H265CBR with target_bitrate -> u32BitRate
+//   enVBR=true               H265VBR with max_bit_rate -> u32MaxBitRate
+//   min_bit_rate             N/A for AX H265VBR; field is parsed but not consumed
 //   gop_size                 u32Gop (IDR interval)
 //   framerate                stFrameRate.fDstFrameRate
 //   max_width/max_height     u32PicWidthSrc / u32PicHeightSrc
 //   intra_refresh            stIntraRefresh config
 //   chroma_qp_offset         s32IntraQpDelta (approximate)
-//   aq_strength              CTB RC mode (QUALITY_RATE)
+//   filter.aq_strength       CTB RC mode (QUALITY_RATE)
+//   filter.denoise_luma      AX IVE Gaussian luma filter after IVPS scale/CSC
+//   filter.denoise_chroma    AX IVE Gaussian chroma filter on NV12 UV after IVPS scale/CSC
+//   filter.sharpen*_luma     AX IVE high-boost luma edge recovery
+//   filter.sharpen*_chroma   split NV12 UV, high-boost U/V independently, then merge
+//   filter.luma_levels       AX IVE multi-threshold luma quantization
+//   filter.chroma_levels     split NV12 UV, quantize U/V independently, then merge
+//   filter.qp_delta_map      AX_VENC_SendFrameEx per-frame 16x16 QP delta map
+//   filter.saturation        N/A for AX encode backend; use ISP IQ/camera tuning
 //   crf                       :  N/A (hardware uses CBR for realtime)
-//   psy_rd / psy_trellis     :  N/A (x265 psychovisual, no HW equivalent)
+//   filter.psy_rd/trellis     :  N/A for AX (x265 psychovisual only)
 //   preset / tune            :  N/A (hardware has fixed quality pipeline)
 //   me / subme / rd / rdoq   :  N/A (hardware internal)
 // ---------------------------------------------------------------------------
 
-#include "quanta/ax_venc_raii.hpp"
+#include "quanta/encode_backend/ax/ax_venc_raii.hpp"
 #include "quanta/stream_encoder.hpp"
-#include "quanta/transcoder.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -39,11 +48,10 @@ extern "C" {
 #include "ax_venc_comm.h"
 }
 
-namespace quanta::detail {
+namespace quanta {
 
 // ---------------------------------------------------------------------------
-// Dimension fitting: downscale src to fit within max, snap to even
-// (Ported from encode_common.hpp — pure math, no FFmpeg dependency)
+// Dimension fitting: downscale src to fit within max, snap to even.
 // ---------------------------------------------------------------------------
 
 inline void fit_dimensions(int src_w, int src_h, int max_w, int max_h, int& out_w, int& out_h) {
@@ -184,6 +192,28 @@ struct Nv12Frame {
         }
     }
 
+    /// Invalidate CPU cache after hardware writes before CPU reads.
+    [[nodiscard]] AX_S32 invalidate_cache() noexcept {
+        if (phy_addr != 0 && vir_addr != nullptr && alloc_size != 0) {
+            return AX_SYS_MinvalidateCache(phy_addr, vir_addr, alloc_size);
+        }
+        return AX_SUCCESS;
+    }
+
+    void flush_uv_cache() noexcept {
+        if (phy_addr != 0 && vir_addr != nullptr && uv_plane_size != 0) {
+            AX_SYS_MflushCache(uv_phy_addr(), uv_data(), static_cast<AX_U32>(uv_plane_size));
+        }
+    }
+
+    [[nodiscard]] AX_S32 invalidate_uv_cache() noexcept {
+        if (phy_addr != 0 && vir_addr != nullptr && uv_plane_size != 0) {
+            return AX_SYS_MinvalidateCache(
+                uv_phy_addr(), uv_data(), static_cast<AX_U32>(uv_plane_size));
+        }
+        return AX_SUCCESS;
+    }
+
     // --- Plane accessors (Y plane at offset 0, UV plane after Y) ---
 
     [[nodiscard]] uint8_t* y_data() noexcept { return static_cast<uint8_t*>(vir_addr); }
@@ -204,26 +234,18 @@ struct Nv12Frame {
     [[nodiscard]] size_t uv_size() const noexcept { return uv_plane_size; }
 };
 
-/// Convert BGR24 (row-major, interleaved BGR, linesize = width * 3) to NV12.
-/// Both width and height must be even (NV12 chroma subsampling requirement).
-/// The output frame must already be allocated via Nv12Frame::allocate().
-/// After writing, the caller must call flush_cache() before submitting to VENC.
-[[nodiscard]] std::expected<void, std::string>
-    bgr24_to_nv12(Nv12Frame& out, const uint8_t* bgr_data, int linesize = 0) noexcept;
-
-/// Scale BGR24 image to fit within max_width × max_height, preserving aspect ratio.
-/// Output dimensions are snapped to even (required by NV12).
-/// Returns {out_width, out_height, out_data} — out_data is row-major BGR24 with
-/// linesize = out_width * 3.
-struct ScaledBgr {
-    std::vector<uint8_t> data;
-    int width  = 0;
-    int height = 0;
+struct AxFilterChain {
+    std::shared_ptr<IvpsModule> ivps_module;
+    std::shared_ptr<IveModule> ive_module;
+    AX_IVPS_ASPECT_RATIO_T aspect_ratio{};
+    bool stage_resize_then_csc = false;
+    bool use_split_chroma      = false;
+    bool use_ive_filters       = false;
 };
 
-[[nodiscard]] ScaledBgr scale_bgr_fit(
-    const uint8_t* bgr_data, int src_width, int src_height, int src_linesize, int max_width,
-    int max_height) noexcept;
+[[nodiscard]] std::expected<AxFilterChain, std::string> build_ax_filter_chain(
+    const FilterParams& filter, int src_width, int src_height, int dst_width,
+    int dst_height) noexcept;
 
 // ---------------------------------------------------------------------------
 // AX VENC channel attribute construction
@@ -267,4 +289,4 @@ struct ScaledBgr {
 /// Returns a string like "AX_ID_VENC:2 AX_ERR_ILLEGAL_PARAM(0x0A)" for 0x8007020A.
 [[nodiscard]] std::string ax_error_string(AX_S32 err) noexcept;
 
-} // namespace quanta::detail
+} // namespace quanta
