@@ -27,7 +27,7 @@ std::expected<void, CameraError> ImageCapturer::init(
 }
 
 std::expected<cv::Mat, CameraError>
-    ImageCapturer::read(std::chrono::duration<unsigned int, std::milli> /*timeout*/) noexcept {
+    ImageCapturer::read(std::chrono::duration<unsigned int, std::micro> /*timeout*/) noexcept {
     return std::unexpected("HIK SDK not available (stub build)");
 }
 

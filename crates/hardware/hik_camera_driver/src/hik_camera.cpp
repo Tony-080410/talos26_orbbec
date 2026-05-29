@@ -188,7 +188,7 @@ public:
     }
 
     std::expected<cv::Mat, CameraError>
-        read(std::chrono::duration<unsigned int, std::milli> timeout) noexcept {
+        read(std::chrono::duration<unsigned int, std::micro> timeout) noexcept {
         std::lock_guard<std::mutex> lock(camera_mutex_);
 
         if (camera_handle_ == nullptr) {
@@ -905,7 +905,7 @@ std::expected<void, CameraError> ImageCapturer::stop_grabbing() noexcept {
 }
 
 std::expected<cv::Mat, CameraError>
-    ImageCapturer::read(std::chrono::duration<unsigned int, std::milli> timeout) noexcept {
+    ImageCapturer::read(std::chrono::duration<unsigned int, std::micro> timeout) noexcept {
     return impl_->read(timeout);
 }
 

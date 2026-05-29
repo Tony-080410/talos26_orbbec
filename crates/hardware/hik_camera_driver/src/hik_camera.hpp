@@ -90,7 +90,7 @@ public:
     ~ImageCapturer() noexcept;
 
     [[nodiscard]] std::expected<cv::Mat, CameraError> read(
-        std::chrono::duration<unsigned int, std::milli> timeout = std::chrono::seconds(5)) noexcept;
+        std::chrono::duration<unsigned int, std::micro> timeout = std::chrono::seconds(5)) noexcept;
 
     [[nodiscard]] std::expected<std::tuple<int, int>, CameraError>
         get_width_height() const noexcept;
