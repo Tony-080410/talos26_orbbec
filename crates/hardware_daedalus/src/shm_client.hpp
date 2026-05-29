@@ -289,6 +289,41 @@ public:
      */
     [[nodiscard]] const CameraInfo& camera_info() const { return meta_->camera_info; }
 
+    /**
+     * @brief 发布位姿 (生产者模式)
+     */
+    void publish_pose(const PoseIndex index, const Pose& pose) const {
+        if (index > 4) {
+            return;
+        }
+
+        PoseOps ops(&meta_->poses[index]);
+        auto& meta         = ops.borrow_mut();
+        meta.frame_seq     = pose.frame_seq;
+        meta.position[0]   = static_cast<float>(pose.x);
+        meta.position[1]   = static_cast<float>(pose.y);
+        meta.position[2]   = static_cast<float>(pose.z);
+        meta.quaternion[0] = static_cast<float>(pose.qw);
+        meta.quaternion[1] = static_cast<float>(pose.qx);
+        meta.quaternion[2] = static_cast<float>(pose.qy);
+        meta.quaternion[3] = static_cast<float>(pose.qz);
+        meta.timestamp_ns  = pose.timestamp_ns;
+        ops.publish();
+    }
+
+    /**
+     * @brief 设置相机内参 (生产者模式)
+     */
+    void publish_camera_info(const CameraInfo& info) const { meta_->camera_info = info; }
+
+    /**
+     * @brief 发布运行时状态 (生产者模式)
+     */
+    void publish_runtime_state(const bool following, const uint64_t timestamp_ns) const {
+        meta_->runtime_state.timestamp_ns = timestamp_ns;
+        meta_->runtime_state.following    = following ? 1U : 0U;
+    }
+
     // ============ 诊断 ============
 
     /**

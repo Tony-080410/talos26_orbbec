@@ -474,6 +474,26 @@ target_link_libraries(talos-playground PRIVATE
         ${OpenCV_LIBS}
 )
 
+add_executable(talos-replay
+        src/talos_replay.cpp
+        src/fcs/runtime/replay.cpp
+)
+
+target_link_libraries(talos-replay PRIVATE
+        talos_build_info
+        talos_log
+        talos_math
+        toml_std
+        ipc
+        fast_tf
+        nlohmann_json::nlohmann_json
+        fmt::fmt
+        spdlog::spdlog
+        opencv_imgcodecs
+        opencv_imgproc
+        "$<$<PLATFORM_ID:Darwin>:-mmacosx-version-min=15.5>"
+)
+
 # ============================================================================
 # MPC Benchmark: 2x TinyMPC (double/dynamic) vs DualSmallMpcSolver (float/fixed)
 # ============================================================================
@@ -564,6 +584,7 @@ set(TALOS_INSTALL_TARGETS
         fcs_visualization
         ${PROJECT_NAME}
         talos-playground
+        talos-replay
         bench_mpc
 )
 
