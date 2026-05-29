@@ -28,7 +28,7 @@ void register_quanta_stream_send_system(talos::Scheduler& scheduler) {
                 return;
             }
             (*output)->send_quanta(std::move(dequeued->packet));
-            SPDLOG_INFO(
+            SPDLOG_DEBUG(
                 "Quanta packet sent: frag={}/{}, packets_left={}, frames_left={}",
                 static_cast<unsigned int>(dequeued->packet.fragment_index) + 1U,
                 static_cast<unsigned int>(dequeued->packet.fragment_count),

@@ -1711,7 +1711,7 @@ std::expected<EncodedPacket, std::string>
         pkt.keyframe = (pack.enCodingType == AX_VENC_VIRTUAL_INTRA_FRAME)
                     || (pack.enCodingType == AX_VENC_INTRA_FRAME);
         if (pkt.keyframe)
-            SPDLOG_INFO("I Frame Generated, seq = {}", pack.u64SeqNum);
+            SPDLOG_DEBUG("I Frame Generated, seq = {}", pack.u64SeqNum);
     }
 
     // Release the stream buffer back to the hardware

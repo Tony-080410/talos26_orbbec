@@ -154,7 +154,7 @@ std::expected<void, std::string> register_quanta_stream_systems(
                     continue;
                 }
 
-                SPDLOG_INFO(
+                SPDLOG_DEBUG(
                     "Quanta frame queued: seq = {}, fragments = {}, bytes = {}", seq, fragments,
                     bytes);
             }

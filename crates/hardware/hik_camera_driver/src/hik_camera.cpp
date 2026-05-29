@@ -598,7 +598,6 @@ private:
         SDK_RET_ASSERT(ret, "set auto exposure");
 
         ret = MV_CC_SetEnumValue(camera_handle_, "ADCBitDepth", profile.adc_depth);
-        SDK_RET_ASSERT(ret, "set adc bit depth");
         if (ret != MV_OK) {
             SPDLOG_LOGGER_WARN(
                 logger_, "set adc bit depth to {}: {}", magic_enum::enum_name(profile.adc_depth),

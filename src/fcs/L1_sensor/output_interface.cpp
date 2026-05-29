@@ -159,7 +159,7 @@ void McuOutput::send_quanta(const quanta::QuantaPacket& packet) const noexcept {
     };
 
     std::memcpy(out.data.custom_byte_block, bytes.data(), bytes.size());
-    SPDLOG_INFO("send_quanta: bytes.size() = {}, seq = {}", bytes.size(), packet.seq);
+    SPDLOG_DEBUG("send_quanta: bytes.size() = {}, seq = {}", bytes.size(), packet.seq);
     device_->send_sync(reinterpret_cast<uint8_t*>(&out), sizeof(out));
 }
 
