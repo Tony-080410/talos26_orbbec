@@ -485,7 +485,7 @@ void register_detection_systems(talos::Scheduler& scheduler) noexcept {
 
                         auto delta_angle = core::math::normalize_angle(target_yaw - target_pos_yaw)
                                          * 180.0 / std::numbers::pi;
-                        if (std::abs(delta_angle) > 45) {
+                        if (std::abs(delta_angle) > 25) {
                             continue;
                         }
                     }

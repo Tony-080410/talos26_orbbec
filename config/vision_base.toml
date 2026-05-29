@@ -207,20 +207,20 @@ radius1 = 0.23
 height = 0.05
 
 [tracker.outpost]
-matcher_gate = 6.0
+matcher_gate = 9.0
 lost_threshold = 1.0
 tracking_threshold = 4
 
 [tracker.outpost.model]
 sigma_q_xy = 8.0
-sigma_q_z = 1.0
-sigma_a_yaw = 2.61327412
-meas_yaw_var_floor = 4e-3
-meas_pitch_var_floor = 4e-3
+sigma_q_z = 0.1
+sigma_a_yaw = 2.71327412
+meas_yaw_var_floor = 5e-3
+meas_pitch_var_floor = 5e-3
 meas_log_dist_var_floor = 2.5e-3
 meas_dist_k = 0.42
-meas_armor_yaw_var_floor = 9e-2
-yaw_log_k = 0.005
+meas_armor_yaw_var_floor = 9e-3
+yaw_log_k = 0.0005
 
 # ============================================================================
 # L4 Planning Configuration (Aimer + Planner Architecture)

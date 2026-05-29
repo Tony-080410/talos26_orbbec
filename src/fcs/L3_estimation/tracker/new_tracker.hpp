@@ -254,11 +254,11 @@ public:
             const double z0 = pos.z();
 
             OutpostEkfMotionModel::VecX xp0;
-            xp0 << x0, y0, armor_yaw, 0.0, z0, z0, z0;
+            xp0 << x0, y0, armor_yaw, 0.0, z0 - 0.1, z0, z0 + 0.1;
             OutpostEkfMotionModel::MatXX P0 = OutpostEkfMotionModel::MatXX::Identity();
 
-            P0(O_XC, O_XC) = 10;
-            P0(O_YC, O_YC) = 10;
+            P0(O_XC, O_XC) = 0.1;
+            P0(O_YC, O_YC) = 0.1;
 
             P0(O_YAW, O_YAW)   = 0.4;
             P0(O_VYAW, O_VYAW) = 100;

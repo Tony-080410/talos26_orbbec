@@ -545,13 +545,13 @@ public:
         problem.SetParameterUpperBound(translation_ypd, 0, kBearingLimit);
         problem.SetParameterLowerBound(translation_ypd, 1, -kBearingLimit);
         problem.SetParameterUpperBound(translation_ypd, 1, kBearingLimit);
-        if (detection.name == ArmorName::Outpost) {
-            auto original_norm = initial_pose.value().prior_distance_m
-                                   ? initial_pose.value().prior_distance_m.value()
-                                   : cv::norm(tvec);
-            problem.SetParameterLowerBound(translation_ypd, 2, std::max(0.0, original_norm - 0.5));
-            problem.SetParameterUpperBound(translation_ypd, 2, original_norm + 0.5);
-        }
+        // if (detection.name == ArmorName::Outpost) {
+        //     auto original_norm = initial_pose.value().prior_distance_m
+        //                            ? initial_pose.value().prior_distance_m.value()
+        //                            : cv::norm(tvec);
+        //     problem.SetParameterLowerBound(translation_ypd, 2, std::max(0.0, original_norm -
+        //     0.5)); problem.SetParameterUpperBound(translation_ypd, 2, original_norm + 0.5);
+        // }
 
         ceres::Solver::Options options;
         options.linear_solver_type           = ceres::DENSE_QR;
@@ -604,7 +604,7 @@ public:
             // constexpr double kCorrelatedScaleSigmaPx        = 10.0;
             auto distance_factor = 0.25 / 5.0;
             if (detection.name == ArmorName::Outpost) {
-                distance_factor = 25.0 / 5.0;
+                distance_factor = 4.0 / 5.0;
             }
             const double kIndependentCornerSigmaPxFloor =
                 distance_factor * translation_ypd[2] + 0.5;
