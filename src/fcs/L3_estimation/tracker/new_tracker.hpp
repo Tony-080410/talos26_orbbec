@@ -516,8 +516,10 @@ private:
 
             const VecZ z_raw    = measurement_to_z_(meas);
             const MatZZ R_model = target.model().R(z_raw);
-            const MatZZ R_update =
-                pnp_augmented_measurement_R_<TargetInfo>(R_model, meas.pnp_cov_ypdr);
+            MatZZ R_update      = R_model;
+            if (target_name_ == ArmorName::Outpost) {
+                R_update = pnp_augmented_measurement_R_<TargetInfo>(R_model, meas.pnp_cov_ypdr);
+            }
 
             for (int id = 0; id < armors_num; ++id) {
                 const VecZ z_pred = target.model().h(target.x(), id);
