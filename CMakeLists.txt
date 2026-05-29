@@ -297,6 +297,7 @@ set(FCS_SOURCES
         src/fcs/L3_estimation/energy_meter/energy_meter_systems.cpp
         src/fcs/L3_estimation/ldm_naive/ldm_naive_systems.cpp
         src/fcs/L4_planning/aimer/aimer.cpp
+        src/fcs/L4_planning/aimer/armor_target_decider.cpp
         src/fcs/L4_planning/aimer/aimer_systems.cpp
         src/fcs/L4_planning/planning_systems.cpp
         src/fcs/L4_planning/trajectory_builder.cpp

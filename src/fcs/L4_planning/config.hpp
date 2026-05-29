@@ -1,5 +1,6 @@
 #pragma once
 
+#include "L4_planning/aimer/armor_target_decider.hpp"
 #include "core/armor_types.hpp"
 #include "toml/ext/containers.hpp"
 
@@ -50,6 +51,7 @@ struct TargetSelectionArmorNameScore {
 };
 
 struct TargetSelectionConfig {
+    ArmorTargetDeciderKind decider{ArmorTargetDeciderKind::Unmanned};
     double temp_lost_state_score{0.05};
     double optical_stale_timeout_s{0.25};
     double switch_margin{0.08};

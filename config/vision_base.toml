@@ -243,6 +243,7 @@ transfer_thresh = 20
 front_window_deg = 60.0
 
 [aimer.target_selection]
+decider = "Manned"
 temp_lost_state_score = 0.05
 optical_stale_timeout_s = 0.25
 switch_margin = 0.08

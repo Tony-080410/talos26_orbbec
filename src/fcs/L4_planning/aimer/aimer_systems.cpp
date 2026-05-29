@@ -1,6 +1,7 @@
 #include "L4_planning/aimer/aimer_systems.hpp"
 #include "L3_estimation/ldm_naive/types.hpp"
 #include "L4_planning/aimer/aimer.hpp"
+#include "L4_planning/aimer/armor_target_decider.hpp"
 #include "L4_planning/aimer/fsm.hpp"
 
 #include "L2_perception/armor/readback_roi.hpp"
@@ -16,6 +17,7 @@
 #include "L4_planning/trajectory_builder.hpp"
 #include "camera_config.hpp"
 #include "core/channel_topics.hpp"
+#include "core/runtime.hpp"
 #include "core/target_key.hpp"
 #include "core/time.hpp"
 #include "core/trajectory/resource.hpp"
@@ -44,15 +46,6 @@ struct TargetPhaseState {
     std::optional<int> jumped_selected_armor_id{};
 };
 
-struct TargetSelectionScores {
-    double total{0.0};
-    double image_center{0.0};
-    double track_state{0.0};
-    double tof{0.0};
-    double gimbal_effort{0.0};
-    double armor_name{0.0};
-};
-
 struct CandidateEvaluation {
     core::TargetKey key{};
     L3::TrackerOutput tracker{};
@@ -70,6 +63,12 @@ struct GimbalEffortMetrics {
 struct ReadbackRoiTimestamps {
     uint64_t projection_timestamp_ns{0};
     uint64_t freshness_timestamp_ns{0};
+};
+
+struct ArmorCandidateCollection {
+    std::vector<core::TargetKey> active_keys{};
+    std::vector<CandidateEvaluation> candidates{};
+    std::vector<TargetSelectionTraceEntry> rejected{};
 };
 
 [[nodiscard]] double clamp01(double value) noexcept { return std::clamp(value, 0.0, 1.0); }
@@ -338,13 +337,51 @@ struct ReadbackRoiTimestamps {
     entry.target_name              = tracker.target_name;
     entry.target_color             = tracker.target_color;
     entry.track_status             = tracker.status;
-    entry.aim_valid                = false;
     entry.was_previously_selected  = was_previously_selected;
-    entry.aim_error                = std::move(reason);
     entry.target_center            = tracker_center_world_position(tracker);
     entry.image_center_distance_px = tracker.last_image_center_distance_px;
     entry.optical_age_s            = optical_age_seconds(tracker, current_ns);
+    entry.aim_valid                = false;
+    entry.aim_error                = std::move(reason);
     return entry;
+}
+
+[[nodiscard]] TargetSelectionTrace build_target_selection_trace(
+    uint64_t current_ns, const std::optional<core::TargetKey>& previous_key,
+    const ArmorTargetDecider& decider, double switch_margin,
+    const ArmorTargetDeciderResult& decider_result,
+    const std::vector<CandidateEvaluation>& candidates,
+    std::vector<TargetSelectionTraceEntry> rejected) {
+    TargetSelectionTrace trace{
+        .timestamp_ns        = current_ns,
+        .kept_current_target = decider_result.kept_current_target,
+        .switch_margin =
+            std::holds_alternative<UnmannedArmorTargetDecider>(decider) ? switch_margin : 0.0,
+    };
+
+    if (previous_key.has_value()) {
+        trace.had_previous_target   = true;
+        trace.previous_target_name  = previous_key->name;
+        trace.previous_target_color = previous_key->color;
+    }
+
+    trace.candidates.reserve(candidates.size() + rejected.size());
+    for (size_t rank = 0; rank < decider_result.ranked_indices.size(); ++rank) {
+        const size_t candidate_index = decider_result.ranked_indices[rank];
+        auto candidate_trace         = candidates[candidate_index].trace_entry;
+        candidate_trace.rank         = static_cast<int>(rank + 1);
+        candidate_trace.selected     = candidate_index == decider_result.selected_index;
+        candidate_trace.runner_up =
+            decider_result.runner_up.has_value() && candidate_index == *decider_result.runner_up;
+        trace.candidates.push_back(std::move(candidate_trace));
+    }
+
+    for (auto& rejected_entry : rejected) {
+        rejected_entry.rank = static_cast<int>(trace.candidates.size() + 1);
+        trace.candidates.push_back(std::move(rejected_entry));
+    }
+
+    return trace;
 }
 
 // Decision — 三种目标源输出的统一类型
@@ -399,6 +436,134 @@ struct AimContext {
         return s;
     }
     return std::nullopt;
+}
+
+[[nodiscard]] ArmorAimContext build_armor_aim_context(
+    const L3::TrackerOutput& tracker, const TargetPhaseState& phase_state) noexcept {
+    ArmorAimContext aim_ctx;
+    aim_ctx.target_jumped      = tracker.target_jumped;
+    aim_ctx.phase              = phase_state.phase;
+    aim_ctx.preferred_armor_id = tracker.last_armor_id;
+    if (tracker.target_jumped && phase_state.jumped_selected_armor_id.has_value()) {
+        aim_ctx.preferred_armor_id = phase_state.jumped_selected_armor_id;
+    }
+    return aim_ctx;
+}
+
+[[nodiscard]] ArmorCandidateCollection collect_armor_candidates(
+    const std::optional<L3::TrackerOutputs>& trackers, const AimContext& ctx,
+    const AimerConfig& aimer_cfg, const TargetSelectionConfig& sel_cfg,
+    std::unordered_map<core::TargetKey, TargetPhaseState, core::TargetKeyHash>& phase_states,
+    const std::optional<core::TargetKey>& previous_key) {
+    ArmorCandidateCollection result;
+
+    const size_t reserve_n = trackers ? trackers->size() : 0U;
+    result.active_keys.reserve(reserve_n);
+    result.candidates.reserve(reserve_n);
+    result.rejected.reserve(reserve_n);
+
+    if (!trackers.has_value()) {
+        return result;
+    }
+
+    const auto cur_euler   = ctx.gimbal.euler_rot();
+    const double cur_yaw   = cur_euler.yaw;
+    const double cur_pitch = cur_euler.pitch;
+
+    for (const auto& tracker : *trackers) {
+        if (!tracker.is_tracking()) {
+            continue;
+        }
+
+        const auto key = make_target_key(tracker);
+        result.active_keys.push_back(key);
+        const bool was_prev = previous_key.has_value() && key == *previous_key;
+
+        auto& phase_state = phase_states[key];
+        advance_armor_aim_phase(
+            aimer_cfg, target_abs_v_yaw(tracker), tracker.target_jumped, phase_state.phase,
+            phase_state.overflow_count);
+
+        auto prediction = aim_tracker_target(
+            ctx.aimer, tracker, build_armor_aim_context(tracker, phase_state), ctx.gimbal,
+            ctx.muzzle, ctx.current_ns, ctx.bullet_speed, ctx.solver);
+        if (!prediction) {
+            result.rejected.push_back(
+                build_rejected_trace_entry(tracker, ctx.current_ns, prediction.error(), was_prev));
+            continue;
+        }
+
+        CandidateEvaluation candidate;
+        candidate.key        = key;
+        candidate.tracker    = tracker;
+        candidate.prediction = *prediction;
+        candidate.scores =
+            score_candidate(sel_cfg, tracker, *prediction, cur_yaw, cur_pitch, ctx.current_ns);
+        candidate.trace_entry = build_scored_trace_entry(
+            sel_cfg, tracker, *prediction, candidate.scores, cur_yaw, cur_pitch, ctx.current_ns,
+            was_prev);
+        result.candidates.push_back(std::move(candidate));
+    }
+
+    return result;
+}
+
+auto cleanup_stale_phase_states(
+    const std::vector<core::TargetKey>& active_keys,
+    std::unordered_map<core::TargetKey, TargetPhaseState, core::TargetKeyHash>& phase_states,
+    ArmorTargetDeciderState& decider_state) -> void {
+    if (active_keys.empty()) {
+        phase_states.clear();
+        decider_state.selected_key.reset();
+        return;
+    }
+
+    std::erase_if(
+        phase_states, [&](const auto& kv) { return !contains_target_key(active_keys, kv.first); });
+}
+
+auto update_selected_phase_state(
+    CandidateEvaluation& selected,
+    std::unordered_map<core::TargetKey, TargetPhaseState, core::TargetKeyHash>& phase_states)
+    -> void {
+    selected.prediction.armor_type = cls_to_armor_type(selected.tracker.target_name);
+
+    auto& phase_state      = phase_states[selected.key];
+    const bool jump_active = selected.tracker.is_tracking() && selected.tracker.target_jumped;
+    const bool keep_jump_memory =
+        selected.prediction.aim_phase != ArmorAimPhase::SingleArmor || jump_active;
+    if (!keep_jump_memory) {
+        phase_state.jumped_selected_armor_id.reset();
+        return;
+    }
+
+    phase_state.jumped_selected_armor_id = selected.prediction.selected_armor_id;
+}
+
+auto reset_selected_target_key_for_non_armor_source(ArmorTargetDeciderState& decider_state)
+    -> void {
+    decider_state.selected_key.reset();
+}
+
+auto write_hold_outputs(
+    talos::spmc_mut<SelectedTargetSnapshot, SelectedTargetSnapshotChannelTopic>& out_snap,
+    talos::spmc_mut<TargetSelectionTrace, TargetSelectionTraceChannelTopic>& out_trace,
+    talos::spmc_mut<ControlIntent, ControlIntentChannelTopic>& out_ctrl,
+    ArmorTargetDeciderState& decider_state, const std::optional<L3::TrackerOutput>& fallback)
+    -> void {
+    const uint64_t now_ns = fcs::clock::now_ns();
+    SelectedTargetSnapshot snap{.timestamp_ns = now_ns};
+    if (fallback.has_value()) {
+        snap.source                = GimbalPlanSource::Armor;
+        snap.tracker               = *fallback;
+        decider_state.selected_key = make_target_key(*fallback);
+    } else {
+        decider_state.selected_key.reset();
+    }
+
+    out_snap.write(std::move(snap));
+    out_trace.write(TargetSelectionTrace{.timestamp_ns = now_ns});
+    out_ctrl.write(HoldCommand{.timestamp_ns = now_ns});
 }
 
 // 从 TargetPrediction + 轨迹构建原料构建 ControlIntent。
@@ -461,157 +626,50 @@ struct AimContext {
 // try_armor — 多目标 tracker → 评分 → 选优 → 弹道
 [[nodiscard]] std::optional<AimDecision> try_armor(
     const std::optional<L3::TrackerOutputs>& trackers, const AimContext& ctx,
+    const ArmorTargetDecider& decider, ArmorTargetDeciderState& decider_state,
     const AimerConfig& aimer_cfg, const TargetSelectionConfig& sel_cfg,
     const ReferenceTrajectoryConfig& ref_traj_cfg,
-    std::unordered_map<core::TargetKey, TargetPhaseState, core::TargetKeyHash>& phase_states,
-    std::optional<core::TargetKey>& selected_key) {
-    const auto prev_key    = selected_key;
-    const auto cur_euler   = ctx.gimbal.euler_rot();
-    const double cur_yaw   = cur_euler.yaw;
-    const double cur_pitch = cur_euler.pitch;
+    std::unordered_map<core::TargetKey, TargetPhaseState, core::TargetKeyHash>& phase_states) {
+    const auto previous_key = decider_state.selected_key;
+    auto collection =
+        collect_armor_candidates(trackers, ctx, aimer_cfg, sel_cfg, phase_states, previous_key);
 
-    std::vector<core::TargetKey> active_keys;
-    std::vector<CandidateEvaluation> candidates;
-    std::vector<TargetSelectionTraceEntry> rejected;
+    cleanup_stale_phase_states(collection.active_keys, phase_states, decider_state);
 
-    const size_t reserve_n = trackers ? trackers->size() : 0U;
-    active_keys.reserve(reserve_n);
-    candidates.reserve(reserve_n);
-    rejected.reserve(reserve_n);
-
-    if (trackers) {
-        for (const auto& t : *trackers) {
-            if (!t.is_tracking())
-                continue;
-
-            const auto key = make_target_key(t);
-            active_keys.push_back(key);
-            const bool was_prev = prev_key.has_value() && key == *prev_key;
-
-            auto& ps = phase_states[key];
-            advance_armor_aim_phase(
-                aimer_cfg, target_abs_v_yaw(t), t.target_jumped, ps.phase, ps.overflow_count);
-
-            ArmorAimContext aim_ctx;
-            aim_ctx.target_jumped      = t.target_jumped;
-            aim_ctx.phase              = ps.phase;
-            aim_ctx.preferred_armor_id = t.last_armor_id;
-            if (t.target_jumped && ps.jumped_selected_armor_id.has_value()) {
-                aim_ctx.preferred_armor_id = ps.jumped_selected_armor_id;
-            }
-
-            auto pred = aim_tracker_target(
-                ctx.aimer, t, aim_ctx, ctx.gimbal, ctx.muzzle, ctx.current_ns, ctx.bullet_speed,
-                ctx.solver);
-            if (!pred) {
-                rejected.push_back(
-                    build_rejected_trace_entry(t, ctx.current_ns, pred.error(), was_prev));
-                continue;
-            }
-
-            CandidateEvaluation c;
-            c.key         = key;
-            c.tracker     = t;
-            c.prediction  = *pred;
-            c.scores      = score_candidate(sel_cfg, t, *pred, cur_yaw, cur_pitch, ctx.current_ns);
-            c.trace_entry = build_scored_trace_entry(
-                sel_cfg, t, *pred, c.scores, cur_yaw, cur_pitch, ctx.current_ns, was_prev);
-            candidates.push_back(std::move(c));
-        }
-    }
-
-    // Cleanup stale phase states
-    if (active_keys.empty()) {
-        phase_states.clear();
-        selected_key.reset();
-    } else {
-        std::erase_if(phase_states, [&](const auto& kv) {
-            return !contains_target_key(active_keys, kv.first);
-        });
-    }
-
-    if (candidates.empty())
+    if (collection.candidates.empty()) {
         return std::nullopt;
-
-    // Sort by score descending
-    std::ranges::sort(candidates, std::greater<>{}, [](const CandidateEvaluation& c) noexcept {
-        return c.scores.total;
-    });
-
-    // Switch-margin selection
-    size_t selected_idx = 0;
-    bool kept           = false;
-    std::optional<size_t> current_idx;
-    if (selected_key.has_value()) {
-        for (size_t i = 0; i < candidates.size(); ++i) {
-            if (candidates[i].key == *selected_key) {
-                current_idx = i;
-                break;
-            }
-        }
-    }
-    if (current_idx.has_value() && *current_idx != 0
-        && candidates[0].scores.total
-               <= candidates[*current_idx].scores.total + sel_cfg.switch_margin) {
-        selected_idx = *current_idx;
-        kept         = true;
     }
 
-    std::optional<size_t> runner_up;
-    if (kept) {
-        runner_up = 0;
-    } else {
-        for (size_t i = 0; i < candidates.size(); ++i) {
-            if (i != selected_idx) {
-                runner_up = i;
-                break;
-            }
-        }
+    std::vector<ArmorTargetDeciderCandidate> decider_candidates;
+    decider_candidates.reserve(collection.candidates.size());
+    for (const auto& candidate : collection.candidates) {
+        decider_candidates.push_back(
+            ArmorTargetDeciderCandidate{
+                .key     = candidate.key,
+                .tracker = candidate.tracker,
+                .scores  = candidate.scores,
+            });
     }
 
-    auto& sel = candidates[selected_idx];
-
-    // Build trace
-    TargetSelectionTrace trace{
-        .timestamp_ns        = ctx.current_ns,
-        .kept_current_target = kept,
-        .switch_margin       = sel_cfg.switch_margin,
-    };
-    if (prev_key.has_value()) {
-        trace.had_previous_target   = true;
-        trace.previous_target_name  = prev_key->name;
-        trace.previous_target_color = prev_key->color;
-    }
-    trace.candidates.reserve(candidates.size() + rejected.size());
-    for (size_t i = 0; i < candidates.size(); ++i) {
-        auto e      = candidates[i].trace_entry;
-        e.rank      = static_cast<int>(i + 1);
-        e.selected  = i == selected_idx;
-        e.runner_up = runner_up.has_value() && i == *runner_up;
-        trace.candidates.push_back(std::move(e));
-    }
-    for (auto& e : rejected) {
-        e.rank = static_cast<int>(trace.candidates.size() + 1);
-        trace.candidates.push_back(std::move(e));
+    const auto decider_result =
+        decide_armor_target(decider, decider_state, std::span{decider_candidates});
+    if (!decider_result.has_value()) {
+        return std::nullopt;
     }
 
-    // Update persistent state
-    sel.prediction.armor_type = cls_to_armor_type(sel.tracker.target_name);
-    auto& ps                  = phase_states[sel.key];
-    const bool jump_active    = sel.tracker.is_tracking() && sel.tracker.target_jumped;
-    if (sel.prediction.aim_phase == ArmorAimPhase::SingleArmor && !jump_active) {
-        ps.jumped_selected_armor_id.reset();
-    } else {
-        ps.jumped_selected_armor_id = sel.prediction.selected_armor_id;
-    }
-    selected_key = sel.key;
+    auto& selected = collection.candidates[decider_result->selected_index];
+    auto trace     = build_target_selection_trace(
+        ctx.current_ns, previous_key, decider, sel_cfg.switch_margin, *decider_result,
+        collection.candidates, std::move(collection.rejected));
 
-    auto seed = make_planner_seed(sel.tracker, sel.prediction);
+    update_selected_phase_state(selected, phase_states);
 
-    auto snap = make_snapshot(sel.prediction, GimbalPlanSource::Armor, sel.tracker);
+    auto seed = make_planner_seed(selected.tracker, selected.prediction);
+
+    auto snap = make_snapshot(selected.prediction, GimbalPlanSource::Armor, selected.tracker);
 
     return AimDecision{
-        .intent   = build_control_intent(sel.prediction, ctx, ref_traj_cfg, seed, std::nullopt),
+        .intent = build_control_intent(selected.prediction, ctx, ref_traj_cfg, seed, std::nullopt),
         .snapshot = std::move(snap),
         .trace    = std::move(trace),
     };
@@ -678,6 +736,11 @@ void register_aimer_systems(talos::Scheduler& scheduler, L4Config&& config) {
         world.insert_resource(L2::TrackerReadbackCache{});
     }
 
+    auto unmanned_armor_target_decider = make_armor_target_decider(
+        config.aimer.target_selection.decider, config.aimer.target_selection.switch_margin);
+    auto manned_armor_target_decider = make_armor_target_decider(
+        ArmorTargetDeciderKind::Manned, config.aimer.target_selection.switch_margin);
+
     world.insert_resource(Aimer(config.aimer));
     world.insert_resource(std::move(config));
 
@@ -685,10 +748,12 @@ void register_aimer_systems(talos::Scheduler& scheduler, L4Config&& config) {
         "l4_aimer",
         [phase_states =
              std::unordered_map<core::TargetKey, TargetPhaseState, core::TargetKeyHash>{},
-         selected_key = std::optional<core::TargetKey>{}](
+         unmanned_armor_target_decider = std::move(unmanned_armor_target_decider),
+         manned_armor_target_decider   = std::move(manned_armor_target_decider),
+         was_following = false, decider_state = ArmorTargetDeciderState{}](
             talos::res<L4Config> cfg, talos::res<Aimer> aimer,
             core::trajectory::trajectory_solver solver,
-            core::trajectory::bullet_speed bullet_speed_,
+            core::trajectory::bullet_speed bullet_speed_, core::following following,
             talos::spmc<L3::TrackerOutputs, TrackerOutputChannelTopic> tracker_in,
             talos::spmc<energy_meter::EnergyMeterState, EnergyMeterStateChannelTopic> rune_in,
             talos::spmc<L3::ldm::LdmState> ldm_in, talos::res<fast_tf::CoordinateSystem> tf_buffer,
@@ -712,19 +777,29 @@ void register_aimer_systems(talos::Scheduler& scheduler, L4Config&& config) {
                 .aimer        = *aimer,
             };
 
+            const bool is_following = following->load();
+            if (is_following && !was_following) {
+                // Entering manned mode must relock to the current UV-center-nearest target.
+                decider_state.selected_key.reset();
+            }
+            const ArmorTargetDecider& active_armor_target_decider =
+                is_following ? manned_armor_target_decider : unmanned_armor_target_decider;
+            was_following = is_following;
+
             const auto tracker_vec = tracker_in.read_current();
-            const auto fallback    = pick_readback_tracker_fallback(tracker_vec, selected_key);
+            const auto fallback =
+                pick_readback_tracker_fallback(tracker_vec, decider_state.selected_key);
 
             auto decision = try_armor(
-                tracker_vec, ctx, cfg->aimer, cfg->aimer.target_selection,
-                cfg->reference_trajectory, phase_states, selected_key);
+                tracker_vec, ctx, active_armor_target_decider, decider_state, cfg->aimer,
+                cfg->aimer.target_selection, cfg->reference_trajectory, phase_states);
 
             if (!decision) {
                 decision = try_rune(rune_in.read_current(), ctx);
                 if (decision) {
                     // Rune doesn't use armor-tracker-key tracking — reset to avoid
                     // stale key influencing the next armor-selection cycle.
-                    selected_key.reset();
+                    reset_selected_target_key_for_non_armor_source(decider_state);
                 }
             }
             if (!decision) {
@@ -736,7 +811,7 @@ void register_aimer_systems(talos::Scheduler& scheduler, L4Config&& config) {
                 if (decision) {
                     // LDM doesn't use armor-tracker-key tracking — reset to avoid
                     // stale key influencing the next armor-selection cycle.
-                    selected_key.reset();
+                    reset_selected_target_key_for_non_armor_source(decider_state);
                 }
             }
 
@@ -745,18 +820,7 @@ void register_aimer_systems(talos::Scheduler& scheduler, L4Config&& config) {
                 out_trace.write(std::move(decision->trace));
                 out_ctrl.write(std::move(decision->intent));
             } else {
-                const uint64_t out_ns = fcs::clock::now_ns();
-                SelectedTargetSnapshot snap{.timestamp_ns = out_ns};
-                if (fallback.has_value()) {
-                    snap.source  = GimbalPlanSource::Armor;
-                    snap.tracker = *fallback;
-                    selected_key = make_target_key(*fallback);
-                } else {
-                    selected_key.reset();
-                }
-                out_snap.write(std::move(snap));
-                out_trace.write(TargetSelectionTrace{.timestamp_ns = out_ns});
-                out_ctrl.write(HoldCommand{.timestamp_ns = out_ns});
+                write_hold_outputs(out_snap, out_trace, out_ctrl, decider_state, fallback);
             }
         });
 

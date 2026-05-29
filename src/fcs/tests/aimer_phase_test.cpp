@@ -16,20 +16,24 @@
 
 #include "L2_perception/armor/readback_roi.hpp"
 #include "L3_estimation/energy_meter/types.hpp"
+#include "L3_estimation/ldm_naive/types.hpp"
 #include "L3_estimation/tracker/new_tracker.hpp"
 #include "L3_estimation/tracker/types.hpp"
 #include "L4_planning/aimer/aimer.hpp"
 #include "L4_planning/aimer/aimer_systems.hpp"
 #include "L4_planning/aimer/fsm.hpp"
+#include "L4_planning/control_intent.hpp"
 #include "L4_planning/gimbal_planner/types.hpp"
 #include "L4_planning/selected_target_snapshot.hpp"
 #include "L4_planning/target_selection_trace.hpp"
 #include "L5_weapon/fire_decision.hpp"
 #include "camera_config.hpp"
+#include "core/runtime.hpp"
 #include "core/time.hpp"
 #include "core/trajectory/resource.hpp"
 #include "core/trajectory/solver/solver_interfaces.hpp"
 #include "frame.hpp"
+#include "scheduler/error_formatter.hpp"
 #include "scheduler/scheduler.hpp"
 
 namespace {
@@ -195,6 +199,7 @@ public:
                 std::make_unique<MockTrajectorySolver>()));
         scheduler_.world().insert_resource(
             fcs::core::trajectory::bullet_speed_data{.bullet_speed = 30.0});
+        static_cast<void>(scheduler_.world().emplace_resource<fcs::core::FollowingState>());
 
         fcs::L4::register_aimer_systems(scheduler_, std::move(config));
 
@@ -230,6 +235,14 @@ public:
                 state.timestamp_ns   = fcs::clock::now_ns();
                 state.tracking_valid = false;
                 rune_out.write(std::move(state));
+            });
+
+        scheduler_.add_system<talos::fixed_rate<200>>(
+            "aimer_system_test_ldm_producer", [](talos::spmc_mut<fcs::L3::ldm::LdmState> ldm_out) {
+                fcs::L3::ldm::LdmState state;
+                state.timestamp_ns = fcs::clock::now_ns();
+                state.status       = fcs::L3::TrackerStatus::Idle;
+                ldm_out.write(std::move(state));
             });
 
         scheduler_.add_system<talos::fixed_rate<200>>(
@@ -274,7 +287,8 @@ public:
 
     void start() {
         const auto build_result = scheduler_.build();
-        ASSERT_TRUE(build_result.has_value()) << "scheduler build failed";
+        ASSERT_TRUE(build_result.has_value())
+            << "scheduler build failed: " << fmt::format("{}", build_result.error());
 
         scheduler_thread_ = std::thread([this]() {
             if (const auto result = scheduler_.run(); !result) {
@@ -315,6 +329,10 @@ public:
             std::scoped_lock lock(trace_state_->mutex);
             trace_state_->trace.reset();
         }
+    }
+
+    void set_following(bool active) {
+        scheduler_.world().get_res_mut<fcs::core::FollowingState>()->store(active);
     }
 
     std::optional<fcs::L4::ControlIntent>
@@ -380,7 +398,7 @@ public:
                 if (plan_state_->plan.has_value()) {
                     // Check timestamp and that we have a Track or Shot (not Hold).
                     const bool is_armor = std::visit(
-                        [](const auto& cmd) {
+                        [min_timestamp_ns](const auto& cmd) {
                             using T = std::decay_t<decltype(cmd)>;
                             if constexpr (std::is_same_v<T, fcs::L4::TrackCommand>)
                                 return cmd.timestamp_ns > min_timestamp_ns;
@@ -455,8 +473,7 @@ private:
         std::optional<fcs::L4::TargetSelectionTrace> trace;
     };
 
-    talos::World world_;
-    talos::Scheduler scheduler_{world_};
+    talos::Scheduler scheduler_{};
     std::shared_ptr<TrackerState> tracker_state_{std::make_shared<TrackerState>()};
     std::shared_ptr<PlanState> plan_state_{std::make_shared<PlanState>()};
     std::shared_ptr<SelectedTargetState> selected_target_state_{
@@ -1245,6 +1262,7 @@ TEST(AimerSystemsTargetSelection, TrackingTargetBeatsTempLostFallback) {
 
 TEST(AimerSystemsTargetSelection, KeepsCurrentTargetWhenScoreGainIsWithinSwitchMargin) {
     fcs::L4::L4Config config;
+    config.aimer.target_selection.decider       = fcs::L4::ArmorTargetDeciderKind::Unmanned;
     config.aimer.target_selection.switch_margin = 1.0;
     AimerSystemHarness harness(config);
     harness.start();
@@ -1293,7 +1311,9 @@ TEST(AimerSystemsTargetSelection, KeepsCurrentTargetWhenScoreGainIsWithinSwitchM
 }
 
 TEST(AimerSystemsTargetSelection, SwitchesWhenNewTargetClearlyWins) {
-    AimerSystemHarness harness;
+    fcs::L4::L4Config config;
+    config.aimer.target_selection.decider = fcs::L4::ArmorTargetDeciderKind::Unmanned;
+    AimerSystemHarness harness(config);
     harness.start();
 
     harness.set_trackers({
@@ -1325,6 +1345,90 @@ TEST(AimerSystemsTargetSelection, SwitchesWhenNewTargetClearlyWins) {
     EXPECT_FALSE(trace->kept_current_target);
     EXPECT_TRUE(trace->candidates.front().selected);
     EXPECT_EQ(trace->candidates.front().target_name, fcs::ArmorName::Two);
+
+    harness.stop();
+}
+
+TEST(AimerSystemsTargetSelection, MannedKeepsCurrentTargetUntilTrackerIsLost) {
+    fcs::L4::L4Config config;
+    config.aimer.target_selection.decider = fcs::L4::ArmorTargetDeciderKind::Manned;
+    AimerSystemHarness harness(config);
+    harness.start();
+
+    harness.set_trackers({
+        make_robot_tracker_output(
+            fcs::ArmorName::One, fcs::L3::TrackerStatus::Tracking, Eigen::Vector3d(3.0, 0.0, 0.0),
+            20.0),
+        make_robot_tracker_output(
+            fcs::ArmorName::Two, fcs::L3::TrackerStatus::Tracking, Eigen::Vector3d(3.0, 0.0, 0.0),
+            80.0),
+    });
+    const auto initial_target = harness.wait_for_target(fcs::ArmorName::One);
+    ASSERT_TRUE(initial_target.has_value());
+
+    harness.set_trackers({
+        make_robot_tracker_output(
+            fcs::ArmorName::One, fcs::L3::TrackerStatus::TempLost, Eigen::Vector3d(3.0, 0.0, 0.0),
+            220.0, fcs::ArmorColor::Blue, initial_target->tracker.last_observation_timestamp_ns),
+        make_robot_tracker_output(
+            fcs::ArmorName::Two, fcs::L3::TrackerStatus::Tracking, Eigen::Vector3d(3.0, 0.0, 0.0),
+            5.0),
+    });
+
+    const auto locked_target = harness.wait_for_selected_target_after(initial_target->timestamp_ns);
+    const auto locked_trace  = harness.wait_for_selection_trace_after(initial_target->timestamp_ns);
+    ASSERT_TRUE(locked_target.has_value());
+    ASSERT_TRUE(locked_trace.has_value());
+    EXPECT_EQ(locked_target->tracker.target_name, fcs::ArmorName::One);
+    EXPECT_TRUE(locked_trace->kept_current_target);
+
+    harness.set_trackers({
+        make_robot_tracker_output(
+            fcs::ArmorName::Two, fcs::L3::TrackerStatus::Tracking, Eigen::Vector3d(3.0, 0.0, 0.0),
+            5.0),
+    });
+
+    const uint64_t switched_after_timestamp =
+        std::max(locked_target->timestamp_ns, locked_trace->timestamp_ns);
+    const auto switched_target = harness.wait_for_selected_target_after(switched_after_timestamp);
+    const auto switched_trace  = harness.wait_for_selection_trace_after(switched_after_timestamp);
+    ASSERT_TRUE(switched_target.has_value());
+    ASSERT_TRUE(switched_trace.has_value());
+    EXPECT_EQ(switched_target->tracker.target_name, fcs::ArmorName::Two);
+    EXPECT_FALSE(switched_trace->kept_current_target);
+
+    harness.stop();
+}
+
+TEST(AimerSystemsTargetSelection, EnteringFollowingRelocksToUvCenterNearestTarget) {
+    fcs::L4::L4Config config;
+    config.aimer.target_selection.decider       = fcs::L4::ArmorTargetDeciderKind::Unmanned;
+    config.aimer.target_selection.switch_margin = 1.0;
+    AimerSystemHarness harness(config);
+    harness.start();
+
+    harness.set_following(false);
+    harness.set_trackers({
+        make_robot_tracker_output(
+            fcs::ArmorName::One, fcs::L3::TrackerStatus::Tracking, Eigen::Vector3d(3.0, 0.0, 0.0),
+            80.0),
+        make_robot_tracker_output(
+            fcs::ArmorName::Two, fcs::L3::TrackerStatus::Tracking, Eigen::Vector3d(3.0, 0.0, 0.0),
+            70.0),
+    });
+
+    const auto unmanned_target = harness.wait_for_target(fcs::ArmorName::One);
+    ASSERT_TRUE(unmanned_target.has_value());
+
+    harness.set_following(true);
+
+    const auto manned_target =
+        harness.wait_for_selected_target_after(unmanned_target->timestamp_ns);
+    const auto manned_trace = harness.wait_for_selection_trace_after(unmanned_target->timestamp_ns);
+    ASSERT_TRUE(manned_target.has_value());
+    ASSERT_TRUE(manned_trace.has_value());
+    EXPECT_EQ(manned_target->tracker.target_name, fcs::ArmorName::Two);
+    EXPECT_FALSE(manned_trace->kept_current_target);
 
     harness.stop();
 }
