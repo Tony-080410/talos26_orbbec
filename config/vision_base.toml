@@ -337,8 +337,8 @@ max_acc = 100.0
 [rune_detector]
 draw = true
 debug_mode = false  # L2层调试模式，启用时输出详细错误信息
-arrow_threshold = 170
-target_threshold = 130
+arrow_threshold = 210
+target_threshold = 40
 rcenter_threshold = 120
 
 # 流水灯参数

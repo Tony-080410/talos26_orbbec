@@ -65,8 +65,7 @@ void RuneDetector::processPictures(const cv::Mat& src, fcs::ArmorColor color) {
 
     cv::threshold(img, arrowImg, params_.arrow_threshold, 255, cv::THRESH_BINARY);
     cv::threshold(img, targetImg, params_.target_threshold, 255, cv::THRESH_BINARY);
-    rCenterImg = arrowImg.clone();
-    // cv::threshold(img, rCenterImg, params_.rcenter_threshold, 255, cv::THRESH_BINARY);
+    cv::threshold(img, rCenterImg, params_.rcenter_threshold, 255, cv::THRESH_BINARY);
 }
 
 /*求点到两个点拟合出直线的距离*/
