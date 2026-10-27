@@ -25,7 +25,7 @@ elseif(UNIX)
     set(ONNXRUNTIME_PLATFORM "linux-aarch64")
     message(WARNING "GPU runtime for ONNX Runtime not available.")
   else()
-    set(ONNXRUNTIME_PLATFORM "linux-x64-gpu")
+    set(ONNXRUNTIME_PLATFORM "linux-x64" CACHE STRING "ONNX Runtime prebuilt platform")
   endif()
 
   set(ONNXRUNTIME_ARCHIVE_EXT "tgz")

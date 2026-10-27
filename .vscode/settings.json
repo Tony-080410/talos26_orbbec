@@ -3,9 +3,14 @@
         "--header-insertion=never"
     ],
     "clangd.path": "clangd",
+    "cmake.generator": "Ninja",
+    "cmake.configureSettings": {
+        "TALOS_PREFER_BTBN_FFMPEG": "OFF",
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
+    },
     "cmake.environment": {
         "CC": "clang-21",
-        "CXX": "clang++-21",
+        "CXX": "clang++-21"
     },
     "editor.formatOnSave": true
 }

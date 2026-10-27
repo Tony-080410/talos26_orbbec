@@ -804,15 +804,32 @@ void register_aimer_systems(talos::Scheduler& scheduler, L4Config&& config) {
             }
             if (!decision) {
                 auto i = ldm_in.read();
-                if (i->status == L3::TrackerStatus::Detecting) {
-                    return;
+                // 原代码直接解引用 i->status，没有先判断 optional 是否为空。
+                // LdmState 只在 l3_ldm_tracker 的 get_output() 成功时才 publish；
+                // 没有 LDM 观测时 tracker 从未 update（target 不 active），该 channel
+                // 一次都没被写过，read() 永远返回空 optional。
+                // 解引用空 optional 命中 libstdc++ 的 _M_is_engaged 断言 -> abort；
+                // Release(-DNDEBUG) 下断言消失，直接读未构造内存，UB。
+                // if (i->status == L3::TrackerStatus::Detecting) {
+                //     return;
+                // }
+                // 原代码这里还二次调用了 ldm_in.read()，两次读取之间状态可能变化，
+                // 且第二次数值未被使用于判空，同样可能拿到空 optional。
+                // decision = try_ldm(ldm_in.read(), ctx, cfg->reference_trajectory);
+                if (i) {
+                    if (i->status == L3::TrackerStatus::Detecting) {
+                        return;
+                    }
+                    // 复用上面已读到的 i，不再重复 read()。
+                    decision = try_ldm(i, ctx, cfg->reference_trajectory);
+                    if (decision) {
+                        // LDM doesn't use armor-tracker-key tracking — reset to avoid
+                        // stale key influencing the next armor-selection cycle.
+                        reset_selected_target_key_for_non_armor_source(decider_state);
+                    }
                 }
-                decision = try_ldm(ldm_in.read(), ctx, cfg->reference_trajectory);
-                if (decision) {
-                    // LDM doesn't use armor-tracker-key tracking — reset to avoid
-                    // stale key influencing the next armor-selection cycle.
-                    reset_selected_target_key_for_non_armor_source(decider_state);
-                }
+                // 没有 LDM 状态时保持 decision 为空，由下面的 write_hold_outputs
+                // 发 Hold，避免在无目标时直接终止整个 aimer 线程。
             }
 
             if (decision) {
