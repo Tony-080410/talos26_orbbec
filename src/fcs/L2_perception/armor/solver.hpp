@@ -796,6 +796,9 @@ private:
     }
 
     void build_model_points() {
+        // RM 标准小装甲板：灯条中心距 135mm，高 55mm。测试板实测同为 135mm，用标准值。
+        // 之前试过 107.4 / 97.5 等拟合值，是因为当时误判板宽 130mm；
+        // 该值只影响距离尺度，改错会导致距离系统性偏差，不要再动。
         constexpr double SMALL_ARMOR_WIDTH  = 135.0 / 1000.0;
         constexpr double SMALL_ARMOR_HEIGHT = 55.0 / 1000.0;
         constexpr double LARGE_ARMOR_WIDTH  = 230.0 / 1000.0;

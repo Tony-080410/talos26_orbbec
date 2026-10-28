@@ -21,6 +21,8 @@ namespace fcs::L2 {
 /// Neural network detection backend using OnnxRuntime
 class OrtBackend : public DetectorBackendBase<OrtBackend> {
 public:
+    // 模型固定导出 640x640（启动日志 shape=[1,3,640,640]），改这两行无效，
+    // ort.cpp 会以模型自带 shape 为准。要提分辨率必须重新导出模型。
     static constexpr int INPUT_W     = 640;
     static constexpr int INPUT_H     = 640;
     static constexpr int NUM_COLORS  = 4;
@@ -62,6 +64,8 @@ private:
         float scale_y = 1.0f; // Scale factor for y coordinates
         float pad_x   = 0.0f; // Padding offset x
         float pad_y   = 0.0f; // Padding offset y
+        float roi_x   = 0.0f; // ROI origin in original image
+        float roi_y   = 0.0f;
         int orig_w    = 0;
         int orig_h    = 0;
     };

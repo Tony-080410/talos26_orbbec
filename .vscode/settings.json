@@ -6,7 +6,8 @@
     "cmake.generator": "Ninja",
     "cmake.configureSettings": {
         "TALOS_PREFER_BTBN_FFMPEG": "OFF",
-        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+        "ENABLE_CALIBRATION": "OFF"
     },
     "cmake.environment": {
         "CC": "clang-21",

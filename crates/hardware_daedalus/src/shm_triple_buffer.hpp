@@ -47,36 +47,30 @@ public:
      * @brief 尝试获取最新数据
      * @return 如果有新数据，返回指向数据的指针；否则返回 nullopt
      *
-     * 使用 CAS 操作尝试获取就绪槽位，如果生产者同时在写入可能失败
+     * 原实现 CAS 只重试两次，producer 高频 publish 时直接放弃本帧，
+     * 实测导致消费者只拿到 1/3 的帧（30fps 输入 → 10fps 消费）。
+     * 改为循环重试：CAS 失败只说明 state 被 producer 更新了，
+     * 重新读 state 再判断是否有新数据即可，不应丢帧。
      */
     [[nodiscard]] std::optional<const SlotType*> borrow() noexcept {
-        auto expected = buf_->state.load(std::memory_order_acquire);
+        for (;;) {
+            auto expected = buf_->state.load(std::memory_order_acquire);
 
-        // 没有新数据
-        if (!(expected & FLAG_NEW)) {
-            return std::nullopt;
-        }
-
-        // CAS: 尝试拿走 ready，把 read 还回去，清除 flag
-        auto ready_idx = expected & INDEX_MASK;
-
-        if (auto desired = buf_->read_idx; !buf_->state.compare_exchange_strong(
-                expected, desired, std::memory_order_acq_rel, std::memory_order_acquire)) {
-            // Producer 刚好又写了，expected 已更新，再试一次
+            // 没有新数据
             if (!(expected & FLAG_NEW)) {
                 return std::nullopt;
             }
-            ready_idx = expected & INDEX_MASK;
-            desired   = buf_->read_idx;
-            if (!buf_->state.compare_exchange_strong(
-                    expected, desired, std::memory_order_acq_rel, std::memory_order_relaxed)) {
-                // producer 在这么短时间内连续 publish 两次，放弃这次
-                return std::nullopt;
-            }
-        }
 
-        buf_->read_idx = ready_idx;
-        return &buf_->slots[ready_idx];
+            const auto ready_idx = expected & INDEX_MASK;
+            if (buf_->state.compare_exchange_strong(
+                    expected, buf_->read_idx, std::memory_order_acq_rel,
+                    std::memory_order_acquire)) {
+                buf_->read_idx = ready_idx;
+                return &buf_->slots[ready_idx];
+            }
+            // CAS 失败：state 已被 producer 改写，expected 现在是新值，
+            // 回到循环顶部重新判断 FLAG_NEW。
+        }
     }
 
     /**

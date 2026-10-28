@@ -53,3 +53,8 @@ llvm.sh*
 3dparty/*.sha256
 3dparty/*.tar.xz
 bin
+
+# 运行时产物
+Log/
+record/*.mcap
+logs/

@@ -283,6 +283,12 @@ void register_l1_sensor_systems(talos::scheduler::Scheduler& app) {
                 return;
             }
 
+            // 临时开关：跳过整套图像发布（含缩放/编码），用于测检测流水线真实帧率。
+            // 用法: TALOS_NO_IMAGE=1 ./build/bin/talos
+            if (std::getenv("TALOS_NO_IMAGE") != nullptr) {
+                return;
+            }
+
             auto batch = det_in.read();
             if (!batch || batch->image.empty()) {
                 return;

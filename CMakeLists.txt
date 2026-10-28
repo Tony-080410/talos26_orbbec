@@ -496,6 +496,36 @@ target_link_libraries(talos-replay PRIVATE
 )
 
 # ============================================================================
+# Orbbec bridge: Gemini 335 -> daedalus shm (talos 端零改动)
+# ============================================================================
+set(ORBBEC_SDK_ROOT "$ENV{HOME}/opt/OrbbecSDK_v2" CACHE PATH "Orbbec SDK root")
+
+if (EXISTS "${ORBBEC_SDK_ROOT}/include/libobsensor/ObSensor.hpp")
+    add_executable(orbbec-bridge src/orbbec_bridge.cpp)
+
+    target_include_directories(orbbec-bridge PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/crates/hardware_daedalus/src
+            ${ORBBEC_SDK_ROOT}/include)
+
+    target_link_directories(orbbec-bridge PRIVATE ${ORBBEC_SDK_ROOT}/lib)
+
+    target_link_libraries(orbbec-bridge PRIVATE
+            ipc
+            opencv_core
+            opencv_imgcodecs
+            opencv_imgproc
+            fmt::fmt
+            OrbbecSDK)
+
+    set_target_properties(orbbec-bridge PROPERTIES
+            BUILD_RPATH "${ORBBEC_SDK_ROOT}/lib"
+            INSTALL_RPATH "${ORBBEC_SDK_ROOT}/lib")
+    message(STATUS "Orbbec bridge enabled: ${ORBBEC_SDK_ROOT}")
+else ()
+    message(STATUS "Orbbec SDK not found at ${ORBBEC_SDK_ROOT}, orbbec-bridge skipped")
+endif ()
+
+# ============================================================================
 # MPC Benchmark: 2x TinyMPC (double/dynamic) vs DualSmallMpcSolver (float/fixed)
 # ============================================================================
 add_library(tinympc_bench STATIC

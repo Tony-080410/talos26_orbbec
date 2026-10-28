@@ -367,12 +367,23 @@ OrtBackend::PreprocContext
     const int input_h = static_cast<int>(shp[2]);
     const int input_w = static_cast<int>(shp[3]);
 
-    const float r = std::min(
-        static_cast<float>(input_w) / static_cast<float>(image.cols),
-        static_cast<float>(input_h) / static_cast<float>(image.rows));
+    // 只送画面中心区域：等效提高小目标分辨率。
+    // 1440x1080 全幅送 640 要降采样 2.25 倍，1.5m 处装甲板只剩 40px 认不出；
+    // 取中心 720x540 后只降 1.125 倍，同距离约 80px。
+    // 代价：目标跑出中心区域就检测不到，需要云台指向补偿。
+    static constexpr float kRoiRatio = 0.5f;
+    const int roi_w = std::max(1, static_cast<int>(static_cast<float>(image.cols) * kRoiRatio));
+    const int roi_h = std::max(1, static_cast<int>(static_cast<float>(image.rows) * kRoiRatio));
+    const int roi_x = (image.cols - roi_w) / 2;
+    const int roi_y = (image.rows - roi_h) / 2;
+    const cv::Mat roi = image(cv::Rect(roi_x, roi_y, roi_w, roi_h));
 
-    const int unpad_w = static_cast<int>(std::round(r * static_cast<float>(image.cols)));
-    const int unpad_h = static_cast<int>(std::round(r * static_cast<float>(image.rows)));
+    const float r = std::min(
+        static_cast<float>(input_w) / static_cast<float>(roi_w),
+        static_cast<float>(input_h) / static_cast<float>(roi_h));
+
+    const int unpad_w = static_cast<int>(std::round(r * static_cast<float>(roi_w)));
+    const int unpad_h = static_cast<int>(std::round(r * static_cast<float>(roi_h)));
 
     const int pad_w = input_w - unpad_w;
     const int pad_h = input_h - unpad_h;
@@ -386,9 +397,11 @@ OrtBackend::PreprocContext
     ctx.scale_y = 1.0f / r;
     ctx.pad_x   = static_cast<float>(left);
     ctx.pad_y   = static_cast<float>(top);
+    ctx.roi_x   = static_cast<float>(roi_x);
+    ctx.roi_y   = static_cast<float>(roi_y);
 
     cv::Mat resized;
-    cv::resize(image, resized, cv::Size(unpad_w, unpad_h));
+    cv::resize(roi, resized, cv::Size(unpad_w, unpad_h));
 
     cv::copyMakeBorder(
         resized, resized, top, bottom, left, right, cv::BORDER_CONSTANT, cv::Scalar(0, 0, 0));
@@ -544,8 +557,9 @@ std::vector<ArmorDetection>
         }
 
         for (auto& pt : pts) {
-            pt.x = (pt.x - ctx.pad_x) / scale_x;
-            pt.y = (pt.y - ctx.pad_y) / scale_y;
+            // 先还原 letterbox，再加回 ROI 原点，映射到原始图像坐标
+            pt.x = (pt.x - ctx.pad_x) / scale_x + ctx.roi_x;
+            pt.y = (pt.y - ctx.pad_y) / scale_y + ctx.roi_y;
         }
 
         ArmorDetection det(pts, class_info.name, class_info.color, conf);

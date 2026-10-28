@@ -64,3 +64,37 @@ if (ENABLE_CALIBRATION)
 
     message(STATUS "rm_calibration target configured")
 endif()
+
+# 独立内参标定：复用 calibration 算法，图像走 daedalus shm（orbbec_bridge 喂）
+# 不放在 ENABLE_CALIBRATION 里：rm_calibration 依赖已过时的 Scheduler API 编不过，
+# 而这个工具只用到 chessboard_detector + intrinsic_calibrator，两个都是纯算法。
+add_executable(calibrate-intrinsic
+    src/calibrate_intrinsic.cpp
+    src/fcs/calibration/chessboard_detector.cpp
+    src/fcs/calibration/intrinsic_calibrator.cpp
+)
+
+    target_include_directories(calibrate-intrinsic PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/fcs
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/crates/hardware_daedalus/src
+)
+
+    target_link_libraries(calibrate-intrinsic PRIVATE
+    fcs
+    fast_tf
+    ipc
+    toml_std
+    spdlog::spdlog
+    fmt::fmt
+    ${OpenCV_LIBS}
+    Eigen3::Eigen
+)
+
+    target_compile_features(calibrate-intrinsic PRIVATE cxx_std_23)
+
+    set_target_properties(calibrate-intrinsic PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
+)
+
+    message(STATUS "calibrate-intrinsic target configured")
